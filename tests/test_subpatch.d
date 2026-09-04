@@ -5,6 +5,7 @@
 //   • Polygons mode + nothing   ⇒ invert isSubpatch on every face.
 //   • edge/vertex/item mode     ⇒ face selection ignored ⇒ whole model.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -12,15 +13,15 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
     // Put us in Polygons mode so the tests below exercise the
     // selection-scoped path (subpatch scope is mode-aware: a face selection
     // only counts while the current selection type is Polygons).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -33,14 +34,14 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 bool[] subpatchFlags() {
-    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto m = parseJSON(get(testBaseUrl() ~ "/api/model"));
     auto a = m["isSubpatch"].array;
     bool[] r;
     foreach (n; a) r ~= n.type == JSONType.true_;
@@ -104,7 +105,7 @@ unittest { // MODE-AWARE scope (parity task 0464): a face selection made in
            // reference editor (re-confirmed headless: select 2 → edge → 6).
     resetCube();                                 // leaves us in Polygons mode
     setSelection("polygons", [0, 1]);            // 2 of 6 faces selected
-    post("http://localhost:8080/api/command", "select.typeFrom edge");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom edge");
     runCmd("mesh.subpatch_toggle");              // was: throw / 2 scoped
     auto sub = subpatchFlags();
     foreach (i, b; sub)

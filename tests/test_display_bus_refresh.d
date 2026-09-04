@@ -33,6 +33,7 @@
 // Runner: ./run_test.d test_display_bus_refresh   (HTTP suite; needs a
 // running `vibe3d --test`, which run_test.d manages).
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -45,7 +46,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void postJson(string path, string body_) {
     auto resp = cast(string)post(baseUrl ~ path, body_);

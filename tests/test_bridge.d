@@ -14,6 +14,7 @@
 //   Polygon-mode bridge (select both faces): bridges then DELETES both caps,
 //   leaving the 4 quad rungs → 4 faces, 8 verts (open tube).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -24,7 +25,7 @@ void main() {}
 // helpers
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

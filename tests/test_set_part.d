@@ -2,6 +2,7 @@
 // faces via /api/command. Verifies assignment, undo, empty-selection no-op,
 // wrong-mode rejection, and .v3d round-trip persistence.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -14,13 +15,13 @@ void main() {}
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
     // mesh.setPart is a Polygons-mode command.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 string postCommandRaw(string body) {
-    return cast(string) post("http://localhost:8080/api/command", body);
+    return cast(string) post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postCommand(string body) {
@@ -36,19 +37,19 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 void postUndo() {
-    auto resp = post("http://localhost:8080/api/undo", "");
+    auto resp = post(testBaseUrl() ~ "/api/undo", "");
     assert(parseJSON(resp)["status"].str == "ok", "undo failed: " ~ resp);
 }
 
 long[] faceParts() {
-    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto m = parseJSON(get(testBaseUrl() ~ "/api/model"));
     auto a = m["facePart"].array;
     long[] r;
     foreach (n; a) r ~= n.integer;
@@ -103,8 +104,8 @@ unittest { // empty selection is a no-op: status != ok, facePart unchanged
 }
 
 unittest { // wrong edit mode (Vertices) is rejected with status error
-    post("http://localhost:8080/api/reset", "");
-    post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
 
     auto resp = postCommandRaw(
         `{"id":"mesh.setPart","params":{"partId":5}}`);
@@ -112,7 +113,7 @@ unittest { // wrong edit mode (Vertices) is rejected with status error
         "expected error when not in Polygons mode, got: " ~ resp);
 
     // Switch to polygon mode and verify facePart is still all zeros.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto fp = faceParts();
     foreach (i, v; fp)
         assert(v == 0,
@@ -154,9 +155,9 @@ unittest { // .v3d round-trip: facePart survives save + load
     scope(exit) if (exists(path)) remove(path);
 
     postCommand(`{"id":"file.save","params":{"path":"` ~ path ~ `"}}`);
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
     postCommand(`{"id":"file.load","params":{"path":"` ~ path ~ `"}}`);
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 
     auto fp = faceParts();
     assert(fp.length == 6,

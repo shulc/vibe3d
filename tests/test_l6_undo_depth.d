@@ -47,17 +47,15 @@
 // `CommandHistory` caps the undo stack and `/api/reset` does not clear it.
 //
 // LANE: `./run_test.d` (lane S).
+import http_client : testBaseUrl, postRaw;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
-string postRaw(string path, string body_) {
-    return cast(string) post(kBase ~ path, body_);
-}
 
 JSONValue postJ(string path, string body_) {
     return parseJSON(postRaw(path, body_));

@@ -2,20 +2,14 @@
 // Verifies that running each preset flips both the ACEN and AXIS stages
 // atomically to the matching mode pair.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 string stageMode(string taskCode) {
     auto j = getJson("/api/toolpipe");

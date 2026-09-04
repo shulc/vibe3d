@@ -32,11 +32,12 @@
 // `./vibe3d --test --http-port <free port>` with a scratch VIBE3D_CONFIG_DIR
 // and tears it down when done. Must be run from the repo root.
 
+import http_client : postJson;
 import std.net.curl;
 import std.json;
 import std.math     : fabs;
 import std.conv     : to;
-import std.process  : spawnProcess, wait, thisProcessID, Pid;
+import std.process  : spawnProcess, wait, thisProcessID, Pid, environment;
 import std.socket   : Socket, AddressFamily, SocketType, ProtocolType, InternetAddress;
 import std.file     : mkdirRecurse, rmdirRecurse, exists;
 import std.path     : buildPath;
@@ -132,6 +133,7 @@ static this() {
     assert(g_inst.up, "test_tool_sticky_cluster_0393: failed to launch a "
         ~ "self-hosted vibe3d instance (run from the repo root; see "
         ~ g_inst.logPath ~ ")");
+    environment["VIBE3D_TEST_PORT"] = g_inst.port.to!string;
 }
 
 static ~this() {
@@ -139,12 +141,9 @@ static ~this() {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helpers.
+// Shared HTTP helpers read the self-launched instance's port set above.
 // ---------------------------------------------------------------------------
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(g_inst.baseUrl ~ path, body_));
-}
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;

@@ -7,6 +7,7 @@
 //  Stage 5: scope filtering via typeEligible
 //  Stage 6: screen-space edge Intersection
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -16,19 +17,12 @@ import std.format : format;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Helpers (mirror test_toolpipe_snap.d / test_fixture_item_transform.d).
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 JSONValue cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

@@ -66,6 +66,7 @@
 // hide block 2's silence. Block 1 is the COUNTER tier (`topologiesCreated`,
 // the one wire counter that separates fast from slow); block 2 is the PIXEL
 // tier (the display-refresh claim, which nothing else can see).
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -80,12 +81,9 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok",

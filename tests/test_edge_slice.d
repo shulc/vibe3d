@@ -16,6 +16,7 @@
 //   undo round-trips both cases.
 //   T-junction backstop: duplicatePositionVerts==0 after every successful cut.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -26,7 +27,7 @@ void main() {}
 // helpers (mirrors test_axis_slice.d)
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

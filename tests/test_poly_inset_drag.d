@@ -12,6 +12,7 @@
 // arbitrary and only the VERTICAL travel carries meaning: dragging UP (screen
 // y decreasing) increases inset.
 
+import http_client : testBaseUrl, postJson;
 import std.json;
 import std.math : abs;
 import std.net.curl : get, post;
@@ -20,12 +21,9 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.polyInsetTool";
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

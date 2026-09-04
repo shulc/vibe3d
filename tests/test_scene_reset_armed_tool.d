@@ -30,6 +30,7 @@
 // invoked, and where the REAL LoopSliceTool instance the factory casts
 // against actually lives) is excluded from the `dub test` build.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -39,7 +40,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void resetCube() {
     auto r = parseJSON(cast(string) post(baseUrl ~ "/api/reset", ""));
@@ -52,7 +53,6 @@ void cmd(string s) {
         "cmd `" ~ s ~ "` failed: " ~ cast(string) resp);
 }
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue getModel()     { return getJson("/api/model"); }
 JSONValue getToolState() { return getJson("/api/tool/state"); }

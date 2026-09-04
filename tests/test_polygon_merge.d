@@ -13,6 +13,7 @@
 //   D — undo / redo round-trip
 //   E — two disjoint adjacent-pairs → 2 merged n-gons (not 1)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort, map;
@@ -27,12 +28,12 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/load-mesh failed: " ~ resp);
 }
@@ -44,7 +45,7 @@ void postSelect(string elementType, int[] indices) {
     auto s = appender!string("[");
     foreach (i, v; indices) { if (i > 0) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ elementType ~ `","indices":` ~ s.data ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/select failed: " ~ resp);
@@ -52,7 +53,7 @@ void postSelect(string elementType, int[] indices) {
 
 /// Run a command that is expected to succeed (asserts status == "ok").
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
                      `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
            id ~ " failed: " ~ resp);
@@ -61,31 +62,31 @@ void runCmd(string id) {
 /// Run a command WITHOUT asserting success — returns the parsed response.
 /// Use this for no-op cases where evaluate() returns false.
 JSONValue postCommandRaw(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
                      `{"id":"` ~ id ~ `"}`);
     return parseJSON(cast(string)resp);
 }
 
 void undoCmd() {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"history.undo"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"history.undo"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok", "undo failed: " ~ resp);
 }
 
 void redoCmd() {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"history.redo"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"history.redo"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok", "redo failed: " ~ resp);
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue getSel() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 void setPolyMode() {
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 void resetCube() {

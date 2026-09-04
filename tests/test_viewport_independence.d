@@ -5,6 +5,7 @@
 // Regression: default GET/POST /api/camera (no query) unchanged.
 module test_viewport_independence;
 
+import http_client : testBaseUrl;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -465,12 +466,8 @@ bool testRegression() {
 // --------------------------------------------------------------------------
 
 int main(string[] args) {
-    // NOTE: keep the literal "http://localhost:8080" — run_test.d isolates
-    // parallel workers by textually rewriting "localhost:8080" to the worker's
-    // port in a scratch copy of the source.  Building the URL from an env var
-    // (VIBE3D_TEST_PORT is never set by the runner) would defeat that rewrite
-    // and make every worker hit port 8080 → cross-worker state corruption.
-    baseUrl = "http://localhost:8080";
+    // Resolve the port assigned to this worker by run_test.d.
+    baseUrl = testBaseUrl();
 
     writeln("=== test_viewport_independence ===");
     int passed = 0, failed = 0;

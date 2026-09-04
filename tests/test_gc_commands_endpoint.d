@@ -24,6 +24,7 @@
 //     wrong, which is why this is checked and not commented.
 //  3. The bytes track the WORK. A column that reports a constant is
 //     indistinguishable from a working one on any single reading.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -31,7 +32,7 @@ import std.format : format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue gc() { return parseJSON(cast(string)get(baseUrl ~ "/api/gc/commands")); }
 

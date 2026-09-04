@@ -9,6 +9,7 @@
 //   • after the drag, v7 = mirror(v6) still holds (verts haven't drifted
 //     off the symmetry plane).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -21,9 +22,9 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // X-symm: drag v6.x → v6.x grows, v7.x shrinks by same Δ
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[6]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
@@ -33,7 +34,7 @@ unittest { // X-symm: drag v6.x → v6.x grows, v7.x shrinks by same Δ
         "tool.pipe.attr symmetry enabled true\n" ~
         "tool.pipe.attr symmetry axis x\n" ~
         "tool.pipe.attr symmetry offset 0\n";
-    auto setResp = post("http://localhost:8080/api/script", script);
+    auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + symmetry config failed: " ~ cast(string)setResp);
 

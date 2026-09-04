@@ -15,6 +15,7 @@
 // at index 0 for the slot mapping — so a wrong implementation reads a
 // DIFFERENT NUMBER here rather than merely a missing effect.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -26,14 +27,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
 
 void runCmd(string id) {
     auto r = postJson("/api/command", `{"id":"` ~ id ~ `"}`);

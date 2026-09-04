@@ -48,6 +48,7 @@
 //     different sets coalesce into one entry
 //       -> W5 "two gang writes over DIFFERENT sets are two undo entries".
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -56,7 +57,7 @@ import std.math   : abs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 

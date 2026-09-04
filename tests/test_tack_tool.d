@@ -16,6 +16,7 @@
 // Phase-0 capture (private doc) — see tests/fixtures/tack.json for the full
 // derivation note.
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -28,7 +29,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 enum int    SRC_FACE = 4;
 enum int    TGT_FACE = 10;
 enum double[3] CLICK_POINT = [
@@ -63,9 +64,6 @@ void selectFace(int idx) {
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string body_) {
     auto r = postJson("/api/command", body_);

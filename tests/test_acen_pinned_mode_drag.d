@@ -36,6 +36,7 @@
 //      pixel offset from two different press pixels gives two DIFFERENT deltas.
 //      Guards against "fixing" the pinned modes by making every mode pinned.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -48,7 +49,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue pj(string p, string b) { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 JSONValue gj(string p)           { return parseJSON(cast(string) get(baseUrl ~ p)); }

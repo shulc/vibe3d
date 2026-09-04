@@ -15,12 +15,13 @@
 // endpoint test — there is no `test_perf_endpoint.d` either, for the same
 // reason: the default build carries no PerfProbe data to assert on.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 unittest { // GET /api/frames responds with a valid JSON object
     post(baseUrl ~ "/api/reset", "");

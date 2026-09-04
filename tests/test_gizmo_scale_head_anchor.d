@@ -19,6 +19,7 @@
 // that handle. Anchor and hit test read the same point (`target.end`), so
 // hovering the anchor must make that exact part hot.
 
+import http_client : testBaseUrl;
 import std.format : format;
 import std.json;
 import std.net.curl : get, post;
@@ -27,7 +28,7 @@ import drag_helpers : playAndWait;
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 private JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string)post(baseUrl ~ path, body_));

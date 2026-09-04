@@ -23,6 +23,7 @@
 //     8. uv.relax regression: perturbed 3×3 grid still converges after the
 //        weld extraction refactor.
 
+import http_client : testBaseUrl;
 import std.math      : fabs, sqrt, acos, isNaN, isInfinity;
 import std.file      : write, remove, exists, readText;
 import std.format    : format;
@@ -45,7 +46,7 @@ void main() {}
 // Helpers
 // ---------------------------------------------------------------------------
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 private enum float  eps   = 1e-4f;
 
 private JSONValue runCmd(string id, string paramsJson = "") {

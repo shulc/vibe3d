@@ -6,6 +6,7 @@
 // apply/revert correctness; tool-driven integration is covered separately
 // once an event-playback log records a drag session.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -18,31 +19,31 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue postRedo() {
-    return parseJSON(post("http://localhost:8080/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 double[3] vertexAt(int idx) {

@@ -14,6 +14,7 @@
 // (monotonic multi-batch growth + backward-restores-baseline + one-step ==
 // three-step) DO catch the accumulation bug directly.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -26,9 +27,8 @@ import drag_helpers; // Vec3, fetchCamera, viewportFromCamera, projectToWindow
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 
 void cmd(string text) {
     auto r = parseJSON(cast(string)post(BASE ~ "/api/command", text));

@@ -16,6 +16,7 @@
 //     Undo via /api/undo → file.save → assert pre-command state restored.
 //     Negatives: absent map / name conflict → status:error.
 
+import http_client : testBaseUrl;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
 import std.json   : parseJSON, JSONValue;
@@ -34,7 +35,7 @@ void main() {}
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 // Post a command; assert status:ok; return the response.
 private JSONValue runCmd(string id, string paramsJson = "") {

@@ -28,6 +28,7 @@
 // centroid) — e.g. inset=0.1 → inner corners at ±(0.5 - 0.1/sqrt(2)) ≈
 // ±0.42929 (NOT ±0.4, which was the old per-edge-miter law's prediction).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -44,33 +45,33 @@ immutable double D1 = 0.1 / SQRT2_;
 // --- HTTP helpers ------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/command failed: " ~ body ~ " → " ~ resp);
 }
 
 JSONValue postCommandRaw(string body) {
-    return parseJSON(cast(string)post("http://localhost:8080/api/command", body));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", body));
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue postRedo() { return parseJSON(post("http://localhost:8080/api/redo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 
 // --- geometry helpers --------------------------------------------------------
 

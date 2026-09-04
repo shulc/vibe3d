@@ -1,3 +1,4 @@
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -15,9 +16,9 @@ unittest { // Test the /api/model endpoint
     // vibe3d per worker across many tests, so without this the mesh asserted
     // below could be whatever a co-worker test left behind (the documented
     // cross-test state-bleed flake — "Expected 8 vertices for a cube").
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto response = get("http://localhost:8080/api/model");
+    auto response = get(testBaseUrl() ~ "/api/model");
 
     // Parse the response as JSON
     auto json = parseJSON(response);

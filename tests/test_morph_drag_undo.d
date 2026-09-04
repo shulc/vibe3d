@@ -19,6 +19,7 @@
 // The gizmo handle is not guessed: `/api/tool/handles` reports each part's
 // screen position, and the synthesized event log presses exactly there.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -30,12 +31,8 @@ import core.time   : dur;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string) post(kBase ~ path, body));
-}
-JSONValue getJson(string path) { return parseJSON(get(kBase ~ path)); }
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

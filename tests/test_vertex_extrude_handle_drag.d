@@ -38,6 +38,7 @@
 // whose override is only updated on MOTION events, so a log that opens with the
 // button-down would hit-test against a stale cursor.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
@@ -49,14 +50,11 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.vertexExtrude";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

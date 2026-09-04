@@ -55,6 +55,7 @@
 // reset is itself the tool-drop), which is `test_bridge_tool_drag.d`'s
 // read → drop → assert discipline and the same reason.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, map;
 import std.array : array;
 import std.conv : to;
@@ -66,7 +67,7 @@ import std.format : format;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.bridgeTool";
 
 /// Two coaxial unit squares — the bridge operand, shared with
@@ -77,10 +78,7 @@ enum string kTwoCaps = `{
 }`;
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

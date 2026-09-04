@@ -21,6 +21,7 @@
 //   drag_helpers.d projectToWindow computes exact screen pixels for each vertex
 //   given the live camera state — no hardcoded pixels, no fragile approximations.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -40,7 +41,7 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void postReset(bool empty = false) {
     string path = empty ? "/api/reset?empty=true" : "/api/reset";

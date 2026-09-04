@@ -24,9 +24,9 @@
 //   Face 0 (+X quad): [c0, A, B, c1] = [0, 2, 3, 1]
 //   Face 1 (−X quad): [c0, c1, C, D] = [0, 1, 5, 4]
 //
-// "localhost:8080" is rewritten to the per-worker port by run_test.d when
-// running in parallel; keep the literal so that rewrite still matches.
+// The shared HTTP client resolves the port assigned by run_test.d.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -35,7 +35,7 @@ import std.format : format;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string DEFORMED_MESH =
     `{"vertices":[[0,0,0],[0,1,0],[2.0,0.5,0],[1.5,1.2,0],[-0.8,-0.3,0],[-1.1,1.3,0]],`
     ~ `"faces":[[0,2,3,1],[0,1,5,4]]}`;
@@ -44,13 +44,6 @@ enum string DISCONNECTED_MESH =
     ~             `[0.5,-0.5,0],[0.5,0.5,0],[0.5,-0.5,1],[0.5,0.5,1]],`
     ~ `"faces":[[0,1,3,2],[4,6,7,5]]}`;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
-
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(BASE ~ path));
-}
 
 double[3] vertexPos(JSONValue model, int idx) {
     auto v = model["vertices"].array[idx].array;

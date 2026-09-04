@@ -7,6 +7,7 @@
 // deterministically reverse exactly one face of the default cube, without
 // needing to hand-author a raw vertex/face JSON fixture.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -19,7 +20,7 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void postReset() {
     auto resp = post(baseUrl ~ "/api/reset", "");

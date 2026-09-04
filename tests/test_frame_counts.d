@@ -27,6 +27,7 @@
 // instrument with a nonzero ImGui floor. The one thing asserted about it is
 // that it responds at all (in perf_probe.d's own unittest).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -36,7 +37,7 @@ import core.time   : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // --------------------------------------------------------------------------
 // Helpers

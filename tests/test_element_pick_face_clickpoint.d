@@ -1,6 +1,7 @@
 // Element Move, elementMode=polygon: the gizmo must land at the face CENTROID
 // regardless of where on the face the click lands — anchor is click-independent.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -11,7 +12,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 JSONValue pj(string p, string b){ return parseJSON(cast(string)post(baseUrl~p,b)); }
 JSONValue gj(string p){ return parseJSON(cast(string)get(baseUrl~p)); }
 void settle(){ import core.thread:Thread; import core.time:msecs; Thread.sleep(150.msecs); }

@@ -13,6 +13,7 @@
 // With amount=0.2 the split points are (-0.3,-0.5,-0.5), (-0.5,-0.3,-0.5),
 // (-0.5,-0.5,-0.3).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -25,22 +26,22 @@ void main() {}
 // --- HTTP helpers -----------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/command failed: " ~ resp ~ "\nbody: " ~ body);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 void cmdArg(string argstring) {
-    auto resp = cast(string)post("http://localhost:8080/api/command", argstring);
+    auto resp = cast(string)post(testBaseUrl() ~ "/api/command", argstring);
     assert(parseJSON(resp)["status"].str == "ok",
            "cmdArg `" ~ argstring ~ "` failed: " ~ resp);
 }
@@ -49,14 +50,14 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo()     { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel()     { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getUndoStatus(){ return parseJSON(get("http://localhost:8080/api/undo/status")); }
+JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel()     { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getUndoStatus(){ return parseJSON(get(testBaseUrl() ~ "/api/undo/status")); }
 
 // --- geometry helpers -------------------------------------------------------
 
@@ -291,9 +292,9 @@ unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
     resetCube();
     cmdArg("select.typeFrom vertex");
     postSelect("vertices", []);
-    auto c0 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto c0 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     foreach (c; kBatchlessControlSeq) postCommand(c);
-    auto c1 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto c1 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
@@ -303,9 +304,9 @@ unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
     resetCube();
     cmdArg("select.typeFrom vertex");
     postSelect("vertices", [0]);
-    auto b1 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto b1 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     postCommand(`{"id":"mesh.vertexBevel","params":{"amount":0.2}}`);
-    auto a1 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto a1 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     assert(getModel()["faceCount"].integer == 7,
         "the 1-corner chamfer did not apply — a refused command moves no "
       ~ "counter at all and makes the assertion below vacuous");
@@ -329,9 +330,9 @@ unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
     resetCube();
     cmdArg("select.typeFrom vertex");
     postSelect("vertices", []);
-    auto b2 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto b2 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     postCommand(`{"id":"mesh.vertexBevel","params":{"amount":0.2}}`);
-    auto a2 = parseJSON(get("http://localhost:8080/api/changes"));
+    auto a2 = parseJSON(get(testBaseUrl() ~ "/api/changes"));
     auto m2 = getModel();
     assert(m2["faceCount"].integer > 7,
         "the whole-mesh chamfer left " ~ m2["faceCount"].integer.to!string

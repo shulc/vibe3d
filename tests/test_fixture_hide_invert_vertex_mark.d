@@ -82,6 +82,7 @@
 //     bit: a stored plane would leave some vertex reading its pre-invert
 //     value where the derived plane re-reads it from its incident polygons.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -93,9 +94,8 @@ import fixture_helpers : requireProvenance;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

@@ -138,6 +138,7 @@
 //
 // MUTATIONS THAT REDDEN IT: recorded at the bottom of this file.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -150,9 +151,8 @@ import drag_helpers;
 
 void main() {}
 
-// The literal is spelled out because run_test.d rewrites "localhost:8080"
-// per worker for parallel runs — do not build it dynamically.
-enum BASE = "http://localhost:8080";
+// Resolve the per-worker port through the shared HTTP client.
+alias BASE = testBaseUrl;
 
 enum string kFixtureJson    = import("fixtures/gesture_zero_delta_undo_second_form.json");
 /// Task 2640's fixture, held open beside this one for exactly one purpose:
@@ -196,10 +196,7 @@ enum float kCutReachWorld = 0.9f;
 // ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
-JSONValue getJson(string p)  { return parseJSON(cast(string) get(BASE ~ p)); }
-JSONValue postJson(string p, string b) {
-    return parseJSON(cast(string) post(BASE ~ p, b));
-}
+
 
 void settle() { Thread.sleep(250.msecs); }
 

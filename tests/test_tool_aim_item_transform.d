@@ -19,6 +19,7 @@
 //
 // Run via: ./run_test.d tool_aim_item_transform
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -39,7 +40,7 @@ import drag_helpers : buildDragLog, playAndWait;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // DragWeldTool's own pick radius (source/tools/edit/drag_weld.d
 // PICK_RADIUS_PX). The fixture guards below are stated in terms of it: a
@@ -51,8 +52,6 @@ enum float PICK_RADIUS_PX = 12.0f;
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
-JSONValue postJson(string path, string body_) { return parseJSON(cast(string) post(BASE ~ path, body_)); }
 
 JSONValue cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

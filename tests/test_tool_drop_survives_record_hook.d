@@ -28,15 +28,15 @@
 // — the crash lived in a nested function of app.d's main(), which `dub test`
 // does not compile at all.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 // `/api/tool/state` carries the ACTIVE tool's own state object and is `{}`
 // when nothing is armed — there is no "active" flag to read.

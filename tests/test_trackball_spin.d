@@ -19,6 +19,7 @@
 // nine orientation lanes. Reading once cannot see a spin: a spin is not a
 // different camera, it is a camera that keeps changing.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -29,9 +30,8 @@ import core.time   : dur;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

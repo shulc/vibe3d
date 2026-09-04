@@ -7,9 +7,9 @@
 // same consistent post-load state /api/reset leaves behind, just with a
 // caller-supplied mesh instead of a primitive.
 //
-// "localhost:8080" is rewritten to the per-worker port by run_test.d when
-// running in parallel; keep the literal so that rewrite still matches.
+// The shared HTTP client resolves the port assigned by run_test.d.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -17,11 +17,11 @@ import std.conv : to;
 void main() {}
 
 string postLoadMesh(string body) {
-    return cast(string)post("http://localhost:8080/api/load-mesh", body);
+    return cast(string)post(testBaseUrl() ~ "/api/load-mesh", body);
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
@@ -30,17 +30,17 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // A unit tetrahedron: 4 verts, 4 triangular faces, 6 edges.
 enum string kTetra =

@@ -8,6 +8,7 @@
 // - constrain.toggle flips enabled false→true→false.
 // - /api/reset restores all attrs to defaults (reset isolation).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -15,15 +16,8 @@ import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 // Find the CONS stage entry in /api/toolpipe.
 string[string] getConsAttrs() {

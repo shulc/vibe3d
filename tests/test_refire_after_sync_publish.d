@@ -56,6 +56,7 @@
 //     (2026-08-25). Mutation: delete `armedUndoEpoch`'s arm in
 //     `armRegradeStamp` and this reddens with the count.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -69,13 +70,8 @@ import drag_helpers;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

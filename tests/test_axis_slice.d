@@ -15,6 +15,7 @@
 // T-junction backstop (HTTP): no two vertices share the exact same position.
 // Authoritative T-junction check (index-share) is in mesh.d unittest{}.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -26,7 +27,7 @@ void main() {}
 // helpers (mirrors test_bridge.d)
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

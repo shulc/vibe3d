@@ -19,9 +19,10 @@
 // a check that reddens on correct input is worth no more than one that never
 // reddens, so every refusal is paired with a legal value that must still land.
 //
-// The literal "localhost:8080" is rewritten per-worker by run_test.d — keep it
-// spelled out (see tests/fixture_helpers.d).
+// The shared HTTP client resolves the per-worker port supplied by run_test.d
+// (see tests/fixture_helpers.d).
 
+import http_client : testBaseUrl;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -30,7 +31,7 @@ import std.algorithm : canFind;
 
 void main() {}
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue jpost(string path, string body_) {
     return parseJSON(post(BASE ~ path, body_));

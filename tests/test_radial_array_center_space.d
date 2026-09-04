@@ -65,6 +65,7 @@
 // clicked point is measured, never predicted. Block 5 needs its own view for a
 // reason that IS about the geometry, and says so in place.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl : get, post;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, PI;
@@ -78,18 +79,14 @@ import drag_helpers;   // Vec3, CameraState, fetchCamera, viewportFromCamera,
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.radialArrayTool";
 
 // --------------------------------------------------------------------------
 // HTTP plumbing
 // --------------------------------------------------------------------------
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(BASE ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
+
 void cmd(string argstring) {
     auto r = postJson("/api/command", argstring);
     assert("status" in r && (r["status"].str == "ok" || r["status"].str == "success"),

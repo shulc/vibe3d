@@ -21,6 +21,7 @@
 //   - HTTP smoke: hand-written v6 .v3d → file.load → uv.flip → file.save →
 //     parse uvMaps, assert u' = 1−u → /api/undo → file.save → assert restored
 
+import http_client : testBaseUrl;
 import std.math   : fabs, cos, sin, PI;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -39,7 +40,7 @@ void main() {}
 // HTTP helpers (only reached when run_test.d starts vibe3d --test)
 // ---------------------------------------------------------------------------
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 private JSONValue runCmd(string id, string paramsJson = "") {
     string body_ = paramsJson.length > 0
@@ -485,8 +486,7 @@ unittest {
 //       file.save → parse uvMaps → assert u'=1−u →
 //       /api/undo → file.save → assert original values restored.
 //
-// The "localhost:8080" literal is rewritten per-worker by run_test.d for
-// parallel runs — keep it spelled out, do not build it dynamically.
+// The shared HTTP client resolves the per-worker port supplied by run_test.d.
 // ---------------------------------------------------------------------------
 
 unittest {

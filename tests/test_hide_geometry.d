@@ -10,6 +10,7 @@
 // the project's testing gate: a wrong rule that hides the right NUMBER of
 // faces from the wrong SET must still fail.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -20,14 +21,8 @@ import core.time : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void waitPlaybackFinish() {
     foreach (_; 0 .. 100) {

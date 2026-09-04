@@ -31,11 +31,12 @@
 //      observable extra deform without any further user action, so it is the
 //      mechanistically correct exemplar for a settle-only repro.
 
+import http_client : getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math     : fabs;
 import std.conv     : to;
-import std.process  : spawnProcess, wait, thisProcessID, Pid;
+import std.process  : spawnProcess, wait, thisProcessID, Pid, environment;
 import std.socket   : Socket, AddressFamily, SocketType, ProtocolType, InternetAddress;
 import std.file     : mkdirRecurse, rmdirRecurse, exists;
 import std.path     : buildPath;
@@ -132,6 +133,7 @@ static this() {
     g_inst = launchInstance();
     assert(g_inst.up, "test_tool_sticky: failed to launch a self-hosted "
         ~ "vibe3d instance (run from the repo root; see " ~ g_inst.logPath ~ ")");
+    environment["VIBE3D_TEST_PORT"] = g_inst.port.to!string;
 }
 
 static ~this() {
@@ -139,16 +141,9 @@ static ~this() {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helpers -- identical idioms to the shared-harness tests, just bound to
-// this file's self-launched instance instead of the module-level baseUrl.
+// Bind the shared HTTP helpers to this file's self-launched instance.
 // ---------------------------------------------------------------------------
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(g_inst.baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(g_inst.baseUrl ~ path));
-}
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;

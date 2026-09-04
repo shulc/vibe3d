@@ -51,6 +51,7 @@
 // Both cases write their files from this process and hand the app absolute
 // paths, exactly as the file dialog would.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -60,7 +61,7 @@ import std.path   : buildPath, buildNormalizedPath, dirName;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (mirrors tests/test_image_commands.d)

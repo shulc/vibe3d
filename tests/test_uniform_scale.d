@@ -11,6 +11,7 @@
 // is at (0,0,0) and a uniform scale factor f maps every vertex v → f*v.
 // No reference engine needed — the assertion is analytic.
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.math  : fabs;
@@ -19,7 +20,7 @@ import std.format : format;
 
 void main() {}
 
-private string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 private JSONValue getJson(string path) {
     return parseJSON(cast(string)get(baseUrl ~ path));

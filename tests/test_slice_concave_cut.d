@@ -14,6 +14,7 @@
 // either crossing edge borders a concave face — those faces simply keep their
 // single Pass-1-spliced crossing vertex (or clean chord-split, if both
 // crossings land in-band) instead.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -21,7 +22,7 @@ import std.format : format;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string) post(BASE ~ path, body_);

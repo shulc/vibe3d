@@ -13,6 +13,7 @@
 // or reordered the topology on a vertex move would silently break index-based
 // selection resolution. This test pins it.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -20,13 +21,13 @@ import std.conv : to;
 void main() {}
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 unittest { // /api/model emits in-range edges + faces; both stable under a move
     // Reset to the pristine startup cube (the runner shares one vibe3d per
     // worker across tests — without this the asserted mesh could be stale).
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto before = getModel();
 
@@ -78,11 +79,11 @@ unittest { // /api/model emits in-range edges + faces; both stable under a move
     // --- topology BYTE-STABLE across a vertex move ---------------------------
     // Select a vertex and translate it. The vertices change; the edge/face
     // index arrays must be byte-identical (toString comparison).
-    auto sel = post("http://localhost:8080/api/select",
+    auto sel = post(testBaseUrl() ~ "/api/select",
         `{"mode":"vertices","indices":[0]}`);
     assert(parseJSON(sel)["status"].str == "ok", "/api/select failed: " ~ sel);
 
-    auto xf = post("http://localhost:8080/api/transform",
+    auto xf = post(testBaseUrl() ~ "/api/transform",
         `{"kind":"translate","delta":[1.0,0.5,-0.25]}`);
     assert(parseJSON(xf)["status"].str == "ok", "/api/transform failed: " ~ xf);
 

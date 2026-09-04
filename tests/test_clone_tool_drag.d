@@ -36,6 +36,7 @@
 // `tests/test_tool_gesture_g*.d` assert "EQUAL" and "EMPTY", which a dead
 // channel satisfies for free — that is why THEY open with a control.)
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -46,14 +47,11 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.clone";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

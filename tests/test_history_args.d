@@ -3,6 +3,7 @@ module test_history_args;
 // Integration tests for subphase 5.3: /api/history returns structured per-entry
 // objects { "label": ..., "args": ..., "command": ... } instead of plain strings.
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.conv : to;
@@ -15,15 +16,15 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 private JSONValue getHistory() {
-    return parseJSON(cast(string)get("http://localhost:8080/api/history"));
+    return parseJSON(cast(string)get(testBaseUrl() ~ "/api/history"));
 }
 
 private JSONValue postCmd(string argstring) {
-    return parseJSON(cast(string)post("http://localhost:8080/api/command", argstring));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", argstring));
 }
 
 private void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 private void postSelect(string mode, int[] indices) {
@@ -33,7 +34,7 @@ private void postSelect(string mode, int[] indices) {
         if (i > 0) idxList ~= ",";
         idxList ~= idx.to!string;
     }
-    post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/select",
         format(`{"mode":"%s","indices":[%s]}`, mode, idxList));
 }
 
@@ -109,7 +110,7 @@ unittest { // no-schema command yields empty args string
     // mesh.delete has no schema at all. Use subdivide since it always succeeds.
     postSelect("vertices", [0]);
     // mesh.subdivide is a polygon-mode op.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto r = postCmd("mesh.subdivide");
     if (r["status"].str != "ok") return; // skip if not applicable in current env
 
@@ -130,12 +131,12 @@ unittest { // redo stack entries are also structured objects
     resetCube();
 
     postSelect("vertices", [0]);
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto r = postCmd("mesh.subdivide");
     if (r["status"].str != "ok") return;
 
     // Undo so the subdivide entry moves to redo.
-    post("http://localhost:8080/api/undo", "");
+    post(testBaseUrl() ~ "/api/undo", "");
 
     auto h    = getHistory();
     auto redo = h["redo"].array;
@@ -157,8 +158,8 @@ unittest { // array.length on undo/redo still works after format change
     resetCube();
 
     postSelect("vertices", [0]);
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
-    post("http://localhost:8080/api/command", `{"id":"mesh.subdivide"}`);
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", `{"id":"mesh.subdivide"}`);
 
     auto h = getHistory();
     int undoLen = cast(int)h["undo"].array.length;

@@ -19,6 +19,7 @@
 //      needs no arithmetic to be decisive.
 //   4. The setting is restored, so nothing bleeds into the rest of the suite.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -29,9 +30,8 @@ import core.time   : dur;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

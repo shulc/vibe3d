@@ -13,9 +13,10 @@
 //   - mesh.delete -> 25 verts (orphan removed), 20 faces
 //
 // Faces are picked by centroid (not hardcoded indices) so the test is robust
-// to subdivide face-ordering changes. The literal localhost:8080 is rewritten
-// per-worker by run_test.d.
+// to subdivide face-ordering changes. The shared HTTP client resolves the
+// per-worker port supplied by run_test.d.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -24,12 +25,12 @@ import std.algorithm : sort;
 void main() {}
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
@@ -37,13 +38,13 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue getModel()  { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue postUndo()  { return parseJSON(post("http://localhost:8080/api/undo", "")); }
+JSONValue getModel()  { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
 
 private double jnum(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer : v.floating;

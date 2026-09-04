@@ -46,6 +46,7 @@
 // still exist (fifteen other files branch on the toggle), but they no longer
 // select a path for these two, and a call left here would say they do.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -55,7 +56,7 @@ import std.array : array;
 
 void main() {}
 
-string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // --- HTTP helpers ----------------------------------------------------------
 

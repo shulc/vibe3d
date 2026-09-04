@@ -82,6 +82,7 @@
 // runs applyHeadless → applyTRS with the preset flags all true) and assert the
 // composed result equals the manual S·R·T of the known cube verts.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -91,14 +92,9 @@ import core.time   : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

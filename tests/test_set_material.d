@@ -10,6 +10,7 @@
 // task 1210. Left as a comment because a test that changed its mind is worth
 // more with the reason attached than without.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.json : JSONType;
@@ -21,13 +22,13 @@ void main() {}
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
     // mesh.setMaterial is a Polygons-mode command.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 string postCommandRaw(string body) {
-    return cast(string) post("http://localhost:8080/api/command", body);
+    return cast(string) post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postCommand(string body) {
@@ -43,14 +44,14 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 string[] undoLabels() {
-    auto h = parseJSON(get("http://localhost:8080/api/history"));
+    auto h = parseJSON(get(testBaseUrl() ~ "/api/history"));
     string[] r;
     foreach (e; h["undo"].array)
         r ~= (e.type == JSONType.object && "label" in e) ? e["label"].str
@@ -59,12 +60,12 @@ string[] undoLabels() {
 }
 
 void postUndo() {
-    auto resp = post("http://localhost:8080/api/undo", "");
+    auto resp = post(testBaseUrl() ~ "/api/undo", "");
     assert(parseJSON(resp)["status"].str == "ok", "undo failed: " ~ resp);
 }
 
 long[] faceMaterials() {
-    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto m = parseJSON(get(testBaseUrl() ~ "/api/model"));
     auto a = m["faceMaterial"].array;
     long[] r;
     foreach (n; a) r ~= n.integer;
@@ -156,8 +157,8 @@ unittest { // a NON-empty selection is still exactly that selection
 }
 
 unittest { // wrong edit mode (Vertices) is rejected with status error
-    post("http://localhost:8080/api/reset", "");
-    post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
 
     auto resp = postCommandRaw(
         `{"id":"mesh.setMaterial","params":{"materialId":5}}`);
@@ -165,7 +166,7 @@ unittest { // wrong edit mode (Vertices) is rejected with status error
         "expected error when not in Polygons mode, got: " ~ resp);
 
     // Switch to polygon mode and verify faceMaterial is still all zeros.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto fm = faceMaterials();
     foreach (i, v; fm)
         assert(v == 0,

@@ -9,6 +9,7 @@
 // - Basis tracks the live camera (changes when the camera orbits).
 // - World mode still returns identity (no-regression sentinel).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -17,11 +18,8 @@ import std.format: format;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

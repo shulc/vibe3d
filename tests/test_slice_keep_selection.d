@@ -19,6 +19,7 @@
 // crossing vertex whole. Per the fix, BOTH halves of EACH selected parent
 // stay selected: 2 selected in -> 4 selected out.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -27,7 +28,7 @@ import core.time   : dur;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void cmd(string s) {
     auto resp = cast(string) post(BASE ~ "/api/command", s);

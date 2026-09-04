@@ -13,6 +13,7 @@
 // Cube layout: 0:(-,-,-) 1:(+,-,-) 2:(+,+,-) 3:(-,+,-) 4:(-,-,+) 5:(+,-,+)
 //              6:(+,+,+) 7:(-,+,+),  half-extent 0.5.
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -22,11 +23,8 @@ import std.math   : fabs;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string) post(kBase ~ path, body));
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

@@ -47,6 +47,7 @@
 // sets `engaged = true` — which is why no drag is needed and this file is
 // deterministic without an event log.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.json;
@@ -58,7 +59,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera,
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.mirrorTool";
 
 /// Two coaxial unit squares — the `/api/load-mesh` operand for block 5.
@@ -69,10 +70,6 @@ enum string kTwoCaps = `{
     "faces":[[0,1,2,3],[4,5,6,7]]
 }`;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

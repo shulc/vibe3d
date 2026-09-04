@@ -79,6 +79,7 @@
 //       -> E8 "0 of 240 pixels across the model's row differ from the
 //          background".
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -89,7 +90,7 @@ import std.algorithm : canFind;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 

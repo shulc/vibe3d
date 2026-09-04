@@ -42,6 +42,7 @@
 // 20 → 20, `totalPolygons` == 1 throughout). A drag that never entered
 // `onParamChanged` reads 0 there and the op-log zero below would be free.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -51,7 +52,7 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 /// How many interactive parameter writes one preview cell drives. Named once:
 /// every exact term below is stated against it, so the cell scales with the
@@ -66,7 +67,7 @@ enum long kCommitEntries = 3;
 JSONValue postTo(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
 }
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
+
 
 void resetCube() {
     auto r = postTo("/api/reset?type=cube", "");

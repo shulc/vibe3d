@@ -115,6 +115,7 @@
 // 1860-sel-display-align.md, section Мутация.
 // ---------------------------------------------------------------------------
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -127,7 +128,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP

@@ -11,6 +11,7 @@
 // v6=(+0.5,+0.5,+0.5) is incident to fi=1,3,4 (3 faces).
 // After splitting v6: fi=1 keeps v6, fi=3→v8, fi=4→v9.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -23,31 +24,31 @@ void main() {}
 bool approxEqual(double a, double b, double eps = 1e-4) { return fabs(a - b) < eps; }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok");
 }
 
 void postCommand(string body_) {
-    auto resp = post("http://localhost:8080/api/command", body_);
+    auto resp = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 string postCommandRaw(string body_) {
-    return cast(string)post("http://localhost:8080/api/command", body_);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body_);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok");
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // ---------------------------------------------------------------------------
 // Core golden: split corner v6 (+,+,+) which is shared by 3 faces

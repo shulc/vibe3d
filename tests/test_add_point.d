@@ -14,6 +14,7 @@
 //   - both former incident faces now contain the new vertex index
 //   - undo restores the original mesh exactly
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -23,12 +24,12 @@ void main() {}
 // ----- HTTP helpers ----------------------------------------------------------
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/load-mesh failed: " ~ resp);
 }
@@ -38,7 +39,7 @@ void postSelect(string mode, int[] indices) {
     auto s = appender!string("[");
     foreach (i, v; indices) { if (i > 0) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ s.data ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/select failed: " ~ resp);
@@ -46,7 +47,7 @@ void postSelect(string mode, int[] indices) {
 
 /// Post command with params JSON.  Asserts status == "ok".
 void postCommandParams(string id, string paramsJson) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `","params":` ~ paramsJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            id ~ " failed: " ~ resp);
@@ -54,13 +55,13 @@ void postCommandParams(string id, string paramsJson) {
 
 /// Post command with params JSON.  Returns raw JSON (no assertion).
 JSONValue postCommandParamsRaw(string id, string paramsJson) {
-    return parseJSON(post("http://localhost:8080/api/command",
+    return parseJSON(post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `","params":` ~ paramsJson ~ `}`));
 }
 
 /// Post command without params.  Returns raw JSON (no assertion).
 JSONValue postCommandRaw(string id) {
-    return parseJSON(post("http://localhost:8080/api/command",
+    return parseJSON(post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`));
 }
 
@@ -71,11 +72,11 @@ void postCommand(string id) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ----- Connectivity helpers --------------------------------------------------

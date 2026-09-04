@@ -85,6 +85,7 @@
 // tests/test_edge_slice.d (the one-shot mesh.edgeSlice command) is untouched
 // and stays green independently — this file only exercises the tool path.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -100,16 +101,13 @@ void main() {}
 // helpers (mirrors test_edge_slice.d / test_loop_slice_tool.d)
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);
     return parseJSON(resp);
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
 
 JSONValue model() { return getJson("/api/model"); }
 

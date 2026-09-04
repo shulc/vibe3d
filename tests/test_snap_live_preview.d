@@ -36,6 +36,7 @@
 // three times with (inner, outer) = (∞, ∞), (default), (1, ∞). That keeps the
 // case selection independent of where the cube happens to project.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -45,7 +46,7 @@ import drag_helpers;
 
 void main() {}
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private void script(string s) {
     auto resp = post(BASE ~ "/api/script", s);

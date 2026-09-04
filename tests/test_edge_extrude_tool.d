@@ -13,6 +13,7 @@
 // applyHeadless → snapshot post), so undo restores the pre-apply state in a
 // single step. The kernel itself is covered by tests/test_edge_extrude.d.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -23,22 +24,22 @@ void main() {}
 // --- HTTP helpers (same shapes as tests/test_edge_extrude.d) ---------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void resetGrid(int n) {
-    auto resp = post("http://localhost:8080/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset grid failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
 void cmd(string s) {
-    auto resp = post("http://localhost:8080/api/command", s);
+    auto resp = post(testBaseUrl() ~ "/api/command", s);
     assert(parseJSON(resp)["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ resp);
 }
 
@@ -46,13 +47,13 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // --- geometry helpers ------------------------------------------------------
 
@@ -221,7 +222,7 @@ unittest {
     cmd("tool.attr edge.extrude width 0");
     // doApply on a no-op tool returns false → ToolDoApplyCommand reports the
     // op didn't apply; geometry is unchanged either way.
-    auto resp = cast(string)post("http://localhost:8080/api/command", "tool.doApply");
+    auto resp = cast(string)post(testBaseUrl() ~ "/api/command", "tool.doApply");
     // status may be "ok" or "error: nothing applied" depending on do_apply's
     // false handling — assert geometry didn't change regardless.
     auto m = getModel();

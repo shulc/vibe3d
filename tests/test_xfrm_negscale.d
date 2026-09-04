@@ -36,6 +36,7 @@
 // convention) — the frozen capture that settled the W1/clamp verdicts is
 // recorded in the (private) task planning doc, not here.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -46,12 +47,9 @@ import core.time   : dur;
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ p, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

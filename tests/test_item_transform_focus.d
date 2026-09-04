@@ -29,6 +29,7 @@
 // the wrong reason and T-X1 could not fail. Every pose below is chosen so the
 // two candidate answers are different in all three components.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -39,9 +40,8 @@ import drag_helpers;
 
 void main() {}
 
-immutable BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(BASE ~ "/api/command", argstring));

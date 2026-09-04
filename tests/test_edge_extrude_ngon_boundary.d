@@ -27,6 +27,7 @@
 // coincident-dup only ever survived for the shared-boundary-corner case
 // exercised here, matching the plan's risk analysis.
 
+import http_client : testBaseUrl, postRaw;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -34,11 +35,9 @@ import std.math : PI, cos, sin;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-string postRaw(string path, string body) {
-    return cast(string)post(BASE ~ path, body);
-}
+
 JSONValue postJ(string path, string body) { return parseJSON(postRaw(path, body)); }
 JSONValue getJ(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 

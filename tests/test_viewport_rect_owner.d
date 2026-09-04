@@ -12,17 +12,15 @@
 // dynamically and test_viewport_gizmo_origin.d tolerates the stomp, but
 // neither asserts the size OWNER. This test does.
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body));
-}
 
 void runCmd(string line) {
     auto r = postJson("/api/command", line);

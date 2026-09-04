@@ -5,6 +5,7 @@
 //   2. Non-existent map → full influence (all verts move equally).
 //   3. Smoke lifecycle: create/rename/set/remove + falloff attr round-trip.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -16,14 +17,9 @@ import std.range     : iota;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 // Send an argstring command (e.g. "tool.set move on").
 void cmd(string s) {
     auto j = postJson("/api/command", s);

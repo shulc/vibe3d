@@ -21,6 +21,7 @@
 // post-click relocated state without a GPU-hover-driven click, so this
 // test is fully deterministic and needs no raw event injection.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -33,7 +34,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Task 0570: the out-of-plane coordinate is QUANTISED, and this file used to
@@ -83,13 +84,6 @@ float quantisedFocusComp(float comp) {
     return cast(float)(acenDnint(cast(double)comp / q) * q);
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 // Walk the /api/toolpipe stages array and return the ACEN stage's
 // attrs as a string→string map.

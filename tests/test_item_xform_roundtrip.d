@@ -23,6 +23,7 @@
 // The reset between save and load is load-bearing too: without it, "the
 // values still match" is also what a completely no-op `file.load` produces.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, fmod;
@@ -34,7 +35,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(BASE ~ "/api/command", argstring));

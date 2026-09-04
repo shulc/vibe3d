@@ -14,6 +14,7 @@
 // Edge 6 == [6,7] is exactly the fixture's `rig.creased_edge`
 // ((-0.5,0.5,0.5)-(0.5,0.5,0.5)).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -23,7 +24,7 @@ import std.math   : fabs;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 void resetCube() {
     auto resp = post(kBase ~ "/api/reset", "");

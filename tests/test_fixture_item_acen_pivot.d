@@ -19,6 +19,7 @@
 // appears), so the item answer is a real election rather than the only
 // value this read can produce.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -29,9 +30,8 @@ import fixture_helpers : requireProvenance, asDouble;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

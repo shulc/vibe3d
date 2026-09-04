@@ -9,6 +9,7 @@
 //   • unknown command id
 //   • repeated concurrent commands serialize correctly (no lost replies)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -17,7 +18,7 @@ import std.range : iota;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // Plain HTTP helper that surfaces the status code AND body — std.net.curl's
 // `get` / `post` throw on non-2xx by default, hiding the 404 path.

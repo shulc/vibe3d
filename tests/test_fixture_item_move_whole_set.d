@@ -23,6 +23,7 @@
 // "the centre follows one item but the motion moves them all" if the state
 // they measure really is one state.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -35,7 +36,7 @@ import item_rig_helpers : buildThreeItemRig, assertItemRigPremises, assertRigsId
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

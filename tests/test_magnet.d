@@ -14,9 +14,9 @@
 //   v6:  0        — anchor (weight=1 via anchorRing) → lands on target
 //   v7:  1.0      — inside, moves in X AND Z (convergent proof)
 //
-// "localhost:8080" is rewritten to the per-worker port by run_test.d when
-// running in parallel; keep the literal so that rewrite still matches.
+// The shared HTTP client resolves the port assigned by run_test.d.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -29,7 +29,7 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetCube() {
     auto resp = cast(string)post(BASE ~ "/api/reset?type=cube", "");

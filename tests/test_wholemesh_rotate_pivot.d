@@ -25,6 +25,7 @@
 // (NOT a stale far pin). A regression to either ruled-out pivot source, or a
 // non-rigid/launched transform, fails here.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -35,13 +36,13 @@ void main() {}
 struct V3 { double x = 0, y = 0, z = 0; }
 
 void cmd(string line) {
-    auto r = post("http://localhost:8080/api/script", line);
+    auto r = post(testBaseUrl() ~ "/api/script", line);
     assert(parseJSON(cast(string)r)["status"].str == "ok",
         "cmd failed: " ~ line ~ " -> " ~ cast(string)r);
 }
 
 V3[] dumpVerts() {
-    auto j = parseJSON(cast(string)get("http://localhost:8080/api/model"));
+    auto j = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
     V3[] o;
     foreach (vv; j["vertices"].array) {
         auto a = vv.array;
@@ -56,7 +57,7 @@ double dist(V3 a, V3 b) {
 }
 
 unittest { // whole-mesh rotate pivots at the centroid; mesh cannot fly
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     // Tall, off-center box: x in [4,5], y in [0,6], z in [4,5].
     // Centroid = (4.5, 3, 4.5); longest half-extent from the centroid is
@@ -67,14 +68,14 @@ unittest { // whole-mesh rotate pivots at the centroid; mesh cannot fly
         ~ `[4,0,4],[5,0,4],[5,0,5],[4,0,5],`
         ~ `[4,6,4],[5,6,4],[5,6,5],[4,6,5]],`
         ~ `"faces":[[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]}`;
-    auto lr = post("http://localhost:8080/api/load-mesh", mesh);
+    auto lr = post(testBaseUrl() ~ "/api/load-mesh", mesh);
     assert(parseJSON(cast(string)lr)["status"].str == "ok",
         "load-mesh failed: " ~ cast(string)lr);
 
     V3 centroid = V3(4.5, 3.0, 4.5);
 
     // EMPTY selection => the whole mesh is the moving set.
-    auto sel = parseJSON(cast(string)get("http://localhost:8080/api/selection"));
+    auto sel = parseJSON(cast(string)get(testBaseUrl() ~ "/api/selection"));
     assert(sel["selectedVertices"].array.length == 0
         && sel["selectedEdges"].array.length == 0
         && sel["selectedFaces"].array.length == 0,

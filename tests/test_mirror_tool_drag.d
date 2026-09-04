@@ -28,6 +28,7 @@
 // no weld, because Mirror's operand rule is `operandFaceMask()` and an empty
 // face selection means the whole mesh.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -39,11 +40,11 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.mirrorTool";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
+
 
 // --- the acceptance witness -------------------------------------------------
 //
@@ -86,9 +87,6 @@ void assertMirrorCommitted(string gesture, string planesBefore, long u0, size_t 
         ~ "the whole gesture was a no-op the attribute could not see");
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

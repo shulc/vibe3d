@@ -1,3 +1,4 @@
+import http_client : testBaseUrl, getJson, postJson;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.file : readText;
 import std.net.curl : get, post;
@@ -9,10 +10,10 @@ import std.math : abs;
 import std.process : environment;
 
 void main() {}
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string fixtureConsumerProvenance = `{"schema":1,"source":"live-capture","reference_token":"ref-editor@11.2v3","method":"debug-live","captured_utc":"2026-08-31","task":"3690"}`;
-JSONValue getJson(string p){return parseJSON(cast(string)get(BASE~p));}
-JSONValue postJson(string p,string b){return parseJSON(cast(string)post(BASE~p,b));}
+
+
 void settle(){Thread.sleep(150.msecs);}
 void cmd(string s){auto r=postJson("/api/command",s);assert(r["status"].str=="ok",r.toString);settle();}
 void baseline(){postJson("/api/script","tool.set move off");settle();postJson("/api/reset","");cmd("history.clear");}

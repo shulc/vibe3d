@@ -17,6 +17,7 @@
 // The crash itself was reproduced by hand instead, twice, on an unmodified
 // build (see the task card's Лог).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -24,11 +25,8 @@ import std.algorithm : canFind;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue postCmd(string query, string argstring) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command" ~ query, argstring));

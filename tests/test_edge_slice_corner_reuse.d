@@ -22,6 +22,7 @@
 // Asserted TOPOLOGY-invariantly (counts + edge-set + vertex-position
 // multiset + manifold), NOT exact face-array order/winding.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -30,7 +31,7 @@ import std.math : abs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

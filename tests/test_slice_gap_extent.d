@@ -23,6 +23,7 @@
 // (16v/12f). At gap=1.0 (loAmt=hiAmt=0.5, exactly the cube's half-extent) the
 // unfixed kernel wiped the mesh to 0v/0f; this test pins gap=1.0/2.0/100 all
 // staying non-empty.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -30,7 +31,7 @@ import std.conv   : to;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string) post(BASE ~ path, body_);

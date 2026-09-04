@@ -24,6 +24,7 @@
 // check the center is non-NaN + agrees with the gizmo center) by also asserting
 // the rendered frame returns to the PRE-gesture pose.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, sin, cos, atan2, PI;
@@ -34,10 +35,9 @@ import core.time   : dur;
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string body_) { return parseJSON(cast(string) post(baseUrl ~ p, body_)); }
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

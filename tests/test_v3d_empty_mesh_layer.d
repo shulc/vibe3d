@@ -47,6 +47,7 @@
 //   * the per-vertex `[x,y,z]` triple guard removed
 //       -> E5 "a malformed vertex triple must still be REFUSED".
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -56,7 +57,7 @@ import std.path   : buildPath;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 

@@ -26,6 +26,7 @@
 // /api/model; raw file content is read straight off disk (the writer is the
 // thing under test).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write, readText;
@@ -34,14 +35,14 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", id ~ " failed: " ~ resp);
 }
@@ -50,11 +51,11 @@ string runCmdAllowError(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    return cast(string) post("http://localhost:8080/api/command", body);
+    return cast(string) post(testBaseUrl() ~ "/api/command", body);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 unittest { // a save emits the v8 layered shape (formatVersion + primaryLayer + layers[0] envelope)

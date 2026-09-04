@@ -7,6 +7,7 @@
 // interactive session lifecycle (activate/attr/apply/deactivate/undo),
 // same shape as tests/test_poly_inset.d's Test F/G for its sibling tool.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,12 +17,12 @@ import std.math : sqrt;
 void main() {}
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/command failed: " ~ resp ~ "\nbody: " ~ body);
 }
@@ -33,20 +34,20 @@ void postCommand(string body) {
 // no-op does, matching the "postCommandRaw" convention other test files
 // use for the one-shot command's own no-op case).
 void postCommandRaw(string body) {
-    post("http://localhost:8080/api/command", body);
+    post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // ---------------------------------------------------------------------------
 // A — headless session: tool.set on, tool.attr inset 0.2, tool.doApply,
@@ -136,9 +137,9 @@ unittest {
 
     // POSITIVE CONTROL: the same counter, moved by a deliberately batchless
     // command, so a dead counter cannot pass the assertion below for free.
-    auto c0 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    auto c0 = parseJSON(cast(string)get(testBaseUrl() ~ "/api/changes"));
     foreach (c; kBatchlessControlSeq) postCommand(c);
-    auto c1 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    auto c1 = parseJSON(cast(string)get(testBaseUrl() ~ "/api/changes"));
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
@@ -149,9 +150,9 @@ unittest {
     postCommand("tool.set mesh.vertexBevel on");
     postCommand("tool.attr mesh.vertexBevel inset 0.2");
 
-    auto b = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    auto b = parseJSON(cast(string)get(testBaseUrl() ~ "/api/changes"));
     postCommand("tool.doApply");
-    auto a = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    auto a = parseJSON(cast(string)get(testBaseUrl() ~ "/api/changes"));
     postCommand("tool.set mesh.vertexBevel off");
 
     auto m = getModel();

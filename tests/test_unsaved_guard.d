@@ -15,17 +15,15 @@
 // makes the busy rule observable here at all. `/api/reset` drops any held
 // action so one case cannot leak into the next on the shared instance.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue postCmd(string query, string argstring) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command" ~ query, argstring));

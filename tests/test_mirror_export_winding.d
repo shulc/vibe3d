@@ -42,6 +42,7 @@
 // same technique tests/test_layer_xform_io.d uses, because there is no HTTP
 // surface that sets a layer transform.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, readText, write;
@@ -57,14 +58,14 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = cast(string) post("http://localhost:8080/api/command", body);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", id ~ " failed: " ~ resp);
 }
@@ -74,13 +75,13 @@ void fileLoad(string path) { runCmd("file.load", `{"path":"` ~ path ~ `"}`); }
 
 JSONValue model(long layer = -1) {
     const url = layer < 0
-        ? "http://localhost:8080/api/model"
-        : "http://localhost:8080/api/model?layer=" ~ layer.to!string;
+        ? testBaseUrl() ~ "/api/model"
+        : testBaseUrl() ~ "/api/model?layer=" ~ layer.to!string;
     return parseJSON(get(url));
 }
 
 JSONValue layerList() {
-    return parseJSON(get("http://localhost:8080/api/layers"));
+    return parseJSON(get(testBaseUrl() ~ "/api/layers"));
 }
 
 /// Unique per test process (the runner runs up to 8 in parallel) AND per stem,

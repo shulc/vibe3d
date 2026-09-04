@@ -18,6 +18,7 @@
 //     9. Spherical smoke: map present, both u and v ∈ [0,1] for all corners.
 //    10. Undo of created-from-absent: after /api/undo, file.save has no uvMaps.
 
+import http_client : testBaseUrl;
 import std.math   : fabs, atan2, PI;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -38,7 +39,7 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 private JSONValue runCmd(string id, string paramsJson = "") {
     string body_ = paramsJson.length > 0

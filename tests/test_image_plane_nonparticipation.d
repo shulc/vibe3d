@@ -21,6 +21,7 @@
 // unchanged" would go red on correct code. T-N1b asserts the +1 pivot / 0
 // corners shape instead.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -33,12 +34,9 @@ import std.string : splitLines, strip;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 JSONValue cmd(string argstring) {
     auto j = postJson("/api/command", argstring);
     assert(j["status"].str == "ok", "cmd `" ~ argstring ~ "` failed: " ~ j.toString);

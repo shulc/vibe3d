@@ -43,6 +43,7 @@
 // sequence; the runner greps the vibe3d stderr after the suite to confirm it
 // stayed silent throughout.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -52,15 +53,12 @@ import core.time   : dur;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (kept parallel to test_layers.d so the two read the same)
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

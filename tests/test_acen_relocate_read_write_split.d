@@ -78,6 +78,7 @@
 //     test fails with "an off-gizmo drag in a relocate-DISALLOWED mode
 //     (`actr.pivot`) must still move the item". Measured, not inferred.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -88,9 +89,8 @@ import core.time   : msecs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 
 void cmd(string argstring) {
     auto j = parseJSON(cast(string) post(BASE ~ "/api/command", argstring));

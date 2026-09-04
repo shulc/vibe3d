@@ -72,6 +72,7 @@
 //   * the whole arm falls through to `selModeFromToken("range")`
 //       -> R2 fails on the command itself (`status:error`), reported by `cmd`.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv     : to;
@@ -82,7 +83,7 @@ import std.path     : buildPath;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 

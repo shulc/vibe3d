@@ -8,6 +8,7 @@
 // the planeDragDelta code path (drag.d), separate from the axis path
 // already covered by test_tool_move_drag.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -20,14 +21,14 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 void runMovePlaneDrag(int plane) {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set move");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set move");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set move failed: " ~ cast(string)setResp);
 

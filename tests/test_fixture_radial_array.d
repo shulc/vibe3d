@@ -20,6 +20,7 @@
 //      produce identical vertex/face counts — both are thin wrappers over
 //      the same `Mesh.radialArrayFaces` kernel.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -34,12 +35,12 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postCommand(string body_) {
-    auto resp = post("http://localhost:8080/api/command", body_);
+    auto resp = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
@@ -47,13 +48,13 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
 
 bool approxEq(double a, double b, double eps = 1e-4) { return abs(a - b) < eps; }
 
@@ -216,7 +217,7 @@ unittest { // CountDosClamp
 
     // Stored field is clamped by the Param itself, not just the eventual
     // kernel output — a write-then-query round-trip proves that.
-    auto q = parseJSON(post("http://localhost:8080/api/command",
+    auto q = parseJSON(post(testBaseUrl() ~ "/api/command",
         "tool.attr mesh.radialArrayTool count ?"));
     assert(q["status"].str == "ok",
         "count query failed: " ~ q.toString);

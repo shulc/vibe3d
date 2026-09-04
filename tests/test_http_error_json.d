@@ -25,13 +25,14 @@
 // token throws `unknown layer kind '<token>'`, and the token is whatever the
 // request said.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : canFind;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // POST that tolerates a non-2xx status — an error body is the thing under
 // test, so `post` throwing on 500 would hide it.

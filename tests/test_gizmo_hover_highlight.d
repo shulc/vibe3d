@@ -160,6 +160,7 @@
 // profile covers all of them and would fail on a tenth-pixel width change.
 // --------------------------------------------------------------------------
 
+import http_client : testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, round, cos, sin, PI;
@@ -169,7 +170,7 @@ import drag_helpers : playAndWait;
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // Registration bases from source/tools/transform/xfrm_transform.d.
 private enum int MOVE_BASE = 0;

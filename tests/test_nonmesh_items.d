@@ -38,6 +38,7 @@
 //   - scene.reset on a mixed document collapses to exactly one mesh layer.
 //   - no missed-publisher warning across a mixed-document sequence.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv       : to;
@@ -47,15 +48,12 @@ import core.time      : msecs;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (mirrors tests/test_layers.d)
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

@@ -15,6 +15,7 @@
 // stack being empty — they only undo as many operations as they did
 // after the reset, so the reset entry stays put underneath.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -32,7 +33,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
@@ -44,42 +45,42 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 void postTransform(string body) {
-    auto resp = post("http://localhost:8080/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/transform", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue postRedo() {
-    return parseJSON(post("http://localhost:8080/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 JSONValue getHistory() {
-    return parseJSON(get("http://localhost:8080/api/history"));
+    return parseJSON(get(testBaseUrl() ~ "/api/history"));
 }
 
 JSONValue getSelection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 double[3] vertexAt(int idx) {
@@ -253,7 +254,7 @@ unittest { // rotate then undo
 unittest { // mesh.subdivide: subdivides cube to 26 verts; undo → back to 8
     resetCube();
     // mesh.subdivide requires polygon edit mode (face-level op).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto m = getModel();
     int origVertCount = cast(int)m["vertices"].array.length;
     int origFaceCount = cast(int)m["faces"].array.length;
@@ -284,7 +285,7 @@ unittest { // mesh.subdivide: subdivides cube to 26 verts; undo → back to 8
 
 unittest { // mesh.subdivide_faceted: same shape as Catmull-Clark, no smoothing
     resetCube();
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto m = getModel();
     int origVertCount = cast(int)m["vertices"].array.length;
     int origFaceCount = cast(int)m["faces"].array.length;
@@ -355,7 +356,7 @@ unittest { // /api/history returns {undo:[...], redo:[...]} with labels
     postSelect("vertices", [0]);
     // mesh.subdivide requires polygon mode — switch (non-undoable, so
     // history shape is unaffected).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     postCommand(`{"id":"mesh.subdivide"}`);
 
     auto h = getHistory();
@@ -446,7 +447,7 @@ unittest { // mixed: select v0, translate, subdivide, undo×3, redo×3
     postTransform(`{"kind":"translate","delta":[1,0,0]}`);
     // mesh.subdivide requires polygon mode (non-undoable switch, so
     // the undo×3 / redo×3 below still walk select / translate / subdivide).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     postCommand(`{"id":"mesh.subdivide"}`);
 
     // Snapshot post-subdivide vert count for later redo verification.

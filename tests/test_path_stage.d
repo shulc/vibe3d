@@ -7,6 +7,7 @@
 //   4. Equal-leg L-shaped 3-vertex path analytic goldens.
 //   5. /api/reset clears the source (no -j8 bleed).
 
+import http_client : testBaseUrl, getJson, postJson, postRaw;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -14,19 +15,8 @@ import std.math   : fabs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
-
-string postRaw(string path, string body_) {
-    return cast(string) post(baseUrl ~ path, body_);
-}
 
 void cmd(string c) {
     postJson("/api/command", c);

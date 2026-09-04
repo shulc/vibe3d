@@ -9,6 +9,7 @@
 // bevel width=0.1 → 10 verts (8+4-2), 7 faces, fv-dist {4:5,5:2}.
 // Chamfer centroid (0,0.45,0.45), normal pointing outward in (+Y+Z) direction.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -19,12 +20,12 @@ void main() {}
 // --- HTTP helpers ------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 JSONValue postCommandRaw(string body) {
-    return parseJSON(cast(string)post("http://localhost:8080/api/command", body));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", body));
 }
 
 void postCommand(string body) {
@@ -36,15 +37,15 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue postRedo() { return parseJSON(post("http://localhost:8080/api/redo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 
 // Task 1180: an edge bevel no longer leaves its band's FACES selected — the
 // reference leaves the band's EDGES and the VERTICES they span, and that law is

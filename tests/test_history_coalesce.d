@@ -14,6 +14,7 @@ module test_history_coalesce;
 // dispatcher site Phase 2 wires. Interactive tool commits do NOT take this
 // path (they call history.record() directly) and so never coalesce.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -22,14 +23,8 @@ import std.format : format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 double jnum(JSONValue v) {
     switch (v.type) {

@@ -11,6 +11,7 @@
 //   • the dragged-vertex exclusion (`exclude` array in MoveTool) keeps
 //     v0 from snapping to itself.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -24,9 +25,9 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // axis-X drag of v0 with vertex snap lands v0 on v1
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
@@ -37,7 +38,7 @@ unittest { // axis-X drag of v0 with vertex snap lands v0 on v1
         "tool.pipe.attr snap types vertex\n" ~
         "tool.pipe.attr snap innerRange 999999\n" ~
         "tool.pipe.attr snap outerRange 999999\n";
-    auto setResp = post("http://localhost:8080/api/script", script);
+    auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + snap config failed: " ~ cast(string)setResp);
 

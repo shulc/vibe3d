@@ -17,6 +17,7 @@
 // All branches are pinned below — independent unittests so a failure
 // localises cleanly.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -28,14 +29,8 @@ void main() {}
 
 enum SDLK_TAB = 9;
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void waitPlaybackFinish() {
     foreach (_; 0 .. 100) {

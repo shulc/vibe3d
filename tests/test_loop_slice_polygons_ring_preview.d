@@ -34,6 +34,7 @@
 //      draw/state path. Also checks `selectionRing` stays empty there (no
 //      face selection exists in that scenario).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -46,7 +47,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void resetCube() {
     auto resp = post(baseUrl ~ "/api/reset", "");

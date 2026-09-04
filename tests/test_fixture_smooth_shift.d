@@ -7,6 +7,7 @@
 // capture and cross-checked analytically (see the smoothShiftFacesByMask
 // doc comment in source/mesh.d for the derived law).
 
+import http_client : testBaseUrl;
 import fixture_helpers;
 import std.json : JSONValue;
 
@@ -55,7 +56,7 @@ unittest { // ThickenPresetActuallyThickens
     import std.json     : parseJSON;
     import std.conv     : to;
 
-    enum string BASE = "http://localhost:8080";
+    alias BASE = testBaseUrl;
     runStep(parseJSON(`{"reset": true}`), "thickenTool_preset", "setup", 0);
     runStep(parseJSON(`{"select": {"mode": "polygons", "coords": [
         [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
@@ -87,7 +88,7 @@ unittest { // ThickenWindingReversed
     import std.math     : abs;
     import std.format   : format;
 
-    enum string BASE = "http://localhost:8080";
+    alias BASE = testBaseUrl;
     runStep(parseJSON(`{"reset": true}`), "thicken_winding", "setup", 0);
     runStep(parseJSON(`{"select": {"mode": "polygons", "coords": [
         [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]

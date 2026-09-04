@@ -9,6 +9,7 @@
 // MoveTool drag flow tests A1–A5 exercise; complements test_toolpipe_falloff,
 // which only round-trips the setAttr surface.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -22,9 +23,9 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // lasso encloses v6 only — only v6 moves under move drag
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
@@ -76,7 +77,7 @@ unittest { // lasso encloses v6 only — only v6 moves under move drag
         "tool.pipe.attr falloff type lasso\n" ~
         "tool.pipe.attr falloff softBorder 0\n" ~
         `tool.pipe.attr falloff lassoPoly "` ~ poly ~ `"` ~ "\n";
-    auto setResp = post("http://localhost:8080/api/script", script);
+    auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + lasso config failed: " ~ cast(string)setResp);
 

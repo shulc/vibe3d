@@ -17,6 +17,7 @@
 // regardless of camera; we assert the target TYPE and its coordinate
 // pattern, both camera-independent.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -29,10 +30,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p)            { return parseJSON(cast(string)get(BASE ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string)post(BASE ~ p, b)); }
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

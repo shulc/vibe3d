@@ -47,6 +47,7 @@
 //   6. THE PIN IS UNTOUCHED in a pinned mode. The half of the old predicate that
 //      was CORRECT and had to survive: no user-placed pin, pivot unmoved.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt, atan2, acos, asin, PI, sin;
@@ -59,7 +60,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue pj(string p, string b) { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 JSONValue gj(string p)           { return parseJSON(cast(string) get(baseUrl ~ p)); }

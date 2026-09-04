@@ -13,6 +13,7 @@
 // suite stays green; flipping kCopilotEnabled back to `true` re-enables
 // every assertion as-is.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -21,15 +22,8 @@ import ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void resetCube() {
     auto resp = postJson("/api/reset?type=cube", "");

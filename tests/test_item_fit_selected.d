@@ -71,6 +71,7 @@
 //       -> F7 "in POLYGON mode the fit must stay on the active layer's own
 //          geometry — focus.x is 5.0000, want 0.0000".
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -79,7 +80,7 @@ import std.math   : abs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 

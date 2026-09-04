@@ -41,6 +41,7 @@
 // All gestures drive the MAIN loop via drag_helpers (real event playback), so
 // the fast-path predicate is exercised end-to-end, not poked directly.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -51,14 +52,8 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 

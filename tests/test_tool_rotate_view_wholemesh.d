@@ -17,6 +17,7 @@
 //   • the centroid stays at the origin (rotation pivots at ACEN.Auto = (0,0,0)
 //     for the whole default cube), i.e. no translation leaks in
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, cos, sin, PI;
@@ -95,17 +96,17 @@ void viewRingGrab(Vec3 pivot, Viewport vp,
 }
 
 void runViewRingWholeMesh(string toolId) {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     // No selection: the moving set is the whole mesh.
-    auto setResp = post("http://localhost:8080/api/script", "tool.set " ~ toolId);
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set " ~ toolId);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set " ~ toolId ~ " failed: " ~ cast(string)setResp);
 
     // Snapshot all 8 verts of the default unit cube.
     int nVerts;
     {
-        auto m = parseJSON(cast(string)get("http://localhost:8080/api/model"));
+        auto m = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
         nVerts = cast(int)m["vertices"].array.length;
     }
     assert(nVerts == 8, "default cube should have 8 verts, got " ~ nVerts.to!string);
@@ -177,7 +178,7 @@ unittest { // bare Transform compact presentation includes screen-space rotate
 
 // Published cumulative rotate euler (deg) off /api/toolpipe/eval.
 double publishedRotateAxis(int axis) {
-    auto j = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe/eval"));
+    auto j = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe/eval"));
     auto t = "transform" in j.object;
     assert(t !is null,
         "eval has no transform block (no transform tool active?): " ~ j.toString);
@@ -192,8 +193,8 @@ double publishedRotateAxis(int axis) {
 // fixes. (The tool is left ACTIVE — no `tool.set off` — so the live run's published
 // rotate is still observable on the eval seam.)
 unittest { // view-ring drag → panel cumulative euler is non-zero
-    post("http://localhost:8080/api/reset", "");
-    auto setResp = post("http://localhost:8080/api/script", "tool.set rotate");
+    post(testBaseUrl() ~ "/api/reset", "");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set rotate");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set rotate failed: " ~ cast(string)setResp);
 

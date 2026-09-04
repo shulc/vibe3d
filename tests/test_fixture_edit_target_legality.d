@@ -52,6 +52,7 @@
 // CONTROL row where the target is required to MOVE, so a constant or frozen
 // read is red rather than quietly agreeable.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort, canFind;
@@ -64,9 +65,8 @@ import fixture_helpers : requireProvenance;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

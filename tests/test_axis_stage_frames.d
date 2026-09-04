@@ -66,6 +66,7 @@
 // than collapsing to the world identity. What the rotated frame should BE is
 // asserted in `test_axis_oriented_box.d` and nowhere here.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -76,7 +77,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // The corpus's own rig: a unit cube with the +Y face (index 4) selected.
 enum string SEL_TOP_FACE = `{"mode":"polygons","indices":[4]}`;

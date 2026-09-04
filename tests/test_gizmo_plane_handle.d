@@ -61,6 +61,7 @@
 //        -> Flow C, "the scale bank must publish its hauled part like every
 //           other bank".
 
+import http_client : testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, sqrt;
@@ -70,7 +71,7 @@ import drag_helpers : playAndWait;
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 private enum int MOVE_BASE = 0, SCALE_BASE = 20;
 // The XY plane handle (normal Z) — at the default camera it is the most

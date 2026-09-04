@@ -72,6 +72,7 @@
 // term: without the policy term in that key the slot stays `valid` and B is
 // answered out of A's FBO.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, lround;
@@ -85,10 +86,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p)              { return parseJSON(cast(string)get(BASE ~ p)); }
-JSONValue postJson(string p, string b)   { return parseJSON(cast(string)post(BASE ~ p, b)); }
 
 void settle() { Thread.sleep(300.msecs); }
 

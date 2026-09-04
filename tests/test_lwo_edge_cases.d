@@ -12,6 +12,7 @@
 //     source/io/lwo_export.d —
 //     so this validates the LOAD path independently)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write;
@@ -22,7 +23,7 @@ import std.bitmanip : nativeToBigEndian;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0

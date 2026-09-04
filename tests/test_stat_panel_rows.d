@@ -12,6 +12,7 @@
 // constant that changes; a test that leaned on it would go red for a reason
 // that has nothing to do with what it checks.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -23,7 +24,7 @@ import core.time   : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue gj(string p) { return parseJSON(cast(string)get(baseUrl ~ p)); }
 

@@ -44,6 +44,7 @@
 // from the publish channel, which the decoy does not touch), so the positive
 // control passes and the HASH assertion is the one that fires.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, lround, sqrt;
@@ -56,10 +57,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p)            { return parseJSON(cast(string)get(BASE ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string)post(BASE ~ p, b)); }
 
 void settle() { Thread.sleep(300.msecs); }
 

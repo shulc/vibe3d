@@ -6,6 +6,7 @@
 //          spatial-fails discriminator proving the branch matters.
 // Stage 3: on-plane projection, unpaired safe-skip, both driver sides, undo.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -18,7 +19,7 @@ void main() {}
 // Helpers
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetCube() {
     auto resp = post(BASE ~ "/api/reset", "");

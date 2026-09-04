@@ -23,6 +23,7 @@
 //   - the reference's measured non-uniform per-band WORLD spacing (a
 //     camera-perspective effect, not a kernel-level law)
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -34,17 +35,13 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetCube() {
     auto resp = post(BASE ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
-JSONValue postJson(string path, string body_) {
-    auto resp = cast(string)post(BASE ~ path, body_);
-    return parseJSON(resp);
-}
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";

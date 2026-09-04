@@ -20,6 +20,7 @@
 // tool.panelEdit (Phase 3). Cube layout (centered at origin, size 1):
 //   v0=(-,-,-)  v2=(+,+,-)  v6=(+,+,+)
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -27,18 +28,12 @@ import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void postTransform(string body) {
     auto r = postJson("/api/transform", body);

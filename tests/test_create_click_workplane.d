@@ -62,6 +62,7 @@ module test_create_click_workplane;
 //        the last block went RED with the centre at (+0.0000,+0.0000,+0.0000)
 //        against an aim of (+0.9000,-0.8000,+0.0000).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.conv    : to;
 import std.format  : format;
 import std.json;
@@ -71,15 +72,8 @@ import std.stdio   : writefln, writeln;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

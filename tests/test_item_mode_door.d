@@ -28,6 +28,7 @@
 //     the two readings must DIFFER. An implementation that pins the geometry
 //     view to any constant reads the same number both times and fails one row.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -35,9 +36,8 @@ import std.format : format;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(BASE ~ "/api/command", argstring));

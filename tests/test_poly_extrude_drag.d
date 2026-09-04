@@ -39,6 +39,7 @@
 // strictly stronger: `built = (n != 0)` is the tool's own claim about its
 // kernel's return, and the count is that claim's consequence read off the mesh.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -50,14 +51,11 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "poly.extrude";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
 
 // --- the acceptance witness -------------------------------------------------
 //

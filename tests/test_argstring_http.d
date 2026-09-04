@@ -4,6 +4,7 @@
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
 //   v4=(-,-,+)  v5=(+,-,+)  v6=(+,+,+)  v7=(-,+,+)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -18,7 +19,7 @@ bool approxEqual(double a, double b, double eps = 1e-4)
 
 void resetCube()
 {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "reset failed: " ~ cast(string) resp);
 }
 
@@ -27,14 +28,14 @@ void postSelect(string mode, int[] indices)
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "select failed");
 }
 
 string postCommandRaw(string body)
 {
-    return cast(string) post("http://localhost:8080/api/command", body);
+    return cast(string) post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postCommand(string body)
@@ -45,7 +46,7 @@ void postCommand(string body)
 
 JSONValue getModel()
 {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // Move v0 to coincide with v1 using the JSON path (regression guard).
@@ -131,7 +132,7 @@ unittest { // /api/script: comment and blank lines are skipped
                     "vert.merge range:fixed dist:0.01 keep:false";
     // pre-select v0 and v1 before script runs
     postSelect("vertices", [0, 1]);
-    auto resp = cast(string) post("http://localhost:8080/api/script", script);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/script", script);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok",
         "/api/script failed: " ~ resp);
@@ -152,7 +153,7 @@ unittest { // /api/script: line numbers in results match script lines
     string script = "mesh.move_vertex from:{-0.5,-0.5,-0.5} to:{0.5,-0.5,-0.5}\n" ~
                     "vert.merge range:auto";
     postSelect("vertices", [0, 1]);
-    auto resp = cast(string) post("http://localhost:8080/api/script", script);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/script", script);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", resp);
     auto results = j["results"].array;
@@ -174,7 +175,7 @@ unittest { // /api/script: stop on first error (default behavior)
     string script = "vert.merge range:fixed dist:0.0 keep:false\n" ~
                     "mesh.move_vertex from:{-0.5,-0.5,-0.5} to:{0.5,-0.5,-0.5}";
     postSelect("vertices", [0, 1]);
-    auto resp = cast(string) post("http://localhost:8080/api/script", script);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/script", script);
     auto j = parseJSON(resp);
     assert(j["status"].str == "error", "expected error for failing line: " ~ resp);
     auto results = j["results"].array;
@@ -190,7 +191,7 @@ unittest { // /api/script ?continue=true: runs all lines, collects all errors
     string script = "vert.merge range:fixed dist:0.0 keep:false\n" ~
                     "vert.merge range:fixed dist:0.0 keep:false";
     postSelect("vertices", [0, 1]);
-    auto resp = cast(string) post("http://localhost:8080/api/script?continue=true", script);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/script?continue=true", script);
     auto j = parseJSON(resp);
     assert(j["status"].str == "error", resp);
     auto results = j["results"].array;
@@ -205,7 +206,7 @@ unittest { // /api/script: ok overall status when all lines succeed
     coincidev0v1Argstring();  // move v0 first
     postSelect("vertices", [0, 1]);
     string script = "vert.merge range:auto";
-    auto resp = cast(string) post("http://localhost:8080/api/script", script);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/script", script);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", resp);
 }

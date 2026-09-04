@@ -26,6 +26,7 @@
 // /api/reset (reset is itself undoable); a ~150ms settle after every play-events
 // / config command; the move stroke drives the MAIN loop via play-events.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -36,14 +37,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void settle() {
     import core.thread : Thread;

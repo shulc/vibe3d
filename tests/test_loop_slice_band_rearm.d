@@ -44,6 +44,7 @@
 // note on this line and the task brief's explicit instruction to keep the
 // line without manufacturing false rigor around it. See the task log.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -54,7 +55,7 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetScene() {
     auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
@@ -80,7 +81,6 @@ void postSelect(int[] indices) {
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
 
 void playAndSettle(string log) {
     auto r = parseJSON(cast(string) post(BASE ~ "/api/play-events", log));

@@ -24,6 +24,7 @@
 // The authoritative T-junction (index-share) check lives in mesh.d unittests.
 // Here we use the position-duplicate backstop from test_axis_slice.d.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -35,7 +36,7 @@ void main() {}
 // Helpers (mirrors test_axis_slice.d)
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

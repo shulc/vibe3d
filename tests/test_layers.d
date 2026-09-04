@@ -24,6 +24,7 @@
 //     undo-of-layer.select variant (an older selection entry must NOT merge
 //     with a new selection on a different layer).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -33,15 +34,12 @@ import core.time   : dur;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

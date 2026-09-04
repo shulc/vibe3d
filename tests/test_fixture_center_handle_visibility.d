@@ -44,6 +44,7 @@
 // grabbability (this tool free-moves on any viewport drag, so both
 // hypotheses predict the same motion). No drag assertion is written here.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -55,7 +56,7 @@ import fixture_helpers : requireProvenance;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // vibe3d-side gizmo part ids for the move bank. The fixture holds the
 // REFERENCE measurement and cannot name these; the mapping to our surface
@@ -64,7 +65,6 @@ enum int PART_CENTER = 3;                      // the centre handle
 immutable int[] PART_ARMS   = [0, 1, 2];       // the three axis arms
 immutable int[] PART_PLANES = [4, 5, 6];       // the three plane handles
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

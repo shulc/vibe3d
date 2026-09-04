@@ -40,6 +40,7 @@
 // the tree that can see it, and it asserts the discrimination explicitly
 // rather than trusting the rig to provide it.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -50,7 +51,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(BASE ~ "/api/command", argstring));

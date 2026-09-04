@@ -62,6 +62,7 @@
 //
 // Runner: ./run_test.d test_bus_display_guard_after_load
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -77,7 +78,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 /// The temp `.obj` carries the port so two workers can never collide on it.
 /// `baseUrl`'s port is what `run_test.d` rewrote for THIS worker.

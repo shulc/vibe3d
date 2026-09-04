@@ -15,6 +15,7 @@
 // compareOp/mergeFrom CONTRACT is additionally locked by an in-module unittest
 // in source/commands/layer/commands.d.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -23,15 +24,12 @@ import core.time   : dur;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

@@ -3,6 +3,7 @@
 // enter the sweeps by default; exclusions below are harness hazards, not
 // policy exemptions.
 
+import http_client : testBaseUrl, getJson, postJson, postRaw;
 import core.thread : Thread;
 import core.time : msecs;
 import std.algorithm : canFind, sort, startsWith;
@@ -18,20 +19,9 @@ import std.stdio : writefln;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.mirrorTool";
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-string postRaw(string path, string body_) {
-    return cast(string)post(BASE ~ path, body_);
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(postRaw(path, body_));
-}
 
 void resetTo(string query = null) {
     auto r = postJson("/api/reset" ~ query, "");

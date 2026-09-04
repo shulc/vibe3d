@@ -27,6 +27,7 @@
 // (not importing that file, so this binary doesn't also pull its own
 // unittests in — see test_acen_auto_relocate.d for the same convention).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.math    : PI, cos, sin, sqrt, fabs;
 import std.json;
 import std.format  : format;
@@ -103,15 +104,8 @@ unittest { // B: non-auto -> stage's live basis + center, via the stage accessor
 
 import drag_helpers;   // Vec3/Viewport/dot/cross/normalize + drag/projection helpers
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

@@ -26,6 +26,7 @@
 //   click the camera-facing midpoint (a = startAngle + PI/2) at world radius
 //   gizmoSize(center); drag tangentially along the arc to a second param.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, atan2, PI;
@@ -38,15 +39,8 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

@@ -23,6 +23,7 @@
 // correct number, and why the rig's separations are asserted rather than
 // described.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -34,9 +35,8 @@ import item_rig_helpers : buildThreeItemRig, assertItemRigPremises, assertRigsId
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 double[3] vec3(JSONValue arr) {
     assert(arr.array.length == 3, "expected a 3-vector, got " ~ arr.toString);

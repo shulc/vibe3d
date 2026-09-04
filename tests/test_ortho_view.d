@@ -7,6 +7,7 @@ module test_ortho_view;
 // orthographic transform.  If the ortho path is broken the wrong vertex
 // (or none) would be selected.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math  : tan, abs, PI;
@@ -16,15 +17,8 @@ import std.format : format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 void runCmd(string line) {
     auto j = postJson("/api/command", line);

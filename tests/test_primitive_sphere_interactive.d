@@ -35,6 +35,7 @@
 // --keep`-held instance, comparing screen-projected handle positions
 // against the click point).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -44,16 +45,9 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "prim.sphere";
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post(BASE ~ path, body));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

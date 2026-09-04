@@ -2,6 +2,7 @@
 // validation and before the live document is replaced. The first cell is the
 // positive control: the same gesture really commits while its mesh survives.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.file : exists, remove, write;
@@ -14,7 +15,7 @@ import core.time : msecs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.mirrorTool";
 
 struct Counts {
@@ -27,13 +28,6 @@ struct Counts {
 enum Counts kCube = Counts(8, 12, 6);
 enum Counts kMirror = Counts(16, 24, 12);
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 JSONValue command(string id, string params = null) {
     const body_ = params.length

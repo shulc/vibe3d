@@ -60,6 +60,7 @@
 // cannot change the answer; a near-tie in this clause remains unproven for us
 // and no case here should pretend otherwise.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, abs;
@@ -70,7 +71,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // The reference-comparison camera, in the spherical terms `/api/camera` takes
 // (it accepts azimuth/elevation/distance/focus and IGNORES an `eye` field —

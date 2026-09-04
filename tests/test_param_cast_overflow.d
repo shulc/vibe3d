@@ -49,13 +49,14 @@
 // MUTATION: delete `.enforceBounds()` from
 // source/tools/slice/loop_slice_tool.d:615 and this test fails naming that
 // param, its interval and -2147483648.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
 import std.format  : format;
 import std.array   : join;
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void main() {}
 

@@ -24,6 +24,7 @@
 // the ReshapeFaces⁻¹ / Reindex⁻¹ inverse and MUST break the round-trip — see
 // the run instructions in the report.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -33,7 +34,7 @@ import drag_helpers;
 
 void main() {}
 
-string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // --- HTTP helpers ----------------------------------------------------------
 

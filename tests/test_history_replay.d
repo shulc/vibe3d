@@ -4,6 +4,7 @@ module test_history_replay;
 // undo-stack entry against the current mesh state through the same
 // main-thread bridge as /api/command.
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.conv : to;
@@ -15,24 +16,24 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 private void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 private JSONValue getModel() {
-    return parseJSON(cast(string)get("http://localhost:8080/api/model"));
+    return parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
 }
 
 private JSONValue getHistory() {
-    return parseJSON(cast(string)get("http://localhost:8080/api/history"));
+    return parseJSON(cast(string)get(testBaseUrl() ~ "/api/history"));
 }
 
 private JSONValue postCmd(string argstring) {
-    return parseJSON(cast(string)post("http://localhost:8080/api/command", argstring));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", argstring));
 }
 
 private JSONValue postReplay(long index) {
     return parseJSON(cast(string)post(
-        "http://localhost:8080/api/history/replay",
+        testBaseUrl() ~ "/api/history/replay",
         `{"index":` ~ index.to!string ~ `}`));
 }
 
@@ -43,7 +44,7 @@ private void postSelect(string mode, int[] indices) {
         if (i > 0) idxList ~= ",";
         idxList ~= idx.to!string;
     }
-    post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/select",
          format(`{"mode":"%s","indices":[%s]}`, mode, idxList));
 }
 
@@ -93,7 +94,7 @@ unittest { // replay reproduces the effect of vert.merge after undo
     assert(mergeIdx >= 0, "vert.merge entry not found in undo stack");
 
     // Undo the merge — verts should be back to 8.
-    post("http://localhost:8080/api/undo", "");
+    post(testBaseUrl() ~ "/api/undo", "");
     int vertsAfterUndo = cast(int)getModel()["vertices"].array.length;
     assert(vertsAfterUndo == 8, "expected 8 verts after undo, got: "
            ~ vertsAfterUndo.to!string);
@@ -133,7 +134,7 @@ unittest { // successful replay response body contains "line" field
     // mesh.subdivide has no position-dependent preconditions — reliable target.
     postSelect("vertices", [0]);
     // mesh.subdivide is polygon-mode-only.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     auto sr = postCmd("mesh.subdivide");
     if (sr["status"].str != "ok") return; // skip if not applicable
 
@@ -143,9 +144,9 @@ unittest { // successful replay response body contains "line" field
     long lastIdx = cast(long)(undo.length - 1);
 
     // Undo so the subdivide is reversible, then replay.
-    post("http://localhost:8080/api/undo", "");
+    post(testBaseUrl() ~ "/api/undo", "");
     // Redo to restore state so replay can apply again (subdivide is repeatable).
-    post("http://localhost:8080/api/redo", "");
+    post(testBaseUrl() ~ "/api/redo", "");
     // Now replay: subdivide again (creates another entry).
     auto resp = postReplay(lastIdx);
     if (resp["status"].str == "ok") {
@@ -198,7 +199,7 @@ unittest { // replay of a successful command grows the undo stack by 1
 unittest { // missing index field → error
     resetCube();
     auto resp = parseJSON(cast(string)post(
-        "http://localhost:8080/api/history/replay", `{"notIndex":0}`));
+        testBaseUrl() ~ "/api/history/replay", `{"notIndex":0}`));
     assert(resp["status"].str == "error",
            "missing index must yield error: " ~ resp.toString());
 }
@@ -206,7 +207,7 @@ unittest { // missing index field → error
 unittest { // negative index → error
     resetCube();
     auto resp = parseJSON(cast(string)post(
-        "http://localhost:8080/api/history/replay", `{"index":-1}`));
+        testBaseUrl() ~ "/api/history/replay", `{"index":-1}`));
     assert(resp["status"].str == "error",
            "negative index must yield error: " ~ resp.toString());
 }

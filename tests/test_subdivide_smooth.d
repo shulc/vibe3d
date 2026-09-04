@@ -5,6 +5,7 @@
 //   new = 0.5 + 0.5*(1/3 - 0.5) = 5/12 ≈ 0.41667
 // (strictly between flat=0.5 and ccsds≈0.278).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort, min, max;
@@ -19,20 +20,20 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue selection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -40,7 +41,7 @@ void runCmd(string id) {
 
 void runCmdParams(string id, string params) {
     auto body_ = `{"id":"` ~ id ~ `","params":{` ~ params ~ `}}`;
-    auto resp  = post("http://localhost:8080/api/command", body_);
+    auto resp  = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(resp)["status"].str == "ok",
         id ~ " (" ~ params ~ ") failed: " ~ resp);
 }
@@ -52,7 +53,7 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
@@ -262,8 +263,8 @@ unittest { // no selection → no auto-select after smooth
 unittest { // smooth in Vertices mode refines whole cage → 26/48/24
     resetCube();
     setSelection("polygons", [0]);  // stale selection — should be ignored
-    post("http://localhost:8080/api/command", "select.typeFrom vertex");
-    auto resp = post("http://localhost:8080/api/command",
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"mesh.subdivide","params":{"mode":"smooth"}}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "smooth in vertex mode should succeed, got " ~ resp);

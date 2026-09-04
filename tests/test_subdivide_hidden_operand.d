@@ -50,6 +50,7 @@
 // corners, not eight. The shared X is compared as "all equal and negative"
 // rather than "= -0.5" because the smooth mode relaxes it to -5/12.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -58,13 +59,8 @@ import std.format  : format;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-
-JSONValue postJson(string p, string b) {
-    return parseJSON(cast(string) post(baseUrl ~ p, b));
-}
 
 void postOk(string p, string b) {
     auto j = postJson(p, b);

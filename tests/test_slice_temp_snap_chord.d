@@ -29,6 +29,7 @@
 // and reports nothing about whether the chord is engaged, so before those two
 // keys neither the bug nor its fix was visible to a headless test.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -38,11 +39,8 @@ import core.time   : msecs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(BASE ~ path));
-}
 
 void cmd(string argstring) {
     auto j = parseJSON(cast(string) post(BASE ~ "/api/command", argstring));

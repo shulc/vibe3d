@@ -7,6 +7,7 @@
 //      ladder empties, the wipe press cancels the unrecorded base floor and
 //      keeps the tool armed (task 0430 keep-alive, reference-measured).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -17,15 +18,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post(BASE ~ path, body));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

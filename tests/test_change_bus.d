@@ -27,6 +27,7 @@
 // Selection-domain bit values mirror change_bus.SelDomain:
 //   Vertex=1, Edge=2, Face=4.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -37,7 +38,7 @@ import core.time   : dur;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 enum uint POSITION = 1;
 enum uint POINTS   = 2;
@@ -61,13 +62,6 @@ enum uint LAYER_VISIBILITY  = 1 << 4;
 enum uint LAYER_BACKGROUND  = 1 << 5;
 enum uint LAYER_ACTIVE      = 1 << 6;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

@@ -39,6 +39,7 @@
 // instead of the golden [0.30,0.30,-0.30]). Reverting restores green. The test
 // therefore genuinely locks the contract.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -51,14 +52,9 @@ void main() {}
 enum int SDLK_z     = 122;     // 'z'
 enum int KMOD_LCTRL = 0x0040;  // 64 — handleKeyDown reads KMOD_CTRL
 
-string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
+
 size_t undoLen() { return getJson("/api/history")["undo"].array.length; }
 size_t redoLen() { return getJson("/api/history")["redo"].array.length; }
 

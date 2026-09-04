@@ -37,6 +37,7 @@
 // `> 8` rather than an exact number because the copy count follows the radial
 // count parameter and the offset follows the drag, which follows the viewport.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -48,12 +49,9 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.radialArrayTool";
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 // --- the acceptance witness -------------------------------------------------
 //
@@ -64,7 +62,7 @@ JSONValue postJson(string path, string body_) {
 // come out differently.
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
+
 
 /// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
 /// marks, no set masks and no per-face material/part.

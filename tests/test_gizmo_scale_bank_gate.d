@@ -34,6 +34,7 @@
 // the full bank, whose anchor is 70 % along the stem — a different point, and
 // comparing the two would have measured the presentation rather than the gate.
 
+import http_client : testBaseUrl;
 import std.conv   : to;
 import std.format : format;
 import std.json;
@@ -45,7 +46,7 @@ import drag_helpers : playAndWait, fetchCamera, viewportFromCamera,
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // Part-id bases from source/tools/transform/xfrm_transform.d — scale occupies
 // 20..29, one part per axis head in the compact presentation.

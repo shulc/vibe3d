@@ -21,6 +21,7 @@
 //            (multibank apply changes the count; undo left to /api/reset).
 //   S bank — tool.attr SX + tool.doApply. Same assertion as R bank.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -34,14 +35,9 @@ void main() {}
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

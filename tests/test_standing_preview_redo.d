@@ -44,6 +44,7 @@
 // (shared bottom face), cut → 10v/7f (same golden as
 // tests/test_edge_slice_tool.d test 1).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -54,7 +55,7 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // --- HTTP helpers (mirror tests/test_loop_slice_ctrlz.d) --------------------
 
@@ -62,9 +63,6 @@ JSONValue postCmd(string path, string body_) {
     return parseJSON(cast(string)post(BASE ~ path, body_));
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
 
 void resetCube() {
     auto r = postCmd("/api/reset", "");

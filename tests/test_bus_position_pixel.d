@@ -118,6 +118,7 @@
 // the probe never found the surface and every assert below would be measuring
 // two shades of background.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -132,13 +133,8 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

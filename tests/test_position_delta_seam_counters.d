@@ -33,6 +33,7 @@
 //                     — but it is NOT evidence that this stage moved anything,
 //                     and quoting it as such would be a check that cannot come
 //                     out differently.
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -41,12 +42,8 @@ import std.stdio  : writefln;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 struct Seam {
     long batchLeaks, nestedBatchOpens, missedPublishers;

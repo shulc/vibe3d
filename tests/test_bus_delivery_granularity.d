@@ -110,6 +110,7 @@
 // NOT for the COMMAND. Stage 2 must key on that distinction; this block pins
 // the number so the distinction cannot drift unobserved.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -123,7 +124,7 @@ import drag_helpers;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // `MeshEditScope` (source/mesh_edit_delta.d) — spelled out rather than
 // imported, because these test binaries compile standalone.
@@ -137,11 +138,6 @@ enum uint kGeometry = kPoints | kPolygons;
 /// says WHICH class moved rather than "14 became 15".
 enum uint kSubdivideDelivery = kPoints | kPolygons | kMarks;   // == 14
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

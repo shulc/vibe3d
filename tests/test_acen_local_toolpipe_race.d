@@ -20,6 +20,7 @@
 // (the same buildDragLog + /api/play-events flow test_acen_softpin_settle.d
 // and friends use for a real gizmo-handle drag).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math    : fabs;
@@ -31,15 +32,8 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

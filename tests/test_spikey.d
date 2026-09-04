@@ -16,6 +16,7 @@
 // Right face (+X, x=0.5): face 3, centroid (0.5, 0, 0), normal +X
 // Unit cube: each edge = 1, perimeter/N = 4/4 = 1 ⇒ disp = amount.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -25,7 +26,7 @@ void main() {}
 
 // --- HTTP helpers ------------------------------------------------------------
 
-string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetCube() {
     auto resp = post(BASE ~ "/api/reset?type=cube", "");

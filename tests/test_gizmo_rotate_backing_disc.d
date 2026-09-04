@@ -141,6 +141,7 @@
 //
 // --------------------------------------------------------------------------
 
+import http_client : testBaseUrl;
 import std.format    : format;
 import std.json;
 import std.math      : abs, sqrt, cos, sin, atan2, PI, round, floor, isNaN;
@@ -153,7 +154,7 @@ import drag_helpers : playAndWait;
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // The scheme, restated as literals rather than imported — the same convention
 // tests/test_gizmo_handle_colours.d and test_gizmo_hover_highlight.d use. A

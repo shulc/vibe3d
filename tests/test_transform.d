@@ -11,6 +11,7 @@
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
 //   v4=(-,-,+)  v5=(+,-,+)  v6=(+,+,+)  v7=(-,+,+)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, PI;
@@ -23,7 +24,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void setSelection(string mode, int[] indices) {
@@ -33,24 +34,24 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 void runTransform(string body) {
-    auto resp = post("http://localhost:8080/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/transform", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }
 
 string runTransformAllowError(string body) {
-    return cast(string)post("http://localhost:8080/api/transform", body);
+    return cast(string)post(testBaseUrl() ~ "/api/transform", body);
 }
 
 double[3] vertexAt(int idx) {
-    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto m = parseJSON(get(testBaseUrl() ~ "/api/model"));
     auto v = m["vertices"].array[idx].array;
     return [v[0].floating, v[1].floating, v[2].floating];
 }

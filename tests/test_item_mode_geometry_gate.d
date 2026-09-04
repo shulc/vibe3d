@@ -105,6 +105,7 @@
 // expression into an equal one and cannot go red. A green from it would be
 // logged as "expected" and would mean nothing. There is no colour-separability
 // question left here to mutate against; the pass-identity question replaced it.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -120,7 +121,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP

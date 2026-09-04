@@ -34,7 +34,7 @@ module run_test;
 extern(C) __gshared string[] rt_options = ["gcopt=parallel:0"];
 
 import std.algorithm : canFind, sort, each, map, sum, minIndex;
-import std.array     : array, appender, replace, join;
+import std.array     : array, appender, join;
 import std.conv      : to, octal;
 import std.datetime.stopwatch : StopWatch, AutoStart;
 import std.json      : JSONValue, parseJSON, JSONType;
@@ -1216,6 +1216,9 @@ string probeMoldFlag() {
 string[] injectedTestModules(string testsDir = "tests") {
     string[] mods;
     if (!exists(testsDir)) return mods;
+    // Shared HTTP transport for every driver. `-I=tests` makes the module
+    // visible, but DMD only emits code for modules named on its command line.
+    mods ~= buildPath(testsDir, "http_client.d");
     foreach (e; dirEntries(testsDir, "*_helpers.d", SpanMode.shallow))
         mods ~= e.name;
     sort(mods);
@@ -1311,44 +1314,25 @@ string[] gateViolations(string testsDir) {
     return out_;
 }
 
-/// Compile each test in `paths` into `outDir`. Source is read AS-IS unless
-/// `port` differs from 8080 — then literal "localhost:8080" is rewritten
-/// to "localhost:<port>" in a per-test scratch copy. This keeps tests
-/// portable to N parallel vibe3d instances without source changes.
-string[] compileTests(string[] paths, string outDir, ushort port) {
+/// Compile each test in `paths` into `outDir`. Tests resolve their worker's
+/// endpoint at runtime through `VIBE3D_TEST_PORT`; sources are compiled as-is.
+string[] compileTests(string[] paths, string outDir) {
     string[] bins;
     foreach (p; paths) {
         string name = baseName(p).stripExtension;
         string of   = buildPath(outDir, name);
         string src  = p;
-        if (port != 8080) {
-            string txt = readText(p)
-                .replace("localhost:8080", "localhost:" ~ port.to!string);
-            src = buildPath(outDir, name ~ ".d");
-            std.file.write(src, txt);
-        }
         // Pull every injected module (see injectedTestModules) into the
         // compilation so a test can `import drag_helpers;` — or
         // `import liveness_gate : scenario;` — without duplicating shared
-        // code. They also get their literal "localhost:8080" rewritten to the
-        // per-worker port: without this, parallel workers' tests all hit port
-        // 8080 through the helpers, corrupting each other's vibe3d state.
+        // code. `http_client` reads the per-worker port from the child
+        // environment, so these sources are compiled without scratch copies.
         string helpers;
         foreach (m; injectedTestModules()) {
-            string hSrc = m;
-            if (port != 8080) {
-                string hTxt = readText(m)
-                    .replace("localhost:8080", "localhost:" ~ port.to!string);
-                hSrc = buildPath(outDir, baseName(m));
-                std.file.write(hSrc, hTxt);
-            }
-            helpers ~= " " ~ hSrc;
+            helpers ~= " " ~ m;
         }
-        // -I=<outDir> first so the rewritten helpers in the scratch dir
-        // win over the unmodified originals in tests/. -J=tests lets a
-        // test embed a golden fixture via `import("fixtures/<name>.json")`
-        // (see tests/fixture_helpers.d) — the path is resolved against the
-        // repo's tests/ dir regardless of the per-worker scratch copy.
+        // -J=tests lets a test embed a golden fixture via
+        // `import("fixtures/<name>.json")` (see tests/fixture_helpers.d).
         //
         // Source-backed tests (those importing project modules like
         // tools.xform_kernels / mesh / math) need the full dependency graph:
@@ -1730,22 +1714,24 @@ bool killTestTree(Pid pid, int gpid) {
     return reapWithin(pid, 10.seconds);
 }
 
-TestResult runOne(string bin, bool verbose) {
+TestResult runOne(string bin, bool verbose, ushort port) {
     TestResult r;
     r.name = baseName(bin);
     auto sw = StopWatch(AutoStart.yes);
 
     Config cfg;
     cfg.preExecFunction = &ownProcessGroup;
+    string[string] childEnv = environment.toAA();
+    childEnv["VIBE3D_TEST_PORT"] = port.to!string;
 
     string outPath = bin ~ ".out";
     File   out_;
     Pid    pid;
     if (verbose) {
-        pid = spawnProcess([bin], stdin, stdout, stderr, null, cfg);
+        pid = spawnProcess([bin], stdin, stdout, stderr, childEnv, cfg);
     } else {
         out_ = File(outPath, "wb");
-        pid  = spawnProcess([bin], stdin, out_, out_, null, cfg);
+        pid  = spawnProcess([bin], stdin, out_, out_, childEnv, cfg);
     }
     immutable int gpid = pid.processID;   // == its pgid: it is the group leader
     synchronized { testGroupPids ~= gpid; }
@@ -1839,7 +1825,7 @@ void reportVibeLogTail(ref Worker w) {
 
 bool prepareWorker(ref Worker w) {
     mkdirRecurse(w.scratch);
-    w.bins = compileTests(w.tests, w.scratch, w.port);
+    w.bins = compileTests(w.tests, w.scratch);
     if (w.bins is null) return false;
     if (g_attachPort != 0) {
         // Attach mode: an external endpoint (the visual_test_proxy → a visible
@@ -2037,7 +2023,7 @@ TestResult[] runWorker(ref Worker w, bool verbose) {
         // leftover state (draining replay, active tool, undo entries, mutated
         // mesh) cannot bleed in. Kills the cross-test state-bleed flake family.
         resetBetweenTests(w.port);
-        auto r = runOne(b, verbose);
+        auto r = runOne(b, verbose, w.port);
         synchronized {
             // The three markers are the FIRST field of the line on purpose:
             // .github/workflows/ci.yaml turns these lines into the job summary

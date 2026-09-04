@@ -12,6 +12,7 @@
 
 module test_ai_exploration;
 
+import http_client : testBaseUrl;
 import std.net.curl   : HTTP;
 import std.json       : JSONValue, JSONType, parseJSON;
 import std.string     : startsWith, indexOf;
@@ -69,14 +70,9 @@ private void reset(string base) {
 // runHttpTests: verifies inertness of the exploration path under --test.
 // ---------------------------------------------------------------------------
 void runHttpTests() {
-    // NOTE: keep the literal "localhost:8080" — run_test.d isolates parallel
-    // workers by textually rewriting it to that worker's port in a scratch copy
-    // of the source. What stood here instead was
-    // `environment.get("VIBE3D_TEST_PORT", "8080")`, and the runner has never
-    // set that variable, so the moment this code started executing under -j N
-    // it would have driven worker 0's instance — including POST /api/reset on
-    // somebody else's scene.
-    string base = "http://localhost:8080";
+    // run_test.d supplies VIBE3D_TEST_PORT to this process; the shared client
+    // resolves it at runtime so parallel workers cannot cross-connect.
+    alias base = testBaseUrl;
 
     // --- Inertness check 1: ε forced 0 under g_testMode -----------------------
     // We cannot directly observe whether the explore hook is set, but we CAN

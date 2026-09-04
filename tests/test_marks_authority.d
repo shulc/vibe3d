@@ -19,6 +19,7 @@
 // HTTP-API style like the other tests: drive selection + subpatch + delete +
 // undo through /api/*, read state back via /api/model + /api/selection.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -29,14 +30,8 @@ import core.time : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 bool ok(JSONValue r) {
     return ("status" in r) && r["status"].type == JSONType.string

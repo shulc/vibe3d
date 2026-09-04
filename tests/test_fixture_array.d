@@ -13,6 +13,7 @@
 // vibe3d's own documented kernel semantics (source/mesh.d's
 // `arrayFacesGrid` doc comment), not against a reference capture.
 
+import http_client : testBaseUrl;
 import fixture_helpers;
 import std.net.curl;
 import std.json;
@@ -37,12 +38,12 @@ unittest {
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void cmd(string s) {
-    auto resp = post("http://localhost:8080/api/command", s);
+    auto resp = post(testBaseUrl() ~ "/api/command", s);
     assert(parseJSON(resp)["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ resp);
 }
 
@@ -50,13 +51,13 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue getModel()     { return parseJSON(cast(string) get("http://localhost:8080/api/model")); }
-JSONValue postUndo()     { return parseJSON(post("http://localhost:8080/api/undo", "")); }
+JSONValue getModel()     { return parseJSON(cast(string) get(testBaseUrl() ~ "/api/model")); }
+JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
 
 bool approxEq(double a, double b, double eps = 1e-5) { return abs(a - b) < eps; }
 
@@ -279,7 +280,7 @@ unittest {
     // don't assert on the response status here, only that it returns fast
     // and leaves the mesh untouched.
     auto sw = StopWatch(AutoStart.yes);
-    post("http://localhost:8080/api/command", "tool.doApply");
+    post(testBaseUrl() ~ "/api/command", "tool.doApply");
     sw.stop();
     assert(sw.peek.total!"msecs" < 5000,
         "Array apply with a huge requested grid must not hang — took "

@@ -37,6 +37,7 @@
 //        consistent selType=polygon case. The type does NOT flip to edge or
 //        vertex merely because those layers now carry a selection.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -48,12 +49,12 @@ void main() {}
 // --- HTTP helpers (same shapes as tests/test_loop_slice_tool.d) ------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void cmd(string s) {
-    auto resp = post("http://localhost:8080/api/command", s);
+    auto resp = post(testBaseUrl() ~ "/api/command", s);
     assert(parseJSON(resp)["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ resp);
 }
 
@@ -61,13 +62,13 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 
 // --- geometry helpers ------------------------------------------------------
 

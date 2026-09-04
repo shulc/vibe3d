@@ -20,6 +20,7 @@
 // (RadialSweepParams / toKernelParams) and `revolveProfileEx` directly
 // -- no HTTP server, no live vibe3d instance, no GL context required.
 
+import http_client : testBaseUrl;
 import std.conv : to;
 import std.math : abs, sin, cos, PI;
 import mesh;
@@ -256,7 +257,7 @@ unittest {
     import std.json    : JSONValue, parseJSON;
     import std.net.curl : get, post;
 
-    enum string BASE = "http://localhost:8080";
+    alias BASE = testBaseUrl;
     enum string TOOL = "mesh.radialSweepTool";
 
     JSONValue postJson(string path, string body_) {

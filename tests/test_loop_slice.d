@@ -15,6 +15,7 @@
 // Counts + Euler alone cannot catch a twisted loop (Risk 2 in the plan).
 // Edge indices are looked up by endpoint pair — they shift after rebuildEdges.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -24,12 +25,12 @@ void main() {}
 // ----- HTTP helpers ----------------------------------------------------------
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/load-mesh failed: " ~ resp);
 }
@@ -39,7 +40,7 @@ void postSelect(string mode, int[] indices) {
     auto s = appender!string("[");
     foreach (i, v; indices) { if (i > 0) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ s.data ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/select failed: " ~ resp);
@@ -47,14 +48,14 @@ void postSelect(string mode, int[] indices) {
 
 /// Post command with params JSON (e.g. `{"count":3}`).  Asserts ok.
 void postCommandParams(string id, string paramsJson) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `","params":` ~ paramsJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            id ~ " failed: " ~ resp);
 }
 
 JSONValue postCommandRaw(string id) {
-    return parseJSON(post("http://localhost:8080/api/command",
+    return parseJSON(post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`));
 }
 
@@ -64,19 +65,19 @@ void postCommand(string id) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue getSelection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 JSONValue postRedo() {
-    return parseJSON(post("http://localhost:8080/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 /// The set of selected-edge indices in the /api/selection payload.

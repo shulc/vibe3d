@@ -4,6 +4,7 @@
 // fit_selected:  reframes to the selected sub-set in the current edit mode;
 //                falls back to the whole mesh when nothing is selected.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -18,11 +19,11 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -35,23 +36,23 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
 }
 
 JSONValue cam() {
-    return parseJSON(get("http://localhost:8080/api/camera"));
+    return parseJSON(get(testBaseUrl() ~ "/api/camera"));
 }
 
 unittest { // viewport.fit recenters the camera on a panned scene
     resetCube();
     // Pan the camera away from origin via a recorded log.
     auto events = cast(const(void)[])read("tests/events/camera_pan_events.log");
-    post("http://localhost:8080/api/play-events", events);
+    post(testBaseUrl() ~ "/api/play-events", events);
     import core.thread : Thread;
     import core.time : msecs;
     for (int i = 0; i < 100; ++i) {
-        if (parseJSON(get("http://localhost:8080/api/play-events/status"))
+        if (parseJSON(get(testBaseUrl() ~ "/api/play-events/status"))
                 ["finished"].type == JSONType.TRUE) break;
         Thread.sleep(100.msecs);
     }
@@ -128,7 +129,7 @@ unittest { // fit_selected on a single vertex puts focus on that vertex
 // ----------------------------------------------------------------------
 
 void postCommand(string id, string param) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `","params":"` ~ param ~ `"}`);
     assert(parseJSON(resp)["status"].str != "error",
         id ~ " " ~ param ~ " failed: " ~ resp);
@@ -145,7 +146,7 @@ double numField(JSONValue j, string key) {
 }
 
 JSONValue camAt(int vp) {
-    return parseJSON(get("http://localhost:8080/api/camera?viewport=" ~ vp.to!string));
+    return parseJSON(get(testBaseUrl() ~ "/api/camera?viewport=" ~ vp.to!string));
 }
 
 struct CellRect { int x, y, w, h; }
@@ -163,7 +164,7 @@ void setCam(int vp, double fx, double fy, double fz, double distance) {
     auto body_ = format(
         `{"focus":{"x":%g,"y":%g,"z":%g},"distance":%g,"azimuth":0,"elevation":0}`,
         fx, fy, fz, distance);
-    auto resp = post("http://localhost:8080/api/camera?viewport=" ~ vp.to!string, body_);
+    auto resp = post(testBaseUrl() ~ "/api/camera?viewport=" ~ vp.to!string, body_);
     assert(parseJSON(resp)["status"].str == "ok",
         "set camera viewport=" ~ vp.to!string ~ " failed: " ~ resp);
 }
@@ -185,11 +186,11 @@ string hoverLog(int x, int y) {
 }
 
 void playEvents(string log) {
-    post("http://localhost:8080/api/play-events", log);
+    post(testBaseUrl() ~ "/api/play-events", log);
     import core.thread : Thread;
     import core.time : msecs;
     for (int i = 0; i < 100; ++i) {
-        if (parseJSON(get("http://localhost:8080/api/play-events/status"))
+        if (parseJSON(get(testBaseUrl() ~ "/api/play-events/status"))
                 ["finished"].type == JSONType.TRUE) return;
         Thread.sleep(50.msecs);
     }

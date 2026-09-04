@@ -33,6 +33,7 @@
 // to nothing, which reads like a broken link; three clips on one path make it
 // resolve to the WRONG clip with every count still adding up.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -41,9 +42,8 @@ import std.path : buildPath;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(baseUrl ~ path)); }
 
 JSONValue cmdRaw(string body_) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

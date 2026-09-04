@@ -21,6 +21,7 @@
 //      0430 keep-alive, reference-measured); drop creates exactly one
 //      entry; post-drop undo clears it.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -30,16 +31,9 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "prim.tube";
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
-
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post(BASE ~ path, body));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

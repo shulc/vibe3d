@@ -92,6 +92,7 @@
 //   * the border drawn one pixel wide, like a mesh's edges
 //       -> U6 "…carries 1 such pixels" where the fixture says 2.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -107,7 +108,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP

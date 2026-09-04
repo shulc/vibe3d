@@ -7,6 +7,7 @@
 //     of every vertex must stay unchanged
 //   • factor > 1 because we drag in the projected +X direction
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -46,13 +47,13 @@ string buildPinnedRelativeDragLog(int vpX, int vpY, int vpW, int vpH,
 }
 
 void runScalePlaneDrag(int plane) {
-    post("http://localhost:8080/api/reset", "");
-    auto selResp = post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/reset", "");
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set scale");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set scale");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set scale failed: " ~ cast(string)setResp);
 
@@ -107,16 +108,16 @@ void runScalePlaneDrag(int plane) {
 }
 
 unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     // Select all 8 cube verts so the whole mesh participates (ACEN.Auto
     // centroid lands at the origin and scaling is symmetric).
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set scale");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set scale");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set scale failed: " ~ cast(string)setResp);
 
@@ -186,13 +187,13 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
 }
 
 unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
-    post("http://localhost:8080/api/reset", "");
-    auto selResp = post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/reset", "");
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set scale");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set scale");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set scale failed: " ~ cast(string)setResp);
 
@@ -257,13 +258,13 @@ unittest { // XZ plane scale: X/Z factors change, Y stays fixed
 }
 
 unittest { // X-axis scale reaches zero with finite reverse drag
-    post("http://localhost:8080/api/reset", "");
-    auto selResp = post("http://localhost:8080/api/select",
+    post(testBaseUrl() ~ "/api/reset", "");
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set scale");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set scale");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set scale failed: " ~ cast(string)setResp);
 

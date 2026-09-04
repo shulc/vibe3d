@@ -31,6 +31,7 @@
 // the origin, which would satisfy a bare "lands near zero" check for the
 // wrong reason.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -43,15 +44,8 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void runCmd(string argstring) {
     auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

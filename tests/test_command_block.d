@@ -19,6 +19,7 @@ module test_command_block;
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
 //   v4=(-,-,+)  v5=(+,-,+)  v6=(+,+,+)  v7=(-,+,+)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -35,7 +36,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/reset failed: " ~ cast(string)resp);
 }
@@ -47,38 +48,38 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/select failed: " ~ cast(string)resp);
 }
 
 void postTransform(string body) {
-    auto resp = post("http://localhost:8080/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/transform", body);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/transform failed: " ~ cast(string)resp);
 }
 
 void blockBegin(string label) {
-    auto resp = post("http://localhost:8080/api/history/block",
+    auto resp = post(testBaseUrl() ~ "/api/history/block",
         `{"action":"begin","label":"` ~ label ~ `"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/history/block begin failed: " ~ cast(string)resp);
 }
 
 void blockEnd() {
-    auto resp = post("http://localhost:8080/api/history/block",
+    auto resp = post(testBaseUrl() ~ "/api/history/block",
         `{"action":"end"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/history/block end failed: " ~ cast(string)resp);
 }
 
 JSONValue postUndo() {
-    return parseJSON(cast(string)post("http://localhost:8080/api/undo", ""));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue postRedo() {
-    return parseJSON(cast(string)post("http://localhost:8080/api/redo", ""));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 // Drain the undo stack so count-based asserts aren't confused by maxDepth
@@ -89,11 +90,11 @@ void drainAndReset() {
 }
 
 JSONValue getModel() {
-    return parseJSON(cast(string)get("http://localhost:8080/api/model"));
+    return parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue getHistory() {
-    return parseJSON(cast(string)get("http://localhost:8080/api/history"));
+    return parseJSON(cast(string)get(testBaseUrl() ~ "/api/history"));
 }
 
 double[3] vertexAt(int idx) {
@@ -121,14 +122,14 @@ void assertVertex(int idx, double x, double y, double z, string label) {
 
 unittest { // missing action returns error
     resetCube();
-    auto resp = post("http://localhost:8080/api/history/block", `{}`);
+    auto resp = post(testBaseUrl() ~ "/api/history/block", `{}`);
     assert(parseJSON(cast(string)resp)["status"].str == "error",
         "expected error for missing action, got: " ~ cast(string)resp);
 }
 
 unittest { // unknown action returns error
     resetCube();
-    auto resp = post("http://localhost:8080/api/history/block",
+    auto resp = post(testBaseUrl() ~ "/api/history/block",
         `{"action":"pause"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "error",
         "expected error for unknown action, got: " ~ cast(string)resp);
@@ -234,7 +235,7 @@ unittest {
 
     // Subsequent ops still work normally after empty blocks.
     postSelect("vertices", [0]);
-    auto sel = parseJSON(cast(string)get("http://localhost:8080/api/selection"));
+    auto sel = parseJSON(cast(string)get(testBaseUrl() ~ "/api/selection"));
     assert(sel["selectedVertices"].array.length == 1);
 }
 

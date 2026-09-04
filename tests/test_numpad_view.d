@@ -19,6 +19,7 @@ module test_numpad_view;
 //      literal SDL_KEYDOWN/UP scancode events) through the real event
 //      router in one shot and assert the final state is Perspective.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.file  : read;
@@ -35,7 +36,7 @@ void waitPlayerIdle() {
     import core.thread : Thread;
     import core.time   : dur;
     for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         auto f = "finished" in s;
         if (f is null || f.type != JSONType.FALSE) {
             Thread.sleep(dur!"msecs"(120));
@@ -45,13 +46,6 @@ void waitPlayerIdle() {
     }
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get("http://localhost:8080" ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post("http://localhost:8080" ~ path, body_));
-}
 
 void runCmd(string line) {
     auto r = postJson("/api/command", line);

@@ -13,6 +13,7 @@
 // per-row asserts below catch the regression before it reaches the
 // cross-engine diff suite.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -20,14 +21,8 @@ import std.math : fabs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

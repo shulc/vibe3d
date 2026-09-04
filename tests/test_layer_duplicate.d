@@ -11,21 +11,19 @@
 //   4. deep-copy independence (editing the active clone leaves source unchanged)
 //   5. undo restores 1 layer + prior primary; redo re-applies
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (same patterns as test_layers.d)
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmdJson(string body_) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

@@ -23,6 +23,7 @@
 // 0.2646 on the same cube under its own mutation. Two instruments written for
 // different purposes, agreeing on the size of the drift, one of them for free.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -33,14 +34,9 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
+
 void settle() {
     import core.thread : Thread;
     import core.time   : msecs;

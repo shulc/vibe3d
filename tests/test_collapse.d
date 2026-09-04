@@ -16,6 +16,7 @@
 //   4=[4,5]  5=[5,6]  6=[6,7]  7=[7,4]
 //   8=[0,4]  9=[7,3]  10=[2,6] 11=[5,1]
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -26,31 +27,31 @@ void main() {}
 bool approxEqual(double a, double b, double eps = 1e-4) { return fabs(a - b) < eps; }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok");
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok");
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // ---------------------------------------------------------------------------
 // Vertex scope

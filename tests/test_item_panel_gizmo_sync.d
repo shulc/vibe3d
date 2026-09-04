@@ -52,6 +52,7 @@
 //     Writing `layer.attr 0 scl.y NaN` here would land a 0.0, get floored,
 //     and look exactly like a passing NaN test.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, isFinite;
@@ -62,7 +63,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(BASE ~ "/api/command", argstring));

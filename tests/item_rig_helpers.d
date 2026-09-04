@@ -15,9 +15,10 @@ module item_rig_helpers;
 // arrangement — one of them wrote pivots, the other did not) are exactly what
 // this module exists to prevent.
 //
-// The literal "localhost:8080" is rewritten per-worker by run_test.d — in
-// helpers too — so keep it spelled out; do not build it dynamically.
+// The shared HTTP client resolves VIBE3D_TEST_PORT at runtime, including for
+// imported helper modules, so parallel workers cannot cross-connect.
 
+import http_client : testBaseUrl;
 import std.json;
 import std.algorithm : sort, map;
 import std.array     : array;
@@ -28,7 +29,7 @@ import std.string    : split;
 
 import fixture_helpers : asDouble;
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private JSONValue rigGet(string path) {
     return parseJSON(cast(string) get(BASE ~ path));

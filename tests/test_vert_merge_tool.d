@@ -11,6 +11,7 @@
 //   v0=(-0.5,-0.5,-0.5)  v1=(0.5,-0.5,-0.5)  v2=(0.5,0.5,-0.5)  v3=(-0.5,0.5,-0.5)
 //   v4=(-0.5,-0.5, 0.5)  v5=(0.5,-0.5, 0.5)  v6=(0.5,0.5, 0.5)  v7=(-0.5,0.5, 0.5)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -18,12 +19,12 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/command failed: " ~ resp ~ "\nbody: " ~ body);
 }
@@ -33,20 +34,20 @@ void postCommand(string body) {
 // n==0 no-op guard reports failure the same way the one-shot command's
 // no-op does, see tests/test_vert_merge_join.d's postCommandRaw).
 void postCommandRaw(string body) {
-    post("http://localhost:8080/api/command", body);
+    post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // Move v0 to within `dist` of v1 along X (v1 stays at (0.5,-0.5,-0.5)).
 void placeV0AtDistanceFromV1(double dist) {

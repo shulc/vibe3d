@@ -37,6 +37,7 @@
 // anchored at the selected vertices' centroid. Only the vertical travel matters
 // — dragging UP (screen y decreasing) increases the merge distance.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -47,14 +48,11 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "vert.merge";
 
 string getRaw(string path) { return cast(string) get(BASE ~ path); }
-JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

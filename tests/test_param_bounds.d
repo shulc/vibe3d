@@ -42,6 +42,7 @@
 // was already in place; only the Param-layer bound was missing), so they now
 // satisfy Block A directly and are not allowlisted.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.regex   : regex, matchFirst;
@@ -56,7 +57,7 @@ void main() {}
 // tests/test_mesh_array.d).
 // ---------------------------------------------------------------------------
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetCube() {
     auto resp = post(BASE ~ "/api/reset", "");

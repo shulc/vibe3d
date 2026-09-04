@@ -23,6 +23,7 @@
 // test_gltf_transform.d, which authors a node-translated glTF fixture so the
 // matrix helpers (toMat16 / mul4 / transformPoint) have a runtime witness.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -83,11 +84,11 @@ string twoPath()   { return "/tmp/vibe3d_test_import_two.obj"; }
 // ---------------------------------------------------------------------------
 
 void resetApp() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 string loadCmd(string path) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ path ~ "\"");
     return cast(string) resp;
 }
@@ -99,7 +100,7 @@ void loadOk(string path) {
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ---------------------------------------------------------------------------

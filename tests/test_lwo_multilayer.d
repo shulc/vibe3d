@@ -27,6 +27,7 @@
 //     PNTS  3 verts  (a triangle at z=+5, well away from layer 0)
 //     POLS  FACE  1 tri   [0,1,2]            (layer-local indices)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -166,32 +167,32 @@ void writeFixture() {
 }
 
 void loadFixture() {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ fixturePath() ~ "\"");
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", "file.load failed: " ~ resp);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue modelLayer(int n) {
-    return parseJSON(get("http://localhost:8080/api/model?layer=" ~ n.to!string));
+    return parseJSON(get(testBaseUrl() ~ "/api/model?layer=" ~ n.to!string));
 }
 
 JSONValue layers() {
-    return parseJSON(get("http://localhost:8080/api/layers"));
+    return parseJSON(get(testBaseUrl() ~ "/api/layers"));
 }
 
 void saveOk(string path) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.save path:\"" ~ path ~ "\"");
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", "file.save failed: " ~ resp);
 }
 
-void resetApp() { post("http://localhost:8080/api/reset", ""); }
+void resetApp() { post(testBaseUrl() ~ "/api/reset", ""); }
 
 double[] vat(JSONValue m, long i) {
     auto a = m["vertices"].array[i].array;
@@ -269,7 +270,7 @@ unittest {  // OBJ-witness (Stage 4): export NO LONGER flattens — 2 layers →
     assert(exists(objPath), "OBJ export should write a file");
 
     resetApp();
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ objPath ~ "\"");
     assert(parseJSON(resp)["status"].str == "ok", "OBJ reload failed: " ~ resp);
 

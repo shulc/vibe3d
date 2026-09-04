@@ -11,6 +11,7 @@
 // state — that it is selection ORDER and not ascending index that picks the
 // pair.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -22,12 +23,12 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
 }
 
@@ -35,22 +36,22 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue postUndo()  { return parseJSON(post("http://localhost:8080/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
 
 // Standard fixture: quad [0,1,2,3] on the XY plane.
 void loadQuad() {

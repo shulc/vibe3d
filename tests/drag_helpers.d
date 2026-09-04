@@ -16,6 +16,7 @@ module drag_helpers;
 // duplicate small (<150 LOC) is cheaper than the alternative of dragging
 // vibe3d's source tree into every test's compilation unit.
 
+import http_client : testBaseUrl;
 import std.json;
 import std.math : sin, cos, tan, sqrt, PI;
 import std.format : format;
@@ -87,7 +88,7 @@ struct CameraState {
     int width, height, vpX, vpY;
 }
 
-CameraState fetchCamera(string baseUrl = "http://localhost:8080") {
+CameraState fetchCamera(string baseUrl = testBaseUrl()) {
     auto j = parseJSON(cast(string)get(baseUrl ~ "/api/camera"));
     CameraState c;
     c.eye    = Vec3(cast(float)j["eye"]["x"].floating,
@@ -200,7 +201,7 @@ string buildDragLog(int vpX, int vpY, int vpW, int vpH,
     return log;
 }
 
-void playAndWait(string log, string baseUrl = "http://localhost:8080") {
+void playAndWait(string log, string baseUrl = testBaseUrl()) {
     auto resp = post(baseUrl ~ "/api/play-events", log);
     auto j = parseJSON(cast(string)resp);
     assert(j["status"].str == "success", "play-events failed: " ~ cast(string)resp);
@@ -212,7 +213,7 @@ void playAndWait(string log, string baseUrl = "http://localhost:8080") {
     assert(false, "play-events did not finish within 10s");
 }
 
-double[3] vertexPos(int idx, string baseUrl = "http://localhost:8080") {
+double[3] vertexPos(int idx, string baseUrl = testBaseUrl()) {
     auto j = parseJSON(cast(string)get(baseUrl ~ "/api/model"));
     auto v = j["vertices"].array[idx].array;
     return [v[0].floating, v[1].floating, v[2].floating];
@@ -225,7 +226,7 @@ double[3] vertexPos(int idx, string baseUrl = "http://localhost:8080") {
 // since a missing part is usually a genuine regression (numbering shift,
 // gizmo not drawn yet), not something to silently skip.
 void fetchHandlePart(int part, out double sx, out double sy, out bool found,
-                     string baseUrl = "http://localhost:8080")
+                     string baseUrl = testBaseUrl())
 {
     found = false;
     auto j = parseJSON(cast(string)get(baseUrl ~ "/api/tool/handles"));
@@ -248,7 +249,7 @@ void fetchHandlePart(int part, out double sx, out double sy, out bool found,
 // snap source) + world positions. Lets a headless test assert the snap
 // visual-feedback wiring (which source/element the highlight resolves to)
 // without a screenshot diff.
-JSONValue fetchSnapLast(string baseUrl = "http://localhost:8080") {
+JSONValue fetchSnapLast(string baseUrl = testBaseUrl()) {
     return parseJSON(cast(string)get(baseUrl ~ "/api/snap/last"));
 }
 
@@ -281,7 +282,7 @@ void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
 
 // Set a UserPlaced action-center pivot via tool.pipe.attr.
 void setFarPivot(double px, double py, double pz,
-                 string baseUrl = "http://localhost:8080")
+                 string baseUrl = testBaseUrl())
 {
     import std.conv : to;
     post(baseUrl ~ "/api/script", "tool.pipe.attr actionCenter userPlacedX " ~ px.to!string);
@@ -293,7 +294,7 @@ void setFarPivot(double px, double py, double pz,
 // Eye = pivot + (3,1,2) → view-space depth ≈ √14 ≈ 3.7 units, well within
 // the 100-unit far clip regardless of how large |pivot| is.
 void setCameraAtPivot(double px, double py, double pz,
-                      string baseUrl = "http://localhost:8080")
+                      string baseUrl = testBaseUrl())
 {
     import std.format : format;
     string body_ = format(

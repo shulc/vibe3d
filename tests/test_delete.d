@@ -11,6 +11,7 @@
 //   f2=left [0,4,7,3]   f3=right [1,2,6,5]
 //   f4=top  [3,7,6,2]   f5=bottom [0,1,5,4]
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -18,40 +19,40 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
 
 void resetGrid(int n) {
-    auto resp = post("http://localhost:8080/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset grid failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue postRedo() { return parseJSON(post("http://localhost:8080/api/redo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // ---------------------------------------------------------------------------
 // Polygons mode

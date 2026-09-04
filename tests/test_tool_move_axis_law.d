@@ -58,6 +58,7 @@
 // drags, (4)'s step is computed here from the camera by the reference's own
 // formula, and (5) is a relation between two of our own drags.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, tan, PI;
@@ -70,7 +71,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void cmd(string c) { post(BASE ~ "/api/command", c); }
 

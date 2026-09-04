@@ -23,6 +23,7 @@
 // (owner case: CC^2 cube, plane normal [0,-0.851,0.524], gap 0.415 center —
 // TWO clean planar/simple caps, band between them removed).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math   : abs, sqrt;
@@ -30,7 +31,7 @@ import std.format : format;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (mirrors test_slice_gap_rmb.d / test_fixture_item_transform.d

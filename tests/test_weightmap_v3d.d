@@ -2,6 +2,7 @@
 // Exercises: save emits the current formatVersion, weightMaps block present when maps
 // exist, absent when empty, and round-trip preserves values.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, write, readText;
@@ -11,7 +12,7 @@ import std.math   : fabs;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 void resetCube() {
     post(kBase ~ "/api/reset", "");

@@ -61,6 +61,7 @@
 // test separates are ~68 degrees apart (measured: 0.895 vs 0.99993 on the
 // discriminating stand), which is four hundred times the tolerance.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -71,14 +72,9 @@ import std.algorithm : max;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 void cmd(string argstring) {
     auto r = postJson("/api/command", argstring);
     assert("status" !in r || r["status"].str != "error",

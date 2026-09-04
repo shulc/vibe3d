@@ -36,6 +36,7 @@
 // registered command lands in the census BY DEFAULT (fail-closed). Each entry
 // carries the reason it cannot be fired blind, and each was measured.
 
+import http_client : testBaseUrl, getJson, postRaw;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -48,15 +49,8 @@ import std.process : thisProcessID;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-string postRaw(string path, string body_) {
-    return cast(string)post(baseUrl ~ path, body_);
-}
 
 void resetTo(string query) { postRaw("/api/reset" ~ query, ""); }
 

@@ -21,6 +21,8 @@
 
 module topopen_place_helpers;
 
+public import http_client : getJson, postJson;
+import http_client : testBaseUrl;
 import std.json;
 import std.math    : sqrt, sin, cos, PI, abs;
 import std.format  : format;
@@ -33,18 +35,11 @@ public import drag_helpers : Vec3, Viewport, CameraState, dot, cross, normalize,
     buildDragLog;
 
 // ---------------------------------------------------------------------------
-// HTTP plumbing (mirrors every other topology-pen test file's local idiom).
+// HTTP plumbing shared by the topology-pen tests.
 // ---------------------------------------------------------------------------
 
-enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

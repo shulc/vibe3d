@@ -31,6 +31,7 @@
 // touching the camera, the projection, or any of the numbers this test would
 // otherwise have to derive from the view matrix.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -42,9 +43,8 @@ import core.time   : msecs;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(baseUrl ~ path)); }
 
 JSONValue cmd(string body_) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

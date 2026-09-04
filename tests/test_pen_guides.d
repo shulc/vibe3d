@@ -18,6 +18,7 @@
 //   worldAxis    : max abs(dot(normalize(v1-v0), axis)) over axes > 0.99
 //   rightAngle   : abs(dot(normalize(v2-v1), normalize(v1-v0)))  < 0.05
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -28,15 +29,8 @@ import core.time   : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
-
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
 
 // ---------------------------------------------------------------------------
 // Common helpers (mirror test_primitive_pen.d).

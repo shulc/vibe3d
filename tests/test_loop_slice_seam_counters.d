@@ -34,6 +34,7 @@
 // each block asserts the geometry first — a refusal makes every zero below it
 // vacuous.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -44,12 +45,12 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
 }
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
+
 
 void resetCube() {
     auto r = postCmd("/api/reset", "");

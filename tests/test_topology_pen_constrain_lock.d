@@ -23,16 +23,14 @@
 //
 // Run via: ./run_test.d topology_pen_constrain_lock
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

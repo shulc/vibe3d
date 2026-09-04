@@ -17,6 +17,7 @@
 //     top-face verts stay the same to within float precision
 //   • bottom-face verts are untouched (no selection bleed)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -37,7 +38,7 @@ double dist(double[3] a, double[3] b) {
 // that's the top face of the default cube regardless of which order
 // the engine stores polygons in.
 int findTopFace() {
-    auto m = parseJSON(cast(string)get("http://localhost:8080/api/model"));
+    auto m = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
     auto verts = m["vertices"].array;
     foreach (fi, f; m["faces"].array) {
         bool top = true;
@@ -51,15 +52,15 @@ int findTopFace() {
 }
 
 unittest { // dragging the view-axis ring rotates top face rigidly
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     int topFace = findTopFace();
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
-    auto setResp = post("http://localhost:8080/api/script", "tool.set rotate");
+    auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set rotate");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set rotate failed: " ~ cast(string)setResp);
 
@@ -67,7 +68,7 @@ unittest { // dragging the view-axis ring rotates top face rigidly
     // pairwise-distance invariants after the drag.
     int[] topVerts;
     {
-        auto m = parseJSON(cast(string)get("http://localhost:8080/api/model"));
+        auto m = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
         foreach (vi; m["faces"].array[topFace].array)
             topVerts ~= cast(int)vi.integer;
     }

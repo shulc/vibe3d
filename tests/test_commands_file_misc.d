@@ -16,17 +16,15 @@
 //     over HTTP — testing toggling is best done with an end-to-end UI
 //     screenshot test, out of scope for the HTTP runner)
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void runCmd(string argstring) {
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

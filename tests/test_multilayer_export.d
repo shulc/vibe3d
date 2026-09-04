@@ -23,6 +23,7 @@
 // import tests use (a z=0 quad layer + a z=+5 triangle layer), which gives two
 // layers with distinct, non-trivial geometry to track across the round-trip.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -111,26 +112,26 @@ enum string FIXTURE = "/tmp/vibe3d_test_mlexport_src.lwo";
 void writeFixture() { write(FIXTURE, buildMultiLayerLwo()); }
 
 void loadOk(string path) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ path ~ "\"");
     assert(parseJSON(resp)["status"].str == "ok", "file.load failed: " ~ resp);
 }
 void saveOk(string path) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.save path:\"" ~ path ~ "\"");
     assert(parseJSON(resp)["status"].str == "ok", "file.save failed: " ~ resp);
 }
 void cmdOk(string line) {
-    auto resp = post("http://localhost:8080/api/command", line);
+    auto resp = post(testBaseUrl() ~ "/api/command", line);
     assert(parseJSON(resp)["status"].str == "ok", "command failed: " ~ resp);
 }
-void resetApp() { post("http://localhost:8080/api/reset", ""); }
+void resetApp() { post(testBaseUrl() ~ "/api/reset", ""); }
 
 JSONValue layers() {
-    return parseJSON(get("http://localhost:8080/api/layers"));
+    return parseJSON(get(testBaseUrl() ~ "/api/layers"));
 }
 JSONValue modelLayer(int n) {
-    return parseJSON(get("http://localhost:8080/api/model?layer=" ~ n.to!string));
+    return parseJSON(get(testBaseUrl() ~ "/api/model?layer=" ~ n.to!string));
 }
 double[] vat(JSONValue m, long i) {
     auto a = m["vertices"].array[i].array;

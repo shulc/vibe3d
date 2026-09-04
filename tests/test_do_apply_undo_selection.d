@@ -41,6 +41,7 @@
 //   tools (and thus the count-change fallback branch) is covered by
 //   test_edge_extrude_tool.d / test_edge_extend_tool.d.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -55,14 +56,8 @@ void main() {}
 // Helpers
 // ---------------------------------------------------------------------------
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;

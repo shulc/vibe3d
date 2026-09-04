@@ -12,6 +12,7 @@
 //     SURF  "Green" { COLR 0.15 0.75 0.20  DIFF 0.9  GLOS 0.6 }
 //     SURF  "Blue"  { COLR 0.10 0.20 0.85  TRAN 0.25 }       // → opacity 0.75
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -197,7 +198,7 @@ void writeFixture() {
 }
 
 void loadFixture() {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ fixturePath() ~ "\"");
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok",
@@ -205,7 +206,7 @@ void loadFixture() {
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ---------------------------------------------------------------------------
@@ -289,13 +290,13 @@ unittest {  // LWO writer emits TAGS + SURF + PTAG that the loader reads back
 
     // Save to a fresh path.
     const roundTripPath = "/tmp/vibe3d_test_lwo_roundtrip.lwo";
-    auto saveResp = post("http://localhost:8080/api/command",
+    auto saveResp = post(testBaseUrl() ~ "/api/command",
         "file.save path:\"" ~ roundTripPath ~ "\"");
     assert(parseJSON(saveResp)["status"].str == "ok",
         "file.save failed: " ~ saveResp);
 
     // Load it back into a fresh mesh state.
-    auto loadResp = post("http://localhost:8080/api/command",
+    auto loadResp = post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ roundTripPath ~ "\"");
     assert(parseJSON(loadResp)["status"].str == "ok",
         "file.load round-trip failed: " ~ loadResp);

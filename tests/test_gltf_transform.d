@@ -26,6 +26,7 @@
 // the test asserts on the post-bake POSITIONS (the bake witness) rather than on
 // face arity, which is a glTF-format property, not an importer property.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -84,18 +85,18 @@ string gltfPath() { return "/tmp/vibe3d_test_gltf_transform.gltf"; }
 // ---------------------------------------------------------------------------
 
 void resetApp() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void loadOk(string path) {
-    auto resp = cast(string) post("http://localhost:8080/api/command",
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/command",
         "file.load path:\"" ~ path ~ "\"");
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", "file.load should succeed: " ~ resp);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ---------------------------------------------------------------------------

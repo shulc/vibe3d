@@ -74,6 +74,7 @@
 //       -> N2 "30 button(s) disagree with what their action declared: [tool
 //          'move' (Move): drawn available, declaration says it needs a target …]"
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -83,7 +84,7 @@ import std.array     : array;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 /// The one sentence a refusal for want of an edit target reads. Duplicated
 /// from `command.kNoEditTargetReason` on purpose — a test that imported the

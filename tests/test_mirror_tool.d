@@ -9,6 +9,7 @@
 // `engaged` no-accidental-mirror guard, headless one-shot not double
 // applying).
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,7 +17,7 @@ import std.math : abs;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 enum string TOOL = "mesh.mirrorTool";
 
 // Helpers ------------------------------------------------------------------
@@ -27,9 +28,6 @@ void resetCube() {
         "/api/reset failed: " ~ resp);
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 // Argstring one-liner (scalar attrs: axis/mergeVerts/invertPolys/distance).
 void cmd(string line) {

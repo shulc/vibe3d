@@ -31,6 +31,7 @@
 // (the `activeDrag is scaleSub && scaleDragActive` branch). Measured divergence
 // under that mutation is recorded at the bottom of this file.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -41,7 +42,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 JSONValue pj(string p, string b) { return parseJSON(cast(string) post(BASE ~ p, b)); }
 JSONValue gj(string p)           { return parseJSON(cast(string) get(BASE ~ p)); }
 void settle() { import core.thread : Thread; import core.time : msecs; Thread.sleep(150.msecs); }

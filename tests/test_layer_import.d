@@ -16,6 +16,7 @@
 // the other interchange guards use. OBJ objects are IDENTITY-transform, so no
 // node-transform bake is exercised here (that lives in test_gltf_transform.d).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -24,7 +25,7 @@ import std.format : format;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Fixtures (OBJ is plain text). Two disjoint quads as separate `o` objects:

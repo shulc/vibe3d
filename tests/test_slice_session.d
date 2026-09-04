@@ -21,6 +21,7 @@
 // fixtures use), so it exercises the actual onMouseButtonDown/Motion/Up +
 // deactivate lifecycle.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs;
@@ -32,7 +33,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera, proje
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void cmd(string s) {
     auto resp = cast(string) post(BASE ~ "/api/command", s);

@@ -9,6 +9,7 @@
 //
 // State is read back from the WORK stage's listAttrs via /api/toolpipe.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -16,11 +17,8 @@ import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void runCmd(string argstring) {
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

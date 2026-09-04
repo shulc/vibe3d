@@ -29,6 +29,7 @@
 // than the same one; and the decoy on a shared path is what makes a
 // path-keyed lookup land on the WRONG clip instead of on nothing.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -39,9 +40,8 @@ import std.format : format;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(baseUrl ~ path)); }
 
 JSONValue cmd(string body_) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

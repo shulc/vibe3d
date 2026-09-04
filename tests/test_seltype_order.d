@@ -18,6 +18,7 @@
 // Counters are read as DELTAS across a step (the runner resets app STATE, not
 // the bus, between test binaries — snapshot-before / read-after and diff).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to, text;
@@ -29,14 +30,9 @@ import core.time   : dur;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

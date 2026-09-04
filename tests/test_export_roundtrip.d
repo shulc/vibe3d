@@ -25,6 +25,7 @@
 // The default cube is the unit cube at ±0.5, so a 1e-6 tolerance is meaningful
 // (coords are O(1), not O(1e6)).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -39,20 +40,20 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = cast(string) post("http://localhost:8080/api/command", body);
+    auto resp = cast(string) post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", id ~ " failed: " ~ resp);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 double comp(JSONValue v) {

@@ -113,6 +113,7 @@
 //      producers, and the drag path uses the OTHER one (see §4c).  The fold
 //      was only ever visible in the overlay, which no headless test can see.
 //
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -123,14 +124,9 @@ import std.algorithm : max;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
+
 void cmd(string argstring) {
     auto r = postJson("/api/command", argstring);
     assert("status" !in r || r["status"].str != "error",

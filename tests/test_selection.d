@@ -1,3 +1,4 @@
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -14,7 +15,7 @@ void waitPlayerIdle() {
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         auto f = "finished" in s;
         if (f is null || f.type != JSONType.FALSE) {
             // The player reports finished once events are DISPATCHED, but
@@ -28,10 +29,6 @@ void waitPlayerIdle() {
     }
 }
 
-JSONValue postJson(string path, string body) {
-    auto resp = cast(string)post("http://localhost:8080" ~ path, body);
-    return parseJSON(resp);
-}
 
 void runCmd(string line) {
     auto r = postJson("/api/command", line);
@@ -54,7 +51,7 @@ void playKey(int sym, int mod = 0) {
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) {
             Thread.sleep(dur!"msecs"(120));
             return;
@@ -66,16 +63,16 @@ void playKey(int sym, int mod = 0) {
 
 unittest { // SELECTION VERTICES: Test selected vertices after playing events
     waitPlayerIdle();
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_points.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -88,7 +85,7 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "vertices", "mode mismatch");
 
@@ -103,12 +100,12 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
 
 unittest { // ESC clears selection in the current edit mode via select.drop shortcut
     waitPlayerIdle();
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     runCmd("select.typeFrom vertex");
     runCmd("select.element vertex set 4 6");
 
-    auto before = parseJSON(get("http://localhost:8080/api/selection"));
+    auto before = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(before["mode"].str == "vertices", "mode mismatch before Esc");
     assert(before["selectedVertices"].array.length == 2,
         "setup should have 2 selected vertices");
@@ -116,7 +113,7 @@ unittest { // ESC clears selection in the current edit mode via select.drop shor
     enum int SDLK_ESCAPE = 27;
     playKey(SDLK_ESCAPE);
 
-    auto after = parseJSON(get("http://localhost:8080/api/selection"));
+    auto after = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(after["mode"].str == "vertices", "Esc should not change edit mode");
     assert(after["selectedVertices"].array.length == 0,
         "Esc should clear vertex selection");
@@ -128,16 +125,16 @@ unittest { // ESC clears selection in the current edit mode via select.drop shor
 
 unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selection
     waitPlayerIdle();
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_add.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -150,7 +147,7 @@ unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selecti
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "vertices", "mode mismatch");
 
@@ -165,16 +162,16 @@ unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selecti
 }
 
 unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_remove.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -187,7 +184,7 @@ unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex se
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "vertices", "mode mismatch");
 
@@ -201,16 +198,16 @@ unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex se
 }
 
 unittest { // DESELECT: clicking empty space after selecting vertices clears selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_deselect.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -223,7 +220,7 @@ unittest { // DESELECT: clicking empty space after selecting vertices clears sel
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "vertices", "mode mismatch");
     assert(json["selectedVertices"].array.length == 0, "selectedVertices should be empty after clicking empty space");
@@ -232,16 +229,16 @@ unittest { // DESELECT: clicking empty space after selecting vertices clears sel
 }
 
 unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5 and 6)
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_edges.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -254,7 +251,7 @@ unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "edges", "mode mismatch");
 
@@ -268,16 +265,16 @@ unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5
 }
 
 unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_add.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -290,7 +287,7 @@ unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing sele
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "edges", "mode mismatch");
 
@@ -305,16 +302,16 @@ unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing sele
 }
 
 unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_remove.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -327,7 +324,7 @@ unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge s
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "edges", "mode mismatch");
 
@@ -341,16 +338,16 @@ unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge s
 }
 
 unittest { // DESELECT EDGES: clicking empty space after selecting edges clears selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_deselect.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -363,7 +360,7 @@ unittest { // DESELECT EDGES: clicking empty space after selecting edges clears 
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "edges", "mode mismatch");
     assert(json["selectedEdges"].array.length    == 0, "selectedEdges should be empty after clicking empty space");
@@ -372,16 +369,16 @@ unittest { // DESELECT EDGES: clicking empty space after selecting edges clears 
 }
 
 unittest { // SELECTION POLYGONS: Test selected faces after playing events (faces 1 and 3)
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -394,7 +391,7 @@ unittest { // SELECTION POLYGONS: Test selected faces after playing events (face
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "polygons", "mode mismatch");
 
@@ -408,16 +405,16 @@ unittest { // SELECTION POLYGONS: Test selected faces after playing events (face
 }
 
 unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_add.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -430,7 +427,7 @@ unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing s
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "polygons", "mode mismatch");
 
@@ -445,16 +442,16 @@ unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing s
 }
 
 unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-face selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_remove.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -467,7 +464,7 @@ unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-fac
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "polygons", "mode mismatch");
 
@@ -481,16 +478,16 @@ unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-fac
 }
 
 unittest { // DESELECT POLYGONS: clicking empty space after selecting faces clears selection
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_deselect.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -503,7 +500,7 @@ unittest { // DESELECT POLYGONS: clicking empty space after selecting faces clea
     // so the trailing click is processed before we read.
     Thread.sleep(dur!"msecs"(120));
 
-    auto json = parseJSON(get("http://localhost:8080/api/selection"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
     assert(json["mode"].str == "polygons", "mode mismatch");
     assert(json["selectedFaces"].array.length    == 0, "selectedFaces should be empty after clicking empty space");

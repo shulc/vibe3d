@@ -83,6 +83,7 @@
 //       -> U2 "the parking pixel must be over empty space" — the app still
 //          reported item 1 with the pointer in the gap.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -97,7 +98,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // The fixture

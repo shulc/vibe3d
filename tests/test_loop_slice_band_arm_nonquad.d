@@ -25,6 +25,7 @@
 // loop_slice.d). Selecting only face 0 with Slice Selected ON is exactly
 // the "band selection whose neighbours are non-quads" case.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -34,7 +35,7 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetScene() {
     auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
@@ -60,7 +61,6 @@ void postSelect(string mode, int[] indices) {
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
 
 void playAndSettle(string log) {
     auto r = parseJSON(cast(string) post(BASE ~ "/api/play-events", log));

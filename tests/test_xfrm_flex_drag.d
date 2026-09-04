@@ -66,6 +66,7 @@
 // one vibe3d is reused per worker across test binaries, so a mode left
 // somewhere else by an earlier test would otherwise decide this one's result.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, tan, PI;
@@ -76,12 +77,9 @@ import core.time   : dur;
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ p, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

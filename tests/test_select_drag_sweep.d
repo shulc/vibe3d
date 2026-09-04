@@ -54,6 +54,7 @@
 // straight screen path touches at most its two endpoints, so the bare cube
 // cannot exhibit the phenomenon at all.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -66,13 +67,13 @@ import drag_helpers; // fetchCamera / viewportFromCamera / projectToWindow /
 void main() {}
 
 void cmd(string body_) {
-    auto resp = post("http://localhost:8080/api/command", body_);
+    auto resp = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "command failed: " ~ body_ ~ " -> " ~ resp);
 }
 
 int[] selectedVerts() {
-    auto sel = parseJSON(cast(string)get("http://localhost:8080/api/selection"));
+    auto sel = parseJSON(cast(string)get(testBaseUrl() ~ "/api/selection"));
     int[] ids;
     foreach (v; sel["selectedVertices"].array) ids ~= cast(int)v.integer;
     ids.sort();
@@ -80,7 +81,7 @@ int[] selectedVerts() {
 }
 
 void resetSubdividedCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
     cmd(`{"id":"history.clear"}`);
@@ -136,7 +137,7 @@ struct Pivot { int px, py, vid; }
 Pivot findPivot() {
     auto cam  = fetchCamera();
     auto vp   = viewportFromCamera(cam);
-    auto j    = parseJSON(cast(string)get("http://localhost:8080/api/model"));
+    auto j    = parseJSON(cast(string)get(testBaseUrl() ~ "/api/model"));
     immutable int cx = cam.vpX + cam.width  / 2;
     immutable int cy = cam.vpY + cam.height / 2;
 
@@ -264,7 +265,7 @@ unittest { // THE BEFORE-IMAGE: undoing a click restores the SWEPT SET.
 
     // Undo the click's MeshSelectionEdit. Its before-image is the SWEPT set,
     // not an empty selection — that is the whole discriminator.
-    auto u = parseJSON(post("http://localhost:8080/api/undo", ""));
+    auto u = parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
 
     auto restored = selectedVerts();

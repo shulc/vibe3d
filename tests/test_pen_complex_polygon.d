@@ -16,6 +16,7 @@
 //      one without re-activating the tool. Pins the state machine's
 //      Drawing → Idle → Drawing transition.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -25,14 +26,9 @@ import core.time : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
+
 void resetEmpty() {
     auto r = postJson("/api/reset?empty=true", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);

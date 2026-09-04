@@ -24,6 +24,7 @@
 //     the cell the cursor ended in (Front/Left/Persp all have a non-zero Y
 //     component in their screen plane), world Y WOULD change → the assert fails.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -38,12 +39,12 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 // GET /api/camera?viewport=N as raw JSON.
 JSONValue camAt(int n) {
     return parseJSON(cast(string)get(
-        "http://localhost:8080/api/camera?viewport=" ~ n.to!string));
+        testBaseUrl() ~ "/api/camera?viewport=" ~ n.to!string));
 }
 
 unittest {
     // ---- 1. Reset (Single layout) + capture the full 3D-area rect. ----
-    auto resetResp = parseJSON(cast(string)post("http://localhost:8080/api/reset", "{}"));
+    auto resetResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/reset", "{}"));
     assert(resetResp["status"].str == "ok", "reset failed");
 
     // Full viewport rect BEFORE switching to Quad (GET default = active cell 0,
@@ -54,7 +55,7 @@ unittest {
     assert(fullW > 8 && fullH > 8, "implausible viewport size");
 
     // ---- 2. Quad layout. ----
-    auto lay = parseJSON(cast(string)post("http://localhost:8080/api/command",
+    auto lay = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command",
                          `{"id":"viewport.layout","params":"Quad"}`));
     assert(lay["status"].str == "ok" || lay["status"].str == "success",
         "viewport.layout Quad failed: " ~ lay.toString);
@@ -74,10 +75,10 @@ unittest {
            "cell0 (Top) focus must be world origin for the centre-grab to land");
 
     // ---- 3. Select the whole cube + activate the move tool. ----
-    auto selResp = parseJSON(cast(string)post("http://localhost:8080/api/select",
+    auto selResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/select",
                              `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok", "select failed: " ~ selResp.toString);
-    auto setResp = parseJSON(cast(string)post("http://localhost:8080/api/script", "tool.set move"));
+    auto setResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/script", "tool.set move"));
     assert(setResp["status"].str == "ok", "tool.set move failed: " ~ setResp.toString);
 
     double[3][8] pre;
@@ -128,7 +129,7 @@ unittest {
         ~ "camera's XZ screen plane to drive the diagonal drag");
 
     // ---- 7. Back to Single: byte-identity guard (cell 0 still reachable). ----
-    auto back = parseJSON(cast(string)post("http://localhost:8080/api/command",
+    auto back = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command",
                           `{"id":"viewport.layout","params":"Single"}`));
     assert(back["status"].str == "ok" || back["status"].str == "success",
         "viewport.layout Single failed: " ~ back.toString);

@@ -16,6 +16,7 @@
 // Vertex), checked here end to end over the live HTTP surface rather than
 // only in the toolpipe.packets unittest.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -26,7 +27,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void ok(char[] resp, string what) {
     assert(parseJSON(cast(string)resp)["status"].str == "ok",

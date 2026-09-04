@@ -134,6 +134,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g2`.
+import http_client : testBaseUrl;
 import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender;
 import std.conv      : to;
@@ -152,7 +153,7 @@ import batchless_control_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 /// The frozen oracle. Read through `import()` rather than off disk: the suite
 /// lane compiles a scratch COPY of `tests/`, and `-J=tests` resolves this in

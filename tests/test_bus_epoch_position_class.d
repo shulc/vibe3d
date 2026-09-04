@@ -64,6 +64,7 @@
 //
 // Runner: ./run_test.d test_bus_epoch_position_class
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -73,7 +74,7 @@ import core.time   : dur;
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void postJson(string path, string body_) {
     auto resp = cast(string)post(baseUrl ~ path, body_);
@@ -84,9 +85,6 @@ void postJson(string path, string body_) {
         path ~ " failed: " ~ resp);
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void settle(int ms = 300) { Thread.sleep(dur!"msecs"(ms)); }
 

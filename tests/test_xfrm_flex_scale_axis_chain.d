@@ -53,6 +53,7 @@
 // principal-ring gesture) and tests/test_xfrm_scale_flip_drag.d (scale Z box
 // grab pixel 400,402 on the deforming Border patch).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI, tan;
@@ -63,12 +64,9 @@ import core.time   : dur;
 
 void main() {}
 
-enum baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ p, body_));
-}
+
 void cmd(string s) {
     auto j = postJson("/api/command", s);
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);

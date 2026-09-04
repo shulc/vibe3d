@@ -42,13 +42,9 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import http_client : getJson, postJson;
 
 void main() {}
-
-string baseUrl = "http://localhost:8080";
-
-JSONValue getJson(string p)            { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

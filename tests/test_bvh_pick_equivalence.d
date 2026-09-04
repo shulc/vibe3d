@@ -5,6 +5,7 @@
 // nanort arbitrary-t differ); avoided by fixture design.
 //
 // Run via: ./run_test.d bvh_pick_equivalence
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -21,7 +22,7 @@ void waitPlayerIdle() {
     import core.thread : Thread;
     import core.time   : dur;
     for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         auto f = "finished" in s;
         if (f is null || f.type != JSONType.FALSE) {
             Thread.sleep(dur!"msecs"(120));
@@ -31,9 +32,6 @@ void waitPlayerIdle() {
     }
 }
 
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post("http://localhost:8080" ~ path, body));
-}
 
 void runCmd(string line) {
     auto r = postJson("/api/command", line);
@@ -43,7 +41,7 @@ void runCmd(string line) {
 
 void resetTo(string prim = "") {
     waitPlayerIdle();
-    post("http://localhost:8080/api/reset", prim);
+    post(testBaseUrl() ~ "/api/reset", prim);
 }
 
 void setCamera(float az, float el, float dist) {
@@ -61,10 +59,10 @@ int assertPickAgreement(int x, int y, string ctx) {
     Thread.sleep(dur!"msecs"(60));
 
     int bvh = parseJSON(get(
-        format("http://localhost:8080/api/pick?x=%d&y=%d&engine=bvh", x, y)
+        format(testBaseUrl() ~ "/api/pick?x=%d&y=%d&engine=bvh", x, y)
     ))["faceIndex"].integer.to!int;
     int gpu = parseJSON(get(
-        format("http://localhost:8080/api/pick?x=%d&y=%d&engine=gpu", x, y)
+        format(testBaseUrl() ~ "/api/pick?x=%d&y=%d&engine=gpu", x, y)
     ))["faceIndex"].integer.to!int;
     assert(bvh == gpu,
            ctx ~ " — BVH=" ~ bvh.to!string ~ " GPU=" ~ gpu.to!string ~
@@ -85,10 +83,10 @@ void sweepGrid(int vpX, int vpY, int vpW, int vpH,
     for (int y = vpY; y < vpY + vpH; y += step) {
         for (int x = vpX; x < vpX + vpW; x += step) {
             int bvh = parseJSON(get(
-                format("http://localhost:8080/api/pick?x=%d&y=%d&engine=bvh", x, y)
+                format(testBaseUrl() ~ "/api/pick?x=%d&y=%d&engine=bvh", x, y)
             ))["faceIndex"].integer.to!int;
             int gpu = parseJSON(get(
-                format("http://localhost:8080/api/pick?x=%d&y=%d&engine=gpu", x, y)
+                format(testBaseUrl() ~ "/api/pick?x=%d&y=%d&engine=gpu", x, y)
             ))["faceIndex"].integer.to!int;
             if (bvh != gpu) {
                 writefln("MISMATCH %s pixel(%d,%d) BVH=%d GPU=%d",

@@ -42,6 +42,7 @@ module stage_helpers;
 // translate/...), and `pipe_setup` reuses its `cmd()` HTTP driver, so a
 // stage fixture is authored with the exact same building blocks instead of
 // a second copy of the HTTP-driving plumbing.
+import http_client : testBaseUrl;
 import std.json;
 import std.net.curl : get;
 import std.math     : fabs;
@@ -55,10 +56,9 @@ import fixture_helpers : cmd, runStep, asDouble, jvec3, requireProvenance;
 import drag_helpers : Vec3, CameraState, fetchCamera, viewportFromCamera,
                       projectToWindow, playAndWait;
 
-// NB: the literal "localhost:8080" is rewritten per-worker by run_test.d
-// for parallel runs (see tests/fixture_helpers.d's identical note) — keep
-// it spelled out, do not build it dynamically.
-private enum string BASE = "http://localhost:8080";
+// The shared HTTP client resolves VIBE3D_TEST_PORT at runtime for the worker
+// compiling this imported module (see tests/fixture_helpers.d).
+alias BASE = testBaseUrl;
 
 private JSONValue getEval(string ctx) {
     auto resp = cast(string) get(BASE ~ "/api/toolpipe/eval");

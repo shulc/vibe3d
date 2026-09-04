@@ -13,6 +13,7 @@
 // case checks the inverse leak (a plain cube must not spontaneously gain
 // Subpatch faces from the cut).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -22,18 +23,18 @@ void main() {}
 // ----- HTTP helpers (mirrors tests/test_loop_slice.d + tests/test_subpatch.d) ---
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postCommand(string id) {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"` ~ id ~ `"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(resp)["status"].str == "ok", id ~ " failed: " ~ resp);
 }
 
 /// Post command with params JSON (e.g. `{"count":3}`). Asserts ok.
 void postCommandParams(string id, string paramsJson) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `","params":` ~ paramsJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", id ~ " failed: " ~ resp);
 }
@@ -43,13 +44,13 @@ void postSelect(string mode, int[] indices) {
     auto s = appender!string("[");
     foreach (i, v; indices) { if (i > 0) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ s.data ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 /// Index of the undirected edge {a,b} in model["edges"], or -1.
@@ -76,7 +77,7 @@ unittest { // Loop Slice on an all-Subpatch cube: every pre-existing AND
     postReset();
 
     // Mark the whole cube Subpatch — mirrors pressing Tab with no selection.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     postCommand("mesh.subpatch_toggle");
     auto marked = getModel();
     foreach (i, b; subpatchFlags(marked))

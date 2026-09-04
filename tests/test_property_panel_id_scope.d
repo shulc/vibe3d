@@ -71,6 +71,7 @@
 //       `sectionUnscoped` id, which is what "the header was never covered"
 //       looks like.
 
+import http_client : testBaseUrl;
 import std.net.curl : get, post;
 import std.json     : parseJSON, JSONValue, JSONType;
 import std.conv     : to;
@@ -80,7 +81,7 @@ import core.time    : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Harness

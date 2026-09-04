@@ -4,6 +4,7 @@
 // separate event batches.  This catches the old last-event/base-width mix-up:
 // its final width depended on how SDL split one physical drag into motions.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,9 +17,8 @@ import drag_helpers;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 
 void cmd(string text) {
     auto r = parseJSON(cast(string)post(BASE ~ "/api/command", text));

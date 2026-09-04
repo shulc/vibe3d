@@ -70,6 +70,7 @@
 //           which is the point: the old rule is indistinguishable from this
 //           one until the gizmo's basis stops being the world basis.
 
+import http_client : testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, asin, sin, cos, PI;
@@ -79,7 +80,7 @@ import drag_helpers : playAndWait;
 
 void main() {}
 
-private enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // Registration bases from source/tools/transform/xfrm_transform.d, and the
 // slot order inside each bank from its own `registerHandles`. Restated rather

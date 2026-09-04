@@ -31,9 +31,10 @@ module fixture_helpers;
 // endpoints answer {"status":"ok"|"error"}; an explicit "error" aborts
 // the test with the server message.
 //
-// NB: the literal "localhost:8080" is rewritten per-worker by run_test.d
-// for parallel runs — keep it spelled out, do not build it dynamically.
+// The shared HTTP client resolves VIBE3D_TEST_PORT at runtime, so every
+// parallel worker talks only to the instance assigned by run_test.d.
 
+import http_client : testBaseUrl;
 import std.json;
 import std.net.curl : get, post;
 import std.conv : to;
@@ -41,7 +42,7 @@ import std.math : fabs, PI, sqrt, acos;
 import std.format : format;
 import std.algorithm : sort;
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 private string endpointPath(string ep) {
     switch (ep) {

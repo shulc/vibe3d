@@ -30,6 +30,7 @@
 // re-baseline `dragFalloff.pickedCenter` after the ARM-1 re-grade the same way
 // the gesture path re-baselines at commit.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -38,14 +39,9 @@ import std.format : format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok",

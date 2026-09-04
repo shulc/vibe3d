@@ -34,6 +34,7 @@
 // Edge indices are derived from faces in a deterministic order; each test
 // discovers the index it needs by endpoint pair from /api/model's "edges" array.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -44,49 +45,49 @@ void main() {}
 // --- HTTP helpers (same shapes as tests/test_delete.d) ---------------------
 
 void resetGrid(int n) {
-    auto resp = post("http://localhost:8080/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset grid failed: " ~ resp);
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void resetOctahedron() {
-    auto resp = post("http://localhost:8080/api/reset?type=octahedron", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=octahedron", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset octahedron failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
 // Inject a raw mesh ({"vertices":[[x,y,z],...],"faces":[[i,j,...],...]}) as the
 // live mesh (test-only path). Used by the non-planar closed-loop fixture below.
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue postRedo() { return parseJSON(post("http://localhost:8080/api/redo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 
 // --- small geometry helpers ------------------------------------------------
 

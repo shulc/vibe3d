@@ -5,6 +5,7 @@
 // (ACEN pivot) is geometry-stable under it. (The gizmo-position drift caveat for
 // R/S edge/face picks is display-only and documented in actcenter.d.)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -15,7 +16,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 JSONValue pj(string p, string b){ return parseJSON(cast(string)post(baseUrl~p,b)); }
 JSONValue gj(string p){ return parseJSON(cast(string)get(baseUrl~p)); }
 void cmd(string s){ auto j = pj("/api/command", s); assert(j["status"].str == "ok", "cmd failed: " ~ s ~ " -> " ~ j.toString); }

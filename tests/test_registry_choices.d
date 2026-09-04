@@ -35,6 +35,7 @@
 //
 // MUST be `unittest{}` blocks: a plain function body in these HTTP test files
 // is never executed by the runner, and the test passes by not running.
+import http_client : testBaseUrl;
 import std.stdio;
 import std.json;
 import std.net.curl : get;
@@ -42,7 +43,7 @@ import std.format   : format;
 import std.array    : join;
 import std.algorithm: canFind, sort;
 
-private enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void main() {}
 

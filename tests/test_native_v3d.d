@@ -5,6 +5,7 @@
 //   → load /tmp/x.v3d → /api/model topology + subpatch + surfaces match the
 //   original cube exactly.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write, readText;
@@ -83,14 +84,14 @@ void assertRejectedByCodec(string resp, string what) {
 }
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -100,11 +101,11 @@ string runCmdAllowError(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 unittest { // save → load round-trip preserves geometry, subpatch and surfaces
@@ -116,7 +117,7 @@ unittest { // save → load round-trip preserves geometry, subpatch and surfaces
     // Mark every face as subpatch so the round-trip has a non-trivial flag
     // array to preserve. With no face selection mesh.subpatch_toggle inverts
     // the flag on every face (all false → all true on a fresh cube).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     runCmd("mesh.subpatch_toggle");
 
     auto orig = model();

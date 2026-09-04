@@ -29,6 +29,7 @@
 // §3.2 table) and backstopped by the existing per-tool drag/deactivate suites
 // (test_edge_extrude_tool, test_tool_move_drag, test_primitive_box, ...).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -48,14 +49,8 @@ enum int SDLK_z       = 122;       // 'z'
 enum int KMOD_LCTRL   = 0x0040;    // 64  — canonFromEvent reads KMOD_CTRL
 enum int KMOD_LSHIFT  = 0x0001;    // 1
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void waitPlaybackFinish() {
     foreach (_; 0 .. 100) {

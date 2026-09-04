@@ -10,6 +10,7 @@
 //   - JSON path parity with argstring path
 //   - axis=X permutation: world-X extent == sizeY
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -17,14 +18,10 @@ import std.math : fabs, sqrt;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 string apiUrl(string path) { return baseUrl ~ path; }
 
-JSONValue postJson(string path, string body_)
-{
-    return parseJSON(cast(string) post(apiUrl(path), body_));
-}
 
 JSONValue getModel()
 {

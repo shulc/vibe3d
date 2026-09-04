@@ -18,6 +18,7 @@
 // vertices (2 per incident edge: a "rim" + a "fan" copy) and 6 new faces
 // (a bridge quad + a fan triangle per incident face).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -30,34 +31,34 @@ void main() {}
 // --- HTTP helpers -----------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/command failed: " ~ resp ~ "\nbody: " ~ body);
 }
 
 string postCommandRaw(string body) {
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel()     { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel()     { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 JSONValue getUndoStatus() {
-    return parseJSON(get("http://localhost:8080/api/undo/status"));
+    return parseJSON(get(testBaseUrl() ~ "/api/undo/status"));
 }
 
 // --- geometry helpers -------------------------------------------------------

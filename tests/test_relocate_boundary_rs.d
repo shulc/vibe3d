@@ -44,6 +44,7 @@
 // /api/play-events (never an /api/command gesture — that races update() /
 // navHistory on the background HTTP thread).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, cos, sin, PI;
@@ -53,14 +54,8 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;

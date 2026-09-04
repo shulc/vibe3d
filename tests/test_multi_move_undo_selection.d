@@ -28,6 +28,7 @@
 // Restoring candidate 0056's carried-suffix skip leaves bottom-4 selected and
 // makes the top-4 assertion below fail.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -46,7 +47,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
@@ -58,7 +59,7 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
@@ -66,22 +67,22 @@ void postSelect(string mode, int[] indices) {
 
 void postTranslate(double dx, double dy, double dz) {
     import std.format : format;
-    auto resp = post("http://localhost:8080/api/transform",
+    auto resp = post(testBaseUrl() ~ "/api/transform",
         format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`, dx, dy, dz));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue getSelection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@
 // this compile, and lets the write-path case build the exact line FormsPanel
 // would emit via the renderer's own substituteQuery/parseBinding.
 
+import http_client : testBaseUrl, postJson;
 import forms : parseBinding, substituteQuery;
 
 import std.net.curl;
@@ -31,15 +32,12 @@ import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 // Dispatch a command, asserting it succeeded.
 void cmd(string line) {

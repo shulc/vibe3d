@@ -9,6 +9,7 @@
 // Both pass the loader's entry-count check but are caught by cleanDegenerateFaces.
 // Literal 2-vertex faces are exercised only in the mesh.d dub unittests.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -21,18 +22,18 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/load-mesh failed: " ~ resp);
 }
 
 JSONValue postCommandRaw(string body) {
-    return parseJSON(post("http://localhost:8080/api/command", body));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", body));
 }
 
 void postCommand(string body) {
@@ -41,25 +42,25 @@ void postCommand(string body) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 long undoCount() {
-    return parseJSON(get("http://localhost:8080/api/history"))["undo"].array.length;
+    return parseJSON(get(testBaseUrl() ~ "/api/history"))["undo"].array.length;
 }
 
 JSONValue getChanges() {
-    return parseJSON(get("http://localhost:8080/api/changes"));
+    return parseJSON(get(testBaseUrl() ~ "/api/changes"));
 }
 
 // Required before the seam block below, which uses a polygon command as its
 // positive control.
 void setPolygonMode() {
-    auto resp = post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    auto resp = post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     assert(parseJSON(resp)["status"].str == "ok",
         "select.typeFrom polygon failed: " ~ resp);
 }
@@ -116,7 +117,7 @@ unittest { // poly.unify no-op on clean mesh: false evaluate → no undo entry
     const depthBefore = undoCount();
     // false-returning evaluate causes /api/command to return {"status":"error"};
     // ignore the response, the load-bearing check is the undo depth.
-    cast(void) post("http://localhost:8080/api/command", `{"id":"poly.unify"}`);
+    cast(void) post(testBaseUrl() ~ "/api/command", `{"id":"poly.unify"}`);
     assert(undoCount() == depthBefore,
         "no-op poly.unify must not add undo entry");
 }
@@ -216,7 +217,7 @@ unittest { // mesh.edgeCrease.set / .clear: one undo step each, and it restores
     // `tests/test_edge_weight_v3d.d` uses. Two and not one: a single-edge
     // crease plane is uniform, and a restore onto the wrong edge would
     // compare EQUAL.
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"edges","indices":[6,9]}`);
     assert(parseJSON(selResp)["status"].str == "ok",
            "/api/select failed: " ~ selResp);
@@ -290,7 +291,7 @@ unittest { // dist widening: near-but-not-coincident verts welded with larger ep
         "faces":[[0,2,3],[1,2,3]]
     }`);
     // Default dist 1e-5: verts 0 and 1 are 0.001 apart → NOT welded → no-op.
-    cast(void) post("http://localhost:8080/api/command", `{"id":"mesh.cleanup"}`);
+    cast(void) post(testBaseUrl() ~ "/api/command", `{"id":"mesh.cleanup"}`);
     assert(getModel()["faceCount"].integer == 2,
         "default dist must not weld near-but-not-coincident verts (contrast case)");
 
@@ -330,7 +331,7 @@ unittest { // mesh.cleanup no-op on clean cube: false evaluate → no undo entry
     const depthBefore = undoCount();
     // false-returning evaluate → /api/command returns {"status":"error"};
     // ignore the response body, assert undo depth is unchanged.
-    cast(void) post("http://localhost:8080/api/command", `{"id":"mesh.cleanup"}`);
+    cast(void) post(testBaseUrl() ~ "/api/command", `{"id":"mesh.cleanup"}`);
     assert(undoCount() == depthBefore,
         "no-op cleanup on clean cube must not add undo entry");
 }
@@ -347,7 +348,7 @@ unittest { // removeOrphans:false: floating vert preserved when no other stage f
 
     // removeOrphans:false → orphan must survive; all other stages no-op → status:error.
     const depthBefore = undoCount();
-    cast(void) post("http://localhost:8080/api/command",
+    cast(void) post(testBaseUrl() ~ "/api/command",
         `{"id":"mesh.cleanup","params":{"removeOrphans":false}}`);
     assert(getModel()["vertexCount"].integer == 4,
         "removeOrphans:false must preserve the floating vert");
@@ -366,7 +367,7 @@ unittest { // all-stages-off + orphan: true no-op, no undo entry (no-op contract
     assert(getModel()["vertexCount"].integer == 4, "fixture: 4 verts (1 orphan)");
 
     const depthBefore = undoCount();
-    cast(void) post("http://localhost:8080/api/command",
+    cast(void) post(testBaseUrl() ~ "/api/command",
         `{"id":"mesh.cleanup","params":{"mergeVerts":false,"dropDegenerate":false,"unify":false,"removeOrphans":false,"dissolve2Valent":false}}`);
     assert(getModel()["vertexCount"].integer == 4,
         "all-stages-off must not remove the orphan vert");

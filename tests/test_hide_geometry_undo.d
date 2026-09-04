@@ -30,6 +30,7 @@
 // element is surrounded by other hidden elements lets a pre-existing check do
 // the new code's work and reads the right number for the wrong reason.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -44,10 +45,8 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p)            { return parseJSON(cast(string)get(BASE ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string)post(BASE ~ p, b)); }
 
 void cmd(string script) {
     auto r = postJson("/api/command", script);

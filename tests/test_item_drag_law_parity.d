@@ -35,6 +35,7 @@
 // UNMEASURED; phase0b_findings.md's own "Still not measured about scale"
 // list names this gap).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -43,7 +44,7 @@ import std.format: format;
 
 import drag_helpers;
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void main() {}
 

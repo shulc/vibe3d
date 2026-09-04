@@ -34,6 +34,7 @@
 // the `square` case below asserts THAT — with the refusal in its message —
 // rather than a reference answer.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -44,7 +45,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 enum string SEL_TOP_FACE = `{"mode":"polygons","indices":[4]}`;
 

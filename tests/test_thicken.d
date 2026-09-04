@@ -5,6 +5,7 @@
 //   grid3x3h  — 16 verts, 8 quads (3×3 minus center), 2 boundary loops.
 //   closedCube — 8 verts, 6 quads, closed (no boundary).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,7 +17,7 @@ void main() {}
 // Infrastructure
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postCmd(string path, string body_) {
     auto resp = cast(string)post(BASE ~ path, body_);

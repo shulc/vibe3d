@@ -26,6 +26,7 @@
 // visible. The target is the MIDDLE one so "off by one" and "took the first"
 // and "took the last" are three different observations.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -34,9 +35,8 @@ import std.path : buildPath;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(baseUrl ~ path)); }
 
 JSONValue cmdRaw(string body_) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

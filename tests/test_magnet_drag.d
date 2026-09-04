@@ -15,8 +15,9 @@
 // (distance from v6 = 1.0 = pickedRadius) → weight=0 → only v6 moves.
 // This cleanly separates "anchor moved" from "neighbour attenuation".
 //
-// "localhost:8080" is rewritten to the per-worker port by run_test.d.
+// The shared HTTP client resolves the port assigned by run_test.d.
 
+import http_client : testBaseUrl;
 import drag_helpers;
 
 import std.net.curl;
@@ -30,7 +31,7 @@ void main() {}
 // Helpers
 // ---------------------------------------------------------------------------
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue jpost(string path, string body_) {
     return parseJSON(cast(string)post(BASE ~ path, body_));

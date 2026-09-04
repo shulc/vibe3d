@@ -5,21 +5,15 @@
 // preset via `tool.set <preset> on` and asserts the falloff stage
 // ends up with the documented `type` + `transparent` values.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 string[string] falloffAttrs() {
     auto j = getJson("/api/toolpipe");

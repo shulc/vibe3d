@@ -5,9 +5,9 @@
 // are topologically isolated (no vert shared with an unselected face),
 // giving unambiguous planarity residuals.
 //
-// "localhost:8080" is rewritten to the per-worker port by run_test.d when
-// running in parallel; keep the literal so that rewrite still matches.
+// The shared HTTP client resolves the port assigned by run_test.d.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -15,15 +15,8 @@ import std.math : fabs, sqrt;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

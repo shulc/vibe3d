@@ -1,3 +1,4 @@
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.string;
 import std.conv;
@@ -12,7 +13,7 @@ unittest {
     string testData = `{"t":0.000,"type":"SDL_MOUSEMOTION","x":100,"y":200,"xrel":0,"yrel":0,"state":0,"mod":0}`;
 
     // Send HTTP POST request
-    auto response = post("http://localhost:8080/api/play-events", testData);
+    auto response = post(testBaseUrl() ~ "/api/play-events", testData);
 
     // Test data - mouse click sequence (JSON Lines / EventLogger format)
     string testData2 =
@@ -20,5 +21,5 @@ unittest {
         `{"t":100.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":150,"y":250,"clicks":1,"mod":0}` ~ "\n" ~
         `{"t":200.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":150,"y":250,"clicks":1,"mod":0}`;
 
-    auto response2 = post("http://localhost:8080/api/play-events", testData2);
+    auto response2 = post(testBaseUrl() ~ "/api/play-events", testData2);
 }

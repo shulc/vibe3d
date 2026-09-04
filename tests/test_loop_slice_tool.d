@@ -23,6 +23,7 @@
 //        changing `position` (simulating what a drag would do) leaves the
 //        evenly-spaced result unchanged.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -33,17 +34,17 @@ void main() {}
 // --- HTTP helpers (same shapes as tests/test_edge_extrude_tool.d) ----------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void cmd(string s) {
-    auto resp = post("http://localhost:8080/api/command", s);
+    auto resp = post(testBaseUrl() ~ "/api/command", s);
     assert(parseJSON(resp)["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ resp);
 }
 
 void postCommand(string body) {
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
@@ -51,14 +52,14 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post("http://localhost:8080/api/undo", "")); }
-JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
 
 // --- geometry helpers (mirror tests/test_loop_slice.d) ---------------------
 
@@ -234,7 +235,7 @@ unittest {
 
     cmd("tool.set mesh.loopSliceTool on");
     cmd("tool.attr mesh.loopSliceTool count 1");
-    post("http://localhost:8080/api/command", "tool.doApply");
+    post(testBaseUrl() ~ "/api/command", "tool.doApply");
 
     auto after = getModel();
     assert(after["vertexCount"].integer > before["vertexCount"].integer,

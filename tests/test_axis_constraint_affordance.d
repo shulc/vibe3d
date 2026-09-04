@@ -8,6 +8,7 @@
 //      down) and asserts /api/toolpipe/eval reports constraintLockedAxis==X.
 //      Also plays a non-Ctrl open drag and asserts -1.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, tan, PI;
@@ -197,13 +198,13 @@ string buildOpenDragLog(int vpX, int vpY, int vpW, int vpH,
 
 // Settle after play-events completes (replay engine reports finished but the
 // main thread may not have processed the last event into tool state yet).
-void settleMs(int ms = 150, string baseUrl = "http://localhost:8080") {
+void settleMs(int ms = 150, string baseUrl = testBaseUrl()) {
     import core.thread : Thread;
     import core.time   : dur;
     Thread.sleep(dur!"msecs"(ms));
 }
 
-void resetCubeSelectAllMove(string baseUrl = "http://localhost:8080") {
+void resetCubeSelectAllMove(string baseUrl = testBaseUrl()) {
     post(baseUrl ~ "/api/reset", "");
     auto sel = post(baseUrl ~ "/api/select",
                     `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
@@ -245,7 +246,7 @@ unittest { // Ctrl open-drag: constraintLockedAxis == expected locked axis
     settleMs(150);
 
     // Read constraintLockedAxis from the toolpipe eval endpoint while drag open.
-    auto resp = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe/eval"));
+    auto resp = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe/eval"));
     assert("transform" in resp,
         "'transform' block missing from /api/toolpipe/eval — move tool not active?");
     auto tf = resp["transform"];
@@ -279,7 +280,7 @@ unittest { // Non-Ctrl open-drag: constraintLockedAxis == -1
     playAndWait(log);
     settleMs(150);
 
-    auto resp = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe/eval"));
+    auto resp = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe/eval"));
     assert("transform" in resp,
         "'transform' block missing from /api/toolpipe/eval");
     auto tf = resp["transform"];
@@ -331,7 +332,7 @@ unittest { // Ctrl screen-DOWN open-drag: constraintLockedAxis == 1 (world Y)
     playAndWait(log);
     settleMs(150);
 
-    auto resp = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe/eval"));
+    auto resp = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe/eval"));
     assert("transform" in resp,
         "'transform' block missing from /api/toolpipe/eval — move tool not active?");
     auto tf = resp["transform"];

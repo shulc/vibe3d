@@ -47,6 +47,7 @@
 //   * undo row: an undo that restores the geometry but not the mark reads 6
 //     polygons with 0 hidden.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -58,9 +59,8 @@ import fixture_helpers : requireProvenance;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));

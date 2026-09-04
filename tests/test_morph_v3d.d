@@ -12,6 +12,7 @@
 //   verts: 0:(-,-,-)  1:(+,-,-)  2:(+,+,-)  3:(-,+,-)
 //          4:(-,-,+)  5:(+,-,+)  6:(+,+,+)  7:(-,+,+)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText, write;
@@ -21,7 +22,7 @@ import std.math   : fabs;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 void resetCube() {
     auto resp = post(kBase ~ "/api/reset", "");

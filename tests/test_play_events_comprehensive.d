@@ -1,3 +1,4 @@
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.algorithm;
 import std.stdio;
@@ -40,7 +41,7 @@ unittest { // Test 5: Wrong HTTP method
 int curlPost(string data) {
     auto http = HTTP();
     http.method = HTTP.Method.post;
-    http.url = "http://localhost:8080/api/play-events";
+    http.url = testBaseUrl() ~ "/api/play-events";
     http.postData = data;
     http.perform();
     return http.statusLine.code;
@@ -49,7 +50,7 @@ int curlPost(string data) {
 int curlGet() {
     auto http = HTTP();
     http.method = HTTP.Method.get;
-    http.url = "http://localhost:8080/api/play-events";
+    http.url = testBaseUrl() ~ "/api/play-events";
     http.perform();
     return http.statusLine.code;
 }

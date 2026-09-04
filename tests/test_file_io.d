@@ -4,6 +4,7 @@
 //   reset → save to /tmp/x.lwo → mutate state → reset → load /tmp/x.lwo
 //   → /api/model topology matches the original cube.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write;
@@ -12,14 +13,14 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -29,11 +30,11 @@ string runCmdAllowError(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    return cast(string)post("http://localhost:8080/api/command", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", body);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 unittest { // save → load round-trip preserves cube topology
@@ -55,7 +56,7 @@ unittest { // save → load round-trip preserves cube topology
     // mesh.subdivide requires polygon edit mode — switch via the argstring
     // form (runCmd wraps everything in {"id": ...}, which doesn't accept
     // positional args).
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
     runCmd("mesh.subdivide");
     auto mutated = model();
     assert(mutated["vertexCount"].integer == 26,

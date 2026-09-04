@@ -22,6 +22,7 @@
 //   * and the ring is Custom-ONLY (part id absent from /api/tool/handles for a
 //     non-Custom axis).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs, sqrt, sin, cos, atan2, PI;
@@ -33,7 +34,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera, proje
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // Must match SliceTool.RING_RADIUS_PX (the screen-constant ring radius). The
 // world radius is gizmoSize(centre, vp, RING_RADIUS_PX) — drag_helpers.gizmoSize

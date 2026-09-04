@@ -1,3 +1,4 @@
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -38,7 +39,7 @@ void assertCameraState(JSONValue json, CameraState expected, double epsilon = 1e
 }
 
 unittest { // Test the /api/camera endpoint
-    auto response = get("http://localhost:8080/api/camera");
+    auto response = get(testBaseUrl() ~ "/api/camera");
 
     auto json = parseJSON(response);
 
@@ -86,21 +87,21 @@ unittest { // Test the /api/camera endpoint
 }
 
 unittest { // ROTATE: Test camera state after playing rotate events
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/camera_rotate_events.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
 
-    auto json = parseJSON(get("http://localhost:8080/api/camera"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/camera"));
     assertCameraState(json, CameraState(
         -0.575, 0.53, 3.0,
         0.0, 0.0, 0.0,
@@ -110,21 +111,21 @@ unittest { // ROTATE: Test camera state after playing rotate events
 }
 
 unittest { // PAN: Test camera state after playing pan events
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     auto events = cast(const(void)[])read("tests/events/camera_pan_events.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(playResponse)["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
 
-    auto json = parseJSON(get("http://localhost:8080/api/camera"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/camera"));
     assertCameraState(json, CameraState(
         0.5, 0.4, 3.0,
         -0.862409, 0.513952, 0.223529,
@@ -135,11 +136,11 @@ unittest { // PAN: Test camera state after playing pan events
 
 unittest { // ZOOM: Test camera state after playing events from events.log
     // Reset to known initial state before playing events
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     // Play events — read as raw bytes to preserve newlines
     auto events = cast(const(void)[])read("tests/events/camera_zoom_events.log");
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     auto playJson = parseJSON(playResponse);
     assert(playJson["status"].str == "success", "play-events failed: " ~ playResponse);
 
@@ -147,13 +148,13 @@ unittest { // ZOOM: Test camera state after playing events from events.log
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
 
     // Check camera state
-    auto json = parseJSON(get("http://localhost:8080/api/camera"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/camera"));
     assertCameraState(json, CameraState(
         0.5, 0.4, 19.132467,
         0.0, 0.0, 0.0,
@@ -163,24 +164,24 @@ unittest { // ZOOM: Test camera state after playing events from events.log
 }
 
 unittest { // WHEEL ZOOM: SDL_MOUSEWHEEL changes camera distance
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     enum events =
         `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
         `{"t":1,"type":"SDL_MOUSEWHEEL","x":0,"y":1}` ~ "\n";
-    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
     auto playJson = parseJSON(playResponse);
     assert(playJson["status"].str == "success", "play-events failed: " ~ playResponse);
 
     import core.thread : Thread;
     import core.time : dur;
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
 
-    auto json = parseJSON(get("http://localhost:8080/api/camera"));
+    auto json = parseJSON(get(testBaseUrl() ~ "/api/camera"));
     assert(approxEqual(json["distance"].floating, 2.7),
         "wheel-up should zoom in to distance 2.7; got " ~
         json["distance"].floating.to!string);

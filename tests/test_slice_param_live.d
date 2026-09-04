@@ -20,6 +20,7 @@
 // Camera-agnostic: reconstructs the same most-facing construction plane the tool
 // picks and lays the slice line on it (mirrors test_slice_session.d).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs;
@@ -31,7 +32,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera, proje
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void cmd(string s) {
     auto resp = cast(string) post(BASE ~ "/api/command", s);

@@ -17,6 +17,7 @@
 // seed edge, which is exactly what task 0231 fixed (the hover highlight used
 // to show the wrong — parallel — ring).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -29,7 +30,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void resetCube() {
     auto resp = post(baseUrl ~ "/api/reset", "");

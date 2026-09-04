@@ -24,6 +24,7 @@
 // renderer's own substituteQuery so the headless assertion exercises the real
 // code path rather than a hand-typed argstring.
 
+import http_client : testBaseUrl, getJson, postJson;
 import forms : parseBinding, substituteQuery, valueToArgToken;
 
 import std.net.curl;
@@ -33,18 +34,12 @@ import std.conv : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

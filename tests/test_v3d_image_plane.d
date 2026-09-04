@@ -50,6 +50,7 @@
 // hand-MUTATES that file and reloads, which is the only way to prove the reader
 // is reading the file rather than finding the state already in memory.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -62,7 +63,7 @@ import std.algorithm : canFind;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 JSONValue cmdRaw(string body_) {
     return parseJSON(cast(string) post(baseUrl ~ "/api/command", body_));

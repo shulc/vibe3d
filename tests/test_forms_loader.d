@@ -24,6 +24,7 @@
 // shipped transform.yaml: startup aborts on a forms-validation failure, so a
 // responsive /api/camera means the on-disk config passed strict validation.
 
+import http_client : testBaseUrl;
 import forms;
 import params : Param, ParamHints, IntEnumEntry;
 
@@ -650,7 +651,7 @@ YAML";
 // ---------------------------------------------------------------------------
 
 unittest {
-    auto response = get("http://localhost:8080/api/camera");
+    auto response = get(testBaseUrl() ~ "/api/camera");
     auto json = parseJSON(response);
     assert("azimuth" in json, "server not responsive — forms validation may have aborted boot");
 }

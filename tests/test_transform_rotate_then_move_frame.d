@@ -24,6 +24,7 @@
 // the dominant run.r term) but cannot make it exact — closing that is a
 // separate task. The cases here cover the world-input bug + scale isolation.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, PI;
@@ -34,14 +35,8 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 void settle() {
     import core.thread : Thread;

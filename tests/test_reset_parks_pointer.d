@@ -29,6 +29,7 @@
 // pointer, and it also fails if the hover cue itself disappears — and it cannot
 // be satisfied by a constant.
 
+import http_client : testBaseUrl;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP, get;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -38,9 +39,8 @@ import std.math      : round;
 import core.thread   : Thread;
 import core.time     : msecs;
 
-// NOTE: keep the literal "http://localhost:8080" — run_test.d isolates parallel
-// workers by textually rewriting it to the worker's port in a scratch copy.
-enum string BASE = "http://localhost:8080";
+// Resolve the port assigned to this worker by run_test.d.
+alias BASE = testBaseUrl;
 
 string httpGet(string p) { return cast(string)get(BASE ~ p); }
 

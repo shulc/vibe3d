@@ -21,6 +21,7 @@
 // a NON-MANIFOLD mesh on purpose — one edge with three incident faces — and
 // each asserts that by counting, not by assuming.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -30,12 +31,12 @@ void main() {}
 // ----- HTTP helpers ----------------------------------------------------------
 
 void postReset() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 
 void postLoadMesh(string body) {
-    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/load-mesh failed: " ~ resp);
 }
@@ -45,14 +46,14 @@ void postSelect(string mode, int[] indices) {
     auto s = appender!string("[");
     foreach (i, v; indices) { if (i > 0) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ s.data ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/select failed: " ~ resp);
 }
 
 JSONValue postCommandRaw(string id) {
-    return parseJSON(post("http://localhost:8080/api/command",
+    return parseJSON(post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`));
 }
 
@@ -62,11 +63,11 @@ void postCommand(string id) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // ----- Connectivity helpers --------------------------------------------------

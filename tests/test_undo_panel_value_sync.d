@@ -25,6 +25,7 @@
 // quoted; ring/arrow/box grab retries on the undo count; published values read off
 // /api/toolpipe/eval, geometry off /api/model.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -37,14 +38,9 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok", "/api/command '" ~ line ~ "' failed: "

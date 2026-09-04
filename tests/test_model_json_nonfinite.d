@@ -52,6 +52,7 @@
 // constant — two `-j 8` workers sharing one path is a race — and (b) every
 // poisoning case ends with `/api/reset`, or the worker's document keeps the
 // infinite geometry and `io/doc_state.d` keeps remembering the temp path.
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv     : to;
@@ -60,15 +61,14 @@ import std.string   : indexOf, lastIndexOf;
 import std.file     : exists, remove, readText, write;
 import std.exception: collectException;
 
-// The runner rewrites this literal to the worker's private port
-// (run_test.d's compileTests). Never run this by hand against 8080 — that is
-// the owner's live editor.
-enum string kBase = "http://localhost:8080";
+// The shared client resolves the worker's private port from the environment.
+// A hand-run binary retains the historical 8080 default.
+alias kBase = testBaseUrl;
 
 void main() {}
 
 /// The port this binary was compiled for, read back out of `kBase` so the
-/// temp-file name follows the rewrite instead of having to be rewritten too.
+/// temp-file name follows the selected worker port.
 private string portTag() {
     return kBase[kBase.lastIndexOf(':') + 1 .. $];
 }

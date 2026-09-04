@@ -15,6 +15,7 @@
 // SCOPE GUARD: select + transform + undo → geometry reverted, selection
 //     unchanged (not over-reverted).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -24,7 +25,7 @@ import std.array  : array;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Helpers

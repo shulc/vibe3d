@@ -31,6 +31,7 @@
 // passes and the cell proves nothing. The unit-test sibling asserts that
 // coincidence outright rather than leaving it as advice.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -57,23 +58,23 @@ JSONValue fixture() {
 // --- HTTP helpers (same shapes as tests/test_edge_extend_tool.d) ------------
 
 void cmd(string s) {
-    auto resp = post("http://localhost:8080/api/command", s);
+    auto resp = post(testBaseUrl() ~ "/api/command", s);
     assert(parseJSON(resp)["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ resp);
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
-JSONValue getModel() { return parseJSON(cast(string)get("http://localhost:8080/api/model")); }
-JSONValue toolState() { return parseJSON(cast(string)get("http://localhost:8080/api/tool/state")); }
+JSONValue getModel() { return parseJSON(cast(string)get(testBaseUrl() ~ "/api/model")); }
+JSONValue toolState() { return parseJSON(cast(string)get(testBaseUrl() ~ "/api/tool/state")); }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
@@ -85,7 +86,7 @@ void postSelect(string mode, int[] indices) {
 void setDragPivot(double[3] p) {
     auto body = `{"id":"tool.attr","params":{"_positional":["edge.extend","_dragPivot",`
         ~ `[` ~ p[0].to!string ~ `,` ~ p[1].to!string ~ `,` ~ p[2].to!string ~ `]]}}`;
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok", "_dragPivot set failed: " ~ resp);
 }
 
@@ -136,7 +137,7 @@ void loadRig() {
         faces ~= "]";
     }
     faces ~= "]";
-    auto resp = post("http://localhost:8080/api/load-mesh",
+    auto resp = post(testBaseUrl() ~ "/api/load-mesh",
         `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh rig failed: " ~ resp);
 

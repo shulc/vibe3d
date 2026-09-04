@@ -3,6 +3,7 @@
 // menu items dispatch these commands; the test drives them through
 // /api/command so we don't depend on ImGui rendering.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -10,14 +11,8 @@ import std.file : exists, readText, remove;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 size_t historyLen(string side) {
     return getJson("/api/history")[side].array.length;

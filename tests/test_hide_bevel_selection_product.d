@@ -40,6 +40,7 @@
 // only asserted "the command returned ok" passes with the bug fully present,
 // and one that asserted only the vertex plane passes too (rebuildEdges does
 // not re-index vertexMarks, so the vertex product is identical either way).
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -47,10 +48,8 @@ import std.algorithm : sort;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p)            { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

@@ -25,6 +25,7 @@
 //
 // Run via: ./run_test.d subpatch_interactive_pick_engine
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -35,7 +36,7 @@ import core.time   : dur;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // The viewport rect the replayed pixels are mapped through.
 enum int VP_X = 150, VP_Y = 28, VP_W = 650, VP_H = 544;
@@ -52,9 +53,6 @@ void waitPlayerIdle() {
     }
 }
 
-JSONValue postJson(string path, string body) {
-    return parseJSON(cast(string)post(BASE ~ path, body));
-}
 
 /// Empty the polygon selection. `/api/select` with an empty index list rather
 /// than a command id: there is no `select.clear` in the registry, and a click

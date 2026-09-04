@@ -10,6 +10,7 @@
 // vanishes under `-release`, so this is the configuration in which a
 // mis-sized emission is caught.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -19,7 +20,7 @@ import std.math   : fabs;
 
 void main() {}
 
-enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 void runCmd(string id, string paramsJson) {
     auto j = parseJSON(cast(string) post(kBase ~ "/api/command",

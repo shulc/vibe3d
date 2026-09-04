@@ -21,6 +21,7 @@
 //   V8 — Owner objection #1 (MAJOR): Count<=1 ALWAYS honors the scrub
 //        regardless of Mode — Uniform must not freeze a Count==1 Position.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -30,7 +31,7 @@ void main() {}
 
 // --- HTTP helpers (mirror tests/test_loop_slice_tool.d) --------------------
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void resetCube() {
     auto resp = post(baseUrl ~ "/api/reset", "");

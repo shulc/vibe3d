@@ -63,6 +63,7 @@
 //
 // Run via: ./run_test.d test_bus_snap_grid_after_drag
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -77,7 +78,7 @@ import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 /// The shipped SnapStage defaults (`toolpipe/packets.d :: SnapPacket`). Spelled
 /// out because the grid's CELL SIZE is `kOuterRangePx` and every separation
@@ -93,11 +94,6 @@ enum double kMinPixelSeparation = 3.0 * kOuterRangePx;
 /// or cube change fails loudly here instead of quietly aiming elsewhere.
 enum int kTarget = 6;
 
-JSONValue getJson(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
 
 void cmd(string line) {
     auto r = postJson("/api/command", line);

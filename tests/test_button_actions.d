@@ -15,6 +15,7 @@
 // Both sides must agree — any mismatch is a hard failure with a
 // "panel/group/label → kind:id" breadcrumb.
 
+import http_client : testBaseUrl;
 import std.net.curl  : get;
 import std.json      : parseJSON, JSONValue;
 import std.conv      : to;
@@ -26,7 +27,7 @@ import argstring     : parseArgstring;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // Helpers

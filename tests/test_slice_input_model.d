@@ -21,6 +21,7 @@
 // tests set the SDL keymod on the drag events (play-events restores modifier
 // state, so SDL_GetModState() reads Ctrl inside the tool handler).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs, sqrt;
@@ -32,7 +33,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera, proje
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // SDL keymod for the left Ctrl key (KMOD_LCTRL). `mods & KMOD_CTRL` in the tool
 // is non-zero for this, so it engages the Ctrl axis-lock without touching

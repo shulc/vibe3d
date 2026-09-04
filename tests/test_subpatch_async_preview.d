@@ -31,6 +31,7 @@
 // `pending == false`. `waitPreviewSettled()` below is that wait. RECORDED
 // input (`/api/play-events`, `--playback`) needs no such call: the barrier
 // holds it, which is what M-DET witnesses.
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -42,10 +43,8 @@ import core.time   : msecs, MonoTime, dur;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p)            { return parseJSON(cast(string)get(BASE ~ p)); }
-JSONValue postJson(string p, string b) { return parseJSON(cast(string)post(BASE ~ p, b)); }
 
 void cmd(string script) {
     auto r = postJson("/api/command", script);

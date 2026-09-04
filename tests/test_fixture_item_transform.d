@@ -19,6 +19,7 @@
 //   2) /api/model?layer=0 vertices are UNCHANGED vs the reset cube (non-baked);
 //   3) /api/reset returns the layer xform to identity (the reset-clears fix).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -29,15 +30,12 @@ import fixture_helpers : requireProvenance;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (mirrors tests/test_layer_params.d).
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));

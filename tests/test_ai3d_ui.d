@@ -14,6 +14,7 @@
 //
 // Skips gracefully when python3 / the worker package is unavailable.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.stdio  : stderr;
@@ -25,7 +26,7 @@ import ai3d_worker_helpers;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 void resetApp() { post(baseUrl ~ "/api/reset", ""); }
 

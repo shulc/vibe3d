@@ -7,6 +7,7 @@
 // vertex then got weight 0 (not in the stale ring, outside the old sphere) and
 // did NOT move; the previously-anchored region moved instead.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -17,7 +18,7 @@ import drag_helpers;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 JSONValue pj(string p, string b){ return parseJSON(cast(string)post(baseUrl~p,b)); }
 JSONValue gj(string p){ return parseJSON(cast(string)get(baseUrl~p)); }
 void settle(){ import core.thread:Thread; import core.time:msecs; Thread.sleep(150.msecs); }

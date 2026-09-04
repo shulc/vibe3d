@@ -27,6 +27,7 @@
 //   Undo round-trip:
 //     history.undo restores pre-sweep vertex and face counts
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -38,12 +39,8 @@ void main() {}
 // helpers
 // ---------------------------------------------------------------------------
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    auto resp = cast(string)post(BASE ~ path, body_);
-    return parseJSON(resp);
-}
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

@@ -52,6 +52,7 @@
 // calls for. What is NOT covered anywhere is an end-to-end gizmo DRAG with
 // something hidden; it needs an event-log fixture and is left to S7.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -61,10 +62,8 @@ import std.string : format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string p)             { return parseJSON(cast(string) get(baseUrl ~ p)); }
-JSONValue postJson(string p, string b)  { return parseJSON(cast(string) post(baseUrl ~ p, b)); }
 
 void cmd(string s) {
     auto j = postJson("/api/command", s);

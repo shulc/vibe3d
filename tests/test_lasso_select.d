@@ -25,6 +25,7 @@
 //   projected endpoints are inside the lasso polygon AND BOTH endpoint windows
 //   contain a surviving pixel in the Edge ID-FBO (depth-pre-pass baked).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -33,14 +34,8 @@ import std.algorithm : canFind;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue getJson(string p) {
-    return parseJSON(cast(string)get(BASE ~ p));
-}
-JSONValue postJson(string p, string b) {
-    return parseJSON(cast(string)post(BASE ~ p, b));
-}
 
 void resetCube() {
     post(BASE ~ "/api/reset", "");

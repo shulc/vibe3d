@@ -50,6 +50,7 @@
 // a default (Count=1) cut on it inserts one loop: V:8->12(+4), F:6->10(+4)
 // (documented in test_loop_slice_v2.d's V2 comment: V=8+4*count, F=6+4*count).
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -60,7 +61,7 @@ import core.time   : msecs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // --- HTTP helpers (mirror tests/test_loop_slice_tool.d / test_edge_slice_tool.d) --
 
@@ -68,9 +69,6 @@ JSONValue postCmd(string path, string body_) {
     return parseJSON(cast(string)post(BASE ~ path, body_));
 }
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(BASE ~ path));
-}
 
 void resetCube() {
     auto r = postCmd("/api/reset", "");

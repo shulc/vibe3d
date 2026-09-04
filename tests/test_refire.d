@@ -8,6 +8,7 @@
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
 //   v4=(-,-,+)  v5=(+,-,+)  v6=(+,+,+)  v7=(-,+,+)
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -24,7 +25,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
@@ -36,42 +37,42 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
 void postTransform(string body) {
-    auto resp = post("http://localhost:8080/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/transform", body);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }
 
 void refireBegin() {
-    auto resp = post("http://localhost:8080/api/refire", `{"action":"begin"}`);
+    auto resp = post(testBaseUrl() ~ "/api/refire", `{"action":"begin"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/refire begin failed: " ~ resp);
 }
 
 void refireEnd() {
-    auto resp = post("http://localhost:8080/api/refire", `{"action":"end"}`);
+    auto resp = post(testBaseUrl() ~ "/api/refire", `{"action":"end"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/refire end failed: " ~ resp);
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue postRedo() {
-    return parseJSON(post("http://localhost:8080/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 // Run an argstring command line through /api/command (the same main-thread
 // bridge the keyboard/UI command path uses). Asserts ok.
 void cmd(string line) {
-    auto resp = post("http://localhost:8080/api/command", line);
+    auto resp = post(testBaseUrl() ~ "/api/command", line);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command '" ~ line ~ "' failed: " ~ resp);
 }
@@ -86,11 +87,11 @@ void drainAndReset() {
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue getHistory() {
-    return parseJSON(get("http://localhost:8080/api/history"));
+    return parseJSON(get(testBaseUrl() ~ "/api/history"));
 }
 
 double[3] vertexAt(int idx) {
@@ -118,14 +119,14 @@ void assertVertex(int idx, double x, double y, double z, string label) {
 
 unittest { // missing action returns error
     resetCube();
-    auto resp = post("http://localhost:8080/api/refire", `{}`);
+    auto resp = post(testBaseUrl() ~ "/api/refire", `{}`);
     assert(parseJSON(resp)["status"].str == "error",
         "expected error for missing action, got: " ~ resp);
 }
 
 unittest { // unknown action returns error
     resetCube();
-    auto resp = post("http://localhost:8080/api/refire", `{"action":"toggle"}`);
+    auto resp = post(testBaseUrl() ~ "/api/refire", `{"action":"toggle"}`);
     assert(parseJSON(resp)["status"].str == "error",
         "expected error for unknown action, got: " ~ resp);
 }
@@ -136,7 +137,7 @@ unittest { // begin then end with nothing in between is a no-op
     refireEnd();
     // Nothing bad should happen; subsequent ops still work normally.
     postSelect("vertices", [0]);
-    auto sel = parseJSON(get("http://localhost:8080/api/selection"));
+    auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(sel["selectedVertices"].array.length == 1);
 }
 

@@ -54,6 +54,7 @@
 //
 // Run via: ./run_test.d topology_pen_version_invalidation
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -61,15 +62,8 @@ import std.format: format;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

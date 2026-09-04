@@ -21,6 +21,7 @@
 //         save again → UVs match the pre-fit values within eps.
 //     8.  No-UV-map error: reset (bare cube, no UV) → uv.fit → expect status:error.
 
+import http_client : testBaseUrl;
 import std.math   : fabs;
 import std.file   : remove, exists, readText;
 import std.format : format;
@@ -46,7 +47,7 @@ void main() {}
 private enum float eps = 1e-4f;
 private bool feq(float a, float b) { return fabs(a - b) < eps; }
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 private JSONValue runCmd(string id, string paramsJson = "") {
     string body_ = paramsJson.length > 0

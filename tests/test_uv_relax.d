@@ -20,6 +20,7 @@
 //     7. No UV map (default cube) → uv.relax → status:error.
 //     8. iter=0 (map present) → uv.relax → status:error.
 
+import http_client : testBaseUrl;
 import std.math   : fabs;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -39,7 +40,7 @@ void main() {}
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-private enum string kBase = "http://localhost:8080";
+alias kBase = testBaseUrl;
 
 private JSONValue runCmd(string id, string paramsJson = "") {
     string body_ = paramsJson.length > 0
@@ -245,7 +246,7 @@ unittest {
 //
 // Center loops: data offsets 4-5 (loop 2), 14-15 (loop 7),
 //                             18-19 (loop 9), 24-25 (loop 12).
-// "localhost:8080" is rewritten per-worker by run_test.d — keep literal.
+// The shared HTTP client resolves the port assigned by run_test.d.
 // ---------------------------------------------------------------------------
 unittest {
     enum string tmpLoad = "/tmp/vibe3d-test-uvrelax-input.v3d";

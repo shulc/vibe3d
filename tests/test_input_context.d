@@ -18,6 +18,7 @@ module test_input_context;
 //      panel's zone. Flattening the three legacy sections into the scoped
 //      table must not have made any of them zone-sensitive.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -40,12 +41,7 @@ enum PROBE_Y = 300;
 enum EVENT_HEADER =
     `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}`;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get("http://localhost:8080" ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post("http://localhost:8080" ~ path, body_));
-}
+
 void runCmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok" || r["status"].str == "success",
@@ -56,7 +52,7 @@ void waitPlayerIdle() {
     import core.thread : Thread;
     import core.time   : dur;
     for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         auto f = "finished" in s;
         if (f is null || f.type != JSONType.FALSE) {
             Thread.sleep(dur!"msecs"(120));

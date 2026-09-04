@@ -16,6 +16,7 @@
 //      ("я выделяю вершину и пытаюсь сделать move, и ничего не
 //      происходит" — visually no change).
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -25,15 +26,8 @@ import core.time   : msecs;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(baseUrl ~ path));
-}
-
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 bool approxEq(double a, double b) { return fabs(a - b) < 1e-4; }
 

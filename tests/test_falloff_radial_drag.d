@@ -17,6 +17,7 @@
 //     center: v0 (at center) moves the most; v6 (opposite corner) moves
 //     the least
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -29,9 +30,9 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // radial falloff: closer-to-center verts move more in a drag
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post("http://localhost:8080/api/select",
+    auto selResp = post(testBaseUrl() ~ "/api/select",
                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
@@ -46,7 +47,7 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
         "tool.pipe.attr falloff type radial\n" ~
         `tool.pipe.attr falloff center "-0.5,-0.5,-0.5"` ~ "\n" ~
         `tool.pipe.attr falloff size "2,2,2"` ~ "\n";
-    auto setResp = post("http://localhost:8080/api/script", script);
+    auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + radial config failed: " ~ cast(string)setResp);
 
@@ -132,13 +133,13 @@ unittest { // Radial-falloff RMB anchor stays at origin plane under panned camer
     import core.thread : Thread;
     import core.time : dur;
 
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 
     // Panned camera: focus.y = 0.6 (discriminating pan on Y). High elevation
     // (1.3 rad ≈ 75°) keeps view forward Y-dominant so the auto workplane
     // normal = Y and focus.y is the out-of-plane discriminator. The /api/camera
     // handler takes azimuth/elevation/distance/focus — the eye key is ignored.
-    post("http://localhost:8080/api/camera",
+    post(testBaseUrl() ~ "/api/camera",
          `{"azimuth":0.4,"elevation":1.3,"distance":3.0,"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
     Thread.sleep(dur!"msecs"(80));
 
@@ -146,13 +147,13 @@ unittest { // Radial-falloff RMB anchor stays at origin plane under panned camer
     string script =
         "tool.set move\n" ~
         "tool.pipe.attr falloff type radial\n";
-    auto setResp = post("http://localhost:8080/api/script", script);
+    auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + radial falloff failed: " ~ cast(string)setResp);
     Thread.sleep(dur!"msecs"(80));
 
     // Fetch camera and build the viewport to compute pixel coordinates.
-    auto camJ = parseJSON(cast(string)get("http://localhost:8080/api/camera"));
+    auto camJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/camera"));
     auto eye   = Vec3(cast(float)camJ["eye"]["x"].floating,
                       cast(float)camJ["eye"]["y"].floating,
                       cast(float)camJ["eye"]["z"].floating);
@@ -182,19 +183,19 @@ unittest { // Radial-falloff RMB anchor stays at origin plane under panned camer
         `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`,
         vpX, vpY, vpW, vpH, px, py, px, py);
 
-    auto playResp = post("http://localhost:8080/api/play-events", rmbLog);
+    auto playResp = post(testBaseUrl() ~ "/api/play-events", rmbLog);
     assert(parseJSON(cast(string)playResp)["status"].str == "success",
         "play-events failed: " ~ cast(string)playResp);
     // Wait for playback to finish.
     foreach (i; 0 .. 60) {
-        auto s = parseJSON(cast(string)get("http://localhost:8080/api/play-events/status"));
+        auto s = parseJSON(cast(string)get(testBaseUrl() ~ "/api/play-events/status"));
         if (s["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(50));
     }
     Thread.sleep(dur!"msecs"(120)); // settle
 
     // Read the falloff center attr back from the pipe.
-    auto pipeJ = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe"));
+    auto pipeJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe"));
     float[3] falloffCenter = [0, 0, 0];
     bool foundFalloff = false;
     foreach (st; pipeJ["stages"].array) {

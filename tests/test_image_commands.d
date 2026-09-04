@@ -24,6 +24,7 @@
 // The image files are written by this process into a scratch directory and
 // read back by the app process by absolute path.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -33,15 +34,12 @@ import std.string : indexOf;
 
 void main() {}
 
-immutable baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP helpers (mirrors tests/test_nonmesh_items.d)
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 JSONValue cmdRaw(string body_) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

@@ -32,6 +32,7 @@
 // so a delta assert on any ordinary bevel cell would sit downstream of a branch
 // it never takes and could not come out differently.
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -40,11 +41,9 @@ import std.math : cos, sin, PI, abs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(BASE ~ path, body_));
-}
+
 JSONValue model()   { return parseJSON(cast(string)get(BASE ~ "/api/model")); }
 JSONValue changes() { return parseJSON(cast(string)get(BASE ~ "/api/changes")); }
 

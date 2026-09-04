@@ -35,6 +35,7 @@
 // what says the plane cut feeds it, and a suite that only ever looked at
 // geometry would not notice the feed going away.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -43,7 +44,7 @@ import std.math   : abs;
 
 void main() {}
 
-enum BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 JSONValue postAt(string path, string body_) {
     return parseJSON(cast(string)post(BASE ~ path, body_));

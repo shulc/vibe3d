@@ -22,6 +22,7 @@
 // the tracker reports true and a plain selection command reports false, in the
 // same run. A field hard-wired to either constant fails one of the two.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -29,7 +30,7 @@ import std.string : indexOf;
 
 void main() {}
 
-string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void resetGrid(int n) {
     auto resp = post(BASE ~ "/api/reset?type=grid&n=" ~ n.to!string, "");

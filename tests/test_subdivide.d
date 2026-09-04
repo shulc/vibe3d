@@ -5,6 +5,7 @@
 //   faces: 6 × 4 = 24
 //   edges: by Euler (V − E + F = 2 for a closed surface) = 48
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -19,17 +20,17 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
     // Subdivide / subdivide_faceted / subpatch_toggle all require
     // Polygons edit mode (guard added with phase-7.6 SYMM work — see
     // commands/mesh/subdivide.d). Reset leaves edit mode at Vertices,
     // so switch explicitly. Tests that exercise the guard itself
     // switch back to vertex / edge mode after this helper.
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 bool[] subpatchFlags() {
@@ -40,7 +41,7 @@ bool[] subpatchFlags() {
 }
 
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
         `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         id ~ " failed: " ~ resp);
@@ -53,7 +54,7 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
@@ -175,9 +176,9 @@ unittest { // subdivide in vertices mode refines the whole cage, ignoring
            // any stale face selection from a prior polygon session.
     resetCube();
     setSelection("polygons", [0]);  // stale selection that should be ignored
-    auto r = post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    auto r = post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
     assert(parseJSON(cast(string)r)["status"].str == "ok");
-    auto resp = post("http://localhost:8080/api/command", "mesh.subdivide");
+    auto resp = post(testBaseUrl() ~ "/api/command", "mesh.subdivide");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "mesh.subdivide should succeed in vertex mode, got " ~ resp);
     auto m = model();
@@ -192,8 +193,8 @@ unittest { // subdivide in vertices mode refines the whole cage, ignoring
 unittest { // subdivide_faceted in edges mode refines the whole cage too.
     resetCube();
     setSelection("polygons", [0]);
-    post("http://localhost:8080/api/command", "select.typeFrom edge");
-    auto resp = post("http://localhost:8080/api/command",
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom edge");
+    auto resp = post(testBaseUrl() ~ "/api/command",
                      "mesh.subdivide_faceted");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "mesh.subdivide_faceted should succeed in edges mode, got " ~ resp);
@@ -209,8 +210,8 @@ unittest { // subpatch_toggle in vertices mode whole-models (parity task 0464):
            // mode). The scoped-vs-whole distinction is covered in test_subpatch.d.
     resetCube();                                 // leaves us in Polygons mode
     setSelection("polygons", [0]);               // stale selection to be ignored
-    post("http://localhost:8080/api/command", "select.typeFrom vertex");
-    auto resp = post("http://localhost:8080/api/command",
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
+    auto resp = post(testBaseUrl() ~ "/api/command",
                      "mesh.subpatch_toggle");
     auto j = parseJSON(cast(string)resp);
     assert(j["status"].str == "ok",
@@ -225,7 +226,7 @@ unittest { // subpatch_toggle in vertices mode whole-models (parity task 0464):
 
 unittest { // subdivide allowed in polygon mode (resetCube already sets it)
     resetCube();
-    auto resp = post("http://localhost:8080/api/command", "mesh.subdivide");
+    auto resp = post(testBaseUrl() ~ "/api/command", "mesh.subdivide");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "mesh.subdivide should succeed in polygon mode, got " ~ resp);
     auto m = model();
@@ -273,7 +274,7 @@ unittest { // faceted subdivide on cube — same topology as CC, but verts stay 
 // ---------------------------------------------------------------------------
 
 JSONValue selection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 // Centroid of face fi from /api/model JSON (avg of its vertex positions).

@@ -35,6 +35,7 @@
 //   8. the WIRE edge on the very same channel still REFUSES, so the tolerance
 //      in 6 is scoped to the file and has not leaked into `layer.attr`.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write, readText;
@@ -44,14 +45,14 @@ import std.math : isClose;
 void main() {}
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
+    post(testBaseUrl() ~ "/api/reset", "");
 }
 
 void runCmd(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    auto resp = post("http://localhost:8080/api/command", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", body);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok", id ~ " failed: " ~ resp);
 }
@@ -60,11 +61,11 @@ string runCmdAllowError(string id, string params = "") {
     string body = params.length > 0
         ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
         : `{"id":"` ~ id ~ `"}`;
-    return cast(string) post("http://localhost:8080/api/command", body);
+    return cast(string) post(testBaseUrl() ~ "/api/command", body);
 }
 
 JSONValue model() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 // Read a JSON number (float or int encoding) as a double for comparison.
@@ -372,14 +373,14 @@ unittest { // 8. the WIRE edge on the same channel still refuses
 
     // Control FIRST, so a refusal below cannot be the route simply being
     // broken: a legal value on the very same channel still lands.
-    auto ok = cast(string) post("http://localhost:8080/api/command",
+    auto ok = cast(string) post(testBaseUrl() ~ "/api/command",
                                 "layer.attr 0 pos.x 1.5");
     assert(parseJSON(ok)["status"].str == "ok",
         "a legal `layer.attr 0 pos.x 1.5` must still apply: " ~ ok);
 
     // And now the refusal. `nope` is the same unreadable token cell 6 feeds
     // the file route; here it must be reported, not absorbed.
-    auto bad = cast(string) post("http://localhost:8080/api/command",
+    auto bad = cast(string) post(testBaseUrl() ~ "/api/command",
                                  "layer.attr 0 pos.x nope");
     auto bj = parseJSON(bad);
     assert(bj["status"].str == "error",

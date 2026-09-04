@@ -168,6 +168,7 @@
 //        that reddens: "the zero-distance gesture produced 0 change-bus
 //        deliveries against the control's 0 — the press was never delivered".
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -179,9 +180,8 @@ import drag_helpers;
 
 void main() {}
 
-// The literal is spelled out because run_test.d rewrites "localhost:8080"
-// per worker for parallel runs — do not build it dynamically.
-enum BASE = "http://localhost:8080";
+// Resolve the per-worker port through the shared HTTP client.
+alias BASE = testBaseUrl;
 
 enum string kFixtureJson = import("fixtures/gesture_zero_delta_undo.json");
 enum string kArmDropFixtureJson =
@@ -206,10 +206,7 @@ enum string kStatus = "open";
 // ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
-JSONValue getJson(string p)  { return parseJSON(cast(string) get(BASE ~ p)); }
-JSONValue postJson(string p, string b) {
-    return parseJSON(cast(string) post(BASE ~ p, b));
-}
+
 
 void settle() { Thread.sleep(250.msecs); }
 

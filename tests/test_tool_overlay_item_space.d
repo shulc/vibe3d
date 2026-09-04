@@ -54,6 +54,7 @@
 // header says which one it picked and why.  The POSITION question — the one
 // this task exists for — is fully separated.
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, PI;
@@ -67,17 +68,13 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera,
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // --------------------------------------------------------------------------
 // HTTP plumbing
 // --------------------------------------------------------------------------
-JSONValue getJson(string path) {
-    return parseJSON(cast(string) get(BASE ~ path));
-}
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
+
+
 void cmd(string argstring) {
     auto r = postJson("/api/command", argstring);
     assert("status" in r && r["status"].str == "ok",

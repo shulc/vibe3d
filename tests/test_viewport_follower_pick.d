@@ -26,6 +26,7 @@
 // expected to pass both before and after the fix — it locks the funnel in
 // place once Stage 1 lands.
 
+import http_client : testBaseUrl;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -38,9 +39,7 @@ import std.format     : format;
 // Helpers (mirrors tests/test_viewport_independence.d)
 // --------------------------------------------------------------------------
 
-// NOTE: keep the literal "http://localhost:8080" — run_test.d isolates
-// parallel workers by textually rewriting "localhost:8080" to the worker's
-// port in a scratch copy of the source.
+// Resolved from the per-worker environment supplied by run_test.d.
 string baseUrl;
 
 string httpGet(string path) {
@@ -306,7 +305,7 @@ bool testPickEquivalence() {
 // --------------------------------------------------------------------------
 
 int main(string[] args) {
-    baseUrl = "http://localhost:8080";
+    baseUrl = testBaseUrl();
 
     writeln("=== test_viewport_follower_pick ===");
     int passed = 0, failed = 0;

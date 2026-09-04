@@ -35,6 +35,7 @@
 // to vary the step while holding everything else in the frame fixed.
 module test_view_grid;
 
+import http_client : testBaseUrl;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -425,10 +426,8 @@ bool testFlowD() {
 // --------------------------------------------------------------------------
 
 int main(string[] args) {
-    // NOTE: keep the literal "http://localhost:8080" — run_test.d isolates
-    // parallel workers by textually rewriting "localhost:8080" to the worker's
-    // port in a scratch copy of the source.
-    baseUrl = "http://localhost:8080";
+    // Resolve the port assigned to this worker by run_test.d.
+    baseUrl = testBaseUrl();
 
     writeln("=== test_view_grid ===");
     int passed = 0, failed = 0;

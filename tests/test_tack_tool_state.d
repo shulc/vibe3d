@@ -5,6 +5,7 @@
 // geometry + camera framing guarantee). See tests/test_tack_tool.d for the
 // commit/undo/parity coverage this file does NOT duplicate.
 
+import http_client : testBaseUrl, postJson;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,7 +17,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 enum int    SRC_FACE = 4;
 enum int    TGT_FACE = 10;
 
@@ -49,9 +50,6 @@ void selectFaces(int[] idx) {
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 
-JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ path, body_));
-}
 
 void cmd(string body_) {
     auto r = postJson("/api/command", body_);

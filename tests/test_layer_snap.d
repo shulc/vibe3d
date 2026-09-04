@@ -28,6 +28,7 @@
 // test is the extra background snap source that snapCursor walks after the
 // active mesh.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -41,18 +42,18 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 // POST /api/command with an argstring body; assert ok.
-void cmd(string argstring, string baseUrl = "http://localhost:8080") {
+void cmd(string argstring, string baseUrl = testBaseUrl()) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", argstring));
     assert(j["status"].str == "ok", "cmd `" ~ argstring ~ "` failed: " ~ j.toString);
 }
 
 // POST /api/command with a JSON body; assert ok.
-void cmdJson(string body_, string baseUrl = "http://localhost:8080") {
+void cmdJson(string body_, string baseUrl = testBaseUrl()) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));
     assert(j["status"].str == "ok", "cmd `" ~ body_ ~ "` failed: " ~ j.toString);
 }
 
-void selectVerts(int[] idx, string baseUrl = "http://localhost:8080") {
+void selectVerts(int[] idx, string baseUrl = testBaseUrl()) {
     string list = "[";
     foreach (i, v; idx) { if (i) list ~= ","; list ~= v.to!string; }
     list ~= "]";
@@ -63,7 +64,7 @@ void selectVerts(int[] idx, string baseUrl = "http://localhost:8080") {
 }
 
 void moveVertexActive(double[3] from, double[3] to,
-                      string baseUrl = "http://localhost:8080") {
+                      string baseUrl = testBaseUrl()) {
     string v3(double[3] p) {
         return "[" ~ p[0].to!string ~ "," ~ p[1].to!string ~ "," ~ p[2].to!string ~ "]";
     }
@@ -80,7 +81,7 @@ void moveVertexActive(double[3] from, double[3] to,
 // Stage 2b: the snap source is the DERIVED `visible && !selected` set, so the
 // state is produced via `layer.select mode:{add,remove}` (the
 // `layer.setBackground` command was retired in Stage 5).
-Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
+Vec3 buildTwoLayers(bool bg, string baseUrl = testBaseUrl()) {
     post(baseUrl ~ "/api/reset", "");
 
     // Layer B — created via layer.add (becomes active + empty), filled with a
@@ -128,7 +129,7 @@ Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
 // IDENTITY of the winner — /api/snap/last is cleared at mouse-up by the tool,
 // so it cannot be read post-drag.
 JSONValue probeSnap(Vec3 worldTarget, int sx, int sy,
-                    string baseUrl = "http://localhost:8080") {
+                    string baseUrl = testBaseUrl()) {
     string v3(Vec3 p) {
         return format("[%.6f,%.6f,%.6f]", p.x, p.y, p.z);
     }
@@ -147,7 +148,7 @@ struct DragOutcome { double[3] pos; JSONValue snap; }
 // it probes /api/snap at the drag-target pixel and returns both the post-drag
 // v0 position and that SnapResult (for source-identity assertions).
 DragOutcome dragV0Toward(Vec3 worldTarget, string snapTypes = "vertex",
-                         string baseUrl = "http://localhost:8080") {
+                         string baseUrl = testBaseUrl()) {
     selectVerts([0]);
 
     string script =

@@ -20,6 +20,7 @@
 //
 // Run via: ./run_test.d pick_item_transform
 
+import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -40,14 +41,12 @@ import drag_helpers : buildDragLog, playAndWait;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(BASE ~ path)); }
-JSONValue postJson(string path, string body_) { return parseJSON(cast(string) post(BASE ~ path, body_)); }
 
 JSONValue cmd(string argstring) {
     auto j = postJson("/api/command", argstring);

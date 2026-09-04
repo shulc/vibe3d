@@ -16,6 +16,7 @@
 // affordance) that cannot be screenshotted headlessly; the gap VALUE + RMB-adjust
 // LOGIC it visualises are covered here by data (tool state + geometry).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -27,7 +28,7 @@ import drag_helpers;   // Vec3, Viewport, fetchCamera, viewportFromCamera, proje
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 
 void cmd(string s) {
     auto resp = cast(string) post(BASE ~ "/api/command", s);

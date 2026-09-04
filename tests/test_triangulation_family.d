@@ -16,6 +16,7 @@
 //   Same result as quadruple for a cube (all tri pairs are coplanar
 //   intra-face pairs; cross-edge tri pairs have different normals).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -30,39 +31,39 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    post("http://localhost:8080/api/reset", "");
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 JSONValue getModel() {
-    return parseJSON(get("http://localhost:8080/api/model"));
+    return parseJSON(get(testBaseUrl() ~ "/api/model"));
 }
 
 JSONValue getSel() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 void runCmd(string id) {
-    auto resp = post("http://localhost:8080/api/command",
+    auto resp = post(testBaseUrl() ~ "/api/command",
                      `{"id":"` ~ id ~ `"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
            id ~ " failed: " ~ resp);
 }
 
 void undoCmd() {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"history.undo"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"history.undo"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
            "undo failed: " ~ resp);
 }
 
 void redoCmd() {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"history.redo"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"history.redo"}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
            "redo failed: " ~ resp);
 }
 
 void setPolyMode() {
-    post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 
 void setSelection(string mode, int[] indices) {
@@ -72,7 +73,7 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
                      `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
            "/api/select failed: " ~ resp);

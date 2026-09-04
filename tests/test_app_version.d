@@ -39,6 +39,7 @@
 // Run from the repo root (the runner's cwd), which is where `./vibe3d`,
 // `dub.json` and `source/` are.
 
+import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.process : execute, environment, Config;
@@ -51,11 +52,8 @@ import std.conv    : to;
 
 void main() {}
 
-string baseUrl = "http://localhost:8080";
+alias baseUrl = testBaseUrl;
 
-JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 /// Run `./vibe3d --version` in an environment where SDL video CANNOT come up.
 ///

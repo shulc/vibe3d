@@ -40,6 +40,7 @@
 //   T9  bare `actr.element` on a plain move tool relocates the pivot and does
 //       NOT open the screen-plane haul.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -52,7 +53,7 @@ import drag_helpers;
 
 void main() {}
 
-enum string BASE = "http://localhost:8080";
+alias BASE = testBaseUrl;
 JSONValue pj(string path, string body_) { return parseJSON(cast(string) post(BASE ~ path, body_)); }
 JSONValue gj(string path)               { return parseJSON(cast(string) get(BASE ~ path)); }
 void settle() { import core.thread : Thread; import core.time : msecs; Thread.sleep(150.msecs); }

@@ -12,6 +12,7 @@
 //   v4=(-0.5,-0.5,+0.5)  v5=(+0.5,-0.5,+0.5)  v6=(+0.5,+0.5,+0.5)  v7=(-0.5,+0.5,+0.5)
 // Face 4 = top face (y = +0.5): verts v3, v2, v6, v7.
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -22,34 +23,34 @@ void main() {}
 // Helpers ------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
 
 void postCommand(string body_) {
-    auto resp = post("http://localhost:8080/api/command", body_);
+    auto resp = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/command failed: " ~ resp);
 }
 
 JSONValue postCommandRaw(string body_) {
-    return parseJSON(post("http://localhost:8080/api/command", body_));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", body_));
 }
 
 void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post("http://localhost:8080/api/select",
+    auto resp = post(testBaseUrl() ~ "/api/select",
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
 }
 
-JSONValue getModel()     { return parseJSON(get("http://localhost:8080/api/model")); }
-JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
-JSONValue postUndo()     { return parseJSON(post("http://localhost:8080/api/undo", "")); }
+JSONValue getModel()     { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
+JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
+JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
 
 bool approxEq(double a, double b, double eps = 1e-5) {
     return abs(a - b) < eps;

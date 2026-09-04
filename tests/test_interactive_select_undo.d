@@ -19,6 +19,7 @@
 // open/close an interactive selection edit session and record one
 // MeshSelectionEdit per drag (coalesced at record time).
 
+import http_client : testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -58,13 +59,13 @@ void clickSelectVertex(uint vid) {
 // tests assert on entry COUNTS. Clear the history after each reset so leftover
 // entries from a prior unittest cannot contaminate the count.
 void clearHistory() {
-    auto resp = post("http://localhost:8080/api/command", `{"id":"history.clear"}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", `{"id":"history.clear"}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "history.clear failed: " ~ resp);
 }
 
 void resetCube() {
-    auto resp = post("http://localhost:8080/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/reset", "");
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
     clearHistory();
@@ -72,11 +73,11 @@ void resetCube() {
 
 void playEvents(string logPath) {
     auto events = cast(const(void)[])read(logPath);
-    auto resp = post("http://localhost:8080/api/play-events", events);
+    auto resp = post(testBaseUrl() ~ "/api/play-events", events);
     assert(parseJSON(resp)["status"].str == "success",
         "play-events failed: " ~ resp);
     for (int i = 0; i < 100; ++i) {
-        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        auto statusJson = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
@@ -91,19 +92,19 @@ void playEvents(string logPath) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post("http://localhost:8080/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
 }
 
 JSONValue postRedo() {
-    return parseJSON(post("http://localhost:8080/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
 }
 
 JSONValue getSelection() {
-    return parseJSON(get("http://localhost:8080/api/selection"));
+    return parseJSON(get(testBaseUrl() ~ "/api/selection"));
 }
 
 JSONValue getHistory() {
-    return parseJSON(get("http://localhost:8080/api/history"));
+    return parseJSON(get(testBaseUrl() ~ "/api/history"));
 }
 
 // Count entries on the undo stack whose internal command name matches.
@@ -123,7 +124,7 @@ JSONValue topSelectionEntry() {
 }
 
 JSONValue translate(double dx) {
-    return parseJSON(post("http://localhost:8080/api/transform",
+    return parseJSON(post(testBaseUrl() ~ "/api/transform",
         `{"kind":"translate","delta":[` ~ dx.to!string ~ `,0,0]}`));
 }
 
@@ -225,7 +226,7 @@ unittest { // select → geometry edit → select ⇒ THREE entries (edit breaks
     // This file is not a distinguishing witness: its assertion counts only
     // selection entries, and both the retired grouped step and strict LIFO
     // leave exactly one such entry on undoStack after this press.
-    auto vBefore = parseJSON(get("http://localhost:8080/api/model"));
+    auto vBefore = parseJSON(get(testBaseUrl() ~ "/api/model"));
     // One undo: reverts sel2.
     assert(postUndo()["status"].str == "ok", "undo (second selection) failed");
     // The remaining stack still has the first selection run (still undoable).
@@ -323,7 +324,7 @@ unittest { // Cross-mode interactive-select undo: MeshSelectionEdit.revert()
 
     // Step 3: switch back to vertex mode — selTypeOrder.front = Vertex now,
     // but the recorded MeshSelectionEdit has beforeMode=Polygons.
-    auto resp = post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    auto resp = post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "select.typeFrom vertex failed");
     auto selVertex = getSelection();
