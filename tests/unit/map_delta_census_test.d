@@ -476,10 +476,17 @@ unittest
           ~ "of the WRONG kind binds on every other term"),
     ];
 
-    // NON-VACUITY FIRST: the table must name at least one file, and the
-    // extractor must find the calls it claims. A table that resolved to zero
-    // calls would pass every row below by never entering the loop.
-    assert(args.length > 0, "the argument table is empty");
+    // POPULATION FLOOR FIRST, and it is an exact count rather than `> 0`:
+    // a table that resolved to zero rows would pass every assertion below by
+    // never entering the loop, and a table that quietly lost ONE row would do
+    // the same for that row alone. Nothing else in this cell can see a
+    // deleted row — the per-row assertions only ever look at rows that are
+    // still there — so this literal is the only guard against a census that
+    // shrinks to fit.
+    assert(args.length == 49, format(
+        "the argument table holds %d row(s), recorded 49. A row that went "
+      ~ "away silently stops being checked; move this number with it and say "
+      ~ "in the commit why the row left.", args.length));
 
     bool[string] recorderSet;
     foreach (ref r; args) recorderSet[r.sym] = true;
@@ -493,7 +500,6 @@ unittest
                 bySymbol[site.symbol ~ "|" ~ recorder] ~= site;
     }
 
-    size_t checked = 0;
     foreach (ref r; args) {
         const key = r.symbol ~ "|" ~ r.sym;
         const calls = bySymbol.get(key, null);
@@ -513,11 +519,16 @@ unittest
           ~ "array handed over. If the change is deliberate, move this row "
           ~ "with it — and check that a witness covers the new behaviour.",
             r.arg, r.symbol, r.sym, a[r.arg], r.want, r.why));
-        ++checked;
     }
-    assert(checked == args.length && scannedFiles >= 200,
-        format("the argument scan checked %d/%d rows over %d source files",
-            checked, args.length, scannedFiles));
+    // NOT a `checked == args.length` tally. That counter was incremented once
+    // per loop iteration and then compared to the length of the thing being
+    // iterated, so it was true whenever the loop ran to the end and false
+    // never — it restated control flow instead of measuring anything. The
+    // row-by-row pin is `calls.length == 1` above; the population pin is the
+    // `args.length == 49` floor before the loop. What is left here is the one
+    // term neither of those covers: that the WALK actually visited the tree.
+    assert(scannedFiles >= 200,
+        format("the argument scan ran over only %d source files", scannedFiles));
 }
 
 unittest // the extractor's OWN probe — the half that is live before L1-a
