@@ -74,7 +74,7 @@ void settle() { Thread.sleep(150.msecs); }
 // tool.set / viewport.view re-stamp the tool's default action-center
 // preset, so a mode set earlier would be clobbered.
 void setupOrtho(string acenMode, string viewPreset) {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/script",  "tool.set move");
     postJson("/api/command", "viewport.view " ~ viewPreset);
     postJson("/api/command", "tool.pipe.attr actionCenter mode " ~ acenMode);

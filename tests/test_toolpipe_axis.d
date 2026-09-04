@@ -32,7 +32,7 @@ float floatAttr(string[string] attrs, string key) {
 }
 
 void resetCube() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/command", "tool.pipe.attr workplane mode auto");
     postJson("/api/command", "tool.pipe.attr axis mode auto");
 }

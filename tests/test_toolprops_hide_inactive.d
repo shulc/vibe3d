@@ -22,7 +22,7 @@ alias baseUrl = testBaseUrl;
 
 
 void resetScene() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
 }
 
 // Retrieve all listAttrs for a stage by its 4-char task code (e.g. "CONS", "ACEN").

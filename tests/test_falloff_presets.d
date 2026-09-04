@@ -47,7 +47,7 @@ JSONValue queryFalloffAttr(string attr) {
 }
 
 void resetCube() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     // Start from a known falloff state.
     cmd("tool.pipe.attr falloff type none");
 }

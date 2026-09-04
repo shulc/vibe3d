@@ -86,7 +86,7 @@ string wp(JSONValue sr) {
 enum double kCubeX = 7.0;
 
 void twoItemSetup() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     cmdJson(`{"id":"imagePlane.add","name":"Ref"}`);
     cmd("layer.attr 0 pos.x " ~ to!string(kCubeX));
     assert(layers().array.length == 2, "cube + plane");

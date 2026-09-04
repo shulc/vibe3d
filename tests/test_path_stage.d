@@ -24,7 +24,17 @@ void cmd(string c) {
 }
 
 void resetScene() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"subdivcube"}`));
+    // The payload used to read `{"primitive":"subdivcube"}`. `primitive` was a
+    // DEAD KEY: the retired `/api/reset` route read its primitive from the
+    // QUERY STRING (`?type=`) and never looked at the body, so this reset has
+    // always produced the DEFAULT CUBE, and so did the other 31 sites that
+    // carried the same key. Renaming it to the key the injector reads makes
+    // the payload honest — and the VALUE is pinned to `cube` on purpose,
+    // because `subdivcube` would newly build a level-7 Catmull-Clark cage
+    // (~98 K faces) for a file whose every cell either replaces the mesh with
+    // `loadMesh` or does not look at it at all. Nothing here reads the
+    // primitive; only `PathStage.reset()` matters.
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
 }
 
 // Load a tiny mesh with known vertex positions via /api/load-mesh.

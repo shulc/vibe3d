@@ -107,7 +107,7 @@ string buildHoverDragLog(
 // ---------------------------------------------------------------------------
 unittest {
     // Reset to cube.
-    auto rr = jpost("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    auto rr = jpost("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     // (reset may return ok or may use the cube primitive path; any 2xx is fine,
     //  just proceed; if cube isn't there we'll fail on geometry assertions.)
 

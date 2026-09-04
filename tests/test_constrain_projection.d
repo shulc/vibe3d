@@ -38,7 +38,7 @@ void cmd(string argstring) {
 }
 
 void resetScene() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
 }
 
 // Install a large flat plane at Y=0 on the CURRENTLY ACTIVE layer by

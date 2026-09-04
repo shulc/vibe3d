@@ -564,8 +564,8 @@ final class CommandHistory {
     // contiguous tail with no foreign entry buried inside.
     //
     // THREAD NOTE: every recorder (interactive commits, navHistory, and the
-    // epoch-marshalled HTTP /api/command, /api/select, /api/toolpipe/eval
-    // handlers) runs on the MAIN thread, so this run state — like the rest of
+    // epoch-marshalled HTTP /api/command, /api/toolpipe/eval handlers) runs on
+    // the MAIN thread, so this run state — like the rest of
     // CommandHistory — needs no locking. A future HTTP-thread-direct recorder
     // would have to marshal to main like every existing path.
     private ulong _currentRunId = 0;

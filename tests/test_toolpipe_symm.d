@@ -32,7 +32,7 @@ string[string] getSymmetryAttrs() {
 }
 
 void resetCube() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", "tool.pipe.attr symmetry offset 0");

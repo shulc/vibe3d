@@ -34,7 +34,7 @@ string[string] getConsAttrs() {
 }
 
 void resetScene() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
 }
 
 // -------------------------------------------------------------------------
@@ -145,7 +145,7 @@ unittest { // /api/reset restores all attrs to defaults
     postJson("/api/command", "tool.pipe.attr constrain offset 3.0");
     postJson("/api/command", "tool.pipe.attr constrain handle false");
     postJson("/api/command", "tool.pipe.attr constrain dblSided true");
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     auto a = getConsAttrs();
     assert(a["enabled"]  == "false", "post-reset enabled: " ~ a["enabled"]);
     assert(a["geometry"] == "point", "post-reset geometry: " ~ a["geometry"]);

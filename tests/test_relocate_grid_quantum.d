@@ -94,7 +94,7 @@ double dnint(double x) { return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5); }
 /// moved. (Not hypothetical: reading the wrong axis under a rig is what left
 /// this term dormant for two rounds.)
 void setup(float fy, float dist) {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/script",  "tool.set move");
     postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
     postJson("/api/camera", format(

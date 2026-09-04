@@ -57,7 +57,7 @@ bool approx(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/command", "tool.pipe.attr snap enabled false");
     // CSV values must be quoted — argstring's bareword grammar
     // doesn't include comma.
@@ -96,7 +96,7 @@ unittest { // SNAP stage present
 // -------------------------------------------------------------------------
 
 unittest { // the shipped defaults
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     auto a = getSnapAttrs();
     assert(a["enabled"] == "false",
         "snapping ships OFF, got " ~ a["enabled"]);

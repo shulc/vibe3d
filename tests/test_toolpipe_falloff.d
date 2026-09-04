@@ -36,7 +36,7 @@ string[string] getFalloffAttrs() {
 }
 
 void resetCube() {
-    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
+    postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/command", "tool.pipe.attr falloff type none");
     // Tools that auto-size on type-switch (e.g. D.1 `xfrm.twist`'s
     // linear-falloff path) leave start/end / center/size at auto-fit
