@@ -134,3 +134,16 @@ drop 0 1 4066 the assert(hub !is null) added by row 8's MacroRecorder constructo
 # Eight of its asserts went with it; the net loss after the two new files is
 # three.
 drop 0 3 4062 the oneStringArg unittest in source/http_providers.d, deleted with the helper when the viewport commands began declaring their own argument; every spelling it pinned is re-pinned over the real commands in tests/unit/command_bindargs_{,parity_}test.d
+
+# TASK 4100 (review round). `commit_seam_census_test.d`'s §2.6 widening block
+# used to name each row's declaring file as a literal path — a `"source/mesh.d"`
+# default on the row struct plus three `"source/mesh_edge_slice.d"` overrides —
+# which is the move-fragility the rest of this task removed everywhere else.
+# The file is now DERIVED from the row's own `publicDecl`, so three asserts go
+# (`exists(meshPath)`, `exists(esPath)`, and `w.declFile in declSrc`, which only
+# ever asked whether the table agreed with itself) and two arrive in their place
+# (`declFilesScanned >= 100`, the walk's non-vacuity floor, and `seen.length == 1`,
+# which reddens both when the declaration is gone and when the signature is
+# realised in two modules). Net -1 assert, and the coverage is strictly wider:
+# the old lookup could not see a deleted declaration at all.
+drop 0 1 4100 commit_seam widening block derives its declaring file from publicDecl instead of naming it as a path; three table-consistency/exists asserts replaced by two tree-facing ones

@@ -3010,19 +3010,6 @@ unittest // Stage I — 13 public imports in, 13 selective imports out, for good
 // ---------------------------------------------------------------------------
 unittest // every §2.6 widening this stage made still has the caller it names
 {
-    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
-    assert(exists(meshPath), "cannot find source/mesh.d at " ~ meshPath);
-    immutable md = stripCommentsAndStrings(readText(meshPath));
-    // TASK 3240 (plan 2910 step 3): three of the rows below no longer declare
-    // in mesh.d. The edge-slice family moved to `source/mesh_edge_slice.d`,
-    // so each row now names its OWN declaring file and this block reads them
-    // all. The rows were retargeted rather than deleted: a widening is a door
-    // held open for a named caller, and the door did not close — it moved.
-    immutable esPath = buildPath(repoRoot, "source", "mesh_edge_slice.d");
-    assert(exists(esPath), "cannot find source/mesh_edge_slice.d at " ~ esPath);
-    immutable es = stripCommentsAndStrings(readText(esPath));
-    immutable string[string] declSrc = ["source/mesh.d":            md,
-                                        "source/mesh_edge_slice.d": es];
     immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
     assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = stripCommentsAndStrings(readText(brPath));
@@ -3067,10 +3054,13 @@ unittest // every §2.6 widening this stage made still has the caller it names
         string   scanNeedle;  // receiver-AGNOSTIC; what the source/** walk counts
         LedgerRow[] callerSymbols; // every non-declarer declaration using scanNeedle
         string   why;
-        // WHERE `publicDecl` MUST LIVE, and which file the caller walk skips
-        // as this row's declarer. Defaults to mesh.d, where every row was
-        // born; task 3240 moved three of them to `source/mesh_edge_slice.d`.
-        string   declFile = "source/mesh.d";
+        // NO `declFile`. Until task 4100's review this struct carried one —
+        // a literal `"source/mesh.d"` default plus three
+        // `"source/mesh_edge_slice.d"` overrides — and it was the last
+        // path-shaped KEY in this file: move a declaration and four literals
+        // have to move with it, which is the fragility the rest of this
+        // census was rekeyed to remove. The declaring file is DERIVED below
+        // from `publicDecl`, so the row names only the symbol it is about.
     }
     static immutable Widening[] kWidenings = [
         Widening("mesh.smoothstep01",
@@ -3125,8 +3115,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "buildLoops(). TASK 3240: the declaration moved to "
                ~ "source/mesh_edge_slice.d with the rest of the edge-slice "
                ~ "family and gained a `ref Mesh` receiver; the widening and "
-               ~ "its caller are otherwise unchanged.",
-                 "source/mesh_edge_slice.d"),
+               ~ "its caller are otherwise unchanged."),
         Widening("Mesh.insertEdgePoint",
                  "private uint insertEdgePoint(",
                  "uint insertEdgePoint(ref Mesh m, uint ei, float t, ref bool[] isCutVert",
@@ -3138,8 +3127,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "every face winding incident on a straddled edge, which is what "
                ~ "makes the cut T-junction-free. cut.d is its only caller "
                ~ "outside the declaring file. TASK 3240: that file is now "
-               ~ "source/mesh_edge_slice.d.",
-                 "source/mesh_edge_slice.d"),
+               ~ "source/mesh_edge_slice.d."),
         Widening("Mesh.rebuildFacesWithChordSplits",
                  "private size_t rebuildFacesWithChordSplits(",
                  "size_t rebuildFacesWithChordSplits(ref Mesh m,",
@@ -3151,8 +3139,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "chord-split face, carrying faceMaterial / the whole faceMarks "
                ~ "word / faceSelectionOrder onto both halves. cut.d is its only "
                ~ "caller outside the declaring file. TASK 3240: that file is "
-               ~ "now source/mesh_edge_slice.d.",
-                 "source/mesh_edge_slice.d"),
+               ~ "now source/mesh_edge_slice.d."),
         // --- Stage E4's two, and BOTH have callers that are still MIXINS ---
         // This is the first pair of rows whose `callerFiles` names a file the
         // conversion has NOT reached. `extrude.d` (Stage H) and `edge_bevel.d`
@@ -3295,12 +3282,84 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "a caller it cannot see."),
     ];
 
+    // -----------------------------------------------------------------------
+    // WHICH FILE DECLARES EACH ROW — DERIVED, NOT SPELLED (task 4100 review).
+    //
+    // The row's key is its SYMBOL. The file is then a fact about the tree, so
+    // it is read off the tree: one walk over `source/**`, and the declaring
+    // file is the one whose code view contains this row's own `publicDecl`.
+    // Task 3240 had to edit four literals to move three declarations out of
+    // mesh.d; the same move now costs nothing here.
+    //
+    // THE DERIVATION IS ITSELF A CHECK, and a stronger one than the table
+    // lookup it replaces. `seen.length == 1` reddens in BOTH directions that
+    // matter: zero means the declaration this row is about is gone or was
+    // respelled (the old `declFile in declSrc` could not see that — it only
+    // asked whether the TABLE was self-consistent), and two means the
+    // signature is realised in two modules, so "the declaring file" is not a
+    // well-defined thing to exclude from the caller walk and the row would
+    // have been quietly measuring one of them.
+    //
+    // WHY `publicDecl` SURVIVES A RE-PRIVATISATION, which is what makes it
+    // usable as the locator here: the public spelling is a SUBSTRING of the
+    // private one (`private float smoothstep01(float t)` contains
+    // `float smoothstep01(float t)`), a property this block already relies on
+    // and states at the visibility term below. So re-privatising a name does
+    // not hide it from the derivation — it reddens the visibility term, which
+    // is the row that should speak.
+    // -----------------------------------------------------------------------
+    string[string]   declFileOf;
+    string[string]   declSrcOf;
+    string[][string] declSeenIn;
+    size_t declFilesScanned;
+    {
+        import std.array : join;
+        import std.file : dirEntries, SpanMode;
+        import std.path : relativePath;
+        import std.string : replace;
+
+        foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+            immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
+            ++declFilesScanned;
+            immutable src = stripCommentsAndStrings(readText(e.name));
+            foreach (w; kWidenings)
+                if (countOccurrences(src, w.publicDecl) >= 1) {
+                    declSeenIn[w.name] ~= rel;
+                    declFileOf[w.name]  = rel;
+                    declSrcOf[w.name]   = src;
+                }
+        }
+    }
+    // Non-vacuity floor for the DERIVATION walk, before any row leans on it:
+    // a mis-rooted walk finds no declarations and every row below would then
+    // redden about a missing declaration rather than about a missing walk.
+    assert(declFilesScanned >= 100,
+        format("the §2.6 declaration walk visited only %d .d file(s) under "
+             ~ "source/ — the tree has well over 100, so the walk is "
+             ~ "mis-rooted and every row's declaring file is unknown.",
+               declFilesScanned));
+
     foreach (w; kWidenings) {
-        assert(w.declFile in declSrc,
-            format("row `%s` names declaring file `%s`, which this block does "
-                 ~ "not read — add it to `declSrc` above (task 3240).",
-                   w.name, w.declFile));
-        immutable string dsrc = declSrc[w.declFile];
+        import std.array : join;
+        const seen = declSeenIn.get(w.name, []);
+        assert(seen.length == 1,
+            format("row `%s` must be declared in exactly ONE file under "
+                 ~ "source/; the walk found its spelling `%s` in %d (%s).\n"
+                 ~ "  * ZERO: the declaration is gone or its signature "
+                 ~ "changed. Update `publicDecl` and say why, or — if the "
+                 ~ "name really went away — the widening held a door open "
+                 ~ "for nobody and the row goes with it (plan §2.6).\n"
+                 ~ "  * TWO OR MORE: the signature is realised in two "
+                 ~ "modules, so `the declaring file` is not one file. The "
+                 ~ "caller walk below excludes it, and with two candidates it "
+                 ~ "would be excluding whichever the walk saw last.",
+                   w.name, w.publicDecl, seen.length,
+                   seen.length ? seen.join(", ") : "none"));
+    }
+
+    foreach (w; kWidenings) {
+        immutable string declFile = declFileOf[w.name];
+        immutable string dsrc     = declSrcOf[w.name];
         assert(countOccurrences(dsrc, w.privateDecl) == 0,
             format("`%s` is `private` again in source/mesh.d. It is %s Task 1903 "
                  ~ "widened it — in the track-1 stage that converted its caller, "
@@ -3333,7 +3392,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                      ~ "`%s` in %s. A term that finds nothing reports nothing, "
                      ~ "which is the shape of the defect it was added to close "
                      ~ "— fix the scanner in tests/unit/decl_needle.d, do not "
-                     ~ "drop the row.", bare, w.declFile));
+                     ~ "drop the row.", bare, declFile));
             foreach (ch; chains)
                 assert(!narrowsVisibility(ch),
                     format("`%s` is declared in %s with the attribute chain "
@@ -3342,14 +3401,14 @@ unittest // every §2.6 widening this stage made still has the caller it names
                          ~ "`source/mesh_ops/`: a mixin body is instantiated "
                          ~ "in mesh.d's scope and sees a private name for "
                          ~ "free, a free function does not.",
-                           bare, w.declFile, ch, w.why));
+                           bare, declFile, ch, w.why));
         }
         assert(countOccurrences(dsrc, w.publicDecl) == 1,
             format("%s no longer declares `%s` as `%s` — count %d, "
                  ~ "expected 1. If the signature changed, update this row and "
                  ~ "say why; if the name is gone, bridge.d's call is gone too "
                  ~ "and the widening should be reverted with it (task 1903 §2.6).",
-                   w.declFile, w.name, w.publicDecl,
+                   declFile, w.name, w.publicDecl,
                    countOccurrences(dsrc, w.publicDecl)));
         // Look the ops file up BEFORE indexing: a row naming a file this block
         // did not read would otherwise die on a RangeError with no row name in
@@ -3371,8 +3430,15 @@ unittest // every §2.6 widening this stage made still has the caller it names
     // --- The other side: WHO ELSE calls it (review MAJOR-2) ----------------
     // One walk over `source/**`, comment- and string-stripped, collecting for
     // each row the set of files that contain its receiver-agnostic needle.
-    // `source/mesh.d` is skipped: it declares the name, and its own calls are
-    // not the question §2.6 asks.
+    // Each row's OWN declaring file — derived above, never spelled — is
+    // skipped for that row: the declarer's internal calls are not the
+    // question §2.6 asks. There is no longer a blanket `source/mesh.d` skip
+    // on top of that. It was redundant for the eight rows mesh.d declares
+    // (their per-row skip already covers it) and WRONG in principle for the
+    // three task 3240 moved out, where mesh.d is an ordinary third-party
+    // module whose calls the row is entitled to hear about; it survived only
+    // because mesh.d's remaining mentions of those three names are all in
+    // COMMENTS, which this walk strips before it looks.
     LedgerHit[][string] callersOf;
     size_t filesScanned = 0;
     {
@@ -3383,17 +3449,16 @@ unittest // every §2.6 widening this stage made still has the caller it names
         immutable srcRoot = buildPath(repoRoot, "source");
         foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
-            if (rel == "source/mesh.d") continue;
             ++filesScanned;
             immutable src = stripCommentsAndStrings(readText(e.name));
             foreach (w; kWidenings)
                 // Skip the row's OWN declaring file: its internal calls are
-                // not what §2.6 asks about. mesh.d is skipped above for every
-                // row; this is the same rule for the three rows task 3240
-                // moved to `source/mesh_edge_slice.d`, whose `edgeIndexOf`
-                // wrapper and `edgeSliceEx`/`splitFaceByVertices` bodies call
-                // two of the three among themselves.
-                if (rel != w.declFile)
+                // not what §2.6 asks about. For the three rows task 3240
+                // moved to `source/mesh_edge_slice.d` that is that file,
+                // whose `edgeIndexOf` wrapper and
+                // `edgeSliceEx`/`splitFaceByVertices` bodies call two of the
+                // three among themselves.
+                if (rel != declFileOf[w.name])
                     callersOf[w.name] ~= symbolTokenHits(src, rel, w.scanNeedle);
         }
     }
@@ -3404,7 +3469,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
     // walk, which is the wrong thing to go read.
     assert(filesScanned >= 100,
         format("the §2.6 caller walk visited only %d .d file(s) under "
-             ~ "source/ (excluding mesh.d) — the tree has well over 100. The "
+             ~ "source/ — the tree has well over 100. The "
              ~ "walk is mis-rooted or the glob is wrong; the caller-set "
              ~ "assertions below would be measuring nothing.", filesScanned));
 
