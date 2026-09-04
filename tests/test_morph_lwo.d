@@ -11,6 +11,7 @@
 // mis-sized emission is caught.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -28,7 +29,7 @@ void runCmd(string id, string paramsJson) {
     assert(j["status"].str == "ok", id ~ " failed: " ~ j.toString);
 }
 void resetCube() {
-    auto j = parseJSON(cast(string) post(kBase ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string) post(kBase ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
 }
 bool approxEq(double a, double b, double eps = 1e-5) { return fabs(a - b) < eps; }

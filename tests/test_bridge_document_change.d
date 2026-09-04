@@ -140,7 +140,7 @@ JSONValue armBridgeHaul() {
     import core.thread : Thread;
     import core.time   : dur;
 
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
     r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
@@ -179,7 +179,7 @@ JSONValue armBridgeHaul() {
 /// Two caps are 8 vertices / 2 FACES, so the count term separates them from
 /// the cube the reset installs.
 void loadCapsStand() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
     r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
@@ -259,7 +259,7 @@ unittest { // Bridge: a reset TO A PRIMITIVE under an armed haul
     // `*mesh` IN PLACE and only then fires `onResetTool()` → `setActiveTool
     // (null)` → `deactivate()`. So no engaged tool is left standing behind an
     // assert raised after this line.
-    auto r = postJson("/api/reset?type=cube", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "reset(cube) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
 
@@ -296,7 +296,7 @@ unittest { // Radial Sweep: a reset TO A PRIMITIVE under an engaged session
 
     armRadialSweep();
 
-    auto r = postJson("/api/reset?type=cube", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "reset(cube) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
 
@@ -325,7 +325,7 @@ unittest { // Magnet: a reset TO A PRIMITIVE with the haul still under way
     bool moved;
     armOpenMagnetHaul(hx, hy, vpX, vpY, vpW, vpH, moved);
 
-    auto r = postJson("/api/reset?type=cube", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "reset(cube) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
     releaseButton(vpX, vpY, vpW, vpH, hx + 60, hy);
@@ -361,7 +361,7 @@ unittest { // Bridge: the reported repro — reset TO EMPTY under an armed haul
     // the deactivate it triggered, so the failure of this cell is the NEXT
     // read timing out rather than an assertion — which is exactly why the
     // cube cells run first.
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
 
@@ -388,7 +388,7 @@ unittest { // Radial Sweep: reset TO EMPTY under an engaged session
 
     armRadialSweep();
 
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
 
@@ -413,7 +413,7 @@ unittest { // Magnet: reset TO EMPTY with the haul still under way
     bool moved;
     armOpenMagnetHaul(hx, hy, vpX, vpY, vpW, vpH, moved);
 
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));
     releaseButton(vpX, vpY, vpW, vpH, hx + 60, hy);

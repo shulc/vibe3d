@@ -96,7 +96,7 @@ unittest {
     ];
 
     // 1. Fresh default cube, empty history stack.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     assert(undoLen() == 0, "history.clear did not empty the undo stack");
 

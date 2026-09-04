@@ -79,7 +79,7 @@ void markSubpatch(int[] faces) {
 }
 
 unittest { // B3: subpatch bit survives deleting an adjacent face
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(faceCount() == 6, "fresh cube has 6 faces");
 
     // Mark faces 0 and 2 subpatch; leave 1,3,4,5 plain.
@@ -109,7 +109,7 @@ unittest { // B3: subpatch bit survives deleting an adjacent face
 }
 
 unittest { // B4: delete->undo restores BOTH Select and Subpatch, idempotently
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(faceCount() == 6);
 
     // Mark faces 1 and 4 subpatch, then leave faces 0 and 5 SELECTED. This

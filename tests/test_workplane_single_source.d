@@ -28,6 +28,7 @@
 // unittests in — see test_acen_auto_relocate.d for the same convention).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.math    : PI, cos, sin, sqrt, fabs;
 import std.json;
 import std.format  : format;
@@ -189,7 +190,7 @@ Vec3 rotatedWpToWorld(Vec3 local) {
 }
 
 void resetRotatedWorkplaneBox(double azOffset, double elSign) {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
 
@@ -277,7 +278,7 @@ Vec3 autoToWorld(AutoBP bp, Vec3 local) {
 }
 
 unittest { // D: auto mover center-drag also stays on the camera-facing plane
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
     auto cam = postJson("/api/camera",

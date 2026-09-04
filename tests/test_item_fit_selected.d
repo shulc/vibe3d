@@ -72,6 +72,7 @@
 //          geometry — focus.x is 5.0000, want 0.0000".
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -99,7 +100,7 @@ private Cam cam() {
 /// Two unit cubes, layer 0 pushed to x = +10, current selection type Item,
 /// nothing selected. The OFFSET is the whole discriminator — see the header.
 private void rigTwoCubes() {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd("layer.add");
     cmd("prim.cube");

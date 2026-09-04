@@ -24,7 +24,7 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // lasso encloses v6 only — only v6 moves under move drag
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",

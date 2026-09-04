@@ -1,5 +1,7 @@
 module test_numpad_view;
 
+
+import http_command_helpers : commandBody;
 // Task 0215 — numpad view shortcuts.
 //
 // Numpad 1/2/3 switch the hovered (else active) viewport cell's view,
@@ -104,7 +106,7 @@ void assertCamera(string wantPreset, string wantProj, string ctx) {
 
 unittest { // step-by-step toggle sequence + selection preserved throughout
     waitPlayerIdle();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
 
     // Baseline: perspective, no toggle history yet.
@@ -160,7 +162,7 @@ unittest { // step-by-step toggle sequence + selection preserved throughout
 
 unittest { // end-to-end: real router replays the static fixture log deterministically
     waitPlayerIdle();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
     assertCamera("Perspective", "Perspective", "initial (fixture test)");
 

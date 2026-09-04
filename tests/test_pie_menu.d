@@ -1,5 +1,7 @@
 module test_pie_menu;
 
+
+import http_command_helpers : commandBody;
 // Task 1800 — the pie (radial) menu, driven end to end through the real SDL
 // event router (`/api/play-events`), never through a shortcut of its own.
 //
@@ -160,7 +162,7 @@ size_t selectedFaceCount() {
 
 void resetScene() {
     waitPlayerIdle();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
     runCmd("viewport.view Perspective");
     runCmd("select.typeFrom polygon");

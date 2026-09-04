@@ -127,7 +127,7 @@ double frameDelta(Frame a, Frame b) {
 
 unittest {
     // ---- scene: level-2 Catmull-Clark cube, upper-region face patch ----
-    postJson("/api/reset?type=subdivcube&levels=2", "");
+    postJson("/api/command", commandBody("scene.reset", `{"type":"subdivcube","levels":2}`));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
 
     auto model = getJson("/api/model");

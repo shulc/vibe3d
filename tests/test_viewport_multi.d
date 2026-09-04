@@ -1,4 +1,5 @@
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -20,7 +21,7 @@ void assertCameraJson(JSONValue j, string ctx) {
 
 unittest {
     // Reset to clean state.
-    auto resetResp = postJson("/api/reset", "{}");
+    auto resetResp = postJson("/api/command", commandBody("scene.reset", "{}"));
     assert(resetResp["status"].str == "ok", "reset failed");
 
     // /api/camera with no param returns the active cell's camera.

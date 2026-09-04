@@ -22,6 +22,7 @@
 //     parse uvMaps, assert u' = 1−u → /api/undo → file.save → assert restored
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.math   : fabs, cos, sin, PI;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -519,7 +520,7 @@ unittest {
     write(tmpLoad, v3d);
 
     // --- reset + load ---
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ tmpLoad ~ `"}`);
 
     // --- apply flip-U about unit ---
@@ -575,7 +576,7 @@ unittest {
 // HTTP: no-op — default cube (no UV map) → uv.flip returns status:error.
 // ---------------------------------------------------------------------------
 unittest {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(runCmdRaw(`{"id":"uv.flip"}`));
     assert(resp["status"].str == "error",
            "uv.flip on a mesh without a UV map must return status:error");

@@ -53,6 +53,7 @@
 // poisoning case ends with `/api/reset`, or the worker's document keeps the
 // infinite geometry and `io/doc_state.d` keeps remembering the temp path.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv     : to;
@@ -88,7 +89,7 @@ private JSONValue postCmd(string body_) {
 }
 
 private void reset() {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
 }
 
 /// Drive `prim.cube` with an out-of-float-range size, as JSON params. Since

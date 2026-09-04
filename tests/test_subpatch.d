@@ -14,7 +14,7 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // Put us in Polygons mode so the tests below exercise the
     // selection-scoped path (subpatch scope is mode-aware: a face selection
     // only counts while the current selection type is Polygons).

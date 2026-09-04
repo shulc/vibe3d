@@ -53,6 +53,7 @@
 // read is red rather than quietly agreeable.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort, canFind;
@@ -141,7 +142,7 @@ string writeBmp(string name, int w, int h) {
 
 /// Two mesh layers, nothing else. Layer 0 == "mesh A", layer 1 == "mesh B".
 void twoMeshRig() {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.add"}`);
     auto st = docState();

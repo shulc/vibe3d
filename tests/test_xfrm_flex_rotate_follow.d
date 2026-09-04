@@ -188,7 +188,7 @@ RotResult driveViewRingRotate(Cam cam) {
 
 unittest {
     // ================= FLEX (axis.mode=select) — siblings FOLLOW =============
-    postJson("/api/reset?type=subdivcube&levels=2", "");
+    postJson("/api/command", commandBody("scene.reset", `{"type":"subdivcube","levels":2}`));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
     selectUpperRegion();
 
@@ -217,7 +217,7 @@ unittest {
     // Same scene + selection + drag mechanics; flip ONLY the action-center /
     // axis to auto (axisTracksSelection() == false). The single boolean is the
     // sole discriminator — no per-mode branch in the gizmo.
-    postJson("/api/reset?type=subdivcube&levels=2", "");
+    postJson("/api/command", commandBody("scene.reset", `{"type":"subdivcube","levels":2}`));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
     selectUpperRegion();
 

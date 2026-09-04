@@ -100,7 +100,7 @@ string cellHash() {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
     auto lm = postJson("/api/command", commandBody("scene.loadMesh", RIG));
     assert(lm["status"].str == "ok" || lm["status"].str == "success",

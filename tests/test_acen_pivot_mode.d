@@ -26,7 +26,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetCube() {
-    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
     cmd(`{"id":"history.clear"}`);
 }

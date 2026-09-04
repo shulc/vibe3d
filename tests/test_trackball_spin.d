@@ -20,6 +20,7 @@
 // different camera, it is a camera that keeps changing.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -40,7 +41,7 @@ JSONValue cmd(string argstring) {
     return j;
 }
 
-void resetApp() { post(baseUrl ~ "/api/reset", ""); }
+void resetApp() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
 void play(string log) {
     auto r = parseJSON(cast(string) post(baseUrl ~ "/api/play-events", log));

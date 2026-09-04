@@ -57,7 +57,7 @@ int findVert(double[3][] verts, double x, double y, double z) {
 // pre-displaced within the same plane, and select it. Returns the 4
 // vertex indices in a fixed (test-local, arbitrary) order.
 int[4] buildAndSelectLoop() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -179,7 +179,7 @@ unittest { // N-Sided(4) uses the SAME center + radius as Circle mode for
 }
 
 unittest { // undo restores — no selection (whole-mesh fallback).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.radial_align");
     cmd("history.undo");
     auto verts = dumpVerts();

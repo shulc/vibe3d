@@ -17,6 +17,7 @@
 //   • the mode names round-trip through getAttrs
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -57,7 +58,7 @@ unittest { // every actr.<mode> preset flips ACEN + AXIS together
 
     // Reset once so every case starts from a clean toolpipe (each
     // preset is independent; the loop just walks them in order).
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     foreach (c; cases) {
         postScript("actr." ~ c.preset);
@@ -73,7 +74,7 @@ unittest { // every actr.<mode> preset flips ACEN + AXIS together
 }
 
 unittest { // explicit sanity: switching back through actr.auto leaves state correct
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // Walk to a non-default mode then back — confirms the preset overwrites
     // prior state and isn't sticky on either stage.
     postScript("actr.local");

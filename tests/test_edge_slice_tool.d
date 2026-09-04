@@ -182,7 +182,7 @@ bool hasNewVertNear(JSONValue m, double[3] p, size_t fromIdx, double eps = 1e-5)
 }
 
 void resetCube() {
-    auto r = postCmd("/api/reset", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed");
     auto s = postCmd("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select (edges) failed");

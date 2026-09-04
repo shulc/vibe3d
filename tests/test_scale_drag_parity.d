@@ -60,7 +60,7 @@ void lockCamera() {
 
 // default cube → select all 8 verts → xfrm.transform with ONLY the S flag.
 void setupScene() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     lockCamera();
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);

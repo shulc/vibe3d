@@ -150,7 +150,7 @@ unittest {
            ~ "fixture ever stops declaring it, drop the sequence rather than leaving a "
            ~ "protocol nothing enforces");
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
 
     // Both directions, twice each. `component` must read the handle VISIBLE

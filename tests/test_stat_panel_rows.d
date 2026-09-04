@@ -13,6 +13,7 @@
 // that has nothing to do with what it checks.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -50,7 +51,7 @@ void cmd(string line) {
 /// with it.
 void settle() { Thread.sleep(400.msecs); }
 
-void resetApp() { httpPost("/api/reset", "{}"); settle(); }
+void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 
 /// Open the panel and expand exactly what a test asserts on.
 void openPanelWith(string[] targets) {

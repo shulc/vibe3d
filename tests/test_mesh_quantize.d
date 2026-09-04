@@ -31,7 +31,7 @@ bool approxEq(double a, double b, double eps = 1e-5) {
 }
 
 unittest { // step=0.5: cube corners already on grid → unchanged
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.quantize X:0.5 Y:0.5 Z:0.5");
     auto verts = getJson("/api/model")["vertices"].array;
     foreach (v; verts) {
@@ -45,7 +45,7 @@ unittest { // step=0.5: cube corners already on grid → unchanged
 }
 
 unittest { // step=0.3: ±0.5 → ±0.6 (round-half-away-from-zero, then ×0.3)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
     auto verts = getJson("/api/model")["vertices"].array;
     foreach (v; verts) {
@@ -64,7 +64,7 @@ unittest { // step=0.3: ±0.5 → ±0.6 (round-half-away-from-zero, then ×0.3)
 
 unittest { // step=0.4: 0.5 → 0.4 (nearest 0.4 multiple is 0.4 vs 0.8 → 0.4 closer)
     // 0.5 / 0.4 = 1.25 → floor(1.25 + 0.5) = 1 → 1 * 0.4 = 0.4. Yes.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.quantize X:0.4 Y:0.4 Z:0.4");
     auto verts = getJson("/api/model")["vertices"].array;
     foreach (v; verts) {
@@ -78,7 +78,7 @@ unittest { // step=0.4: 0.5 → 0.4 (nearest 0.4 multiple is 0.4 vs 0.8 → 0.4 
 }
 
 unittest { // empty selection ⇒ whole mesh quantized
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     // No selectedFaces — the command should still touch every vert.
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
@@ -93,7 +93,7 @@ unittest { // empty selection ⇒ whole mesh quantized
 }
 
 unittest { // selection-aware in vertices mode: only selected verts move
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     // Select vert 0 only — that's at (-0.5, -0.5, -0.5).
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
@@ -115,7 +115,7 @@ unittest { // selection-aware in vertices mode: only selected verts move
 }
 
 unittest { // undo restores pre-quantize positions
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
     cmd("history.undo");
     auto verts = getJson("/api/model")["vertices"].array;
@@ -132,7 +132,7 @@ unittest { // undo restores pre-quantize positions
 unittest { // PR-2 of the convolve design doc: per-axis
            // anisotropic step. X stays on a 0.5 grid (already-on),
            // Y snaps to 0.3 (±0.5 → ±0.6), Z stays on 0.5.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.quantize X:0.5 Y:0.3 Z:0.5");
     auto verts = getJson("/api/model")["vertices"].array;
     foreach (v; verts) {
@@ -149,7 +149,7 @@ unittest { // PR-2 of the convolve design doc: per-axis
 unittest {
     // Linear falloff blend — top corners snap to the 0.3 grid (weight
     // 1), bottom corners stay at ±0.5 (weight 0).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto resp = postJson("/api/command",
         `{"id":"mesh.quantize","params":{"X":0.3,"Y":0.3,"Z":0.3,`
         ~ `"falloff":{"type":"linear","shape":"linear",`
@@ -193,7 +193,7 @@ unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
            // return FALSE, not a true-with-empty-touchedIdx no-op), so the
            // only reachable route is the EMPTY OPERAND — nothing selected AND
            // every vertex hidden.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto selAll = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selAll["status"].str == "ok", selAll.toString);

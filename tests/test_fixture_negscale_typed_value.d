@@ -68,6 +68,7 @@
 // addresses behind the law live in the private capture card.
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, isFinite;
@@ -86,7 +87,7 @@ private void cmd(string s, string ctx) {
 }
 
 private void reset(string ctx) {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", format("%s: reset failed: %s", ctx, r.toString));
 }
 

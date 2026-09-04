@@ -142,7 +142,7 @@ JSONValue snapAt(double[3] world) {
 /// reset → a camera that looks at the cube's +X+Y+Z corner → snap configured
 /// at the shipped ranges → ONE probe that BUILDS the candidate grid.
 void armAndBuildGrid() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto camR = postJson("/api/camera",
         `{"azimuth":0.4,"elevation":0.6,"distance":6.0,`
       ~ `"focus":{"x":0,"y":0,"z":0}}`);

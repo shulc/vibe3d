@@ -22,6 +22,7 @@
 // state, so SDL_GetModState() reads Ctrl inside the tool handler).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs, sqrt;
@@ -46,7 +47,7 @@ void cmd(string s) {
 }
 
 void resetCube() {
-    auto resp = cast(string) post(BASE ~ "/api/reset", "");
+    auto resp = cast(string) post(BASE ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

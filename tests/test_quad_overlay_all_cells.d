@@ -106,7 +106,7 @@ void script(string s) {
 void settle() { Thread.sleep(400.msecs); }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     settle();
 }
 

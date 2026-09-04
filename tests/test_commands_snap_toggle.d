@@ -7,6 +7,7 @@
 // Both read back from /api/toolpipe SNAP stage's listAttrs.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -41,7 +42,7 @@ bool typeOn(string types, string name) {
 }
 
 unittest { // snap.toggle: false → true → false
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto a0 = snapAttrs();
     bool start = a0["enabled"] == "true";
 
@@ -59,7 +60,7 @@ unittest { // snap.toggle: false → true → false
 }
 
 unittest { // snap.toggleType: flips a single SnapType bit on/off
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Pin to a known starting set so the test isn't sensitive to
     // whichever defaults the engine ships with today.
     runCmd("tool.pipe.attr snap types vertex");

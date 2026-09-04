@@ -24,6 +24,7 @@
 // Run via: ./run_test.d topology_pen_constrain_lock
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 
@@ -51,7 +52,7 @@ bool constrainEnabled() {
 }
 
 void resetScene() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // baseline: transient composition still reverts on tool switch

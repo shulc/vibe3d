@@ -81,7 +81,7 @@ unittest { // a bare horizontal haul bridges the two caps, and the drop records 
     import core.thread : Thread;
     import core.time   : dur;
 
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
 
     r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));

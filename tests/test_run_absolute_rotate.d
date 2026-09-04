@@ -197,12 +197,12 @@ void establishCubeBaseline() {
         // to a stale state (the -j1 cross-test-bleed flake). history.clear is a
         // SideEffect command: it wipes BOTH stacks WITHOUT touching the mesh, so
         // the cube stays pristine AND undo=0.
-        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", commandBody("scene.reset"));                 // cube
         postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }

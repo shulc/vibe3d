@@ -6,6 +6,7 @@
 // against an analytical reference.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -36,7 +37,7 @@ bool approxEq(double a, double b, double eps = 1e-4) {
 }
 
 unittest { // angle=0 ⇒ no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.bend on");
     cmd("tool.attr xfrm.bend angle 0");
@@ -54,7 +55,7 @@ unittest { // bend cube around X-spine: each vert at signed X distance
            // Cube: X spans [-0.5, +0.5], so half-extent = 0.5. Bend
            // angle 90° → verts at x=+0.5 rotate +90° around Z; verts at
            // x=-0.5 rotate -90°. Pivot = origin (cube centroid).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     auto before = dumpVerts();
 
@@ -92,7 +93,7 @@ unittest { // bend cube around X-spine: each vert at signed X distance
 unittest { // spine = +Y direction → bend axis = Y × Y = degenerate;
            // falls back to Y × Z = +X. Verts above the centroid rotate
            // +angle around X; verts below rotate -angle around X.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     auto before = dumpVerts();
 

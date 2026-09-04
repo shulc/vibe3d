@@ -165,7 +165,7 @@ void playAndWait(string logPath) {
 
 // mesh.move_vertex → Position published, no Geometry, no Marks.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());   // drain the reset's own flush
 
     cmd("mesh.move_vertex from:{0.5,0.5,0.5} to:{0.75,0.6,0.55}");
@@ -184,7 +184,7 @@ unittest {
 
 // mesh.subdivide → Points|Polygons (Geometry); undo + redo re-publish the class.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     auto before = settleAfter(readChanges());
 
@@ -212,10 +212,10 @@ unittest {
 
 // /api/reset → All bits (Position|Points|Polygons|Marks|Material).
 unittest {
-    post(baseUrl ~ "/api/reset", "");          // get into a known state
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));          // get into a known state
     auto before = settleAfter(readChanges());
 
-    post(baseUrl ~ "/api/reset", "");          // the reset under test
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));          // the reset under test
     auto after = settleAfter(before);
 
     assert((after.lastDeliveryFlags & ALLBITS) == ALLBITS,
@@ -233,7 +233,7 @@ unittest {
 unittest {
     // Reproduce the capture's scene: empty → segments-2 cube → asymmetric 3-poly
     // selection → move tool → ACEN.Local (matches the captured drag's pipe state).
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");
@@ -265,7 +265,7 @@ unittest {
 // face subpatch → preview active, then a recorded move drag whose mouse-up fires
 // the redirect) and assert the bus contract holds (missedPublishers stays 0).
 unittest {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");
@@ -330,7 +330,7 @@ void selectVia(string mode, int[] indices) {
 // Vertex — the recorded log is a points-mode click drag that touches no edge or
 // face selection).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());
 
     playAndWait("tests/events/selection_points.log");
@@ -348,7 +348,7 @@ unittest {
 // /api/select polygons → Face domain; /api/select edges → Edge domain. Each
 // mode routes through its own setXSelectedFrom, which publishes only its bit.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());
 
     selectVia("polygons", [0, 1, 2]);
@@ -368,7 +368,7 @@ unittest {
 // correct domain. Edge mode + a single seed edge → select.loop adds the rest of
 // the loop → the Edge domain ticks.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     cmd("select.typeFrom edge");
     selectVia("edges", [0]);                // seed one edge
@@ -383,7 +383,7 @@ unittest {
 // Undo of an interactive selection (UI-undo class: MeshSelectionEdit) re-applies
 // the prior selection through setXSelectedFrom → the domain is re-published.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("history.clear");
 
     // First interactive selection lands a MeshSelectionEdit on the undo stack.
@@ -407,7 +407,7 @@ unittest {
 // So the refined contract is: type switches that FLIP the current type tick
 // currentTypeChanged, while mesh + selection counters stay frozen.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Seed a selection so there IS something whose "mode" could be (wrongly)
     // construed as changing — then prove the mode switch alone publishes only
     // the current-type signal.
@@ -447,7 +447,7 @@ unittest {
 // so it ticks NOTHING — proves the same-type no-op contract (keys 1/2/3 pressed
 // for the mode you are already in do not drop the tool or note a change).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");            // make polygon current
     auto before = settleAfter(readChanges());
 
@@ -470,7 +470,7 @@ unittest {
 // both bits carried in ONE delivery (coalesce: the command emits Added, the
 // switch hook emits ActiveChanged in the same frame).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());
 
     cmd("layer.add name:B");
@@ -490,7 +490,7 @@ unittest {
 // layer.delete of the ACTIVE layer bumps Removed AND Active (the active object
 // changed). Set up: add B (active), then delete B → active falls back to A.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // B (index 1) is now active
     auto before = settleAfter(readChanges());
 
@@ -507,7 +507,7 @@ unittest {
 // Layer object is unchanged — only its index may shift). Set up: A,B,C with C
 // active; delete B (index 1) — C stays active (same object).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // index 1, active
     cmd("layer.add name:C");                 // index 2, active
     auto before = settleAfter(readChanges());
@@ -524,7 +524,7 @@ unittest {
 // layer.reorder bumps Reordered and does NOT bump Active (identity-preserving:
 // the active Layer object is unchanged, only re-pointed by index).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // index 1
     cmd("layer.add name:C");                 // index 2, active
     cmd("layer.select index:0");             // A active again
@@ -543,7 +543,7 @@ unittest {
 // the active mesh (MeshChangeAll) — that mesh-counter movement is unchanged
 // behaviour and not asserted-against here (the select switches the mesh).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // B active
     cmd("layer.select index:0");             // A active
     auto before = settleAfter(readChanges());
@@ -564,7 +564,7 @@ unittest {
 // layer.rename bumps Renamed and does NOT bump ANY mesh-change counter (it is a
 // pure document-state change touching no mesh-pending state).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());
 
     cmd("layer.rename name:Renamed");         // rename the active layer
@@ -580,7 +580,7 @@ unittest {
 
 // layer.setVisible bumps VisibilityChanged, no mesh counters.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto before = settleAfter(readChanges());
 
     cmd("layer.setVisible value:false");
@@ -598,7 +598,7 @@ unittest {
 // NO mesh-change counter. This guards that retiring the kind didn't smuggle the
 // event onto another channel.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // need >1 layer (B active + selected)
     // TASK 0671 — `set A` then `add B`, not `add A`. The edit target is the
     // HEAD of the selection queue, so `add A` would leave it on B and

@@ -428,8 +428,6 @@ class HttpServer {
     // evaluation touches live mesh vertices.
     private alias PathQueryProvider = string delegate(float t);
     private PathQueryProvider pathQueryProvider;
-    private alias ResetHandler = void delegate(string primitiveType, bool empty, int param);
-    private ResetHandler resetHandler;
     // POST /api/camera — sync bridge to set the live View. Used by
     // the cross-engine drag test to align vibe3d's camera with a
     // reference engine's before replaying a drag through /api/play-events.
@@ -689,16 +687,12 @@ class HttpServer {
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
     // constructed (and self-registered into `bridges`) in the HttpServer
     // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
-    // (reset, model, pipeEval, path, command,
+    // (model, pipeEval, path, command,
     // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
     // `service` delegate closes over `this` (reading the handler/provider
     // fields above AT TICK TIME, so it works even though app.d wires those
     // fields after HttpServer is constructed).
     private IMainThreadBridge[] bridges;
-
-    struct ResetReq  { string type; bool empty; int param; }
-    struct ResetResp { }   // errors are thrown by the handler itself (no catch — matches pre-refactor tickReset)
-    private MainThreadBridge!(ResetReq, ResetResp) resetBridge;
 
     struct ModelReq  { int layer = -1; bool detailed; }
     struct ModelResp { string result; string error; }
@@ -887,12 +881,6 @@ class HttpServer {
         this.port = port;
         atomicStore(this.isRunning, false);
         this.eventPlayer = EventPlayer();
-
-        resetBridge = new MainThreadBridge!(ResetReq, ResetResp)(this,
-            (ref ResetReq req, ref ResetResp resp) {
-                if (resetHandler !is null)
-                    resetHandler(req.type, req.empty, req.param);
-            });
 
         modelBridge = new MainThreadBridge!(ModelReq, ModelResp)(this,
             (ref ModelReq req, ref ModelResp resp) {
@@ -1464,13 +1452,6 @@ class HttpServer {
     public int  playerMouseY()    const { return eventPlayer.mouseY; }
     public bool playerMouseDown() const { return eventPlayer.mouseDown; }
     public bool playerFinished()  const { return !eventPlayer.active; }
-
-    /**
-     * Set the reset handler callback
-     */
-    public void setResetHandler(ResetHandler handler) {
-        this.resetHandler = handler;
-    }
 
     /// Set the POST /api/camera handler. Called on the main thread with
     /// the parsed JSON body — sets View azimuth/elevation/distance/focus
@@ -3244,28 +3225,6 @@ class HttpServer {
         }
     }
 
-    private void route_apiReset(HttpRequest request, HttpResponse response) {
-        if (resetHandler !is null) {
-            resetBridge.req.type  = parseQueryString(request.path, "type", "");
-            string emptyParam = parseQueryString(request.path, "empty", "");
-            resetBridge.req.empty = (emptyParam == "true" || emptyParam == "1");
-            // Dense perf meshes take an int: grid → ?n=<int>,
-            // subdivcube → ?levels=<int>. -1 means "use the factory
-            // default" (n=316 / levels=7). Accept either key; n wins if
-            // both are somehow present.
-            int nParam = parseQueryInt(request.path, "n", -1);
-            int lvlParam = parseQueryInt(request.path, "levels", -1);
-            resetBridge.req.param = (nParam >= 0) ? nParam : lvlParam;
-            resetBridge.submitAndWait();  // timeout is silent-ok — no error body
-            response.statusCode = 200;
-            response.body = `{"status":"ok"}`;
-        } else {
-            response.statusCode = 500;
-            response.body = `{"error":"Reset handler not set"}`;
-        }
-        response.headers["Content-Type"] = "application/json";
-    }
-
     private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response) {
         // Task 0763 — same defect shape FrameWorkProbe.toJson documents and
         // tools/local/frame_counts_seq_race.sh measured for /api/frames/counts
@@ -4081,7 +4040,6 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/surface-raycast",      "GET",  Match.prefix, Answered.mainThread, "route_apiSurfaceRaycast"),
     RouteSpec("/api/camera",               "GET",  Match.prefix, Answered.httpThread, "route_apiCameraGet"),
     RouteSpec("/api/recorded-events",      "GET",  Match.exact,  Answered.httpThread, "route_apiRecordedEvents"),
-    RouteSpec("/api/reset",                "POST", Match.prefix, Answered.mainThread, "route_apiReset"),
     RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.httpThread, "route_apiPlayEventsStatus"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
     // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,

@@ -24,7 +24,7 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 void postReset() {
-    auto resp = post(baseUrl ~ "/api/reset", "");
+    auto resp = post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

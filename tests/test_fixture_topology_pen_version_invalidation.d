@@ -97,7 +97,7 @@ bool approx(double a, double b, double eps = 0.02) { return fabs(a - b) < eps; }
 enum int CX = 475, CY = 300;
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     cmd("tool.pipe.attr constrain enabled true");
     cmd("tool.pipe.attr constrain geometry screen");

@@ -45,7 +45,7 @@ JSONValue jpost(string path, string body_) {
 }
 
 void resetCube() {
-    auto j = jpost("/api/reset", "");
+    auto j = jpost("/api/command", commandBody("scene.reset"));
     assert(j["status"].str == "ok", "/api/reset failed");
     // Clear undo history so tests start from a clean slate.
     auto ch = jpost("/api/command", `{"id":"history.clear"}`);

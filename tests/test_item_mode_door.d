@@ -29,6 +29,7 @@
 //     view to any constant reads the same number both times and fails one row.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -46,7 +47,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetCube() {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd(`{"id":"history.clear"}`);
 }

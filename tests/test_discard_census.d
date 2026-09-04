@@ -53,7 +53,14 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 
-void resetTo(string query) { postRaw("/api/reset" ~ query, ""); }
+void resetTo(string query) {
+    string body_;
+    if (query.length == 0) body_ = commandBody("scene.reset");
+    else if (query == "?type=subdivcube&levels=2")
+        body_ = commandBody("scene.reset", `{"type":"subdivcube","levels":2}`);
+    else assert(false, "unsupported reset query: " ~ query);
+    postRaw("/api/command", body_);
+}
 
 /// One vertex selected — see correction (2) in the header.
 void seedSelection() {

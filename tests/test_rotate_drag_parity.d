@@ -102,7 +102,7 @@ void lockCamera() {
 // the R flag (so the click can't accidentally land on a move arrow / scale
 // box) → ACEN.Auto (default). Returns the top-face vert indices.
 int[] setupScene() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     lockCamera();
     int topFace = findTopFace();
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));

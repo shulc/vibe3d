@@ -7,7 +7,7 @@ import std.conv : to;
 void main() {}
 
 unittest { // SMOKE: /api/command runs select.invert on a fresh cube
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // After reset: vertex mode, empty selection.
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
@@ -48,7 +48,7 @@ unittest { // ERROR: missing 'id' field returns status:error
 }
 
 unittest { // /api/select: vertex mode, two indices
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,5]}`));
     assert(parseJSON(resp)["status"].str == "ok",
@@ -64,7 +64,7 @@ unittest { // /api/select: vertex mode, two indices
 }
 
 unittest { // /api/select switches edit mode
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[3]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
@@ -82,7 +82,7 @@ unittest { // /api/select switches edit mode
 }
 
 unittest { // /api/select replaces previous selection in same mode
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2]}`));
     post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[7]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
@@ -93,7 +93,7 @@ unittest { // /api/select replaces previous selection in same mode
 }
 
 unittest { // /api/select: out-of-range index returns error
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[999]}`));
     auto j = parseJSON(resp);
     assert(j["status"].str == "error",
@@ -101,7 +101,7 @@ unittest { // /api/select: out-of-range index returns error
 }
 
 unittest { // /api/select: empty indices clears current selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
     post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));

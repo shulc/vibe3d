@@ -36,6 +36,7 @@
 //      in 6 is scoped to the file and has not leaked into `layer.attr`.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write, readText;
@@ -45,7 +46,7 @@ import std.math : isClose;
 void main() {}
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 void runCmd(string id, string params = "") {

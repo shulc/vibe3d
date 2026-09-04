@@ -79,7 +79,7 @@ void cmd(string c) { post(BASE ~ "/api/command", c); }
 // `dist <= 0` keeps whatever camera /api/reset left; a positive value pushes
 // the camera to that eye distance, which is how (4) walks the zoom staircase.
 void setupAxisDrag(string acen, string rounding = "fine", double dist = 0) {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     // Coordinate Rounding is selected EXPLICITLY in every scenario, never
     // inherited: the runner reuses one vibe3d per worker across test
     // binaries, and a test that left the setting somewhere else would make

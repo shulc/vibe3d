@@ -39,7 +39,7 @@ alias BASE = testBaseUrl;
 
 
 void resetCube() {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
 }
 
 void waitForPlaybackFinish() {
@@ -79,7 +79,7 @@ void playAndWait(string logPath) {
 //   Edge (4,5): ONE endpoint visible, ONE occluded — the bug target.
 //   Edge (4,6): BOTH endpoints visible — positive control.
 int setupOccluderScene() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 
     r = postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[` ~

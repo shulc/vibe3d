@@ -34,7 +34,8 @@ void main() {}
 alias BASE = testBaseUrl;
 
 void resetGrid(int n) {
-    auto resp = post(BASE ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(BASE ~ "/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/reset grid failed: " ~ cast(string)resp);
 }

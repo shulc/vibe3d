@@ -33,6 +33,7 @@
 // and tears it down when done. Must be run from the repo root.
 
 import http_client : postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math     : fabs;
@@ -165,7 +166,7 @@ JSONValue query(string line) {
 }
 
 void resetCube() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

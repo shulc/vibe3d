@@ -139,6 +139,7 @@
 // MUTATIONS THAT REDDEN IT: recorded at the bottom of this file.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -284,7 +285,7 @@ string buildMoveLog(int vpX, int vpY, int vpW, int vpH,
 /// in +X through a COMMAND, so the tail of the undo stack is a plain Model
 /// entry with no tool-lifecycle entry after it. Returns the pre-edit mesh.
 double[][] buildStand() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
     auto pre = verts();
     assert(pre.length > 0 && pre[0].length == 3,

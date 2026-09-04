@@ -21,7 +21,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // Subdivide / subdivide_faceted / subpatch_toggle all require
     // Polygons edit mode (guard added with phase-7.6 SYMM work — see
     // commands/mesh/subdivide.d). Reset leaves edit mode at Vertices,

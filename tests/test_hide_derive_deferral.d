@@ -105,7 +105,7 @@ size_t vertCount() { return getJson("/api/model")["vertices"].array.length; }
 private struct Round { long deferred; long unbatched; long delivered; size_t n; }
 
 private Round pasteRound(int subdivides, bool vertexMode) {
-    postOk("/api/reset?type=cube", "");
+    postOk("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     settle();
     foreach (i; 0 .. subdivides) { postOk("/api/command", "mesh.subdivide"); settle(80); }
 

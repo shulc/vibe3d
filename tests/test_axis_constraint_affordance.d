@@ -206,7 +206,7 @@ void settleMs(int ms = 150, string baseUrl = testBaseUrl()) {
 }
 
 void resetCubeSelectAllMove(string baseUrl = testBaseUrl()) {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto sel = post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)sel)["status"].str == "ok",
         "select failed: " ~ cast(string)sel);

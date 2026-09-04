@@ -75,7 +75,7 @@ void loadFinBundle(int n) {
 }
 
 void loadCube() {
-    ok(postJson("/api/reset", ""), "/api/reset");
+    ok(postJson("/api/command", commandBody("scene.reset")), "/api/reset");
 }
 
 /// The index of the edge joining `a` and `b` in the live mesh.

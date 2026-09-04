@@ -24,7 +24,7 @@ enum string TOOL = "mesh.mirrorTool";
 // Helpers ------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post(BASE ~ "/api/reset", "");
+    auto resp = post(BASE ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }

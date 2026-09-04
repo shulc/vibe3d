@@ -46,7 +46,7 @@ bool approxEq(double a, double b, double eps = 1e-5) {
 }
 
 unittest { // strn=0 ⇒ no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0 iter:5");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -57,7 +57,7 @@ unittest { // strn=0 ⇒ no-op
 }
 
 unittest { // iter=0 ⇒ no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:0");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -82,7 +82,7 @@ unittest { // strn=1, iter=1 on cube — each vert averages with its 3
            //     = (-1/6, -1/6, -1/6).
            // strn=1: new = old + 1*(avg-old) = avg.
            // So every cube vert moves to its (avg of 3 nbrs).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:1");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -98,7 +98,7 @@ unittest { // strn=1, iter=1 on cube — each vert averages with its 3
 }
 
 unittest { // strn=0.5, iter=1 on cube — half the displacement of strn=1
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0.5 iter:1");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -114,7 +114,7 @@ unittest { // strn=0.5, iter=1 on cube — half the displacement of strn=1
 }
 
 unittest { // many iterations converge toward origin
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:100");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -126,7 +126,7 @@ unittest { // many iterations converge toward origin
 }
 
 unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only it moves
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(sel["status"].str == "ok");
@@ -147,7 +147,7 @@ unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only it moves
 }
 
 unittest { // undo restores
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:3");
     cmd("history.undo");
     auto verts = dumpVerts();
@@ -166,7 +166,7 @@ unittest { // undo restores
 // with lockBound they stay pinned at ±0.5.
 
 unittest { // lockBound:false ⇒ boundary verts move (regression check)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Select + delete top face (f4 in cube order).
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
@@ -188,7 +188,7 @@ unittest { // lockBound:false ⇒ boundary verts move (regression check)
 }
 
 unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     // Capture boundary positions: every vert at y=+0.5 sits on the
@@ -235,12 +235,12 @@ unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
 
 unittest { // lockBound on a CLOSED mesh (cube with no boundary) is a no-op
            // — smoothing identical with lockBound on/off.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:false");
     auto noLock = dumpVerts();
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:true");
     auto withLock = dumpVerts();
@@ -260,7 +260,7 @@ unittest { // lockBound on a CLOSED mesh (cube with no boundary) is a no-op
 unittest { // cube-minus-top: top corners are valence-3 (2 horizontal
            // boundary edges + 1 vertical shared edge), so lockCorner
            // locks NOTHING and the verts must move under heavy smooth.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
@@ -287,7 +287,7 @@ unittest { // single quad (cube minus 5 faces): all 4 remaining verts
            // are valence-2 corners (each touches 2 boundary edges of
            // the same single face). lockCorner pins ALL of them →
            // smooth becomes a no-op.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Keep f0 (back face), delete f1..f5.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[1,2,3,4,5]}`));
     cmd("mesh.delete");
@@ -311,14 +311,14 @@ unittest { // single quad (cube minus 5 faces): all 4 remaining verts
 
 unittest { // lockBound + lockCorner together is equivalent to lockBound
            // alone — corner is a subset. Verify on cube-minus-top.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:5 lockBound:true lockCorner:true");
     auto both = dumpVerts();
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
@@ -340,7 +340,7 @@ unittest { // lockBound + lockCorner together is equivalent to lockBound
 
 unittest { // sharpAngle = 45° < 90° → every cube edge is
            // "sharp" → all 8 verts pinned → smooth no-op.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto before = dumpVerts();
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45");
     auto after = dumpVerts();
@@ -356,7 +356,7 @@ unittest { // sharpAngle = 45° < 90° → every cube edge is
 
 unittest { // sharpAngle = 115° > 90° → no edge passes
            // the threshold → no lock → cube smooths normally.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:115");
     auto after = dumpVerts();
     bool anyMoved = false;
@@ -374,7 +374,7 @@ unittest { // sharpThreshold (RADIANS wire alias) = π/4 ≈ 0.785 (45°)
            // < 90° → every cube edge is "sharp" → all 8 verts pinned →
            // smooth no-op. Mirrors the sharpAngle:45 case but exercises
            // the radians wire param the parity harness sends.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto before = dumpVerts();
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:0.7853981633974483");
     auto after = dumpVerts();
@@ -393,7 +393,7 @@ unittest { // sharpThreshold (RADIANS wire alias) = 2.0 (≈114.59°)
            // smooths toward centroid. Radians analogue of the
            // sharpAngle:115 case; this is the parity divergence fixed
            // in task 0473 (harness sends `sharpThreshold` in radians).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:2.0");
     auto after = dumpVerts();
     bool anyMoved = false;
@@ -411,7 +411,7 @@ unittest { // sharpThreshold OVERRIDES sharpAngle when both supplied:
            // sharpAngle:45 alone would pin the cube, but a radians
            // sharpThreshold:2.0 (≈114.59°) supplied alongside wins →
            // no lock → cube smooths. Locks in the override precedence.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45 sharpThreshold:2.0");
     auto after = dumpVerts();
     bool anyMoved = false;
@@ -428,10 +428,10 @@ unittest { // sharpThreshold OVERRIDES sharpAngle when both supplied:
 unittest { // lockSharp:false ⇔ default smooth: regression — no
            // difference between explicit lockSharp:false and the
            // default omitted parameter.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0.5 iter:2 lockSharp:false");
     auto explicit = dumpVerts();
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0.5 iter:2");
     auto omitted = dumpVerts();
     assert(explicit.length == omitted.length);
@@ -451,7 +451,7 @@ unittest { // lockSharp:false ⇔ default smooth: regression — no
 
 unittest { // cube + preserve:true ⇒ no-op (all motion is along
            // corner normals, all cancelled by projection).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto before = dumpVerts();
     cmd("mesh.smooth strn:1 iter:5 preserve:true");
     auto after = dumpVerts();
@@ -467,10 +467,10 @@ unittest { // cube + preserve:true ⇒ no-op (all motion is along
 }
 
 unittest { // preserve:false ⇔ default smooth: regression.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0.5 iter:2 preserve:false");
     auto explicit = dumpVerts();
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.smooth strn:0.5 iter:2");
     auto omitted = dumpVerts();
     foreach (i; 0 .. explicit.length)
@@ -485,7 +485,7 @@ unittest { // open mesh (cube minus top) + preserve: verts still
            // preserve produces a DIFFERENT result from non-preserved
            // smooth (proving the projection actually fires) and that
            // verts haven't escaped a reasonable bbox.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
 
@@ -493,7 +493,7 @@ unittest { // open mesh (cube minus top) + preserve: verts still
     cmd("mesh.smooth strn:0.5 iter:2 preserve:true");
     auto withPreserve = dumpVerts();
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
@@ -519,7 +519,7 @@ unittest {
     // vert between its pre-smooth original and the post-smooth result
     // by per-vert weight, evaluated at the ORIGINAL position (not the
     // moving target).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto pre = dumpVerts();
 
     auto resp = postJson("/api/command",
@@ -563,7 +563,7 @@ unittest { // no-op smooth undo must not truncate the undo stack (task 2110,
            // With the fix (revert() returns true on empty — no-op success):
            //   the no-op undo succeeds; the real smooth's entry is still
            //   underneath and its own undo succeeds next.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto before = dumpVerts();
     // `/api/reset` pushes scene.reset onto the SAME undo stack as an
     // UndoBoundary entry rather than clearing it — but `CommandHistory`

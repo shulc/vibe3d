@@ -50,7 +50,7 @@ void main() {}
 // --- HTTP helpers (same shapes as tests/test_loop_slice_tool.d) ------------
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

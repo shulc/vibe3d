@@ -25,7 +25,7 @@ void translate(double dx) {
 }
 
 unittest { // history.clear wipes both undo + redo stacks.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     translate(0.1);
@@ -49,7 +49,7 @@ unittest { // history.clear wipes both undo + redo stacks.
 
 unittest { // history.saveAsScript writes #LXMacro# header + one
            // argstring per undo entry.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");   // pristine
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -78,7 +78,7 @@ unittest { // history.saveAsScript writes #LXMacro# header + one
 
 unittest { // saveAsScript without `path` arg fails apply() — no
            // file is written.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto r = postJson("/api/command", "history.saveAsScript");
     // The argstring parser may either error (missing required
     // positional) or the command's apply() returns false (path

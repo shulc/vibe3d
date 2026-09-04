@@ -39,7 +39,9 @@
 //          move a single pixel, while the same turn moves a shaded one.
 module test_viewport_display;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -93,7 +95,7 @@ void postCommand(string cmd, string params = "") {
 // before the scene render), so anything that changes the scene needs a frame
 // to land before it is visible to a probe.
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     Thread.sleep(400.msecs);
 }
 

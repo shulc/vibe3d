@@ -26,12 +26,13 @@ alias baseUrl = testBaseUrl;
 
 
 void resetCube() {
-    auto resp = postJson("/api/reset?type=cube", "");
+    auto resp = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(resp["status"].str == "ok", "/api/reset cube failed");
 }
 
 void resetGrid(int n) {
-    auto resp = postJson("/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = postJson("/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     assert(resp["status"].str == "ok", "/api/reset grid failed");
 }
 

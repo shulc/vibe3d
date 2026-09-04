@@ -73,7 +73,7 @@ bool symmetricAboutX(double[3][] verts, double eps = 2e-3) {
 // faces are on opposite X sides and pair across X=0, so ACEN.Local sees two
 // X-mirror clusters.
 void setupLocalSymmScene(string toolId) {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:2 sizeY:2 sizeZ:2 "
         ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");

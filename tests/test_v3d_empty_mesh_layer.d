@@ -48,6 +48,7 @@
 //       -> E5 "a malformed vertex triple must still be REFUSED".
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -113,7 +114,7 @@ private string show(Row[] rs) {
 // ===========================================================================
 
 unittest {  // E1 — the round trip the editor itself produces
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     // `/api/reset` gives one cube; `layer.add` is the Add Item ▸ Mesh button
     // and makes exactly the empty item this task is about. Nothing else is
@@ -208,7 +209,7 @@ unittest {  // E6 — a refused load leaves the OPEN document intact
     // mutated only at the swap above, after every reject"). Asserted here
     // because this task moved a reject, and a relaxation that half-applied a
     // file before failing would be a far worse bug than the one being fixed.
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed");
     cmd("layer.add");
     auto before = rows();

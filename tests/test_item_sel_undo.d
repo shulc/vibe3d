@@ -33,6 +33,7 @@
 // broken invariant rather than a wrong vertex position.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -63,7 +64,7 @@ JSONValue cmdJson(string body_) {
 void clearHistory() { cmdJson(`{"id":"history.clear"}`); }
 
 void resetCube() {
-    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
     clearHistory();
 }

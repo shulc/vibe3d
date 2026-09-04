@@ -87,7 +87,7 @@ double[3][] readVertices() {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     // Same scene as the Tier-B "bg_cube_topface_center" fixture case.
     cmd("layer.add name:Bg");

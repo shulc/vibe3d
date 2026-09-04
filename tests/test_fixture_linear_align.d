@@ -63,7 +63,7 @@ void assertManifold(long vBefore, long eBefore, long fBefore) {
 }
 
 int[4] buildChain() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -169,7 +169,7 @@ unittest { // DoS / degenerate-selection guard: activating the tool with
            // no selection falls back to whole-mesh (matching the
            // command); applyHeadless must not crash on a non-chain
            // selection, and mesh validity is preserved either way.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto model0 = getJson("/api/model");
     long v0 = model0["vertexCount"].integer, e0 = model0["edgeCount"].integer,
          f0 = model0["faceCount"].integer;

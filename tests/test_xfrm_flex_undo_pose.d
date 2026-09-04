@@ -155,7 +155,7 @@ bool scaleBoxPx(int axis, out int px, out int py) {
 }
 
 void setupFlex() {
-    postJson("/api/reset?type=subdivcube&levels=2", "");
+    postJson("/api/command", commandBody("scene.reset", `{"type":"subdivcube","levels":2}`));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
     selectUpperRegion();
     cmd("tool.set xfrm.flex on");

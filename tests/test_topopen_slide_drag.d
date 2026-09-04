@@ -89,7 +89,7 @@ string dominoMeshBody() {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", dominoMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh (domino) failed: " ~ lr.toString);
 

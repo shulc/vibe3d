@@ -52,7 +52,7 @@ void lockCamera() {
 // test_toolpipe_acen.d uses) -> 2 Local clusters. Face 4's own centroid
 // (0, 0.5, 0) is cluster 0's pivot.
 void setupLocalTwoClusterScene() {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     lockCamera();
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1");
     cmd("select.typeFrom polygon");

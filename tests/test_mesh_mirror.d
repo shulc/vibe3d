@@ -28,7 +28,7 @@ void main() {}
 // Helpers ------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
@@ -36,9 +36,9 @@ void resetCube() {
 // `empty=true` clears the mesh entirely instead of seeding the default
 // cube — used with postLoadMesh to inject custom test geometry.
 void postReset(bool empty) {
-    string path = empty ? testBaseUrl() ~ "/api/reset?empty=true"
-                         : testBaseUrl() ~ "/api/reset";
-    auto resp = post(path, "");
+    auto body_ = empty ? commandBody("scene.reset", `{"empty":true}`)
+                       : commandBody("scene.reset");
+    auto resp = post(testBaseUrl() ~ "/api/command", body_);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }

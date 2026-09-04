@@ -57,6 +57,7 @@
 //     `armRegradeStamp` and this reddens with the count.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -156,7 +157,7 @@ long moveGestureOnArrow(long wantCount, double dragPx = 60.0) {
 //     the anchor is what decides it.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -199,7 +200,7 @@ unittest {
              ~ "one with it", v6AfterGesture[0], v6Regraded[0]));
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +208,7 @@ unittest {
 //     at its first failed assert and the two facts fail for different reasons.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -265,7 +266,7 @@ unittest {
              ~ "the recorded remainder stays", disagree, checks));
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +309,7 @@ long armedRatePerSettle() {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -367,7 +368,7 @@ unittest {
     // ---------------------------------------------------------------------
     // (b) A FOREIGN mutationVersion bump, again with the run open and armed.
     // ---------------------------------------------------------------------
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -499,5 +500,5 @@ unittest {
                fVerDelta));
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

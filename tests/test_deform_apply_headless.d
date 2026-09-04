@@ -14,6 +14,7 @@
 // cross-engine diff suite.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -37,7 +38,7 @@ bool approxEq(double a, double b, double eps = 1e-4) {
 unittest { // shear: linear X gradient by Y, weight 0 at y=-0.5, 1 at y=+0.5
     // Reset + polygon mode (xfrm.shear is selection-aware in Polygons mode;
     // empty selection falls back to the whole mesh in MoveTool).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
 
     // Cube with segmentsY=4 — produces 5 vert rows along Y at
@@ -103,7 +104,7 @@ unittest { // shear: linear X gradient by Y, weight 0 at y=-0.5, 1 at y=+0.5
 }
 
 unittest { // shear with TX=0 leaves the cube alone — nothing moves
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
@@ -135,7 +136,7 @@ unittest { // shear with TX=0 leaves the cube alone — nothing moves
 // ---------------------------------------------------------------------------
 
 unittest { // taper: per-row X-scale by SX · weight(y) about the ACEN center
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
@@ -184,7 +185,7 @@ unittest { // taper: per-row X-scale by SX · weight(y) about the ACEN center
 }
 
 unittest { // taper at identity (SX=SY=SZ=1) is a no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");

@@ -81,7 +81,7 @@ bool sameVec(double[] a, double[] b, double tol) {
 //      consumers are untouched.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     // A
     assert(!snapEnabled(),
@@ -110,7 +110,7 @@ unittest {
         ~ "is dropped — the restore writes the SAVED value, never a constant");
 
     // E
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(!snapEnabled(), "setup: reset returns the clean slate");
     cmd("tool.set mesh.topoPen on");
     assert(snapEnabled(), "setup: armed");
@@ -120,13 +120,13 @@ unittest {
         ~ "otherwise the pen leaves snapping armed under every tool that follows");
 
     // F
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move on");
     assert(!snapEnabled(),
         "a tool that is not the pen must not arm snapping — this is the pen's "
         ~ "own activation, not a change to the shipped default");
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ---------------------------------------------------------------------------
@@ -140,12 +140,12 @@ unittest {
 // cross-test failure waiting to happen.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.pipe.attr snap enabled true");   // user had snapping on ...
     cmd("tool.set mesh.topoPen on");           // ... and the pen armed over it
     assert(snapEnabled(), "setup: armed");
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(!snapEnabled(),
         "a scene reset must leave snapping OFF even though the tool it dropped "
         ~ "had a restore pending — otherwise the pre-reset value is written back "
@@ -169,7 +169,7 @@ unittest {
 // now.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     setupSphereBg(R, LON, LAT);
 
     auto lq = postJson("/api/command", commandBody("scene.loadMesh", format(
@@ -271,5 +271,5 @@ unittest {
                    i, before[i], restored[i]));
 
     cmd("tool.set mesh.topoPen off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

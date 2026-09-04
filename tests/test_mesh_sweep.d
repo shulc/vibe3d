@@ -93,7 +93,7 @@ long boundaryEdgeCount(JSONValue m) {
 // along the Y axis (axis=1).  Results in segs+1 verts and segs edges at indices
 // 0 .. segs-1.
 void buildArc(int segs) {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd(`{"id":"prim.arc","segments":` ~ segs.to!string ~ `,"axis":1}`);
 }
 
@@ -103,7 +103,7 @@ void buildArc(int segs) {
 void buildClosedQuadProfile() {
     // load-mesh replaces the current mesh entirely; no reset required, but
     // an explicit reset first keeps the mode clean.
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     auto r = postJson("/api/command", commandBody("scene.loadMesh", `{
         "vertices": [[1,0,0],[0,0,1],[-1,0,0],[0,0,-1]],
         "faces": [[0,1,2,3]]
@@ -368,7 +368,7 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     // in tests/batchless_control_helpers.d because the answer has moved five
     // times,
     // exactly as mesh.sweep's open-profile arm did before Stage E2.
-    postJson("/api/reset", "");          // the default cube, so triple has work
+    postJson("/api/command", commandBody("scene.reset"));          // the default cube, so triple has work
     setSelection("polygons", []);
     // `batchLeaks` / `batchUpgradeRefusals` are PROCESS-CUMULATIVE, like every
     // other counter this file reads: the app instance is shared with every

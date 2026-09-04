@@ -8,6 +8,7 @@
 //      keeps the tool armed (task 0430 keep-alive, reference-measured).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -176,7 +177,7 @@ void resetForBox() {
 }
 
 void resetForBoxCamera(double elevation) {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",
@@ -190,7 +191,7 @@ void resetForBoxCamera(double elevation) {
 // MODERATE range: a click ON a cube vertex snaps, but a drag a face-width away
 // stays free. Used to reproduce the "base drawn at the half-offset" snap bug.
 void resetForBoxSnap() {
-    auto r = postJson("/api/reset", "");          // default cube = snap target
+    auto r = postJson("/api/command", commandBody("scene.reset"));          // default cube = snap target
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",
@@ -204,7 +205,7 @@ void resetForBoxSnap() {
 }
 
 void resetForRotatedWorkplaneBox() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
 
@@ -720,7 +721,7 @@ unittest { // Keep-alive x ladder composition (task 0430): ladder -> wipe -> pri
 // ---------------------------------------------------------------------------
 unittest { // Box base lands on focus plane, not origin plane, with panned AUTO workplane (task 0066)
     // Reset to empty (no mesh), clear history.
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
 

@@ -21,6 +21,7 @@
 // mouse-down/motion/up sequence via drag_helpers.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -40,7 +41,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetCube() {
-    auto j = parseJSON(cast(string)post(BASE ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
     cmd(`{"id":"history.clear"}`);
 }

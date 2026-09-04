@@ -119,7 +119,7 @@ void selectAllVerts(int n) {
 }
 
 unittest { // block 1 — the family moves none of the three. LIVE for morph.*
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     selectAllVerts(8);
 
     const before = changes();

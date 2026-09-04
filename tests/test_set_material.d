@@ -23,7 +23,7 @@ void main() {}
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // mesh.setMaterial is a Polygons-mode command.
     post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
@@ -157,7 +157,7 @@ unittest { // a NON-empty selection is still exactly that selection
 }
 
 unittest { // wrong edit mode (Vertices) is rejected with status error
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
 
     auto resp = postCommandRaw(

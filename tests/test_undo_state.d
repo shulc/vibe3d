@@ -34,7 +34,7 @@ void translate(double dx) {
 // BEFORE the clear: /api/select records a UI-undo entry (P5), so clearing
 // last guarantees an empty stack at the start of each test.
 void freshSession() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/command", "history.clear");
 }

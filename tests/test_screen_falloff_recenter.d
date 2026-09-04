@@ -36,6 +36,7 @@
 //   * Release cleanly afterward.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -102,7 +103,7 @@ string mouseUpLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 
 unittest {
     // ---- Build a dense mesh ----
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Whole-cage subdivide (no face selection in vertices mode) twice → ~98
     // verts. The screen disc then selects a clear local cluster.
     postJson("/api/script", "mesh.subdivide\nmesh.subdivide");

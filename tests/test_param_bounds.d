@@ -43,6 +43,7 @@
 // satisfy Block A directly and are not allowlisted.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.regex   : regex, matchFirst;
@@ -60,7 +61,7 @@ void main() {}
 alias BASE = testBaseUrl;
 
 void resetCube() {
-    auto resp = post(BASE ~ "/api/reset", "");
+    auto resp = post(BASE ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

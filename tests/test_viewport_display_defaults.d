@@ -29,7 +29,9 @@
 // a file-format question and needs no running app.
 module test_viewport_display_defaults;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -83,7 +85,7 @@ void postCommandRaw(string cmd, string paramsJson) {
 }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     Thread.sleep(400.msecs);
 }
 
@@ -168,7 +170,7 @@ string fitLattice(int w, int h) {
 /// later default assertion in this process.
 void restoreDefaults() {
     try { postCommand("viewport.layout", "Single"); } catch (Exception) {}
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     Thread.sleep(250.msecs);
 }
 

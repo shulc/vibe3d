@@ -66,7 +66,7 @@ double[3] actionCenter() {
 
 unittest { // tool.set xfrm.transform activates without error; attrs
            // round-trip through /api/command.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform TX 0.25");
     // doApply with no selection — applyHeadless returns false (no
@@ -85,7 +85,7 @@ unittest { // tool.set xfrm.transform activates without error; attrs
 }
 
 unittest { // T flag off skips the translate step even with TX set.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform TX 0.5");
@@ -100,7 +100,7 @@ unittest { // T flag off skips the translate step even with TX set.
 unittest { // Pure RY=90° around ACEN.Auto pivot (= selection bbox
            // centre = v6 itself, since only v6 is selected). Rotating
            // a point about itself is a no-op — v6 stays put.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform S false");
@@ -121,7 +121,7 @@ unittest { // SY=2 with multi-vertex selection. ACEN.Auto pivot is the
            // scaling about (·, +0.5, ·) by SY=2 leaves both verts'
            // Y exactly where they were (point on the pivot plane).
            // Verify they stay put.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform R false");
@@ -141,7 +141,7 @@ unittest { // TransformMove preset flips T=1 / R=0 / S=0 on the base
            // preset's `attrs:` block; subsequent doApply with TX=0.5
            // and a non-zero RY/SX confirms only translate fired (no
            // rotation / scale leak through disabled flags).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.set TransformMove on");
     cmd("tool.attr TransformMove TX 0.25");
@@ -160,7 +160,7 @@ unittest { // TransformMove preset flips T=1 / R=0 / S=0 on the base
 
 unittest { // TransformScale preset: T=0/R=0/S=1. Pure SY=2 around
            // the bbox-centre of multi-vertex selection.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,4,5]}`));
     cmd("tool.set TransformScale on");
     cmd("tool.attr TransformScale TX 100");   // ignored — T off
@@ -177,7 +177,7 @@ unittest { // TransformScale preset: T=0/R=0/S=1. Pure SY=2 around
 
 unittest { // transform presets publish both operation flags
            // (T/R/S) and handle presentation metadata (H/presentation).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     cmd("tool.set Transform on");
     assert(queryCmd("tool.attr Transform H ?").integer == 0);
@@ -211,7 +211,7 @@ unittest { // transform presets publish both operation flags
 unittest { // Toolbar aliases move/rotate/scale use the same full handle banks
            // as TransformMove / TransformRotate / TransformScale. Bare Transform
            // is the only compact combined presentation.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     cmd("tool.set move on");
     assert(queryCmd("tool.attr move H ?").integer == 0);
@@ -240,7 +240,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
            // the MoveTool sub-instance which handles the drag as it
            // does on its own. Mirrors test_tool_move_drag.d but via
            // xfrm.transform.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform R false");
@@ -281,7 +281,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
 }
 
 unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     int topFace = findTopFace();
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     cmd("tool.set Transform on");
@@ -337,7 +337,7 @@ unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
 }
 
 unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     cmd("tool.set Transform on");
 
@@ -383,7 +383,7 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
 }
 
 unittest { // Bare Transform: rotate then move must not re-apply the rotation.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2]}`));
     cmd("tool.set Transform off");
     cmd("tool.set Transform on");
@@ -451,7 +451,7 @@ unittest { // T→R→S chain order: TX=0.5 first translates v6 to
            // Verify the chain ordering by checking the final
            // position is what T-first-then-R-about-original-pivot
            // predicts.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform TX 0.5");
     cmd("tool.attr xfrm.transform RY 90");

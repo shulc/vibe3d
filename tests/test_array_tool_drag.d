@@ -80,7 +80,7 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
     // `tool.set <tool> off` that used to stand here (task 2900) was a workaround
     // for the opposite order. Removing it is not tidying: it makes this stand a
     // WITNESS for that guarantee instead of a file that hides its loss.
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 
     r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));

@@ -612,7 +612,7 @@ void freezeOrCompare(Cell[] cells) {
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto r = postJ("/api/reset");
+    auto r = postJ("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 }
 

@@ -160,12 +160,12 @@ string fmt(double[3] p) {
 }
 
 void resetEmpty() {
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/reset?empty=true", ""));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"empty":true}`)));
     assert(r["status"].str == "ok", "/api/reset?empty=true failed: " ~ r.toString);
     runCmd("history.clear");
 }
 void resetCube() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     runCmd("history.clear");
 }

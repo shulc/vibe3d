@@ -146,7 +146,7 @@ double meanX() {
 /// visible and NOT selected, i.e. background. CONS enabled ONCE here — see the
 /// header for why it is never turned off again.
 void buildTwoLayerRig() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // `enabled true` FIRST and through the command layer: this is the write
     // that sets `userLocked`, and everything below depends on it.
     cmd("tool.pipe.attr constrain enabled true");

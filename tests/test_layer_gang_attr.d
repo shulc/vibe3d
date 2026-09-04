@@ -49,6 +49,7 @@
 //       -> W5 "two gang writes over DIFFERENT sets are two undo entries".
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -101,7 +102,7 @@ private void assertPos(double[] want, string what) {
 /// so one can stay outside the gang, different so an undo that flattens them is
 /// visible rather than a no-op.
 private void rig() {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd("layer.add");
     cmd("layer.add");

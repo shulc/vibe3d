@@ -22,6 +22,7 @@
 // corners shape instead.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -85,7 +86,7 @@ string wp(JSONValue sr) {
 enum double kCubeX = 7.0;
 
 void twoItemSetup() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmdJson(`{"id":"imagePlane.add","name":"Ref"}`);
     cmd("layer.attr 0 pos.x " ~ to!string(kCubeX));
     assert(layers().array.length == 2, "cube + plane");

@@ -14,7 +14,9 @@
 //      gridSteps and master) still produces byte-identical error text.
 module test_viewport_commands_registry;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP, get;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -40,7 +42,7 @@ string httpPost(string path, string body_) {
 }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
 }
 
 /// POST /api/command with a JSON `params` field, return the parsed response

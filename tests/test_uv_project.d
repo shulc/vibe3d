@@ -19,6 +19,7 @@
 //    10. Undo of created-from-absent: after /api/undo, file.save has no uvMaps.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.math   : fabs, atan2, PI;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -273,7 +274,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"planar","axis":"z"}`);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
     assert(exists(tmpSave), "expected saved file");
@@ -320,7 +321,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"box"}`);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
 
@@ -345,7 +346,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"cylindrical","axis":"y"}`);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
 
@@ -371,7 +372,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"spherical","axis":"y"}`);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
 
@@ -402,7 +403,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     // Default cube has no UV map → uv.project creates one.
     runCmd("uv.project", `{"mode":"planar","axis":"z"}`);
 

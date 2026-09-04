@@ -5,6 +5,7 @@
 // remaps cursor distance to a new dist; RMB-up ends the gesture.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -74,7 +75,7 @@ void playAndWait(string log) {
 }
 
 unittest { // RMB drag rightward grows dist; leftward shrinks
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.elementMove on");
     // Anchor the picked sphere at origin with radius 0.5 — predictable
@@ -111,7 +112,7 @@ unittest { // RMB drag rightward grows dist; leftward shrinks
 
 unittest { // RMB drag with element-falloff inactive falls through
            // to the standard lasso path (no NaN, no dist drift).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     // Plain Move, no element falloff active.
     cmd("tool.set move on");

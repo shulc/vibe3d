@@ -10,6 +10,7 @@
 //   • repeated concurrent commands serialize correctly (no lost replies)
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -103,7 +104,7 @@ unittest { // unknown command id → status="error"
 
 unittest { // concurrent /api/command calls all complete with consistent state
     // Reset to a known starting point.
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     // Fire eight concurrent file.new commands in parallel. Each one
     // wipes the scene to empty; running them concurrently shouldn't

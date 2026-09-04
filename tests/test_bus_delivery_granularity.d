@@ -210,7 +210,7 @@ long dragXAndCountDeliveries(int steps, double dragPx = 70.0) {
 //     today and need not tomorrow. Measured on `main` with the same log: 0.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     settle();
 
@@ -246,7 +246,7 @@ unittest {
 // (2) `lastDeliveryFlags` names the LAST delivery, not the union of the session.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     settle();
 
@@ -350,7 +350,7 @@ unittest {
 // selection, or "one delivery" would be a claim about a command that did
 // nothing.
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
 
     const long selBefore =
@@ -499,7 +499,8 @@ long selectedVertexCount() {
 /// Reset to a dense grid, put the current type on `mode`, and look at it from
 /// below so the Polygons-lasso front-facing pre-check accepts the faces.
 void gridSceneBelow(int n, string mode) {
-    postJson("/api/reset?type=grid&n=" ~ n.to!string, "");
+    postJson("/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":[]}`));
     postJson("/api/camera", `{"elevation":-0.4}`);
     settle();

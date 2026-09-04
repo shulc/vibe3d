@@ -13,6 +13,7 @@
 // neither asserts the size OWNER. This test does.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -35,7 +36,7 @@ double cameraWidth(int viewportIdx) {
 }
 
 unittest { // SplitH: active cell (0) width == half the full-area width
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 
     // Single layout: cell 0 spans the whole 3D area — this is the reference
     // "full-area width" the force-feed used to stamp onto every layout.
@@ -59,11 +60,11 @@ unittest { // SplitH: active cell (0) width == half the full-area width
         "(regression: force-feed re-stamped the full-area size) — " ~
         "full=" ~ fullWidth.to!string ~ ", got=" ~ cell0Width.to!string);
 
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 }
 
 unittest { // Quad: active cell (0) width == quarter the full-area width
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 
     double fullWidth = cameraWidth(0);
 
@@ -79,7 +80,7 @@ unittest { // Quad: active cell (0) width == quarter the full-area width
         "Quad cell 0 width must be SMALLER than the full-area width " ~
         "(regression: force-feed re-stamped the full-area size)");
 
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 }
 
 private double abs_(double x) { return x < 0 ? -x : x; }

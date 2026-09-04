@@ -57,7 +57,7 @@ string irregularHexBody() {
 }
 
 unittest {
-    postJson("/api/reset", "");   // single layer == primary (layer 0)
+    postJson("/api/command", commandBody("scene.reset"));   // single layer == primary (layer 0)
 
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", irregularHexBody()));
     assert(lr["status"].str == "ok", "load-mesh (irregular hexahedron) failed: " ~ lr.toString);

@@ -11,6 +11,7 @@
 //   - Undo after prim.arc           → restores empty scene
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -30,7 +31,7 @@ JSONValue getModel()
 
 void resetEmpty()
 {
-    auto resp = postJson("/api/reset?empty=true", "");
+    auto resp = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(resp["status"].str == "ok", "reset(empty) failed: " ~ resp.toString);
 }
 

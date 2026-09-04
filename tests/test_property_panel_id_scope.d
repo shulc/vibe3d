@@ -72,6 +72,7 @@
 //       looks like.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json     : parseJSON, JSONValue, JSONType;
 import std.conv     : to;
@@ -167,7 +168,7 @@ void restoreSharedInstance() {
     try {
         cmd("ui.toolProperties hide");
         cmd("tool.pipe.attr path enabled false");
-        post(baseUrl ~ "/api/reset", "");
+        post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     } catch (Exception) {}
 }
 
@@ -176,7 +177,7 @@ void restoreSharedInstance() {
 // ---------------------------------------------------------------------------
 
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Leave the shared instance as found, however this ends — a visible Tool
     // Properties window swallows the synthetic viewport drags other tests
     // depend on, and a stacked falloff bleeds into any test that reads the

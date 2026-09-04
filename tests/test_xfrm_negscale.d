@@ -37,6 +37,7 @@
 // recorded in the (private) task planning doc, not here.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -55,7 +56,7 @@ void cmd(string s) {
     assert(j["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ j.toString);
 }
 void reset() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed");
 }
 

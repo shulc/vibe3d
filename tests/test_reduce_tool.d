@@ -3,6 +3,7 @@
 // Helpers are a local copy of the 0109 test's buildDenseTriMesh / assertManifoldClean.
 
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -16,7 +17,7 @@ JSONValue postJ(string path, string body) { return parseJSON(postRaw(path, body)
 JSONValue getJ(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 
 void resetCube() {
-    auto r = postJ("/api/reset", "");
+    auto r = postJ("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

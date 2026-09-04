@@ -82,7 +82,7 @@ void moveVertexActive(double[3] from, double[3] to,
 // state is produced via `layer.select mode:{add,remove}` (the
 // `layer.setBackground` command was retired in Stage 5).
 Vec3 buildTwoLayers(bool bg, string baseUrl = testBaseUrl()) {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     // Layer B — created via layer.add (becomes active + empty), filled with a
     // cube, then one corner is parked at the isolated snap target.

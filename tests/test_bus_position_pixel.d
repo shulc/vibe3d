@@ -420,7 +420,7 @@ void assertSurfaceFollowed(const ref Readings r, string armLabel) {
 // anywhere on this path, which is exactly why no version key can catch it.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     loadOpenPatch();
     frontalCamera(11.0);
     enableSubpatchOnEveryFace();
@@ -525,7 +525,7 @@ unittest {
 // very path the whole time the gizmo was broken.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     loadOpenPatch();
     frontalCamera(11.0);
     enableSubpatchOnEveryFace();

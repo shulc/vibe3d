@@ -424,7 +424,7 @@ private FillBlock fillBlock(const int[2] p, string what) {
 //      to redden on a mutation confined to its own site.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     settle();
     loadMesh(`[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1],`
              ~ `[-0.6,-0.5,-1],[3.0,-0.5,-1],[3.0,0.5,-1],[-0.6,0.5,-1]]`,
@@ -647,7 +647,7 @@ unittest {
 //      at the SELECTED size.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     settle();
     // A DIAMOND: a quad rotated 45 degrees, so the two edges meeting at the
     // top vertex leave its own scan row immediately. See the header.
@@ -766,7 +766,7 @@ unittest {
 //      single pixel.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     settle();
     loadMesh(`[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1],`
              ~ `[-0.6,-0.5,-1],[3.0,-0.5,-1],[3.0,0.5,-1],[-0.6,0.5,-1]]`,

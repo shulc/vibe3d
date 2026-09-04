@@ -2,6 +2,7 @@
 // the active falloff stage. An `xfrm.push` (Distance attr).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -32,7 +33,7 @@ bool approxEq(double a, double b, double eps = 1e-4) {
 }
 
 unittest { // dist=0 ⇒ no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     cmd("tool.attr xfrm.push dist 0");
@@ -49,7 +50,7 @@ unittest { // push cube without falloff: each vert moves along its
            // smooth normal by `dist`. Cube corners have a smooth
            // normal pointing diagonally outward (avg of the 3
            // incident face normals = (sign·1/sqrt(3), ..., ...) ).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     // Disable any auto-attached falloff (preset doesn't add one but
@@ -72,7 +73,7 @@ unittest { // push cube without falloff: each vert moves along its
 unittest { // push with linear falloff: top row pushes full dist,
            // bottom row stays. Verifies falloff plumbing (same as
            // shear/twist/taper integration).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
@@ -108,7 +109,7 @@ unittest { // push with linear falloff: top row pushes full dist,
 }
 
 unittest { // negative dist ⇒ inward push (collapse direction)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     cmd("tool.pipe.attr falloff type none");
@@ -146,7 +147,7 @@ unittest { // task 0319 — overshoot guard: a large negative dist used to
            // collapse every vertex of an octahedron onto (0,0,0) (fuzz-
            // found, status still "ok"). The push must now stop short of
            // the collapse point instead of landing on/through it.
-    postJson("/api/reset?type=octahedron", "");
+    postJson("/api/command", commandBody("scene.reset", `{"type":"octahedron"}`));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     cmd("tool.pipe.attr falloff type none");
@@ -174,7 +175,7 @@ unittest { // task 0319 — overshoot guard: a large negative dist used to
 unittest { // task 0319 — same overshoot guard on a plain cube, whose
            // collapse point is the well-known half-space-diagonal
            // (dist == -sqrt(3)/2 ≈ -0.866).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     cmd("tool.pipe.attr falloff type none");
@@ -196,7 +197,7 @@ unittest { // task 0319 — same overshoot guard on a plain cube, whose
 unittest { // task 0319 — the guard must not clip ordinary (non-overshoot)
            // pushes: a moderate negative dist, well inside the safe
            // range, should move verts by exactly `dist` (unclamped).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.push on");
     cmd("tool.pipe.attr falloff type none");

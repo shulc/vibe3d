@@ -53,7 +53,7 @@ void cmd(string s) {
 }
 
 void resetCube() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd(`{"id":"history.clear"}`);
 }

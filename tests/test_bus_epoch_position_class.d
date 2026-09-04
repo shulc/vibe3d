@@ -94,7 +94,7 @@ void settle(int ms = 300) { Thread.sleep(dur!"msecs"(ms)); }
 long counter(JSONValue ch, string key) { return ch[key].integer; }
 
 unittest {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     settle();
 
     // Baseline: the VBO already agrees with the mesh, so any disagreement
@@ -174,5 +174,5 @@ unittest {
              ~ "class an interactive transform publishes",
                worstIdx, m[worstIdx].toString, p[worstIdx].toString, worst));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
 }

@@ -52,7 +52,7 @@ bool attrQueryOk(string toolId, string name) {
 }
 
 unittest { // view-preset switch preserves selection, no active tool
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
 
     auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,2,5]}`));
@@ -72,7 +72,7 @@ unittest { // view-preset switch preserves selection, no active tool
 }
 
 unittest { // view-preset switch preserves selection AND the active tool
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
 
     auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[1,3,6]}`));
@@ -102,7 +102,7 @@ unittest { // view-preset switch preserves selection AND the active tool
 
 unittest { // view-preset switch preserves an EMPTY selection + active tool
     // (the whole-mesh / no-selection mode of a transform tool)
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
 
     auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));

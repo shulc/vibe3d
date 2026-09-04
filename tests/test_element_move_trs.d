@@ -10,6 +10,7 @@
 //     is active).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -45,7 +46,7 @@ unittest { // Translate-only: TX=0.3 with pickedCenter at +X+Y+Z
            // sphere (distance 0 → weight 1), so it shifts by +0.3
            // in X. Other corners are at √(0.25·3) ≈ 0.87 from
            // pickedCenter > 0.5 → weight 0.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0.5,0.5,0.5\"");
     cmd("tool.pipe.attr falloff dist 0.5");
@@ -69,7 +70,7 @@ unittest { // Translate-only: TX=0.3 with pickedCenter at +X+Y+Z
 unittest { // RX/RY/RZ attrs on xfrm.elementMove are NO-OPS — the
            // preset is T-only (R=0/S=0). Set RY=90 and verify the
            // mesh is untouched.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0.5,0.5,0.5\"");
     cmd("tool.pipe.attr falloff dist 0.5");
@@ -83,7 +84,7 @@ unittest { // RX/RY/RZ attrs on xfrm.elementMove are NO-OPS — the
 }
 
 unittest { // SX/SY/SZ likewise no-ops on the T-only preset.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0.5,0.5,0.5\"");
     cmd("tool.pipe.attr falloff dist 0.5");
@@ -113,7 +114,7 @@ unittest { // Full T+R+S chain via the unified `Transform` preset (T=R=S=1),
            // (The pre-fold per-pass chain translated v6 OFF the pivot FIRST at
            // full weight, then rotated/scaled the displaced point at a REDUCED
            // live weight, yielding +X — the divergence MS-4 corrects.)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set Transform on");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");

@@ -47,7 +47,7 @@ alias BASE = testBaseUrl;
 
 private string endpointPath(string ep) {
     switch (ep) {
-        case "reset":     return BASE ~ "/api/reset";
+        case "reset":     return BASE ~ "/api/command";
         case "select":    return BASE ~ "/api/command";
         case "command":   return BASE ~ "/api/command";
         case "transform": return BASE ~ "/api/command";
@@ -96,7 +96,9 @@ private void postStep(JSONValue step, string name, string phase, size_t i) {
     string body = ("argstring" in step) ? step["argstring"].str
                 : ("body"      in step) ? step["body"].toString
                 : "";
-    if (ep == "select")
+    if (ep == "reset")
+        body = commandBody("scene.reset", body);
+    else if (ep == "select")
         body = commandBody("mesh.select", body);
     else if (ep == "transform")
         body = commandBody("mesh.transform", body);
@@ -306,7 +308,9 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         // geometry — otherwise prim.cube APPENDS onto the reset cube and the
         // two coincide at shared corners, doubling those verts).
         bool empty = ("empty" in step) && step["empty"].type == JSONType.true_;
-        post(BASE ~ "/api/reset" ~ (empty ? "?empty=true" : ""), "");
+        post(BASE ~ "/api/command",
+            empty ? commandBody("scene.reset", `{"empty":true}`)
+                  : commandBody("scene.reset"));
     } else if ("select" in step) {
         auto sel    = step["select"];
         string mode = sel["mode"].str;
@@ -1554,7 +1558,7 @@ void runSelectLoopSuite(string fixtureJson) {
     foreach (cs; fx["cases"].array) {
         string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
 
-        post(BASE ~ "/api/reset?empty=true", "");
+        post(BASE ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
         auto lr = parseJSON(cast(string) post(BASE ~ "/api/command",
             commandBody("scene.loadMesh", cs["mesh"].toString)));
         if ("status" in lr) assert(lr["status"].str == "ok",
@@ -1629,7 +1633,7 @@ void runSelectLoopFvSuite(string fixtureJson) {
         string mode = cs["mode"].str;
         bool isVert = mode == "vertex";
 
-        post(BASE ~ "/api/reset?empty=true", "");
+        post(BASE ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
         auto lr = parseJSON(cast(string) post(BASE ~ "/api/command",
             commandBody("scene.loadMesh", cs["mesh"].toString)));
         if ("status" in lr) assert(lr["status"].str == "ok",

@@ -30,6 +30,7 @@
 // question arises.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -93,7 +94,7 @@ double dnint(double x) { return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5); }
 /// moved. (Not hypothetical: reading the wrong axis under a rig is what left
 /// this term dormant for two rounds.)
 void setup(float fy, float dist) {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/script",  "tool.set move");
     postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
     postJson("/api/camera", format(

@@ -45,7 +45,7 @@ JSONValue camAt(int n) {
 
 unittest {
     // ---- 1. Reset (Single layout) + capture the full 3D-area rect. ----
-    auto resetResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/reset", "{}"));
+    auto resetResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", commandBody("scene.reset", "{}")));
     assert(resetResp["status"].str == "ok", "reset failed");
 
     // Full viewport rect BEFORE switching to Quad (GET default = active cell 0,

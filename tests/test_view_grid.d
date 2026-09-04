@@ -35,7 +35,9 @@
 // to vary the step while holding everything else in the frame fixed.
 module test_view_grid;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -111,7 +113,7 @@ void setCamera(double az, double el, double dist) {
 }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     Thread.sleep(350.msecs);
 }
 

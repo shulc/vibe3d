@@ -30,6 +30,7 @@
 // path-keyed lookup land on the WRONG clip instead of on nothing.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -117,7 +118,7 @@ enum int kCellLeft  = 2;
 enum int kCellPersp = 3;
 
 void buildFixture() {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"viewport.layout","params":"Quad"}`);

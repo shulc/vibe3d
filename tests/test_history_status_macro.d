@@ -26,7 +26,7 @@ void translate(double dx) {
 
 unittest { // /api/history surfaces a non-zero flags field; the bit
            // pattern includes Succeeded (1) + Undoable (16) = 17.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -49,7 +49,7 @@ unittest { // /api/history surfaces a non-zero flags field; the bit
 unittest { // macro.record state:1 starts capture; subsequent
            // commands land in the buffer; macro.saveRecorded writes
            // a #LXMacro# file with one line per captured argstring.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -86,7 +86,7 @@ unittest { // macro.record state:1 starts capture; subsequent
 
 unittest { // macro.record state:0 stops capture; commands after
            // stop are NOT in the saved file.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -122,7 +122,7 @@ unittest { // macro.record state:0 stops capture; commands after
 }
 
 unittest { // macro.saveRecorded without `path` arg fails apply().
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto r = postJson("/api/command", "macro.saveRecorded");
     assert(r["status"].str != "ok",
         "saveRecorded without path should fail; got " ~ r.toString);

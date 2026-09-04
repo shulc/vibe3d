@@ -37,6 +37,7 @@
 // case selection independent of where the cube happens to project.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -83,7 +84,7 @@ private double[3] arr3(JSONValue v) {
 }
 
 unittest {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
 
     // Arm a transform tool. Nothing is selected and nothing is dragged: the
     // preview runs on plain hover, which is the path under test.

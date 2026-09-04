@@ -32,6 +32,7 @@
 // under that mutation is recorded at the bottom of this file.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -66,7 +67,7 @@ double[][] modelVerts() {
 // One +X scale-handle drag of `mag` pixels, delivered in `steps` motion events.
 // Same grab recipe as tests/test_acen_pin_characterization.d's scenario E.
 double[][] scaleDragWithSteps(int steps, double mag = 80.0) {
-    pj("/api/reset", "");
+    pj("/api/command", commandBody("scene.reset"));
     settle();
     cmd("tool.set TransformScale");
     cmd("tool.pipe.attr actionCenter mode auto");

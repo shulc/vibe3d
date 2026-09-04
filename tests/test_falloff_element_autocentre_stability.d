@@ -31,6 +31,7 @@
 // the gesture path re-baselines at commit.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -78,7 +79,7 @@ double maxDelta(double[3][] a, double[3][] b) {
 // must settle. Observed over several frame-times, the preview may not creep.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set Transform");   // the attr id below must name the ACTIVE tool
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -135,5 +136,5 @@ unittest {
         ~ "assertion above is inert -- it would pass on a frozen preview.");
 
     cmd("tool.set Transform off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

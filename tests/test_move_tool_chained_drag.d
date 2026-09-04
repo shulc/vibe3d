@@ -90,7 +90,7 @@ double[3] applyModel(double[16] m, double x, double y, double z) {
 }
 
 unittest { // After drag1+drag2 in one tool session, rendered position = CPU mesh
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/script", "tool.set move");
 

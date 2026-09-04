@@ -3,6 +3,7 @@
 // exist, absent when empty, and round-trip preserves values.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, write, readText;
@@ -15,7 +16,7 @@ void main() {}
 alias kBase = testBaseUrl;
 
 void resetCube() {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
 }
 
 void runCmd(string id, string paramsJson = "") {

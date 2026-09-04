@@ -44,6 +44,7 @@
 //
 // Run via: ./run_test.d topopen_remove_edge_vertex
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -78,7 +79,7 @@ string ctrlMmbAt(double t0, int px, int py) {
 /// for the opposite order. Removing it is not tidying: it makes this stand a
 /// WITNESS for that guarantee instead of a file that hides its loss.
 CameraState armCube() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
         0.3, 0.5, 4.0, 0.0, 0.0, 0.0));

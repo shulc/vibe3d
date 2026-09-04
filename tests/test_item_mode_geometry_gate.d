@@ -106,6 +106,7 @@
 // logged as "expected" and would mean nothing. There is no colour-separability
 // question left here to mutate against; the pass-identity question replaced it.
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -512,7 +513,7 @@ private struct Box {
 private enum int[] kStanding = [0, 2, 4];
 
 private void buildRig() {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.duplicate"}`);
@@ -869,7 +870,7 @@ unittest {
 /// A clean single-cube scene with an empty undo stack — what `/api/reset`
 /// yields between test binaries.
 private void freshCube() {
-    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd(`{"id":"history.clear"}`);
     settle();
@@ -947,7 +948,7 @@ unittest {
                    ~ "would already be able to see this state",
                    route, editModeName(), selectedVertices()));
 
-        auto r = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+        auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
         assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
         settle();
 

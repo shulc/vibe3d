@@ -4,6 +4,7 @@
 // via `tool.pipe.attr actionCenter userPlacedCenter "x,y,z"`.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -48,7 +49,7 @@ unittest { // type=element activates falloff with dist attr; the
            // sphere centre lives on ACEN (single source of truth),
            // so the round-trip checks userPlaced via ACEN's
            // userPlacedX/Y/Z.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set move on");
     cmd("tool.pipe.attr falloff type element");
@@ -71,7 +72,7 @@ unittest { // type=element activates falloff with dist attr; the
 
 unittest { // element falloff + Move TX: top-face verts near the picked
            // centre get full weight, far ones get 0
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
@@ -118,7 +119,7 @@ unittest { // element falloff + Move TX: top-face verts near the picked
 
 unittest { // dist=0 ⇒ degenerate radius: falloff returns weight=1
            // everywhere (no clamp can happen). Verts move uniformly.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set move on");
     cmd("tool.pipe.attr falloff type element");

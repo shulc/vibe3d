@@ -5,7 +5,9 @@
 // Regression: default GET/POST /api/camera (no query) unchanged.
 module test_viewport_independence;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -49,7 +51,7 @@ void postCommand(string cmd, string params = "") {
 }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
 }
 
 double getField(JSONValue j, string[] path...) {

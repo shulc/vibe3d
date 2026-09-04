@@ -72,7 +72,7 @@ unittest {
     enum float R = 1.0f;
     enum float H = 0.5f;
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", tubeMeshBody(R, H, N)));
     assert(lr["status"].str == "ok", "load-mesh (tube) failed: " ~ lr.toString);
 

@@ -27,6 +27,7 @@
 // / config command; the move stroke drives the MAIN loop via play-events.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -83,7 +84,7 @@ double maxDelta(Vec3[] a, Vec3[] b) {
 // moving set (universal "empty selection = all" rule).
 void establishDenseCube() {
     drainHistory();
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     drainHistory();
     postJson("/api/script", "mesh.subdivide");
     settle();

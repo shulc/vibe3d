@@ -4,6 +4,7 @@
 // bug is in the panel render or in the actual undo/redo stack.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -14,7 +15,7 @@ alias baseUrl = testBaseUrl;
 
 
 unittest { // baseline: /api/undo path
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", "mesh.subdivide");
     postJson("/api/undo", "");
@@ -27,7 +28,7 @@ unittest { // baseline: /api/undo path
 }
 
 unittest { // through the command dispatcher (same path Ctrl-Z takes)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", "mesh.subdivide");
     auto r = postJson("/api/command", "history.undo");
@@ -42,7 +43,7 @@ unittest { // through the command dispatcher (same path Ctrl-Z takes)
 }
 
 unittest { // smooth subdivide: undo restores 8/12/6 cube; redo re-applies
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // switch to polygon mode (required by subdivide guard)
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", "history.clear");

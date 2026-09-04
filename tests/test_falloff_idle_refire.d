@@ -147,7 +147,7 @@ string ctrlZ(double t) {
 // per-vertex weight. size=(0.9,0.9,0.9), shape=linear.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type cylinder");
     cmd("tool.pipe.attr falloff shape linear");
@@ -169,7 +169,7 @@ unittest {
         ~ " after axis Y->X");
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -180,7 +180,7 @@ unittest {
 // Widening the radius to 3.0 idle brings v6 into range.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -204,7 +204,7 @@ unittest {
         ~ v6Regraded[0].to!string ~ " after widening dist to 3.0");
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -215,7 +215,7 @@ unittest {
 // regardless of the sphere math (falloff.d elementWeight).
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -239,7 +239,7 @@ unittest {
         ~ ", still " ~ v6Regraded[0].to!string ~ " after anchorRing=\"6\"");
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -249,7 +249,7 @@ unittest {
 // test_falloff_element_connect.d's two-cube fixture.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:3 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:1 segmentsZ:1 radius:0");   // append -> verts 8..15
@@ -282,7 +282,7 @@ unittest {
         ~ "its unmoved position; got " ~ v0Regraded[0].to!string);
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -316,7 +316,7 @@ unittest {
 // attribute-write control) live in tests/test_slot_activation_boundary.d.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -351,7 +351,7 @@ unittest {
         ~ afterRelocate[0][0].to!string);
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -365,7 +365,7 @@ unittest {
 // in-session undo-stack tag, not a geometry delta.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -389,7 +389,7 @@ unittest {
         ~ ", still " ~ inSessionCount().to!string ~ " after mode=vertex");
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -404,7 +404,7 @@ unittest {
 // centre vertex's weight dramatically.
 // ===========================================================================
 unittest {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:4 segmentsY:4 segmentsZ:4 radius:0");
@@ -430,7 +430,7 @@ unittest {
         ~ ", still " ~ centreRegraded[0].to!string ~ " after steps 1->6");
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -440,7 +440,7 @@ unittest {
 // switching the active map idle must re-grade both verts.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
@@ -472,7 +472,7 @@ unittest {
         ~ v1AfterG[0].to!string ~ ", still " ~ v1Regraded[0].to!string);
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -482,7 +482,7 @@ unittest {
 // steps/mapName — task 0179 DoD item).
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
@@ -518,5 +518,5 @@ unittest {
         ~ "got " ~ falloffAttr("map"));
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

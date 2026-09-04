@@ -5,6 +5,7 @@
 // bar toolbar state the user controls independently.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -36,7 +37,7 @@ string[string] stageAttrs(string task) {
 unittest { // tool.set xfrm.elementMove off resets ACEN + WGHT to
            // defaults. Without this the next tool would inherit
            // mode=element / type=element from the previous session.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     // Simulate the post-click state: ACEN pivoted, falloff sphere
     // configured, anchor ring populated.
@@ -77,7 +78,7 @@ unittest { // Switching from xfrm.elementMove to TransformMove
            // must reset ACEN/WGHT BEFORE the new preset's
            // preActivate runs. TransformMove has no pipe.* block,
            // so the resulting state is the post-reset baseline.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0.1,0.2,0.3\"");
     cmd("tool.pipe.attr falloff anchorRing \"0,1,2\"");
@@ -101,7 +102,7 @@ unittest { // Switching to a preset that DOES pin pipe stages
            // (xfrm.elementMove again) lands on the preset's
            // settings — reset fires first, then preActivate
            // applies. End state matches preset, not defaults.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set TransformMove on");
     cmd("tool.set xfrm.elementMove on");
     auto acen = stageAttrs("ACEN");
@@ -117,7 +118,7 @@ unittest { // Switching to a preset that DOES pin pipe stages
 unittest { // User-driven globals SNAP / SYMM / WORK survive tool
            // switches — they reflect status-bar toolbar state the
            // user controls independently, NOT preset config.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     // Turn snap on (= user-driven global). Verify it carries across
     // tool activation + deactivation.

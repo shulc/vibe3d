@@ -55,6 +55,7 @@
 // cannot exhibit the phenomenon at all.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -81,7 +82,7 @@ int[] selectedVerts() {
 }
 
 void resetSubdividedCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
     cmd(`{"id":"history.clear"}`);

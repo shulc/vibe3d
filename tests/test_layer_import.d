@@ -17,6 +17,7 @@
 // node-transform bake is exercised here (that lives in test_gltf_transform.d).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -63,7 +64,7 @@ string v3dOut()   { return "/tmp/vibe3d_test_layer_import_rt.v3d"; }
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
-void resetApp() { post(baseUrl ~ "/api/reset", ""); }
+void resetApp() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
 JSONValue cmd(string argstring) {
     auto resp = cast(string) post(baseUrl ~ "/api/command", argstring);

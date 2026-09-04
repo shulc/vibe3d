@@ -16,6 +16,7 @@
 // action so one case cannot leak into the next on the shared instance.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -29,7 +30,7 @@ JSONValue postCmd(string query, string argstring) {
     return parseJSON(cast(string)post(baseUrl ~ "/api/command" ~ query, argstring));
 }
 
-void resetScene() { post(baseUrl ~ "/api/reset", ""); }
+void resetScene() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
 long vertCount() {
     return getJson("/api/model")["vertices"].array.length;

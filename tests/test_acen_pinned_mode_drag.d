@@ -97,7 +97,7 @@ string[string] acenAttrs() {
 
 // Fresh cube, +Y face selected, Move armed, action centre `mode`.
 void setup(string mode) {
-    pj("/api/reset", "");
+    pj("/api/command", commandBody("scene.reset"));
     settle();
     pj("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex())));
     cmd("actr." ~ mode);

@@ -13,6 +13,7 @@
 //   shows the previous value).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -35,7 +36,7 @@ string[string] getFalloffAttrs() {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr falloff type none");
     // Tools that auto-size on type-switch (e.g. D.1 `xfrm.twist`'s
     // linear-falloff path) leave start/end / center/size at auto-fit

@@ -14,6 +14,7 @@
 // pivot relocates onto the clicked face.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -57,12 +58,12 @@ void establishCubeBaseline() {
         postJson("/api/script", "tool.set xfrm.elementMove off");
         Thread.sleep(120.msecs);
         drainHistory();
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         drainHistory();
         if (cubePristine()) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 

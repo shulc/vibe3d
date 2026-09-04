@@ -28,7 +28,7 @@ JSONValue getModel() {
 unittest { // /api/model emits in-range edges + faces; both stable under a move
     // Reset to the pristine startup cube (the runner shares one vibe3d per
     // worker across tests — without this the asserted mesh could be stale).
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto before = getModel();
 

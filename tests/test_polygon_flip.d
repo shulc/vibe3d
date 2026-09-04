@@ -14,7 +14,7 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/reset failed: " ~ resp);
 }
@@ -164,7 +164,7 @@ unittest { // empty face selection flips every face
 // No-op on empty mesh: evaluate returns false → no undo entry added
 // ---------------------------------------------------------------------------
 unittest { // flip on empty mesh is a no-op that does not add an undo entry
-    auto resp = post(testBaseUrl() ~ "/api/reset?empty=true", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/reset?empty=true failed: " ~ resp);
 

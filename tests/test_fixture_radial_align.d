@@ -69,7 +69,7 @@ void assertManifold(long vBefore, long eBefore, long fBefore) {
 }
 
 int[4] buildLoop() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -206,7 +206,7 @@ unittest { // `side` DoS clamp — an absurd value must not hang or corrupt
 }
 
 unittest { // no selection -> whole-mesh fallback must not crash.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto model0 = getJson("/api/model");
     long v0 = model0["vertexCount"].integer, e0 = model0["edgeCount"].integer,
          f0 = model0["faceCount"].integer;

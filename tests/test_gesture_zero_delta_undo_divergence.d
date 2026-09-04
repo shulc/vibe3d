@@ -377,7 +377,7 @@ bool realDrag(double magPx, int steps) {
 CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
     CellResult r;
 
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     settle();
 
     // E1
@@ -453,7 +453,7 @@ CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
 ArmDropResult runArmDropParityCell(double stdMagPx, int stdSteps) {
     ArmDropResult r;
 
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     settle();
 
     selectVerts([2, 3, 6, 7]);

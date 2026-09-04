@@ -113,7 +113,7 @@ DragSetup armHandle() {
 }
 
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectTopFrontEdge();
     long depthBefore = modelDepth();
@@ -182,7 +182,7 @@ unittest {
 // before the tool is dropped. Returning to L0 must replay its activation
 // snapshot exactly.
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectCornerEdges();
     long depthBefore = modelDepth();
@@ -253,7 +253,7 @@ unittest {
 // This pins the `if (built && before.filled) before.restore()` guard that the
 // whole topology-tool family carries; dropping it double-bevels here.
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectTopFrontEdge();
 

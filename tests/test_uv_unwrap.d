@@ -24,6 +24,7 @@
 //        weld extraction refactor.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.math      : fabs, sqrt, acos, isNaN, isInfinity;
 import std.file      : write, remove, exists, readText;
 import std.format    : format;
@@ -281,7 +282,7 @@ unittest {
 }`;
     write(tmpLoad, v3d);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ tmpLoad ~ `"}`);
 
     // Apply with explicit params so the test is not sensitive to defaults.
@@ -397,7 +398,7 @@ unittest {
 // HTTP Test 7: Default cube → uv.unwrap → status:error (no-pin guard).
 // ---------------------------------------------------------------------------
 unittest {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(runCmdRaw(
         `{"id":"uv.unwrap","params":{"mode":"planar","seams":"boundary","iter":30}}`));
     assert(resp["status"].str == "error",
@@ -442,7 +443,7 @@ unittest {
 }`;
     write(tmpLoad, v3d);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ tmpLoad ~ `"}`);
     runCmd("uv.relax", `{"iter":50,"strn":0.5}`);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);

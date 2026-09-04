@@ -23,6 +23,7 @@
 // (see tests/fixture_helpers.d).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -38,7 +39,7 @@ private JSONValue jpost(string path, string body_) {
 }
 
 private void reset() {
-    auto r = jpost("/api/reset", "");
+    auto r = jpost("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString());
 }
 

@@ -43,10 +43,10 @@ bool approxEq(double a, double b, double eps = 1e-5) {
 }
 
 unittest { // determinism — same seed twice ⇒ identical positions
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:42");
     auto first = dumpVerts();
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:42");
     auto second = dumpVerts();
     assert(first.length == second.length);
@@ -60,10 +60,10 @@ unittest { // determinism — same seed twice ⇒ identical positions
 }
 
 unittest { // different seed ⇒ different output (with overwhelming probability)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:42");
     auto a = dumpVerts();
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:7");
     auto b = dumpVerts();
     bool anyDifferent = false;
@@ -76,7 +76,7 @@ unittest { // different seed ⇒ different output (with overwhelming probability
 }
 
 unittest { // scl=0 on every axis ⇒ no-op
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0 rangeY:0 rangeZ:0 seed:42");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -90,7 +90,7 @@ unittest { // scl=0 on every axis ⇒ no-op
 }
 
 unittest { // displacement bounded by scl per axis
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.2 rangeY:0.05 rangeZ:0.0 seed:1");
     auto verts = dumpVerts();
     foreach (v; verts) {
@@ -107,7 +107,7 @@ unittest { // displacement bounded by scl per axis
 }
 
 unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only that vert moves
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[3]}`));
     assert(sel["status"].str == "ok");
@@ -130,7 +130,7 @@ unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only that vert 
 }
 
 unittest { // undo restores pre-jitter positions
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:1");
     cmd("history.undo");
     auto verts = dumpVerts();
@@ -151,7 +151,7 @@ unittest { // enableX:false rangeX:0.5 → X coordinate UNCHANGED.
            // RNG rolls still happen (3 per vert) so Y/Z stay in sync
            // with the all-enabled baseline — verify that by comparing
            // Y/Z against the baseline.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.5 rangeY:0.5 rangeZ:0.5 seed:42 enableX:false");
     auto gated = dumpVerts();
 
@@ -161,7 +161,7 @@ unittest { // enableX:false rangeX:0.5 → X coordinate UNCHANGED.
     }
 
     // Y/Z displacement should match the all-enabled run.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.5 rangeY:0.5 rangeZ:0.5 seed:42");
     auto baseline = dumpVerts();
     foreach (i; 0 .. gated.length) {
@@ -173,7 +173,7 @@ unittest { // enableX:false rangeX:0.5 → X coordinate UNCHANGED.
 }
 
 unittest { // enableY:false: Y pinned, X/Z follow baseline.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.5 rangeY:0.5 rangeZ:0.5 seed:42 enableY:false");
     auto gated = dumpVerts();
     foreach (v; gated)
@@ -182,7 +182,7 @@ unittest { // enableY:false: Y pinned, X/Z follow baseline.
 }
 
 unittest { // enableZ:false: Z pinned.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.5 rangeY:0.5 rangeZ:0.5 seed:42 enableZ:false");
     auto gated = dumpVerts();
     foreach (v; gated)
@@ -191,7 +191,7 @@ unittest { // enableZ:false: Z pinned.
 }
 
 unittest { // all three enables = false ⇒ no movement at all.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.5 rangeY:0.5 rangeZ:0.5 seed:42 "
         ~ "enableX:false enableY:false enableZ:false");
     auto verts = dumpVerts();
@@ -203,12 +203,12 @@ unittest { // all three enables = false ⇒ no movement at all.
 }
 
 unittest { // explicit enableAxis:true ≡ default-omitted (regression).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.3 rangeY:0.3 rangeZ:0.3 seed:1 "
         ~ "enableX:true enableY:true enableZ:true");
     auto explicit = dumpVerts();
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.3 rangeY:0.3 rangeZ:0.3 seed:1");
     auto omitted = dumpVerts();
 
@@ -225,11 +225,11 @@ unittest {
     // We compare jitter-with-weight=1-at-top against jitter-without-
     // falloff at the same seed, expecting top displacements to match
     // and bottom displacements to be zero.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.jitter rangeX:0.2 rangeY:0.2 rangeZ:0.2 seed:42");
     auto unweighted = dumpVerts();
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto pre = dumpVerts();
     auto resp = postJson("/api/command",
         `{"id":"mesh.jitter","params":{`
@@ -267,7 +267,7 @@ unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
            // this still moves all 8 verts even though they're hidden) → no-op
            // jitter with the selection cleared (now nothing selected AND
            // everything hidden ⇒ empty operand).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto selAll = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selAll["status"].str == "ok", selAll.toString);

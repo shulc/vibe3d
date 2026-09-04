@@ -36,7 +36,7 @@ void runCmd(string id, string paramsJson) {
     assert(j["status"].str == "ok", id ~ " failed: " ~ j.toString);
 }
 void resetCube() {
-    auto j = postJson("/api/reset", "");
+    auto j = postJson("/api/command", commandBody("scene.reset"));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
 }
 void postSelect(string mode, int[] indices) {

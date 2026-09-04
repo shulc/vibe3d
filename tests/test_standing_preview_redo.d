@@ -66,7 +66,7 @@ JSONValue postCmd(string path, string body_) {
 
 
 void resetCube() {
-    auto r = postCmd("/api/reset", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed");
 }
 

@@ -97,7 +97,7 @@ void ok(char[] resp, string what) {
 // frame AND the centre the pipe published — the two inputs, together, because
 // the point of this file is that they move independently.
 Frame frameFor(string actr, string sel = SEL_TOP_FACE) {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
     auto ev = parseJSON(cast(string)get(BASE ~ "/api/toolpipe/eval"));
@@ -198,7 +198,7 @@ unittest { // THE SEPARABILITY PROPERTY — one centre, two frames
 // per-vertex movement on each world axis. The offset is diagonal so the drag
 // has a component along the handle whichever way it projects.
 double[3] dragHandle(string actr, int part, string sel = SEL_TOP_FACE) {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "tool.set move"), "tool.set move");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
@@ -292,7 +292,7 @@ enum string ROTATED_CUBE = `{"vertices":[`
     ~ `"faces":[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]]}`;
 
 unittest { // Local and Select stay in lockstep off the world axes too
-    ok(post(BASE ~ "/api/reset", ""), "reset");
+    ok(post(BASE ~ "/api/command", commandBody("scene.reset")), "reset");
     auto lm = post(BASE ~ "/api/command", commandBody("scene.loadMesh", ROTATED_CUBE));
     assert(parseJSON(cast(string)lm)["status"].str == "ok",
            "load-mesh failed: " ~ cast(string)lm);

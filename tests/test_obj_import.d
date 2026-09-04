@@ -24,6 +24,7 @@
 // matrix helpers (toMat16 / mul4 / transformPoint) have a runtime witness.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -84,7 +85,7 @@ string twoPath()   { return "/tmp/vibe3d_test_import_two.obj"; }
 // ---------------------------------------------------------------------------
 
 void resetApp() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 string loadCmd(string path) {

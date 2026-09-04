@@ -13,6 +13,7 @@
 //     so this validates the LOAD path independently)
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write;
@@ -52,7 +53,7 @@ unittest { // empty mesh save → reload is rejected (no POLS); prior mesh kept
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
 
-    post(baseUrl ~ "/api/reset?empty=true", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(model()["vertexCount"].integer == 0,
         "setup: empty reset should leave 0 verts");
 
@@ -61,7 +62,7 @@ unittest { // empty mesh save → reload is rejected (no POLS); prior mesh kept
 
     // Re-cube the scene, then try to load — the load should be rejected
     // because the file has no POLS chunk; cube remains intact.
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     string body = `{"id":"file.load","params":{"path":"` ~ path ~ `"}}`;
     auto resp  = parseJSON(cast(string)post(baseUrl ~ "/api/command", body));
     assert(resp["status"].str == "error",
@@ -75,7 +76,7 @@ unittest { // large mesh round-trip: subdivide twice → save → reload
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
 
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Two Catmull-Clark passes on the cube blow vertex count up by ~16×.
     post(baseUrl ~ "/api/command", "select.typeFrom polygon");
     runCmd("mesh.subdivide");
@@ -88,7 +89,7 @@ unittest { // large mesh round-trip: subdivide twice → save → reload
         preV.to!string);
 
     runCmd("file.save", `{"path":"` ~ path ~ `"}`);
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ path ~ `"}`);
 
     auto m1 = model();
@@ -105,7 +106,7 @@ unittest { // vertex positions preserved across save → reload
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
 
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto m0 = model();
     double[3][] pre;
     foreach (v; m0["vertices"].array) {
@@ -113,7 +114,7 @@ unittest { // vertex positions preserved across save → reload
     }
 
     runCmd("file.save", `{"path":"` ~ path ~ `"}`);
-    post(baseUrl ~ "/api/reset?empty=true", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
     runCmd("file.load", `{"path":"` ~ path ~ `"}`);
 
     auto m1 = model();
@@ -135,7 +136,7 @@ unittest { // 5× save / load cycles don't accumulate float drift
     enum string path = "/tmp/vibe3d-test-cycles.lwo";
     scope(exit) if (exists(path)) remove(path);
 
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto m0 = model();
     double[3][] pre;
     foreach (v; m0["vertices"].array)
@@ -143,7 +144,7 @@ unittest { // 5× save / load cycles don't accumulate float drift
 
     foreach (_; 0 .. 5) {
         runCmd("file.save", `{"path":"` ~ path ~ `"}`);
-        post(baseUrl ~ "/api/reset?empty=true", "");
+        post(baseUrl ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
         runCmd("file.load", `{"path":"` ~ path ~ `"}`);
     }
 
@@ -215,7 +216,7 @@ unittest { // PTCH chunk on load → isSubpatch flag set
 
     write(path, cast(void[])lwo);
 
-    post(baseUrl ~ "/api/reset?empty=true", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset", `{"empty":true}`));
     runCmd("file.load", `{"path":"` ~ path ~ `"}`);
     auto m = model();
     assert(m["vertexCount"].integer == 4,

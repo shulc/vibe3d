@@ -26,7 +26,7 @@ void command(string line) {
 
 void establishBaseline() {
     postJson("/api/script", "tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     command("history.clear");
 }
 

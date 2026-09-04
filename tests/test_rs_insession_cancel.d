@@ -47,6 +47,7 @@
 // Cube layout (centered at origin, size 1): v6 = (0.5, 0.5, 0.5).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -135,12 +136,12 @@ void establishCubeBaseline() {
         // to a stale state (the -j1 cross-test-bleed flake). history.clear is a
         // SideEffect command: it wipes BOTH stacks WITHOUT touching the mesh, so
         // the cube stays pristine AND undo=0.
-        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", commandBody("scene.reset"));                 // cube
         postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");    // last reset stands, un-undone
+    postJson("/api/command", commandBody("scene.reset"));    // last reset stands, un-undone
     postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }

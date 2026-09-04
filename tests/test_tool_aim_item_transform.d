@@ -72,7 +72,7 @@ void waitIdle() {
 
 void resetScene() {
     waitIdle();
-    auto j = postJson("/api/reset", "");
+    auto j = postJson("/api/command", commandBody("scene.reset"));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
 }
 

@@ -88,7 +88,7 @@ size_t duplicatePositionVerts(JSONValue m) {
 
 // Reset to default cube and switch to vertex mode (ensures SubjectPacket delivery).
 void loadCube() {
-    auto r = postCmd("/api/reset", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed");
     auto s = postCmd("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select failed");

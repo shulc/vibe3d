@@ -14,6 +14,7 @@
 // every assertion as-is.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -26,7 +27,7 @@ alias baseUrl = testBaseUrl;
 
 
 void resetCube() {
-    auto resp = postJson("/api/reset?type=cube", "");
+    auto resp = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(resp["status"].str == "ok", "/api/reset cube failed");
 }
 

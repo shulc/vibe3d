@@ -50,7 +50,7 @@ void cmd(string s) {
 // radial-drag test recipe; the quoted vec3 value for `center` needs
 // the script parser).
 void setupSoftTransform() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok",
         "select-all failed: " ~ selResp.toString);

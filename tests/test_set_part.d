@@ -16,7 +16,7 @@ void main() {}
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // mesh.setPart is a Polygons-mode command.
     post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
@@ -104,7 +104,7 @@ unittest { // empty selection is a no-op: status != ok, facePart unchanged
 }
 
 unittest { // wrong edit mode (Vertices) is rejected with status error
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     post(testBaseUrl() ~ "/api/command", "select.typeFrom vertex");
 
     auto resp = postCommandRaw(
@@ -155,7 +155,7 @@ unittest { // .v3d round-trip: facePart survives save + load
     scope(exit) if (exists(path)) remove(path);
 
     postCommand(`{"id":"file.save","params":{"path":"` ~ path ~ `"}}`);
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     postCommand(`{"id":"file.load","params":{"path":"` ~ path ~ `"}}`);
     post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 

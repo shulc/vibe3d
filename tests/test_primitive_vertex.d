@@ -28,6 +28,7 @@
 // Viewport recording reference: (150,28  650×544, fovY=0.785398)
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -42,7 +43,7 @@ alias baseUrl = testBaseUrl;
 
 
 void resetEmpty() {
-    auto resp = postJson("/api/reset?empty=true", "");
+    auto resp = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(resp["status"].str == "ok", "reset(empty) failed: " ~ resp.toString);
 }
 

@@ -65,7 +65,7 @@ JSONValue postTo(string path, string body_) {
 
 
 void resetCube() {
-    auto r = postTo("/api/reset?type=cube", "");
+    auto r = postTo("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 void cmd(string s) {
@@ -562,7 +562,7 @@ unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
     // (the shape `tests/test_poly_inset_drag.d` already drives). So the press
     // point is arbitrary and only the VERTICAL travel carries meaning.
     enum int kFrames = 12;
-    auto rr = postTo("/api/reset", "");
+    auto rr = postTo("/api/command", commandBody("scene.reset"));
     assert(rr["status"].str == "ok", "reset failed: " ~ rr.toString);
     auto sel = postTo("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(sel["status"].str == "ok", "face select failed: " ~ sel.toString);

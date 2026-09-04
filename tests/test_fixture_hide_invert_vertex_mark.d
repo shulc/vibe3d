@@ -220,7 +220,7 @@ unittest {
            ~ "measurement the prefix's after_invert row records");
 
     // ---- build the rig ------------------------------------------------------
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
     {
         JSONValue mesh = JSONValue(["vertices": rig["vertices"], "faces": rig["faces"]]);

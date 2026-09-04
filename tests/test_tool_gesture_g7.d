@@ -848,7 +848,7 @@ void quadFacePx(out int fx, out int fy) {
 //    asserts zero on is alive.
 // ---------------------------------------------------------------------------
 unittest {
-    auto r0 = postJ("/api/reset");
+    auto r0 = postJ("/api/command", commandBody("scene.reset"));
     assert(r0["status"].str == "ok", "control: reset failed: " ~ r0.toString);
     cmdLine("history.clear");
     immutable string before = planes();

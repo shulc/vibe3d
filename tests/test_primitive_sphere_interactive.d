@@ -36,6 +36,7 @@
 // against the click point).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -134,7 +135,7 @@ Vec3 center() {
 double centerAlong(Vec3 axis) { return dotD(center(), axis); }
 
 void resetForSphere() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",

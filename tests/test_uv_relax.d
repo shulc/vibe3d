@@ -21,6 +21,7 @@
 //     8. iter=0 (map present) → uv.relax → status:error.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.math   : fabs;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
@@ -284,7 +285,7 @@ unittest {
 }`;
     write(tmpLoad, v3d);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ tmpLoad ~ `"}`);
 
     // Apply relax with enough passes to converge the center well within eps.
@@ -359,7 +360,7 @@ unittest {
 // HTTP Test 7: Default cube has no UV map → uv.relax → status:error.
 // ---------------------------------------------------------------------------
 unittest {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(runCmdRaw(`{"id":"uv.relax"}`));
     assert(resp["status"].str == "error",
            "uv.relax on mesh without UV map must return status:error");
@@ -390,7 +391,7 @@ unittest {
 }`;
     write(tmpLoad, v3d);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("file.load", `{"path":"` ~ tmpLoad ~ `"}`);
 
     auto resp = parseJSON(runCmdRaw(`{"id":"uv.relax","params":{"iter":0}}`));

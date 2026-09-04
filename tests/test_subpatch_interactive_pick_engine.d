@@ -128,7 +128,7 @@ void clickAt(int wx, int wy) {
 
 void resetFixture() {
     waitPlayerIdle();
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     Thread.sleep(dur!"msecs"(120));
     runCmd("select.typeFrom polygon");
 }

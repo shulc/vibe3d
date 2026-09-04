@@ -169,7 +169,7 @@ Vec3 v3(const double[3] p) { return Vec3(cast(float)p[0], cast(float)p[1], cast(
 // The two DRAW the same picture; that is the whole point.
 // --------------------------------------------------------------------------
 void buildStand(bool transformed) {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 
     auto M = composeItemMatrix();
     string verts = "[";

@@ -20,13 +20,14 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset failed: " ~ resp);
 }
 
 void resetGrid(int n) {
-    auto resp = post(testBaseUrl() ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(testBaseUrl() ~ "/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/reset grid failed: " ~ resp);
 }

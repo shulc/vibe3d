@@ -29,6 +29,7 @@
 // does not compile at all.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -54,7 +55,7 @@ void cmd(string s) {
 unittest {
     // Baseline: the server answers before we start.
     assert(getJson("/api/ping")["status"].str == "ok", "server must be up");
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 
     // Arm a tool, then drop it — the drop is what records a ToolLifecycle
@@ -74,7 +75,7 @@ unittest {
     // drop the armed tool (file.new's path, which also records a lifecycle
     // entry) — the server must survive that too.
     cmd("tool.set move on");
-    auto r2 = parseJSON(cast(string) post(baseUrl ~ "/api/reset", ""));
+    auto r2 = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r2["status"].str == "ok", "/api/reset after arming failed");
     assert(getJson("/api/ping")["status"].str == "ok",
            "server died on a reset-driven tool drop");

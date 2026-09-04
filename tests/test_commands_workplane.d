@@ -44,7 +44,7 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 double f(string[string] a, string key) { return a[key].to!double; }
 
 unittest { // reset: auto=true, center=0, rotation=0
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Knock workplane out of default first so reset has work to do.
     runCmd("workplane.offset axis:X dist:0.7");
     runCmd("workplane.rotate axis:Y angle:45");
@@ -62,7 +62,7 @@ unittest { // reset: auto=true, center=0, rotation=0
 }
 
 unittest { // offset adds dist along the chosen axis; subsequent offsets stack
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     runCmd("workplane.offset axis:X dist:0.3");
     auto a1 = workplaneAttrs();
     assert(approx(f(a1, "cenX"), 0.3),
@@ -82,7 +82,7 @@ unittest { // offset adds dist along the chosen axis; subsequent offsets stack
 }
 
 unittest { // rotate adds angle (degrees) around the chosen axis; stacks
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     runCmd("workplane.rotate axis:Y angle:30");
     auto a1 = workplaneAttrs();
     assert(approx(f(a1, "rotY"), 30.0),
@@ -97,7 +97,7 @@ unittest { // rotate adds angle (degrees) around the chosen axis; stacks
 }
 
 unittest { // edit: absolute set, NaN fields untouched
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     runCmd("workplane.offset axis:Z dist:9");      // baseline non-zero cenZ
     runCmd("workplane.edit cenX:1 rotZ:90");        // touches only cenX and rotZ
     auto a = workplaneAttrs();
@@ -109,7 +109,7 @@ unittest { // edit: absolute set, NaN fields untouched
 }
 
 unittest { // alignToSelection on top face: workplane center sits at face centroid
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Find top face index — same approach as test_tool_rotate_drag.
     auto m = getJson("/api/model");
     int topFace = -1;

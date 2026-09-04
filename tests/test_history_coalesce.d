@@ -58,7 +58,7 @@ bool posEq(double[3] a, double[3] b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     // Wipe the worker-global undo stack. The undo history is shared across
     // every test that runs against this worker's long-lived vibe3d, and
     // /api/reset does NOT clear it (it records a scene.reset entry instead).

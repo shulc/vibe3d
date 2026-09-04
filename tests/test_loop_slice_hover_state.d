@@ -18,6 +18,7 @@
 // to show the wrong — parallel — ring).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -33,7 +34,7 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 void resetCube() {
-    auto resp = post(baseUrl ~ "/api/reset", "");
+    auto resp = post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/reset failed: " ~ cast(string)resp);
 }

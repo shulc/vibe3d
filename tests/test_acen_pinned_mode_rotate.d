@@ -113,7 +113,7 @@ Vec3 acenCenter() {
 
 // Fresh cube, +Y face selected, Rotate armed, action centre `mode`.
 void setup(string mode) {
-    pj("/api/reset", "");
+    pj("/api/command", commandBody("scene.reset"));
     settle();
     pj("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex())));
     cmd("actr." ~ mode);

@@ -10,6 +10,7 @@
 // the `rotate` tool. We verify against an analytical reference.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -40,7 +41,7 @@ bool approxEq(double a, double b, double eps = 1e-4) {
 }
 
 unittest { // vortex preset activation: type=cylinder, shape=linear
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.vortex on");
     auto j = getJson("/api/toolpipe");
     string ftype, fshape;
@@ -66,7 +67,7 @@ unittest { // vortex preset activation: type=cylinder, shape=linear
 
 unittest { // RY=0 ⇒ no-op even with cylinder falloff active. Angle 0 under
            // angle-scaling is R(w·0)=identity for every weight, so nothing moves.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.vortex on");
     cmd("tool.pipe.attr falloff center \"0,0,0\"");

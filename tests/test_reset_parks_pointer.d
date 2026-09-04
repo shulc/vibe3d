@@ -30,6 +30,7 @@
 // be satisfied by a constant.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP, get;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -141,7 +142,7 @@ void main() {}
 unittest {
     writeln("=== test_reset_parks_pointer ===");
 
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     settle();
 
     Cell c;
@@ -172,7 +173,7 @@ unittest {
     //     FIRST test of a worker's slice gets, and the one every later test in
     //     that slice is entitled to. Re-arm afterwards: the reset drops the
     //     tool, and the pixel only means something with the gizmo drawn.
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     settle();
     int cx2, cy2;
     Cell c2;

@@ -24,6 +24,7 @@
 // different purposes, agreeing on the size of the drift, one of them for free.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -63,7 +64,7 @@ string hoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 // pivot AFTER the release — it must still be on the picked vertex, not at the
 // mesh centroid.
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
     postJson("/api/command", "tool.pipe.attr falloff mode vertex");

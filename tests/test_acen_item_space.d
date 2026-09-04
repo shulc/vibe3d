@@ -123,7 +123,7 @@ string fmt3(double[3] v) {
 // --------------------------------------------------------------------------
 void buildStand(string itemTransform) {
     auto fx = fixture();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 
     string verts = "[";
     foreach (i, v; fx["stand"]["vertices"].array) {

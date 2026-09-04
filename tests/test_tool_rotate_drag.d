@@ -53,7 +53,7 @@ int findTopFace() {
 }
 
 unittest { // dragging the view-axis ring rotates top face rigidly
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     int topFace = findTopFace();
     auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));

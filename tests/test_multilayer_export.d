@@ -24,6 +24,7 @@
 // layers with distinct, non-trivial geometry to track across the round-trip.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -125,7 +126,7 @@ void cmdOk(string line) {
     auto resp = post(testBaseUrl() ~ "/api/command", line);
     assert(parseJSON(resp)["status"].str == "ok", "command failed: " ~ resp);
 }
-void resetApp() { post(testBaseUrl() ~ "/api/reset", ""); }
+void resetApp() { post(testBaseUrl() ~ "/api/command", commandBody("scene.reset")); }
 
 JSONValue layers() {
     return parseJSON(get(testBaseUrl() ~ "/api/layers"));

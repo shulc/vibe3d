@@ -118,7 +118,7 @@ void establishCubeBaseline() {
         // pre-reset mesh is clean (see header — without this we'd just undo
         // our own reset back to the dirty mesh).
         drainHistory();
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         // Drain the reset (+ any select UI-undo) so count-delta asserts start
         // from a known floor; the pre-reset mesh is already clean.
         drainHistory();
@@ -127,7 +127,7 @@ void establishCubeBaseline() {
     }
     // Last reset stands (NOT undone) so a genuinely unrestorable prior state
     // still leaves a clean cube for the test's own assertions to run against.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 

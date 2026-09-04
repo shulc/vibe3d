@@ -54,7 +54,7 @@ string[string] getSnapAttrs() {
 
 // Standard setup: default cube, snap enabled, huge range.
 void snapSetup(string types) {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("tool.pipe.attr snap enabled true");
     cmd(`tool.pipe.attr snap types "` ~ types ~ `"`);
     cmd("tool.pipe.attr snap innerRange 999999");
@@ -123,7 +123,7 @@ unittest { // snap.mode command round-trips all three modes
 unittest { // reset clears snapMode back to global
     snapSetup("vertex");
     cmd("snap.mode item");
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     auto a = getSnapAttrs();
     assert(a["snapMode"] == "global",
         "reset must restore snapMode=global; got " ~ a["snapMode"]);
@@ -139,7 +139,7 @@ unittest { // reset clears snapMode back to global
 // =========================================================================
 
 unittest { // WorldAxis constraint fires; constraintType == 512
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/camera",
         `{"azimuth":0.0,"elevation":0.0,"distance":3.0,` ~
         `"focus":{"x":0,"y":0,"z":0}}`);
@@ -166,7 +166,7 @@ unittest { // WorldAxis constraint fires; constraintType == 512
 
 unittest { // WorldAxis snap returns constraintType in JSON response
     // Verify the /api/snap JSON carries the constraintType key.
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("tool.pipe.attr snap enabled true");
     cmd("tool.pipe.attr snap types worldAxis");
     auto p = viewportCenter();
@@ -182,7 +182,7 @@ unittest { // WorldAxis snap returns constraintType in JSON response
 // =========================================================================
 
 unittest { // Pivot discrete snap fires on world pivot position
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/camera",
         `{"azimuth":0.0,"elevation":0.0,"distance":3.0,` ~
         `"focus":{"x":0,"y":0,"z":0}}`);
@@ -242,7 +242,7 @@ unittest { // Box corner discrete snap fires; result at a cube AABB corner
 // =========================================================================
 
 unittest { // Global mode: pivot snap fires
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("layer.attr 0 pivot.x 0.3");
     cmd("snap.mode global");
     cmd("tool.pipe.attr snap enabled true");
@@ -256,7 +256,7 @@ unittest { // Global mode: pivot snap fires
 }
 
 unittest { // Component mode: pivot snap does NOT fire (pivot is item-only)
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("layer.attr 0 pivot.x 0.3");
     cmd("snap.mode component");
     cmd("tool.pipe.attr snap enabled true");
@@ -271,7 +271,7 @@ unittest { // Component mode: pivot snap does NOT fire (pivot is item-only)
 }
 
 unittest { // Item mode: vertex snap does NOT fire (vertex is component-only)
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("snap.mode item");
     cmd("tool.pipe.attr snap enabled true");
     cmd("tool.pipe.attr snap types vertex");
@@ -285,7 +285,7 @@ unittest { // Item mode: vertex snap does NOT fire (vertex is component-only)
 }
 
 unittest { // Item mode: pivot snap fires
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("layer.attr 0 pivot.x 0.3");
     cmd("snap.mode item");
     cmd("tool.pipe.attr snap enabled true");
@@ -362,7 +362,7 @@ unittest { // existing vertex snap unaffected after new-type changes
 }
 
 unittest { // disabled snap still returns input pass-through with new types
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     cmd("tool.pipe.attr snap enabled false");
     cmd(`tool.pipe.attr snap types "vertex,pivot,box,worldAxis,intersection"`);
     auto sr = querySnap(1.1, 2.2, 3.3, 100, 100);

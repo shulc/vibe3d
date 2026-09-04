@@ -1,4 +1,5 @@
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -87,7 +88,7 @@ unittest { // Test the /api/camera endpoint
 }
 
 unittest { // ROTATE: Test camera state after playing rotate events
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/camera_rotate_events.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -111,7 +112,7 @@ unittest { // ROTATE: Test camera state after playing rotate events
 }
 
 unittest { // PAN: Test camera state after playing pan events
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/camera_pan_events.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -136,7 +137,7 @@ unittest { // PAN: Test camera state after playing pan events
 
 unittest { // ZOOM: Test camera state after playing events from events.log
     // Reset to known initial state before playing events
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // Play events — read as raw bytes to preserve newlines
     auto events = cast(const(void)[])read("tests/events/camera_zoom_events.log");
@@ -164,7 +165,7 @@ unittest { // ZOOM: Test camera state after playing events from events.log
 }
 
 unittest { // WHEEL ZOOM: SDL_MOUSEWHEEL changes camera distance
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     enum events =
         `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~

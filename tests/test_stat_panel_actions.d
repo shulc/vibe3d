@@ -48,7 +48,7 @@ void cmd(string line) {
 }
 
 void settle() { Thread.sleep(400.msecs); }
-void resetApp() { httpPost("/api/reset", "{}"); settle(); }
+void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 
 // The panel is a floating window and `/api/reset` does not close it: a block
 // that leaves it open hands every later test on this worker a viewport with a

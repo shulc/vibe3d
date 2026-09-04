@@ -110,7 +110,7 @@ size_t selectedFaceCount() {
 /// Fresh cube, face `HIDDEN_FACE` hidden, mark confirmed present. Every row
 /// re-runs this from scratch so no row can inherit another's state.
 void cubeWithOneHiddenFace() {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
     selectPolys([HIDDEN_FACE]);
     cmd(`{"id":"mesh.hide"}`);
@@ -162,7 +162,7 @@ unittest {
     // Without this, "21" below could be the number this command always
     // produces and every row under it would be measuring nothing.
     {
-        postOk("/api/reset", "");
+        postOk("/api/command", commandBody("scene.reset"));
         cmd(`{"id":"history.clear"}`);
         selectPolys([]);
         assert(selectedFaceCount() == 0, "vacuity guard: nothing selected");

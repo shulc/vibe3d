@@ -58,6 +58,7 @@
 // re-grades here, as it did before 0791 — see the task's gap list.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -137,7 +138,7 @@ void moveGestureOnArrow(double dragPx = 60.0) {
 // the landed gesture must leave an OPEN in-session run, or the cell is testing
 // nothing.
 double[3][] armAndLandGesture(string cellName, void delegate() setup) {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set move");
     setup();
     settle();
@@ -151,7 +152,7 @@ double[3][] armAndLandGesture(string cellName, void delegate() setup) {
 
 void dropTool() {
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // Assert the geometry is exactly where the gesture left it — a slot activation
@@ -380,7 +381,7 @@ unittest {
 // activation (it is not left dangling), and the rotated geometry stays put.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set Transform on");
     cmd("tool.pipe.attr actionCenter mode origin");
     cmd("tool.pipe.attr falloff type radial");
@@ -415,7 +416,7 @@ unittest {
                 ~ held[i][k].to!string ~ ", now " ~ after[i][k].to!string);
 
     cmd("tool.set Transform off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================

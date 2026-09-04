@@ -25,7 +25,12 @@ enum string TOOL = "mesh.mirrorTool";
 
 
 void resetTo(string query = null) {
-    auto r = postJson("/api/reset" ~ query, "");
+    string body_;
+    if (query.length == 0) body_ = commandBody("scene.reset");
+    else if (query == "?type=subdivcube&levels=2")
+        body_ = commandBody("scene.reset", `{"type":"subdivcube","levels":2}`);
+    else assert(false, "unsupported reset query: " ~ query);
+    auto r = postJson("/api/command", body_);
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

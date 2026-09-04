@@ -73,7 +73,7 @@ unittest {
     auto rig = fx["rig"];
 
     // ---- build the rig exactly as the fixture describes it ------------------
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
 
     {

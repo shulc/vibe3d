@@ -104,7 +104,7 @@ double[] distinctX() {
 
 // Reset to the standard cube and clear the selection.
 void loadCube() {
-    auto r = postAt("/api/reset", "");
+    auto r = postAt("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     auto s = postAt("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select failed: " ~ s.toString);

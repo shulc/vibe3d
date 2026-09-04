@@ -20,7 +20,7 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 

@@ -30,7 +30,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetEmpty() {
-    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/reset?empty=true", ""));
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset", `{"empty":true}`)));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
 }
 

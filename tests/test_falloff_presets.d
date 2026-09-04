@@ -13,6 +13,7 @@
 // - Command labels read as first-class sub-tools ("Linear Falloff", ...).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 
@@ -46,7 +47,7 @@ JSONValue queryFalloffAttr(string attr) {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     // Start from a known falloff state.
     cmd("tool.pipe.attr falloff type none");
 }

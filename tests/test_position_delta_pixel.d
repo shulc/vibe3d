@@ -424,7 +424,7 @@ void undo() {
 // this same mutation.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     loadOpenPatch();
     frontalCamera(13.0);
     enableSubpatchOnEveryFace();
@@ -519,7 +519,7 @@ unittest {
 // on the publish side.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     loadOpenPatch();
     frontalCamera(13.0);
     enableSubpatchOnEveryFace();

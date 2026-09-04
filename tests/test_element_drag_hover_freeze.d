@@ -25,7 +25,7 @@ int hoverVertex() {
 }
 
 unittest {
-    pj("/api/reset","");
+    pj("/api/command", commandBody("scene.reset"));
     // Pre-select a DIFFERENT vertex (v0) as the moving set, with a tiny falloff
     // sphere, so the picked vertex v6 stays STATIONARY during the drag (it is
     // not in the moving set and v0 is far outside v6's sphere → nothing moves).

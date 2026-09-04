@@ -31,7 +31,7 @@ void cmd(string s) {
         "cmd `" ~ s ~ "` failed: " ~ j.toString);
 }
 
-void reset() { postJson("/api/reset", ""); }
+void reset() { postJson("/api/command", commandBody("scene.reset")); }
 
 struct V3 { double x, y, z; }
 

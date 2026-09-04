@@ -73,6 +73,7 @@
 //       -> R2 fails on the command itself (`status:error`), reported by `cmd`.
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv     : to;
@@ -163,7 +164,7 @@ private string show(int[] xs) {
 
 /// Five layers, item selection type current, nothing selected.
 private void rig() {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     foreach (i; 0 .. 4) cmd("layer.add");
     cmd("select.item");
@@ -247,7 +248,7 @@ unittest {  // R6 — a resource item inside the span is NOT a row, so not swept
     //
     // Layout built below: [mesh0, mesh1, mesh2, IMAGE3, mesh4]. The span 1..4
     // therefore crosses index 3.
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     foreach (i; 0 .. 2) cmd("layer.add");
     {

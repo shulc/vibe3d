@@ -17,6 +17,7 @@
 // The shared HTTP client resolves the port assigned by run_test.d.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -32,7 +33,7 @@ void main() {}
 alias BASE = testBaseUrl;
 
 void resetCube() {
-    auto resp = cast(string)post(BASE ~ "/api/reset?type=cube", "");
+    auto resp = cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(parseJSON(resp)["status"].str == "ok",
            "/api/reset cube failed: " ~ resp);
 }

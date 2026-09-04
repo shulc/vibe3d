@@ -22,6 +22,7 @@
 //     8.  No-UV-map error: reset (bare cube, no UV) → uv.fit → expect status:error.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.math   : fabs;
 import std.file   : remove, exists, readText;
 import std.format : format;
@@ -334,7 +335,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"planar","axis":"z"}`);
     runCmd("uv.fit");
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
@@ -380,7 +381,7 @@ unittest {
     scope(exit) { if (exists(tmpSave)) remove(tmpSave); }
     if (exists(tmpSave)) remove(tmpSave);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"box"}`);
     runCmd("uv.pack");
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
@@ -420,7 +421,7 @@ unittest {
     if (exists(tmpA)) remove(tmpA);
     if (exists(tmpB)) remove(tmpB);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project", `{"mode":"planar","axis":"z"}`);
     // Save UVs after projection (pre-fit reference).
     runCmd("file.save", `{"path":"` ~ tmpA ~ `"}`);
@@ -457,7 +458,7 @@ unittest {
 // Proves the validation throw propagates through the HTTP command dispatcher.
 // ---------------------------------------------------------------------------
 unittest {
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = runCmdRaw(`{"id":"uv.fit"}`);
     auto j    = parseJSON(resp);
     assert(j["status"].str == "error",

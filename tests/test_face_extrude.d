@@ -27,12 +27,13 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    auto resp = post(testBaseUrl() ~ "/api/reset?type=cube", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 
 void resetGrid(int n) {
-    auto resp = post(testBaseUrl() ~ "/api/reset?type=grid&n=" ~ n.to!string, "");
+    auto resp = post(testBaseUrl() ~ "/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset grid failed: " ~ resp);
 }
 

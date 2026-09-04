@@ -180,7 +180,7 @@ string lassoLog(int vpX, int vpY, int vpW, int vpH,
 // Load the rig, aim the camera down −Z from +Z, and hand back the camera the
 // projections below are computed with.
 CameraState setupRig() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
     auto lm = postJson("/api/command", commandBody("scene.loadMesh", RIG));
     assert(lm["status"].str == "ok" || lm["status"].str == "success",
@@ -355,7 +355,7 @@ unittest {
                   ~ "not part of this task; got shaded=%d wireframe=%d",
                   faceShaded, faceWire));
 
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
 }
 
@@ -418,6 +418,6 @@ unittest {
                   ~ "the band; got %s", wireSel));
 
     setStyle("shaded");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
 }

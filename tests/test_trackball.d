@@ -20,6 +20,7 @@
 //   4. The setting is restored, so nothing bleeds into the rest of the suite.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -40,7 +41,7 @@ JSONValue cmd(string argstring) {
     return j;
 }
 
-void resetApp() { post(baseUrl ~ "/api/reset", ""); }
+void resetApp() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
 /// Play a log WITHOUT resetting first.
 ///

@@ -1,5 +1,7 @@
 module test_ortho_view;
 
+
+import http_command_helpers : commandBody;
 // Acceptance test: click on an off-center vertex in ortho Top view and
 // confirm the correct vertex is selected (parallel ray, not perspective ray).
 //
@@ -41,7 +43,7 @@ void waitPlayback() {
 }
 
 unittest { // ortho Top: click on off-center vertex selects the correct vertex
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
 
     // Switch to ortho Top via the viewport.view argstring command.

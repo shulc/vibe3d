@@ -114,7 +114,7 @@ void assertRigsIdentical(JSONValue rigA, string nameA, JSONValue rigB, string na
 /// (`rig.selection_order`, entries of the form "set 0" / "add 2"), so the
 /// driver cannot drift from the order the fixture narrates.
 void buildThreeItemRig(JSONValue rig) {
-    rigPostOk("/api/reset", "");
+    rigPostOk("/api/command", commandBody("scene.reset"));
     rigCmd(`{"id":"history.clear"}`);
 
     JSONValue mesh = JSONValue(["vertices": rig["vertices"], "faces": rig["faces"]]);

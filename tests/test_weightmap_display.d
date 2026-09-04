@@ -102,7 +102,7 @@ void postCommandObj(string cmd, string paramsJson) {
 void settle() { Thread.sleep(400.msecs); }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     settle();
 }
 
@@ -1321,7 +1321,7 @@ int main(string[] args) {
     // restores in a scope(exit); this catches a flow that died somewhere that
     // skipped even that.
     restoreDefaults();
-    try { httpPost("/api/reset", "{}"); } catch (Exception) {}
+    try { httpPost("/api/command", commandBody("scene.reset", "{}")); } catch (Exception) {}
 
     writefln("\n%d passed, %d failed", passed, failed);
     return failed > 0 ? 1 : 0;

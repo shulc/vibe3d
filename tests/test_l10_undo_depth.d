@@ -178,8 +178,8 @@ string[2] contrast(string a, string b) {
 // because its three modes are three different kernels behind one class.
 // ---------------------------------------------------------------------------
 
-enum Step[] kCube        = [Step("/api/reset", "")];
-enum Step[] kCubePolyMode = [Step("/api/reset", ""),
+enum Step[] kCube        = [Step("/api/command", commandBody("scene.reset"))];
+enum Step[] kCubePolyMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom polygon")];
 
 unittest { // mesh.triple — whole-mesh fallback, no selection
@@ -200,7 +200,7 @@ unittest { // mesh.detriangulate — same operand shape as quadruple
 
 unittest { // poly.unify — a duplicate face is the only operand it accepts
     undoRoundTrip("poly.unify",
-        [Step("/api/reset?empty=true", ""),
+        [Step("/api/command", commandBody("scene.reset", `{"empty":true}`)),
          Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
                               ~ `"faces":[[0,1,2,3],[0,1,2,3]]}`))],
         `{"id":"poly.unify"}`);
@@ -255,7 +255,7 @@ unittest { // mesh.edgeJoin — a pentagon, dissolving its one 2-valent corner
     // makes the command refuse on its degree guard, which the assert above
     // would report as "did not apply" rather than as a wrong stand.
     undoRoundTrip("mesh.edgeJoin",
-        [Step("/api/reset?empty=true", ""),
+        [Step("/api/command", commandBody("scene.reset", `{"empty":true}`)),
          Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0],[2,0,0],[2,1,0],`
                               ~ `[0,1,0]],"faces":[[0,1,2,3,4]]}`)),
          Step("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0,1]}`))],
@@ -274,7 +274,7 @@ unittest { // mesh.sweep — polygon mode, the arm that DELETES the profile face
     // before it, the delta named the appends only and this round-trip would
     // come back one face short with every count still right.
     undoRoundTrip("mesh.sweep",
-        [Step("/api/reset?empty=true", ""),
+        [Step("/api/command", commandBody("scene.reset", `{"empty":true}`)),
          Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[1,0,0],[0,0,1],[-1,0,0],`
                               ~ `[0,0,-1]],"faces":[[0,1,2,3]]}`)),
          Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],

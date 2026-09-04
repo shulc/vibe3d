@@ -27,6 +27,7 @@
 // face arity, which is a glTF-format property, not an importer property.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -85,7 +86,7 @@ string gltfPath() { return "/tmp/vibe3d_test_gltf_transform.gltf"; }
 // ---------------------------------------------------------------------------
 
 void resetApp() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 void loadOk(string path) {

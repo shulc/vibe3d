@@ -2,6 +2,7 @@
 // regardless of where on the face the click lands — anchor is click-independent.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -36,7 +37,7 @@ string hoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 }
 
 unittest {
-    pj("/api/reset","");
+    pj("/api/command", commandBody("scene.reset"));
     pj("/api/script","tool.set xfrm.elementMove on");
     pj("/api/command","tool.pipe.attr falloff dist 4");
     pj("/api/command","tool.pipe.attr falloff mode polygon");

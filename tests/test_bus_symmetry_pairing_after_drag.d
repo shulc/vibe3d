@@ -107,7 +107,7 @@ int[] pairOfNow() {
 /// premise fails loudly here instead of the arms below measuring something
 /// else.
 void armAndBuildPairing() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto r = post(BASE ~ "/api/script",
         "tool.pipe.attr symmetry enabled true\n"
       ~ "tool.pipe.attr symmetry axis x\n"

@@ -106,7 +106,7 @@ float floatAttr(string[string] attrs, string key) {
 
 // Reset to a known starting point: cube primitive + Auto ACEN.
 void resetCubeAuto() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
 }
 

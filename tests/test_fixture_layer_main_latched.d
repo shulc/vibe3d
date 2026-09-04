@@ -40,6 +40,7 @@
 // `secondary_difference_not_asserted`).
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -133,7 +134,7 @@ unittest {
     immutable long iNonMesh = indexOfLabel(rig, "non-mesh item");
 
     // ---- build the rig: two meshes, then a non-mesh item -------------------
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.add"}`);
     {

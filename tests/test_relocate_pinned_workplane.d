@@ -32,6 +32,7 @@
 // wrong reason.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -77,7 +78,7 @@ void settle() { Thread.sleep(150.msecs); }
 // work plane is pinned after the view because `workplane.edit` is
 // independent of both and reads cleaner here.
 void setupPinned(string viewPreset, string workplaneEdit, string acenMode) {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/script",  "tool.set move");
     if (viewPreset.length) postJson("/api/command", "viewport.view " ~ viewPreset);
     runCmd(workplaneEdit);
@@ -232,7 +233,7 @@ unittest {
 // branch and did not buy its correctness by disabling the port.
 // -------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/script",  "tool.set move");
     postJson("/api/command", "viewport.view Front");
     postJson("/api/command", "tool.pipe.attr actionCenter mode none");

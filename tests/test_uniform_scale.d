@@ -12,6 +12,7 @@
 // No reference engine needed — the assertion is analytic.
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.math  : fabs;
@@ -31,7 +32,7 @@ private void cmd(string s) {
 }
 
 private void reset() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed");
 }
 

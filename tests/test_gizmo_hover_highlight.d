@@ -508,7 +508,7 @@ private Handles handles() {
 // that check the "before" reading could itself be a hover and every
 // comparison below would be against the wrong baseline.
 private Cell armMoveAndPark() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/script", "tool.set move");
 

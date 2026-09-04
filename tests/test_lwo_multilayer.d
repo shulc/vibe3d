@@ -28,6 +28,7 @@
 //     POLS  FACE  1 tri   [0,1,2]            (layer-local indices)
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -192,7 +193,7 @@ void saveOk(string path) {
     assert(j["status"].str == "ok", "file.save failed: " ~ resp);
 }
 
-void resetApp() { post(testBaseUrl() ~ "/api/reset", ""); }
+void resetApp() { post(testBaseUrl() ~ "/api/command", commandBody("scene.reset")); }
 
 double[] vat(JSONValue m, long i) {
     auto a = m["vertices"].array[i].array;

@@ -31,6 +31,7 @@
 // against actually lives) is excluded from the `dub test` build.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -43,7 +44,7 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 void resetCube() {
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

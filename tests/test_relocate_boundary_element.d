@@ -113,12 +113,12 @@ void establishCubeBaseline() {
         }
         Thread.sleep(120.msecs);
         drainHistory();              // pop the prior test's commands FIRST
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         drainHistory();              // pop the reset (+ select UI-undo)
         if (cubePristine()) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");      // last reset stands (not undone)
+    postJson("/api/command", commandBody("scene.reset"));      // last reset stands (not undone)
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 

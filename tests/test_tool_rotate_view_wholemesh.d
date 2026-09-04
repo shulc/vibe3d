@@ -18,6 +18,7 @@
 //     for the whole default cube), i.e. no translation leaks in
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, cos, sin, PI;
@@ -96,7 +97,7 @@ void viewRingGrab(Vec3 pivot, Viewport vp,
 }
 
 void runViewRingWholeMesh(string toolId) {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // No selection: the moving set is the whole mesh.
     auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set " ~ toolId);
@@ -193,7 +194,7 @@ double publishedRotateAxis(int axis) {
 // fixes. (The tool is left ACTIVE — no `tool.set off` — so the live run's published
 // rotate is still observable on the eval seam.)
 unittest { // view-ring drag → panel cumulative euler is non-zero
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set rotate");
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set rotate failed: " ~ cast(string)setResp);

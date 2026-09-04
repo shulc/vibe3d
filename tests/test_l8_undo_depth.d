@@ -178,12 +178,12 @@ string[2] contrast(string a, string b) {
 // command and hide the other five.
 // ---------------------------------------------------------------------------
 
-enum Step[] kCube         = [Step("/api/reset", "")];
-enum Step[] kCubePolyMode = [Step("/api/reset", ""),
+enum Step[] kCube         = [Step("/api/command", commandBody("scene.reset"))];
+enum Step[] kCubePolyMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom polygon")];
-enum Step[] kCubeVertMode = [Step("/api/reset", ""),
+enum Step[] kCubeVertMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom vertex")];
-enum Step[] kCubeEdgeMode = [Step("/api/reset", ""),
+enum Step[] kCubeEdgeMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom edge")];
 
 enum Step kSelFace0 = Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));

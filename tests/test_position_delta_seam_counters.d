@@ -73,7 +73,7 @@ void ok(string line) {
 /// `linear_align` are not the identity on this stand (see the unit file's
 /// `standMesh` for why a flat uniform grid cannot exhibit them).
 void standMesh() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // A 4x4 vertex grid (3x3 quads) in the XY plane, loaded explicitly rather
     // than built from a primitive command, so this file drives exactly the
     // nine commands it is measuring and nothing else contributes op-log

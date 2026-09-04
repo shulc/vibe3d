@@ -23,6 +23,7 @@
 //     non-Custom axis).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : abs, fabs, sqrt, sin, cos, atan2, PI;
@@ -48,7 +49,7 @@ void cmd(string s) {
 }
 
 void resetCube() {
-    auto resp = cast(string) post(BASE ~ "/api/reset", "");
+    auto resp = cast(string) post(BASE ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

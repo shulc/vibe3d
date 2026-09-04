@@ -14,6 +14,7 @@
 // loses mantissa bits tilts the horizon a little every time, and the drift is
 // cumulative over a session of opening and closing a document.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sin, cos, PI;
@@ -76,7 +77,7 @@ private double[9] obliqueOrientation() {
 }
 
 unittest { // GET publishes the orientation, and it is the camera it describes
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     auto j = camera();
     auto o = orientationOf(j);
 
@@ -99,7 +100,7 @@ unittest { // GET publishes the orientation, and it is the camera it describes
 }
 
 unittest { // the round trip is BIT-EXACT for an orientation no chart can name
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     auto want = obliqueOrientation();
 
     string body_ = "{\"orientation\":[";
@@ -141,7 +142,7 @@ unittest { // the round trip is BIT-EXACT for an orientation no chart can name
 }
 
 unittest { // a NON-orthonormal matrix is repaired, not rejected and not kept
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     // A visibly drifted matrix — the shape a measured orientation from another
     // instrument arrives in. It must be accepted and cleaned, because refusing
     // it would make the field useless for the thing it exists for.
@@ -161,7 +162,7 @@ unittest { // a NON-orthonormal matrix is repaired, not rejected and not kept
 }
 
 unittest { // a malformed orientation leaves the camera where it was
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     postCamera(`{"azimuth":1.25,"elevation":0.3}`);
     auto before = orientationOf(camera());
     // Wrong arity: must be refused as a unit, not partially applied.
@@ -178,7 +179,7 @@ unittest { // a malformed orientation leaves the camera where it was
 }
 
 unittest { // the angles are a READ of the matrix, and agree with it
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     postCamera(`{"azimuth":-0.5040186,"elevation":0.4138754,"roll":0.2055634}`);
     auto j = camera();
     auto o = orientationOf(j);

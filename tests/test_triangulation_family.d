@@ -32,7 +32,7 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     post(testBaseUrl() ~ "/api/command", "select.typeFrom polygon");
 }
 

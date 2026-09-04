@@ -42,7 +42,7 @@ void runCmd(string line) {
 
 void resetTo(string prim = "") {
     waitPlayerIdle();
-    post(testBaseUrl() ~ "/api/reset", prim);
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset", prim));
 }
 
 void setCamera(float az, float el, float dist) {

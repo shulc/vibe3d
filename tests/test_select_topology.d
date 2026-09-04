@@ -28,7 +28,7 @@ void main() {}
 // ---------------------------------------------------------------------------
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 void setSelection(string mode, int[] indices) {

@@ -139,14 +139,14 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", commandBody("scene.reset"));                 // cube
         postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
         postJson("/api/command", "workplane.reset");
         postJson("/api/command", "tool.pipe.attr axis mode world");
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", "workplane.reset");
     postJson("/api/command", "tool.pipe.attr axis mode world");

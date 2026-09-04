@@ -10,6 +10,7 @@
 // and run via `dub test --config=tests`. This file covers the HTTP surface.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -21,7 +22,7 @@ alias baseUrl = testBaseUrl;
 
 
 void resetScene() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
 }
 
 // Retrieve all listAttrs for a stage by its 4-char task code (e.g. "CONS", "ACEN").

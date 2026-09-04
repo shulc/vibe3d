@@ -16,6 +16,7 @@
 // reason: the default build carries no PerfProbe data to assert on.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 
@@ -24,7 +25,7 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 unittest { // GET /api/frames responds with a valid JSON object
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     auto response = cast(string)get(baseUrl ~ "/api/frames");
     auto json = parseJSON(response);

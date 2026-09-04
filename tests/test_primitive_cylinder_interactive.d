@@ -22,6 +22,7 @@
 //      committed primitive.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -122,7 +123,7 @@ Vec3 center() {
 double centerAlong(Vec3 axis) { return dotD(center(), axis); }
 
 void resetForCylinder() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",
@@ -203,7 +204,7 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
 // ---------------------------------------------------------------------------
 
 void resetForCylinderFrontCam() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",

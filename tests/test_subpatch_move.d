@@ -95,7 +95,7 @@ double maxDelta(in double[3][] a, in double[3][] b) {
 
 unittest { // cage vertex moves through /api/transform while subpatch is active
     // Fresh cube.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     // In Polygons mode with no selection, mesh.subpatch_toggle flips every
     // face (whole-model). That mirrors the Tab keyboard handler.
@@ -134,7 +134,7 @@ unittest { // cage vertex moves through /api/transform while subpatch is active
 
 unittest { // gpu.faceVbo (the surface that the user sees) actually
            // changes when we move a vertex of a subpatch cube
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto cageSurface = gpuSurface();
     // Cage cube renders 6 faces × 2 triangles × 3 verts = 36 face-verts.
     assert(cageSurface.faceVertCount == 36,

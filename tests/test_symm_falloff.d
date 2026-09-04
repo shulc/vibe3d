@@ -110,7 +110,7 @@ unittest {
     // a segmented cube duplicates corner verts and the closest-match pairing
     // becomes ambiguous, an orthogonal pre-existing concern — test_symm_during_drag
     // uses the 8-vert cube for the same reason).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // empty sel ⇒ whole mesh
     auto before = dumpVerts();
 
@@ -157,7 +157,7 @@ unittest {
 unittest {
     // Default 8-vert cube (clean, involutive X-pairing; a segmented cube
     // duplicates corner verts and the closest-match pairing becomes ambiguous).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // empty sel ⇒ whole mesh
     auto before = dumpVerts();
 
@@ -220,7 +220,7 @@ unittest {
 //      inherits the driver's reflected position and STILL MOVES.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // whole mesh
     auto before = dumpVerts();                          // default 8-vert cube
 
@@ -259,7 +259,7 @@ unittest {
 //     symmetric about X=0 (the +X-driven rotated cluster, reflected).
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // 8-vert cube (clean pairs)
     auto before = dumpVerts();
 
@@ -291,7 +291,7 @@ unittest {
 //     symmetric about X=0 under fixed-base position-copy.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // 8-vert cube (clean pairs)
     auto before = dumpVerts();
 
@@ -350,7 +350,7 @@ unittest {
 // falloffOnPlus, zero otherwise) and the −X column is position-copied to the
 // SAME value. Clean 8-vert cube so the X-pairing is involutive.
 void twoSidedRegression(bool falloffOnPlus) {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");                     // empty sel ⇒ whole mesh
     auto before = dumpVerts();                          // default 8-vert cube
 
@@ -472,7 +472,7 @@ unittest {
 // back from the run.
 void segmentedFullGradient(bool falloffOnPlus) {
     // --- Clean-scene setup: empty the default cube, build a fresh seg-4 cube.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Default 8-vert cube ⇒ select all 8 verts, delete them ⇒ scene is empty.
     selectJson("vertices", [0, 1, 2, 3, 4, 5, 6, 7]);
     cmd("mesh.delete");

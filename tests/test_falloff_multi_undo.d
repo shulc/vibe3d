@@ -35,6 +35,7 @@
 // WGHT-stage baseline.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -105,13 +106,13 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         postJson("/api/command", "falloff.clear");      // drop stacked extras
         postJson("/api/command", "history.clear");      // wipe stacks, keep cube
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "falloff.clear");
     postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");

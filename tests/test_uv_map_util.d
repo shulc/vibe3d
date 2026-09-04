@@ -17,6 +17,7 @@
 //     Negatives: absent map / name conflict → status:error.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.file   : write, remove, exists, readText;
 import std.format : format;
 import std.json   : parseJSON, JSONValue;
@@ -361,7 +362,7 @@ unittest {
     scope(exit) if (exists(tmp)) remove(tmp);
 
     // seed
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project");
 
     // delete
@@ -382,7 +383,7 @@ unittest {
 
 unittest {
     // absent map → status:error
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(runCmdRaw(`{"id":"uv.delete","params":{"name":"uv"}}`));
     assert(resp["status"].str == "error",
            "uv.delete on absent map must return status:error");
@@ -396,7 +397,7 @@ unittest {
     enum string tmp = "/tmp/vibe3d-test-uvutil-rename.v3d";
     scope(exit) if (exists(tmp)) remove(tmp);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project");
 
     // rename uv → uv2
@@ -420,7 +421,7 @@ unittest {
 
 unittest {
     // rename to existing name → status:error
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project");
     // Add a second map via rename (need a second map to conflict against).
     // Easier: just try to rename uv to uv (identical → error).
@@ -432,7 +433,7 @@ unittest {
 
 unittest {
     // rename absent map → status:error
-    post(kBase ~ "/api/reset", "");   // fresh cube, no UV map
+    post(kBase ~ "/api/command", commandBody("scene.reset"));   // fresh cube, no UV map
     auto resp = parseJSON(
         runCmdRaw(`{"id":"uv.rename","params":{"from":"uv","to":"uv2"}}`));
     assert(resp["status"].str == "error",
@@ -447,7 +448,7 @@ unittest {
     enum string tmp = "/tmp/vibe3d-test-uvutil-copy.v3d";
     scope(exit) if (exists(tmp)) remove(tmp);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project");
 
     // save baseline data for "uv"
@@ -488,7 +489,7 @@ unittest {
 
 unittest {
     // copy absent source → status:error
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(
         runCmdRaw(`{"id":"uv.copy","params":{"from":"uv","to":"uv2"}}`));
     assert(resp["status"].str == "error",
@@ -503,7 +504,7 @@ unittest {
     enum string tmp = "/tmp/vibe3d-test-uvutil-clear.v3d";
     scope(exit) if (exists(tmp)) remove(tmp);
 
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("uv.project");
 
     // save baseline (non-zero values from uv.project)
@@ -547,7 +548,7 @@ unittest {
 
 unittest {
     // absent map → status:error
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     auto resp = parseJSON(
         runCmdRaw(`{"id":"uv.clear","params":{"name":"uv"}}`));
     assert(resp["status"].str == "error",
@@ -556,7 +557,7 @@ unittest {
 
 unittest {
     // domain guard via HTTP: create weight map "w", then uv.clear {name:"w"} → error
-    post(kBase ~ "/api/reset", "");
+    post(kBase ~ "/api/command", commandBody("scene.reset"));
     runCmd("mesh.weightmap.create", `{"name":"w"}`);
     auto resp = parseJSON(
         runCmdRaw(`{"id":"uv.clear","params":{"name":"w"}}`));

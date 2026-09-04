@@ -29,6 +29,7 @@ import std.net.curl;
 import std.json;
 import std.conv : to;
 import std.format : format;
+import http_command_helpers : commandBody;
 
 void main() {}
 
@@ -36,7 +37,10 @@ alias baseUrl = testBaseUrl;
 
 JSONValue gc() { return parseJSON(cast(string)get(baseUrl ~ "/api/gc/commands")); }
 
-void resetGrid(int n) { post(baseUrl ~ format("/api/reset?type=grid&n=%d", n), ""); }
+void resetGrid(int n) {
+    post(baseUrl ~ "/api/command",
+        commandBody("scene.reset", format(`{"type":"grid","n":%d}`, n)));
+}
 
 void command(string id) {
     post(baseUrl ~ "/api/command", format(`{"id":"%s","params":{}}`, id));

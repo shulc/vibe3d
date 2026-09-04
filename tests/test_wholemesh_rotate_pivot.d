@@ -58,7 +58,7 @@ double dist(V3 a, V3 b) {
 }
 
 unittest { // whole-mesh rotate pivots at the centroid; mesh cannot fly
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // Tall, off-center box: x in [4,5], y in [0,6], z in [4,5].
     // Centroid = (4.5, 3, 4.5); longest half-extent from the centroid is

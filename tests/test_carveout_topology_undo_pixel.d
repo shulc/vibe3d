@@ -205,7 +205,7 @@ enum DHVec3 kFaceInterior = DHVec3(0.65f, 0.65f, 0.0f);
 
 unittest {
     // ---- rig ------------------------------------------------------------
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     settle();
     loadOpenPatch();
     post(BASE ~ "/api/camera?viewport=0",

@@ -63,7 +63,7 @@ void cmd(string c) {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
 }
 
 // ---------------------------------------------------------------------------

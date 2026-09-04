@@ -5,6 +5,7 @@
 // but echo back the bare token, so they are NOT tested in the round-trip loop.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -29,7 +30,7 @@ string falloffAttr(string key) {
 }
 
 unittest { // every surviving mode value round-trips through setAttr / listAttrs
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     foreach (mode; ["auto", "vertex", "edge", "polygon"]) {
         cmd("tool.pipe.attr falloff mode " ~ mode);
@@ -40,7 +41,7 @@ unittest { // every surviving mode value round-trips through setAttr / listAttrs
 }
 
 unittest { // retired alias tokens are accepted but echo back the bare token
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     // autoCent → auto
     cmd("tool.pipe.attr falloff mode autoCent");
@@ -57,7 +58,7 @@ unittest { // retired alias tokens are accepted but echo back the bare token
 }
 
 unittest { // unknown mode rejected (not silently coerced)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     auto r = postJson("/api/command",
                       "tool.pipe.attr falloff mode bogus");
@@ -67,7 +68,7 @@ unittest { // unknown mode rejected (not silently coerced)
 
 unittest { // default after xfrm.elementMove preset = auto
            // (`mode integer 0` baseline)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     assert(falloffAttr("mode") == "auto",
         "xfrm.elementMove default mode should be 'auto', got "

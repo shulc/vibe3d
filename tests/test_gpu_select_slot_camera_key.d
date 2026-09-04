@@ -86,6 +86,7 @@
 // Runner: ./run_test.d test_gpu_select_slot_camera_key
 
 import http_client : getJson, postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -179,7 +180,7 @@ string parkAt(CameraState cam, int px, int py) {
 }
 
 unittest {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     settle();
 
     auto cam0 = fetchCamera();
@@ -245,5 +246,5 @@ unittest {
              ~ "camera moved",
                got, want, d0, d1, want, vid));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
 }

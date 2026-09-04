@@ -7,6 +7,7 @@
 // HTTP path, and that an unknown attr / value is rejected.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -249,7 +250,7 @@ unittest { // workplane.alignToSelection polygon mode
 
     // Default reset gives an 8-vert cube. Switch to polygon mode and
     // select face 1 (the +Z face by cube factory convention).
-    auto rr = postJson("/api/reset", "");
+    auto rr = postJson("/api/command", commandBody("scene.reset"));
     assert(rr["status"].str == "ok", rr.toString);
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", "select.element polygon set 1");
@@ -263,5 +264,5 @@ unittest { // workplane.alignToSelection polygon mode
         "alignToSelection should pin the workplane (auto=false)");
 
     postJson("/api/command", "workplane.reset");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

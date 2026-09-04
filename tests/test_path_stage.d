@@ -24,7 +24,7 @@ void cmd(string c) {
 }
 
 void resetScene() {
-    postJson("/api/reset", `{"primitive":"subdivcube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"subdivcube"}`));
 }
 
 // Load a tiny mesh with known vertex positions via /api/load-mesh.

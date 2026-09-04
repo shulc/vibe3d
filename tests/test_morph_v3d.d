@@ -26,7 +26,7 @@ void main() {}
 alias kBase = testBaseUrl;
 
 void resetCube() {
-    auto resp = post(kBase ~ "/api/reset", "");
+    auto resp = post(kBase ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(cast(string) resp)["status"].str == "ok",
         "/api/reset failed: " ~ cast(string) resp);
 }

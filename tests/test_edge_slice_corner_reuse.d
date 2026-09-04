@@ -88,7 +88,7 @@ bool hasVertexNear(JSONValue m, double x, double y, double z, double eps) {
 }
 
 unittest { // golden-parity: kept degenerate-chain edge-split visible through mesh.edgeSlice
-    auto r0 = postCmd("/api/reset", "");
+    auto r0 = postCmd("/api/command", commandBody("scene.reset"));
     assert(r0["status"].str == "ok", "/api/reset failed");
     auto s0 = postCmd("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[]}`));
     assert(s0["status"].str == "ok", "/api/select (edges) failed");

@@ -24,6 +24,7 @@
 //
 // Run via: ./run_test.d topopen_addloop_middle
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.algorithm : max, min;
@@ -46,7 +47,7 @@ double[] beltCutXs(int layer) {
 }
 
 unittest {
-    postJson("/api/reset", "");   // default cube, single layer == primary (layer 0)
+    postJson("/api/command", commandBody("scene.reset"));   // default cube, single layer == primary (layer 0)
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,

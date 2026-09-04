@@ -24,6 +24,7 @@
 // unfixed kernel wiped the mesh to 0v/0f; this test pins gap=1.0/2.0/100 all
 // staying non-empty.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -46,7 +47,7 @@ void cmd(string argstring) {
 }
 
 void resetCube() {
-    auto r = postCmd("/api/reset", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

@@ -23,7 +23,7 @@ JSONValue postJ(string path, string body) { return parseJSON(postRaw(path, body)
 JSONValue getJ(string path) { return parseJSON(get(BASE ~ path)); }
 
 void resetCube() {
-    auto r = postJ("/api/reset", "");
+    auto r = postJ("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

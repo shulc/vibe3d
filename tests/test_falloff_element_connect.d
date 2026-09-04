@@ -23,6 +23,7 @@
 // interactive click.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -65,7 +66,7 @@ double[][] dumpVerts() {
 // ----------------------------------------------------------------------
 
 unittest { // connect attr round-trips for every realigned key
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr falloff type element");
     foreach (mode; ["ignore", "useConnectivity", "rigid", "edgeLoops"]) {
@@ -77,7 +78,7 @@ unittest { // connect attr round-trips for every realigned key
 }
 
 unittest { // old (retired) keys are now rejected — hard rename, no alias
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr falloff type element");
     foreach (stale; ["off", "vertex", "polygon", "material", "bogus"]) {
@@ -101,7 +102,7 @@ unittest { // old (retired) keys are now rejected — hard rename, no alias
 
 // Build the two-component scene; assert 16 verts in two clusters.
 void buildTwoComponents() {
-    postJson("/api/reset", "");          // default cube → verts 0..7 (±0.5)
+    postJson("/api/command", commandBody("scene.reset"));          // default cube → verts 0..7 (±0.5)
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:3 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:1 segmentsZ:1 radius:0");  // append → 8..15
@@ -254,7 +255,7 @@ unittest {
 // ----------------------------------------------------------------------
 
 unittest { // reset clears a locked element falloff to a clean slate
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     // Lock the falloff into a non-default Element config. Each of these
     // tool.pipe.attr writes sets userLocked=true.
@@ -269,7 +270,7 @@ unittest { // reset clears a locked element falloff to a clean slate
 
     // Now reset — both the bare /api/reset and ?empty=true funnel through
     // SceneReset, which must fully reset the pipe (clears userLocked too).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     assert(falloffAttr("type")    == "none",
         "reset must clear locked falloff type; got " ~ falloffAttr("type"));
@@ -282,13 +283,13 @@ unittest { // reset clears a locked element falloff to a clean slate
 }
 
 unittest { // same clean-slate guarantee for /api/reset?empty=true
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff connect rigid");
     assert(falloffAttr("connect") == "rigid", "pre-reset connect (empty path)");
 
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
 
     assert(falloffAttr("type")    == "none",
         "empty reset must clear locked falloff type; got " ~ falloffAttr("type"));

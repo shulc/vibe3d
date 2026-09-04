@@ -59,7 +59,7 @@ bool approxEq(double a, double b, double eps = 1e-3) {
 
 unittest { // /api/toolpipe round-trip: pickedCenter set via
            // tool.pipe.attr surfaces back through the WGHT stage.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0.25,-0.3,0.7\"");
     auto pc = pivotAttr();
@@ -71,7 +71,7 @@ unittest { // /api/toolpipe round-trip: pickedCenter set via
 unittest { // A freshly armed tool is posed through the same prepared VTS door
            // as its first frame tick. The old constructor-origin window no
            // longer exists, so a headless apply must observe the posed falloff.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.attr xfrm.elementMove TX 0.3");
     cmd("tool.doApply");
@@ -88,7 +88,7 @@ unittest { // pickedCenter is just the falloff anchor, NOT a
            // sphere large enough to enclose every vert (dist=2).
            // Apply TX=0.3 → only the -Z face moves (= the prior
            // selection); the +Z face stays put.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0,0,0.5\"");
@@ -120,7 +120,7 @@ unittest { // pickedCenter is just the falloff anchor, NOT a
 unittest { // Empty selection ⇒ whole mesh moves (universal rule).
            // pickedCenter at the cube centre, dist=2 covers every
            // corner. TX=0.5 shifts every vert by its sphere weight.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0,0,0\"");
     cmd("tool.pipe.attr falloff dist 2");
@@ -158,7 +158,7 @@ unittest { // anchorRing: picked element's verts always get weight=1
            // circuit they'd get weight=0 and the picked face wouldn't
            // move. Verify: all 4 +Z verts shift by full TX; -Z face
            // stays put (outside sphere AND not in ring).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0,0,0.5\"");
     cmd("tool.pipe.attr falloff dist 0.5");
@@ -183,7 +183,7 @@ unittest { // anchorRing: picked element's verts always get weight=1
 }
 
 unittest { // anchorRing round-trip via setAttr / listAttrs.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr falloff anchorRing \"0,3,7\"");
     auto j = getJson("/api/toolpipe");
@@ -205,7 +205,7 @@ unittest { // anchorRing round-trip via setAttr / listAttrs.
 
 unittest { // Type change AWAY from Element wipes anchorRing — no
            // stale ring carries into a subsequent re-activation.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr falloff anchorRing \"1,2\"");
     cmd("tool.pipe.attr falloff type linear");
@@ -224,7 +224,7 @@ unittest { // queryActionCenter returns ACEN.userPlaced when Element
            // falloff is active — gizmo follows the click. Round-
            // trips ACEN.cenX/Y/Z (the live computed pivot) as the
            // observable proxy.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0,0,0.5\"");
     auto pc = pivotAttr();

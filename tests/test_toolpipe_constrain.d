@@ -9,6 +9,7 @@
 // - /api/reset restores all attrs to defaults (reset isolation).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -33,7 +34,7 @@ string[string] getConsAttrs() {
 }
 
 void resetScene() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
 }
 
 // -------------------------------------------------------------------------
@@ -144,7 +145,7 @@ unittest { // /api/reset restores all attrs to defaults
     postJson("/api/command", "tool.pipe.attr constrain offset 3.0");
     postJson("/api/command", "tool.pipe.attr constrain handle false");
     postJson("/api/command", "tool.pipe.attr constrain dblSided true");
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     auto a = getConsAttrs();
     assert(a["enabled"]  == "false", "post-reset enabled: " ~ a["enabled"]);
     assert(a["geometry"] == "point", "post-reset geometry: " ~ a["geometry"]);

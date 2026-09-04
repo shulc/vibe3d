@@ -212,7 +212,8 @@ Reading settled(string what) {
 }
 
 void resetGrid(int n) {
-    httpPost("/api/reset?type=grid&n=" ~ n.to!string, "");
+    httpPost("/api/command",
+        commandBody("scene.reset", `{"type":"grid","n":` ~ n.to!string ~ `}`));
     Thread.sleep(600.msecs);
 }
 

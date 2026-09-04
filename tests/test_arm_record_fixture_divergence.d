@@ -1,4 +1,5 @@
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.file : readText;
 import std.net.curl : get, post;
@@ -16,7 +17,7 @@ enum string fixtureConsumerProvenance = `{"schema":1,"source":"live-capture","re
 
 void settle(){Thread.sleep(150.msecs);}
 void cmd(string s){auto r=postJson("/api/command",s);assert(r["status"].str=="ok",r.toString);settle();}
-void baseline(){postJson("/api/script","tool.set move off");settle();postJson("/api/reset","");cmd("history.clear");}
+void baseline(){postJson("/api/script","tool.set move off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("history.clear");}
 JSONValue toolGeometryBaseline;
 void toolBaseline(){baseline();cmd("mesh.subdivide");cmd("select.element vertex set 9 11 13 15");cmd("history.clear");settle();toolGeometryBaseline=vertices();}
 string tool(){auto s=getJson("/api/tool/state");if(!("tool" in s.object))return "none";auto t=s["tool"].str;return t=="xfrm"?"move":t=="slice"?"cutting":t;}

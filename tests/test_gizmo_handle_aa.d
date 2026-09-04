@@ -38,6 +38,7 @@
 // passes before and after — it is the half that stops the fix overshooting.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio      : writeln, writefln;
 import std.net.curl   : HTTP;
 import std.json       : parseJSON, JSONValue, JSONType;
@@ -81,7 +82,7 @@ void script(string line) {
 void settle() { Thread.sleep(400.msecs); }
 
 void resetApp() {
-    httpPost("/api/reset", "{}");
+    httpPost("/api/command", commandBody("scene.reset", "{}"));
     settle();
 }
 

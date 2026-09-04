@@ -44,7 +44,7 @@ string disconnectedPointsBody() {
 unittest {
     // --- T6: connected patch, no background layer -> graceful relax ---
     {
-        postJson("/api/reset", "");   // single layer == primary (layer 0), no background
+        postJson("/api/command", commandBody("scene.reset"));   // single layer == primary (layer 0), no background
 
         Vec3 A = Vec3(1, 0, 0);
         Vec3 C = Vec3(0, 0, 1);
@@ -80,7 +80,7 @@ unittest {
 
     // --- T7: fully disconnected patch, no background layer -> byte-identical no-op ---
     {
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
 
         auto lr = postJson("/api/command", commandBody("scene.loadMesh", disconnectedPointsBody()));
         assert(lr["status"].str == "ok", "load-mesh (disconnected points) failed: " ~ lr.toString);

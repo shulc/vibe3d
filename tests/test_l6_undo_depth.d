@@ -176,10 +176,10 @@ string[2] contrast(string a, string b) {
 // command and hide the other five.
 // ---------------------------------------------------------------------------
 
-enum Step[] kCube         = [Step("/api/reset", "")];
-enum Step[] kCubePolyMode = [Step("/api/reset", ""),
+enum Step[] kCube         = [Step("/api/command", commandBody("scene.reset"))];
+enum Step[] kCubePolyMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom polygon")];
-enum Step[] kCubeVertMode = [Step("/api/reset", ""),
+enum Step[] kCubeVertMode = [Step("/api/command", commandBody("scene.reset")),
                              Step("/api/command", "select.typeFrom vertex")];
 
 unittest { // mesh.clone — the append publisher with NO weld to credit

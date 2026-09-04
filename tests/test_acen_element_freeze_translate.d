@@ -41,6 +41,7 @@
 //       NOT open the screen-plane haul.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -109,7 +110,7 @@ string upLog(CameraState cam, int x, int y) {
 }
 
 void armElementMove() {
-    pj("/api/reset", "");
+    pj("/api/command", commandBody("scene.reset"));
     pj("/api/script", "tool.set xfrm.elementMove on");
     pj("/api/command", "tool.pipe.attr falloff mode vertex");
     pj("/api/command", "tool.pipe.attr falloff dist 4");
@@ -243,7 +244,7 @@ unittest {
     // The other half of the asymmetry. An explicit full reset erases every pin;
     // with the cube back at the origin and nothing selected the Element arm
     // falls through to its whole-mesh fallback, (0,0,0).
-    pj("/api/reset", "");
+    pj("/api/command", commandBody("scene.reset"));
     pj("/api/script", "tool.set xfrm.elementMove on");
     settle();
     auto afterReset = acenCenter();

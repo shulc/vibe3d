@@ -1,4 +1,5 @@
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -37,7 +38,7 @@ string postCheck(string path, string body_, out HTTP.StatusLine sl) {
 }
 
 unittest { // GET /api/ping → 200 with status="ok"
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     HTTP.StatusLine sl;
     auto body = fetchCheck("/api/ping", sl);
     assert(sl.code == 200,

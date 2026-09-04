@@ -41,7 +41,7 @@ float floatAttr(string[string] attrs, string key) {
 
 // Reset to a known starting point: cube primitive + empty selection.
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
 }
 

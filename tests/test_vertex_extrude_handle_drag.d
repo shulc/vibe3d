@@ -128,7 +128,7 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
     import core.thread : Thread;
     import core.time   : dur;
 
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 

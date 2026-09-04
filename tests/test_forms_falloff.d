@@ -23,6 +23,7 @@
 // would emit via the renderer's own substituteQuery/parseBinding.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import forms : parseBinding, substituteQuery;
 
 import std.net.curl;
@@ -60,7 +61,7 @@ bool rowVisible(string attr) {
 }
 
 void resetCube() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

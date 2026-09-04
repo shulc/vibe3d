@@ -71,7 +71,7 @@ JSONValue postTo(string path, string body_) {
 
 
 void resetCube() {
-    auto r = postTo("/api/reset?type=cube", "");
+    auto r = postTo("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 void cmd(string s) {

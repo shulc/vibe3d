@@ -17,6 +17,7 @@
 //      Drawing → Idle → Drawing transition.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -30,7 +31,7 @@ alias baseUrl = testBaseUrl;
 
 
 void resetEmpty() {
-    auto r = postJson("/api/reset?empty=true", "");
+    auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 }
 void activatePen() {

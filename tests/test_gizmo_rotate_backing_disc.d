@@ -142,6 +142,7 @@
 // --------------------------------------------------------------------------
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.format    : format;
 import std.json;
 import std.math      : abs, sqrt, cos, sin, atan2, PI, round, floor, isNaN;
@@ -466,7 +467,7 @@ private struct Scan {
 private Scan g_scan;
 
 private void armRotate() {
-    post(baseUrl ~ "/api/reset", "{}");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset", "{}"));
     settle();
     script("tool.set rotate");
     settle();

@@ -17,6 +17,7 @@
 //     screenshot test, out of scope for the HTTP runner)
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -45,7 +46,7 @@ void setCamera(string body_) {
 }
 
 unittest { // file.new on a cube → empty mesh
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     assert(modelVertexCount() == 8, "setup: default cube should have 8 verts");
 
     runCmd("file.new");
@@ -55,7 +56,7 @@ unittest { // file.new on a cube → empty mesh
 }
 
 unittest { // file.new is undoable (SceneReset captures pre-empty mesh)
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     assert(modelVertexCount() == 8);
 
     runCmd("file.new");
@@ -71,7 +72,7 @@ unittest { // file.new is undoable (SceneReset captures pre-empty mesh)
 }
 
 unittest { // history.show: command dispatch succeeds (UI toggle isn't queryable)
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     runCmd("history.show");
     // Idempotency: a second call toggles back. Both should succeed.
     runCmd("history.show");
@@ -89,7 +90,7 @@ unittest { // file.new resets the camera pose (task 0182 / V3)
     // (menu, shortcut, HTTP) resets the viewport uniformly. Without it, a
     // File -> New that leaves a stale camera would ship green (this test
     // previously only asserted mesh-empty, never camera pose).
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto defaultCam = cameraJson();
 
     // Orbit/zoom/pan the camera away from the default framing.
@@ -113,5 +114,5 @@ unittest { // file.new resets the camera pose (task 0182 / V3)
            afterCam["focus"]["z"].floating == defaultCam["focus"]["z"].floating,
         "file.new should reset focus to default; got " ~ afterCam.toString);
 
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 }

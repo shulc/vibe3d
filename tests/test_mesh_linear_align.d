@@ -54,7 +54,7 @@ int findVert(double[3][] verts, double x, double y, double z) {
 unittest { // open 4-vertex chain, uniform=false (default): endpoints fixed,
            // interior verts project onto their own (own-position) line —
            // bit-exact vs the "la_nonuniform" capture case.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -99,7 +99,7 @@ unittest { // open 4-vertex chain, uniform=false (default): endpoints fixed,
 unittest { // same chain, uniform=true — B lands at equal chain-index
            // spacing (t=1/3) instead of its own projection (t=0.4833).
            // Bit-exact vs la_uniform.json.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -126,7 +126,7 @@ unittest { // same chain, uniform=true — B lands at equal chain-index
 
 unittest { // weight=0.5 blends source -> aligned (nonuniform) linearly.
            // Bit-exact vs la_weight05.json.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");
     auto before = dumpVerts();
     int idxA = findVert(before, -0.5, -0.5, -0.5);
@@ -151,7 +151,7 @@ unittest { // undo restores — no selection (whole-mesh fallback: 8 cube
            // corners don't form a single clean chain, so extraction falls
            // back to selection order; the op must still run + undo cleanly
            // without crashing regardless of the resulting geometry).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("mesh.linear_align");
     cmd("history.undo");
     auto verts = dumpVerts();

@@ -61,7 +61,7 @@ unittest { // weight×delta: vert0 weight=1.0 moves TY; vert1 weight=0.0 stays
     // Fresh cube has 8 verts at Y in {0,1}. Create weight map "wm", set
     // vert 0 weight=1.0 (all others default 0.0). Apply type=vertexMap +
     // TY=0.5 → vert0 shifts +0.5, vert1 stays.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     selectAllVerts(8);
 
     cmdJ("mesh.weightmap.create", `{"name":"wm"}`);
@@ -90,7 +90,7 @@ unittest { // weight×delta: vert0 weight=1.0 moves TY; vert1 weight=0.0 stays
 }
 
 unittest { // non-existent map → full influence (all 8 verts move equally)
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     selectAllVerts(8);
 
     auto before = dumpVerts();
@@ -113,7 +113,7 @@ unittest { // non-existent map → full influence (all 8 verts move equally)
 }
 
 unittest { // smoke: lifecycle create/rename/set/remove + falloff attr round-trip
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     cmdJ("mesh.weightmap.create", `{"name":"tmp"}`);
     cmdJ("mesh.weightmap.rename", `{"from":"tmp","to":"final"}`);

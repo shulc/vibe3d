@@ -130,7 +130,7 @@ double pivotX() {
 //    raw-factory invariant (the committed entry is a real history step).
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     long baseVerts = vertCount();
 
     // Commit one real edit so the undo stack has something to pop. An edge
@@ -189,7 +189,7 @@ unittest {
 //    entry, so we clear the stack explicitly first.)
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     assert(undoLen() == 0, "history.clear did not empty the undo stack");
     long v0 = vertCount();
@@ -224,7 +224,7 @@ unittest {
 //    wiring + post-undo coherence, which is P1's behavioural contract.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     long baseVerts = vertCount();
 
@@ -298,7 +298,7 @@ unittest {
 //    length-mismatched baseline.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     long baseVerts = vertCount();
 
@@ -363,7 +363,7 @@ unittest {
 //    value 0, not the edited 0.2.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
 
     // Select a single corner vertex so the move has an unambiguous observable.
@@ -437,7 +437,7 @@ unittest {
 //    The ordering (relocate BEFORE beginSession) matches production.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
 
     // Select the +++ corner so the Auto action center sits at that vertex

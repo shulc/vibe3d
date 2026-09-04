@@ -136,7 +136,7 @@ void drainAndReset() {
             if (undoCount() == 0) break;
             postJson("/api/undo", "");
         }
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         foreach (_; 0 .. 100) {
             if (undoCount() == 0) break;
             postJson("/api/undo", "");
@@ -146,7 +146,7 @@ void drainAndReset() {
             return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 void selectAll8() {

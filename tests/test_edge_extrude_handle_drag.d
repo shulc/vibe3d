@@ -134,7 +134,7 @@ int findEdgeXPosZNeg() {
 }
 
 unittest { // width, then a horizontal haul on the extrude arrow, and the tool builds
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 

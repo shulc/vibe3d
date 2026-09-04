@@ -177,7 +177,7 @@ void mostRecentRunState(out bool inSession, out long runId) {
 // which a stale `selectionWeights` could feed a re-apply.
 // ===========================================================================
 unittest {
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:4 segmentsY:4 segmentsZ:4 radius:0");
@@ -225,7 +225,7 @@ unittest {
         ~ ", now " ~ centreAfterSelect[0].to!string);
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ===========================================================================
@@ -245,7 +245,7 @@ unittest {
 // held run the same way `mesh.select` does.
 // ===========================================================================
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
@@ -289,5 +289,5 @@ unittest {
         ~ ", v1.x " ~ v1AfterG[0].to!string ~ " -> " ~ v1AfterEdit[0].to!string);
 
     cmd("tool.set move off");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

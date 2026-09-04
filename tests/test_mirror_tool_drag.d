@@ -29,6 +29,7 @@
 // face selection means the whole mesh.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -118,7 +119,7 @@ void resetForMirrorCamera() {
     // `tool.set <tool> off` that used to stand here (task 2900) was a workaround
     // for the opposite order. Removing it is not tidying: it makes this stand a
     // WITNESS for that guarantee instead of a file that hides its loss.
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",

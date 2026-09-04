@@ -34,6 +34,7 @@
 // running `vibe3d --test`, which run_test.d manages).
 
 import http_client : postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -91,7 +92,7 @@ long gpuFaceVertCount() {
 }
 
 unittest { // 1. same-batch undo→pick: the pull-guard scenario
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     settle();
 
@@ -166,12 +167,12 @@ unittest { // 1. same-batch undo→pick: the pull-guard scenario
                ~ "mid-batch pull-guard did not refresh the VBO before the pick",
                picked.to!string, vid));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
 }
 
 unittest { // 2. flush-site upload with no command-side display call
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     settle();
 
     auto m0 = model();
@@ -191,6 +192,6 @@ unittest { // 2. flush-site upload with no command-side display call
                ~ "bus-driven upload did not run after mesh.subdivide",
                got, want));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
 }

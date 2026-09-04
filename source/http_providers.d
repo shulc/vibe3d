@@ -2966,6 +2966,34 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     faces[i] = face;
                 }
                 loadMesh.setData(verts, faces);
+            } else if (auto reset = cast(SceneReset)cmd) {
+                bool empty;
+                if (auto p = "empty" in pj) {
+                    if (p.type != JSONType.true_ && p.type != JSONType.false_)
+                        throw new Exception("'empty' must be a boolean");
+                    empty = p.type == JSONType.true_;
+                }
+                if (empty) {
+                    reset.setEmpty(true);
+                } else {
+                    string primitiveType;
+                    if (auto p = "type" in pj) {
+                        if (p.type != JSONType.string)
+                            throw new Exception("'type' must be a string");
+                        primitiveType = p.str;
+                    }
+                    int primitiveParam = -1;
+                    foreach (key; ["n", "levels"]) {
+                        if (auto p = key in pj) {
+                            if (p.type != JSONType.integer && p.type != JSONType.uinteger)
+                                throw new Exception("'" ~ key ~ "' must be an integer");
+                            primitiveParam = cast(int)p.integer;
+                            break;
+                        }
+                    }
+                    reset.setPrimitive(primitiveType);
+                    reset.setPrimitiveParam(primitiveParam);
+                }
             }
         }
 
@@ -3021,6 +3049,14 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
+            immutable bool resetForAutomation =
+                command.g_testMode && cast(SceneReset)cmd !is null;
+
+            if (resetForAutomation) {
+                import ui.discard_guard : resetUiPolicyRecord;
+                resetUiPolicyRecord();
+                if (dropPendingGuard !is null) dropPendingGuard();
+            }
 
             // viewport.* commands (task 0761): argument extraction ahead of
             // apply(), same position in the dispatch flow the old
@@ -3162,6 +3198,19 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     } else if (!applyOrRefire(cmd, RecordMode.Coalescing)) {
                         refused(cmd, id, origin);
                     }
+                }
+
+                if (resetForAutomation) {
+                    pipeGizmoHost.cancelDrag();
+                    import ai.debug_trace : clearLatestAiDebugTraces;
+                    clearLatestAiDebugTraces();
+                    aiState.setEnabled(false);
+                    import eventlog : parkOverrideMouse;
+                    parkOverrideMouse();
+                    import pie_state : closePie;
+                    closePie();
+                    aiExplore.discardPending();
+                    if (stepTrace !is null) stepTrace.reset();
                 }
 
                 // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
@@ -3457,100 +3506,10 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
     }
 }
 
-// wireMutationHandlers — `/api/reset`,
-// `/api/test/layer` — the POST routes that change the document.
+// wireMutationHandlers — POST routes that retain dedicated test scaffolding.
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
     with (app) {
-        // Phase A.5: dispatch /api/reset through SceneReset command.
-        // Note: scene.reset is undoable but since /api/reset is also used
-        // by tests to bring vibe3d to a fresh state, we may want a way
-        // to NOT push it onto the stack — handled via cmd.isUndoable in
-        // future if needed.
-        httpServer.setResetHandler((string primitiveType, bool empty, int param) {
-            {
-                // Task 1520/1521: a test reads its OWN dispatch, not the
-                // previous case's leftovers on the shared --test instance.
-                // (This handler calls `cmd.apply()` DIRECTLY — it touches
-                // neither `applyOrRefire` nor the UI dispatch point — which is
-                // exactly why `/api/reset` is unguarded and why the mutation
-                // that reddens `apiResetIsUnguarded` has to be inserted into
-                // `SceneReset.apply()` itself.)
-                import ui.discard_guard : resetUiPolicyRecord;
-                resetUiPolicyRecord();
-                if (dropPendingGuard !is null) dropPendingGuard();
-            }
-            auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
-            if (empty)
-                cmd.setEmpty(true);
-            else {
-                cmd.setPrimitive(primitiveType);
-                cmd.setPrimitiveParam(param);   // grid n / subdivcube levels
-            }
-            if (!cmd.apply())
-                throw new Exception("scene.reset did not apply");
-            // Viewport manager reset (layout / cellCount / activeId / per-cell
-            // ortho preset / independence flags — nothing bleeds into the next
-            // test on the shared --test instance) now happens INSIDE cmd.apply()
-            // via the factory's onViewportReset delegate (V3: single reset
-            // owner, same delegate file.new / bare scene.reset use) — no
-            // second explicit call needed here.
-            // The host now owns the no-tool falloff drag (step 3 of the
-            // stage-gizmo refactor); a reset must drop any in-flight drag.
-            pipeGizmoHost.cancelDrag();
-            {
-                import ai.debug_trace : clearLatestAiDebugTraces;
-                clearLatestAiDebugTraces();
-            }
-            // A scene reset returns the editor to its known-good default state;
-            // the AI master switch is off by default, so clear it too. Without
-            // this, an earlier session (or an earlier test on the shared --test
-            // instance) that enabled AI would leave `aiState.enabled` stuck on
-            // across the reset (the test_ai_toggle "AI must default off" failure).
-            aiState.setEnabled(false);
-            // Same argument, second global: park the REPLAYED POINTER. Every
-            // replayed motion/button event moves it and nothing ever moved it
-            // back, so it outlives the test that put it there — and `run_test.d`
-            // shares one `--test` instance across a worker's whole slice, so the
-            // next test's re-baselined scene keeps being hover-picked against
-            // the previous test's cursor. That is a hover the next test never
-            // asked for: one extra vertex-dot submission if the cursor landed on
-            // a vertex, a gizmo part repainted in the hover colour if it landed
-            // on a handle — enough to fail an assertion about draw counts or
-            // about pixels, and only when the slice happens to put those two
-            // tests together, which the LPT scheduler re-decides every run.
-            // Deliberately here and NOT in SceneReset: file.new goes through the
-            // command too, and for a human the pointer really IS where it is.
-            // See eventlog.parkOverrideMouse.
-            {
-                import eventlog : parkOverrideMouse;
-                parkOverrideMouse();
-            }
-            // Third global with the same argument (task 1800): an OPEN PIE
-            // MENU. It is modal — it swallows every mouse and key event — so a
-            // test that left one up would hand the next test on this shared
-            // `--test` worker an editor whose input goes nowhere, and the
-            // symptom would be "the next test's clicks did nothing", read as a
-            // picking bug.
-            {
-                import pie_state : closePie;
-                closePie();
-            }
-            // selTypeOrder is kept in lockstep with editMode by the
-            // promoteGeometryType hook installed on the scene.reset factory — no
-            // manual re-sync needed here (the old reverse-sync is deleted).
-            history.record(cmd);
-            // Discard any exploration pending on reset — the candidate set is
-            // stale after a reset and any undo that follows belongs to the new
-            // scene, not the pre-reset grab.
-            aiExplore.discardPending();
-            // A reset returns to a known-good empty trace too — otherwise a
-            // test-automation instance's /api/trace would keep accumulating
-            // entries from a scene it just discarded. Null when HTTP is off
-            // (release/default runs never construct stepTrace).
-            if (stepTrace !is null) stepTrace.reset();
-        });
-
         // Test-only layer injection (POST /api/test/layer) — task 0615.
         // The special construction shape (non-mesh kind, optional insertion,
         // no selection/focus change) is configured on the registered

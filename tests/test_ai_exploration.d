@@ -12,7 +12,9 @@
 
 module test_ai_exploration;
 
+
 import http_client : getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl   : HTTP;
 import std.json       : JSONValue, JSONType, parseJSON;
 import std.string     : startsWith, indexOf;
@@ -43,7 +45,7 @@ unittest { runHttpTests(); }
 // client (tests/http_client.d), which resolves this worker's port.
 // ---------------------------------------------------------------------------
 private void reset() {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // ---------------------------------------------------------------------------

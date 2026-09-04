@@ -15,6 +15,7 @@
 // Skips gracefully when python3 / the worker package is unavailable.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.stdio  : stderr;
@@ -28,7 +29,7 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void resetApp() { post(baseUrl ~ "/api/reset", ""); }
+void resetApp() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
 JSONValue cmd(string argstring) {
     auto resp = cast(string) post(baseUrl ~ "/api/command", argstring);

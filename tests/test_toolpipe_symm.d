@@ -32,7 +32,7 @@ string[string] getSymmetryAttrs() {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", "tool.pipe.attr symmetry offset 0");
@@ -298,7 +298,7 @@ double[3] vertexAt(int idx) {
 }
 
 unittest { // translate one corner with X-symm → mirror also moves
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Select vert 0 = (-0.5, -0.5, -0.5) only.
@@ -320,7 +320,7 @@ unittest { // translate one corner with X-symm → mirror also moves
         ~ v2[0].to!string ~ "," ~ v2[1].to!string ~ "," ~ v2[2].to!string);
 
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -329,7 +329,7 @@ unittest { // translate one corner with X-symm → mirror also moves
 // -------------------------------------------------------------------------
 
 unittest { // translate along the X axis with X-symm → mirror moves opposite
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
@@ -340,7 +340,7 @@ unittest { // translate along the X axis with X-symm → mirror moves opposite
     assert(approxEq(v0[0], -1.5), "v0.x expected -1.5, got " ~ v0[0].to!string);
     assert(approxEq(v1[0],  1.5), "v1.x expected  1.5, got " ~ v1[0].to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -349,7 +349,7 @@ unittest { // translate along the X axis with X-symm → mirror moves opposite
 // -------------------------------------------------------------------------
 
 unittest { // undo restores mirror
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
@@ -365,7 +365,7 @@ unittest { // undo restores mirror
         "undo should restore both v0 and v1 to y=-0.5, got "
         ~ v0[1].to!string ~ ", " ~ v1[1].to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -377,7 +377,7 @@ unittest { // undo restores mirror
 // -------------------------------------------------------------------------
 
 unittest { // on-plane vertex projected
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", "tool.pipe.attr symmetry offset -0.5");
@@ -390,7 +390,7 @@ unittest { // on-plane vertex projected
         ~ v0[0].to!string ~ "," ~ v0[1].to!string ~ "," ~ v0[2].to!string ~ ")");
     postJson("/api/command", "tool.pipe.attr symmetry offset 0");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -432,7 +432,7 @@ bool selContains(int[] sel, int idx) {
 }
 
 unittest { // vertex pick adds mirror with symmetry on
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
@@ -441,22 +441,22 @@ unittest { // vertex pick adds mirror with symmetry on
     assert(selContains(sel, 1),
         "v1 (X-mirror of v0) should be auto-selected; got " ~ sel.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // vertex pick: no mirror when symmetry is off
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     auto sel = vertexSelection();
     assert(selContains(sel, 0));
     assert(!selContains(sel, 1),
         "v1 must NOT be auto-selected when symmetry is off; got " ~ sel.to!string);
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // edge pick adds mirror edge
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Cube edge 0 = (0,3): both verts on -X side → mirror edge is (1,2)
@@ -479,11 +479,11 @@ unittest { // edge pick adds mirror edge
         "mirror edge (verts 1↔2) idx=" ~ mirrorEi.to!string
         ~ " should be auto-selected; got " ~ edges.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // face pick adds mirror face
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Cube face 2 = -X face (vertex set {0,3,7,4}); X-mirror is face 3
@@ -495,11 +495,11 @@ unittest { // face pick adds mirror face
         "face 3 (mirror of -X face) should be auto-selected; got "
         ~ faces.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // face pick: a face symmetric to itself doesn't double-select
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Cube face 0 = -Z face (vertex set {0,1,2,3}); X-mirror is itself
@@ -512,7 +512,7 @@ unittest { // face pick: a face symmetric to itself doesn't double-select
         "face 0 should be its own mirror across X — selection should be "
         ~ "length 1, got " ~ faces.length.to!string ~ " (" ~ faces.to!string ~ ")");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -524,7 +524,7 @@ unittest { // face pick: a face symmetric to itself doesn't double-select
 // -------------------------------------------------------------------------
 
 unittest { // pick +X face, translate +X → symmetric expansion
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // face 3 = +X face ({1,2,6,5}). Auto-symmetry adds face 2 = -X
@@ -545,11 +545,11 @@ unittest { // pick +X face, translate +X → symmetric expansion
             "v" ~ i.to!string ~ ".x expected -1.5 (mirror), got " ~ v[0].to!string);
     }
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // face 2 = -X face ({0,4,7,3}). Auto-symmetry adds face 3 = +X face.
@@ -571,7 +571,7 @@ unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
             ~ v[0].to!string);
     }
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -581,7 +581,7 @@ unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
 // -------------------------------------------------------------------------
 
 unittest { // pick face3 w/ symm, disable symm, translate → both faces move together
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
@@ -603,7 +603,7 @@ unittest { // pick face3 w/ symm, disable symm, translate → both faces move to
             "v" ~ i.to!string ~ " expected x=" ~ want.to!string
             ~ ", got " ~ v[0].to!string);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -619,7 +619,7 @@ unittest { // pick face3 w/ symm, disable symm, translate → both faces move to
 // -------------------------------------------------------------------------
 
 unittest { // gizmo follows the picked half — face on +X
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // We need a mode that uses selection centroid. Auto is the default
@@ -637,11 +637,11 @@ unittest { // gizmo follows the picked half — face on +X
 
     postJson("/api/command", "tool.pipe.attr actionCenter mode none");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // gizmo follows the picked half — face on -X
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", "tool.pipe.attr actionCenter mode select");
@@ -655,7 +655,7 @@ unittest { // gizmo follows the picked half — face on -X
 
     postJson("/api/command", "tool.pipe.attr actionCenter mode none");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // -------------------------------------------------------------------------
@@ -667,7 +667,7 @@ unittest { // gizmo follows the picked half — face on -X
 // -------------------------------------------------------------------------
 
 unittest { // rotate +X face around Y axis with X-symm → mirror rotates the other way
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Pick face 3 (+X face) only — selectedFaces becomes [2, 3] via
@@ -701,11 +701,11 @@ unittest { // rotate +X face around Y axis with X-symm → mirror rotates the ot
     assert(approxEq(v3[0], -v2[0]) && approxEq(v3[1], v2[1]) && approxEq(v3[2], v2[2]),
         "v3 should be mirror of v2");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // scale +X face along Y with X-symm → mirror scales too
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
@@ -722,11 +722,11 @@ unittest { // scale +X face along Y with X-symm → mirror scales too
     assert(approxEq(v3[0], -v2[0]) && approxEq(v3[1], v2[1]) && approxEq(v3[2], v2[2]),
         "v3 should be mirror_X of v2");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 unittest { // baseSide reflects pick anchor
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
@@ -750,5 +750,5 @@ unittest { // baseSide reflects pick anchor
             ~ ", got " ~ vs[i].integer.to!string);
     }
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }

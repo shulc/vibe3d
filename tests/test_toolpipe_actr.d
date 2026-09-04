@@ -3,6 +3,7 @@
 // atomically to the matching mode pair.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 
@@ -21,7 +22,7 @@ string stageMode(string taskCode) {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
     postJson("/api/command", "tool.pipe.attr axis mode auto");
 }

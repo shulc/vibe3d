@@ -8,6 +8,7 @@
 // did NOT move; the previously-anchored region moved instead.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -29,7 +30,7 @@ Vec3 vpos(int i) {
 }
 
 unittest {
-    pj("/api/reset","");
+    pj("/api/command", commandBody("scene.reset"));
     pj("/api/script","tool.set xfrm.elementMove on");
     // SMALL sphere: without the anchor ring a vertex at √0.75≈0.87 from the
     // origin is OUTSIDE it, so only the picked vertex (ring weight=1) moves.

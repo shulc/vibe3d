@@ -82,7 +82,7 @@ void selectVia(string mode, int[] indices) {
 // 1 + 3: a switch promotes the current type; /api/selection reflects it; mode
 // and selType stay in lockstep across the three geometry types.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     cmd("select.typeFrom polygon");
     auto s = readSel();
@@ -102,7 +102,7 @@ unittest {
 
 // 1: each FLIP ticks currentTypeChanged exactly once.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");             // settle to a known current type
     auto base = waitTypeChangedPast(0);        // ensure the reset/seed flushed
 
@@ -116,7 +116,7 @@ unittest {
 
 // 2: a switch to the already-current type does NOT flip (no tick).
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
     waitTypeChangedPast(0);
     auto before = currentTypeChanged();
@@ -136,7 +136,7 @@ unittest {
 // the /api/reset handler did not leave the order stale. The prior type before
 // reset (polygon here) must NOT survive into the post-reset ordering front.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     // Switch to polygon mode, then reset — reset must front vertices.
     cmd("select.typeFrom polygon");
@@ -144,7 +144,7 @@ unittest {
     assert(sBefore.selType == "polygon" && sBefore.mode == "polygons",
         "pre-reset: polygon mode expected; got " ~ sBefore.selType ~ "/" ~ sBefore.mode);
 
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     auto sAfter = readSel();
     assert(sAfter.mode == "vertices",
         "post-reset: mode must be vertices; got " ~ sAfter.mode);
@@ -157,7 +157,7 @@ unittest {
 // mode was reached via select.typeFrom or via the /api/select polygons token.
 // The selType layer above editMode does not perturb the geometry payload.
 unittest {
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
 
     // Reach polygon mode via select.typeFrom, then select faces.
     cmd("select.typeFrom polygon");
@@ -166,7 +166,7 @@ unittest {
     sort(viaTypeFrom);
 
     // Reset, reach polygon mode via the /api/select mode token, select the same.
-    post(baseUrl ~ "/api/reset", "");
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     selectVia("polygons", [0, 2, 4]);
     auto viaSelectToken = readSel().faces.dup;
     sort(viaSelectToken);

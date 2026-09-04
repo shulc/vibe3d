@@ -39,7 +39,7 @@ double queryInset() {
 }
 
 unittest { // an upward haul drives `inset` positive through the motion path
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 

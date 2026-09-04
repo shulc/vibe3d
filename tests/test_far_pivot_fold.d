@@ -24,6 +24,7 @@
 //       published gpuMatrix is the correct c-anchored matrix.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -148,7 +149,7 @@ void resetCamera() {
 // (1) STANDALONE Move — far pivot, expected GREEN pre-fix (pure-translate path)
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/script", "tool.set move");
     setFarPivot(10000.0, 10000.0, 10000.0);
 
@@ -198,7 +199,7 @@ unittest {
 //   NEW error (double kernel) < 1e-5 < 5e-4 → assertion passes post-fix. TRUE RED→GREEN.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/script", "tool.set rotate");
     setFarPivot(10000.0, 10000.0, 10000.0);
 
@@ -301,7 +302,7 @@ unittest {
 // (the drag commits and the result is geometrically sound).
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/script", "tool.set scale");
     setFarPivot(10000.0, 10000.0, 10000.0);
 
@@ -361,7 +362,7 @@ unittest {
 // (4) GPU parity — far pivot Rotate: gpuMatrix is the correct world matrix.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/script", "tool.set rotate");
     setFarPivot(10000.0, 10000.0, 10000.0);
 

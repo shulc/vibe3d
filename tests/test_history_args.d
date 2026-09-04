@@ -26,7 +26,7 @@ private JSONValue postCmd(string argstring) {
 }
 
 private void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 private void postSelect(string mode, int[] indices) {

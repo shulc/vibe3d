@@ -53,7 +53,7 @@ void translate(double dx) {
 unittest { // jumpTo walks undo/redo correctly. Build 3 translates,
            // jump to middle, end, beginning, end again. Each step
            // observed via v6.x.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     clearHistory();
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -106,7 +106,7 @@ unittest { // jumpTo walks undo/redo correctly. Build 3 translates,
 }
 
 unittest { // Out-of-range target clamps silently to maxTarget.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     clearHistory();
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
@@ -129,14 +129,14 @@ unittest { // Out-of-range target clamps silently to maxTarget.
 }
 
 unittest { // Negative target is rejected as an error.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto r = postJson("/api/history/jump", `{"target":-1}`);
     assert(r["status"].str == "error",
         "negative target should error; got " ~ r.toString);
 }
 
 unittest { // Missing target field is rejected.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto r = postJson("/api/history/jump", `{}`);
     assert(r["status"].str == "error",
         "missing target should error; got " ~ r.toString);

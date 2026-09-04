@@ -60,7 +60,9 @@ bool scriptInteractive(string cmd) {
 
 void resetMesh(string type, int n) {
     string key = (type == "subdivcube") ? "levels" : "n";
-    postUrl(format("/api/reset?type=%s&%s=%d", type, key, n));
+    auto body_ = format(`{"id":"scene.reset","params":{"type":"%s","%s":%d}}`,
+                        type, key, n);
+    postUrl("/api/command", body_);
 }
 
 bool selectVertices(int[] indices) {

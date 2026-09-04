@@ -68,7 +68,7 @@ int[] selectedEdges() {
 
 // hide vertex 0's faces → bevel one edge → what did the command leave selected?
 int[] beveledProduct(int operandEdge) {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd(`{"id":"history.clear"}`);
 

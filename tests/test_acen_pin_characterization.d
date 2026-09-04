@@ -118,13 +118,13 @@ void establishCubeBaseline() {
         }
         Thread.sleep(120.msecs);
         drainHistory();
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         cmd("history.clear");
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");

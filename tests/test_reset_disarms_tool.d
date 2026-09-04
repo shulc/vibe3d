@@ -107,7 +107,7 @@ size_t lifecycleUndoCount() {
 
 /// `/api/reset` to a cube, asserting the route itself answered.
 void resetToCube(string why) {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok",
         "/api/reset refused (" ~ why ~ "): " ~ r.toString);
 }

@@ -24,7 +24,7 @@ void main() {}
 // ----- HTTP helpers (mirrors tests/test_loop_slice.d + tests/test_subpatch.d) ---
 
 void postReset() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

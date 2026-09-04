@@ -45,8 +45,9 @@ void main() {}
 alias baseUrl = testBaseUrl;
 
 void postReset(bool empty = false) {
-    string path = empty ? "/api/reset?empty=true" : "/api/reset";
-    auto r = parseJSON(cast(string)post(baseUrl ~ path, ""));
+    auto body_ = empty ? commandBody("scene.reset", `{"empty":true}`)
+                       : commandBody("scene.reset");
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 }
 

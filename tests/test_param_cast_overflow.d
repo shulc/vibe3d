@@ -50,6 +50,7 @@
 // source/tools/slice/loop_slice_tool.d:615 and this test fails naming that
 // param, its interval and -2147483648.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -130,7 +131,7 @@ unittest { // BoundedIntTooLParamsSurviveWireInfinity
     // run_test.d resets between tests anyway, but a test that leaves a tool
     // active is a test that can only be debugged by reading the runner.
     postCmd(`{"id":"tool.set","params":{"_positional":["none","on"]}}`);
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
 
     assert(unreadable.length * 2 < subjects.length,
         format("%d of %d bounded Int tool params could not be read back — the "

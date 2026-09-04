@@ -10,6 +10,7 @@
 // - /api/reset clears the parent link (-j8 bleed guard).
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -28,7 +29,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetCube() {
-    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
     cmd(`{"id":"history.clear"}`);
 }
@@ -211,6 +212,6 @@ unittest { // reset clears parent (-j8 bleed guard)
     cmd("layer.parent child:1 parent:0");
     assert(getLayerParent(1) == 0, "parent should be 0 before reset");
     // reset collapses to 1 layer; the surviving layer has no parent
-    parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(getLayerParent(0) == -1, "layer 0 parent must be -1 after reset");
 }

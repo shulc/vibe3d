@@ -1,5 +1,7 @@
 module test_create_click_workplane;
 
+
+import http_command_helpers : commandBody;
 // Where an interactive create-click actually puts geometry, per view preset
 // (task 0661).
 //
@@ -215,7 +217,7 @@ double axisComp(V3 v, int i) { return i == 0 ? v.x : (i == 1 ? v.y : v.z); }
 V3[] createByDrag(string preset, double a0, double b0, double a1, double b1,
                   V3 focus, out V3[2] aimed)
 {
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     postJson("/api/camera",
              format(`{"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
                     focus.x, focus.y, focus.z));
@@ -371,7 +373,7 @@ unittest { // the DEPTH discriminator: the plane is anchored at the FOCUS
                  ~ "worst corner miss %.4f", preset, miss));
     }
     cmd("viewport.view Perspective");
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 }
 
 unittest { // the click that used to be dropped in silence, at its own call site
@@ -386,7 +388,7 @@ unittest { // the click that used to be dropped in silence, at its own call site
     // user's click was not registered at all — and the tool reported nothing.
     //
     // `center` is a vec3 Param, so the retention is directly readable.
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     cmd("viewport.view Front");
     cmd("select.typeFrom polygon");
     cmd("select.polygon 0");
@@ -425,6 +427,6 @@ unittest { // the click that used to be dropped in silence, at its own call site
 
     cmd("tool.set mesh.radialArrayTool off");
     cmd("viewport.view Perspective");
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     writeln("test_create_click_workplane PASS");
 }

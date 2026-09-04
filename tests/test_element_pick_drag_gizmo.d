@@ -8,6 +8,7 @@
 // while the gizmo == handler.center.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -30,7 +31,7 @@ Vec3 gizmoCenter() {
 }
 
 unittest {
-    pj("/api/reset","");
+    pj("/api/command", commandBody("scene.reset"));
     pj("/api/script","tool.set xfrm.elementMove on");
     pj("/api/command","tool.pipe.attr falloff dist 4");
     pj("/api/command","tool.pipe.attr falloff mode vertex");

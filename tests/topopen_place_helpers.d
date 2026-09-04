@@ -437,14 +437,14 @@ string cubeMeshBody() {
 // ---------------------------------------------------------------------------
 
 void setupSphereBg(float R, int lon = 32, int lat = 24) {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", sphereMeshBody(R, lon, lat)));
     assert(lr["status"].str == "ok", "load-mesh (sphere) failed: " ~ lr.toString);
     cmd("layer.add name:Edit");
 }
 
 void setupCubeBg() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", cubeMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh (cube) failed: " ~ lr.toString);
     cmd("layer.add name:Edit");

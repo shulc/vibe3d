@@ -34,6 +34,7 @@
 // did not regress the previously-working cell.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -73,7 +74,7 @@ void settle() { Thread.sleep(150.msecs); }
 // tool.set / viewport.view re-stamp the tool's default action-center
 // preset, so a mode set earlier would be clobbered.
 void setupOrtho(string acenMode, string viewPreset) {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/script",  "tool.set move");
     postJson("/api/command", "viewport.view " ~ viewPreset);
     postJson("/api/command", "tool.pipe.attr actionCenter mode " ~ acenMode);

@@ -18,6 +18,7 @@
 // pattern, both camera-independent.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -45,7 +46,7 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 // activate prim.cube, and arm SNAP with one type + effectively-infinite
 // range so the nearest target always qualifies.
 void resetBoxWithSnap(string types) {
-    auto r = postJson("/api/reset", "");          // default cube = 8 verts
+    auto r = postJson("/api/command", commandBody("scene.reset"));          // default cube = 8 verts
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
     r = postJson("/api/camera",

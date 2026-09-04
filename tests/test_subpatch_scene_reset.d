@@ -26,6 +26,7 @@
 // zero warnings — this HTTP round-trip is the only oracle.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -49,7 +50,7 @@ long modelVertexCount() {
 
 unittest { // subpatch preview correctly clears across /api/reset (scene.reset)
     // Fresh cube: flat cage renders 6 faces x 2 tris x 3 verts = 36 face-verts.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
     auto cageCount = gpuFaceVertCount();
     assert(cageCount == 36,
@@ -72,7 +73,7 @@ unittest { // subpatch preview correctly clears across /api/reset (scene.reset)
     // registerCommands (Phase 2) now builds, whose onResetTool callback
     // calls subpatchPreview.deactivate(). Every HTTP test in the suite
     // starts this way.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     settle();
 
     auto afterResetCount = gpuFaceVertCount();

@@ -37,7 +37,7 @@ void cmd(string s) {
 }
 
 void resetCube() {
-    auto resp = cast(string) post(BASE ~ "/api/reset", "");
+    auto resp = cast(string) post(BASE ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

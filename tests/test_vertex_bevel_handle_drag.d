@@ -100,7 +100,7 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 }
 
 unittest { // dragging the inset arrow moves `inset` off zero
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 

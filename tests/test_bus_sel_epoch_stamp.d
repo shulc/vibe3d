@@ -65,7 +65,7 @@ long activeCellSelEpoch() {
 }
 
 unittest {
-    postOk("/api/reset");
+    postOk("/api/command", commandBody("scene.reset"));
     settle();
 
     const long e0 = activeCellSelEpoch();

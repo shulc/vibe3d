@@ -101,7 +101,7 @@ void establishCubeBaseline() {
         // documented "got (-1,0,1)" flake). Pop the previous test's commands
         // first, then reset, then drain only to floor the entry counters.
         drainHistory();
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         drainHistory();
         auto v = getJson("/api/model")["vertices"].array;
         if (v.length == 8) {
@@ -115,7 +115,7 @@ void establishCubeBaseline() {
     }
     // Last reset stands (NOT undone) so even a genuinely unrestorable prior
     // state leaves a clean cube for the test's own assertions.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 }
 
 // NOTE on the Tool Properties window: this test does NOT drive panel

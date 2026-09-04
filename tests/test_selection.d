@@ -1,4 +1,5 @@
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -63,7 +64,7 @@ void playKey(int sym, int mod = 0) {
 
 unittest { // SELECTION VERTICES: Test selected vertices after playing events
     waitPlayerIdle();
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_points.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -100,7 +101,7 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
 
 unittest { // ESC clears selection in the current edit mode via select.drop shortcut
     waitPlayerIdle();
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     runCmd("select.typeFrom vertex");
     runCmd("select.element vertex set 4 6");
@@ -125,7 +126,7 @@ unittest { // ESC clears selection in the current edit mode via select.drop shor
 
 unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selection
     waitPlayerIdle();
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_add.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -162,7 +163,7 @@ unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selecti
 }
 
 unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_remove.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -198,7 +199,7 @@ unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex se
 }
 
 unittest { // DESELECT: clicking empty space after selecting vertices clears selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_deselect.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -229,7 +230,7 @@ unittest { // DESELECT: clicking empty space after selecting vertices clears sel
 }
 
 unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5 and 6)
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_edges.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -265,7 +266,7 @@ unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5
 }
 
 unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_add.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -302,7 +303,7 @@ unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing sele
 }
 
 unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_remove.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -338,7 +339,7 @@ unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge s
 }
 
 unittest { // DESELECT EDGES: clicking empty space after selecting edges clears selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_edges_deselect.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -369,7 +370,7 @@ unittest { // DESELECT EDGES: clicking empty space after selecting edges clears 
 }
 
 unittest { // SELECTION POLYGONS: Test selected faces after playing events (faces 1 and 3)
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -405,7 +406,7 @@ unittest { // SELECTION POLYGONS: Test selected faces after playing events (face
 }
 
 unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_add.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -442,7 +443,7 @@ unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing s
 }
 
 unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-face selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_remove.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);
@@ -478,7 +479,7 @@ unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-fac
 }
 
 unittest { // DESELECT POLYGONS: clicking empty space after selecting faces clears selection
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto events = cast(const(void)[])read("tests/events/selection_polygons_deselect.log");
     auto playResponse = post(testBaseUrl() ~ "/api/play-events", events);

@@ -20,6 +20,7 @@
 //   3) /api/reset returns the layer xform to identity (the reset-clears fix).
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -44,7 +45,7 @@ JSONValue cmd(string argstring) {
 }
 
 void resetCube() {
-    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
     cmd(`{"id":"history.clear"}`);
 }

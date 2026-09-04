@@ -212,7 +212,7 @@ void buildStandScaledY(bool transformed, double sclY) {
 }
 
 void buildStandFull(bool transformed, double sclY, double az, double el) {
-    auto r = postJson("/api/reset", "{}");
+    auto r = postJson("/api/command", commandBody("scene.reset", "{}"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString());
 
     string verts = "[";

@@ -42,6 +42,7 @@
 // the fast-path predicate is exercised end-to-end, not poked directly.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -174,7 +175,7 @@ void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
 //     byte-identical to pre-Phase-3.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // No selection ⇒ whole-mesh moving set, pivot at origin (fast-path eligible).
     postJson("/api/script", "tool.set move");
 
@@ -224,7 +225,7 @@ unittest {
 //     into the GPU u_model during the Move drag.
 // ---------------------------------------------------------------------------
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Composed preset, default ACEN = None (pivot at origin for whole-mesh).
     postJson("/api/script", "tool.set Transform");
 

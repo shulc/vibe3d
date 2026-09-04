@@ -122,7 +122,7 @@ Outcome runOffHandlePlaneDrag(double fx, double fy, double az = CAM_AZ,
                               string actr = "", double el = CAM_EL,
                               string sel = "", double dist = CAM_DIST,
                               Vec3 guardPivot = Vec3(0, 0, 0)) {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
     // Default subject: the whole cube in vertex mode. The corpus's own rig
     // selects ONE POLYGON instead, which is what puts a face normal in the
     // AXIS stage's frame — pass it explicitly rather than defaulting to it,

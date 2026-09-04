@@ -168,7 +168,7 @@ void setupScene() {
     // tool.set move on → actr.local. Order matters: actr.local needs
     // ACEN + AXIS stages registered by the active tool's preset, so
     // the tool must come on before the preset switch.
-    postJson("/api/reset?empty=true", "");
+    postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
     lockCamera();
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
       ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");

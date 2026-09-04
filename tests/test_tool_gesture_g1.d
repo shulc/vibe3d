@@ -602,12 +602,12 @@ void freezeOrCompare(Cell[] cells) {
 // ---------------------------------------------------------------------------
 
 void resetEmpty() {
-    auto r = postJ("/api/reset?empty=true");
+    auto r = postJ("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
 }
 
 void resetCube() {
-    auto r = postJ("/api/reset");
+    auto r = postJ("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 }
 

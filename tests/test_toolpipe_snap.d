@@ -12,6 +12,7 @@
 // - Tiny range + cursor far from any vert ⇒ no snap.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -56,7 +57,7 @@ bool approx(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     postJson("/api/command", "tool.pipe.attr snap enabled false");
     // CSV values must be quoted — argstring's bareword grammar
     // doesn't include comma.
@@ -95,7 +96,7 @@ unittest { // SNAP stage present
 // -------------------------------------------------------------------------
 
 unittest { // the shipped defaults
-    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     auto a = getSnapAttrs();
     assert(a["enabled"] == "false",
         "snapping ships OFF, got " ~ a["enabled"]);

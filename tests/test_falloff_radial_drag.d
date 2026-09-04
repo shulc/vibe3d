@@ -31,7 +31,7 @@ void main() {}
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
 unittest { // radial falloff: closer-to-center verts move more in a drag
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
@@ -133,7 +133,7 @@ unittest { // Radial-falloff RMB anchor stays at origin plane under panned camer
     import core.thread : Thread;
     import core.time : dur;
 
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // Panned camera: focus.y = 0.6 (discriminating pan on Y). High elevation
     // (1.3 rad ≈ 75°) keeps view forward Y-dominant so the auto workplane

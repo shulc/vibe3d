@@ -32,6 +32,7 @@
 // otherwise have to derive from the view matrix.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -135,7 +136,7 @@ ulong residentBytes() {
 /// Reset, aim cell 0 at an ortho Front view, park the cube far away so it
 /// cannot cover the probe, and stand a 16 x 8 m reference plane at the origin.
 void buildFixture() {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     // Ortho Front: the plane's own axis, and the view in which the ground grid
@@ -306,7 +307,7 @@ unittest {
     immutable ulong bigBytes   = 16 * 16 * 4;
 
     void twoPlanes() {
-        auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+        auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
         assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
         cmd(`{"id":"history.clear"}`);
         cmd(`{"id":"image.load","path":` ~ jsonStr(small) ~ `}`);   // 1
@@ -328,7 +329,7 @@ unittest {
 
     // Arm 1 — the document is thrown away entirely.
     twoPlanes();
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     assert(residentEntries() == 0 && residentBytes() == 0,
         format("T-C5 (reset): a document with no planes holds nothing — got "

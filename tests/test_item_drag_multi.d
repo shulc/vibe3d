@@ -41,6 +41,7 @@
 // rather than trusting the rig to provide it.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -189,7 +190,7 @@ double[3] bWorldPivot() {
 /// lands A as primary with B still selected. The reverse order would leave
 /// B primary and silently swap which item the shared centre follows.
 void buildRig() {
-    auto j = parseJSON(cast(string)post(BASE ~ "/api/reset", ""));
+    auto j = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(j["status"].str == "ok", "/api/reset failed: " ~ j.toString);
 
     cmd("layer.add name:B");

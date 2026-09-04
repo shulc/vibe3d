@@ -1,5 +1,7 @@
 module test_input_context;
 
+
+import http_command_helpers : commandBody;
 // Task 1810 — a chord means different things depending on where the cursor is.
 //
 // The claim under test is not "a scoped binding exists" but "the SAME chord at
@@ -146,7 +148,7 @@ void hideLayerPanel() { runCmd("ui.layerList hide"); waitForZone("layerList", fa
 
 void resetScene() {
     waitPlayerIdle();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
     hideLayerPanel();
 }

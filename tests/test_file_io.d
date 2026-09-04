@@ -5,6 +5,7 @@
 //   → /api/model topology matches the original cube.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : remove, exists, getSize, write;
@@ -13,7 +14,7 @@ import std.conv : to;
 void main() {}
 
 void resetCube() {
-    post(testBaseUrl() ~ "/api/reset", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 }
 
 void runCmd(string id, string params = "") {

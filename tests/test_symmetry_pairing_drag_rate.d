@@ -53,6 +53,7 @@
 // Run via: ./run_test.d test_symmetry_pairing_drag_rate
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -99,7 +100,7 @@ DHVec3 evalPivot() {
 }
 
 void arm() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto camR = postJson("/api/camera",
         `{"azimuth":0.4,"elevation":0.6,"distance":6.0,`
       ~ `"focus":{"x":0,"y":0,"z":0}}`);

@@ -80,6 +80,7 @@
 //          background".
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -118,7 +119,7 @@ private string cmdRefused(string argstring, string what) {
 enum string kReason = "no mesh item is selected: there is no mesh edit target";
 
 private void resetCube() {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.reset")));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
     cmd(`{"id":"history.clear"}`);
 }

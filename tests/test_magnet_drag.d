@@ -18,6 +18,7 @@
 // The shared HTTP client resolves the port assigned by run_test.d.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import drag_helpers;
 
 import std.net.curl;
@@ -106,7 +107,7 @@ string buildHoverDragLog(
 // ---------------------------------------------------------------------------
 unittest {
     // Reset to cube.
-    auto rr = jpost("/api/reset", `{"primitive":"cube"}`);
+    auto rr = jpost("/api/command", commandBody("scene.reset", `{"primitive":"cube"}`));
     // (reset may return ok or may use the cube primitive path; any 2xx is fine,
     //  just proceed; if cube isn't there we'll fail on geometry assertions.)
 

@@ -59,11 +59,11 @@ JSONValue postCmd(string path, string body_) {
 
 
 void resetEmpty() {
-    auto r = postCmd("/api/reset?empty=true", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset", `{"empty":true}`));
     assert(r["status"].str == "ok", "/api/reset failed");
 }
 void resetScene() {
-    auto r = postCmd("/api/reset", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed");
 }
 void cmd(string s) {

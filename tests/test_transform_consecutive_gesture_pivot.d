@@ -97,13 +97,13 @@ void establishCubeBaseline() {
         }
         Thread.sleep(120.msecs);
         drainHistory();
-        postJson("/api/reset", "");
+        postJson("/api/command", commandBody("scene.reset"));
         postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         clearHistory();
         if (cubePristine() && selectionPristine()) return;
         Thread.sleep(20.msecs);
     }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     clearHistory();
     assert(cubePristine() && selectionPristine(),

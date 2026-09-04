@@ -82,7 +82,7 @@ size_t faceCount() { return getJson("/api/model")["faces"].array.length; }
 /// for the opposite order. Removing it is not tidying: it makes this stand a
 /// WITNESS for that guarantee instead of a file that hides its loss.
 void armStand(bool select) {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     if (select) {
         r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));

@@ -93,6 +93,7 @@
 //       -> U6 "…carries 1 such pixels" where the fixture says 2.
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -242,7 +243,7 @@ private struct Box {
 /// own — and it means the item the flows click (index 1) is neither the
 /// already-primary one nor an end of the array.
 private void buildRig() {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.duplicate"}`);
@@ -582,7 +583,7 @@ unittest {
 // depth compare passes both.
 // ---------------------------------------------------------------------------
 private void rayArm(size_t nearIdx, size_t farIdx) {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.duplicate"}`);
@@ -719,7 +720,7 @@ private int[2] toWindow(DHVec3 world) {
 /// Layers: [0] cube, [1] clip, [2] plane. Written as literals at the commands
 /// below because they are ARGUMENTS to them.
 private void buildPlaneRig(float planeX, float planeZ, float pixelSize) {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     auto file = opaqueBmp("ref.bmp", 64, 32);

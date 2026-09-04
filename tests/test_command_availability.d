@@ -75,6 +75,7 @@
 //          'move' (Move): drawn available, declaration says it needs a target …]"
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -184,7 +185,7 @@ private Bar readBar() {
 // ---------------------------------------------------------------------------
 
 unittest {
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
 
     // ---- the declaration, straight from the registry ----------------------
     auto reg = getJson("/api/registry");
@@ -442,5 +443,5 @@ unittest {
 
     // Leave the app the way it was found.
     cmdOk("layer.select index:0 mode:set");
-    post(BASE ~ "/api/reset", "");
+    post(BASE ~ "/api/command", commandBody("scene.reset"));
 }

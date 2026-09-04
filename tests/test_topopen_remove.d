@@ -17,6 +17,7 @@
 //
 // Run via: ./run_test.d topopen_remove
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs;
@@ -56,7 +57,7 @@ int expectedFaceForHit(Vec3 hit) {
 }
 
 unittest {
-    postJson("/api/reset", "");   // default cube, single layer == primary (layer 0)
+    postJson("/api/command", commandBody("scene.reset"));   // default cube, single layer == primary (layer 0)
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
@@ -99,7 +100,7 @@ unittest {
 }
 
 unittest {
-    postJson("/api/reset", "");   // default cube, single layer == primary (layer 0)
+    postJson("/api/command", commandBody("scene.reset"));   // default cube, single layer == primary (layer 0)
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,

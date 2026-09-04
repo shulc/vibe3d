@@ -65,7 +65,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 void resetCube() {
-    auto resp = postJson("/api/reset", "");
+    auto resp = postJson("/api/command", commandBody("scene.reset"));
     assert(resp["status"].str == "ok", "/api/reset failed: " ~ resp.toString);
 }
 

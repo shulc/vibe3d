@@ -275,7 +275,7 @@ unittest {
     // Reset cube, select the same interior edge {1,2} used by the primary
     // golden case above (edge index 2 on the default cube: vert1=
     // (0.5,-0.5,-0.5), vert2=(0.5,0.5,-0.5)).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[2]}`));
 
     httpCmd("tool.set " ~ TOOL);

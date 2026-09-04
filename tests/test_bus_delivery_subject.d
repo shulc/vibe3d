@@ -174,12 +174,12 @@ unittest {
     // process out of whatever the previous test in this worker left behind
     // (tool armed, selection, a dirty document), so the delta below is a
     // property of `scene.reset` and not of the state it happened to start in.
-    auto warm = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto warm = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(warm["status"].str == "ok", "cube reset failed");
     settle();
 
     const long before = deliveries();
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(r["status"].str == "ok", "cube reset failed");
     settle();
     const long delta = deliveries() - before;
@@ -224,7 +224,7 @@ unittest {
 //     this task neither owns nor changes.
 // --------------------------------------------------------------------------
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectTopFrontEdge();
     const size_t cubeVerts = model()["vertices"].array.length;

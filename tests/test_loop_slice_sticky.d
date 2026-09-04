@@ -31,6 +31,7 @@
 //      session/gesture state into accidental sticky settings.
 
 import http_client : getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math     : fabs;
@@ -161,7 +162,7 @@ JSONValue query(string line) {
 }
 
 void resetCube() {
-    auto r = postJson("/api/reset", "");
+    auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 

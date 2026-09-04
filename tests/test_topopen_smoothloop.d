@@ -36,6 +36,7 @@
 //
 // Run via: ./run_test.d topopen_smoothloop
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -83,7 +84,7 @@ unittest { // Shift+Ctrl+RMB on an edge relaxes its loop and records one entry
     // `tool.set <tool> off` that used to stand here (task 2900) was a workaround
     // for the opposite order. Removing it is not tidying: it makes this stand a
     // WITNESS for that guarantee instead of a file that hides its loss.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
         0.3, 0.5, 4.0, 0.0, 0.0, 0.0));

@@ -70,7 +70,7 @@ void cmd(string line) {
 // sleep cannot make a passing assertion pass "more".
 void settle() { Thread.sleep(400.msecs); }
 
-void resetApp() { httpPost("/api/reset", "{}"); settle(); }
+void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 
 /// The last frame that actually rendered a viewport cell. Always read this,
 /// never `last` — see the endpoint comment in http_server.d.

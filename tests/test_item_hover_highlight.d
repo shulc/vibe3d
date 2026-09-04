@@ -84,6 +84,7 @@
 //          reported item 1 with the pointer in the gap.
 
 import http_client : getJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -236,7 +237,7 @@ private struct Box {
 /// the app's real behaviour. That gives the frame a selected item the cursor is
 /// not over — the second colour, for free, in the same frame as the first.
 private void buildRig() {
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.duplicate"}`);
@@ -665,7 +666,7 @@ private void rayArm(size_t nearIdx, size_t farIdx) {
     immutable sel  = rgbOf(fx["colors"]["selected_not_hovered"]);
     immutable selH = rgbOf(fx["colors"]["selected_and_hovered"]);
 
-    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
     cmd(`{"id":"layer.duplicate"}`);

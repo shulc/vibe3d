@@ -15,6 +15,7 @@
 // single Pass-1-spliced crossing vertex (or clean chord-split, if both
 // crossings land in-band) instead.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -37,7 +38,7 @@ void cmd(string argstring) {
 }
 
 void resetLshape() {
-    auto r = postCmd("/api/reset?type=lshape", "");
+    auto r = postCmd("/api/command", commandBody("scene.reset", `{"type":"lshape"}`));
     assert(r["status"].str == "ok", "/api/reset?type=lshape failed: " ~ r.toString);
 }
 

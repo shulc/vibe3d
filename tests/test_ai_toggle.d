@@ -11,6 +11,7 @@
 // kCopilotEnabled back to `true` re-enables every assertion as-is.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.stdio : stderr;
@@ -43,7 +44,7 @@ size_t historyLen(string side) {
 
 unittest { // default-off and advisor shell payload
     if (!kCopilotEnabled) { stderr.writeln("SKIP: test_ai_toggle (kCopilotEnabled=false, task 0422)"); return; }
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto ai = aiStatus();
     assert(ai["enabled"].boolean == false,
         "AI must default off; got " ~ ai.toString);

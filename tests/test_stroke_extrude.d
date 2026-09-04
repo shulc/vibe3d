@@ -39,7 +39,7 @@ void main() {}
 alias BASE = testBaseUrl;
 
 void resetCube() {
-    auto resp = post(BASE ~ "/api/reset?type=cube", "");
+    auto resp = post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset cube failed: " ~ resp);
 }
 

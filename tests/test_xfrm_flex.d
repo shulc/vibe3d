@@ -54,7 +54,7 @@ bool approxEq(double a, double b, double eps = 1e-3) {
 unittest { // Preset round-trip — no exception means the preset is
            // registered and the four pipe stages (ACEN/AXIS/Falloff/
            // ACTR) accept their attr values.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.flex on");
     cmd("tool.set xfrm.flex off");
 }
@@ -64,7 +64,7 @@ unittest { // Single-face selection on a cube: all 4 selected verts
            // neighbours, only 2 are in the selected face). Every
            // selected vert → weight 0; every unselected vert →
            // weight 0; TX should move NOTHING.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto before = dumpVerts();
 
@@ -95,7 +95,7 @@ unittest { // Selecting EVERY face on the cube means every selected
            // (deep-interior fall-through). TX should move every
            // vert by full strength. This pins down the "no
            // boundary, no constraint" edge case.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     auto before = dumpVerts();
 
@@ -121,7 +121,7 @@ unittest { // Unselected verts ALWAYS stay put. Select 1 face, set
            // steps=8 (huge BFS budget). The 4 unselected verts
            // must remain untouched — the falloff does not
            // propagate outside the selection, regardless of steps.
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto before = dumpVerts();
 

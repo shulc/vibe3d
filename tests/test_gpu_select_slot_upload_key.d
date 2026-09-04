@@ -116,7 +116,7 @@ void nearestOnScreen(JSONValue m, int px, int py,
 }
 
 unittest {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     settle();
 
     auto cam = fetchCamera();
@@ -190,5 +190,5 @@ unittest {
              ~ "since stage 2b removed the change-bus trigger",
                got, want, d0, d1, want, vid));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
 }

@@ -104,7 +104,7 @@ size_t selectedFaceCount() {
 /// Reset to the cage, hide the face the fixture names, and assert the mark
 /// landed. Every branch re-runs this from scratch.
 void buildRigAndHide(JSONValue rig) {
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd(`{"id":"history.clear"}`);
     JSONValue mesh = JSONValue(["vertices": rig["vertices_list"], "faces": rig["faces"]]);
     postOk("/api/command", commandBody("scene.loadMesh", mesh.toString));

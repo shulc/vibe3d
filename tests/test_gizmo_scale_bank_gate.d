@@ -119,7 +119,7 @@ private Vec3 pivotFromState() {
 // A camera that frames the gizmo obliquely, so no axis is near enough to the
 // view direction to be culled and all three heads are readable.
 private void setUp() {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
 }

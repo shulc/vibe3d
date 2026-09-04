@@ -2449,7 +2449,6 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/surface-raycast", "GET", null),
     SweepRoute("/api/camera", "GET", null),
     SweepRoute("/api/recorded-events", "GET", null),
-    SweepRoute("/api/reset", "POST", `{}`),
     SweepRoute("/api/play-events/status", "GET", null),
     SweepRoute("/api/test/layer", "POST", `{}`),
     SweepRoute("/api/command", "POST", `{}`),
@@ -2661,7 +2660,7 @@ void cmdTsanSweep(string[] args) {
     int subdivOk = 0;
     string loopReply;
     if (!stoppedByRss) {
-        httpPost(port, "/api/reset", `{}`, 60);
+        httpPost(port, "/api/command", `{"id":"scene.reset"}`, 60);
         // Five, because mesh.d takes the std.parallelism path only at >= 4096
         // faces (PARALLEL_BUILD_MIN) and a cube reaches 6144 exactly at the
         // fifth subdivision — four would leave 1536 and the parallel branch

@@ -89,7 +89,7 @@ bool polyBevelActive() {
 // Shift handle: direct press captures; a SMOOTH multi-batch drag accumulates the
 // TOTAL delta (not per-event); backward restores baseline; one-step == three-step.
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -159,7 +159,7 @@ unittest {
 // dragging the box TOWARD the center grows inset (cap shrinks) — inverted from a
 // naive axis drag — and the box FOLLOWS the cursor inward.
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -211,7 +211,7 @@ unittest {
     enum int EX = 400, EY = 450; // clearly off the two handles (near screen centre)
 
     // vertical UP → shift grows, inset untouched.
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -227,7 +227,7 @@ unittest {
     cmd("tool.set poly.bevel off");
 
     // horizontal RIGHT → inset grows, shift untouched.
-    reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -250,7 +250,7 @@ unittest {
     enum int EX = 400, EY = 450;
 
     // Ctrl + up-dominant diagonal (dy > dx) → only shift.
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -264,7 +264,7 @@ unittest {
     cmd("tool.set poly.bevel off");
 
     // Ctrl + right-dominant (dx > dy) → only inset.
-    reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -286,7 +286,7 @@ unittest {
 // no fresh drag starts (dragPart stays -1) and no edit is lost.
 unittest {
     enum int EX = 400, EY = 450;
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -330,7 +330,7 @@ unittest {
 // bevels, each undoable").
 unittest {
     enum int EX = 400, EY = 450;
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -369,7 +369,7 @@ unittest {
 // editor's MODEL-class-command post-mode end-callback (a hard drop, not a re-arm).
 unittest {
     enum int EX = 400, EY = 450;
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");
@@ -409,7 +409,7 @@ unittest {
 // starts a fresh free-drag; the ongoing drag then hauls the new bevel.
 unittest {
     enum int EX = 400, EY = 450;
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
     cmd("tool.set poly.bevel on");

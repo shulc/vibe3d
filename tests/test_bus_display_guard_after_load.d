@@ -63,6 +63,7 @@
 // Runner: ./run_test.d test_bus_display_guard_after_load
 
 import http_client : postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -201,7 +202,7 @@ void assertPixelIsLoadedMeshOnly(int px, int py) {
 /// stack, and the loaded mesh's nearest-vertex pixel in `px`/`py`.
 void armLoadedThenUndone(out int vid, out int px, out int py) {
     write(objPath(), kSmallCubeObj);
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     settle();
     const long baseVerts = model()["vertexCount"].integer;
@@ -274,7 +275,7 @@ unittest {
              ~ "green whether the display guard works or not",
                px, py, selectedVertices().to!string));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     if (exists(objPath())) remove(objPath());
 }
@@ -320,7 +321,7 @@ unittest {
              ~ "2a the guard keys on the bus epoch, not on a pending word)",
                sel.to!string, vid));
 
-    postOk("/api/reset", "");
+    postOk("/api/command", commandBody("scene.reset"));
     cmd("history.clear");
     if (exists(objPath())) remove(objPath());
 }

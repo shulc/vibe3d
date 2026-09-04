@@ -64,7 +64,7 @@ bool[] subpatchFlags() {
 }
 
 unittest { // Tab with no selection flips every face's subpatch flag
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     auto before = subpatchFlags();
     assert(before.length == 6, "cube has 6 faces");
     foreach (i, b; before)
@@ -94,7 +94,7 @@ unittest { // Tab with no selection flips every face's subpatch flag
 }
 
 unittest { // Tab with a single face selected flips only that face
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Switch to Polygons mode + select face 0 via the command channel —
     // the Tab handler reads mesh.selectedFaces, which /api/select
     // populates.
@@ -119,7 +119,7 @@ unittest { // MODE-AWARE (parity 0464): a face selection made in polygon mode
            // edge. Tab in edge mode toggles the WHOLE model — matching the
            // reference editor (re-confirmed headless: polygon-select 2 →
            // switch to edge → convert → all 6 become subpatch).
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
     // Select 2 of 6 faces in polygon mode …
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`));

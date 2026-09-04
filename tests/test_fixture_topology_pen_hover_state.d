@@ -87,7 +87,7 @@ double[3][] readVertices() {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postJson("/api/command", commandBody("scene.reset"));
 
     // Same scene/camera as test_fixture_topology_pen_tool.d (focus'd
     // exactly on the cube's top-face centre (0,0.5,0) -- see that file's

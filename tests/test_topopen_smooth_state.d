@@ -11,6 +11,7 @@
 //
 // Run via: ./run_test.d topopen_smooth_state
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -38,7 +39,7 @@ string upOnlyLog(int vpX, int vpY, int vpW, int vpH, int px, int py) {
 }
 
 unittest {
-    postJson("/api/reset", "");   // default cube, single layer == primary (layer 0)
+    postJson("/api/command", commandBody("scene.reset"));   // default cube, single layer == primary (layer 0)
 
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,

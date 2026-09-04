@@ -32,7 +32,7 @@ void main() {}
 // ----- HTTP helpers ----------------------------------------------------------
 
 void postReset() {
-    auto resp = post(testBaseUrl() ~ "/api/reset", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
     assert(parseJSON(resp)["status"].str == "ok", "/api/reset failed: " ~ resp);
 }
 

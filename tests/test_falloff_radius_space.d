@@ -186,7 +186,7 @@ enum double weightTol = 1e-4;
 // --------------------------------------------------------------------------
 void buildStand(JSONValue kase) {
     auto fx = fixture();
-    postJson("/api/reset", "{}");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
 
     string verts = "[";
     foreach (i, v; fx["stand"]["vertices"].array) {
