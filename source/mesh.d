@@ -151,7 +151,8 @@ public import mesh_ops.select_loop;
 public import mesh_ops.poly_bevel;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward, WireKeyPolicy;
-import mesh_planes : rewriteFaces, FaceSource, kNoSource;
+import mesh_planes : rewriteFaces, FaceSource, kNoSource,
+                     appendFacePlanes, PlaneFit;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
@@ -3401,21 +3402,14 @@ struct Mesh {
     void resetSelection() {
         resizeVertexSelection();
         resizeEdgeSelection();
-        resizeFaceSelection();
-        // resizeFaceSelection only touches the bit array; resetSelection also
-        // brings the per-face pick-order / subpatch / material arrays in sync
-        // (e.g. after an import grew `faces`). resizeSubpatch is grow/shrink
-        // ONLY (zero-fill on grow) — it does not clear pre-existing bits.
-        faceSelectionOrder.length   = faces.length;
-        resizeSubpatch();
-        faceMaterial.length         = faces.length;
-        facePart.length             = faces.length;
-        faceSetMask.length          = faces.length;   // NIT (task 1060 review): same
-                                                        // length-sync facePart gets, just
-                                                        // above — benign today (a short
-                                                        // mask reads as "no membership" via
-                                                        // memberOf's bounds check), kept in
-                                                        // lock-step for hygiene/consistency.
+        // TASK 4059 — one door for every per-face plane, `faceMarks`
+        // included, so `resizeFaceSelection()`/`resizeSubpatch()` (whose
+        // whole body is `faceMarks.length = faces.length`) are no longer
+        // spelled here. Grow/shrink ONLY, zero-fill on grow: it does not
+        // clear pre-existing bits, which is what makes this a SELECTION
+        // reset and not a subpatch one (the paragraph above). The four
+        // per-plane grows it replaces are named in task 4059's `## Лог`.
+        appendFacePlanes(this);
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
@@ -3453,14 +3447,17 @@ struct Mesh {
     void syncSelection() {
         if (vertexMarks.length < vertices.length) resizeVertexSelection();
         if (edgeMarks.length   < edges.length)    resizeEdgeSelection();
-        if (faceMarks.length   < faces.length)    resizeFaceSelection();
         if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
         if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
-        if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
-        if (faceMaterial.length         < faces.length)    faceMaterial.length         = faces.length;
-        if (facePart.length             < faces.length)    facePart.length             = faces.length;
-        // NIT (task 1060 review): same length-sync facePart gets just above.
-        if (faceSetMask.length          < faces.length)    faceSetMask.length          = faces.length;
+        // TASK 4059 — the four hand-written face grows AND the guarded
+        // `resizeFaceSelection()` that used to sit above them collapse into
+        // the funnel. `GrowOnly`, not the kernels' `Exact`: this method is
+        // documented as "grow selection arrays to match geometry without
+        // clearing", and a plane LONGER than `faces` must survive it
+        // untruncated. The compare is per plane inside the funnel, so a mesh
+        // that needs no growth still allocates nothing — the property task
+        // 4066 came here to protect.
+        appendFacePlanes(this, PlaneFit.GrowOnly);
     }
 
     // Rebuild the deduplicated `edges` array from the current `faces`.
@@ -7688,12 +7685,12 @@ struct Mesh {
         // Re-derive edges from the new face list.
         rebuildEdges();
 
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -7916,12 +7913,12 @@ struct Mesh {
         // Subpatch + face-order arrays follow the new face count. New
         // faces inherit subpatch from their source; selection switches
         // to the new copies.
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -8218,12 +8215,12 @@ struct Mesh {
 
         rebuildEdges();
 
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -8454,12 +8451,12 @@ struct Mesh {
         rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count.
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
         // Mark the new mirrored faces as the active selection; clear
         // the originals' face-selection bits (they keep their geometry
         // unchanged but lose the "this is selected" tag, matching
@@ -8714,12 +8711,12 @@ struct Mesh {
         // New faces inherit subpatch flag from their source and start
         // with a fresh selection order (1-based) so they are picked up
         // as the active selection.
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
         // Clear old face selection first; only new duplicates remain selected.
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
@@ -8791,12 +8788,12 @@ struct Mesh {
 
         // Grow subpatch / selection-order / face-selection / material arrays
         // to the new face count. Mirroring duplicateSelectedFaces order.
-        resizeSubpatch();
-        faceSelectionOrder.length = faces.length;
-        resizeFaceSelection();
-        faceMaterial.length       = faces.length;
-        facePart.length           = faces.length;
-        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this);
 
         // Deselect all pre-existing faces; only pasted faces end up selected.
         foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);

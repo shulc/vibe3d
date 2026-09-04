@@ -821,6 +821,78 @@ void rewriteVertices(ref Mesh m, Vec3[] newVerts, in VertSource src) {
 }
 
 // ---------------------------------------------------------------------------
+// The APPEND half of the funnel (task 4059).
+//
+// `rewriteFaces` above covers the RENUMBERING half: a kernel that replaces
+// `faces` wholesale. It does not cover the other, more common shape — a
+// kernel that APPENDS faces to the tail and then has to bring every parallel
+// plane up to the new length. That was 32 hand-written
+// `<plane>.length = faces.length` lines, four in each of eight functions
+// (`Mesh.resetSelection`, `Mesh.syncSelection`, `radialArrayFaces`,
+// `arrayFaces`, `arrayFacesGrid`, `mirrorFacesPlane`,
+// `duplicateSelectedFaces`, `appendGeometry` — measured 2026-09-04, task
+// 4059's `## Лог`), plus `resizeSubpatch()`/`resizeFaceSelection()` standing
+// in for the fifth. A plane added to `kFacePlanes` reached NONE of them
+// without eight separate edits, and the sixteenth of those is the finding
+// audit 4 opened with.
+//
+// WHAT THIS IS NOT. It does not append the WINDINGS — the eight kernels
+// interleave their face appends with vertex creation and with
+// `appendFaceRaw`'s per-corner map growth, and each one then assigns the new
+// faces' plane values from a source face by hand. Folding those loops in
+// would ALSO fold `faceMarks` in whole-word, which inherits Hide and Lock on
+// a duplicate — a behaviour change, not a refactor (the kernels copy the
+// Subpatch bit alone, via `setFaceSubpatch`). The card sketched
+// `appendFaces(lists, policy)`; the `lists` half is deliberately not taken
+// here, and the reason is that inheritance semantics question, which is a
+// measured law we do not have.
+// ---------------------------------------------------------------------------
+
+/// How far a plane is taken when the geometry array has changed length.
+enum PlaneFit : ubyte {
+    /// `plane.length = faces.length` — grows a short plane AND truncates a
+    /// long one. The shape the six topology kernels and `Mesh.resetSelection`
+    /// wrote by hand.
+    Exact,
+    /// `if (plane.length < faces.length) plane.length = faces.length` — grow
+    /// only, never truncate. `Mesh.syncSelection`'s shape, and the difference
+    /// is load-bearing: `syncSelection` is documented as "grow selection
+    /// arrays to match geometry WITHOUT clearing", and it is called on paths
+    /// where `faces` may be SHORTER than a plane that still holds values a
+    /// later step reads. Truncating there would be a silent data loss the
+    /// `Exact` arm's callers have already decided they want.
+    GrowOnly,
+}
+
+/// Bring every plane in `kFacePlanes` to `m.faces.length`.
+///
+/// Call it AFTER the faces have been appended (or removed) and, at the
+/// topology kernels, after `rebuildEdges()` — the position the 32 hand-written
+/// lines occupied. Touches no version stamp and publishes nothing, for the
+/// same reason `rewriteFaces` does not: see this module's header.
+///
+/// The body iterates `kFacePlanes`, so a plane added to that list is grown
+/// here without anyone remembering to come back. That is the whole point, and
+/// it is what the mutation in task 4059's `## Мутация` exercises: drop a name
+/// from `kFacePlanes` and `tests/unit/mesh_face_plane_append_test.d`'s
+/// by-NAME length assertion for that plane reddens (the by-name spelling is
+/// deliberate — an assertion that itself iterated `kFacePlanes` would go green
+/// over the shortened list, which is the defect `CLAUDE.md`'s "a check that
+/// cannot come out differently" section is about).
+void appendFacePlanes(ref Mesh m, PlaneFit fit = PlaneFit.Exact) {
+    const size_t want = m.faces.length;
+    static foreach (n; kFacePlanes) {
+        {
+            // `__traits(getMember, m, n)` written out at each use rather than
+            // bound through an `alias` — see `rewriteFaces`'s NOTE ON SHAPE
+            // for why an alias over a `ref` parameter loses the instance.
+            if (fit == PlaneFit.Exact || __traits(getMember, m, n).length < want)
+                __traits(getMember, m, n).length = want;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Version-stamp invariant (plan §2.5) — `rewriteFaces`/`rewriteVertices` must
 // move NEITHER `mutationVersion` NOR `topologyVersion`: `commitChange` stays
 // the CALLER's job, run once at the kernel's tail, after `rebuildEdges()` /
