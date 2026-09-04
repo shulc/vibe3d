@@ -3,11 +3,37 @@ module mesh_dirty;
 // ===========================================================================
 // HOW TO KEY A CACHE — READ THIS BEFORE WRITING A FRESHNESS CHECK
 // ===========================================================================
-// One shape, `mesh.MeshKey!(Terms...)`: a mesh ADDRESS (always, never optional)
-// plus one field per term you declare. `stamp(m)` writes them, `matches(m)`
-// asks whether all still hold, `agreesOn!(Sub...)` asks over a subset or
-// against a second key you sampled yourself. Terms available today, each with
-// its argument at its own declaration:
+// TWO KEY TYPES, AND THE DISCRIMINATOR IS THE TERMS — NOT THE CACHE, NOT THE
+// MODULE, AND NOT WHETHER YOU HAVE A `Mesh` IN HAND (all eight `MeshDirtyKey`
+// sites do). Ask what the key compares BESIDES the mesh address:
+//
+//   * ANY mesh COUNTER — alone, or with a bus epoch beside it
+//       -> `mesh.MeshKey!(Terms...)`. A mesh ADDRESS (always, never optional)
+//          plus one field per term you declare. `stamp(m)` writes them all
+//          FROM THE MESH, `matches(m)` asks whether all still hold, and
+//          `agreesOn!(Sub...)` asks the same over a SUBSET of them, against a
+//          second key you sampled yourself. It can therefore only carry terms
+//          that EXIST — the six below.
+//   * an ADDRESS AND ONE BUS EPOCH, and nothing else
+//       -> `MeshDirtyKey` (this module). `stamp(a, e)` / `matches(a, e)` take
+//          the pair the caller sampled, so the epoch may come from any of the
+//          four watchers — including `g_displayEpochs` and
+//          `g_settledGeomEpochs`, which have NO `MeshKey` term at all, and a
+//          key over those two cannot be a `MeshKey` today no matter what it
+//          holds.
+//
+// MEASURED, not asserted (task 4060 review): the eight surviving
+// `MeshDirtyKey` fields — `bvh_pick._surfKey`, `app.gpuUploadedKey_`,
+// `app.displayServiced_`, `editor_app.BgGpu.uploaded`, `snap.meshKey`,
+// `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey` — are
+// every one of them address + one epoch and carry NO counter, and every live
+// `MeshKey` instantiation carries at least one counter. Four of the eight
+// (display ×2, settled-geometry ×2) have no term to move to; the other four
+// (geometry ×2, topology ×2) could be `MeshKey!MeshTermGeomEpoch` /
+// `MeshKey!MeshTermTopoEpoch` and were left alone, because 4060 folded only
+// the keys that already carried a counter beside their address.
+//
+// Terms available today, each with its argument at its own declaration:
 //
 //   mesh.MeshTermMutation   `mutationVersion` — "anything committed changed"
 //   mesh.MeshTermStruct     `structVersion`   — the EDGE set
@@ -273,12 +299,15 @@ struct MeshTermGeomEpoch {
 /// `Points | Polygons` with `Position` deliberately EXCLUDED.
 ///
 /// USE IT for a stage-owned derived structure that is a function of adjacency
-/// and of the selected set and of nothing else: the two consumers are
-/// `FalloffStage`'s selection-weight buffer and `ActionCenterStage`'s cluster
-/// partition and bbox membership list. Read that watcher's own doc comment
-/// below before choosing it over `MeshTermGeomEpoch` — the exclusion is the
-/// whole reason it exists, and getting it WIDER leaves every value correct
-/// and moves only a count, which is why both consumers are pinned by rates.
+/// and of the selected set and of nothing else. ONE consumer today —
+/// `ActionCenterStage._bboxKey`, the bbox membership list, which pairs it with
+/// `MeshTermMarks`. The watcher itself has two more (`FalloffStage`'s
+/// selection-weight buffer and `ActionCenterStage`'s cluster partition), but
+/// those reach it through a `MeshDirtyKey`, not through this term. Read that
+/// watcher's own doc comment below before choosing it over `MeshTermGeomEpoch`
+/// — the exclusion is the whole reason it exists, and getting it WIDER leaves
+/// every value correct and moves only a count, which is why all three
+/// consumers are pinned by rates.
 ///
 /// It pairs with a `Marks` term, never replaces one: no watcher here carries
 /// `Marks`, on purpose.
@@ -292,7 +321,6 @@ struct MeshTermTopoEpoch {
         return v == g_topoEpochs.epochFor(cast(size_t)&m);
     }
 }
-
 
 // THE THREE WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
 // stage 2e). A consumer may legitimately DECLINE to key on any of them —
