@@ -232,3 +232,102 @@ unittest {
     // here. See `assertRejectsUndeclaredAttrs`.
     assertRejectsUndeclaredAttrs(new SymmetryStage(), "symmetry");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0710 review follow-up — THE ORACLE FOR `symmetryPacketsEqual`.
+//
+// Sixteen sites in the transform tools gate a mid-gesture re-fire on that one
+// comparison, and until this block nothing in the tree failed when it was
+// wrong: cutting it down to `a.enabled == b.enabled` left BOTH lanes green
+// (`473 modules passed unittests`, `Total: 8 Passed: 8 Failed: 0`). Every
+// other symmetry test sets the config BEFORE a drag and holds it, so the only
+// observable — a mid-gesture change to a field other than the enable flag —
+// is never produced.
+//
+// Both halves below are derived from `SymmetryConfig.tupleof`, never from a
+// written-out list of seven names: a field added to the config later is
+// covered without anyone remembering this file exists. A field whose type is
+// neither bool nor arithmetic stops the BUILD with a message naming it,
+// instead of being skipped in silence.
+//
+// Order is deliberate: the two asserts that must stay GREEN when the equality
+// is broken sit above the per-field loop that must go RED, so one run buys
+// both halves (druntime stops the module at the first failed assert).
+// ---------------------------------------------------------------------------
+unittest {
+    import symmetry : symmetryPacketsEqual;
+
+    // Population floor. A `static foreach` over an empty field list asserts
+    // nothing and reads exactly like a passing test.
+    static assert(SymmetryConfig.tupleof.length >= 7,
+        "SymmetryConfig lost a field: the seven this oracle was written for "
+        ~ "are its floor, not its exact count");
+
+    // --- alias-this storage, over EVERY field rather than `enabled` alone ---
+    // A base-class member shadowing one of these (the `Stage.enabled` trap
+    // task 0705 hit) silently redirects the stage's writes away from the
+    // config while every read still compiles.
+    auto st = new SymmetryStage();
+    static foreach (i, _; SymmetryConfig.tupleof) {{
+        enum fname = __traits(identifier, SymmetryConfig.tupleof[i]);
+        assert(&__traits(getMember, st, fname) is &st.config.tupleof[i],
+            "SymmetryStage." ~ fname ~ " must resolve to SymmetryConfig's "
+            ~ "storage, not to a shadowing member");
+    }}
+
+    // A non-default baseline on both sides, so a perturbation below moves a
+    // field away from the value a default-constructed packet would carry.
+    SymmetryPacket base;
+    base.enabled      = true;
+    base.axisIndex    = 2;
+    base.offset       = 3.5f;
+    base.useWorkplane = true;
+    base.topology     = true;
+    base.epsilonWorld = 0.25f;
+    base.baseSide     = -1;
+
+    SymmetryPacket same = base;
+    assert(symmetryPacketsEqual(base, same),
+        "two packets carrying the identical config must compare equal");
+
+    // The plane and the pairing snapshot are NOT config: `evaluate` rebuilds
+    // them from the config plus the live mesh, and a refire gate keyed on them
+    // would fire on geometry that never changed the user's symmetry setting.
+    SymmetryPacket derived = base;
+    derived.planePoint  = Vec3(9, 9, 9);
+    derived.planeNormal = Vec3(0, 1, 0);
+    derived.pairOf      = [1, 0];
+    derived.onPlane     = [true, false];
+    derived.vertSign    = [-1, +1];
+    derived.axisFlags   = [false, true, false];
+    derived.pivot       = Vec3(1, 2, 3);
+    assert(symmetryPacketsEqual(base, derived),
+        "symmetryPacketsEqual compares the CONFIG only — the plane and the "
+        ~ "pairing snapshot are stage-rebuilt derivations");
+
+    // --- every config field, alone, must be observable through the gate -----
+    size_t perturbed;
+    static foreach (i, T; typeof(SymmetryConfig.tupleof)) {{
+        enum fname = __traits(identifier, SymmetryConfig.tupleof[i]);
+        SymmetryPacket other = base;
+        static if (is(T == bool))
+            other.config.tupleof[i] = !base.config.tupleof[i];
+        else static if (__traits(isArithmetic, T))
+            other.config.tupleof[i] = cast(T)(base.config.tupleof[i] + 1);
+        else
+            static assert(false,
+                "SymmetryConfig." ~ fname ~ " has a type this oracle cannot "
+                ~ "perturb — extend the perturbation, do not skip the field");
+        assert(other.config.tupleof[i] != base.config.tupleof[i],
+            "the perturbation of SymmetryConfig." ~ fname ~ " changed nothing, "
+            ~ "so the assert below would hold for the wrong reason");
+        assert(!symmetryPacketsEqual(base, other),
+            "symmetryPacketsEqual ignores SymmetryConfig." ~ fname ~ ": a "
+            ~ "mid-gesture change to that field alone would not re-fire the "
+            ~ "transform, and the sixteen refire gates would serve the "
+            ~ "pre-change symmetry for the rest of the drag");
+        ++perturbed;
+    }}
+    assert(perturbed == SymmetryConfig.tupleof.length,
+        "the field loop must visit every SymmetryConfig field");
+}
