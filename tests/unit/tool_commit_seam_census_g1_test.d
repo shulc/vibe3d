@@ -51,6 +51,9 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf;
 
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
+    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 // ---------------------------------------------------------------------------
@@ -65,54 +68,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 // this file: a scanner that lost its place eats the rest of the file, and the
 // `recordGestureEdit(` total collapses and reddens with a message that says so.
 // ---------------------------------------------------------------------------
-private string stripCommentsAndStrings(string src) {
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { sink.put(' '); ++i; }
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2; sink.put("  ");
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put("  ");
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; sink.put("  "); continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; sink.put("  "); if (depth == 0) break; continue; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) { sink.put(' '); ++i; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '`') { sink.put(src[i] == '\n' ? '\n' : ' '); ++i; }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private size_t countOccurrences(string hay, string needle) {
     size_t n = 0, i = 0;
@@ -137,10 +93,11 @@ private bool isIdentChar(char c) {
 /// Every `history.<NAME>(` / `history_.<NAME>(` in `src`, as (name, line).
 /// Hand-scanned rather than regex'd so the receiver term stays exactly the one
 /// the plan's population is defined over.
-private struct SurfaceHit { string name; size_t line; }
+private struct SurfaceHit { string symbol; string name; size_t line; }
 
 private SurfaceHit[] historySurface(string src) {
     SurfaceHit[] hits;
+    const symbols = enclosingSymbols(src);
     size_t i = 0;
     while (true) {
         auto rel = src[i .. $].indexOf("history");
@@ -162,7 +119,8 @@ private SurfaceHit[] historySurface(string src) {
         size_t r = q;
         while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
         if (r >= src.length || src[r] != '(') continue;      // a read, not a call
-        hits ~= SurfaceHit(nm, lineOf(src, p));
+        const line = lineOf(src, p);
+        hits ~= SurfaceHit(symbolAt(symbols, line - 1), nm, line);
     }
     return hits;
 }
@@ -248,30 +206,28 @@ unittest {
 //    non-recorders, both in `box.d`, both named here so that "1" cannot drift
 //    into "2" unnoticed.
 // ---------------------------------------------------------------------------
-private struct RosterRow { string path; string name; size_t count; string why; }
-
-private enum RosterRow[] kSurfaceRoster = [
+private enum LedgerRow[] kSurfaceRoster = [
     // The seam itself. THREE primitives, one per `GestureRecordMode` member,
     // plus the belt's run-close. This is the whole reason `source/tool.d` is in
     // the population: it is the family's only surviving recorder.
-    RosterRow("source/tool.d", "record", 1,
+    LedgerRow("Tool.recordGestureEdit|record", 1,
         "GestureRecordMode.Plain -> CommandHistory.record"),
-    RosterRow("source/tool.d", "recordInSession", 1,
+    LedgerRow("Tool.recordGestureEdit|recordInSession", 1,
         "GestureRecordMode.InSession -> CommandHistory.recordInSession"),
-    RosterRow("source/tool.d", "replaceInSessionTailWith", 1,
+    LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1,
         "GestureRecordMode.ReplaceRunTail -> CommandHistory.replaceInSessionTailWith"),
-    RosterRow("source/tool.d", "consolidate", 1,
+    LedgerRow("Tool.refuseGestureRecord|consolidate", 1,
         "the refusal belt closing the run the skipped splice would have closed"),
     // The two legitimate non-recorders left inside a G1 tool.
-    RosterRow("source/tools/create/box.d", "nextRun", 1,
+    LedgerRow("BoxTool.ensureLiveRun|nextRun", 1,
         "ensureLiveRun() opens the live-edit run id; a read/allocate, not a record"),
-    RosterRow("source/tools/create/box.d", "undo", 1,
+    LedgerRow("BoxTool.cancelUncommittedEdit|undo", 1,
         "the interactive undo LADDER inside cancelUncommittedEdit (task 0414); "
       ~ "it pops a live step and is not a record"),
 ];
 
 unittest {
-    string[] problems;
+    LedgerHit[] ledgerHits;
     size_t   totalHits = 0;
 
     foreach (rel; familyPaths()) {
@@ -281,28 +237,9 @@ unittest {
         auto hits = historySurface(src);
         totalHits += hits.length;
 
-        // Every hit must be rostered for THIS file.
         foreach (h; hits) {
-            bool rostered = false;
-            foreach (row; kSurfaceRoster)
-                if (row.path == rel && row.name == h.name) { rostered = true; break; }
-            if (!rostered)
-                problems ~= "    · UNROSTERED call on the history surface: `history."
-                          ~ h.name ~ "(` at " ~ rel ~ ":" ~ h.line.to!string
-                          ~ "  — after phase B every record in this family goes "
-                          ~ "through `Tool.recordGestureEdit`. If this call is "
-                          ~ "legitimate (the way box's `nextRun`/`undo` are), add "
-                          ~ "a roster row with the reason; do not widen a regex.";
-        }
-        // Every rostered row for THIS file must be present, with its count.
-        foreach (row; kSurfaceRoster) {
-            if (row.path != rel) continue;
-            size_t n = 0;
-            foreach (h; hits) if (h.name == row.name) ++n;
-            if (n != row.count)
-                problems ~= "    · " ~ rel ~ ": `history." ~ row.name ~ "(` x "
-                          ~ n.to!string ~ ", roster says " ~ row.count.to!string
-                          ~ "  (" ~ row.why ~ ")";
+            ledgerHits ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
+                                    "history." ~ h.name);
         }
     }
 
@@ -318,9 +255,12 @@ unittest {
       ~ "four. The scanner read nothing — check `repoRoot` and the stripper "
       ~ "before believing any green above it.");
 
+    const problems = reconcile(kSurfaceRoster, ledgerHits);
     assert(problems.length == 0,
         "G1 census: the family's history call surface is not what the seam "
-      ~ "leaves behind.\n" ~ joinLines(problems));
+      ~ "leaves behind.\n" ~ problems);
+    assert(ledgerHits.length == 6,
+        "G1 census: expected exactly six history-surface sites");
 }
 
 // ---------------------------------------------------------------------------
@@ -331,61 +271,51 @@ unittest {
 //    fixture cell to redden) a checkable claim rather than a hope: there is
 //    exactly ONE `ReplaceRunTail` site in the family, and it is box's.
 // ---------------------------------------------------------------------------
-private struct CallRow { string path; size_t calls, plain, inSession, replaceTail; }
-
-private enum CallRow[] kCallRoster = [
+private enum LedgerRow[] kCallRoster = [
     // The seam: one declaration, one dispatch arm per mode — plus a SECOND
     // mention of `ReplaceRunTail`, the belt's `mode ==` test in
     // `refuseGestureRecord`. That second one is the whole of round 4's fix 3
     // and it is counted, not tolerated: if it disappears the belt has stopped
     // closing the run it skipped.
-    CallRow("source/tool.d",                                1, 1, 1, 2),
-    CallRow("source/tools/create/arc.d",                    1, 1, 0, 0),
-    CallRow("source/tools/create/box.d",                    3, 1, 1, 1),
-    CallRow("source/tools/create/pen.d",                    1, 1, 0, 0),
-    CallRow("source/tools/create/primitive_create_tool.d",  1, 1, 0, 0),
-    CallRow("source/tools/create/vertex_place.d",           1, 1, 0, 0),
-    CallRow("source/tools/deform/magnet.d",                 1, 1, 0, 0),
-    CallRow("source/tools/edit/edge_extend.d",              2, 2, 0, 0),
-    CallRow("source/tools/edit/edge_extrude.d",             2, 2, 0, 0),
+    LedgerRow("Tool|call", 1, "seam declaration"),
+    LedgerRow("Tool.recordGestureEdit|plain", 1, "plain dispatch arm"),
+    LedgerRow("Tool.recordGestureEdit|inSession", 1, "in-session dispatch arm"),
+    LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch arm"),
+    LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "refusal belt"),
+    LedgerRow("ArcTool.commitArcEdit|call", 1, "arc commit"),
+    LedgerRow("ArcTool.commitArcEdit|plain", 1, "arc mode"),
+    LedgerRow("BoxTool.commitBoxEdit|call", 2, "box commit paths"),
+    LedgerRow("BoxTool.commitBoxEdit|plain", 1, "box plain path"),
+    LedgerRow("BoxTool.commitBoxEdit|replaceTail", 1, "box tail path"),
+    LedgerRow("BoxTool.recordLiveEdit|call", 1, "box live record"),
+    LedgerRow("BoxTool.recordLiveEdit|inSession", 1, "box live mode"),
+    LedgerRow("PenTool.commitPolygonWithUndo|call", 1, "pen commit"),
+    LedgerRow("PenTool.commitPolygonWithUndo|plain", 1, "pen mode"),
+    LedgerRow("PrimitiveCreateTool.commitEdit|call", 1, "primitive commit"),
+    LedgerRow("PrimitiveCreateTool.commitEdit|plain", 1, "primitive mode"),
+    LedgerRow("VertexTool.onMouseButtonDown|call", 1, "vertex commit"),
+    LedgerRow("VertexTool.onMouseButtonDown|plain", 1, "vertex mode"),
+    LedgerRow("MagnetTool.commitEdit|call", 1, "magnet commit"),
+    LedgerRow("MagnetTool.commitEdit|plain", 1, "magnet mode"),
+    LedgerRow("EdgeExtendTool.commitEdit|call", 2, "edge-extend commit paths"),
+    LedgerRow("EdgeExtendTool.commitEdit|plain", 2, "edge-extend modes"),
+    LedgerRow("EdgeExtrudeTool.commitEdit|call", 2, "edge-extrude commit paths"),
+    LedgerRow("EdgeExtrudeTool.commitEdit|plain", 2, "edge-extrude modes"),
 ];
 
 unittest {
-    string[] problems;
+    LedgerHit[] hits;
     size_t   totalCalls = 0;
 
     foreach (rel; familyPaths()) {
         immutable full = buildPath(repoRoot, rel);
         auto src = stripCommentsAndStrings(readText(full));
-        immutable size_t calls  = countOccurrences(src, "recordGestureEdit(");
-        immutable size_t plain  = countOccurrences(src, "GestureRecordMode.Plain");
-        immutable size_t sess   = countOccurrences(src, "GestureRecordMode.InSession");
-        immutable size_t tail   = countOccurrences(src, "GestureRecordMode.ReplaceRunTail");
-        totalCalls += calls;
-
-        size_t wantC, wantP, wantS, wantT;
-        bool listed = false;
-        foreach (row; kCallRoster)
-            if (row.path == rel) {
-                wantC = row.calls; wantP = row.plain;
-                wantS = row.inSession; wantT = row.replaceTail;
-                listed = true; break;
-            }
-        if (!listed && (calls || plain || sess || tail)) {
-            problems ~= "    · " ~ rel ~ " names the seam and is not in the call "
-                      ~ "roster (" ~ calls.to!string ~ " call(s))";
-            continue;
-        }
-        if (!listed) continue;
-        if (calls != wantC)
-            problems ~= "    · " ~ rel ~ ": recordGestureEdit( x " ~ calls.to!string
-                      ~ ", roster says " ~ wantC.to!string;
-        if (plain != wantP || sess != wantS || tail != wantT)
-            problems ~= "    · " ~ rel ~ ": modes {Plain " ~ plain.to!string
-                      ~ ", InSession " ~ sess.to!string ~ ", ReplaceRunTail "
-                      ~ tail.to!string ~ "}, roster says {Plain " ~ wantP.to!string
-                      ~ ", InSession " ~ wantS.to!string ~ ", ReplaceRunTail "
-                      ~ wantT.to!string ~ "}";
+        auto calls = symbolTokenHits(src, rel, "recordGestureEdit(", "call");
+        totalCalls += calls.length;
+        hits ~= calls;
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.Plain", "plain");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.InSession", "inSession");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.ReplaceRunTail", "replaceTail");
     }
 
     assert(totalCalls >= 13,
@@ -394,8 +324,9 @@ unittest {
       ~ "expected; a number near zero means the scanner read nothing, not that "
       ~ "the family stopped recording.");
 
+    const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
-        "G1 census: the seam's call sites moved.\n" ~ joinLines(problems)
+        "G1 census: the seam's call sites changed.\n" ~ problems
       ~ "\n  Exactly ONE `ReplaceRunTail` dispatch exists in this family "
       ~ "(box's commit while a live run is open). That is what licenses the "
       ~ "plan's M2 mutation to predict a single reddened fixture cell — if the "

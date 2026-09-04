@@ -39,8 +39,9 @@ import std.array     : appender;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
+import std.string    : splitLines;
 
-import tests.unit.revert_entry_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -80,14 +81,19 @@ private Scan scanRoots() {
         ++r.files;
         r.rawBytes += text.length;
         const string code = blankNonCode(text);
+        const symbols = enclosingSymbols(code);
         foreach (t; kTokens) {
             const size_t raw  = countIn(text, t);
-            const size_t codeN = countIn(code, t);
+            size_t codeN;
+            foreach (li, line; code.splitLines) {
+                const n = countIn(line, t);
+                codeN += n;
+                if (n != 0)
+                    r.offenders ~= format("%s — %s:%d: `%s` appears %d time(s) in CODE",
+                        symbolAt(symbols, li), rel, li + 1, t, n);
+            }
             r.rawHits  += raw;
             r.codeHits += codeN;
-            if (codeN != 0)
-                r.offenders ~= format("%s — `%s` appears %d time(s) in CODE",
-                                      rel, t, codeN);
         }
         // The wire ids were string literals; `blankNonCode` erases those, so
         // they are looked for in the RAW text and reported separately.
@@ -136,8 +142,8 @@ unittest {
     // NON-VACUITY, and this is the half that makes the zero mean something.
     // The historical comments are supposed to be there; if this reads 0 the
     // scanner was handed blank text and the gate above passed for free.
-    assert(s.rawHits > 0, format(
-        "the census found %d RAW mention(s) of the hatch across %d file(s) / "
+    assert(s.rawHits == 64, format(
+        "the census found %d RAW mention(s) of the hatch, expected exactly 64, across %d file(s) / "
       ~ "%d byte(s). Zero here does not mean the tree is clean — it means the "
       ~ "scanner read nothing, and the `codeHits == 0` gate above is then "
       ~ "satisfied for free. The historical comments naming the flag are "
@@ -156,7 +162,7 @@ unittest {
 /// take it back out again — otherwise the census is counting comments and the
 /// nineteen deliberate historical mentions would all read as offenders.
 unittest {
-    immutable host = readText(buildPath(repoRoot, "source/commands/mesh/smooth.d"));
+    immutable host = readText(__FILE_FULL_PATH__);
 
     size_t codeHits(string text) {
         const string code = blankNonCode(text);

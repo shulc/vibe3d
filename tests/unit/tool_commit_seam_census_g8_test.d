@@ -112,6 +112,9 @@ import std.path      : buildPath, dirName, relativePath;
 import std.regex     : regex, matchAll;
 import std.string    : indexOf, strip;
 
+import tests.unit.census_symbols : blankNonCode, LedgerRow, LedgerHit,
+    reconcile, symbolTokenHits;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 // ---------------------------------------------------------------------------
@@ -136,58 +139,10 @@ private string readSource(string rel) {
 // the rest of the file, and the totals collapse and redden with a message that
 // says so.
 // ---------------------------------------------------------------------------
-private string stripCommentsAndStrings(string src) {
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { sink.put(' '); ++i; }
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2; sink.put("  ");
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put("  ");
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; sink.put("  "); continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; sink.put("  "); if (depth == 0) break; continue; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) { sink.put(' '); ++i; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '`') { sink.put(src[i] == '\n' ? '\n' : ' '); ++i; }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
-/// Comments only — string literals survive. The wire names ARE string
-/// literals, so member 3 cannot use the full stripper, and a comment that
-/// spells a wire name must still not be counted as a row.
+/// Comments only — string literals survive because the wire names are
+/// literals in the registration census below.
 private string stripCommentsOnly(string src) {
     auto sink = appender!string;
     size_t i = 0;
@@ -744,78 +699,38 @@ unittest {
 //    anchored predicate in the sibling census files; this file does not use it
 //    and does not touch it.
 // ---------------------------------------------------------------------------
-private struct BinderRow { string path; size_t count; string why; }
-
-private enum BinderRow[] kBinderRoster = [
+private enum LedgerRow[] kBinderRoster = [
     // The EIGHT surviving transform-zone bindings split FOUR / FOUR across
     // these two declarations, and the split matters: it is why neither is idle.
-    BinderRow("source/tools/transform/transform.d", 1,
+    LedgerRow("TransformTool|binder", 1,
         "`TransformTool`'s own binder, reached by FOUR of the eight "
       ~ "transform-zone registrations (xfrm.push, xfrm.bend, "
       ~ "xfrm.linearAlignTool, xfrm.radialAlignTool). The transform zone is "
       ~ "OUT OF task 1905's scope by decision D1, and group G8 does NOT close "
       ~ "it: the app-level closures collapsing changes nothing about which "
       ~ "binder a transform tool DECLARES"),
-    BinderRow("source/tools/transform/xfrm_transform.d", 1,
+    LedgerRow("XfrmTransformTool|binder", 1,
         "an `override` of the above, reached by the other FOUR "
       ~ "`XfrmTransformTool` registrations (move / rotate / scale / "
       ~ "xfrm.transform) and forwarding to its three composed sub-tools"),
 ];
 
 unittest {
-    string[] problems;
+    LedgerHit[] hits;
     size_t total = 0, filesRead = 0;
 
     foreach (rel; sourceTree()) {
         auto src = stripCommentsAndStrings(readSource(rel));
         ++filesRead;
-        immutable size_t n = countOccurrences(src, "void setUndoBindings");
-        total += n;
-        if (n == 0) continue;
-
-        size_t want = 0;
-        bool listed = false;
-        foreach (row; kBinderRoster)
-            if (row.path == rel) { want = row.count; listed = true; break; }
-        if (!listed) {
-            problems ~= "    · UNROSTERED binder declaration: `void "
-                      ~ "setUndoBindings` x " ~ n.to!string ~ " in " ~ rel
-                      ~ ". Every tool in groups G1-G7 binds through "
-                      ~ "`Tool.setGestureBindings`, whose declaration is "
-                      ~ "`final`. A second binder is a second place to forget, "
-                      ~ "and a tool bound through neither is SILENT — the mesh "
-                      ~ "is edited and no undo entry is written";
-            continue;
-        }
-        if (n != want)
-            problems ~= "    · " ~ rel ~ ": `void setUndoBindings` x "
-                      ~ n.to!string ~ ", roster says " ~ want.to!string
-                      ~ "  (" ~ (){
-                            foreach (row; kBinderRoster)
-                                if (row.path == rel) return row.why;
-                            return "";
-                        }() ~ ")";
+        const found = symbolTokenHits(src, rel, "void setUndoBindings", "binder");
+        total += found.length;
+        hits ~= found;
     }
-
-    foreach (row; kBinderRoster) {
-        immutable full = buildPath(repoRoot, row.path);
-        if (!exists(full))
-            problems ~= "    · rostered survivor is gone from the tree: "
-                      ~ row.path ~ "  (was: " ~ row.why ~ ")";
-    }
-
-    if (total < kBinderRoster.length)
-        problems ~= "    · NON-VACUITY: the walk of `source/` found "
-                  ~ total.to!string ~ " `void setUndoBindings` declaration(s) "
-                  ~ "across " ~ filesRead.to!string ~ " file(s); two survive "
-                  ~ "by design, both in the transform zone. A number below two "
-                  ~ "means either the reader returned nothing — in which case "
-                  ~ "every row above is vacuous — or a survivor was deleted, "
-                  ~ "which is good news that still has to be recorded by "
-                  ~ "removing its roster row";
-
+    const problems = reconcile(kBinderRoster, hits);
     assert(problems.length == 0,
-        "G8 census: the `setUndoBindings` residue moved.\n" ~ joinLines(problems));
+        "G8 census: the `setUndoBindings` residue changed.\n" ~ problems);
+    assert(total == 2 && filesRead >= 400,
+        "G8 census: expected exactly two binders over a non-empty source walk");
 }
 
 // ---------------------------------------------------------------------------

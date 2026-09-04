@@ -452,7 +452,7 @@ unittest
     import std.file  : exists, readText;
     import std.path  : buildPath, dirName;
     import std.string: strip;
-    import tests.unit.revert_entry_census_test : blankNonCode;
+    import tests.unit.census_symbols : blankNonCode;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

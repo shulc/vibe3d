@@ -115,6 +115,7 @@ import std.string    : indexOf, strip;
 import std.traits    : FieldNameTuple;
 
 import toolpipe.packets : SubjectPacket;
+import tests.unit.census_symbols : stripCommentsAndStrings = blankNonCode;
 
 // ---------------------------------------------------------------------------
 // Shared low-level scan: comments and string/char literals are replaced by
@@ -128,72 +129,6 @@ private bool isIdentChar(char c) { return isAlphaNum(c) || c == '_'; }
 
 private void skipWs(string s, ref size_t i) {
     while (i < s.length && isWhite(s[i])) i++;
-}
-
-private string stripCommentsAndStrings(string src) pure {
-    auto buf = new char[src.length];
-    size_t i = 0;
-    while (i < src.length) {
-        immutable char c = src[i];
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { buf[i] = ' '; i++; }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '*') {
-            buf[i] = ' '; buf[i + 1] = ' '; i += 2;
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                buf[i] = (src[i] == '\n') ? '\n' : ' ';
-                i++;
-            }
-            if (i + 1 < src.length) { buf[i] = ' '; buf[i + 1] = ' '; i += 2; }
-            else if (i < src.length) { buf[i] = ' '; i++; }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '+') {
-            int depth = 1;
-            buf[i] = ' '; buf[i + 1] = ' '; i += 2;
-            while (i + 1 < src.length && depth > 0) {
-                if (src[i] == '/' && src[i + 1] == '+') {
-                    depth++; buf[i] = ' '; buf[i + 1] = ' '; i += 2; continue;
-                }
-                if (src[i] == '+' && src[i + 1] == '/') {
-                    depth--; buf[i] = ' '; buf[i + 1] = ' '; i += 2; continue;
-                }
-                buf[i] = (src[i] == '\n') ? '\n' : ' ';
-                i++;
-            }
-            continue;
-        }
-        if (c == '"' || c == '`') {
-            immutable char q = c;
-            immutable bool raw = (q == '`');
-            buf[i] = ' '; i++;
-            while (i < src.length && src[i] != q) {
-                if (!raw && src[i] == '\\' && i + 1 < src.length) {
-                    buf[i] = ' '; i++;
-                    buf[i] = (src[i] == '\n') ? '\n' : ' '; i++;
-                    continue;
-                }
-                buf[i] = (src[i] == '\n') ? '\n' : ' ';
-                i++;
-            }
-            if (i < src.length) { buf[i] = ' '; i++; }
-            continue;
-        }
-        if (c == '\'') {
-            buf[i] = ' '; i++;
-            while (i < src.length && src[i] != '\'') {
-                if (src[i] == '\\' && i + 1 < src.length) { buf[i] = ' '; i++; }
-                buf[i] = (src[i] == '\n') ? '\n' : ' ';
-                i++;
-            }
-            if (i < src.length) { buf[i] = ' '; i++; }
-            continue;
-        }
-        buf[i] = c;
-        i++;
-    }
-    return cast(string) buf;
 }
 
 private size_t lineAt(string src, size_t pos) {

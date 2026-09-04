@@ -115,7 +115,8 @@ private enum size_t kMarkerWindow = 12;
 // it, one of them a kRemainder file). `filesScanned` below still notices a
 // desync from any form nobody has thought of.
 // ---------------------------------------------------------------------------
-import tests.unit.version_poll_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile;
 
 private bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -134,53 +135,9 @@ private bool namesIdent(string ln, string id) {
     return false;
 }
 
-/// Blank the body of every real `unittest` block in an already-code-only
-/// view. `version (unittest)` survives — it is production code (mock hooks,
-/// test-visible accessors), and `source/**` carries ~195 of them. Copied
-/// verbatim from `version_poll_census_test.d`'s `blankUnittestBodies`
-/// (module-private there, so duplicated rather than imported).
-private string blankUnittestBodies(string code) {
-    auto buf = code.dup;
-    void blankBlock(size_t from) {
-        size_t j = from;
-        while (j < buf.length && buf[j] != '{') {
-            if (buf[j] == ';') return;      // `unittest` used as a name; bail
-            ++j;
-        }
-        if (j >= buf.length) return;
-        int depth = 0;
-        for (; j < buf.length; ++j) {
-            const char c = buf[j];
-            if (c == '{') ++depth;
-            else if (c == '}') { --depth; if (depth == 0) { buf[j] = ' '; return; } }
-            if (c != '\n') buf[j] = ' ';
-        }
-    }
-    bool parenthesised(size_t i) {
-        size_t k = i;
-        while (k > 0 && (buf[k - 1] == ' ' || buf[k - 1] == '\t'
-                      || buf[k - 1] == '\n' || buf[k - 1] == '\r')) --k;
-        return k > 0 && buf[k - 1] == '(';
-    }
-    enum kw = "unittest";
-    size_t i = 0;
-    while (i + kw.length <= buf.length) {
-        if (buf[i .. i + kw.length] == kw
-            && (i == 0 || !isIdentChar(buf[i - 1]))
-            && (i + kw.length >= buf.length || !isIdentChar(buf[i + kw.length]))
-            && !parenthesised(i))
-        {
-            blankBlock(i + kw.length);
-            i += kw.length;
-            continue;
-        }
-        ++i;
-    }
-    return cast(string)buf;
-}
-
 private struct Site {
     string file;
+    string symbol;
     size_t line;    // 1-based
     string text;
     bool   argued;
@@ -190,6 +147,7 @@ private struct Site {
 /// findings (repo-root-relative, e.g. `source/app.d`).
 private Site[] scanSource(string label, string src) {
     const string code  = blankUnittestBodies(blankNonCode(src));
+    const symbols = enclosingSymbols(code);
     const string marks = blankNonCode(src, /*keepComments=*/true);
     auto codeLines = code.splitLines();
     auto markLines = marks.splitLines();
@@ -205,7 +163,8 @@ private Site[] scanSource(string label, string src) {
     auto sites = appender!(Site[]);
     foreach (li, ln; codeLines)
         if (namesIdent(ln, kMethod) || namesIdent(ln, kField))
-            sites.put(Site(label, li + 1, ln.strip, argumentAbove(li)));
+            sites.put(Site(label, symbolAt(symbols, li), li + 1, ln.strip,
+                           argumentAbove(li)));
     return sites.data;
 }
 
@@ -364,49 +323,20 @@ unittest {
 // un-marked NEW site is more informative reported as "write the note" first.
 // ---------------------------------------------------------------------------
 
-private struct RemainderFile { string file; size_t sites; }
-
 /// Task 1931's measured remainder (2026-08-26): ONE registration, in
 /// `source/app.d`, wiring `fboSelEpoch`. Complete as of stage 3.
-private static immutable RemainderFile[] kRemainder = [
-    RemainderFile("source/app.d", 1),
+private static immutable LedgerRow[] kRemainder = [
+    LedgerRow("main", 1, "the one subscriber wiring fboSelEpoch"),
 ];
 
 unittest {
-    foreach (ref r; kRemainder)
-        assert(buildPath(repoRoot, r.file).exists, format(
-            "task 1931 records %d onSelectionChanged registration(s) in %s "
-          ~ "and that file is gone. If the module moved, move the row; if the "
-          ~ "registration went with it, delete the row too.", r.sites, r.file));
-
     auto sites = scanTree();
-    size_t[string] found;
-    foreach (ref s; sites) found[s.file] = found.get(s.file, 0) + 1;
+    LedgerHit[] hits;
+    foreach (ref s; sites)
+        hits ~= LedgerHit(s.symbol, s.file, s.line, s.text);
+    const bad = reconcile(kRemainder, hits);
 
-    auto bad = appender!string;
-
-    foreach (ref r; kRemainder) {
-        const size_t n = found.get(r.file, 0);
-        if (n == r.sites) continue;
-        bad.put(format("\n    %s — recorded %d, scanner found %d",
-                        r.file, r.sites, n));
-        foreach (ref s; sites)
-            if (s.file == r.file)
-                bad.put(format("\n        found  %s:%d  %s", s.file, s.line, s.text));
-    }
-
-    foreach (f, n; found) {
-        bool recorded = false;
-        foreach (ref r; kRemainder) if (r.file == f) { recorded = true; break; }
-        if (recorded) continue;
-        bad.put(format("\n    %s — NOT RECORDED AT ALL, scanner found %d site(s)",
-                        f, n));
-        foreach (ref s; sites)
-            if (s.file == f)
-                bad.put(format("\n        found  %s:%d  %s", s.file, s.line, s.text));
-    }
-
-    assert(bad.data.length == 0, format(
+    assert(bad.length == 0, format(
         "task 1931: the onSelectionChanged registration SET no longer matches "
       ~ "the recorded remainder.%s\n\n"
       ~ "  The task's conclusion — per-type selection delivery is measured, "
@@ -420,5 +350,8 @@ unittest {
       ~ "revisiting the whole question.\n"
       ~ "    * FEWER than recorded — a registration was migrated or deleted; "
       ~ "drop the row here in the same commit.",
-        bad.data));
+        bad));
+    assert(hits.length == 1,
+        format("selection-channel population changed: expected 1, found %d",
+               hits.length));
 }

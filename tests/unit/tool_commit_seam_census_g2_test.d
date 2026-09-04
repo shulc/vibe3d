@@ -68,6 +68,9 @@ import std.file      : dirEntries, exists, isDir, isFile, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName, extension;
 import std.string    : indexOf;
 
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
+    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 /// The directory G2 IS.
@@ -91,54 +94,7 @@ private enum string kSeamFile = "source/tool.d";
 // that lost its place eats the rest of the file, the seam's own four calls
 // vanish, and the floor reddens saying so.
 // ---------------------------------------------------------------------------
-private string stripCommentsAndStrings(string src) {
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { sink.put(' '); ++i; }
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2; sink.put("  ");
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put("  ");
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; sink.put("  "); continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; sink.put("  "); if (depth == 0) break; continue; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) { sink.put(' '); ++i; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '`') { sink.put(src[i] == '\n' ? '\n' : ' '); ++i; }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private size_t countOccurrences(string hay, string needle) {
     size_t n = 0, i = 0;
@@ -169,10 +125,11 @@ private string joinLines(const(string)[] xs) {
 /// Every `history.<NAME>(` / `history_.<NAME>(` in `src`, as (name, line).
 /// Hand-scanned rather than regex'd so the receiver term stays exactly the one
 /// the plan's population is defined over.
-private struct SurfaceHit { string name; size_t line; }
+private struct SurfaceHit { string symbol; string name; size_t line; }
 
 private SurfaceHit[] historySurface(string src) {
     SurfaceHit[] hits;
+    const symbols = enclosingSymbols(src);
     size_t i = 0;
     while (true) {
         auto rel = src[i .. $].indexOf("history");
@@ -193,7 +150,8 @@ private SurfaceHit[] historySurface(string src) {
         size_t r = q;
         while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
         if (r >= src.length || src[r] != '(') continue;   // a read, not a call
-        hits ~= SurfaceHit(nm, lineOf(src, p));
+        const line = lineOf(src, p);
+        hits ~= SurfaceHit(symbolAt(symbols, line - 1), nm, line);
     }
     return hits;
 }
@@ -319,81 +277,36 @@ unittest {
 //    is therefore the seam's four rows and nothing else, and ANY name on the
 //    surface inside `source/tools/alignment/` is a finding.
 // ---------------------------------------------------------------------------
-private struct RosterRow { string path; string name; size_t count; string why; }
-
-private enum RosterRow[] kSurfaceRoster = [
-    RosterRow(kSeamFile, "record", 1,
+private enum LedgerRow[] kSurfaceRoster = [
+    LedgerRow("Tool.recordGestureEdit|record", 1,
         "GestureRecordMode.Plain -> CommandHistory.record; this is the branch "
       ~ "ALL FIVE G2 sites take"),
-    RosterRow(kSeamFile, "recordInSession", 1,
+    LedgerRow("Tool.recordGestureEdit|recordInSession", 1,
         "GestureRecordMode.InSession -> CommandHistory.recordInSession (G1's "
       ~ "live-box site; no G2 site reaches it)"),
-    RosterRow(kSeamFile, "replaceInSessionTailWith", 1,
+    LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1,
         "GestureRecordMode.ReplaceRunTail -> CommandHistory.replaceInSessionTailWith "
       ~ "(G1's splice; no G2 site reaches it)"),
-    RosterRow(kSeamFile, "consolidate", 1,
+    LedgerRow("Tool.refuseGestureRecord|consolidate", 1,
         "the refusal belt closing the run the skipped splice would have closed"),
 ];
 
 unittest {
-    string[] problems;
-    size_t   totalHits = 0;
-
+    LedgerHit[] ledgerHits;
+    size_t totalHits;
     foreach (rel; familyPaths()) {
-        immutable full = buildPath(repoRoot, rel);
-        assert(exists(full), "G2 census: population member is missing: " ~ rel);
-        auto src  = stripCommentsAndStrings(readText(full));
-        auto hits = historySurface(src);
-        totalHits += hits.length;
-
-        foreach (h; hits) {
-            bool ok = false;
-            foreach (row; kSurfaceRoster)
-                if (row.path == rel && row.name == h.name) { ok = true; break; }
-            if (!ok)
-                problems ~= "    · UNROSTERED call on the history surface: `history."
-                          ~ h.name ~ "(` at " ~ rel ~ ":" ~ h.line.to!string
-                          ~ "  — after phase C every record in this family goes "
-                          ~ "through `Tool.recordGestureEdit`, and this family "
-                          ~ "keeps no legitimate non-recorder of its own. If this "
-                          ~ "call is genuinely legitimate, add a roster row with "
-                          ~ "the reason; do not widen a regex.";
-        }
-        foreach (row; kSurfaceRoster) {
-            if (row.path != rel) continue;
-            size_t n = 0;
-            foreach (h; hits) if (h.name == row.name) ++n;
-            if (n != row.count)
-                problems ~= "    · " ~ rel ~ ": `history." ~ row.name ~ "(` x "
-                          ~ n.to!string ~ ", roster says " ~ row.count.to!string
-                          ~ "  (" ~ row.why ~ ")";
-        }
+        const src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
+        const found = historySurface(src);
+        totalHits += found.length;
+        foreach (h; found)
+            ledgerHits ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
+                                    "history." ~ h.name);
     }
-
-    // NON-VACUITY, AND IT GOES INTO THE SAME ACCUMULATOR — never in front of
-    // it. A stripper that lost its place, or a repoRoot pointing nowhere,
-    // produces an EMPTY surface and satisfies every "unrostered == 0" above for
-    // free; for THIS family that is the likelier accident, because its own five
-    // files are supposed to contribute zero hits. But as a SEPARATE assert
-    // placed above, this floor swallows the very finding it is meant to
-    // accompany: measured on this lane, deleting the belt's `consolidate` call
-    // from `source/tool.d` printed the floor and NOT the roster row that names
-    // the missing primitive. That is CLAUDE.md's "a second, unnamed guard
-    // refuses first" happening inside a witness written to catch exactly that,
-    // so the floor is a LAST line of the same message.
-    if (totalHits < 4)
-        problems ~= "    · NON-VACUITY: the scan found only " ~ totalHits.to!string
-                  ~ " call(s) on the history surface across the whole "
-                  ~ "population, and the seam alone makes four. If the rows "
-                  ~ "above do not explain that, the scanner read nothing — "
-                  ~ "check `repoRoot` and the stripper before believing any "
-                  ~ "green. This floor matters more here than in G1: G2's own "
-                  ~ "five files are expected to contribute ZERO, so an empty "
-                  ~ "read looks exactly like a clean migration.";
-
+    const problems = reconcile(kSurfaceRoster, ledgerHits);
     assert(problems.length == 0,
-        "G2 census: the family's history call surface is not what the seam "
-      ~ "leaves behind.\n" ~ joinLines(problems));
+        "G2 census: the family's history call surface changed.\n" ~ problems);
+    assert(totalHits == 4,
+        "G2 census: the seam must contribute exactly four history-surface calls");
 }
 
 // ---------------------------------------------------------------------------
@@ -418,79 +331,41 @@ unittest {
 //        leave all five G2 cells green. When this zero stops being zero, that
 //        prediction has to be re-argued and this member reddens first.
 // ---------------------------------------------------------------------------
-private struct CallRow { string path; size_t calls, plain, inSession, replaceTail; }
-
-private enum CallRow[] kCallRoster = [
-    // The seam: one declaration, one dispatch arm per mode — plus a SECOND
-    // mention of `ReplaceRunTail`, the belt's `mode ==` test in
-    // `refuseGestureRecord`. That second one is counted, not tolerated: if it
-    // disappears the belt has stopped closing the run it skipped.
-    CallRow(kSeamFile,                                        1, 1, 1, 2),
-    CallRow("source/tools/alignment/array_tool.d",            1, 1, 0, 0),
-    CallRow("source/tools/alignment/clone_tool.d",            1, 1, 0, 0),
-    CallRow("source/tools/alignment/mirror.d",                1, 1, 0, 0),
-    CallRow("source/tools/alignment/radial_array_tool.d",     1, 1, 0, 0),
-    CallRow("source/tools/alignment/radial_sweep_tool.d",     1, 1, 0, 0),
+private enum LedgerRow[] kCallRoster = [
+    LedgerRow("Tool|call", 1, "seam declaration"),
+    LedgerRow("Tool.recordGestureEdit|plain", 1, "plain dispatch"),
+    LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
+    LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
+    LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
+    LedgerRow("ArrayTool.commitEdit|call", 1, "array commit"),
+    LedgerRow("ArrayTool.commitEdit|plain", 1, "array mode"),
+    LedgerRow("CloneTool.commitEdit|call", 1, "clone commit"),
+    LedgerRow("CloneTool.commitEdit|plain", 1, "clone mode"),
+    LedgerRow("MirrorTool.commitMirrorEdit|call", 1, "mirror commit"),
+    LedgerRow("MirrorTool.commitMirrorEdit|plain", 1, "mirror mode"),
+    LedgerRow("RadialArrayTool.commitEdit|call", 1, "radial-array commit"),
+    LedgerRow("RadialArrayTool.commitEdit|plain", 1, "radial-array mode"),
+    LedgerRow("RadialSweepTool.commitSweepEdit|call", 1, "radial-sweep commit"),
+    LedgerRow("RadialSweepTool.commitSweepEdit|plain", 1, "radial-sweep mode"),
 ];
 
 unittest {
-    string[] problems;
-    size_t   totalCalls = 0, totalPlain = 0, totalTail = 0;
-
+    LedgerHit[] hits;
+    size_t totalCalls;
     foreach (rel; familyPaths()) {
-        auto src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
-        immutable size_t calls = countOccurrences(src, "recordGestureEdit(");
-        immutable size_t plain = countOccurrences(src, "GestureRecordMode.Plain");
-        immutable size_t sess  = countOccurrences(src, "GestureRecordMode.InSession");
-        immutable size_t tail  = countOccurrences(src, "GestureRecordMode.ReplaceRunTail");
-        totalCalls += calls; totalPlain += plain; totalTail += tail;
-
-        size_t wantC, wantP, wantS, wantT;
-        bool listed = false;
-        foreach (row; kCallRoster)
-            if (row.path == rel) {
-                wantC = row.calls; wantP = row.plain;
-                wantS = row.inSession; wantT = row.replaceTail;
-                listed = true; break;
-            }
-        if (!listed) {
-            if (calls || plain || sess || tail)
-                problems ~= "    · " ~ rel ~ " names the seam (" ~ calls.to!string
-                          ~ " call(s)) and is not in the call roster. Two files "
-                          ~ "of this directory belong to the TRANSFORM zone and "
-                          ~ "one holds pure kernels; a record site appearing in "
-                          ~ "any of them is a sixth G2 site with no fixture cell.";
-            continue;
-        }
-        if (calls != wantC)
-            problems ~= "    · " ~ rel ~ ": recordGestureEdit( x " ~ calls.to!string
-                      ~ ", roster says " ~ wantC.to!string;
-        if (plain != wantP || sess != wantS || tail != wantT)
-            problems ~= "    · " ~ rel ~ ": modes {Plain " ~ plain.to!string
-                      ~ ", InSession " ~ sess.to!string ~ ", ReplaceRunTail "
-                      ~ tail.to!string ~ "}, roster says {Plain " ~ wantP.to!string
-                      ~ ", InSession " ~ wantS.to!string ~ ", ReplaceRunTail "
-                      ~ wantT.to!string ~ "}";
+        const src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
+        const calls = symbolTokenHits(src, rel, "recordGestureEdit(", "call");
+        totalCalls += calls.length;
+        hits ~= calls;
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.Plain", "plain");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.InSession", "inSession");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.ReplaceRunTail", "replaceTail");
     }
-
-    // Same rule as member 2: the floor is the LAST line of the accumulator, not
-    // an assert in front of it.
-    if (totalCalls < 6)
-        problems ~= "    · NON-VACUITY: only " ~ totalCalls.to!string
-                  ~ " `recordGestureEdit(` across the whole population. Five "
-                  ~ "tool sites plus the seam's own declaration are expected; a "
-                  ~ "number near zero means the scanner read nothing, not that "
-                  ~ "the family stopped recording.";
-
+    const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
-        "G2 census: the seam's call sites moved.\n" ~ joinLines(problems)
-      ~ "\n  When all five G2 sites are `Plain`, `GestureRecordMode.Plain` is "
-      ~ "counted SIX times over this population — one per site plus the seam's "
-      ~ "own dispatch arm; this run counted " ~ totalPlain.to!string
-      ~ ". `ReplaceRunTail` is counted " ~ totalTail.to!string
-      ~ " time(s), and every one of them is inside `source/tool.d`. Those two "
-      ~ "facts are what license the plan's M2 prediction that suppressing the "
-      ~ "splice branch leaves every G2 cell green.");
+        "G2 census: the seam's call sites changed.\n" ~ problems);
+    assert(totalCalls == 6,
+        "G2 census: expected five tool sites plus the seam declaration");
 }
 
 // ---------------------------------------------------------------------------

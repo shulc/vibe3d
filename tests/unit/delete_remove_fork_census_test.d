@@ -30,12 +30,14 @@
 // one at a time.
 module tests.unit.delete_remove_fork_census_test;
 
-import std.algorithm : canFind, sort, uniq;
-import std.array     : array;
-import std.file      : exists, readText;
+import std.algorithm : canFind, startsWith;
+import std.file      : dirEntries, exists, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.string    : indexOf, splitLines;
+import std.string    : splitLines;
+
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+    enclosingSymbols, symbolAt;
 
 /// Repository root, rooted at THIS FILE rather than at the working directory.
 /// A census that quietly finds nothing when the lane runs from elsewhere is a
@@ -44,18 +46,6 @@ private string repoRoot()
 {
     // …/tests/unit/<this file>  ->  …
     return dirName(dirName(dirName(__FILE_FULL_PATH__)));
-}
-
-/// The file's text with `//` line comments removed.
-private string codeOnly(string text)
-{
-    string outp;
-    foreach (line; text.splitLines()) {
-        immutable i = line.indexOf("//");
-        outp ~= (i < 0 ? line : line[0 .. i]);
-        outp ~= "\n";
-    }
-    return outp;
 }
 
 /// Read a file that MUST exist, and return its code with comments stripped
@@ -69,7 +59,7 @@ private void scanFile(string rel, out string code, out size_t bytes)
       ~ "with it");
     immutable raw = readText(path);
     bytes = raw.length;
-    code  = codeOnly(raw);
+    code  = blankNonCode(raw);
 }
 
 unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
@@ -83,19 +73,6 @@ unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
     //       reddens. This is NOT decoration: a duplicated literal in a list
     //       whose LENGTH is the only other check leaves one file unscanned and
     //       the census green forever.
-    static immutable string[] kTargets = [
-        "source/commands/mesh/delete.d",
-        "source/commands/mesh/remove.d",
-    ];
-
-    // The list must name each file once. Checked before anything is read, so
-    // a duplicate cannot be masked by the scan itself succeeding.
-    auto sorted = kTargets.dup.sort().uniq().array;
-    assert(sorted.length == kTargets.length,
-        format("the census path list holds %d entries but only %d distinct "
-             ~ "ones — a duplicate leaves a target unscanned and this census "
-             ~ "green forever", kTargets.length, sorted.length));
-
     // The tokens, and why each is here. `undoTrackerEnabled` is the fork
     // itself. `MeshSnapshot` is the thing the fork existed to hold: a file
     // that lost the branch but kept the field has not finished the migration,
@@ -105,29 +82,44 @@ unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
         "MeshSnapshot",
     ];
 
-    size_t scannedBytes = 0;
-    size_t scannedFiles = 0;
-    foreach (rel; kTargets) {
-        string code; size_t bytes;
-        scanFile(rel, code, bytes);
-        scannedBytes += bytes;
+    size_t scannedBytes, scannedFiles, targetLines;
+    bool[string] targetClasses;
+    string[] offenders;
+    foreach (de; dirEntries(buildPath(repoRoot(), "source"), "*.d", SpanMode.depth)) {
         ++scannedFiles;
-        foreach (tok; kForbidden)
-            assert(!code.canFind(tok),
-                format("%s still names `%s` in CODE. Stage L3-b deleted the "
-                     ~ "`undoTrackerEnabled()` fork and the whole-mesh "
-                     ~ "snapshot arm from both destructive commands; a "
-                     ~ "re-added arm is invisible to every behavioural test, "
-                     ~ "because the default environment takes the delta "
-                     ~ "branch either way", rel, tok));
+        const raw = readText(de.name);
+        scannedBytes += raw.length;
+        const code = blankUnittestBodies(blankNonCode(raw));
+        const symbols = enclosingSymbols(code);
+        foreach (li, line; code.splitLines) {
+            const symbol = symbolAt(symbols, li);
+            const target = symbol == "MeshDelete" || symbol.startsWith("MeshDelete.")
+                        || symbol == "MeshRemove" || symbol.startsWith("MeshRemove.");
+            if (!target) continue;
+            targetClasses[symbol.startsWith("MeshDelete") ? "MeshDelete" : "MeshRemove"] = true;
+            ++targetLines;
+            foreach (tok; kForbidden) if (line.canFind(tok))
+                offenders ~= format("%s — %s:%d still names `%s` in CODE",
+                    symbol, de.name[repoRoot().length + 1 .. $], li + 1, tok);
+        }
     }
+
+    assert(offenders.length == 0,
+        format("Stage L3-b's two destructive commands regained an undo fork:%-(\n    %s%). "
+             ~ "The default environment takes the delta branch either way, so "
+             ~ "behavioural tests cannot see this regression.", offenders));
 
     // Totals READ FROM THE SCAN, never written as literals — a hard-coded
     // count is satisfied by a scan that never ran.
-    assert(scannedFiles == kTargets.length,
-        format("scanned %d files, the list names %d", scannedFiles,
-               kTargets.length));
-    assert(scannedBytes >= 100,
+    assert(scannedFiles >= 400 && targetLines >= 100,
+        format("scanned %d files but only %d lines in MeshDelete/MeshRemove; "
+             ~ "the symbol census is measuring almost nothing", scannedFiles,
+               targetLines));
+    assert(targetClasses.length == 2
+        && "MeshDelete" in targetClasses && "MeshRemove" in targetClasses,
+        format("the symbol census reached %d destructive command class(es), "
+             ~ "expected exactly MeshDelete and MeshRemove", targetClasses.length));
+    assert(scannedBytes >= 100_000,
         format("the census read %d bytes in total — a scan over an empty or "
              ~ "truncated file finds no forbidden token either", scannedBytes));
 }

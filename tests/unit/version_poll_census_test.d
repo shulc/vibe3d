@@ -150,7 +150,7 @@ private enum size_t kTwoHopWindow = 6;
 // to consume exactly the same code view. They are re-exported here because
 // eight censuses in this package import them by this module's name; that
 // re-export is the only reason this line exists and it retires with them.
-public import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
 import tests.unit.census_symbols : isIdentChar, enclosingSymbols, symbolAt,
                                    LedgerRow, LedgerHit, reconcile;
 

@@ -47,7 +47,7 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 
-import tests.unit.revert_entry_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode;
 
 private enum unitDir = dirName(__FILE_FULL_PATH__);
 

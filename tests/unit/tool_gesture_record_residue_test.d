@@ -62,56 +62,11 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
 
+import tests.unit.census_symbols : blankNonCode;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-private string stripCommentsAndStrings(string src) {
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { sink.put(' '); ++i; }
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2; sink.put("  ");
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put("  ");
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; sink.put("  "); continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; sink.put("  "); if (depth == 0) break; continue; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) { sink.put(' '); ++i; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '`') { sink.put(src[i] == '\n' ? '\n' : ' '); ++i; }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private size_t countOccurrences(string hay, string needle) {
     size_t n = 0, i = 0;

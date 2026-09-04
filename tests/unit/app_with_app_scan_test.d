@@ -56,6 +56,8 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : strip;
 
+import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode;
+
 // ---------------------------------------------------------------------------
 // Scanner
 // ---------------------------------------------------------------------------
@@ -69,73 +71,7 @@ private bool isIdentChar(char c) { return isAlphaNum(c) || c == '_'; }
 
 /// Replace every comment and literal with spaces, preserving length and every
 /// newline so that byte offsets and line numbers still address the original.
-string blankNonCode(string src) {
-    auto outBuf = new char[src.length];
-    outBuf[] = ' ';
-    size_t i = 0;
-    while (i < src.length) {
-        const char c = src[i];
-
-        // Keep newlines wherever they fall, so line counting stays exact.
-        void copyThrough(size_t from, size_t to) {
-            foreach (k; from .. to)
-                if (src[k] == '\n') outBuf[k] = '\n';
-        }
-
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '/') {
-            size_t j = i;
-            while (j < src.length && src[j] != '\n') j++;
-            copyThrough(i, j);
-            i = j;
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '*') {
-            size_t j = i + 2;
-            while (j + 1 < src.length && !(src[j] == '*' && src[j + 1] == '/')) j++;
-            j = (j + 1 < src.length) ? j + 2 : src.length;
-            copyThrough(i, j);
-            i = j;
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '+') {
-            size_t j = i + 2;
-            int depth = 1;
-            while (j + 1 < src.length && depth > 0) {
-                if (src[j] == '/' && src[j + 1] == '+') { depth++; j += 2; }
-                else if (src[j] == '+' && src[j + 1] == '/') { depth--; j += 2; }
-                else j++;
-            }
-            copyThrough(i, j);
-            i = j;
-            continue;
-        }
-        // WYSIWYG string: r"..." or `...` — no escapes inside.
-        if (c == '`' || (c == 'r' && i + 1 < src.length && src[i + 1] == '"'
-                         && (i == 0 || !isIdentChar(src[i - 1])))) {
-            const char term = (c == '`') ? '`' : '"';
-            size_t j = (c == '`') ? i + 1 : i + 2;
-            while (j < src.length && src[j] != term) j++;
-            j = (j < src.length) ? j + 1 : src.length;
-            copyThrough(i, j);
-            i = j;
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            size_t j = i + 1;
-            while (j < src.length && src[j] != c) {
-                if (src[j] == '\\') j++;
-                j++;
-            }
-            j = (j < src.length) ? j + 1 : src.length;
-            copyThrough(i, j);
-            i = j;
-            continue;
-        }
-        outBuf[i] = c;
-        i++;
-    }
-    return cast(string) outBuf;
-}
+alias blankNonCode = sharedBlankNonCode;
 
 /// Every live `with (subject)` in `src`, in source order.
 WithHit[] scanLiveWith(string src) {

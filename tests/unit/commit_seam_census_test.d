@@ -18,9 +18,10 @@
 // today's tree, which is a check that cannot come out differently.
 module tests.unit.commit_seam_census_test;
 
-import std.file   : readText, exists;
+import std.file   : dirEntries, readText, exists, SpanMode;
 import std.format : format;
 import std.path   : buildPath, dirName;
+import std.string : endsWith, splitLines, startsWith, strip;
 
 // Task 3280 — the attribute-chain predicate lives in ONE place now. See
 // tests/unit/decl_needle.d for why a per-census prefix rule kept failing
@@ -28,6 +29,9 @@ import std.path   : buildPath, dirName;
 import tests.unit.decl_needle : declaresVarOfType, declaredVarName,
                                 hasUnknownDeclPrefix,
                                 funcDeclAttrChains, narrowsVisibility;
+
+import tests.unit.census_symbols : blankNonCode, LedgerRow, LedgerHit,
+    enclosingSymbols, symbolAt, reconcile, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -50,59 +54,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 // message that says the stripper ate the file. Add either construct to
 // `mesh.d` and this scanner needs the case, not a bigger floor.
 // ---------------------------------------------------------------------------
-private string stripCommentsAndStrings(string src) {
-    import std.array : appender;
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        // Line comment.
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') ++i;
-            continue;
-        }
-        // Block comment.
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2;
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) ++i;
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        // Nesting block comment.
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; if (depth == 0) break; continue; }
-                ++i;
-            }
-            sink.put(' ');
-            continue;
-        }
-        // Double-quoted string (with escapes).
-        if (src[i] == '"') {
-            ++i;
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        // Backtick string (no escapes).
-        if (src[i] == '`') {
-            ++i;
-            while (i < src.length && src[i] != '`') ++i;
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private size_t countOccurrences(string haystack, string needle) {
     size_t n = 0, i = 0;
@@ -3113,7 +3065,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         string   opsFile;     // which mesh_ops file `callSite` is looked for in
         string   callSite;    // must appear at least once in that ops file
         string   scanNeedle;  // receiver-AGNOSTIC; what the source/** walk counts
-        string[] callerFiles; // every non-declarer file that contains scanNeedle
+        LedgerRow[] callerSymbols; // every non-declarer declaration using scanNeedle
         string   why;
         // WHERE `publicDecl` MUST LIVE, and which file the caller walk skips
         // as this row's declarer. Defaults to mesh.d, where every row was
@@ -3127,7 +3079,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bridge.d",
                  "smoothstep01(t)",
                  "smoothstep01(",
-                 ["source/mesh_ops/bridge.d"],
+                 [LedgerRow("bridgeTwistedVertex", 1, "only converted caller")],
                  "a module-level free function of `mesh`, NOT a Mesh member — plan "
                ~ "§2.6 called it out by name as \"the one that will not compile "
                ~ "after conversion\". `bridgeTwistedVertex` is its only caller "
@@ -3138,7 +3090,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bridge.d",
                  "ed.orientFaceConsistent(",
                  "orientFaceConsistent(",
-                 ["source/mesh_ops/bridge.d"],
+                 [LedgerRow("bridgeStripPaired", 1, "paired strip"),
+                  LedgerRow("bridgeFanRows", 1, "fan rows")],
                  "the task-0394 winding-consistency vote, shared by "
                ~ "`makePolygonFromVerts` (in mesh.d) and bridge.d's "
                ~ "`bridgeStripPaired` / `bridgeFanRows` (task 0395)."),
@@ -3148,7 +3101,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bridge.d",
                  "ed.registerNewFaceEdges(",
                  "registerNewFaceEdges(",
-                 ["source/mesh_ops/bridge.d"],
+                 [LedgerRow("bridgeStripPaired", 1, "paired strip"),
+                  LedgerRow("bridgeFanRows", 1, "fan rows")],
                  "the incremental edgeFaces update that lets a LATER face in the "
                ~ "same strip/fan see its already-placed siblings; bridge.d is its "
                ~ "only caller."),
@@ -3159,7 +3113,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/cut.d",
                  "ed.edgeIndexOfVerts(",
                  "edgeIndexOfVerts(",
-                 ["source/mesh_ops/cut.d"],
+                 [LedgerRow("planeCutCore", 3, "three raw edge lookups")],
                  "the raw edge lookup by endpoint pair. It is NOT the same thing "
                ~ "as the public `edgeIndexOf` it already backed: that one is the "
                ~ "guarded accessor an outside module should reach for, and it "
@@ -3179,7 +3133,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/cut.d",
                  "ed.insertEdgePoint(",
                  "insertEdgePoint(",
-                 ["source/mesh_ops/cut.d"],
+                 [LedgerRow("planeCutCore", 1, "plane crossing insertion")],
                  "cutByPlane Pass-1: it splices one shared crossing vertex into "
                ~ "every face winding incident on a straddled edge, which is what "
                ~ "makes the cut T-junction-free. cut.d is its only caller "
@@ -3192,7 +3146,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/cut.d",
                  "ed.rebuildFacesWithChordSplits(",
                  "rebuildFacesWithChordSplits(",
-                 ["source/mesh_ops/cut.d"],
+                 [LedgerRow("planeCutCore", 1, "chord-split rebuild")],
                  "cutByPlane Pass-2 + finalize: it emits the two sub-faces per "
                ~ "chord-split face, carrying faceMaterial / the whole faceMarks "
                ~ "word / faceSelectionOrder onto both halves. cut.d is its only "
@@ -3214,9 +3168,12 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bevel_fin.d",
                  "ed.finalizeTopologyEdit(",
                  "finalizeTopologyEdit(",
-                 ["source/mesh_ops/bevel_fin.d",
-                  "source/mesh_ops/bevel_vertex.d",
-                  "source/mesh_ops/extrude.d"],
+                 [LedgerRow("bevelIsolatedFinBundleSpine", 1, "isolated fin"),
+                  LedgerRow("bevelFinBundleSpineMultiEdge", 1, "multi-edge fin"),
+                  LedgerRow("bevelVerticesByMask", 1, "vertex bevel"),
+                  LedgerRow("extrudeEdgesByMask", 1, "edge extrusion"),
+                  LedgerRow("extrudeFacesByMask", 1, "face extrusion"),
+                  LedgerRow("smoothShiftFacesByMask", 1, "smooth shift")],
                  "the shared tail of a topology edit — rebuild edges + loops, "
                ~ "compact orphan vertices, rebuild loops AGAIN (the second "
                ~ "buildLoops is mandatory: compaction invalidates the face/vert "
@@ -3229,9 +3186,9 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bevel_vertex.d",
                  "Mesh.rebuildFaceWithVertexSubs(",
                  "rebuildFaceWithVertexSubs(",
-                 ["source/mesh_ops/bevel_vertex.d",
-                  "source/mesh_ops/edge_bevel.d",
-                  "source/mesh_ops/extrude.d"],
+                 [LedgerRow("bevelVerticesByMask", 1, "vertex bevel"),
+                  LedgerRow("bevelEdgesByMask", 1, "edge bevel"),
+                  LedgerRow("extrudeVerticesByMask", 1, "vertex extrusion")],
                  "the one-face substitution pass shared by the three kernels "
                ~ "that replace a vertex with several: it rebuilds one winding "
                ~ "with `oldV -> newVs` applied at EVERY position the old vertex "
@@ -3265,9 +3222,11 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/loop_slice.d",
                  "Mesh.faceAttrOr(",
                  "faceAttrOr(",
-                 ["source/mesh_ops/edge_bevel.d",
-                  "source/mesh_ops/extrude.d",
-                  "source/mesh_ops/loop_slice.d"],
+                 [LedgerRow("bevelEdgesByMask", 2, "two host-face reads"),
+                  LedgerRow("extrudeEdgesByMask", 7, "edge extrusion reads"),
+                  LedgerRow("extendEdgesByMask", 3, "edge extension reads"),
+                  LedgerRow("insertEdgeLoopsMulti.splitFaceTracked", 1, "split helper read"),
+                  LedgerRow("insertEdgeLoopsMulti", 3, "loop and cap reads")],
                  "the bounds-defended per-face attribute read — `fi < attr.length "
                ~ "? attr[fi] : T.init` — that every kernel emitting faces uses "
                ~ "instead of indexing `faceMarks`/`faceMaterial`/`facePart`/"
@@ -3288,8 +3247,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/loop_slice.d",
                  "Mesh.combineFaceMarksWords(",
                  "combineFaceMarksWords(",
-                 ["source/mesh_ops/edge_bevel.d",
-                  "source/mesh_ops/loop_slice.d"],
+                 [LedgerRow("bevelEdgesByMask", 1, "edge bevel fold"),
+                  LedgerRow("insertEdgeLoopsMulti", 1, "loop cap fold")],
                  "the per-bit fold of two faces' mark words, used where ONE new "
                ~ "face has SEVERAL source faces and no single one to inherit "
                ~ "from: Loop Slice's Cap Sections arm folds every ring face's "
@@ -3320,7 +3279,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/poly_bevel.d",
                  "buildRawMesh(",
                  "buildRawMesh(",
-                 ["source/mesh_ops/poly_bevel.d"],
+                 [LedgerRow("(module scope)", 5, "five module unittest fixtures")],
                  "the raw fixture builder (`vertices = …; faces = …; "
                ~ "rebuildEdgesFromFaces(); buildLoops(); resetSelection();`) "
                ~ "shared by `mesh.d`'s own T-S1 grid and by the five "
@@ -3414,7 +3373,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
     // each row the set of files that contain its receiver-agnostic needle.
     // `source/mesh.d` is skipped: it declares the name, and its own calls are
     // not the question §2.6 asks.
-    string[][string] callersOf;
+    LedgerHit[][string] callersOf;
     size_t filesScanned = 0;
     {
         import std.file : dirEntries, SpanMode;
@@ -3434,9 +3393,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
                 // moved to `source/mesh_edge_slice.d`, whose `edgeIndexOf`
                 // wrapper and `edgeSliceEx`/`splitFaceByVertices` bodies call
                 // two of the three among themselves.
-                if (rel != w.declFile
-                    && countOccurrences(src, w.scanNeedle) >= 1)
-                    callersOf[w.name] ~= rel;
+                if (rel != w.declFile)
+                    callersOf[w.name] ~= symbolTokenHits(src, rel, w.scanNeedle);
         }
     }
 
@@ -3450,35 +3408,25 @@ unittest // every §2.6 widening this stage made still has the caller it names
              ~ "walk is mis-rooted or the glob is wrong; the caller-set "
              ~ "assertions below would be measuring nothing.", filesScanned));
 
-    static string joinSorted(const(string)[] xs) {
-        import std.algorithm : sort;
-        import std.array     : join;
-        string[] tmp;
-        foreach (x; xs) tmp ~= x;
-        tmp.sort();
-        return tmp.length == 0 ? "(none)" : tmp.join(", ");
-    }
-
     foreach (w; kWidenings) {
-        immutable string got  = joinSorted(callersOf.get(w.name, []));
-        immutable string want = joinSorted(w.callerFiles);
-        assert(got == want,
+        const problems = reconcile(w.callerSymbols,
+                                   callersOf.get(w.name, []));
+        assert(problems.length == 0,
             format("`%s` was widened out of `private` by task 1903, and plan "
                  ~ "§2.6 requires the stage that inherits a public name to say "
-                 ~ "WHO USES IT. The row declares its callers as [%s]; the tree "
-                 ~ "actually has [%s] (needle `%s`, %d file(s) under source/ "
-                 ~ "scanned, source/mesh.d excluded as the declarer).\n"
-                 ~ "  * A file in the tree but NOT in the row: a second stage is "
-                 ~ "now leaning on this widening. Add it to `callerFiles` with a "
+                 ~ "WHO USES IT. The owning-declaration ledger changed for "
+                 ~ "needle `%s` after %d source files were scanned:%s\n"
+                 ~ "  * A symbol in the tree but NOT in the row: a second stage is "
+                 ~ "now leaning on this widening. Add its declaration with a "
                  ~ "note saying which stage owns it — a public door with an "
                  ~ "unlisted user is how `Mesh.faceAttrOr` ended up with callers "
-                 ~ "in three files across three stages and no record of it.\n"
-                 ~ "  * A file in the row but NOT in the tree: that caller is "
+                 ~ "across three stages and no record of it.\n"
+                 ~ "  * A symbol in the row but NOT in the tree: that caller is "
                  ~ "gone. If the row is now empty, narrow the name back to "
                  ~ "`private` in the same change and delete the row (plan §2.6, "
                  ~ "review S3).\n"
                  ~ "  Why this widening exists: it is %s",
-                   w.name, want, got, w.scanNeedle, filesScanned, w.why));
+                   w.name, w.scanNeedle, filesScanned, problems, w.why));
     }
 }
 
@@ -4007,50 +3955,42 @@ unittest // L0-b — the recorder pins, one per command
     // still green, all of symmetry.d's rows are still green, and the undo
     // silently falls back to the legacy array. These are the only TEXT halves
     // that redden for it.
-    struct Pin { string file; string diffCall; size_t recordingOpens; string why; }
-    static immutable Pin[] kPins = [
-        Pin("transform.d", "ed.recordPositionDiff(preMirror);", 1,
-            "mesh.transform records in TWO passes: `ed.setVertexPositions` for "
-          ~ "the kind switch and `ed.recordPositionDiff` for the symmetry "
-          ~ "mirror. Only the second one covers the mirror PARTNER, and this "
-          ~ "command's own legacy `touchedIdx`/`touchedPrev` capture already "
-          ~ "covers that vertex — so with the diff call gone the forward, the "
-          ~ "census and the tracker-OFF undo are all still right and only the "
-          ~ "ARMED revert is short"),
-        Pin("symmetrize.d", "ed.recordPositionDiff(prevPositions);", 1,
-            "mesh.symmetrize has NO forward position write of its own — its "
-          ~ "entire forward is the `applySymmetryMirror` call — so this one "
-          ~ "statement is the whole of what the migration added. Without it "
-          ~ "the op-log is EMPTY and `revert()` still answers `true`, which is "
-          ~ "plan §5.3's \"answers true, changes nothing\" shape"),
+    static immutable LedgerRow[] kPins = [
+        LedgerRow("MeshTransform.applyKernel|record", 1,
+            "mesh.transform's post-hoc symmetry record"),
+        LedgerRow("MeshTransform.applyKernel|image", 1,
+            "mesh.transform records the preMirror image"),
+        LedgerRow("MeshTransform.evaluate|batch", 1,
+            "mesh.transform's recording batch"),
+        LedgerRow("MeshSymmetrize.applyKernel|record", 1,
+            "mesh.symmetrize's post-hoc symmetry record"),
+        LedgerRow("MeshSymmetrize.applyKernel|image", 1,
+            "mesh.symmetrize records prevPositions"),
+        LedgerRow("MeshSymmetrize.evaluate|batch", 1,
+            "mesh.symmetrize's recording batch"),
     ];
-    foreach (pin; kPins) {
-        immutable src = stripCommentsAndStrings(readText(
-            buildPath(repoRoot, "source", "commands", "mesh", pin.file)));
-        assert(countOccurrences(src, "recordPositionDiff(") == 1,
-            format("source/commands/mesh/%s calls `recordPositionDiff` %d "
-                 ~ "time(s), expected exactly 1. %s.",
-                   pin.file, countOccurrences(src, "recordPositionDiff("),
-                   pin.why));
-        assert(countOccurrences(src, pin.diffCall) == 1,
-            format("source/commands/mesh/%s no longer spells its recorder "
-                 ~ "`%s` exactly once. The count row above reads 1 for ANY "
-                 ~ "single call — including one handed the WRONG pre-image, "
-                 ~ "which is a delta that reverts to an intermediate state — "
-                 ~ "so this is the half that names the image.",
-                   pin.file, pin.diffCall));
-        assert(countOccurrences(src, "MeshEditBatch(*mesh,") == pin.recordingOpens,
-            format("source/commands/mesh/%s opens %d RECORDING `MeshEditBatch`"
-                 ~ "(es), expected %d. Its other two opens are "
-                 ~ "`MeshEditBatch.unrecorded` (the redo and tracker-off "
-                 ~ "arms), which record nothing by design; if the recording "
-                 ~ "open became `unrecorded` too, `recordPositionDiff` above "
-                 ~ "would still be spelled and would still be REACHED — it "
-                 ~ "early-outs on a non-recording frame — and the command "
-                 ~ "would record nothing with every text row green.",
-                   pin.file, countOccurrences(src, "MeshEditBatch(*mesh,"),
-                   pin.recordingOpens));
+    LedgerHit[] hits;
+    size_t filesRead;
+    foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const rel = e.name[repoRoot.length + 1 .. $];
+        const src = stripCommentsAndStrings(readText(e.name));
+        foreach (h; symbolTokenHits(src, rel, "recordPositionDiff(", "record"))
+            if (h.key.startsWith("MeshTransform.applyKernel|")
+                    || h.key.startsWith("MeshSymmetrize.applyKernel|")) hits ~= h;
+        foreach (h; symbolTokenHits(src, rel, "ed.recordPositionDiff(preMirror);", "image"))
+            hits ~= h;
+        foreach (h; symbolTokenHits(src, rel, "ed.recordPositionDiff(prevPositions);", "image"))
+            hits ~= h;
+        foreach (h; symbolTokenHits(src, rel, "MeshEditBatch(*mesh,", "batch"))
+            if (h.key.startsWith("MeshTransform.evaluate|")
+                    || h.key.startsWith("MeshSymmetrize.evaluate|")) hits ~= h;
+        ++filesRead;
     }
+    const problems = reconcile(kPins, hits);
+    assert(problems.length == 0,
+        "L0-b symmetry recorder pins changed." ~ problems);
+    assert(hits.length == 6 && filesRead >= 400,
+        format("L0-b symmetry pins found %d sites over %d files", hits.length, filesRead));
 }
 
 unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
@@ -4299,142 +4239,63 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
 // the number is the evidence.
 // ---------------------------------------------------------------------------
 
-private struct PreviewSeamRow {
-    string file;            /// path under the repo root
-    size_t unrecorded;      /// `MeshEditBatch.unrecorded(` opens
-    size_t recording;       /// RECORDING `MeshEditBatch(` opens
-    string why;
-}
-
-private static immutable PreviewSeamRow[] kPreviewSeam = [
-    PreviewSeamRow("source/tools/edit/poly_bevel.d", 3, 0,
-        "Stage F2 plus ARM/RECORD's detached prepared-parameter door. Three "
-      ~ "UNRECORDED opens — `applyHeadless` (the tool.doApply path), the "
-      ~ "per-frame preview kernel lambda, and the prepared candidate's exact "
-      ~ "PreviewRebuild run. NO recording open: "
-      ~ "`commitEdit` captures a whole-mesh MeshSnapshot and re-runs nothing"),
-    PreviewSeamRow("source/tools/edit/edge_bevel.d", 3, 0,
-        "Stage G plus ARM/RECORD's detached prepared-parameter door. The "
-      ~ "legacy headless and live PreviewRebuild doors remain unchanged; the "
-      ~ "third UNRECORDED open runs only against the prepared candidate and "
-      ~ "installs atomically after validation. All three record zero op-log "
-      ~ "entries. Same original two doors, same shape as Poly Bevel's, and the same "
-      ~ "reason for the zero: the manifold edge bevel family is a Stage-A "
-      ~ "decline, so its commit still undoes through MeshSnapshot"),
-    PreviewSeamRow("source/tools/edit/edge_extend.d", 2, 1,
-        "Stage H. Two UNRECORDED opens (`applyHeadless`, the preview kernel "
-      ~ "lambda) plus ONE RECORDING open — `commitEdit`, which stage L8 "
-      ~ "migrated. This is the only converted preview tool whose drop records, "
-      ~ "and it is what `tests/test_edge_extend_preview_seam.d` uses as its "
-      ~ "positive control for `opLogEntriesRecorded`"),
+private static immutable LedgerRow[] kPreviewSeam = [
+    LedgerRow("PolyBevelTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("PolyBevelTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("PolyBevelTool.buildPreparedParamUpdate.run|unrecorded", 1, "prepared candidate"),
+    LedgerRow("PolyBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("PolyBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
+    LedgerRow("EdgeBevelTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("EdgeBevelTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("EdgeBevelTool.buildPreparedParamUpdate.run|unrecorded", 1, "prepared candidate"),
+    LedgerRow("EdgeBevelTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("EdgeBevelTool.rebuildPreview.run|unrecorded", 1, "live preview kernel"),
+    LedgerRow("EdgeExtendTool|field", 1, "PreviewRebuild owner"),
+    LedgerRow("EdgeExtendTool.rebuildPreview|run", 1, "preview seam call"),
+    LedgerRow("EdgeExtendTool.applyHeadless|unrecorded", 1, "headless kernel"),
+    LedgerRow("EdgeExtendTool.runPreviewKernel|unrecorded", 1, "preview kernel"),
+    LedgerRow("EdgeExtendTool.fillCommitCarrier|recording", 1, "recording commit"),
 ];
 
-unittest // Stage M — the roster is CLOSED, and each member's batches are pinned
+unittest // Stage M - the PreviewRebuild population and batch modes are closed
 {
-    import std.algorithm : sort, uniq;
-    import std.array     : array;
-    import std.file      : dirEntries, SpanMode;
-
-    // The anti-duplication term every roster in this file carries: a typo
-    // throws (`readText` on a missing file), a DUPLICATE is silent and leaves
-    // one of the three unscanned and green forever.
-    auto names = new string[kPreviewSeam.length];
-    foreach (i, ref r; kPreviewSeam) names[i] = r.file;
-    sort(names);
-    assert(names.uniq.array.length == kPreviewSeam.length,
-        format("the PreviewRebuild roster names only %d DISTINCT file(s) "
-             ~ "across its %d rows — a duplicate leaves one member unscanned.",
-               names.uniq.array.length, kPreviewSeam.length));
-
-    // TERM 1 — THE ROSTER IS CLOSED. Derived from the tree, not from the
-    // table: every file under `source/tools` that holds a `PreviewRebuild`
-    // must be a row here. A fourth consumer is not a defect in itself; it is a
-    // tool whose preview batch nothing watches, and this is where it is told
-    // to bring a drag cell with it.
-    string[] found;
+    LedgerHit[] hits;
+    LedgerHit[] batchCandidates;
+    size_t filesRead;
     foreach (e; dirEntries(buildPath(repoRoot, "source", "tools"), "*.d",
                            SpanMode.depth)) {
-        immutable code = stripCommentsAndStrings(readText(e.name));
-        if (countOccurrences(code, "PreviewRebuild preview_") > 0)
-            found ~= e.name[repoRoot.length + 1 .. $];
-    }
-    sort(found);
-    // ACCUMULATE, then assert ONCE. A gate that asserts inside the loop names
-    // only the FIRST offender and sends the reader after one of several.
-    string[] unrostered;
-    foreach (f; found) {
-        bool known = false;
-        foreach (ref r; kPreviewSeam) if (r.file == f) { known = true; break; }
-        if (!known) unrostered ~= f;
-    }
-    assert(found.length == kPreviewSeam.length && unrostered.length == 0,
-        format("source/tools holds %d file(s) with a `PreviewRebuild "
-             ~ "preview_` field; this roster names %d. Unrostered: %s.\n"
-             ~ "  Found: %s\n  Roster: %s\n"
-             ~ "  A NEW CONSUMER OF `tools/edit/preview_rebuild.d` MUST ARRIVE "
-             ~ "WITH TWO THINGS in the same commit: a row here stating its "
-             ~ "two-sided batch counts, and a runtime cell that drives its "
-             ~ "preview and asserts `changeBus.opLogEntriesRecorded` did not "
-             ~ "move across the frames (the three that exist are "
-             ~ "tests/test_poly_bevel_seam_counters.d block 5, "
-             ~ "tests/test_edge_bevel_seam_counters.d block 4 and "
-             ~ "tests/test_edge_extend_preview_seam.d). Neither instrument "
-             ~ "sees what the other does: this scan cannot see a runtime "
-             ~ "switch, and a counter cannot see a tool nobody drives "
-             ~ "(task 1903 Stage M).",
-               found.length, kPreviewSeam.length, unrostered, found, names));
-
-    // TERM 2 — the per-file two-sided counts.
-    foreach (ref r; kPreviewSeam) {
-        immutable abs = buildPath(repoRoot, r.file);
-        assert(exists(abs), "the PreviewRebuild roster names " ~ r.file
-                          ~ " and that file is gone — move the row");
-        immutable code = stripCommentsAndStrings(readText(abs));
-
-        // ANTI-VACUITY for this row: the file must still USE the seam. A file
-        // that stopped calling `preview_.run` would keep whatever batch counts
-        // it happens to have and its row would go on being green about a
-        // preview path that no longer exists.
-        assert(countOccurrences(code, "preview_.run(") == 1,
-            format("%s calls `preview_.run(` %d time(s), expected 1. This row "
-                 ~ "counts the batch opens of a PreviewRebuild consumer; a "
-                 ~ "file that no longer runs the seam is not one, and its "
-                 ~ "counts below would be green about nothing.",
-                   r.file, countOccurrences(code, "preview_.run(")));
-
-        immutable size_t unrec = countOccurrences(code, "MeshEditBatch.unrecorded(");
-        immutable size_t rec   = countOccurrences(code, "MeshEditBatch(");
-        assert(unrec == r.unrecorded && rec == r.recording,
-            format("%s opens %d UNRECORDED and %d RECORDING MeshEditBatch(es); "
-                 ~ "the roster says %d and %d.\n  %s\n"
-                 ~ "  THE ROW IS TWO-SIDED ON PURPOSE: a one-sided "
-                 ~ "`unrecorded == %d` stays green when a RECORDING open is "
-                 ~ "ADDED beside the unrecorded ones, and a recording open on "
-                 ~ "a per-frame preview path is exactly what plan §9 forbids — "
-                 ~ "it builds and throws away a full op-log at scrub rate. If "
-                 ~ "the change is deliberate, move BOTH numbers and say in the "
-                 ~ "commit message WHICH door moved (task 1903 Stage M).",
-                   r.file, unrec, rec, r.unrecorded, r.recording, r.why,
-                   r.unrecorded));
+        ++filesRead;
+        const file = e.name[repoRoot.length + 1 .. $];
+        const code = stripCommentsAndStrings(readText(e.name));
+        hits ~= symbolTokenHits(code, file, "PreviewRebuild preview_", "field");
+        hits ~= symbolTokenHits(code, file, "preview_.run(", "run");
+        batchCandidates ~= symbolTokenHits(code, file,
+            "MeshEditBatch.unrecorded(", "unrecorded");
+        batchCandidates ~= symbolTokenHits(code, file,
+            "MeshEditBatch(", "recording");
     }
 
-    // TERM 3 — the seam itself opens NONE. `preview_rebuild.d` takes the
-    // kernel as a delegate and never opens a batch of its own: that decision
-    // (plan §9.1, taken at F2 and repeated at G and H) is what lets each tool
-    // open INSIDE its own lambda, so the batch lands on whichever mesh the
-    // kernel actually got — the private cage on a placement frame, the live
-    // mesh on a full rebuild. A batch opened in the seam would land on one of
-    // the two unconditionally and there is no counter that would say which.
-    immutable seam = stripCommentsAndStrings(
+    // A preview owner is discovered from the field, not from its file. Batch
+    // sites are then closed over that declaration and its nested members.
+    string[] owners;
+    foreach (ref h; hits)
+        if (h.key.endsWith("|field")) owners ~= h.key[0 .. $ - "|field".length];
+    foreach (ref h; batchCandidates) {
+        bool owned;
+        foreach (owner; owners)
+            if (h.key.startsWith(owner ~ ".")) { owned = true; break; }
+        if (owned) hits ~= h;
+    }
+    const problems = reconcile(kPreviewSeam, hits);
+    assert(problems.length == 0,
+        "Stage M PreviewRebuild symbol ledger changed.\n" ~ problems);
+    assert(hits.length == 15 && filesRead >= 60,
+        format("PreviewRebuild census found %d sites over %d files", hits.length, filesRead));
+
+    const seam = stripCommentsAndStrings(
         readText(buildPath(repoRoot, "source", "tools", "edit", "preview_rebuild.d")));
     assert(countOccurrences(seam, "MeshEditBatch") == 0,
-        format("source/tools/edit/preview_rebuild.d now names `MeshEditBatch` "
-             ~ "%d time(s). The shared seam must open none: each consumer "
-             ~ "opens inside its own kernel lambda so the batch follows the "
-             ~ "mesh the kernel got (plan §9.1). A batch here would wrap both "
-             ~ "the cage path and the live path in one constructor choice "
-             ~ "(task 1903 Stage M).",
-               countOccurrences(seam, "MeshEditBatch")));
+        "the shared preview seam must not open a recording or unrecorded batch");
 }
 
 // ---------------------------------------------------------------------------
@@ -4471,196 +4332,50 @@ unittest // Stage M — the roster is CLOSED, and each member's batches are pinn
 // Delete `source/commands/mesh/paste.d`'s field → its count row reddens.
 // ---------------------------------------------------------------------------
 
-private struct SnapHolderRow {
-    string file;      /// path under the repo root
-    size_t decls;     /// `MeshSnapshot <name>` declarations, comment-stripped
-    string bucket;    /// which decline this is
-    string why;
-}
-
-private static immutable SnapHolderRow[] kSnapHolders = [
-    // BUCKET D — document-level / opaque-wrapper declines (plan §6.6). A
-    // snapshot of everything IS the semantics for these; there is no delta
-    // that expresses "the document was replaced".
-    SnapHolderRow("source/commands/mesh/paste.d", 1, "D",
-        "the payload comes from OUTSIDE the document, so the forward is not a "
-      ~ "function of this mesh. It is also the suite's last batchless "
-      ~ "geometry command and therefore the positive control for "
-      ~ "`changeBus.unbatchedGeometryCommits` (tests/batchless_control_helpers.d) "
-      ~ "and the only beneficiary of the hide-derive deferral pair (card 2400)"),
-    SnapHolderRow("source/commands/mesh/remesh.d", 1, "D",
-        "whole-`Mesh` replace plus a forward GIGO rollback a delta cannot serve"),
-    SnapHolderRow("source/commands/mesh/subdivide.d", 1, "D",
-        "whole-`Mesh` replace (Catmull-Clark builds a new mesh)"),
-    SnapHolderRow("source/commands/mesh/subdivide_faceted.d", 1, "D",
-        "whole-`Mesh` replace, same shape as subdivide.d"),
-    SnapHolderRow("source/commands/scene/reset.d", 1, "D",
-        "the primitive factories install a new mesh wholesale"),
-    SnapHolderRow("source/commands/scene/load_mesh.d", 1, "D",
-        "an import replaces the document; a snapshot of everything IS the "
-      ~ "semantics"),
-    SnapHolderRow("source/commands/file/load.d", 1, "D",
-        "the interchange path's single-mesh undo, same reason as load_mesh.d"),
-    SnapHolderRow("source/commands/tool/do_apply.d", 1, "D",
-        "`restoreGeometryKeepSelection` has no delta analogue — the wrapper "
-      ~ "does not know what the tool did"),
-    SnapHolderRow("source/commands/tool/headless.d", 1, "D",
-        "the opaque tool wrapper, same reason as do_apply.d"),
-
-    // BUCKET A — value-blocked kernels: the reason is a measured property of
-    // the kernel, recorded at the declaration.
-    SnapHolderRow("source/commands/mesh/bevel.d", 1, "A",
-        "the EDGE arm only — the POLYGON arm migrated at L7 and holds a "
-      ~ "`MeshEditDelta` in the same class. Three measured candidates refuse "
-      ~ "the edge arm a delta; the corner blocker (two `rewriteFaces` under "
-      ~ "one `beginCornerRewrite`) is still open (cards 2360/2320/2330)"),
-    SnapHolderRow("source/commands/mesh/edge_extrude.d", 1, "A",
-        "L8 DECLINED the command: the swept-surface law leaves untouched "
-      ~ "faces without a source, and no `MeshOpEntry` kind restores the "
-      ~ "PolyVertex map wholesale (card 2370). The interactive TOOL of the "
-      ~ "same name DOES record a delta — do not read the two as one"),
-    SnapHolderRow("source/commands/mesh/edge_extend.d", 1, "A",
-        "the twin of edge_extrude.d, declined by L8 for the same law"),
-    SnapHolderRow("source/commands/select/sets.d", 4, "A",
-        "PERMANENTLY DENSE by the owner's L1 ruling: a recorded undo would "
-      ~ "have to carry a slot index that is NOT stable across save/load plus "
-      ~ "a per-element bit plane in two shapes, and nothing in `MeshOpEntry` "
-      ~ "expresses either. Four classes, one reason"),
-
-    // BUCKET E — infrastructure, not a command's undo at all.
-    SnapHolderRow("source/commands/mesh/session_edit.d", 3, "E",
-        "`MeshSessionEdit`'s own `before`/`after` pair — the payload 24 "
-      ~ "`app.d` factories build and the 30 tool files under `source/tools` "
-      ~ "still fill. That is task 1905's boundary, not a leftover here. The "
-      ~ "THIRD declaration is a `unittest` local (`MeshSnapshot dummy;`)"),
+private static immutable LedgerRow[] kSnapHolders = [
+    LedgerRow("FileLoad", 1, "bucket D document load"),
+    LedgerRow("MeshPaste", 1, "bucket D external payload"),
+    LedgerRow("Remesh", 1, "bucket D whole-mesh replacement"),
+    LedgerRow("Subdivide", 1, "bucket D whole-mesh replacement"),
+    LedgerRow("SubdivideFaceted", 1, "bucket D whole-mesh replacement"),
+    LedgerRow("SceneReset", 1, "bucket D document replacement"),
+    LedgerRow("MeshLoadRaw", 1, "bucket D document replacement"),
+    LedgerRow("ToolDoApplyCommand", 1, "bucket D opaque wrapper"),
+    LedgerRow("ToolHeadlessCommand", 1, "bucket D opaque wrapper"),
+    LedgerRow("MeshBevel", 1, "bucket A value-blocked edge arm"),
+    LedgerRow("MeshEdgeExtrude", 1, "bucket A value-blocked kernel"),
+    LedgerRow("MeshEdgeExtend", 1, "bucket A value-blocked kernel"),
+    LedgerRow("SelectSetStore", 1, "bucket A permanently dense registry"),
+    LedgerRow("SelectSetEdit", 1, "bucket A permanently dense registry"),
+    LedgerRow("SelectSetRename", 1, "bucket A permanently dense registry"),
+    LedgerRow("SelectSetDelete", 1, "bucket A permanently dense registry"),
+    LedgerRow("MeshSessionEdit", 2, "bucket E carrier before/after pair"),
+    LedgerRow("(module scope)", 1, "bucket E session-edit unittest stand"),
 ];
 
-unittest // Stage M — the closing MeshSnapshot count for source/commands
+unittest // Stage M - the closing MeshSnapshot declaration census
 {
-    import std.algorithm : sort, uniq;
-    import std.array     : array, split;
-    import std.file      : dirEntries, SpanMode;
-    import std.string    : strip, startsWith;
-
-    // How many `MeshSnapshot <ident>` DECLARATIONS a comment-stripped file
-    // holds. Deliberately not a raw `countOccurrences(src, "MeshSnapshot")`:
-    // that counts `ref MeshSnapshot` parameters, `MeshSnapshot.init` and the
-    // type name in a doc line, and the number would move for reasons that are
-    // not a holder appearing.
-    //
-    // THE ATTRIBUTE TERM IS NOT WRITTEN HERE ANY MORE (task 3280). Until then
-    // this scanner stripped exactly one leading attribute and exactly the word
-    // `private`, so `protected MeshSnapshot snap;` — or `public`, `package`,
-    // `static`, `__gshared`, `private static`, an `@`-attribute, or
-    // `MeshSnapshot[] snaps;` — read as NOT A DECLARATION. Every term below
-    // then failed the same way and failed QUIETLY: the file never entered
-    // `found`, so TERM 1 saw no new holder, TERM 2 never visited it, and TERM
-    // 3's 19-in-14 stayed exactly 19 in 14. A command going back to a
-    // whole-mesh undo in any spelling but `private` was born green. Measured
-    // on this tree the two needles agree — every holder today IS spelled
-    // `private` or bare — so the delta is not a number, it is the mutation:
-    // add `protected MeshSnapshot snap;` to an unrostered command and the old
-    // needle stays green while this one names the file.
-    //
-    // `hasUnknownDeclPrefix` is the second half and the reason this is a
-    // repair rather than a bigger list: an attribute the shared table has
-    // never seen makes the line REPORTABLE instead of invisible.
-    static size_t declCountRaw(string code, out string[] unknownPrefixes) {
-        size_t n = 0;
-        foreach (line; code.split('\n')) {
-            if (declaresVarOfType(line, "MeshSnapshot")) { ++n; continue; }
-            if (hasUnknownDeclPrefix(line, "MeshSnapshot"))
-                unknownPrefixes ~= line.strip;
-        }
-        return n;
-    }
-
-    static size_t declCount(string code) {
-        string[] unknown;
-        immutable size_t n = declCountRaw(code, unknown);
-        assert(unknown.length == 0,
-            format("a `MeshSnapshot` declaration sits behind an attribute "
-                 ~ "chain tests/unit/decl_needle.d does not know: %s\n"
-                 ~ "  This is the LOUD half of task 3280's repair. Widen "
-                 ~ "`kVarAttrKeywords` there (and the fixture beside it), "
-                 ~ "never this census — a per-census attribute list is the "
-                 ~ "thing that went wrong four lanes running.", unknown));
-        return n;
-    }
-
-    auto names = new string[kSnapHolders.length];
-    foreach (i, ref r; kSnapHolders) names[i] = r.file;
-    sort(names);
-    assert(names.uniq.array.length == kSnapHolders.length,
-        format("the MeshSnapshot-holder roster names only %d DISTINCT file(s) "
-             ~ "across its %d rows — a duplicate leaves one unscanned.",
-               names.uniq.array.length, kSnapHolders.length));
-
-    // TERM 1 — THE FILE SET, derived from the tree. Accumulate BOTH ways and
-    // assert once: a gate that asserts inside the loop names only the first
-    // offender (card 2400's measured lesson).
-    string[] found;
-    size_t totalDecls = 0;
+    LedgerHit[] hits;
+    size_t filesRead;
     foreach (e; dirEntries(buildPath(repoRoot, "source", "commands"), "*.d",
                            SpanMode.depth)) {
-        immutable code = stripCommentsAndStrings(readText(e.name));
-        immutable size_t n = declCount(code);
-        if (n == 0) continue;
-        found ~= e.name[repoRoot.length + 1 .. $];
-        totalDecls += n;
+        ++filesRead;
+        const file = e.name[repoRoot.length + 1 .. $];
+        const code = stripCommentsAndStrings(readText(e.name));
+        const symbols = enclosingSymbols(code);
+        foreach (li, line; code.splitLines) {
+            if (hasUnknownDeclPrefix(line, "MeshSnapshot"))
+                assert(false, format(
+                    "%s:%d has an unrecognised MeshSnapshot declaration prefix: %s",
+                    file, li + 1, line.strip));
+            if (declaresVarOfType(line, "MeshSnapshot"))
+                hits ~= LedgerHit(symbolAt(symbols, li), file, li + 1, line.strip);
+        }
     }
-    sort(found);
-
-    string[] newHolders, lostHolders;
-    foreach (f; found) {
-        bool known = false;
-        foreach (ref r; kSnapHolders) if (r.file == f) { known = true; break; }
-        if (!known) newHolders ~= f;
-    }
-    foreach (ref r; kSnapHolders) {
-        bool present = false;
-        foreach (f; found) if (f == r.file) { present = true; break; }
-        if (!present) lostHolders ~= r.file;
-    }
-    assert(newHolders.length == 0 && lostHolders.length == 0,
-        format("the `MeshSnapshot` holder set under source/commands has "
-             ~ "changed.\n  NEW holders (a command went back to a whole-mesh "
-             ~ "undo): %s\n  LOST holders (a decline became a migration, or a "
-             ~ "file moved): %s\n  Found %d file(s), roster names %d.\n"
-             ~ "  THIS ROW IS THE CLOSING COUNT OF TASK 1903 TRACK 2. Every "
-             ~ "entry is a DECLINE with its reason at its own site; there is "
-             ~ "no un-migrated command family left. A NEW entry must arrive "
-             ~ "with its reason at the declaration AND a row here saying which "
-             ~ "bucket it is (D = document-level/opaque, A = value-blocked "
-             ~ "kernel, E = infrastructure). Until stage N this row was "
-             ~ "IMMOVABLE — `runMapEdit`'s hatch arm made 20 files declare a "
-             ~ "field they never used, so it read the same on migrated and "
-             ~ "un-migrated code alike (card 2290).",
-               newHolders, lostHolders, found.length, kSnapHolders.length));
-
-    // TERM 2 — the per-file counts, exact. A file that keeps its row and grows
-    // a SECOND holder is invisible to TERM 1.
-    string[] countMismatches;
-    foreach (ref r; kSnapHolders) {
-        immutable abs = buildPath(repoRoot, r.file);
-        assert(exists(abs), "the MeshSnapshot-holder roster names " ~ r.file
-                          ~ " and that file is gone — move the row");
-        immutable size_t n = declCount(stripCommentsAndStrings(readText(abs)));
-        if (n != r.decls)
-            countMismatches ~= format("%s: %d declaration(s), roster says %d "
-                                    ~ "[bucket %s] — %s",
-                                      r.file, n, r.decls, r.bucket, r.why);
-    }
-    assert(countMismatches.length == 0,
-        format("%d MeshSnapshot-holder row(s) disagree with the tree:\n  %s",
-               countMismatches.length, countMismatches));
-
-    // TERM 3 — the TOTAL, stated so a reader of the track's close has the one
-    // number the DoD asks for. 19 declarations in 14 files: 9 bucket-D, 4
-    // bucket-A (one of which is `select/sets.d` ×4) and 1 bucket-E (×3).
-    assert(totalDecls == 19 && found.length == 14,
-        format("source/commands holds %d `MeshSnapshot` declaration(s) in %d "
-             ~ "file(s); task 1903 closed at 19 in 14. The per-file rows above "
-             ~ "say WHICH moved; this row is what a reader of the card's "
-             ~ "closing summary can compare against.", totalDecls, found.length));
+    const problems = reconcile(kSnapHolders, hits);
+    assert(problems.length == 0,
+        "the source/commands MeshSnapshot-holder symbol ledger changed.\n" ~ problems);
+    assert(hits.length == 19 && filesRead >= 150,
+        format("expected 19 MeshSnapshot declarations over a live commands walk; got %d over %d files",
+               hits.length, filesRead));
 }

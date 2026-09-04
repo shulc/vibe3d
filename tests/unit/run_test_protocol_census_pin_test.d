@@ -61,6 +61,8 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
+import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode;
+
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
 
@@ -74,52 +76,7 @@ private enum kNarrowEsc  = "args.length > 1";               // the one sanctione
 /// Blank every comment and every string/char literal to spaces, in place, so
 /// that what remains is code AND every surviving offset still indexes the
 /// original text (newlines are kept, so a hit can be reported as a line).
-private string blankNonCode(string src)
-{
-    auto b = src.dup;
-    size_t i = 0;
-    while (i < b.length)
-    {
-        if (b[i] == '/' && i + 1 < b.length && b[i + 1] == '/')
-        {
-            while (i < b.length && b[i] != '\n') { b[i] = ' '; i++; }
-        }
-        else if (b[i] == '/' && i + 1 < b.length && b[i + 1] == '*')
-        {
-            b[i] = ' '; b[i + 1] = ' '; i += 2;
-            while (i + 1 < b.length && !(b[i] == '*' && b[i + 1] == '/'))
-            { if (b[i] != '\n') b[i] = ' '; i++; }
-            if (i + 1 < b.length) { b[i] = ' '; b[i + 1] = ' '; i += 2; }
-        }
-        else if (b[i] == '/' && i + 1 < b.length && b[i + 1] == '+')
-        {
-            int depth = 1;
-            b[i] = ' '; b[i + 1] = ' '; i += 2;
-            while (i + 1 < b.length && depth > 0)
-            {
-                if (b[i] == '/' && b[i + 1] == '+') { depth++; b[i] = ' '; b[i + 1] = ' '; i += 2; continue; }
-                if (b[i] == '+' && b[i + 1] == '/') { depth--; b[i] = ' '; b[i + 1] = ' '; i += 2; continue; }
-                if (b[i] != '\n') b[i] = ' ';
-                i++;
-            }
-        }
-        else if (b[i] == '"' || b[i] == '`' || b[i] == '\'')
-        {
-            const q = b[i];
-            b[i] = ' '; i++;
-            while (i < b.length && b[i] != q)
-            {
-                if (q != '`' && b[i] == '\\' && i + 1 < b.length)
-                { b[i] = ' '; b[i + 1] = ' '; i += 2; continue; }
-                if (b[i] != '\n') b[i] = ' ';
-                i++;
-            }
-            if (i < b.length) { b[i] = ' '; i++; }
-        }
-        else i++;
-    }
-    return cast(string) b;
-}
+private alias blankNonCode = sharedBlankNonCode;
 
 private size_t lineOf(string src, size_t off)
 {

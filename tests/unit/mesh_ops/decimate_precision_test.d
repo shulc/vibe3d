@@ -4,6 +4,7 @@ import math;
 import mesh;
 import mesh_edit_delta : MeshEditScope;
 import mesh_ops.decimate;
+import tests.unit.census_symbols : stripCommentsAndStrings = blankNonCode;
 
 private uint floatBits(float value)
 {
@@ -53,66 +54,6 @@ unittest { // norm3 rounds the sum in binary32 before taking the square root
                format("norm3 row %s rounded bits moved: 0x%08x != 0x%08x",
                       i, floatBits(actual), testCase.roundedBits));
     }
-}
-
-private string stripCommentsAndStrings(string src)
-{
-    import std.array : appender;
-
-    auto sink = appender!string;
-    size_t i;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i .. i + 2] == "//") {
-            while (i < src.length && src[i] != '\n') ++i;
-            continue;
-        }
-        if (i + 1 < src.length && src[i .. i + 2] == "/*") {
-            i += 2;
-            while (i + 1 < src.length && src[i .. i + 2] != "*/") ++i;
-            i = i + 2 <= src.length ? i + 2 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (i + 1 < src.length && src[i .. i + 2] == "/+") {
-            int depth;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i .. i + 2] == "/+") {
-                    ++depth;
-                    i += 2;
-                    continue;
-                }
-                if (i + 1 < src.length && src[i .. i + 2] == "+/") {
-                    --depth;
-                    i += 2;
-                    if (depth == 0) break;
-                    continue;
-                }
-                ++i;
-            }
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i;
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = i + 1 <= src.length ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i;
-            while (i < src.length && src[i] != '`') ++i;
-            i = i + 1 <= src.length ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
 }
 
 private size_t countOccurrences(string haystack, string needle)

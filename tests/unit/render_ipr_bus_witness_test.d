@@ -48,7 +48,7 @@ import std.file      : exists, readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 
-import tests.unit.version_poll_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

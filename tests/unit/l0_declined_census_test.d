@@ -75,7 +75,8 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines, strip;
 
-import tests.unit.version_poll_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
+    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -174,24 +175,16 @@ unittest {
 // declarations claim.
 // ===========================================================================
 
-private struct DormantRow {
-    string zone;        // "source" or "tests"
-    string file;        // repo-relative
-    string ident;
-    size_t count;
-    string why;
-}
-
 /// THE RECORDED SET, measured on this tree 2026-08-27 through the code view
 /// above. Every row is the DECLARATION itself or a call; there is no third
 /// possibility, which is what makes a changed number legible.
-private immutable DormantRow[] kDormant = [
-    DormantRow("source", "source/mesh_edit_delta.d", "recordHideDelta", 1,
+private immutable LedgerRow[] kDormant = [
+    LedgerRow("MeshEditTracker|recordHideDelta", 1,
         "the declaration, and nothing else in the whole tree. `HideDelta` has "
       ~ "NO caller: no MeshEditTracker has ever put one into a log"),
-    DormantRow("source", "source/mesh_edit_delta.d", "recordSubpatchDelta", 1,
+    LedgerRow("MeshEditTracker|recordSubpatchDelta", 1,
         "the declaration. Zero PRODUCTION callers"),
-    DormantRow("tests", "tests/test_mesh_edit_delta.d", "recordSubpatchDelta", 1,
+    LedgerRow("(module scope)|recordSubpatchDelta", 1,
         "cell (d)'s sparse round-trip — the ONE caller this kind has ever "
       ~ "had, and the reason `SubpatchDelta` and `HideDelta` are different "
       ~ "diagnoses rather than one status"),
@@ -199,7 +192,7 @@ private immutable DormantRow[] kDormant = [
 
 private immutable string[] kDormantIdents = ["recordHideDelta", "recordSubpatchDelta"];
 
-private struct Found { string zone; string file; string ident; size_t count; }
+private struct Found { string zone; string file; string symbol; string ident; size_t line; }
 
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
@@ -207,9 +200,11 @@ private Found[] scanDormant() {
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             const code = blankNonCode(readText(de.name));
+            const symbols = enclosingSymbols(code);
             foreach (id; kDormantIdents) {
-                const n = countIdentIn(code, id);
-                if (n) found.put(Found(zone, rel, id, n));
+                foreach (li, line; code.splitLines)
+                    foreach (_; 0 .. countIdentIn(line, id))
+                        found.put(Found(zone, rel, symbolAt(symbols, li), id, li + 1));
             }
         }
     }
@@ -221,39 +216,15 @@ private Found[] scanDormant() {
 unittest // GATE A
 {
     auto found = scanDormant();
-
-    // (1) An identifier in a file nobody recorded. This is the shape a FIRST
-    //     CALLER takes, and it is the whole point of the gate.
-    foreach (f; found) {
-        bool known = false;
-        foreach (r; kDormant)
-            if (r.file == f.file && r.ident == f.ident) { known = true; break; }
-        assert(known, format(
-            "L0 dormancy broken: `%s` now occurs in %s, which is not in this "
-          ~ "gate's recorded set. If that is a real call then the kind is no "
-          ~ "longer DORMANT and its declaration in source/mesh_edit_delta.d "
-          ~ "says the opposite — fix the declaration and this table together, "
-          ~ "in the same commit, or drop the call.", f.ident, f.file));
-    }
-
-    // (2) A recorded pair whose count moved. A SECOND caller in a file that
-    //     already had one, or the declaration itself going away.
-    foreach (r; kDormant) {
-        size_t n = 0;
-        bool seen = false;
-        foreach (f; found)
-            if (f.file == r.file && f.ident == r.ident) { n = f.count; seen = true; }
-        assert(seen, format(
-            "L0 dormancy census: recorded occurrence of `%s` in %s has "
-          ~ "VANISHED (recorded %d, found 0). Either the recorder was deleted "
-          ~ "— in which case say so at the kind's declaration — or the scanner "
-          ~ "lost its place, and a scanner that reads nothing passes every "
-          ~ "other row silently.", r.ident, r.file, r.count));
-        assert(n == r.count, format(
-            "L0 dormancy census: `%s` occurs %d time(s) in %s, recorded %d "
-          ~ "(%s). A count that went UP in the declaring file is a caller the "
-          ~ "declaration does not admit to.", r.ident, n, r.file, r.count, r.why));
-    }
+    LedgerHit[] hits;
+    foreach (ref f; found)
+        hits ~= LedgerHit(f.symbol ~ "|" ~ f.ident, f.file, f.line, f.ident);
+    const bad = reconcile(kDormant, hits);
+    assert(bad.length == 0, format(
+        "L0 dormancy symbol ledger changed:%s\nA new caller means the kind is "
+      ~ "no longer DORMANT; change the declaration and ledger together.", bad));
+    assert(hits.length == 3,
+        format("L0 dormant population changed: expected 3, found %d", hits.length));
 
     // NOTE ON WHAT IS *NOT* ASSERTED HERE, because writing it was the first
     // draft and it was inert. A third row of the shape "the total across both
@@ -290,74 +261,80 @@ unittest // GATE A anti-vacuity — the tree walk actually read the tree
 // declarations say.
 // ===========================================================================
 
-private struct DenseRow {
-    string file;
-    string captureIdent;    // the dense capture the declaration promises
-    size_t captureCount;    // declaration + write + read
-    size_t anchorCount;     // occurrences of the declaration marker, RAW text
-    string why;
-}
+private immutable LedgerRow[] kDenseCaptures = [
+    LedgerRow("(module scope)|HideRevertCommon", 1, "mixin declaration"),
+    LedgerRow("MeshHide|HideRevertCommon", 1, "mesh.hide mixin"),
+    LedgerRow("MeshHideUnselected|HideRevertCommon", 1, "mesh.hideUnselected mixin"),
+    LedgerRow("MeshHideInvert|HideRevertCommon", 1, "mesh.hideInvert mixin"),
+    LedgerRow("MeshUnhideAll|HideRevertCommon", 1, "mesh.unhideAll mixin"),
+    LedgerRow("SubpatchToggle|origSubpatch", 1, "dense field"),
+    LedgerRow("SubpatchToggle.evaluate|origSubpatch", 1, "dense capture"),
+    LedgerRow("SubpatchToggle.revertImpl|origSubpatch", 1, "dense restore"),
+    LedgerRow("MeshSetPart|origPart", 1, "dense field"),
+    LedgerRow("MeshSetPart.evaluate|origPart", 1, "dense capture"),
+    LedgerRow("MeshSetPart.revertImpl|origPart", 1, "dense restore"),
+];
 
-private immutable DenseRow[] kDense = [
-    DenseRow("source/commands/mesh/hide.d", "HideRevertCommon", 5,
-        5,
-        "the `mixin template` declaration plus one `mixin` in each of the "
-      ~ "FOUR hide commands. The nine planes it captures are the ruling: a "
-      ~ "measured capture says one undo restores the selection, its ORDER and "
-      ~ "other domains, and a HideDelta-only revert answers `true` while "
-      ~ "losing them"),
-    DenseRow("source/commands/mesh/subpatch_toggle.d", "origSubpatch", 3,
-        1,
-        "the field, the `dup` capture and the revert loop. Declined because a "
-      ~ "SubpatchDelta would be the same delta spelled twice"),
-    DenseRow("source/commands/mesh/set_part.d", "origPart", 3,
-        1,
-        "the field, the `dup` capture and the revert. Declined because no "
-      ~ "MeshOpEntry.Kind carries facePart as its payload and a fifteenth "
-      ~ "kind would owe a branch in six exhaustive final switches for good"),
+private immutable string[] kDenseOwners = [
+    "HideRevertCommon", "MeshHide", "MeshHideUnselected", "MeshHideInvert",
+    "MeshUnhideAll", "SubpatchToggle", "MeshSetPart",
 ];
 
 private enum string kAnchor = "PERMANENTLY DENSE";
 
-unittest // GATE B — no recorder call, and the capture field is still there
-{
-    foreach (r; kDense) {
-        const raw  = readText(buildPath(repoRoot, r.file));
-        const code = blankNonCode(raw);
-
-        // (i) The migration this file's declaration refuses would appear here.
-        const calls = recorderCallsIn(code);
-        assert(calls.length == 0, format(
-            "L0 permanently-dense broken: %s now carries %d recorder-call "
-          ~ "signal(s) (the `.rec()` accessor and the `record<Upper>` name on "
-          ~ "one line count as two) — %s. Its own declaration says this command is NEVER "
-          ~ "migrated to a recorded MeshEditDelta and gives the reason (%s). "
-          ~ "A migration here is a decision to reopen, not an edit: change "
-          ~ "the declaration first.", r.file, calls.length, calls, r.why));
-
-        // (ii) …and the dense capture it promises instead is still present.
-        const n = countIdentIn(code, r.captureIdent);
-        assert(n == r.captureCount, format(
-            "L0 permanently-dense broken: %s mentions `%s` %d time(s) in "
-          ~ "code, recorded %d (%s). The declaration promises a dense "
-          ~ "capture; if it is gone, undo is being restored from something "
-          ~ "else and the comment is now false.",
-            r.file, r.captureIdent, n, r.captureCount, r.why));
-
-        // (iii) The WEAK half, and labelled as such: the declaration itself is
-        //       still in the file. A comment check cannot catch a wrong
-        //       comment — only a deleted one — which is exactly why (i) and
-        //       (ii) above are the rows that carry this gate.
-        const a = countIdentIn(raw, kAnchor);
-        assert(a == r.anchorCount, format(
-            "L0 permanently-dense declaration missing or duplicated: %s "
-          ~ "carries the marker `%s` %d time(s), recorded %d. This is the "
-          ~ "WEAK row of this gate — it can only see a declaration DELETED, "
-          ~ "never one that has drifted away from the code. If you moved the "
-          ~ "declaration, move this number with it.",
-            r.file, kAnchor, a, r.anchorCount));
-    }
+private bool belongsToDenseOwner(string symbol) {
+    import std.string : startsWith;
+    foreach (owner; kDenseOwners)
+        if (symbol == owner || symbol.startsWith(owner ~ ".")) return true;
+    return false;
 }
+
+unittest // GATE B — dense declarations and the absence of recorder calls
+{
+    LedgerHit[] captures;
+    LedgerHit[] recorderHits;
+    size_t anchorCount;
+    size_t filesRead;
+
+    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const rel = de.name[repoRoot.length + 1 .. $];
+        const raw = readText(de.name);
+        const code = blankNonCode(raw);
+        const symbols = enclosingSymbols(code);
+        LedgerHit[] inFile;
+        foreach (ident; ["HideRevertCommon", "origSubpatch", "origPart"])
+            foreach (li, line; code.splitLines)
+                foreach (_; 0 .. countIdentIn(line, ident))
+                    inFile ~= LedgerHit(symbolAt(symbols, li) ~ "|" ~ ident,
+                                        rel, li + 1, line.strip);
+        if (inFile.length) {
+            captures ~= inFile;
+            anchorCount += countIdentIn(raw, kAnchor);
+        }
+
+        foreach (li, line; code.splitLines) {
+            const symbol = symbolAt(symbols, li);
+            if (!belongsToDenseOwner(symbol)) continue;
+            foreach (hit; recorderCallsIn(line))
+                recorderHits ~= LedgerHit(symbol, rel, li + 1, hit);
+        }
+        ++filesRead;
+    }
+
+    const problems = reconcile(kDenseCaptures, captures);
+    assert(problems.length == 0,
+        "L0 permanently-dense capture symbol ledger changed." ~ problems);
+    assert(captures.length == 11 && filesRead >= 200, format(
+        "L0 dense census found %d capture sites over %d source files",
+        captures.length, filesRead));
+    assert(recorderHits.length == 0, format(
+        "L0 permanently-dense declarations now contain recorder calls: %s",
+        recorderHits));
+    assert(anchorCount == 7, format(
+        "L0 dense declarations carry %d `%s` markers, expected 7",
+        anchorCount, kAnchor));
+}
+
 
 unittest // GATE B instrument — the recorder scan can actually find something
 {

@@ -37,6 +37,8 @@ import std.format : format;
 import std.algorithm : sort, uniq;
 import std.array  : array;
 
+import tests.unit.census_symbols : blankNonCode;
+
 private string repoRoot()
 {
     // …/tests/unit/<this file>  ->  …
@@ -61,49 +63,7 @@ private enum string[12] kL2Commands = [
 /// code — the second spelling being the one that drifts. Both censuses carry
 /// their own per-file non-vacuity floor, so a stripper regression reddens in
 /// both rather than being silently absorbed by either.
-string codeOnly(string src) pure
-{
-    auto buf = new char[src.length];
-    size_t i = 0;
-    void blank(size_t n) { foreach (k; 0 .. n) { if (i >= src.length) return;
-        buf[i] = (src[i] == '\n') ? '\n' : ' '; i++; } }
-    while (i < src.length) {
-        immutable char c = src[i];
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { buf[i] = ' '; i++; }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '*') {
-            blank(2);
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) blank(1);
-            blank(2);
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '+') {
-            int depth = 1;
-            blank(2);
-            while (i + 1 < src.length && depth > 0) {
-                if (src[i] == '/' && src[i + 1] == '+') { depth++; blank(2); continue; }
-                if (src[i] == '+' && src[i + 1] == '/') { depth--; blank(2); continue; }
-                blank(1);
-            }
-            continue;
-        }
-        if (c == '"' || c == '`') {
-            immutable char q = c;
-            immutable bool raw = (q == '`');
-            buf[i] = ' '; i++;
-            while (i < src.length && src[i] != q) {
-                if (!raw && src[i] == '\\' && i + 1 < src.length) blank(1);
-                blank(1);
-            }
-            if (i < src.length) { buf[i] = ' '; i++; }
-            continue;
-        }
-        buf[i] = c; i++;
-    }
-    return cast(string) buf;
-}
+alias codeOnly = blankNonCode;
 
 /// ditto — shared with the L10 census for the same reason.
 size_t countOf(string hay, string needle)

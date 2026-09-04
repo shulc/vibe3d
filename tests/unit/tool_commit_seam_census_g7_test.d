@@ -113,6 +113,9 @@ import std.path      : baseName, buildPath, dirName;
 import std.regex     : regex, matchAll, replaceAll;
 import std.string    : indexOf, strip;
 
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
+    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private enum string kPenDir = "source/tools/edit/topology_pen";
@@ -139,54 +142,7 @@ private enum string kPenDir = "source/tools/edit/topology_pen";
 // and 3: a scanner that lost its place eats the rest of the file, and both
 // totals collapse and redden with a message that says so.
 // ---------------------------------------------------------------------------
-private string stripCommentsAndStrings(string src) {
-    auto sink = appender!string;
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { sink.put(' '); ++i; }
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            i += 2; sink.put("  ");
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) {
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            sink.put("  ");
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; sink.put("  "); continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; sink.put("  "); if (depth == 0) break; continue; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            continue;
-        }
-        if (src[i] == '"') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) { sink.put(' '); ++i; }
-                sink.put(src[i] == '\n' ? '\n' : ' '); ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        if (src[i] == '`') {
-            ++i; sink.put(' ');
-            while (i < src.length && src[i] != '`') { sink.put(src[i] == '\n' ? '\n' : ' '); ++i; }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            sink.put(' ');
-            continue;
-        }
-        sink.put(src[i]);
-        ++i;
-    }
-    return sink.data;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private string stripCommentsOnly(string src) {
     return src.replaceAll(regex(`/\*[\s\S]*?\*/`), "")
@@ -225,10 +181,11 @@ private string joinLines(const(string)[] xs) {
 /// match: `history = h;` (an assignment) and `history_(CommandHistory h)` (the
 /// bridge setter's own declaration) — neither is a call on the surface, and the
 /// pen holds both.
-private struct SurfaceHit { string name; size_t line; }
+private struct SurfaceHit { string symbol; string name; size_t line; }
 
 private SurfaceHit[] historySurface(string src) {
     SurfaceHit[] hits;
+    const symbols = enclosingSymbols(src);
     size_t i = 0;
     while (true) {
         auto rel = src[i .. $].indexOf("history");
@@ -249,7 +206,8 @@ private SurfaceHit[] historySurface(string src) {
         size_t r = q;
         while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
         if (r >= src.length || src[r] != '(') continue;      // a read, not a call
-        hits ~= SurfaceHit(nm, lineOf(src, p));
+        const line = lineOf(src, p);
+        hits ~= SurfaceHit(symbolAt(symbols, line - 1), nm, line);
     }
     return hits;
 }
@@ -299,16 +257,12 @@ unittest {
     foreach (e; dirEntries(buildPath(repoRoot, kPenDir), "*.d", SpanMode.shallow))
         found ~= baseName(e.name);
     found.sort();
-
-    // NON-VACUITY, and it is a ROW, not a leading assert: as its own assert it
-    // would abort ahead of the accumulator and hide the file that moved.
     if (found.length < kG7Files.length)
         problems ~= "    · NON-VACUITY: the walk of `" ~ kPenDir ~ "` returned "
                   ~ "only " ~ found.length.to!string ~ " file(s), the roster "
                   ~ "holds " ~ kG7Files.length.to!string ~ ". The path is wrong "
                   ~ "or the tree moved — the rows above and below are then "
                   ~ "measuring nothing";
-
     foreach (f; found) {
         bool known = false;
         foreach (x; kG7Files) if (x == f) { known = true; break; }
@@ -330,88 +284,29 @@ unittest {
       ~ "`kG7Files`. Do not delete the row that reddened.");
 }
 
-// ---------------------------------------------------------------------------
-// 2. THE HISTORY CALL SURFACE OF THE FAMILY, name by name, file by file.
-//
-//    After phase D every recorder in this family lives in ONE place — the seam
-//    on `Tool` — and NOTHING is left inside the six pen modules. G7 holds no
-//    legitimate non-recorder to except (contrast G1's `box.d`, which
-//    legitimately keeps `nextRun` and `undo`, and G5's four `invalidateRedo`):
-//    its roster for the package is an exact, checked ZERO.
-// ---------------------------------------------------------------------------
-private struct RosterRow { string path; string name; size_t count; string why; }
-
-private enum RosterRow[] kSurfaceRoster = [
-    // The seam itself. THREE primitives, one per `GestureRecordMode` member,
-    // plus the belt's run-close. This is the whole reason `source/tool.d` is in
-    // the population: it is the family's only surviving recorder, and the only
-    // thing keeping this member's scan non-vacuous.
-    RosterRow("source/tool.d", "record", 1,
-        "GestureRecordMode.Plain -> CommandHistory.record"),
-    RosterRow("source/tool.d", "recordInSession", 1,
-        "GestureRecordMode.InSession -> CommandHistory.recordInSession"),
-    RosterRow("source/tool.d", "replaceInSessionTailWith", 1,
-        "GestureRecordMode.ReplaceRunTail -> CommandHistory.replaceInSessionTailWith"),
-    RosterRow("source/tool.d", "consolidate", 1,
-        "the refusal belt closing the run the skipped splice would have closed"),
+private enum LedgerRow[] kSurfaceRoster = [
+    LedgerRow("Tool.recordGestureEdit|record", 1, "plain recorder dispatch"),
+    LedgerRow("Tool.recordGestureEdit|recordInSession", 1, "session recorder dispatch"),
+    LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1, "tail recorder dispatch"),
+    LedgerRow("Tool.refuseGestureRecord|consolidate", 1, "refusal belt"),
 ];
 
 unittest {
-    string[] problems;
-    size_t   totalHits = 0;
-
+    LedgerHit[] ledgerHits;
+    size_t totalHits;
     foreach (rel; populationPaths()) {
-        immutable full = buildPath(repoRoot, rel);
-        if (!exists(full)) {
-            problems ~= "    · population member is missing from the tree: " ~ rel;
-            continue;
-        }
-        auto src  = stripCommentsAndStrings(readText(full));
-        auto hits = historySurface(src);
-        totalHits += hits.length;
-
-        foreach (h; hits) {
-            bool rostered = false;
-            foreach (row; kSurfaceRoster)
-                if (row.path == rel && row.name == h.name) { rostered = true; break; }
-            if (!rostered)
-                problems ~= "    · UNROSTERED call on the history surface: `history."
-                          ~ h.name ~ "(` at " ~ rel ~ ":" ~ h.line.to!string
-                          ~ "  — after phase D every record in this family goes "
-                          ~ "through `Tool.recordGestureEdit`, and no module of "
-                          ~ "the topology-pen package has a legitimate reason to "
-                          ~ "reach `CommandHistory` at all. If this call really "
-                          ~ "is legitimate, add a roster row with the reason; do "
-                          ~ "not widen a regex.";
-        }
-        foreach (row; kSurfaceRoster) {
-            if (row.path != rel) continue;
-            size_t n = 0;
-            foreach (h; hits) if (h.name == row.name) ++n;
-            if (n != row.count)
-                problems ~= "    · " ~ rel ~ ": `history." ~ row.name ~ "(` x "
-                          ~ n.to!string ~ ", roster says " ~ row.count.to!string
-                          ~ "  (" ~ row.why ~ ")";
-        }
+        const src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
+        const found = historySurface(src);
+        totalHits += found.length;
+        foreach (h; found)
+            ledgerHits ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
+                                    "history." ~ h.name);
     }
-
-    // NON-VACUITY, load-bearing exactly as it is for G4: the six pen modules
-    // contribute ZERO hits by design, so without `source/tool.d` in the
-    // population this member would be satisfied by a stripper that lost its
-    // place, a `repoRoot` pointing nowhere, or a scan of an empty list. A
-    // FLOOR, not an equality: an EXTRA call is caught above with its name and
-    // its address, which is the message worth reading. IN the accumulator, not
-    // ahead of it.
-    if (totalHits < 4)
-        problems ~= "    · NON-VACUITY: the scan found " ~ totalHits.to!string
-                  ~ " call(s) on the history surface across the whole "
-                  ~ "population, and the seam alone makes four. The scanner "
-                  ~ "read nothing — check `repoRoot` and the stripper before "
-                  ~ "believing any row above";
-
+    const problems = reconcile(kSurfaceRoster, ledgerHits);
     assert(problems.length == 0,
-        "G7 census: the family's history call surface is not what the seam "
-      ~ "leaves behind.\n" ~ joinLines(problems));
+        "G7 census: the family's history call surface changed.\n" ~ problems);
+    assert(totalHits == 4,
+        "G7 census: history-surface population changed");
 }
 
 // ---------------------------------------------------------------------------
@@ -430,78 +325,35 @@ unittest {
 //    `InSession` appears below, that reasoning stops holding and this member
 //    says so first.
 // ---------------------------------------------------------------------------
-private struct CallRow { string path; size_t calls, plain, inSession, replaceTail; }
-
-private enum CallRow[] kCallRoster = [
-    // The seam: one declaration, one dispatch arm per mode — plus a SECOND
-    // mention of `ReplaceRunTail`, the belt's `mode ==` test in
-    // `refuseGestureRecord`. That second one is counted, not tolerated: if it
-    // disappears the belt has stopped closing the run it skipped.
-    CallRow("source/tool.d",                                    1, 1, 1, 2),
-    CallRow("source/tools/edit/topology_pen/tool.d",             2, 2, 0, 0),
-    CallRow("source/tools/edit/topology_pen/defs.d",             0, 0, 0, 0),
-    CallRow("source/tools/edit/topology_pen/json.d",             0, 0, 0, 0),
-    CallRow("source/tools/edit/topology_pen/package.d",          0, 0, 0, 0),
-    CallRow("source/tools/edit/topology_pen/render.d",           0, 0, 0, 0),
-    CallRow("source/tools/edit/topology_pen/snap_guide.d",       0, 0, 0, 0),
+private enum LedgerRow[] kCallRoster = [
+    LedgerRow("Tool|call", 1, "seam declaration"),
+    LedgerRow("Tool.recordGestureEdit|plain", 1, "plain dispatch"),
+    LedgerRow("Tool.recordGestureEdit|inSession", 1, "session dispatch"),
+    LedgerRow("Tool.recordGestureEdit|replaceTail", 1, "tail dispatch"),
+    LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
+    LedgerRow("TopologyPenTool.placeVertexAt|call", 1, "tool commit"),
+    LedgerRow("TopologyPenTool.placeVertexAt|plain", 1, "plain mode"),
+    LedgerRow("TopologyPenTool.recordSnapshotUndo|call", 1, "tool commit"),
+    LedgerRow("TopologyPenTool.recordSnapshotUndo|plain", 1, "plain mode"),
 ];
 
 unittest {
-    string[] problems;
-    size_t   totalCalls = 0;
-
+    LedgerHit[] hits;
+    size_t totalCalls;
     foreach (rel; populationPaths()) {
-        auto src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
-        immutable size_t calls  = countOccurrences(src, "recordGestureEdit(");
-        immutable size_t plain  = countOccurrences(src, "GestureRecordMode.Plain");
-        immutable size_t sess   = countOccurrences(src, "GestureRecordMode.InSession");
-        immutable size_t tail   = countOccurrences(src, "GestureRecordMode.ReplaceRunTail");
-        totalCalls += calls;
-
-        size_t wantC, wantP, wantS, wantT;
-        bool listed = false;
-        foreach (row; kCallRoster)
-            if (row.path == rel) {
-                wantC = row.calls; wantP = row.plain;
-                wantS = row.inSession; wantT = row.replaceTail;
-                listed = true; break;
-            }
-        if (!listed) {
-            problems ~= "    · " ~ rel ~ " is in the population and not in the "
-                      ~ "call roster (" ~ calls.to!string ~ " call(s)) — every "
-                      ~ "member of this family is named here, with its number";
-            continue;
-        }
-        if (calls != wantC)
-            problems ~= "    · " ~ rel ~ ": recordGestureEdit( x " ~ calls.to!string
-                      ~ ", roster says " ~ wantC.to!string
-                      ~ ". G7 holds exactly two seam sites, BOTH in `"
-                      ~ kG7SeamFile ~ "` (`placeVertexAt` raw on a "
-                      ~ "`MeshVertexNew`, `recordSnapshotUndo` the tail thirteen "
-                      ~ "gesture commits funnel through)";
-        if (plain != wantP || sess != wantS || tail != wantT)
-            problems ~= "    · " ~ rel ~ ": modes {Plain " ~ plain.to!string
-                      ~ ", InSession " ~ sess.to!string ~ ", ReplaceRunTail "
-                      ~ tail.to!string ~ "}, roster says {Plain " ~ wantP.to!string
-                      ~ ", InSession " ~ wantS.to!string ~ ", ReplaceRunTail "
-                      ~ wantT.to!string ~ "}";
+        const src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
+        const calls = symbolTokenHits(src, rel, "recordGestureEdit(", "call");
+        totalCalls += calls.length;
+        hits ~= calls;
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.Plain", "plain");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.InSession", "inSession");
+        hits ~= symbolTokenHits(src, rel, "GestureRecordMode.ReplaceRunTail", "replaceTail");
     }
-
-    if (totalCalls < 3)
-        problems ~= "    · NON-VACUITY: only " ~ totalCalls.to!string
-                  ~ " `recordGestureEdit(` in the whole population. Two pen "
-                  ~ "sites plus the seam's own declaration are expected; a "
-                  ~ "number near zero means the scanner read nothing, not that "
-                  ~ "the family stopped recording";
-
+    const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
-        "G7 census: the seam's call sites moved.\n" ~ joinLines(problems)
-      ~ "\n  This family is `Plain` at both of its sites. A site that moves to "
-      ~ "`InSession` or `ReplaceRunTail` leaves the history run OPEN, and "
-      ~ "NOTHING on the wire says so — not the stack depth, not the committed "
-      ~ "names, not the labels, not one plane of the frozen fixture (measured by "
-      ~ "lane G0-G7 under exactly that mutation: `Total: 1 Passed: 1`). This "
-      ~ "line is the only witness.");
+        "G7 census: the seam's call sites changed.\n" ~ problems);
+    assert(totalCalls == 3,
+        "G7 census: recordGestureEdit population changed");
 }
 
 // ---------------------------------------------------------------------------
@@ -531,10 +383,8 @@ unittest {
 //    `CommandHistory` parameter in a rostered file is a row of its own whatever
 //    the method or the parameter is called.
 // ---------------------------------------------------------------------------
-private struct ParamRow { string file; string name; size_t count; string why; }
-
-private enum ParamRow[] kHistoryParamRoster = [
-    ParamRow("tool.d", "h", 1,
+private enum LedgerRow[] kHistoryParamRoster = [
+    LedgerRow("TopologyPenTool|h", 1,
         "the phase-B bridge setter `package void history_(CommandHistory h)` — "
       ~ "the pen's former field spelling, kept reachable for the in-package "
       ~ "white-box rig (tests/unit/tools/edit/topology_pen/gestures_test.d), "
@@ -547,8 +397,11 @@ private enum ParamRow[] kHistoryParamRoster = [
 /// after it followed by `)`, `,` or `=`. A field declaration
 /// (`CommandHistory history;`) is member 6's business and is deliberately not
 /// matched here.
-private SurfaceHit[] historyTypedParams(string src) {
-    SurfaceHit[] hits;
+private struct ParamHit { string symbol; string name; size_t line; }
+
+private ParamHit[] historyTypedParams(string src) {
+    ParamHit[] hits;
+    const symbols = enclosingSymbols(src);
     enum tok = "CommandHistory";
     size_t i = 0;
     while (true) {
@@ -570,7 +423,8 @@ private SurfaceHit[] historyTypedParams(string src) {
         while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
         if (q >= src.length) continue;
         if (src[q] != ')' && src[q] != ',' && src[q] != '=') continue;
-        hits ~= SurfaceHit(nm, lineOf(src, p));
+        const line = lineOf(src, p);
+        hits ~= ParamHit(symbolAt(symbols, line - 1), nm, line);
     }
     return hits;
 }
@@ -578,9 +432,7 @@ private SurfaceHit[] historyTypedParams(string src) {
 unittest {
     string[] problems;
     size_t seamDecls  = 0;
-    size_t seenParams = 0;
-    size_t[string] paramCount;   // "<file>:<paramName>" -> how many
-    string[string] paramWhere;   // the same key -> "<rel>:<line>" of the first
+    LedgerHit[] paramHits;
 
     foreach (rel; populationPaths()) {
         auto src = stripCommentsAndStrings(readText(buildPath(repoRoot, rel)));
@@ -597,43 +449,14 @@ unittest {
                       ~ "the base's is `final` and there is nothing to add";
         if (rel == "source/tool.d") continue;
 
-        immutable string f = baseName(rel);
         foreach (h; historyTypedParams(src)) {
-            ++seenParams;
-            immutable string key = f ~ ":" ~ h.name;
-            ++paramCount[key];
-            if (key !in paramWhere) paramWhere[key] = rel ~ ":" ~ h.line.to!string;
+            paramHits ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
+                                   "CommandHistory " ~ h.name);
         }
     }
 
-    // Anything the roster does not name at all.
-    foreach (key, n; paramCount) {
-        bool rostered = false;
-        foreach (row; kHistoryParamRoster)
-            if (row.file ~ ":" ~ row.name == key) { rostered = true; break; }
-        if (!rostered)
-            problems ~= "    · UNROSTERED `CommandHistory` parameter `" ~ key
-                      ~ "` x " ~ n.to!string ~ ", first at " ~ paramWhere[key]
-                      ~ "  — a pen method that takes a history can bind one, and "
-                      ~ "a tool that can bind its own history is the second place "
-                      ~ "to forget that `Tool.setGestureBindings` exists to "
-                      ~ "remove. If it is legitimate, add a roster row with the "
-                      ~ "reason.";
-    }
-    // And every rostered survivor with its EXACT count. This row is also the
-    // member's non-vacuity floor for the parameter half: a scanner that read
-    // nothing drives every count to zero and reports it here, in the same
-    // accumulator as everything else, rather than aborting ahead of it.
-    size_t wantParams = 0;
-    foreach (row; kHistoryParamRoster) {
-        wantParams += row.count;
-        immutable string key = row.file ~ ":" ~ row.name;
-        immutable size_t n = (key in paramCount) ? paramCount[key] : 0;
-        if (n != row.count)
-            problems ~= "    · `CommandHistory " ~ row.name ~ "` in " ~ row.file
-                      ~ ": " ~ n.to!string ~ " parameter(s), roster says "
-                      ~ row.count.to!string ~ "  (" ~ row.why ~ ")";
-    }
+    const paramProblems = reconcile(kHistoryParamRoster, paramHits);
+    if (paramProblems.length) problems ~= paramProblems;
 
     if (seamDecls != 1)
         problems ~= "    · `void setGestureBindings` is declared "
@@ -641,12 +464,9 @@ unittest {
                   ~ "one, on `Tool`, is the point of it — and a zero here means "
                   ~ "the scan read nothing, so the per-file rows above are "
                   ~ "vacuous too";
-    if (seenParams < wantParams)
-        problems ~= "    · NON-VACUITY: the scan found " ~ seenParams.to!string
-                  ~ " `CommandHistory` parameter(s) across the six pen modules; "
-                  ~ "the roster alone expects " ~ wantParams.to!string
-                  ~ ". The parameter scanner read nothing, so the unrostered "
-                  ~ "rows above are vacuous";
+    if (paramHits.length != 1)
+        problems ~= "    · CommandHistory parameter population is "
+                  ~ paramHits.length.to!string ~ ", expected exactly 1";
 
     assert(problems.length == 0,
         "G7 census: binding declarations moved.\n" ~ joinLines(problems));

@@ -43,7 +43,7 @@ import std.regex : ctRegex, matchAll;
 import std.string : endsWith, split, splitLines, strip;
 
 import tests.unit.census_gate : scanD;
-import tests.unit.version_poll_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum ledgerPath = "tests/unit/unittest_source_ceiling_ledger.txt";

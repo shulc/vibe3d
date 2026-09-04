@@ -39,6 +39,8 @@ import std.array  : array;
 /// Repository root, rooted at THIS FILE rather than at the working directory.
 /// A census that quietly finds nothing when the lane runs from elsewhere is a
 /// test that passes for the wrong reason.
+import tests.unit.census_symbols : blankNonCode;
+
 private string repoRoot()
 {
     // …/tests/unit/<this file>  ->  …
@@ -52,49 +54,7 @@ private string repoRoot()
 /// splice it deleted (`face = face[0 .. k+1] ~ vm ~ face[k+1 .. $]`), so a
 /// census that only ate `//` would count the explanation of the fix as an
 /// instance of the defect and this file could never be green.
-private string stripCommentsAndStrings(string src) pure
-{
-    auto buf = new char[src.length];
-    size_t i = 0;
-    void blank(size_t n) { foreach (k; 0 .. n) { if (i >= src.length) return;
-        buf[i] = (src[i] == '\n') ? '\n' : ' '; i++; } }
-    while (i < src.length) {
-        immutable char c = src[i];
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '/') {
-            while (i < src.length && src[i] != '\n') { buf[i] = ' '; i++; }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '*') {
-            blank(2);
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) blank(1);
-            blank(2);
-            continue;
-        }
-        if (c == '/' && i + 1 < src.length && src[i + 1] == '+') {
-            int depth = 1;
-            blank(2);
-            while (i + 1 < src.length && depth > 0) {
-                if (src[i] == '/' && src[i + 1] == '+') { depth++; blank(2); continue; }
-                if (src[i] == '+' && src[i + 1] == '/') { depth--; blank(2); continue; }
-                blank(1);
-            }
-            continue;
-        }
-        if (c == '"' || c == '`' || c == '\'') {
-            immutable char q = c;
-            immutable bool raw = (q == '`');
-            buf[i] = ' '; i++;
-            while (i < src.length && src[i] != q) {
-                if (!raw && src[i] == '\\' && i + 1 < src.length) { blank(1); }
-                blank(1);
-            }
-            if (i < src.length) { buf[i] = ' '; i++; }
-            continue;
-        }
-        buf[i] = c; i++;
-    }
-    return cast(string) buf;
-}
+private alias stripCommentsAndStrings = blankNonCode;
 
 private bool identChar(char c)
 {

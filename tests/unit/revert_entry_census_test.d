@@ -76,6 +76,10 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : strip;
 
+import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode,
+    sharedBlankUnittestBodies = blankUnittestBodies, enclosingSymbols,
+    symbolAt, LedgerRow, LedgerHit, reconcile;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 // ---------------------------------------------------------------------------
@@ -83,77 +87,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 // file's header). Blank comments and/or literals IN PLACE — same length, same
 // line breaks, so a finding still reports the real line number.
 // ---------------------------------------------------------------------------
-package string blankNonCode(string src, bool keepComments = false) {
-    auto outBuf = new char[src.length];
-    foreach (i, c; src) outBuf[i] = (c == '\n') ? '\n' : ' ';
-    size_t codeStart = 0;
-    void keep(size_t a, size_t b) {
-        foreach (k; a .. b) if (src[k] != '\n') outBuf[k] = src[k];
-    }
-    void drop(size_t a, size_t b) { keep(codeStart, a); codeStart = b; }
-
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            const size_t s = i;
-            while (i < src.length && src[i] != '\n') ++i;
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            const size_t s = i;
-            i += 2;
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) ++i;
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            const size_t s = i;
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; if (depth == 0) break; continue; }
-                ++i;
-            }
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        if (src[i] == '"') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        if (src[i] == '`') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '`') ++i;
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        if (src[i] == '\'') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '\'') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        ++i;
-    }
-    keep(codeStart, src.length);
-    return cast(string)outBuf;
-}
+package alias blankNonCode = sharedBlankNonCode;
 
 private bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -162,63 +96,8 @@ private bool isIdentChar(char c) {
 
 /// Duplicated from `version_poll_census_test.d`: blank the BODY of every real
 /// `unittest` block (not `version (unittest)`, which is production code).
-private string blankUnittestBodies(string code) {
-    auto buf = code.dup;
-    void blankBlock(size_t from) {
-        size_t j = from;
-        while (j < buf.length && buf[j] != '{') {
-            if (buf[j] == ';') return;
-            ++j;
-        }
-        if (j >= buf.length) return;
-        int depth = 0;
-        for (; j < buf.length; ++j) {
-            const char c = buf[j];
-            if (c == '{') ++depth;
-            else if (c == '}') { --depth; if (depth == 0) { buf[j] = ' '; return; } }
-            if (c != '\n') buf[j] = ' ';
-        }
-    }
-    bool parenthesised(size_t i) {
-        size_t k = i;
-        while (k > 0 && (buf[k - 1] == ' ' || buf[k - 1] == '\t'
-                      || buf[k - 1] == '\n' || buf[k - 1] == '\r')) --k;
-        return k > 0 && buf[k - 1] == '(';
-    }
-    enum kw = "unittest";
-    size_t i = 0;
-    while (i + kw.length <= buf.length) {
-        if (buf[i .. i + kw.length] == kw
-            && (i == 0 || !isIdentChar(buf[i - 1]))
-            && (i + kw.length >= buf.length || !isIdentChar(buf[i + kw.length]))
-            && !parenthesised(i))
-        {
-            blankBlock(i + kw.length);
-            i += kw.length;
-            continue;
-        }
-        ++i;
-    }
-    return cast(string)buf;
-}
+private alias blankUnittestBodies = sharedBlankUnittestBodies;
 
-// ---------------------------------------------------------------------------
-// Function-name resolution. NOT a parser: a header-classifying heuristic over
-// the brace stack. It only has to be deterministic and correct for the seven
-// known sites (proven by the scanner cells below) — a wrong resolution on
-// code nobody has written yet still reddens the gate, because either way the
-// reported (file, function) pair will not be in the recorded table.
-// ---------------------------------------------------------------------------
-
-/// Keywords that open a CONTROL-FLOW or non-callable block, not a callable.
-/// `static` is here to catch `static if`/`static foreach` — the one named
-/// blind spot: a `static` FUNCTION modifier (`static bool helper() { … }`)
-/// is misclassified as non-callable by this same rule, so a `.revert()`
-/// call whose nearest real enclosing function is `static` attributes to
-/// that function's own PARENT scope instead. None of the seven recorded
-/// sites is `static`; a future one that is will still redden the gate (as
-/// an unaccounted pair), just possibly under the parent's name rather than
-/// its own — the census does not need the name to be right, only new.
 private static immutable string[] kControlKeywords = [
     "if", "for", "foreach", "foreach_reverse", "while", "switch",
     "catch", "else", "try", "finally", "scope", "version", "debug",
@@ -239,7 +118,6 @@ private bool looksLikeFunctionHeader(string h) {
     return h.canFind('(');
 }
 
-/// The identifier immediately before the FIRST top-level `(` in `h`.
 private string extractName(string h) {
     const ptrdiff_t p = () {
         foreach (i, c; h) if (c == '(') return cast(ptrdiff_t)i;
@@ -255,6 +133,7 @@ private string extractName(string h) {
 
 private struct RevertSite {
     string file;
+    string symbol;
     string func;
     size_t line;      // 1-based, into the ORIGINAL text — diagnostic only
     string text;
@@ -357,6 +236,7 @@ private bool revertSiteHere(string code, size_t i) {
 /// stack built as the text is consumed left to right.
 private RevertSite[] scanRevertSites(string label, string src) {
     const string code = blankUnittestBodies(blankNonCode(src));
+    const symbols = enclosingSymbols(code);
 
     ScopeEntry[] stack;
     auto header = appender!string;
@@ -425,7 +305,7 @@ private RevertSite[] scanRevertSites(string label, string src) {
                 arg = (e > k) ? code[k .. e - 1].strip : "";
             }
 
-            sites.put(RevertSite(label, fn, line,
+            sites.put(RevertSite(label, symbolAt(symbols, line - 1), fn, line,
                                  "…" ~ recv ~ ".revert"
                                  ~ (parens ? "(" ~ arg ~ ")" : ""),
                                  recv, arg.length != 0));
@@ -666,29 +546,27 @@ PROBE";
 // site changed.
 // ---------------------------------------------------------------------------
 
-private struct RevertRow { string file; string func; string why; }
-
-private static immutable RevertRow[] kRecorded = [
-    RevertRow("source/command_history.d", "revertImpl",
+private static immutable LedgerRow[] kRecorded = [
+    LedgerRow("CompositeCommand.revertImpl", 1,
         "CompositeCommand.revertImpl() — foreach_reverse over children_, nests "
       ~ "inside the caller's batch rather than opening its own. TASK 2500 "
       ~ "renamed the enclosing function: `Command.revert` is `final` now and "
       ~ "`revertImpl` is the override point, so the `func` column moved with "
       ~ "it. The call itself did not move and is still inside undo()'s batch."),
-    RevertRow("source/command_history.d", "undo",
+    LedgerRow("CommandHistory.undo", 1,
         "undo(), task 3694 common strict-LIFO tail — replaces the retired "
       ~ "ToolLifecycle / Case A / Case B calls and remains inside undo()'s "
       ~ "single beginDeliveryBatchGlobal()"),
-    RevertRow("source/command_history.d", "fire",
+    LedgerRow("CommandHistory.fire", 1,
         "fire()'s live-command revert before the re-fire's apply — inside "
       ~ "fire()'s own beginDeliveryBatchGlobal() at :1507"),
-    RevertRow("source/commands/copilot/cycle_finding.d", "revertImpl",
+    LedgerRow("CopilotCycleFindingCommand.revertImpl", 1,
         "delegates to the inner select-only command's revert()"),
-    RevertRow("source/commands/copilot/select_finding.d", "revertImpl",
+    LedgerRow("CopilotSelectFindingCommand.revertImpl", 1,
         "delegates to inner.revert(), then restores the panel's active row"),
-    RevertRow("source/commands/ai3d/generate.d", "revertImpl",
+    LedgerRow("Ai3dGenerate.revertImpl", 1,
         "delegates to importer.revert()"),
-    RevertRow("source/commands/image/commands.d", "revertImpl",
+    LedgerRow("ImageRemove.revertImpl", 1,
         "delegates to inner_.revert()"),
 ];
 
@@ -711,10 +589,10 @@ static assert(kRecorded.length == 7,
 // `.revert()` added to the SAME function would still be counted and would
 // still redden the gate (proven by the probe cell below).
 // ---------------------------------------------------------------------------
-private struct ExcludedRow { string file; string func; string why; }
+private struct ExcludedRow { string symbol; string why; }
 
 private static immutable ExcludedRow[] kNotCommandRevert = [
-    ExcludedRow("source/tools/transform/xfrm_transform.d", "commitEdit",
+    ExcludedRow("XfrmTransformTool.commitEdit",
         "`gh.revert()` on a `GestureHook`, not on a `Command` — a hook body "
       ~ "composed for `setCmdHooks`, not a call this census's batches govern"),
 ];
@@ -725,15 +603,14 @@ private static immutable ExcludedRow[] kNotCommandRevert = [
 /// probe cell below can exercise it on a synthetic map instead of the tree.
 private size_t[string] applyExclusions(size_t[string] found, const ExcludedRow[] exclusions) {
     foreach (ref ex; exclusions) {
-        const string key = ex.file ~ "\0" ~ ex.func;
-        const size_t cur = found.get(key, 0);
+        const size_t cur = found.get(ex.symbol, 0);
         assert(cur > 0, format(
             "excluded (file, function) pair %s :: %s has ZERO scanned "
           ~ "occurrences — the exclusion is now stale (the excluded call "
           ~ "moved or was deleted). Delete this exclusion row rather than "
           ~ "let it silently cover for a future, unrelated site.",
-            ex.file, ex.func));
-        if (cur <= 1) found.remove(key); else found[key] = cur - 1;
+            "(any file)", ex.symbol));
+        if (cur <= 1) found.remove(ex.symbol); else found[ex.symbol] = cur - 1;
     }
     return found;
 }
@@ -742,15 +619,15 @@ private size_t[string] applyExclusions(size_t[string] found, const ExcludedRow[]
 /// (file, function) pair — proven on a synthetic map before trusting it on
 /// the tree.
 unittest {
-    static immutable ExcludedRow[] ex = [ExcludedRow("f.d", "fn", "test-only")];
+    static immutable ExcludedRow[] ex = [ExcludedRow("fn", "test-only")];
 
-    size_t[string] one = ["f.d\0fn": 1];
+    size_t[string] one = ["fn": 1];
     assert(applyExclusions(one, ex).length == 0,
         "the sole excluded occurrence must be fully removed");
 
-    size_t[string] two = ["f.d\0fn": 2];
+    size_t[string] two = ["fn": 2];
     auto after = applyExclusions(two, ex);
-    assert(after.get("f.d\0fn", 0) == 1,
+    assert(after.get("fn", 0) == 1,
         "a second, unexcluded occurrence at the same key must SURVIVE the "
       ~ "exclusion, not be swallowed by it");
 }
@@ -759,22 +636,7 @@ unittest {
 // THE GATE.
 // ---------------------------------------------------------------------------
 unittest {
-    // Every recorded file must still exist — checked first, same reason
-    // `version_poll_census_test.d` checks it first: a moved module should be
-    // diagnosed as "row stale", not as "scanner found 0" further down.
-    bool[string] seenFiles;
-    foreach (ref r; kRecorded) seenFiles[r.file] = true;
-    foreach (f; seenFiles.byKey)
-        assert(buildPath(repoRoot, f).exists, format(
-            "the revert census records site(s) in %s and that file is gone. "
-          ~ "If the module moved, move the row(s); if the revert() call went "
-          ~ "with it, delete the row(s).", f));
-
     const scanned = scanTree();
-
-    size_t[string] expected;
-    foreach (ref r; kRecorded) expected[r.file ~ "\0" ~ r.func]
-        = expected.get(r.file ~ "\0" ~ r.func, 0) + 1;
 
     size_t[string] found;
     foreach (ref s; scanned.sites) {
@@ -786,29 +648,23 @@ unittest {
         // 2 at all, so 71 sites this project added between L0 and L4 were not
         // merely unaccounted — they were invisible.
         if (s.hasArg) continue;
-        found[s.file ~ "\0" ~ s.func] = found.get(s.file ~ "\0" ~ s.func, 0) + 1;
+        found[s.symbol] = found.get(s.symbol, 0) + 1;
     }
     found = applyExclusions(found, kNotCommandRevert);
 
-    auto bad = appender!string;
-    foreach (key, n; expected) {
-        const size_t got = found.get(key, 0);
-        if (got == n) continue;
-        auto parts = key.split0();
-        bad.put(format("\n    %s :: %s — recorded %d, scanner found %d",
-                        parts[0], parts[1], n, got));
-    }
-    foreach (key, n; found) {
-        if (key in expected) continue;
-        auto parts = key.split0();
-        bad.put(format("\n    %s :: %s — NOT IN THE RECORDED TABLE AT ALL, "
-                      ~ "scanner found %d site(s)", parts[0], parts[1], n));
-        foreach (ref s; scanned.sites)
-            if (s.file == parts[0] && s.func == parts[1])
-                bad.put(format("\n        found %s:%d", s.file, s.line));
-    }
+    LedgerHit[] hits;
+    foreach (ref s; scanned.sites)
+        if (!s.hasArg && s.symbol in found)
+            hits ~= LedgerHit(s.symbol, s.file, s.line, s.text);
+    // The one hook exclusion was removed from `found`; mirror that subtraction
+    // in the diagnostic hit stream before reconciliation.
+    foreach (i, ref s; scanned.sites)
+        if (!s.hasArg && s.symbol == kNotCommandRevert[0].symbol)
+            foreach_reverse (j; 0 .. hits.length)
+                if (hits[j].key == s.symbol) { hits = hits[0 .. j] ~ hits[j + 1 .. $]; break; }
+    const bad = reconcile(kRecorded, hits);
 
-    assert(bad.data.length == 0, format(
+    assert(bad.length == 0, format(
         "task 1932: the production `.revert()` call-site SET no longer "
       ~ "matches the recorded seven-row table.%s\n\n"
       ~ "  A `.revert()` call is not wrong by itself — all seven recorded "
@@ -819,10 +675,10 @@ unittest {
       ~ "which case add its row here), or it does not (in which case it "
       ~ "needs a batch of its own before it can be safe, same as the other "
       ~ "seven got).\n\n"
-      ~ "  Recorded: %d site(s) over %d (file, function) pair(s). Scanner: "
-      ~ "%d over %d.",
-        bad.data, kRecorded.length, expected.length,
-        scanned.sites.length, found.length));
+      ~ "  Recorded: %d site(s). Scanner: %d no-argument sites.",
+        bad, kRecorded.length, hits.length));
+    assert(hits.length == 7,
+        format("expected exactly 7 Command.revert sites, found %d", hits.length));
 
     // Vacuity floor, AFTER the real assertion — a scanner that lost its place
     // (an unterminated literal, a stripper bug) finds nothing and the gate
@@ -872,84 +728,119 @@ unittest {
 // its row, and the card records the number the total moved from and to.
 // ===========================================================================
 
-private struct UndoImageRow { string file; size_t n; }
-
-private static immutable UndoImageRow[] kUndoImage = [
-    UndoImageRow("source/commands/mesh/add_point.d", 1),
-    UndoImageRow("source/commands/mesh/array.d", 1),
-    UndoImageRow("source/commands/mesh/axis_slice.d", 4),
-    UndoImageRow("source/commands/mesh/bevel.d", 2),
-    UndoImageRow("source/commands/mesh/bridge.d", 2),
-    UndoImageRow("source/commands/mesh/cleanup.d", 1),
-    UndoImageRow("source/commands/mesh/clone_.d", 1),
-    UndoImageRow("source/commands/mesh/collapse.d", 2),
-    UndoImageRow("source/commands/mesh/cut.d", 2),
-    UndoImageRow("source/commands/mesh/delete.d", 1),
-    UndoImageRow("source/commands/mesh/detriangulate.d", 1),
-    UndoImageRow("source/commands/mesh/duplicate.d", 1),
-    UndoImageRow("source/commands/mesh/edge_crease.d", 3),
-    UndoImageRow("source/commands/mesh/edge_join.d", 2),
-    UndoImageRow("source/commands/mesh/edge_slice.d", 2),
-    UndoImageRow("source/commands/mesh/edge_slide.d", 1),
-    UndoImageRow("source/commands/mesh/face_extrude.d", 2),
-    UndoImageRow("source/commands/mesh/fix_orientation.d", 1),
-    UndoImageRow("source/commands/mesh/flip.d", 1),
-    UndoImageRow("source/commands/mesh/jitter.d", 1),
-    UndoImageRow("source/commands/mesh/linear_align.d", 1),
-    UndoImageRow("source/commands/mesh/loop_slice.d", 4),
-    UndoImageRow("source/commands/mesh/magnet.d", 1),
-    UndoImageRow("source/commands/mesh/make_polygon.d", 1),
-    UndoImageRow("source/commands/mesh/merge.d", 2),
-    UndoImageRow("source/commands/mesh/mirror.d", 1),
-    UndoImageRow("source/commands/mesh/morph.d", 6),
-    UndoImageRow("source/commands/mesh/poly_inset.d", 2),
-    UndoImageRow("source/commands/mesh/polygon_align.d", 1),
-    UndoImageRow("source/commands/mesh/position_undo.d", 1),
-    UndoImageRow("source/commands/mesh/quadruple.d", 1),
-    UndoImageRow("source/commands/mesh/quantize.d", 1),
-    UndoImageRow("source/commands/mesh/radial_align.d", 1),
-    UndoImageRow("source/commands/mesh/radial_array.d", 1),
-    UndoImageRow("source/commands/mesh/reduce.d", 2),
-    UndoImageRow("source/commands/mesh/remove.d", 1),
-    UndoImageRow("source/commands/mesh/screen_slice.d", 2),
-    UndoImageRow("source/commands/mesh/session_edit.d", 1),
-    UndoImageRow("source/commands/mesh/smooth.d", 1),
-    UndoImageRow("source/commands/mesh/smooth_shift.d", 2),
-    UndoImageRow("source/commands/mesh/spikey.d", 1),
-    UndoImageRow("source/commands/mesh/spin_edge.d", 1),
-    UndoImageRow("source/commands/mesh/split_edge.d", 1),
-    UndoImageRow("source/commands/mesh/split_face.d", 1),
-    UndoImageRow("source/commands/mesh/stroke_extrude.d", 2),
-    UndoImageRow("source/commands/mesh/sweep.d", 1),
-    UndoImageRow("source/commands/mesh/symmetrize.d", 1),
-    UndoImageRow("source/commands/mesh/thicken.d", 1),
-    UndoImageRow("source/commands/mesh/transform.d", 1),
-    UndoImageRow("source/commands/mesh/triple.d", 1),
-    UndoImageRow("source/commands/mesh/unify.d", 1),
-    UndoImageRow("source/commands/mesh/uv_map_util.d", 4),
-    UndoImageRow("source/commands/mesh/uv_pack.d", 2),
-    UndoImageRow("source/commands/mesh/uv_project.d", 1),
-    UndoImageRow("source/commands/mesh/uv_relax.d", 1),
-    UndoImageRow("source/commands/mesh/uv_transform.d", 3),
-    UndoImageRow("source/commands/mesh/uv_unwrap.d", 1),
-    UndoImageRow("source/commands/mesh/vert_join.d", 2),
-    UndoImageRow("source/commands/mesh/vert_merge.d", 1),
-    UndoImageRow("source/commands/mesh/vertex_bevel.d", 1),
-    UndoImageRow("source/commands/mesh/vertex_center.d", 1),
-    UndoImageRow("source/commands/mesh/vertex_extrude.d", 2),
-    UndoImageRow("source/commands/mesh/vertex_new.d", 1),
-    UndoImageRow("source/commands/mesh/vertex_set.d", 1),
-    UndoImageRow("source/commands/mesh/vertex_split.d", 1),
-    UndoImageRow("source/commands/mesh/weightmap.d", 4),
-    UndoImageRow("source/commands/mesh/weld_vertex_pair.d", 1),
+private static immutable LedgerRow[] kUndoImage = [
+    LedgerRow("MeshAddPoint.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshArray.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshAxisSlice.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshAxisSlice.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshJulienne.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshJulienne.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshBevel.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshBevel.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshBridge.settle", 1, "recorded undo-image revert"),
+    LedgerRow("MeshBridge.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCleanup.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshClone.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCollapse.accept", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCollapse.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCut.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCut.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshDelete.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshDetriangulate.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshDuplicate.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("EdgeCreaseSet.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("runCreaseWrites", 1, "recorded undo-image revert"),
+    LedgerRow("EdgeCreaseClear.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEdgeJoin.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEdgeJoin.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEdgeSlice.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEdgeSlice.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEdgeSlide.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshFaceExtrude.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshFaceExtrude.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshFixOrientation.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshFlip.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshJitter.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshLinearAlign.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshAddLoop.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshAddLoop.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshLoopSlice.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshLoopSlice.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshMagnet.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshMakePolygon.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshMergeFaces.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshMergeFaces.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshMirror.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphCreate.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphRemove.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphRename.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphSet.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphClear.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MorphApplyCmd.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshPolygonInset.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshPolygonInset.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshAlign.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("RecordedUndo", 1, "recorded undo-image revert"),
+    LedgerRow("MeshQuadruple.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshQuantize.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshRadialAlign.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshRadialArray.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshReduce.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshReduce.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshRemove.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshScreenSlice.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshScreenSlice.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSessionEdit.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSmooth.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSmoothShift.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSmoothShift.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSpikey.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSpinEdge.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSplitEdge.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSplitFace.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshStrokeExtrude.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshStrokeExtrude.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSweep.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSymmetrize.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshThicken.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshTransform.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshTriple.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshUnify.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvDelete.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvRename.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvCopy.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvClear.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvFit.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvPack.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvProject.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvRelax.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvFlip.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvMirror.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvRotate.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("UvUnwrap.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertJoin.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertJoin.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertMerge.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertexBevel.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshCenterVertices.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertexExtrude.evaluate", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertexExtrude.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertexNew.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshSetPosition.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshVertexSplit.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("WeightmapCreate.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("WeightmapRemove.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("WeightmapRename.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("WeightmapSet.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshWeldVertexPair.revertImpl", 1, "recorded undo-image revert"),
 ];
 
 /// The EXACT total, not a floor. A threshold would stay green over a file
 /// that stopped reverting for an unrelated reason while another gained a site.
 private enum size_t kUndoImageTotal = 104;
 
-static assert(kUndoImage.length == 67,
-    "the undo-image roster must hold exactly 67 files. It was 48 files / 71 "
+static assert(kUndoImage.length == 104,
+    "the undo-image roster must hold exactly 104 owning symbols. It was 48 files / 71 "
   ~ "sites when task 1903 stage N-d gave this set its first census; task 2500 "
   ~ "moved it to 67 / 104 by deleting `map_edit_undo.revertMapEdit` (and its "
   ~ "`…EmptyOk` twin) and putting the bare `undo_.revert(*mesh)` those "
@@ -971,12 +862,10 @@ unittest
 {
     const scanned = scanTree();
 
-    size_t[string] found;
     size_t total = 0;
-    string[string] recvOf;
+    LedgerHit[] hits;
     foreach (ref s; scanned.sites) {
         if (!s.hasArg) continue;
-        found[s.file] = found.get(s.file, 0) + 1;
         ++total;
         assert(canFind(kUndoImageReceivers, s.recv), format(
             "%s:%d — `%s.revert(...)` takes an argument and `%s` is not one of "
@@ -985,34 +874,22 @@ unittest
           ~ "`Command`-typed receiver has grown an argument, which would slip "
           ~ "past gate 1 and land here on purpose.",
             s.file, s.line, s.recv, s.recv, kUndoImageReceivers));
+        hits ~= LedgerHit(s.symbol, s.file, s.line, s.text);
     }
 
-    size_t[string] expected;
-    foreach (ref r; kUndoImage) expected[r.file] = r.n;
+    const bad = reconcile(kUndoImage, hits);
 
-    auto bad = appender!string;
-    foreach (file, n; expected) {
-        const size_t got = found.get(file, 0);
-        if (got != n)
-            bad.put(format("\n    %s — roster says %d, scanner found %d",
-                           file, n, got));
-    }
-    foreach (file, n; found)
-        if (file !in expected)
-            bad.put(format("\n    %s — NOT IN THE ROSTER AT ALL, scanner "
-                         ~ "found %d site(s)", file, n));
-
-    assert(bad.data.length == 0, format(
+    assert(bad.length == 0, format(
         "task 1903 stage N-d: the argument-bearing `.revert(` site set no "
-      ~ "longer matches the 67-file roster.%s\n\n"
+      ~ "longer matches the 104-symbol roster.%s\n\n"
       ~ "  These are undo IMAGES — `MeshEditDelta.revert(*mesh)` and "
       ~ "`RecordedUndo.revert(*mesh)` — not `Command.revert()`, which gate 1 "
       ~ "above owns. A new one is not wrong; it is UNACCOUNTED, and declaring "
       ~ "it here is what §S-8 item 1 of the seam plan asked every migration "
       ~ "commit to do and what no migration could do while the scanner "
       ~ "matched only the empty-paren spelling.\n\n"
-      ~ "  Roster: %d site(s) over %d file(s). Scanner: %d over %d.",
-        bad.data, kUndoImageTotal, kUndoImage.length, total, found.length));
+      ~ "  Roster: %d site(s) over %d symbols. Scanner: %d.",
+        bad, kUndoImageTotal, kUndoImage.length, total));
 
     assert(total == kUndoImageTotal, format(
         "the roster's per-file counts add up but the total is %d, not the "
@@ -1073,14 +950,6 @@ unittest
       ~ "double-counting");
 }
 
-/// Small local helper: split a `"\0"`-joined `(file, func)` key back apart.
-/// Kept next to its one caller rather than in the shared blank-strip section
-/// above, since nothing else in this file needs it.
-private string[2] split0(string key) {
-    foreach (i, c; key) if (c == '\0') return [key[0 .. i], key[i + 1 .. $]];
-    return [key, ""];
-}
-
 // ---------------------------------------------------------------------------
 // POSITIVE CONTROL — without this, block A above is vacuous on a broken
 // walk in a way the file-count floor cannot catch: if `blankNonCode` or
@@ -1111,8 +980,4 @@ unittest {
         "expected beginDeliveryBatchGlobal( to be CALLED exactly 1 time in "
       ~ "command.d (Command.apply); code-level scan found %d", nCommand));
 
-    // And the table rows' files are the ones the census actually depends on.
-    foreach (ref r; kRecorded)
-        assert(buildPath(repoRoot, r.file).exists,
-            format("recorded file missing: %s", r.file));
 }

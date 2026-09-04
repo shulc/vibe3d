@@ -60,16 +60,18 @@
 // ===========================================================================
 module tests.unit.l1_declined_census_test;
 
-import std.file   : readText;
+import std.algorithm : startsWith;
+import std.file   : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path   : buildPath, dirName;
+import std.string : splitLines;
 
-import tests.unit.version_poll_census_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
+    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
 import tests.unit.l0_declined_census_test  : countIdentIn, recorderCallsIn;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-private enum string kSetsFile = "source/commands/select/sets.d";
 private enum string kAnchor   = "PERMANENTLY DENSE";
 
 // ---------------------------------------------------------------------------
@@ -77,26 +79,32 @@ private enum string kAnchor   = "PERMANENTLY DENSE";
 // Each row says what the number is MADE OF, so a changed count is legible
 // rather than a number to re-baseline.
 // ---------------------------------------------------------------------------
-private struct DenseRow { string ident; size_t count; string why; }
-
-private immutable DenseRow[] kSetsDense = [
-    DenseRow("MeshSnapshot", 12,
-        "the `snapshot` import, plus a FIELD, a `.capture` and a `.init` reset "
-      ~ "or a `.filled` read in each of the four registry verbs (store / edit "
-      ~ "/ rename / delete). This is the dense capture all four declarations "
-      ~ "promise INSTEAD of a recorded delta"),
-    DenseRow("SelectionSnapshot", 3,
-        "the import, the field inside `Touched`, and the per-layer capture in "
-      ~ "`select.set.apply`. A different type from the four above BECAUSE it "
+private immutable LedgerRow[] kSetsDense = [
+    LedgerRow("SelectSetStore|MeshSnapshot", 1, "store field"),
+    LedgerRow("SelectSetStore.applyImpl|MeshSnapshot", 1, "store capture"),
+    LedgerRow("SelectSetEdit|MeshSnapshot", 1, "edit field"),
+    LedgerRow("SelectSetEdit.applyImpl|MeshSnapshot", 1, "edit capture"),
+    LedgerRow("SelectSetRename|MeshSnapshot", 1, "rename field"),
+    LedgerRow("SelectSetRename.applyImpl|MeshSnapshot", 3,
+        "the capture and two `.init` refusal resets; the field is the sibling "
+      ~ "row. This is the dense capture the declaration promises instead of "
+      ~ "a recorded delta"),
+    LedgerRow("SelectSetDelete|MeshSnapshot", 1, "delete field"),
+    LedgerRow("SelectSetDelete.applyImpl|MeshSnapshot", 2, "delete capture/reset"),
+    LedgerRow("SelectSetApply|SelectionSnapshot", 1, "Touched snapshot field"),
+    LedgerRow("SelectSetApply.applyImpl|SelectionSnapshot", 1,
+        "the per-layer capture in `select.set.apply`; the field inside "
+      ~ "`Touched` is the sibling row. A different type from the four above because it "
       ~ "captures the nine-plane selection object — Select bits, three "
       ~ "`*SelectionOrder` arrays and three counters — which is blocker 1 of "
       ~ "that command's declaration"),
-    DenseRow("Touched", 4,
+    LedgerRow("SelectSetApply|Touched", 2, "declaration and touched_ field"),
+    LedgerRow("SelectSetApply.applyImpl|Touched", 2,
         "the `struct Touched` declaration, the `Touched[] touched_` field, the "
       ~ "local in `applyImpl` and the append that fills it. Blocker 2 made of "
       ~ "code: this command accumulates a LIST of edited meshes"),
-    DenseRow("Document", 3,
-        "the import, the `Document* doc` field and the constructor parameter. "
+    LedgerRow("SelectSetApply|Document", 2,
+        "the `Document* doc` field and the constructor parameter. "
       ~ "The other half of blocker 2 — a `MeshEditDelta` is produced by a "
       ~ "batch over ONE `Mesh` and replayed into ONE `Mesh`, and no decision "
       ~ "about a Marks publisher changes that"),
@@ -104,54 +112,61 @@ private immutable DenseRow[] kSetsDense = [
 
 unittest // GATE S1 — no recorder call in sets.d
 {
-    const raw  = readText(buildPath(repoRoot, kSetsFile));
-    const code = blankNonCode(raw);
-
-    // Anti-vacuity FIRST, in its own words: a read that returned nothing
-    // makes every `length == 0` row below green for the wrong reason.
-    assert(raw.length >= 5000, format(
-        "L1 decline census: read only %d bytes of %s — the tree walk lost its "
-      ~ "place, and a scan that reads nothing passes every row silently.",
-        raw.length, kSetsFile));
-
-    const calls = recorderCallsIn(code);
+    LedgerHit[] calls;
+    size_t filesRead;
+    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const rel = de.name[repoRoot.length + 1 .. $];
+        const code = blankNonCode(readText(de.name));
+        const symbols = enclosingSymbols(code);
+        foreach (li, line; code.splitLines) {
+            const symbol = symbolAt(symbols, li);
+            if (!symbol.startsWith("SelectSet")) continue;
+            foreach (hit; recorderCallsIn(line))
+                calls ~= LedgerHit(symbol, rel, li + 1, hit);
+        }
+        ++filesRead;
+    }
     assert(calls.length == 0, format(
-        "L1 PERMANENTLY DENSE broken: %s now carries %d recorder-call "
-      ~ "signal(s) — %s. All five classes in that file declare, each with its "
+        "L1 PERMANENTLY DENSE broken: SelectSet declarations now carry %d recorder-call "
+      ~ "signal(s) — %s. All five classes declare, each with its "
       ~ "own reason, that they are NEVER migrated to a recorded "
       ~ "MeshEditDelta: four of them write the named-set REGISTRY, a plane no "
       ~ "MeshOpEntry.Kind carries as a payload, and select.set.apply has two "
       ~ "independent blockers on top of that. Migrating one of them is a "
       ~ "decision to REOPEN the owner's L1 ruling, not an edit: change the "
-      ~ "declaration first, in the same commit.", kSetsFile, calls.length, calls));
+      ~ "declaration first, in the same commit.", calls.length, calls));
+    assert(filesRead >= 200,
+        format("L1 decline census scanned only %d source files", filesRead));
 }
 
 unittest // GATE S2 — the dense captures the declarations promise are still there
 {
-    const raw  = readText(buildPath(repoRoot, kSetsFile));
-    const code = blankNonCode(raw);
-
-    foreach (r; kSetsDense) {
-        const n = countIdentIn(code, r.ident);
-        assert(n == r.count, format(
-            "L1 PERMANENTLY DENSE broken: %s mentions `%s` %d time(s) in "
-          ~ "code, recorded %d (%s). A count that went DOWN means the undo of "
-          ~ "one of these five commands is now restored from something else "
-          ~ "and its declaration is false; a count that went UP is a caller "
-          ~ "the declaration does not admit to. Move this number only "
-          ~ "together with the declaration it measures.",
-            kSetsFile, r.ident, n, r.count, r.why));
+    LedgerHit[] hits;
+    size_t anchorCount;
+    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const raw = readText(de.name);
+        const code = blankNonCode(raw);
+        const file = de.name[repoRoot.length + 1 .. $];
+        size_t before = hits.length;
+        foreach (ident; ["MeshSnapshot", "SelectionSnapshot", "Touched", "Document"])
+            foreach (hit; symbolTokenHits(code, file, ident, ident))
+                if (hit.key.startsWith("SelectSet"))
+                    hits ~= hit;
+        if (hits.length != before) anchorCount += countIdentIn(raw, kAnchor);
     }
+    const bad = reconcile(kSetsDense, hits);
+    assert(bad.length == 0, format("L1 dense-capture symbol ledger changed:%s", bad));
+    assert(hits.length == 19,
+        format("L1 dense-capture population changed: expected 19, found %d", hits.length));
 
     // THE WEAK ROW, labelled as such. A comment census can see a declaration
     // DELETED and can never see one that has drifted away from the code —
     // which is exactly why the two rows above, not this one, carry the gate.
-    const a = countIdentIn(raw, kAnchor);
-    assert(a == 5, format(
-        "L1 decline declaration missing or duplicated: %s carries the marker "
+    assert(anchorCount == 5, format(
+        "L1 decline declaration missing or duplicated: the owner files carry the marker "
       ~ "`%s` %d time(s), recorded 5 — one at each of the five command "
       ~ "classes. If you moved a declaration, move this number with it.",
-        kSetsFile, kAnchor, a));
+        kAnchor, anchorCount));
 }
 
 unittest // GATE S1/S2 instrument — the scanners can actually find something
@@ -242,10 +257,10 @@ unittest
         "GATE S3: a SelectionDelta revert RESTORED the selection order stamp "
       ~ "(vertexSelectionOrder[3] came back as %d, it was perturbed to 7 while "
       ~ "the selection was down). That is a real improvement — and it expires "
-      ~ "BLOCKER 1 of select.set.apply's PERMANENTLY DENSE declaration in %s, "
+      ~ "BLOCKER 1 of select.set.apply's PERMANENTLY DENSE declaration, "
       ~ "which says this kind carries mark words only and would lose the "
       ~ "order. Re-read that declaration: BLOCKER 2 (it binds a Document and "
       ~ "edits several meshes, while a MeshEditDelta binds one) is untouched "
       ~ "by this and still stands on its own.",
-        m.vertexSelectionOrder[3], kSetsFile));
+        m.vertexSelectionOrder[3]));
 }

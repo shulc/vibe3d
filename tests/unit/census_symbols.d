@@ -87,7 +87,7 @@
 // list of keywords cannot cover a construct whose head is user-chosen.
 module tests.unit.census_symbols;
 
-import std.algorithm : canFind;
+import std.algorithm : canFind, find;
 import std.array     : appender, join;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
@@ -516,6 +516,32 @@ package struct LedgerHit {
     string text;
 }
 
+/// Every non-overlapping occurrence of `needle` in an already-blanked CODE
+/// view, attributed to its enclosing declaration. `tag` is an optional
+/// discriminator for ledgers that count several predicates over the same
+/// declaration (for example `recordGestureEdit` and its three modes).
+package LedgerHit[] symbolTokenHits(string code, string file, string needle,
+                                    string tag = "")
+{
+    LedgerHit[] hits;
+    if (needle.length == 0) return hits;
+    const symbols = enclosingSymbols(code);
+    size_t from, line0;
+    while (from + needle.length <= code.length) {
+        auto rel = code[from .. $].find(needle);
+        if (rel.length == 0) break;
+        const pos = cast(size_t)(rel.ptr - code.ptr);
+        foreach (c; code[from .. pos]) if (c == '\n') ++line0;
+        size_t lineEnd = pos;
+        while (lineEnd < code.length && code[lineEnd] != '\n') ++lineEnd;
+        const symbol = symbolAt(symbols, line0);
+        hits ~= LedgerHit(tag.length ? symbol ~ "|" ~ tag : symbol,
+                          file, line0 + 1, code[pos .. lineEnd]);
+        from = pos + needle.length;
+    }
+    return hits;
+}
+
 /// Compare the found multiset against the recorded one. Returns `""` when
 /// they agree, and otherwise a block of findings, one paragraph each.
 ///
@@ -900,6 +926,16 @@ unittest {
     ];
     assert(reconcile(rows2, split).canFind("AMBIGUOUS"),
            reconcile(rows2, split));
+}
+
+unittest { // generic token attribution used by the remaining census families
+    enum sample = "void f() {\n  x();\n  x();\n}\nvoid g() {\n  x();\n}\n";
+    const hits = symbolTokenHits(blankNonCode(sample), "moved.d", "x(", "call");
+    assert(hits.length == 3, format("expected three token sites, got %s", hits));
+    assert(hits[0].key == "f|call" && hits[1].key == "f|call"
+        && hits[2].key == "g|call", format("wrong symbol attribution: %s", hits));
+    assert(hits[2].file == "moved.d" && hits[2].line == 6,
+        format("diagnostic address drifted: %s", hits[2]));
 }
 
 // ---------------------------------------------------------------------------

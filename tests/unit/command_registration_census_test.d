@@ -40,9 +40,10 @@ import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.regex     : regex, matchAll;
-import std.string    : strip;
+import std.string    : splitLines, strip;
 
-import tests.unit.app_with_app_scan_test : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -53,39 +54,6 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private bool isIdentChar(char c) {
     import std.ascii : isAlphaNum;
     return isAlphaNum(c) || c == '_';
-}
-
-/// Blank the balanced body of every `unittest { … }` in code that has already
-/// had its comments and literals blanked. `version (unittest) { … }` blocks are
-/// LEFT ALONE: they are production seams, not tests.
-private string blankUnittestBodies(string code) {
-    auto outBuf = code.dup;
-    size_t p = 0;
-    while (p + 8 <= outBuf.length) {
-        if (outBuf[p .. p + 8] == "unittest"
-            && (p == 0 || !isIdentChar(outBuf[p - 1]))
-            && (p + 8 == outBuf.length || !isIdentChar(outBuf[p + 8]))) {
-            size_t q = p + 8;
-            while (q < outBuf.length && (outBuf[q] == ' ' || outBuf[q] == '\t'
-                                         || outBuf[q] == '\n' || outBuf[q] == '\r')) q++;
-            if (q < outBuf.length && outBuf[q] == '{') {
-                size_t r = q + 1;
-                int depth = 1;
-                while (r < outBuf.length && depth > 0) {
-                    if (outBuf[r] == '{') depth++;
-                    else if (outBuf[r] == '}') depth--;
-                    if (depth == 0) break;
-                    r++;
-                }
-                foreach (k; q + 1 .. r)
-                    if (outBuf[k] != '\n') outBuf[k] = ' ';
-                p = r;
-                continue;
-            }
-        }
-        p++;
-    }
-    return cast(string) outBuf;
 }
 
 struct ClassDecl {
@@ -189,20 +157,20 @@ unittest { // `subclass` / `new Xy` boundaries
 /// purpose. Each row names the file that builds it; the gate checks that
 /// file still does, so a row whose reason went away turns red instead of
 /// quietly exempting a class nobody constructs any more.
-private struct BuiltElsewhere { string name; string file; string why; }
+private struct BuiltElsewhere { string name; string symbol; string why; }
 
 private static immutable BuiltElsewhere[] kBuiltElsewhere = [
-    BuiltElsewhere("LayerXformEdit", "source/app.d",
+    BuiltElsewhere("LayerXformEdit", "main",
         "the item-transform gizmo-drag undo record: app.d's "
       ~ "`layerXformEditFactory` closure hands it to the tool (task 0614 "
       ~ "Phase 4); it is a gesture's record, not a wire command"),
-    BuiltElsewhere("MeshMorphEdit", "source/app.d",
+    BuiltElsewhere("MeshMorphEdit", "main",
         "the routed-gesture morph undo record: app.d's `morphEditFactory` "
       ~ "(task 1069), the same shape as LayerXformEdit"),
-    BuiltElsewhere("MeshSelectionEdit", "source/input_router.d",
+    BuiltElsewhere("MeshSelectionEdit", "InputRouter.commitInteractiveSelEdit",
         "the click / paint selection undo record, constructed directly by "
       ~ "the router at the gesture end"),
-    BuiltElsewhere("ToolActivationCommand", "source/prepared_tool_transition.d",
+    BuiltElsewhere("ToolActivationCommand", "prepareArm",
         "the tool lifecycle record the prepared transition builds; never "
       ~ "dispatched by id"),
 ];
@@ -263,8 +231,38 @@ unittest {
              ~ "(215 measured at task 4066) — the instantiation match is broken",
                registered));
 
-    // The recorded rows are checked against the file each names, and against
-    // registration.d, so a row can neither rot nor shadow a real registration.
+    // The recorded rows are checked against their owning declaration, and
+    // against registration.d, so a row can neither rot nor shadow a real
+    // registration. The two merge constructors are part of the closed
+    // population too: otherwise a same-file move could hide a displaced
+    // external builder by keeping the raw class-name count unchanged.
+    static immutable LedgerRow[] builderLedger = [
+        LedgerRow("main|LayerXformEdit", 1, "app factory"),
+        LedgerRow("LayerXformEdit.mergeRunTail|LayerXformEdit", 1, "merge constructor"),
+        LedgerRow("main|MeshMorphEdit", 1, "app factory"),
+        LedgerRow("MeshMorphEdit.mergeRunTail|MeshMorphEdit", 1, "merge constructor"),
+        LedgerRow("InputRouter.commitInteractiveSelEdit|MeshSelectionEdit", 1, "selection gesture"),
+        LedgerRow("prepareArm|ToolActivationCommand", 1, "prepared transition"),
+    ];
+    LedgerHit[] builderHits;
+    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const code = blankUnittestBodies(blankNonCode(readText(de.name)));
+        const symbols = enclosingSymbols(code);
+        foreach (li, line; code.splitLines) foreach (ref row; kBuiltElsewhere) {
+            if (!instantiates(line, row.name)) continue;
+            const symbol = symbolAt(symbols, li);
+            builderHits ~= LedgerHit(symbol ~ "|" ~ row.name,
+                de.name[repoRoot.length + 1 .. $], li + 1, line.strip);
+        }
+    }
+    const builderProblems = reconcile(builderLedger, builderHits);
+    assert(builderProblems.length == 0, format(
+        "the closed construction ledger for the four deliberately unregistered "
+      ~ "commands changed:\n%s", builderProblems));
+    assert(builderHits.length == 6, format(
+        "expected exactly 6 construction sites for the four exemptions, found %d",
+        builderHits.length));
+
     foreach (ref row; kBuiltElsewhere) {
         bool declaredHere;
         foreach (ref d; derived) if (d.name == row.name && !d.isAbstract) declaredHere = true;
@@ -274,13 +272,13 @@ unittest {
         assert(!instantiates(regCode, row.name),
             row.name ~ " is recorded as built elsewhere but registration.d now "
           ~ "`new`s it — delete the row, the class is registered");
-        const where = buildPath(repoRoot, row.file);
-        assert(exists(where), row.file ~ " (named by the " ~ row.name ~ " row) is missing");
-        assert(instantiates(blankUnittestBodies(blankNonCode(readText(where))), row.name),
-            format("%s no longer builds %s, which this census exempts from "
-                 ~ "registration because of that site (%s). The class is now "
-                 ~ "constructed nowhere: register it, delete it, or record its "
-                 ~ "new builder here.", row.file, row.name, row.why));
+        bool hasBuilder;
+        foreach (ref hit; builderHits)
+            if (hit.key == row.symbol ~ "|" ~ row.name) hasBuilder = true;
+        assert(hasBuilder, format(
+            "%s no longer builds %s, which this census exempts from registration "
+          ~ "because of that site (%s). Register it, delete it, or record its "
+          ~ "new builder declaration here.", row.symbol, row.name, row.why));
     }
 
     // THE CANARY, and it is DIFFERENTIAL on purpose: one concrete class

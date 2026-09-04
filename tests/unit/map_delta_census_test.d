@@ -40,9 +40,11 @@ module tests.unit.map_delta_census_test;
 
 import std.file   : readText, exists, dirEntries, SpanMode;
 import std.format : format;
-import std.path   : buildPath, dirName, baseName;
+import std.path   : buildPath, dirName;
+import std.string : splitLines;
 
-import tests.unit.version_poll_census_test : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -68,9 +70,22 @@ private size_t countOccurrences(string hay, string needle) {
 /// TOP-LEVEL commas. This is the half of W-K12 that sees a substituted
 /// before-image: a caller that swaps `pre` for `live.data` keeps the count and
 /// changes this.
-private string[][] callArgs(string code, string needle) {
+private struct CallSite {
+    string symbol;
+    string[] args;
+    size_t line;
+}
+
+private size_t lineOf(string code, size_t pos) {
+    size_t line = 1;
+    foreach (c; code[0 .. pos]) if (c == '\n') ++line;
+    return line;
+}
+
+private CallSite[] callArgs(string code, string needle) {
     import std.string : strip;
-    string[][] outp;
+    CallSite[] outp;
+    const symbols = enclosingSymbols(code);
     size_t i = 0;
     const string pat = needle ~ "(";
     while (i + pat.length <= code.length) {
@@ -95,7 +110,8 @@ private string[][] callArgs(string code, string needle) {
             }
             ++j;
         }
-        outp ~= args;
+        const line = lineOf(code, i);
+        outp ~= CallSite(symbolAt(symbols, line - 1), args, line);
         i = j + 1;
     }
     return outp;
@@ -184,10 +200,10 @@ unittest
 // The argument-TEXT half is owed by L1-a (`recordMapCreate*`) and L1-e
 // (`recordMapValueDiff`); its machinery is proven by the probe cell below.
 // ===========================================================================
-/// One symbol's EXPECTED occurrence map over `source/**`, in a code view with
-/// comments, strings and unittest bodies blanked. `file` is a basename; a
-/// symbol absent from every other file is the closed half of the claim.
-private struct SymRow { string sym; string file; size_t n; string why; }
+private immutable string[] kMapRecorders = [
+    "recordMapValueDiff", "recordMapValuesOwned", "recordMapCreate",
+    "recordMapCreateFilledOwned", "recordMapRemoveOwned", "recordMapRename",
+];
 
 unittest
 {
@@ -197,74 +213,58 @@ unittest
     // which is why that method reports WHICH spelling won), and `morph.d` is
     // the kind's FIRST PRODUCTION CALLER — Stage L1-a, six calls across five
     // command classes.
-    static immutable SymRow[] rows = [
-        SymRow("recordMapValueDiff(",         "mesh.d",             1, "its declaration on MeshEditBatch"),
-        SymRow("recordMapValuesOwned(",       "mesh_edit_delta.d",  1, "its declaration on MeshEditTracker"),
-        SymRow("recordMapValuesOwned(",       "mesh.d",             2, "recordMapValueDiff's WholeArray and Listed arms"),
-        SymRow("recordMapValuesOwned(",       "morph.d",            2, "mesh.morph.set (one element) and mesh.morph.clear (the selected set) — both `Listed`, both recorded from a KNOWN index set rather than diffed"),
-        SymRow("recordMapCreate(",            "mesh_edit_delta.d",  1, "its declaration"),
-        SymRow("recordMapCreate(",            "morph.d",            1, "mesh.morph.create's RELATIVE branch — created empty, so DefaultInit is faithful in both directions"),
-        SymRow("recordMapCreateFilledOwned(", "mesh_edit_delta.d",  1, "its declaration"),
-        SymRow("recordMapCreateFilledOwned(", "morph.d",            1, "mesh.morph.create's ABSOLUTE branch — created DENSE, so the content must ride or a forward replay loses the base snapshot"),
-        SymRow("recordMapRemoveOwned(",       "mesh_edit_delta.d",  1, "its declaration"),
-        SymRow("recordMapRemoveOwned(",       "morph.d",            1, "mesh.morph.remove"),
-        SymRow("recordMapRename(",            "mesh_edit_delta.d",  1, "its declaration"),
-        SymRow("recordMapRename(",            "morph.d",            1, "mesh.morph.rename — two strings, which is the whole reason the arm exists"),
+    static immutable LedgerRow[] rows = [
+        LedgerRow("MeshEditBatch|recordMapValueDiff", 1, "recorder declaration"),
+        LedgerRow("MeshEditTracker|recordMapValuesOwned", 1, "recorder declaration"),
+        LedgerRow("MeshEditBatch.recordMapValueDiff|recordMapValuesOwned", 2, "sparse and dense arms"),
+        LedgerRow("MorphSet.setKernel|recordMapValuesOwned", 1, "mesh.morph.set"),
+        LedgerRow("MorphClear.clearKernel|recordMapValuesOwned", 1, "mesh.morph.clear"),
+        LedgerRow("WeightmapSet.setKernel|recordMapValuesOwned", 1, "mesh.weightmap.set"),
+        LedgerRow("UvClear.clearKernel|recordMapValuesOwned", 1, "uv.clear"),
 
-        // ---- Stage L1-b (task 2250): the other three groups ---------------
-        // `weightmap.d` — four commands, one recorder call each, one arm each.
-        SymRow("recordMapCreate(",            "weightmap.d",        1, "mesh.weightmap.create — created zero-filled with no presence channel, so DefaultInit is faithful in BOTH directions and carries no array at all"),
-        SymRow("recordMapRemoveOwned(",       "weightmap.d",        1, "mesh.weightmap.remove — the whole map plus its registry SLOT (`W` sits at index 1 of the parity stand)"),
-        SymRow("recordMapRename(",            "weightmap.d",        1, "mesh.weightmap.rename"),
-        SymRow("recordMapValuesOwned(",       "weightmap.d",        1, "mesh.weightmap.set — ONE element, `Listed`, recorded from a known index rather than diffed. Mode A's extreme: twelve bytes of arrays"),
-        // `uv_map_util.d` — the UV registry group.
-        SymRow("recordMapRemoveOwned(",       "uv_map_util.d",      1, "uv.delete — whole map plus the SLOT (`uv2` sits at index 2)"),
-        SymRow("recordMapRename(",            "uv_map_util.d",      1, "uv.rename"),
-        SymRow("recordMapCreateFilledOwned(", "uv_map_util.d",      1, "uv.copy — it CREATES its target AND FILLS it, so the content must ride or a forward replay reproduces an empty channel of the right length"),
-        SymRow("recordMapValuesOwned(",       "uv_map_util.d",      1, "uv.clear — `WholeArray`, never sparsified (plan §K.5 rule 5: every corner is a candidate, so the sparse form is strictly larger)"),
-        // The five UV VALUE files — the POST-HOC door, one call per class
-        // except the two hybrids, which also own a Create.
-        SymRow("recordMapValueDiff(",         "uv_transform.d",     3, "uv.flip / uv.mirror / uv.rotate — one per class"),
-        SymRow("recordMapValueDiff(",         "uv_pack.d",          2, "uv.fit / uv.pack. `uv.pack` records ONE entry for all its islands: the recorder diffs the finished map, so the per-island structure of the forward is invisible to the undo"),
-        SymRow("recordMapValueDiff(",         "uv_relax.d",         1, "uv.relax"),
-        SymRow("recordMapValueDiff(",         "uv_project.d",       1, "uv.project's EXISTING-map branch"),
-        SymRow("recordMapCreateFilledOwned(", "uv_project.d",       1, "…and its CREATED branch. Two spellings in one file is what a hybrid IS, and the branch is invisible after the write — once it has run the map exists either way"),
-        SymRow("recordMapValueDiff(",         "uv_unwrap.d",        1, "uv.unwrap's EXISTING-map branch"),
-        SymRow("recordMapCreateFilledOwned(", "uv_unwrap.d",        1, "…and its CREATED branch, through the same one `recordUnwrap` site that the seed-only arm uses — so the two arms cannot drift into recording different shapes"),
+        LedgerRow("MeshEditTracker|recordMapCreate", 1, "recorder declaration"),
+        LedgerRow("MorphCreate.createKernel|recordMapCreate", 1, "relative morph create"),
+        LedgerRow("WeightmapCreate.createKernel|recordMapCreate", 1, "weight-map create"),
+        LedgerRow("runCreaseWrites|recordMapCreate", 1, "crease-map create"),
 
-        // ---- Stage L5-d (task 2300): the crease pair ----------------------
-        // ONE call each, both inside the shared `runCreaseWrites`, which is
-        // why the counts are 1 and not 2 despite two command classes: the
-        // classes differ only in the weight they pass. This is the kind's
-        // first EDGE-domain caller, and the first production execution of
-        // `owesTopologyBump`'s creaseWeight arm (W-K9).
-        SymRow("recordMapCreate(",            "edge_crease.d",      1, "mesh.edgeCrease.set / .clear on a mesh that has no crease map yet — created zero-filled with no presence channel, so DefaultInit is faithful in BOTH directions. Without it the undo leaves an empty crease map registered where the snapshot arm removed it, which the frozen L5 oracle reads on `meshMaps`"),
-        SymRow("recordMapValueDiff(",         "edge_crease.d",      1, "the POST-HOC door — `setCreaseWeight` has already written, so the diff against the pre-image IS the record. Called on the FAILURE arm too: the writes have already landed by the time an edge fails, and the delta is then the only thing that can roll the half-loop back"),
+        LedgerRow("MeshEditTracker|recordMapCreateFilledOwned", 1, "recorder declaration"),
+        LedgerRow("MorphCreate.createKernel|recordMapCreateFilledOwned", 1, "absolute morph create"),
+        LedgerRow("UvCopy.copyKernel|recordMapCreateFilledOwned", 1, "uv.copy"),
+        LedgerRow("UvProject.kernel|recordMapCreateFilledOwned", 1, "uv.project created arm"),
+        LedgerRow("UvUnwrap.recordUnwrap|recordMapCreateFilledOwned", 1, "uv.unwrap created arm"),
+
+        LedgerRow("MeshEditTracker|recordMapRemoveOwned", 1, "recorder declaration"),
+        LedgerRow("MorphRemove.removeKernel|recordMapRemoveOwned", 1, "mesh.morph.remove"),
+        LedgerRow("WeightmapRemove.removeKernel|recordMapRemoveOwned", 1, "mesh.weightmap.remove"),
+        LedgerRow("UvDelete.deleteKernel|recordMapRemoveOwned", 1, "uv.delete"),
+
+        LedgerRow("MeshEditTracker|recordMapRename", 1, "recorder declaration"),
+        LedgerRow("MorphRename.renameKernel|recordMapRename", 1, "mesh.morph.rename"),
+        LedgerRow("WeightmapRename.renameKernel|recordMapRename", 1, "mesh.weightmap.rename"),
+        LedgerRow("UvRename.renameKernel|recordMapRename", 1, "uv.rename"),
+
+        LedgerRow("runCreaseWrites|recordMapValueDiff", 1, "crease writes"),
+        LedgerRow("UvFit.kernel|recordMapValueDiff", 1, "uv.fit"),
+        LedgerRow("UvPack.kernel|recordMapValueDiff", 1, "uv.pack"),
+        LedgerRow("UvProject.kernel|recordMapValueDiff", 1, "uv.project existing arm"),
+        LedgerRow("UvRelax.kernel|recordMapValueDiff", 1, "uv.relax"),
+        LedgerRow("UvFlip.kernel|recordMapValueDiff", 1, "uv.flip"),
+        LedgerRow("UvMirror.kernel|recordMapValueDiff", 1, "uv.mirror"),
+        LedgerRow("UvRotate.kernel|recordMapValueDiff", 1, "uv.rotate"),
+        LedgerRow("UvUnwrap.recordUnwrap|recordMapValueDiff", 1, "uv.unwrap existing arm"),
     ];
 
-    // The symbols, DEDUPED — most are listed under several files and counting
-    // one once per ROW would multiply every one of its counts.
-    bool[string] symSet;
-    foreach (ref r; rows) symSet[r.sym] = true;
-    auto syms = symSet.keys;
 
     size_t scannedFiles = 0, scannedBytes = 0;
-    size_t[string] got;      // "sym@file" -> count
-    string[] extras;
+    LedgerHit[] hits;
 
     foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         const string code = codeView(readText(de.name));
         ++scannedFiles;
         scannedBytes += code.length;
-        const string bn = baseName(de.name);
-        foreach (sym; syms) {
-            const size_t n = countOccurrences(code, sym);
-            if (n == 0) continue;
-            got[sym ~ "@" ~ bn] = got.get(sym ~ "@" ~ bn, 0) + n;
-            bool named = false;
-            foreach (ref q; rows) if (q.sym == sym && q.file == bn) named = true;
-            if (!named) extras ~= format("%s in %s x%d", sym, bn, n);
-        }
+        const string rel = de.name[repoRoot.length + 1 .. $];
+        foreach (recorder; kMapRecorders)
+            hits ~= symbolTokenHits(code, rel, recorder ~ "(", recorder);
     }
 
     // The floor: a broken walk reports zero everywhere and passes.
@@ -273,17 +273,9 @@ unittest
       ~ "is broken and every count below is a zero it did not earn",
         scannedFiles, scannedBytes));
 
-    foreach (ref r; rows) {
-        const string key = r.sym ~ "@" ~ r.file;
-        const size_t n = got.get(key, 0);
-        assert(n == r.n, format(
-            "census: `%s` occurs %d times in source/%s, the table says %d (%s).",
-            r.sym, n, r.file, r.n, r.why));
-    }
-
-    assert(extras.length == 0, format(
-        "census: a map recorder is called from a file the table does not name: "
-      ~ "%s.\n"
+    const problems = reconcile(rows, hits);
+    assert(problems.length == 0, format(
+        "census: the map-recorder symbol ledger changed.%s\n"
       ~ "The recorder callers of Kind.MapValueDelta are ENUMERATED, not merely "
       ~ "counted: `commands/mesh/morph.d` (Stage L1-a, six calls), "
       ~ "`recordMapValueDiff`'s own two arms in mesh.d, and Stage L1-b's "
@@ -294,7 +286,9 @@ unittest
       ~ "TOGETHER WITH the exact TEXT of each one's before-image / content "
       ~ "argument in the block below, because a count row stays green when the "
       ~ "ARGUMENT changes (L0-b, M-b4) and the two create spellings differ by "
-      ~ "exactly that argument.", extras));
+      ~ "exactly that argument.", problems));
+    assert(hits.length == 34,
+        format("map-recorder census expected 34 sites, found %d", hits.length));
 }
 
 // ===========================================================================
@@ -316,9 +310,8 @@ unittest
 // here and is meant to.
 // ===========================================================================
 private struct ArgRow {
-    string file;    // basename under source/
+    string symbol;  // enclosing declaration; stable when its body moves
     string sym;     // recorder name, no paren
-    size_t call;    // which call in file order
     size_t arg;     // 0-based argument index
     string want;    // exact stripped text
     string why;
@@ -329,46 +322,46 @@ unittest
     static immutable ArgRow[] args = [
         // mesh.morph.set — one element, both channels, images read from the
         // LIVE map on both sides of the write.
-        ArgRow("morph.d", "recordMapValuesOwned", 0, 6, "before.dup",
+        ArgRow("MorphSet.setKernel", "recordMapValuesOwned", 6, "before.dup",
             "the pre-op components, captured BEFORE setMorphValue runs"),
-        ArgRow("morph.d", "recordMapValuesOwned", 0, 7, "after.dup",
+        ArgRow("MorphSet.setKernel", "recordMapValuesOwned", 7, "after.dup",
             "the post-op components, READ BACK from the live map rather than "
           ~ "reconstructed from the command's parameters"),
-        ArgRow("morph.d", "recordMapValuesOwned", 0, 8, "[presBefore]",
+        ArgRow("MorphSet.setKernel", "recordMapValuesOwned", 8, "[presBefore]",
             "the presence bit as it was. Swap this for [presAfter] and every "
           ~ "float still restores while the presence half is lost"),
-        ArgRow("morph.d", "recordMapValuesOwned", 0, 9, "[presAfter]",
+        ArgRow("MorphSet.setKernel", "recordMapValuesOwned", 9, "[presAfter]",
             "the presence bit as it now is"),
         // mesh.morph.clear — the selected set, four pre-sized arrays.
-        ArgRow("morph.d", "recordMapValuesOwned", 1, 6, "before",
+        ArgRow("MorphClear.clearKernel", "recordMapValuesOwned", 6, "before",
             "the pre-op values of the cleared elements"),
-        ArgRow("morph.d", "recordMapValuesOwned", 1, 7, "after",
+        ArgRow("MorphClear.clearKernel", "recordMapValuesOwned", 7, "after",
             "the post-clear values, gathered from the live map so a refused "
           ~ "element is recorded as it really is"),
-        ArgRow("morph.d", "recordMapValuesOwned", 1, 8, "pb",
+        ArgRow("MorphClear.clearKernel", "recordMapValuesOwned", 8, "pb",
             "the presence bits as they were. THIS is the argument mutation M1 "
           ~ "substitutes; the count row stays green under it"),
-        ArgRow("morph.d", "recordMapValuesOwned", 1, 9, "pa",
+        ArgRow("MorphClear.clearKernel", "recordMapValuesOwned", 9, "pa",
             "the presence bits after the clear — all zero for every element "
           ~ "the kernel actually reached"),
         // mesh.morph.create, absolute — the forward-faithful content.
-        ArgRow("morph.d", "recordMapCreateFilledOwned", 0, 4, "m.data.dup",
+        ArgRow("MorphCreate.createKernel", "recordMapCreateFilledOwned", 4, "m.data.dup",
             "the created content, carried so a FORWARD replay (redo through "
           ~ "MeshSessionEdit) reproduces the dense base snapshot"),
-        ArgRow("morph.d", "recordMapCreateFilledOwned", 0, 5, "m.present.dup",
+        ArgRow("MorphCreate.createKernel", "recordMapCreateFilledOwned", 5, "m.present.dup",
             "…and its presence channel, for the same reason"),
         // mesh.morph.remove — the whole map, plus the registry slot.
-        ArgRow("morph.d", "recordMapRemoveOwned", 0, 4, "slot",
+        ArgRow("MorphRemove.removeKernel", "recordMapRemoveOwned", 4, "slot",
             "the map's index in meshMaps BEFORE the splice. Pass uint.max "
           ~ "here and the undo restores the map's CONTENT at the wrong "
           ~ "position, which meshPlanesJson reads and the frozen oracle sees"),
-        ArgRow("morph.d", "recordMapRemoveOwned", 0, 5, "data",
+        ArgRow("MorphRemove.removeKernel", "recordMapRemoveOwned", 5, "data",
             "the pre-op values, dup'd before removeMeshMap splices them away"),
-        ArgRow("morph.d", "recordMapRemoveOwned", 0, 6, "pres",
+        ArgRow("MorphRemove.removeKernel", "recordMapRemoveOwned", 6, "pres",
             "…and the presence channel"),
         // mesh.morph.rename — two strings and nothing else.
-        ArgRow("morph.d", "recordMapRename", 0, 0, "from_", "the old name"),
-        ArgRow("morph.d", "recordMapRename", 0, 1, "to_",   "the new name"),
+        ArgRow("MorphRename.renameKernel", "recordMapRename", 0, "from_", "the old name"),
+        ArgRow("MorphRename.renameKernel", "recordMapRename", 1, "to_",   "the new name"),
 
         // ===================================================================
         // STAGE L1-b (task 2250).
@@ -376,54 +369,54 @@ unittest
         // --- weightmap.d ---------------------------------------------------
         // mesh.weightmap.set — one element, both images read from the LIVE map
         // on either side of a write this command does not own.
-        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 6, "[before]",
+        ArgRow("WeightmapSet.setKernel", "recordMapValuesOwned", 6, "[before]",
             "the pre-op value, captured BEFORE setVertexWeight runs"),
-        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 7, "[after]",
+        ArgRow("WeightmapSet.setKernel", "recordMapValuesOwned", 7, "[after]",
             "the post-op value, READ BACK from the live map rather than "
           ~ "reconstructed from the command's own `weight_` parameter — the "
           ~ "write goes through a Mesh setter, and an entry whose after-image "
           ~ "disagrees with the mesh writes the wrong thing on redo"),
-        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 8,
+        ArgRow("WeightmapSet.setKernel", "recordMapValuesOwned", 8,
             "tracks ? [presBefore] : null",
             "the presence channel, decided by the KIND and never by the "
           ~ "array. A weight map does not track presence, and "
           ~ "`patchMapValuesWrite` REFUSES an entry that carries the channel "
           ~ "anyway — a refusal applies nothing and still answers true"),
-        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 9,
+        ArgRow("WeightmapSet.setKernel", "recordMapValuesOwned", 9,
             "tracks ? [presAfter] : null", "…and its after-image"),
         // mesh.weightmap.remove — the whole map plus the registry slot.
-        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 4, "slot",
+        ArgRow("WeightmapRemove.removeKernel", "recordMapRemoveOwned", 4, "slot",
             "the map's index in meshMaps BEFORE the splice. `uint.max` here "
           ~ "restores the map's CONTENT at the END of the registry: measured "
           ~ "on the frozen oracle, which reddens on "
           ~ "[mesh.weightmap.remove/postUndo] plane 'meshMaps'"),
-        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 5, "data",
+        ArgRow("WeightmapRemove.removeKernel", "recordMapRemoveOwned", 5, "data",
             "the pre-op values, dup'd before removeMeshMap splices them away"),
-        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 6, "pres",
+        ArgRow("WeightmapRemove.removeKernel", "recordMapRemoveOwned", 6, "pres",
             "…and the presence channel, empty for this kind but carried "
           ~ "through the same field rather than hard-coded to null"),
         // --- uv_map_util.d -------------------------------------------------
-        ArgRow("uv_map_util.d", "recordMapRemoveOwned", 0, 4, "slot",
+        ArgRow("UvDelete.deleteKernel", "recordMapRemoveOwned", 4, "slot",
             "uv.delete's registry slot. `uint.max` reddens the frozen oracle "
           ~ "on [uv.delete/postUndo] plane 'meshMaps'"),
-        ArgRow("uv_map_util.d", "recordMapCreateFilledOwned", 0, 4, "dst.data.dup",
+        ArgRow("UvCopy.copyKernel", "recordMapCreateFilledOwned", 4, "dst.data.dup",
             "uv.copy carries the COPIED content: the undo needs only a name, "
           ~ "but MeshSessionEdit replays a delta FORWARD for redo, and a "
           ~ "DefaultInit create would bring the map back correctly shaped and "
           ~ "full of zeros"),
-        ArgRow("uv_map_util.d", "recordMapCreateFilledOwned", 0, 5, "dst.present.dup",
+        ArgRow("UvCopy.copyKernel", "recordMapCreateFilledOwned", 5, "dst.present.dup",
             "…and its presence channel"),
-        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 5, "null",
+        ArgRow("UvClear.clearKernel", "recordMapValuesOwned", 5, "null",
             "uv.clear addresses WholeArray, so it lists NO indices. A "
           ~ "`Listed` entry with an empty index list is refused, which is the "
           ~ "empty-means-all trap the addressing enum exists to close"),
-        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 6, "before",
+        ArgRow("UvClear.clearKernel", "recordMapValuesOwned", 6, "before",
             "THE ARGUMENT THIS WHOLE BLOCK EXISTS FOR. uv.clear's forward "
           ~ "result is all zeros, so passing the POST-clear image here makes "
           ~ "the undo zero-fill — every length still matches, the entry still "
           ~ "binds, and `revert()` still answers true. Stage F1 measured "
           ~ "exactly that failure"),
-        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 7, "m.data.dup",
+        ArgRow("UvClear.clearKernel", "recordMapValuesOwned", 7, "m.data.dup",
             "…and the after-image, read from the live map"),
         // --- the five UV value files: the POST-HOC door --------------------
         // Two arguments per call. Arg 1 is the pre-op image — substitute the
@@ -432,52 +425,52 @@ unittest
         // restores nothing and reports success. Arg 3 is the publish class —
         // drop it and the default `Maps` applies, moving what
         // `ChangeBus.docRevision()` counts, on the RECORDED arm only.
-        ArgRow("uv_transform.d", "recordMapValueDiff", 0, 1, "pre", "uv.flip"),
-        ArgRow("uv_transform.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.flip's class"),
-        ArgRow("uv_transform.d", "recordMapValueDiff", 1, 1, "pre", "uv.mirror"),
-        ArgRow("uv_transform.d", "recordMapValueDiff", 1, 3, "MeshEditScope.Material", "uv.mirror's class"),
-        ArgRow("uv_transform.d", "recordMapValueDiff", 2, 1, "pre", "uv.rotate"),
-        ArgRow("uv_transform.d", "recordMapValueDiff", 2, 3, "MeshEditScope.Material", "uv.rotate's class"),
-        ArgRow("uv_pack.d", "recordMapValueDiff", 0, 1, "pre", "uv.fit"),
-        ArgRow("uv_pack.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.fit's class"),
-        ArgRow("uv_pack.d", "recordMapValueDiff", 1, 1, "pre", "uv.pack"),
-        ArgRow("uv_pack.d", "recordMapValueDiff", 1, 3, "MeshEditScope.Material", "uv.pack's class"),
-        ArgRow("uv_relax.d", "recordMapValueDiff", 0, 1, "pre", "uv.relax"),
-        ArgRow("uv_relax.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.relax's class"),
-        ArgRow("uv_project.d", "recordMapValueDiff", 0, 1, "preData",
+        ArgRow("UvFlip.kernel", "recordMapValueDiff", 1, "pre", "uv.flip"),
+        ArgRow("UvFlip.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.flip's class"),
+        ArgRow("UvMirror.kernel", "recordMapValueDiff", 1, "pre", "uv.mirror"),
+        ArgRow("UvMirror.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.mirror's class"),
+        ArgRow("UvRotate.kernel", "recordMapValueDiff", 1, "pre", "uv.rotate"),
+        ArgRow("UvRotate.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.rotate's class"),
+        ArgRow("UvFit.kernel", "recordMapValueDiff", 1, "pre", "uv.fit"),
+        ArgRow("UvFit.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.fit's class"),
+        ArgRow("UvPack.kernel", "recordMapValueDiff", 1, "pre", "uv.pack"),
+        ArgRow("UvPack.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.pack's class"),
+        ArgRow("UvRelax.kernel", "recordMapValueDiff", 1, "pre", "uv.relax"),
+        ArgRow("UvRelax.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.relax's class"),
+        ArgRow("UvProject.kernel", "recordMapValueDiff", 1, "preData",
             "uv.project's EXISTING-map branch. Named `preData` and not `pre` "
           ~ "because `pre` in that file is the map POINTER resolved before the "
           ~ "batch — passing it would not even compile, which is the only "
           ~ "reason this row differs from its siblings"),
-        ArgRow("uv_project.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.project's class"),
-        ArgRow("uv_unwrap.d", "recordMapValueDiff", 0, 1, "preData",
+        ArgRow("UvProject.kernel", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.project's class"),
+        ArgRow("UvUnwrap.recordUnwrap", "recordMapValueDiff", 1, "preData",
             "uv.unwrap's EXISTING-map branch — and this image has a SECOND "
           ~ "job: it is also the rollback the kernel applies when `uvUnwrap` "
           ~ "refuses AFTER the seed write, which is why it is taken on every "
           ~ "arm and not behind `recording()`"),
-        ArgRow("uv_unwrap.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.unwrap's class"),
+        ArgRow("UvUnwrap.recordUnwrap", "recordMapValueDiff", 3, "MeshEditScope.Material", "uv.unwrap's class"),
 
         // ===================================================================
         // STAGE L5-d (task 2300) — the crease pair.
         // ===================================================================
-        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 1, "pre",
+        ArgRow("runCreaseWrites", "recordMapValueDiff", 1, "pre",
             "the pre-op crease values, dup'd from the live map AFTER it is "
           ~ "created and BEFORE the first setCreaseWeight. Replace this with "
           ~ "`mm.data` — the LIVE array — and the entry's before-image equals "
           ~ "its after-image: the undo restores nothing and reports success, "
           ~ "which is the exact failure this half of the census exists for"),
-        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 2, "null",
+        ArgRow("runCreaseWrites", "recordMapValueDiff", 2, "null",
             "no presence channel: `kindInfo(creaseWeight).tracksPresence` is "
           ~ "false, and `recordMapValueDiff` refuses an entry that carries the "
           ~ "channel anyway — a refusal applies nothing and still answers true"),
-        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material",
+        ArgRow("runCreaseWrites", "recordMapValueDiff", 3, "MeshEditScope.Material",
             "the class `setCreaseWeight` itself publishes, so the recorded arm "
           ~ "stamps exactly what the redo and the pre-migration path stamped"),
-        ArgRow("edge_crease.d", "recordMapCreate", 0, 1, "mm.dim",
+        ArgRow("runCreaseWrites", "recordMapCreate", 1, "mm.dim",
             "the shape terms are read back off the LIVE map rather than "
           ~ "hard-coded from `kindInfo`, so a registry that produced something "
           ~ "else cannot be described as something it is not"),
-        ArgRow("edge_crease.d", "recordMapCreate", 0, 3, "mm.kind",
+        ArgRow("runCreaseWrites", "recordMapCreate", 3, "mm.kind",
             "the KIND, which the replay uses as a refusal term — and it is "
           ~ "load-bearing here rather than a sanity check: an Edge/dim-1 map "
           ~ "of the WRONG kind binds on every other term"),
@@ -488,31 +481,43 @@ unittest
     // calls would pass every row below by never entering the loop.
     assert(args.length > 0, "the argument table is empty");
 
+    bool[string] recorderSet;
+    foreach (ref r; args) recorderSet[r.sym] = true;
+    CallSite[][string] bySymbol;
+    size_t scannedFiles;
+    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        const code = codeView(readText(de.name));
+        ++scannedFiles;
+        foreach (recorder; recorderSet.keys)
+            foreach (site; callArgs(code, recorder))
+                bySymbol[site.symbol ~ "|" ~ recorder] ~= site;
+    }
+
     size_t checked = 0;
     foreach (ref r; args) {
-        const string path = buildPath(repoRoot, "source", "commands", "mesh", r.file);
-        assert(exists(path), format(
-            "census: %s is missing — the argument scan would report nothing", path));
-        auto calls = callArgs(codeView(readText(path)), r.sym);
-        assert(r.call < calls.length, format(
-            "census: %s holds %d call(s) to `%s`; the table names call #%d. A "
-          ~ "call that MOVED is a call whose arguments nobody is checking any "
-          ~ "more.", r.file, calls.length, r.sym, r.call));
-        auto a = calls[r.call];
+        const key = r.symbol ~ "|" ~ r.sym;
+        const calls = bySymbol.get(key, null);
+        assert(calls.length == 1, format(
+            "census: `%s` holds %d call(s) to `%s`, expected exactly one. "
+          ~ "Moving the declaration does not change this key; adding, removing, "
+          ~ "or splitting its call does.", r.symbol, calls.length, r.sym));
+        auto a = calls[0].args;
         assert(r.arg < a.length, format(
-            "census: call #%d to `%s` in %s takes %d argument(s); the table "
-          ~ "names #%d.", r.call, r.sym, r.file, a.length, r.arg));
+            "census: `%s`'s call to `%s` takes %d argument(s); the table "
+          ~ "names #%d.", r.symbol, r.sym, a.length, r.arg));
         assert(a[r.arg] == r.want, format(
-            "census: argument %d of call #%d to `%s` in %s reads `%s`, the "
+            "census: argument %d of `%s`'s call to `%s` reads `%s`, the "
           ~ "table says `%s` (%s).\n"
           ~ "This row exists because the COUNT row above stays green through "
           ~ "exactly this edit: same caller, same number of calls, different "
           ~ "array handed over. If the change is deliberate, move this row "
           ~ "with it — and check that a witness covers the new behaviour.",
-            r.arg, r.call, r.sym, r.file, a[r.arg], r.want, r.why));
+            r.arg, r.symbol, r.sym, a[r.arg], r.want, r.why));
         ++checked;
     }
-    assert(checked == args.length, "the argument scan skipped a row");
+    assert(checked == args.length && scannedFiles >= 200,
+        format("the argument scan checked %d/%d rows over %d source files",
+            checked, args.length, scannedFiles));
 }
 
 unittest // the extractor's OWN probe — the half that is live before L1-a
@@ -533,24 +538,24 @@ unittest // the extractor's OWN probe — the half that is live before L1-a
         "the call extractor found %d calls in the probe, expected 2 — it "
       ~ "cannot report on L1-e's call sites if it cannot read this one",
         calls.length));
-    assert(calls[0].length == 3 && calls[1].length == 3, format(
+    assert(calls[0].args.length == 3 && calls[1].args.length == 3, format(
         "the extractor split the argument lists wrong: %s", calls));
-    assert(calls[0][1] == "pre", format(
+    assert(calls[0].args[1] == "pre", format(
         "the BEFORE-IMAGE argument of call 0 read as `%s`, expected `pre`. "
       ~ "This is the term that sees a caller substituting the LIVE array for "
       ~ "its pre-op image — the substitution a count row cannot see.",
-        calls[0][1]));
+        calls[0].args[1]));
     import std.algorithm.searching : canFind;
-    assert(calls[1][1].canFind("m.meshMap(") && calls[1][1].canFind(").data"), format(
-        "the extractor did not keep a nested call intact: `%s`", calls[1][1]));
+    assert(calls[1].args[1].canFind("m.meshMap(") && calls[1].args[1].canFind(").data"), format(
+        "the extractor did not keep a nested call intact: `%s`", calls[1].args[1]));
 
     // POTENCY: change the argument and the row must move.
     enum string probe2 = q{
         void f() { ed.recordMapValueDiff("uv", live.data, null); }
     };
     auto c2 = callArgs(codeView(probe2), "recordMapValueDiff");
-    assert(c2.length == 1 && c2[0][1] == "live.data", format(
+    assert(c2.length == 1 && c2[0].args[1] == "live.data", format(
         "the extractor reported `%s` for a substituted before-image — if it "
       ~ "cannot tell `pre` from `live.data` the whole row is a decoy",
-        c2.length ? c2[0][1] : "<none>"));
+        c2.length ? c2[0].args[1] : "<none>"));
 }
