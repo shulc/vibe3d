@@ -74,6 +74,17 @@
 // this reported a member `C.run` as bare `C` — a bug that is invisible in a
 // flat module and turns two distinct symbols into one the moment anything is
 // nested.
+//
+// "ANONYMOUS when it cannot name" is a claim with a known way of failing, and
+// it HAS failed once here. An attribute carrying arguments — `@Attr("x") void
+// f() { … }` — puts a top-level `(` in front of the function's own with an
+// arbitrary identifier before it, so instead of degrading to anonymous the
+// walker NAMED THE ATTRIBUTE, and two functions under the same UDA in one
+// file collapsed into one key (task 4056 review; latent, no such site in
+// `source/` today). Attributes with arguments now have their own arm in
+// `declaratorName` and their own cell. The keyword-headed forms `extern(C)`
+// and `pragma(…)` were already covered by `kNotAName`; the lesson is that a
+// list of keywords cannot cover a construct whose head is user-chosen.
 module tests.unit.census_symbols;
 
 import std.algorithm : canFind;
@@ -329,6 +340,9 @@ package string blankUnittestBodies(string code) {
 /// preceded by one of these is a control-flow or attribute parenthesis, never
 /// a parameter list, so the walker keeps looking. `this` and `~this` are
 /// deliberately absent: they ARE names.
+///
+/// This list cannot be the whole story, because a UDA's head is user-chosen:
+/// `@Attr("x")` is caught by the `@` arm in `declaratorName`, not from here.
 private immutable string[] kNotAName = [
     "if", "else", "for", "foreach", "foreach_reverse", "while", "do",
     "switch", "with", "try", "catch", "finally", "scope", "synchronized",
@@ -391,6 +405,20 @@ package string declaratorName(string d)
         size_t s = e;
         while (s > 0 && isIdentChar(d[s - 1])) --s;
         if (s == e) continue;                       // `(x) { … }` — a lambda
+        // An ATTRIBUTE'S parenthesis is not a parameter list, and an
+        // attribute that carries ARGUMENTS cannot be caught by name the way
+        // `extern(C)` / `pragma(…)` are: a UDA is spelled with an arbitrary
+        // identifier, so `@Attr("x") void f() { … }` would name the block
+        // `Attr` and merge every function under the same UDA into one ledger
+        // key. Recognise it by the `@` instead — walking back over a
+        // qualified name (`@core.attribute.gnuAbiTag`) and a template
+        // instantiation (`@Attr!int`) but NEVER across whitespace, because
+        // skipping blanks here would read `@safe void f()` as an attribute
+        // too and lose `f`.
+        size_t at = s;
+        while (at > 0 && (isIdentChar(d[at - 1]) || d[at - 1] == '.'
+                                                 || d[at - 1] == '!')) --at;
+        if (at > 0 && d[at - 1] == '@') continue;   // `@Attr(…) void f() { … }`
         const string ident = d[s .. e];
         if (isNotAName(ident)) continue;            // `if (…) { … }`
         if (s > 0 && d[s - 1] == '~') return "~" ~ ident;
@@ -659,6 +687,51 @@ PROBE";
     assert(symbolAt(s, 1) == "cb",    symbolAt(s, 1));
     assert(symbolAt(s, 4) == "inl",   symbolAt(s, 4));
     assert(symbolAt(s, 8) == "attrs", symbolAt(s, 8));
+}
+
+/// …AND AN ATTRIBUTE THAT CARRIES ARGUMENTS, which is the same rule reached
+/// through a different door and the one that has no keyword to be caught by.
+/// `extern` and `pragma` are in `kNotAName`; a UDA is spelled with an
+/// ARBITRARY identifier, so `@Attr("x") void f() { … }` puts a top-level `(`
+/// in front of the function's own with `Attr` sitting where a declarator name
+/// would sit. A walker that stops there names the block `Attr`, and TWO
+/// functions carrying the same UDA in one file then collapse into ONE ledger
+/// key — which the AMBIGUITY finding cannot catch, because ambiguity is
+/// defined over FILES and these two are in the same one. That is a silent
+/// merge of two symbols, the exact failure the nested-aggregate cell above
+/// exists for.
+///
+/// LATENT, not live: `grep -rnE '@[A-Za-z_][A-Za-z0-9_.]*\(' source/
+/// --include=*.d` reports four hits on 2026-09-04 (`@selector(…)` ×3 in
+/// `source/app.d`, `@section(…)` in `source/tsan_preinit.d`) and every one of
+/// them sits on a declaration that ends in `;`, so none of them reaches a
+/// brace. The cell is here because the walker is claimed to make anything it
+/// cannot name ANONYMOUS, and this shape made it name the wrong thing instead.
+unittest {
+    enum string probe = q"PROBE
+@Attr("x") void first() {
+    hit();
+}
+@core.attribute.gnuAbiTag("v2") @Other!int(3) void second() {
+    hit();
+}
+PROBE";
+    auto s = symsOf(probe);
+    assert(symbolAt(s, 1) == "first", format(
+        "an attribute with arguments must not be taken for the declarator: "
+      ~ "`@Attr(\"x\") void first()` names `first`, not the attribute. "
+      ~ "Got `%s`.", symbolAt(s, 1)));
+    assert(symbolAt(s, 4) == "second", format(
+        "a QUALIFIED attribute (`@core.attribute.gnuAbiTag`) and a TEMPLATED "
+      ~ "one (`@Other!int`) must both be stepped over — got `%s`.",
+        symbolAt(s, 4)));
+    // Said again as the consequence, so a future walker that names both
+    // blocks after some third thing still reddens with the reason.
+    assert(symbolAt(s, 1) != symbolAt(s, 4), format(
+        "two functions under attributes must not share a key: both came out "
+      ~ "as `%s`, so one ledger row would cover two declarations and no "
+      ~ "AMBIGUITY finding could see it — they are in the same file.",
+        symbolAt(s, 1)));
 }
 
 /// A lambda is anonymous — and the ONE-LINE BODY LIMIT, stated as a cell
