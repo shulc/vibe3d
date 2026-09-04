@@ -2867,10 +2867,26 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         // Retired HTTP wrapper arguments. These commands predate Param-backed
         // JSON injection, so their former route validation/configuration now
         // lives at the one generic command-dispatch point.
-        void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj) {
+        //
+        // THE GATE IS THE REGISTERED ID, NOT THE CLASS. A command CLASS is not
+        // a command: `file.new` is registered as a `SceneReset` (registration.d
+        // — "File → New = empty scene", `setEmpty(true)`), and a cast-gated
+        // branch therefore also fires on it. Measured on this branch before the
+        // fix: `POST /api/command {"id":"file.new"}` carries an object body
+        // (the envelope itself, or `{}` from the argstring parser), so this
+        // block ran, found no `"empty"` key, took the primitive arm and called
+        // `reset.setPrimitive("")` — whose side effect is `emptyScene = false`.
+        // `file.new` answered `status:ok` and left the DEFAULT CUBE: 8 vertices
+        // where the command's whole contract is 0. Every id below is registered
+        // exactly once except `scene.reset`, but the gate is by id for all four
+        // so a second registration of any of them cannot silently inherit
+        // another command's argument law.
+        void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj, string id) {
             import math : Vec3;
 
-            if (auto select = cast(MeshSelect)cmd) {
+            if (id == "mesh.select") {
+                auto select = cast(MeshSelect)cmd;
+                assert(select !is null, "mesh.select is not a MeshSelect");
                 if ("mode" !in pj || pj["mode"].type != JSONType.string)
                     throw new Exception("missing 'mode' string field");
                 if ("indices" !in pj || pj["indices"].type != JSONType.array)
@@ -2883,7 +2899,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 }
                 select.setMode(pj["mode"].str);
                 select.setIndices(indices);
-            } else if (auto transform = cast(MeshTransform)cmd) {
+            } else if (id == "mesh.transform") {
+                auto transform = cast(MeshTransform)cmd;
+                assert(transform !is null, "mesh.transform is not a MeshTransform");
                 Vec3 vec3From(string field, Vec3 def) {
                     if (field !in pj) return def;
                     auto a = pj[field].array;
@@ -2923,7 +2941,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 transform.setAngle (floatFrom("angle", 0.0f));
                 transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
                 transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            } else if (auto loadMesh = cast(MeshLoadRaw)cmd) {
+            } else if (id == "scene.loadMesh") {
+                auto loadMesh = cast(MeshLoadRaw)cmd;
+                assert(loadMesh !is null, "scene.loadMesh is not a MeshLoadRaw");
                 if ("vertices" !in pj || pj["vertices"].type != JSONType.array)
                     throw new Exception("missing 'vertices' array field");
                 if ("faces" !in pj || pj["faces"].type != JSONType.array)
@@ -2966,7 +2986,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     faces[i] = face;
                 }
                 loadMesh.setData(verts, faces);
-            } else if (auto reset = cast(SceneReset)cmd) {
+            } else if (id == "scene.reset") {
+                auto reset = cast(SceneReset)cmd;
+                assert(reset !is null, "scene.reset is not a SceneReset");
                 bool empty;
                 if (auto p = "empty" in pj) {
                     if (p.type != JSONType.true_ && p.type != JSONType.false_)
@@ -3049,8 +3071,21 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
+            // THE AUTOMATION RE-BASELINE IS `scene.reset`'S, AND ONLY ITS.
+            // This read `cast(SceneReset)cmd !is null` and so also fired on
+            // `file.new`, which registration.d builds from the SAME class.
+            // The retired `/api/reset` handler named the hazard where it
+            // deliberately did NOT put the pointer park into `SceneReset`:
+            // "file.new goes through the command too, and for a human the
+            // pointer really IS where it is." Under the class gate every
+            // `file.new` in `--test` had the unsaved-work record wiped and any
+            // held action dropped BEFORE dispatch, then — after a dispatch
+            // that may have been DEFERRED behind the prompt and never applied
+            // at all — parked the pointer, closed the pie, killed the AI
+            // switch and reset the step trace. The id is the thing that
+            // decides, so gate on the id.
             immutable bool resetForAutomation =
-                command.g_testMode && cast(SceneReset)cmd !is null;
+                command.g_testMode && id == "scene.reset";
 
             if (resetForAutomation) {
                 import ui.discard_guard : resetUiPolicyRecord;
@@ -3103,7 +3138,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     // Commands formerly reached through dedicated HTTP
                     // wrappers: preserve their payload shapes while applying
                     // them through this single refusal-aware dispatcher.
-                    injectRetiredWrapperArgs(cmd, pj);
+                    // Gated on the registered id — see the function's header
+                    // for the `file.new` case a class gate silently swallowed.
+                    injectRetiredWrapperArgs(cmd, pj, id);
 
                     // Falloff side-channel — mesh.smooth / mesh.jitter /
                     // mesh.quantize accept a `falloff` JSON object that
@@ -3174,6 +3211,15 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // the plain path below. Non-tool.attr commands inside a
                 // refire window (and non-opted-in tools) keep the plain
                 // fire(cmd) path.
+                // Did the command ACTUALLY change the scene? A UI-origin
+                // line can be held by the unsaved-work prompt and apply
+                // nothing, so the post-dispatch re-baseline below must not
+                // run on the strength of having been ASKED. (A script-origin
+                // refusal throws out of `refused()` and never reaches the
+                // block, but the flag is carried explicitly rather than
+                // inferred from that control flow: the inference is exactly
+                // the kind that silently stops holding when a policy moves.)
+                bool applied = false;
                 if (!session.tryRefireDispatch(cmd, id)) {
                     // Command-dispatch path: route through recordCoalescing()
                     // so consecutive COMPATIBLE delta edits (same targets, same
@@ -3197,10 +3243,20 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                         runUiCommand(cmd, RecordMode.Coalescing, id);
                     } else if (!applyOrRefire(cmd, RecordMode.Coalescing)) {
                         refused(cmd, id, origin);
+                    } else {
+                        applied = true;
                     }
+                } else {
+                    applied = true;   // the refire path fired the command
                 }
 
-                if (resetForAutomation) {
+                // Scripted origin AND an actual apply. `?origin=ui` exists to
+                // drive the UI POLICY (test_unsaved_guard.d), and a scene reset
+                // taken down that path is a user gesture whose deferral is the
+                // thing under test — re-baselining the harness around it would
+                // destroy the state the case is about.
+                if (resetForAutomation && origin == CommandOrigin.script
+                                       && applied) {
                     pipeGizmoHost.cancelDrag();
                     import ai.debug_trace : clearLatestAiDebugTraces;
                     clearLatestAiDebugTraces();

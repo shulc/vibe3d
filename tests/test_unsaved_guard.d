@@ -44,6 +44,19 @@ void dirtyScene() {
     assert(r["status"].str == "ok", "setup: mesh.subdivide failed: " ~ r.toString);
 }
 
+/// Number of entries the armed step trace holds. `/api/trace` is a JSON array.
+long traceLength() {
+    return getJson("/api/trace").array.length;
+}
+
+/// Let the main loop turn over so a just-dispatched command's step-trace
+/// append has landed before it is read back.
+void settleFrames() {
+    import core.thread : Thread;
+    import core.time   : msecs;
+    Thread.sleep(200.msecs);
+}
+
 JSONValue policyLast() {
     auto p = getJson("/api/ui/policy");
     assert("last" in p.object, "no UI dispatch was recorded: " ~ p.toString);
@@ -135,12 +148,32 @@ unittest { // cleanQuitIsNotGuarded — THE case that pins the `dirty` term
         "a command-dispatched quit must not take the --test instance down");
 }
 
-unittest { // apiResetIsUnguarded — the PROGRAMMATIC path never prompts
-    // `/api/reset` builds the `scene.reset` factory and calls `cmd.apply()`
-    // DIRECTLY: it touches neither `applyOrRefire` nor the UI dispatch point.
-    // That is why the mutation which reddens this case has to be inserted into
-    // `SceneReset.apply()` itself — moving the guard into `applyOrRefire`
-    // would be INERT here.
+unittest { // scriptResetIsUnguarded — the PROGRAMMATIC path never prompts
+    // WHAT THIS CASE NOW DISCRIMINATES, because its old rationale is dead.
+    // It used to read: "`/api/reset` builds the `scene.reset` factory and
+    // calls `cmd.apply()` DIRECTLY: it touches neither `applyOrRefire` nor the
+    // UI dispatch point" — and concluded that only a mutation inside
+    // `SceneReset.apply()` could redden it. That was true of a dedicated route
+    // with its own hand-rolled body. Task 4063 retired that route: a scene
+    // reset is now the SAME generic `/api/command` dispatch as every other
+    // command, so it does go through `applyOrRefire`, and "this one path is
+    // special" is no longer the thing being said.
+    //
+    // What is left is still worth a case, and it is the ORIGIN split. The
+    // unsaved-work guard lives at exactly one point, `runUiCommand`, which
+    // only a `CommandOrigin.ui` line reaches; a script line applies directly.
+    // So this case pins that a scene reset dispatched WITHOUT `?origin=ui`
+    // raises no prompt and leaves no deferred action — the contract every
+    // other test in the tree leans on when it calls `resetScene()` on a dirty
+    // document. Its sibling `guardsFileNew` above drives the
+    // SAME command class down the ui path and gets the prompt; between them
+    // the origin term is pinned in both directions, which is a stronger
+    // reading than the old "it bypasses the dispatcher" one ever was.
+    //
+    // The mutation that reddens it is therefore a policy mutation, not a
+    // command one: make `refused`/`runUiCommand` reachable from the script
+    // origin, or make the guard unconditional, and the `pending` assert below
+    // goes red.
     dirtyScene();
     assert(vertCount() > 8, "setup: the scene should be subdivided");
 
@@ -148,12 +181,79 @@ unittest { // apiResetIsUnguarded — the PROGRAMMATIC path never prompts
     auto p = getJson("/api/ui/policy");
     if ("last" in p.object)
         assert(p["last"]["verdict"].str != "prompt",
-            "/api/reset must not raise the unsaved-work prompt: " ~ p.toString);
+            "a script-origin scene.reset must not raise the unsaved-work "
+          ~ "prompt: " ~ p.toString);
     assert(p["pending"].boolean == false,
-        "/api/reset must leave no deferred action: " ~ p.toString);
+        "a script-origin scene.reset must leave no deferred action: "
+      ~ p.toString);
     assert(vertCount() == 8,
-        "/api/reset must have actually reset the scene; got "
+        "a script-origin scene.reset must have actually reset the scene; got "
         ~ vertCount().to!string);
+}
+
+unittest { // deferredFileNewRunsNoResetSideEffects — task 4063 blocker 3
+    // THE DEFECT THIS PINS. `/api/command`'s dispatcher carries a test-mode
+    // re-baseline for the AUTOMATION reset: before dispatch it wipes the UI
+    // policy record and drops any held action, and after dispatch it cancels
+    // the pipe drag, clears the AI debug traces, turns the AI switch off,
+    // parks the override pointer, closes the pie menu, discards a pending
+    // exploration and RESETS THE STEP TRACE. It was gated on
+    // `cast(SceneReset)cmd !is null` — and `file.new`'s factory builds a
+    // `SceneReset` too (its `name()` is literally "scene.reset", which is what
+    // the header of this file is about). So in `--test` every `file.new` ran
+    // the whole re-baseline, INCLUDING on the ui path where the unsaved-work
+    // prompt had held the action and it never applied at all: seven pieces of
+    // global state destroyed for a command that did nothing.
+    //
+    // WHY THE STEP TRACE IS THE OBSERVABLE. Of the seven it is the only one
+    // that is cheap, queryable over HTTP and unambiguous: `/api/trace/reset`
+    // arms it, one command appends one entry, and the re-baseline's
+    // `stepTrace.reset()` empties it. The pointer park needs a pixel probe and
+    // the AI switch needs the AI subsystem; this needs two GETs.
+    //
+    // ORDER. The POPULATION FLOOR comes first — "the trace survived" is
+    // vacuously true of an empty trace, and an unarmed trace is always empty.
+    // Then the deferral itself is asserted, because a `file.new` that APPLIED
+    // would make the surviving trace mean nothing (a re-baseline after a real
+    // apply is the intended behaviour). The survival assert is last, so it is
+    // the line that reddens.
+    dirtyScene();
+    parseJSON(cast(string)post(baseUrl ~ "/api/trace/reset", ""));
+    auto sub = postCmd("", "mesh.subdivide");
+    assert(sub["status"].str == "ok", "setup: subdivide failed: " ~ sub.toString);
+    settleFrames();
+
+    // POPULATION FLOOR: the trace is armed and holds exactly the one entry
+    // the subdivide above appended.
+    assert(traceLength() == 1,
+        "setup: an armed trace must hold the one subdivide entry; got "
+        ~ traceLength().to!string ~ " — with 0 the survival assert below is "
+        ~ "satisfied by a trace that was never populated");
+    immutable long vertsBefore = vertCount();
+
+    // The gesture: File → New over unsaved work. It is HELD by the prompt.
+    auto r = postCmd("?origin=ui", "file.new");
+    assert(r["status"].str == "ok", r.toString);
+    auto l = policyLast();
+    assert(l["id"].str        == "file.new",  l.toString);
+    assert(l["outcome"].str   == "deferred",  l.toString);
+    assert(l["performed"].boolean == false,   l.toString);
+    assert(getJson("/api/ui/policy")["pending"].boolean,
+        "the guarded file.new must be HELD — without the deferral this cell "
+        ~ "measures nothing");
+    assert(vertCount() == vertsBefore,
+        "a deferred file.new must not have emptied the scene; got "
+        ~ vertCount().to!string ~ " verts");
+
+    // THE RED HALF. Nothing applied, so nothing may have been re-baselined.
+    assert(traceLength() == 1,
+        "a DEFERRED file.new ran the automation reset's post-dispatch "
+        ~ "re-baseline and wiped the step trace: " ~ traceLength().to!string
+        ~ " entries left. That block belongs to `scene.reset` on the script "
+        ~ "origin, not to every command that happens to be a SceneReset "
+        ~ "instance");
+
+    resetScene();   // drop the held action for the next case
 }
 
 unittest { // secondGuardedIsRefused — the BUSY rule (B9)
