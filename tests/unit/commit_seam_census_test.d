@@ -2283,7 +2283,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
 //     BOTH WAYS. The alternative (return them in a result struct) was declined
 //     because it rewrites three call sites in two modules this conversion
 //     otherwise does not touch — a second edit hiding inside a move.
-//   * THE THIRD MODULE `dub build` CANNOT SEE. `source/mesh_bevel_census.d`
+//   * THE THIRD MODULE `dub build` CANNOT SEE. `tests/unit/mesh_bevel_census_test.d`
 //     calls this kernel at ELEVEN sites, ALL below a module-level
 //     `version (unittest):`. A signature change there is invisible to a plain
 //     build; only `dub test --config=tests` and the suite binary go red. The
@@ -2574,7 +2574,7 @@ unittest // Stage G — the manifold edge bevel family
     // satisfied by a field nobody reads.
     {
         static immutable string[] kReaders =
-            ["source/mesh_bevel_census.d", "tests/unit/mesh_ops/edge_bevel_test.d"];
+            ["tests/unit/mesh_bevel_census_test.d", "tests/unit/mesh_ops/edge_bevel_test.d"];
         foreach (rel; kReaders) {
             immutable rp = buildPath(repoRoot, rel);
             assert(exists(rp), "cannot find " ~ rel ~ " at " ~ rp);
@@ -2594,21 +2594,25 @@ unittest // Stage G — the manifold edge bevel family
 
     // ---- THE THIRD MODULE `dub build` CANNOT SEE ---------------------------
     //
-    // `source/mesh_bevel_census.d` is a `source/` module whose entire body sits
+    // `tests/unit/mesh_bevel_census_test.d` (until task 4066,
+    // `source/mesh_bevel_census.d`) is a module whose entire body sits
     // below a module-level `version (unittest):`. It calls this kernel at
     // ELEVEN sites; when Stage G changed the signature, `dub build` stayed
     // green and only `dub test --config=tests` / the suite binary went red.
-    // That is why this stage's gate is BOTH lanes.
-    immutable mbcPath = buildPath(repoRoot, "source", "mesh_bevel_census.d");
-    assert(exists(mbcPath), "cannot find source/mesh_bevel_census.d at " ~ mbcPath);
+    // That is why this stage's gate is BOTH lanes — and since the move it
+    // is also simply outside `dub build`'s source paths.
+    immutable mbcPath = buildPath(repoRoot, "tests", "unit", "mesh_bevel_census_test.d");
+    assert(exists(mbcPath), "cannot find tests/unit/mesh_bevel_census_test.d at " ~ mbcPath);
     immutable mbc = stripCommentsAndStrings(readText(mbcPath));
     assert(countOccurrences(mbc, "\nversion (unittest):") == 1,
-        "source/mesh_bevel_census.d no longer gates its whole body behind a "
-      ~ "module-level `version (unittest):`. That gate is why a signature "
-      ~ "change in `mesh_ops/edge_bevel.d` is INVISIBLE to `dub build` here, "
-      ~ "and why Stage G's gate is both lanes (task 1903 Stage G).");
+        "tests/unit/mesh_bevel_census_test.d no longer gates its whole body behind a "
+      ~ "module-level `version (unittest):`. That gate was why a signature "
+      ~ "change in `mesh_ops/edge_bevel.d` was INVISIBLE to `dub build` while "
+      ~ "the file lived under source/, and why Stage G's gate is both lanes "
+      ~ "(task 1903 Stage G); task 4066 moved the file to tests/unit/ and "
+      ~ "kept the line so the move stayed a move.");
     assert(countOccurrences(mbc, "bevelEdgesOnce(") == 12,
-        format("source/mesh_bevel_census.d makes %d `bevelEdgesOnce(` "
+        format("tests/unit/mesh_bevel_census_test.d makes %d `bevelEdgesOnce(` "
              ~ "reference(s); Stage G measured 12 — the helper's own "
              ~ "declaration plus the ELEVEN census call sites it replaced. A "
              ~ "LOWER count is a site that went back to calling the kernel "
@@ -2621,7 +2625,7 @@ unittest // Stage G — the manifold edge bevel family
     // opening its own batch is caught either by the count or by the shape.
     assert(countOccurrences(mbc, "MeshEditBatch.unrecorded(m, kEdgeBevelEditScope)") == 1
         && countOccurrences(mbc, "MeshEditBatch(") == 0,
-        format("source/mesh_bevel_census.d opens %d unrecorded "
+        format("tests/unit/mesh_bevel_census_test.d opens %d unrecorded "
              ~ "`MeshEditBatch`(es) with the helper's exact spelling and %d "
              ~ "RECORDING one(s); expected exactly 1 and 0. The eleven census "
              ~ "sites go through ONE helper so there is ONE place that says why "

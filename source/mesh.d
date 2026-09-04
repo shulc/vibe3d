@@ -14861,7 +14861,7 @@ struct Mesh {
     // (source/mesh_ops/edge_bevel.d); a free function cannot inject a field, so
     // the declaration lands in the struct that already owned it. Every spelling
     // at every site is unchanged — the three resets and the three appends in
-    // `mesh_ops/edge_bevel.d`, the three reads in `source/mesh_bevel_census.d`,
+    // `mesh_ops/edge_bevel.d`, the three reads in `tests/unit/mesh_bevel_census_test.d`,
     // the two in `tests/unit/mesh_ops/edge_bevel_test.d`. They are PUBLIC
     // because a mixin-injected member with no access specifier always was, so
     // this is a move and not a widening; plan §2.7 keeps cross-module output

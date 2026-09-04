@@ -37,7 +37,7 @@ import mesh_ops.bevel_curves;
 // inject anything, so their DECLARATION moved into `struct Mesh` itself
 // (source/mesh.d, beside the other per-op scratch state) and every spelling —
 // the three resets and the three appends here, the three reads in
-// `source/mesh_bevel_census.d`, the two in
+// `tests/unit/mesh_bevel_census_test.d`, the two in
 // `tests/unit/mesh_ops/edge_bevel_test.d` — is unchanged. The alternative
 // (return them beside the count in a result struct) was declined because it is
 // a SECOND edit hiding inside a move: it rewrites three call sites in two

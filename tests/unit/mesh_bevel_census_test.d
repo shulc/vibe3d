@@ -1,4 +1,4 @@
-module mesh_bevel_census;
+module tests.unit.mesh_bevel_census_test;
 
 // Task 0445 — a refusal CENSUS for `Mesh.bevelEdgesByMask` over realistic
 // meshes, not just the cube every existing bevel test runs on.
@@ -32,8 +32,10 @@ module mesh_bevel_census;
 // exist in source/mesh.d, it is built HERE, test-only, rather than added
 // to the production primitive-factory set.
 //
-// WHERE THIS RUNS. Plain `unittest {}` blocks in a source/ module, so
-// `dub test --config=tests` (the `dubtest` lane already in
+// WHERE THIS RUNS. Plain `unittest {}` blocks under tests/unit/ (task 4066
+// moved the file out of source/, where nothing imported it — it was a
+// 1 755-line module compiled into every `dub build` for zero shipped
+// symbols), so `dub test --config=tests` (the `dubtest` lane already in
 // run_all.d's default suite set) exercises it — no vibe3d process, no
 // HTTP round-trip, no new run_all.d lane needed. Every mesh here tops out
 // in the low hundreds of vertices/edges, and `bevelEdgesByMask` is O(mesh
@@ -42,7 +44,10 @@ module mesh_bevel_census;
 //
 // `version (unittest)` gates the ENTIRE file body below the imports —
 // none of this (primitives, classifier, census loop) compiles into the
-// shipped `vibe3d` binary; it only exists under `dub test`.
+// shipped `vibe3d` binary; it only exists under `dub test`. (Redundant now
+// that the file lives under tests/unit/, which only the `tests`
+// configuration compiles; kept so the move stays a move —
+// tests/unit/commit_seam_census_test.d pins the line.)
 //
 // EXTENDED 2026-07-20 (still task 0445): the census above measures
 // ACCEPTANCE only — after task 0439's free-end cap landed, that number
