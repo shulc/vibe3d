@@ -8907,9 +8907,12 @@ struct Mesh {
         // carried marks, not the pre-carry ones.
         //
         // THE PARAGRAPH ABOVE ABOUT "`edgeMarks` IS NOT RE-INDEXED" IS STILL
-        // LIVE for every caller that does not ask. `leaveIndexed` is the
-        // default and the arm 180 of the 182 call sites take, so on those
-        // paths the hazard reads exactly as it did — the caller's own
+        // LIVE for every caller that does not ask. Measured 2026-09-05 with a
+        // comment- and string-stripped scan of `source/**.d` for
+        // `\brebuildEdges\s*\(` (excluding the declaration): 39 call
+        // expressions across 12 files, of which 2 pass
+        // `EdgePlaneCarry.byKey` and 37 take the default. On those 37 the
+        // hazard reads exactly as it did — the caller's own
         // `clearEdgeSelectionResize()` is still what stands between a stale
         // mark and a live index. Turning the default over is a per-op
         // behaviour decision with eight measured witnesses; see

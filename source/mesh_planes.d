@@ -1090,9 +1090,11 @@ struct EdgeCarry {
     /// stamped on this mesh). The AA above is then never built, and
     /// `applyEdgePlanes` degrades to a length fit that allocates only when the
     /// edge count actually moved. Measured shape, not a guess: `rebuildEdges`
-    /// is called from 182 sites and is already O(corners), so the scan that
-    /// decides this adds a same-order pass with no allocation, while the AA it
-    /// avoids is one hash entry per edge.
+    /// is called from 39 sites across 12 files (measured 2026-09-05, a
+    /// comment- and string-stripped scan of `source/**.d` for
+    /// `\brebuildEdges\s*\(`, declaration excluded) and is already
+    /// O(corners), so the scan that decides this adds a same-order pass with
+    /// no allocation, while the AA it avoids is one hash entry per edge.
     bool armed;
 }
 
