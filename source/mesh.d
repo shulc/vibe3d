@@ -2971,101 +2971,10 @@ struct Mesh {
                                         dropSetMsk, dropOrd, survIdx, survLists);
     }
 
-    // --- Task 1903 Stage L2-P1: THE WINDING WRITER -------------------------
-    //
-    // `MeshEditBatch`'s write surface is four methods (`setVertexPos`,
-    // `setVertexPositions`, `addVertex`, `addFace`) and NOT ONE OF THEM WRITES
-    // A WINDING. Six of the nine undo-breaking sites Stage L2 has to close are
-    // winding writes — `flipFacesByMask`'s reverse, `spinEdgeRings_`'s two ring
-    // installs, `insertEdgePoint`'s corner splice, `splitVerticesByMask`'s
-    // corner repoint, `poly_bevel`'s spike install — and every one of them
-    // today is a raw `faces[fi] = …` that reaches no hook at all. A raw
-    // winding write leaves the op-log EMPTY, so `revert()` answers `true` and
-    // either changes nothing (`flip`, `spinEdge`) or truncates vertices that
-    // the surviving windings still name, which THROWS out of
-    // `finalize`→`buildLoops`. This pair of methods is the one door those
-    // sites go through instead.
-    //
-    // ---------------------------------------------------------------------
-    // WHY IT IS ON `Mesh` AND NOT ON `MeshEditBatch`
-    // ---------------------------------------------------------------------
-    // Four of the five call sites are `Mesh` members (`flipFacesByMask`,
-    // `spinEdgeRings_`, `insertEdgePoint`, `splitVerticesByMask`); only
-    // `poly_bevel.spikeFacesByMask` holds a batch. A batch method would have
-    // to be threaded into four kernels that have no batch to thread, so the
-    // door would be reachable from one caller in five. The precedent is
-    // `recordFaceReindexIfWanted` above: a `Mesh` member that owns the
-    // `editRecorder_` reach for a mechanism whose callers are not batch
-    // holders.
-    //
-    // ---------------------------------------------------------------------
-    // IT CAPTURES THE BEFORE-IMAGE ITSELF, AND THAT IS THE DESIGN
-    // ---------------------------------------------------------------------
-    // A signature taking `(idx, before, after)` — the shape
-    // `recordReshapeFaces` itself has — is one transposition away from
-    // recording the inverse of the edit, and a transposed `ReshapeFaces` is
-    // INVISIBLE to every count: face count, vertex count, edge count and the
-    // whole mark plane are identical whichever way round the two lists go, so
-    // only a per-winding compare after a revert can see it. Here the
-    // before-image is read out of the live `faces` array by the method, one
-    // statement before the write, so "before" and "after" cannot be swapped by
-    // a caller. The bug is not tested for; it is unrepresentable.
-    //
-    // THE ALIASING GUARD IS THE OTHER HALF OF THAT. `reverse(faces[fi])` — the
-    // exact spelling `flipFacesByMask` uses today — mutates the winding IN
-    // PLACE, so a caller that reverses first and then calls this with
-    // `faces[fi]` would hand us a "before" that is already the "after", and
-    // the entry would record a no-op while the mesh changed. The pointer
-    // compare below catches precisely that, because an in-place reverse keeps
-    // the array's pointer. A migrating kernel must build its new winding into
-    // a FRESH array.
-    //
-    // ---------------------------------------------------------------------
-    // WHAT IT DOES *NOT* DO: PUBLISH
-    // ---------------------------------------------------------------------
-    // No `commitChange` here, deliberately, and this is the one place the
-    // shape departs from `MeshEditBatch.setVertexPos`. Every one of the five
-    // target sites already publishes at the END of its own kernel — the
-    // winding write is a step inside a topology op, not an edit in itself —
-    // and a per-face commit is the task 1330 shape that made bulk kernels
-    // quadratic (one derived-hide pass per element). The kernel owns the
-    // publish; this owns the write and the record.
-    //
-    // ---------------------------------------------------------------------
-    // THE PER-CORNER PAYLOAD, AND WHY THE PAIR IS RECORDED HERE
-    // ---------------------------------------------------------------------
-    // A `ReshapeFaces` entry restores the winding and says nothing about the
-    // per-corner (UV / morph) plane. For an ARITY-CHANGING reshape the corner
-    // carry can usually re-derive the correspondence slot-for-slot; for an
-    // equal-arity PERMUTATION — a winding reversal, i.e. `mesh.flip` — it
-    // cannot: `renumbersCorners` and `CornerCarry.reshapeSrc` both keep the
-    // slots and never notice that what sits under them changed
-    // (`mesh_edit_delta.d`'s comment on `renumbersCorners` names `mesh.flip`
-    // by name). Recording `recordPolyVertexPayload` IMMEDIATELY BEFORE the
-    // entry is what closes that: on the reverse the carry finds the pre-op
-    // corner values verbatim and restores them, instead of matching windings.
-    // The pairing is BY ADJACENCY and nothing may be recorded between the two,
-    // which is a second reason the pair lives inside one method rather than at
-    // five call sites.
-    //
-    // ---------------------------------------------------------------------
-    // THE ONE EXISTING RESHAPE PUBLISHER, AND WHAT THIS CANNOT EXPRESS
-    // ---------------------------------------------------------------------
-    // `dissolveVerticesByMask` builds the same pair by hand. This writer does
-    // NOT subsume it and is not meant to: there the `ReshapeFaces` entry
-    // describes faces that are then installed by a WHOLESALE
-    // `mesh_planes.rewriteFaces` (which also drops degenerate faces and
-    // reindexes), so the record and the write are two separate acts against
-    // two different index spaces. This method's contract is the opposite —
-    // record and write are ONE act, in place, at a live index. A kernel that
-    // replaces the whole `faces` array still records by hand, or routes
-    // through `rewriteFaces`. Stated so that the next reader does not "unify"
-    // the two and silently move the dissolve's entry into a post-rewrite
-    // space.
-    //
-    // Returns true when the winding was actually installed. A write that
-    // changes nothing is dropped from BOTH the write and the record, so an
-    // entry never carries an identity reshape.
+    // Install one in-place face winding and record its live before-image
+    // (task 1903). The replacement must not alias `faces[fi]`; identity writes
+    // record nothing, and whole-array rewrites use `rewriteFaces` instead.
+    // Rationale and witness: doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
     bool setFaceWinding(FaceIdx fi, uint[] to) {
         if (fi >= faces.length) return false;
         assert(to.ptr !is faces[fi].ptr,
@@ -3288,46 +3197,10 @@ struct Mesh {
         commitChange(MeshEditScope.Position);
     }
 
-    // --- Task 1903 Stage K: arming is PER REWRITE, never per batch ---------
-    //
-    // `MeshEditTracker.wantsFaceReindex` is a field on the RECORDER, i.e. on
-    // the whole batch. Setting it there and leaving it set is not a stronger
-    // version of setting it here — it is a DIFFERENT and wrong thing, and the
-    // difference was measured, not argued (plan §5.3, "K's red row", Stage E1
-    // 2026-08-25): `unifyFaces`' stand is F=2, its drop goes through
-    // `Mesh.deleteFacesByMask` which already records `RemoveFaces`, and with
-    // the flag armed batch-wide the SAME drop is also described by
-    // `rewriteFaces`' `FaceReindex` publisher. The LIFO revert then re-inserts
-    // the face TWICE and lands on F=3 against a pre-op F=2 — a revert that
-    // overshoots its own starting state.
-    //
-    // So the arming is a SCOPE around one `rewriteFaces` call, opened inside
-    // the kernel that owns that rewrite. Two things follow, and both are the
-    // point rather than side effects:
-    //
-    //   * the audit question — "does this op already record its face change
-    //     some other way?" — is answered NEXT TO the code it is about, by the
-    //     presence or absence of these three lines, instead of in a table that
-    //     rots; and
-    //   * a kernel that calls a hooked mutator (`deleteFacesByMask`,
-    //     `compactUnreferenced`, `removeEdgesByMask`) somewhere else in its
-    //     body cannot accidentally double-record it, because the flag is false
-    //     again by the time control reaches that call.
-    //
-    // NESTING IS SAFE BY RESTORE, NOT BY ASSERT. The destructor puts back the
-    // value it found, so an armed kernel calling an armed kernel arms once and
-    // disarms once. Two rewrites in ONE function want TWO scopes, not one
-    // spanning both (`mesh_ops/edge_bevel.d` is the case) — one scope per
-    // rewrite is what makes each rewrite's arming decision separately
-    // readable and separately revertible.
-    //
-    // INERT WITHOUT A RECORDING BATCH. With no batch open, or with an
-    // `unrecorded` one, `editRecorder_` is null: construction stores null,
-    // the destructor returns on its first line, and the whole scope is two
-    // predictable branches. Every production caller of every armed kernel
-    // today opens an UNRECORDED batch (plan §9), so arming changes no shipped
-    // behaviour — it changes what a RECORDING batch would produce, which is
-    // what the L-stages flip on.
+    // Face reindex arming is scoped to one rewrite, never to the surrounding
+    // batch (task 1903). Only a rewrite without its own remove/reshape record
+    // may arm it. Rationale and roster:
+    // doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
     struct FaceReindexArm {
         private MeshEditTracker* rec_;
         private bool prev_;
@@ -4882,61 +4755,9 @@ struct Mesh {
                 faceRemap[fi] = -1;
             }
         }
-        // TASK 1903 STAGE L5-a — ARMED, per rewrite, and the reason the K-era
-        // note above it said "NOT armed" is measured DEAD rather than merely
-        // overruled.
-        //
-        // WHAT THE ARM BUYS, measured 2026-08-28 on `makeTaggedGridDirty(3)`
-        // with a RECORDING batch, weld stage alone (`mergeVerts` on, every
-        // other `CleanupOptions` stage off):
-        //   * disarmed — the op-log is EMPTY, `revert()` answers **true** and
-        //     changes NOTHING. Face count, vertex count, edge count and every
-        //     mark word round-trip while `faces` comes back REMAPPED: on that
-        //     stand `f9 [0,16,5,4]` and `f10 [16,4,8,9]` stay at their
-        //     post-weld `[0,1,5,4]` / `[1,4,8,9]`. That is the `revert()`-true
-        //     -and-silent shape §5.5's L2 note calls worse than a throw.
-        //   * armed — `[MeshMapDelta, FaceReindex]`, `revert()` true, and the
-        //     residual is exactly two planes: the Select bits of `faceMarks`
-        //     and `edgeMarks`, written by the `setFaceMarksFrom` /
-        //     `clearFaceSelectionResize` / `clearEdgeSelectionResize` TAILS
-        //     below, which run AFTER this rewrite and are therefore outside
-        //     what any face entry can describe.
-        //
-        // 1902 §5.4 declined this on the ground that "the VERTEX renumbering
-        // this rewrite serves is already recorded by `compactUnreferenced`'s
-        // `recordReindex`". Read as index spaces the two are different
-        // objects — `Reindex` permutes VERTICES, `FaceReindex` restores the
-        // FACE array — and the LIFO revert orders them correctly: `Reindex⁻¹`
-        // + `RemoveVerts⁻¹` re-open the pre-compaction vertex space BEFORE
-        // `FaceReindex⁻¹` installs the pre-weld windings, which name
-        // pre-compaction vertex indices.
-        //
-        // THE PREDICTION THAT HAD TO BE MEASURED, because the identical one
-        // died at `arrayFacesGrid` under Stage K (plan §5.3, MAJOR-4, where
-        // arming landed E=48 against a pre-op E=24): NO DOUBLE REVERT. On the
-        // full default sweep the op-log reads, in order,
-        // `[MeshMapDelta, FaceReindex, MeshMapDelta, FaceReindex, RemoveVerts,
-        // Reindex, MeshMapDelta, RemoveFaces]` — entry 2 is THIS rewrite,
-        // entry 4 is `cleanDegenerateFaces`' — and the revert lands V, F and E
-        // on exactly their pre-op values, with `faces` and `edges` byte
-        // -identical.
-        //
-        // THE SCOPE, NEVER A BATCH-WIDE FLAG, and for this family that is an
-        // ENUMERATED reason rather than an inherited caution. The four-needle
-        // sweep over `mesh_ops/cleanup.d` and every `Mesh` member it reaches
-        // (2026-08-28) found FOUR `rewriteFaces` calls and no hook-free face
-        // writer at all: this one, `cleanDegenerateFaces`' (armed),
-        // `deleteFacesByMask`' and `dissolveVerticesByMask`' — and the last
-        // two must NOT be armed, because each already records its own
-        // `RemoveFaces` / `ReshapeFaces`. Arming either is K's red row: the
-        // drop described twice, and a revert that lands the face count PAST
-        // where it started.
-        //
-        // ITS TWIN IS DELIBERATELY LEFT ALONE. `applyVertexRemapAndRebuild`
-        // (above in this file) carries the same "NOT armed" note and is L10's;
-        // L5's green says nothing about it, and the two are separable on
-        // purpose. `tests/unit/face_reindex_arming_test.d` carries this site
-        // in its roster.
+        // This rewrite alone is armed for face reindexing (task 1903); sibling
+        // removers record their own operations and must stay unarmed.
+        // See doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
         { auto arm = faceReindexScope();
           rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length)); }
         setFaceMarksFrom(faceMarks, ~Marks.Select);
@@ -8907,49 +8728,10 @@ struct Mesh {
         const bool hadEdges = edges.length > 0;
         edges.length = 0;
         edgeIndexMap.clear();
-        // TASK 1333 — the commits are REMOVED here, not deferred.
-        //
-        // This loop used to call `addEdge` per face corner, and `addEdge` is
-        // `insertEdgeDedup` + the version stamps + `commitChange`. So a
-        // re-derive of E edges paid E geometry commits, and every one of them
-        // ran a full-mesh `refreshHiddenDerived` whenever anything was hidden
-        // (1330's deferral is allowed only in the state where that derive
-        // provably writes nothing). `insertEdgeDedup` is already the private
-        // NON-committing primitive, factored out for exactly this — its own
-        // doc comment reserves the "commit only on a real insert" gate for
-        // callers like this one.
-        //
-        // WHY COLLAPSING E COMMITS INTO ONE IS INVISIBLE — and why, unlike a
-        // deferral, this works WHILE SOMETHING IS HIDDEN:
-        //   * inside this function `edges` is APPEND-ONLY, and `faces` /
-        //     `faceMarks` are untouched;
-        //   * `refreshHiddenDerived` derives the VERTEX plane from `faces` +
-        //     `faceMarks` alone, so every per-edge call recomputed the same
-        //     vertex plane — the first one settled it and the rest were no-ops;
-        //   * it derives edge `ei` from `edges[ei]`'s two endpoint vertices, so
-        //     an edge's hidden answer is FIXED from the moment it is appended
-        //     and is never revisited;
-        //   * each mid-loop derive therefore covered a PREFIX of the edge array
-        //     (it skips `ei >= edges.length`), and the one closing derive
-        //     covers the whole of it, recomputing every prefix answer
-        //     identically — the tail beyond `edges.length` is left alone by
-        //     both.
-        // The sequence of per-edge derives thus converges on exactly what one
-        // closing derive computes, INCLUDING the Select-clear set: the derive
-        // is the only writer of Select in this region, and nothing re-selects
-        // in between (the loop body calls nothing but `insertEdgeDedup`).
-        //
-        // Because this is a removal and not a postponement there is no window
-        // in which a reader could observe a stale plane: the single commit
-        // still happens before `rebuildEdges` returns, so the renumbering
-        // hazard this function is famous for (`edgeMarks` is NOT re-indexed;
-        // a stale SET Hide bit makes `selectEdge` refuse silently and
-        // permanently — see tests/test_hide_bevel_selection_product.d) is
-        // cleared exactly as eagerly as before. No read barrier is needed and
-        // nothing can go stale. 1330's `beginHideDeriveBatch`/
-        // `endHideDeriveBatch` pair is gone from here for the same reason:
-        // with one commit there is nothing left to batch, and the pair's
-        // `anyHideBitSet()` scan was pure cost.
+        // Rebuild every deduplicated edge without publishing from the loop,
+        // then advance the structural stamps once (task 1333). Authored wire
+        // edges use the same map before the final commit.
+        // See doc/source_prose_policy.md#один-структурный-commit-после-rebuildappend.
         bool inserted = false;
         foreach (ref f; faces)
             foreach (k; 0 .. f.length)
@@ -9057,64 +8839,10 @@ struct Mesh {
         // length of `faces` before the append").
         const appendBase = faceAppendBase();
         faces ~= idx.dup;
-        // TASK 1361 — the per-CORNER commits are REMOVED here, not deferred.
-        // Same move as task 1333 made in `rebuildEdges`, for the same reason
-        // and with the same proof; read that function's comment first.
-        //
-        // This loop used to call `addEdge` per corner, and `addEdge` is
-        // `insertEdgeDedup` + the version stamps + `commitChange(Polygons)`.
-        // `Polygons` is a Geometry-class bit, so every one of those commits
-        // ran a full-mesh `refreshHiddenDerived` whenever anything was hidden
-        // (1330's deferral is allowed only in the state where that derive
-        // provably writes nothing). A kernel appending N faces therefore paid
-        // a whole-mesh derive per corner on top of the one per face.
-        // `insertEdgeDedup` is already the private NON-committing primitive,
-        // factored out for exactly this.
-        //
-        // WHY COLLAPSING THE CORNER COMMITS INTO THE TAIL ONE IS INVISIBLE.
-        // The region in question runs from the `faces ~= idx.dup` above to the
-        // `commitChange` below. Inside it:
-        //   * `faces`, `faceMarks`, `vertexMarks` and `edgeMarks` are ALL
-        //     untouched — the face append happens BEFORE the region's first
-        //     derive, so every derive in the region already sees the new face
-        //     (this is the one place the argument differs from `rebuildEdges`,
-        //     where `faces` is untouched throughout instead);
-        //   * `edges` is APPEND-ONLY.
-        // `refreshHiddenDerived` derives the VERTEX plane from `faces` +
-        // `faceMarks` alone, so every per-corner call recomputed the same
-        // vertex plane — the first settled it and the rest were idempotent
-        // no-ops. It derives edge `ei` from `edges[ei]`'s two endpoints, whose
-        // Hide bits the same call has just settled, so an edge's answer is
-        // FIXED from the moment it is appended and never revisited; and it
-        // skips `ei >= edges.length`, so each mid-loop derive covered a strict
-        // PREFIX of what the closing one covers and recomputes identically.
-        // The Select-clear set comes along: the derive is the only writer of
-        // `Marks.Select` in this region, and nothing re-selects in between.
-        //
-        // WHAT ELSE RUNS IN THE REGION: only
-        // `growPolyVertexMapsForAppendedCorners`, and it reads and writes
-        // nothing but `meshMaps[].data` for PolyVertex-domain maps — no plane,
-        // no Marks, no `edges`, no `faces`. The `editRecorder_` hook sits
-        // AFTER the tail commit, outside the region, and reads only
-        // `appendBase` + `idx`. So nothing in the region consults a derived
-        // plane or a Mark, and there is no reader to observe the difference.
-        //
-        // The ACCUMULATED CHANGE FLAGS are unchanged bit for bit:
-        // `MeshEditScope.Geometry == Points | Polygons`, so the tail
-        // `commitChange(Geometry)` already ORs in every bit the dropped
-        // `commitChange(Polygons)` calls contributed.
-        //
-        // Unlike `rebuildEdges`, no "did anything insert?" gate is needed:
-        // the version bump + `edgeMapStamp` re-stamp below is UNCONDITIONAL
-        // already (a face whose edges all pre-exist bumped exactly once before
-        // this change too, because the loop inserted nothing), so "nothing
-        // appended ⇒ nothing bumped" was never this function's contract and
-        // nothing about it moves. What does change is the bump COUNT for a
-        // face that DOES insert edges: 1 + inserts becomes 1. Audited
-        // repo-wide in 1333 — every reader of `structVersion` /
-        // `mutationVersion` / `topologyVersion` treats them as monotone
-        // stamps, never as counts (`loopsValid()` and `edgeMapUsable()` are
-        // `== structVersion` compares; tests compare `> before` / `== before`).
+        // Add the face's edges without per-corner commits, grow PolyVertex
+        // planes for the appended corners, then publish one structural change
+        // (task 1361). `edgeIndexMap` is complete before it is stamped valid.
+        // See doc/source_prose_policy.md#один-структурный-commit-после-rebuildappend.
         for (uint i = 0; i < idx.length; i++)
             insertEdgeDedup(edgeIndexMap, idx[i], idx[(i+1) % idx.length]);
         // GAP-3 atomic append: addFace does NOT call buildLoops, so without
@@ -11385,48 +11113,10 @@ struct Mesh {
         // preserves the other bits of any pre-existing entries.
         applySelectedFrom_(faceMarks, faceSelectionOrder, src, SelDomain.Face);
     }
-    // RETIRED (task 0613, Stage 1 — doc/hide_geometry_plan.md §4.2): this used
-    // to be `setFaceSubpatchFrom(const bool[] src)`, a masked single-bit
-    // writer. Every one of its ~13 call sites resized `faceMarks` to a NEW
-    // (usually shorter, always re-indexed) length and then patched in ONLY
-    // the Subpatch bit — leaving whatever raw word already sat at the new
-    // index (D array-shrink does not clear truncated tail slots, and a
-    // compaction's "new index i" is generally a DIFFERENT face than "old
-    // index i"). Select survived that unnoticed because every compaction site
-    // separately force-clears it afterward (`clearFaceSelectionResize` /
-    // `setFacesSelectedFrom`); Hide has no such second pass, so it would have
-    // silently MOVED onto whichever face slides into a deleted face's slot —
-    // documented in-place at `deleteFacesByMask` below before this fix.
-    // `setFaceMarksFrom` replaces it: the caller supplies the FULL new word
-    // per new index (typically the old face's whole `faceMarks` entry,
-    // captured in the same walk that used to capture just `isFaceSubpatch`),
-    // and `keepMask` says which of ITS bits survive — `~Marks.Select` at
-    // every compaction/wipe site (Select is still dropped, byte-identical to
-    // today), `uint.max` at a same-length restore that must preserve
-    // everything not explicitly overwritten by the caller. Raw (no
-    // commitChange), same "bulk/internal writer, caller commits" contract
-    // setFaceSubpatchFrom had.
-    //
-    // SELF-ALIASING IS SUPPORTED, and every `mesh_planes.rewriteFaces`-
-    // migrated call site (task 1902 Stage B) relies on it:
-    // `setFaceMarksFrom(faceMarks, ~Marks.Select)`, `src` the SAME array as
-    // the field being written. `rewriteFaces` has already carried the WHOLE
-    // marks word onto `faceMarks` at each new index; this call's only
-    // remaining job is to mask the Select bit back out of what is already
-    // there, so passing `faceMarks` as both source and destination is the
-    // direct spelling of that, not an accident. It is safe here for two
-    // properties of THIS body specifically — not a general aliasing
-    // guarantee — so do not assume it extends to a body shaped differently:
-    // (1) `faceMarks.length = src.length` is a no-op when `src is faceMarks`
-    // (already the same length), so the resize cannot reallocate/move the
-    // backing store out from under `src` before the loop runs; (2) the loop
-    // reads `src[i]` into the local `w` and writes `faceMarks[i]` in the
-    // SAME iteration, one index at a time, so a write at index i is never
-    // read back at a later index — there is no cross-index dependency for a
-    // forward pass to disturb. A non-aliased caller (`src` a freshly
-    // gathered, generally shorter array — e.g. a compaction's `newWord`)
-    // depends on neither property, since `src` and `faceMarks` are genuinely
-    // different arrays there.
+    // Raw face-mark bulk write: preserve only `keepMask` and do not publish
+    // (task 0613). The caller owes one final commit/derived-hide refresh; a
+    // local hide-derive batch would combine nothing.
+    // See doc/source_prose_policy.md#удалённый-отдельный-hide-derive-batch.
     void setFaceMarksFrom(const uint[] src, uint keepMask) {
         faceMarks.length = src.length;
         foreach (i, w; src) faceMarks[i] = w & keepMask;
