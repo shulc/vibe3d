@@ -1,11 +1,24 @@
-# Task 4057 source-test ceilings.
-# Counts are compiler-aware: comments and string/character literals are removed.
-# Refresh once at rebase when concurrent test-extraction lanes have landed.
+# Task 4057 source-test ceilings. GENERATED FILE — do not hand-count rows.
+#
+# Refresh:
+#     rdmd -version=CeilingLedgerTool -I. \
+#         tests/unit/unittest_source_ceiling_test.d > \
+#         tests/unit/unittest_source_ceiling_ledger.txt
+#
+# Then READ THE DIFF. Regeneration is mechanical and will absorb an
+# addition nobody argued for; an in-module unittest under source/ is
+# admissible only for a `private` symbol, and the commit that raises
+# `unittest-blocks` has to name that symbol.
+#
+# Counts are compiler-aware: comments and string/character literals are
+# removed before either scanner runs. `version-ceiling` is policy and is
+# carried over from the previous ledger, never re-measured.
 source-files 510
 unittest-blocks 745
 version-ceiling 10
 
-# Per-file unittest counts are diagnostic: the enforced ceiling is source-wide.
+# Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
+# no file may hold more than its own row.
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
@@ -172,7 +185,8 @@ block source/view.d 26
 block source/viewgrid.d 2
 block source/weightmap_view.d 1
 
-# Files already above version-ceiling; each number is that file's own ceiling.
+# Files above the per-file version(unittest) ceiling of 10. This list may
+# only shrink, and each number is EXACT: shed a guard and lower the row.
 allow-version source/mesh.d 17
 allow-version source/mesh_gpu.d 44
 allow-version source/mesh_visibility.d 13
