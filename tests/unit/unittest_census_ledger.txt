@@ -182,3 +182,16 @@ drop 0 1 4335 the open-fan cap block's `faces.length >= facesBefore + 2`, which 
 # parser; the two real workplane declarations remain pinned in both directions
 # by the shared LedgerRow/reconcile census and its exact population of two.
 drop 1 17 4170 subject construction assertion (c) uses the shared declaration-keyed scanner; its private function-body parser and synthetic self-test block are gone
+
+# Task 4360 — one assert removed from
+# tests/unit/edge_bevel_open_fan_cap_parity_test.d. It was the DIVERGENCE pin
+# `open_fan_K2_boundary_L1: m.vertices.length == 12 && m.faces.length == 7`,
+# which recorded the counts we built while that cell did not match the
+# capture. The cell now matches, so the pin's own numbers are wrong and its
+# job has moved UP the same loop, not away: the cell is `mustMatch` and
+# `compareToDump` refuses a differing vertex count outright (`ov.length !=
+# rv.length` short-circuits the bijection) before comparing the face sets, so
+# 15v/10f is asserted against the capture's own counts rather than against a
+# transcribed pair. The sibling K>=3 pin (18v/11f) is untouched and still
+# guards the one cell that still diverges.
+drop 0 1 4360 the boundary cell's 12v/7f divergence pin, superseded by the same cell's equality against the capture (which gates on vertex count first)

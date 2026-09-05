@@ -16,16 +16,22 @@
 // construction does not consult the fan's openness at all -- which made our
 // refusal a DIVERGENCE rather than a simplification.
 //
-// WHAT CHANGED UNDER IT, and it is the reason three sentences here are in the
-// past tense (task 4335). The refusal is GONE: vibe3d builds the cap on an
-// open fan, and three of the five driven cells now reproduce these dumps
-// vertex for vertex and face for face. So this file is no longer only target
-// geometry -- for those three it is a regression lock. Two cells still
-// diverge and stay target geometry: `open_fan_K2_boundary_L1`, a spoke ON the
-// rim, which the identity above never covered; and `open_fan_K3_L1`, where
-// our cap interior is recorded only at K == 2 and every wider fan keeps a
-// flat cap -- on CLOSED fans as much as open ones, so that one is a separate
-// divergence and not a leftover of openness.
+// WHAT CHANGED UNDER IT, and it is the reason several sentences here are in
+// the past tense (tasks 4335 and 4360). The refusal is GONE: vibe3d builds
+// the cap on an open fan, and FOUR of the five driven cells now reproduce
+// these dumps vertex for vertex and face for face. So this file is no longer
+// only target geometry -- for those four it is a regression lock.
+// `open_fan_K2_boundary_L1`, a spoke ON the rim, was one of task 4335's two
+// remainders and stopped being one under task 4360: matching it needed no new
+// capture, only two laws corrected where the OLDER fixtures had been
+// degenerate for the distinction -- a right-angled corner cannot separate "a
+// slide along the beveled edge" from "width along the other edge's inward
+// normal", and an apex-symmetric notch cannot separate a raw-spoke arc blend
+// from one whose radius is interpolated linearly. ONE cell still diverges and
+// stays target geometry: `open_fan_K3_L1`, where our cap interior is recorded
+// only at K == 2 and every wider fan keeps a flat cap -- on CLOSED fans as
+// much as open ones, so that one is a separate divergence and not a leftover
+// of openness.
 //
 // STILL TRUE OF *THIS* CELL: it is pinned to nothing in vibe3d. It imports
 // std.{json,file,math,format} and reads the fixture; it cannot see our

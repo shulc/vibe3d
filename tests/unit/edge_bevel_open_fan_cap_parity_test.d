@@ -18,24 +18,31 @@
 // vertex is claimed exactly once — never an index-wise diff.
 //
 // WHAT THE CAPTURE COVERS, stated as the boundary it actually has. The
-// open/closed identity was measured for INTERIOR selected spokes. Three cells
-// here match the reference vertex-for-vertex and face-for-face; the other two
-// do NOT and are asserted to still diverge, with their counts, because they
-// are shapes the capture does not settle:
-//   * `open_fan_K2_boundary_L1` — a selected spoke ON the rim. Register row 21
-//     names this as the part that stays open: there is no closed twin for it
-//     and the reference's cap there is a different one.
+// open/closed identity was measured for INTERIOR selected spokes. FOUR cells
+// here match the reference vertex-for-vertex and face-for-face; ONE does not
+// and is asserted to still diverge, with its counts.
+//   * `open_fan_K2_boundary_L1` — a selected spoke ON the rim. This one
+//     DIVERGED when task 4335 wrote this file (12v/7f against the captured
+//     15v/10f) and register row 21 kept that half open; task 4360 CLOSED it,
+//     and it now matches like any other cell. Two laws were corrected to get
+//     there, both of them cases where the older fixtures could not tell two
+//     candidates apart: the rim free-end corner is at `width` along the OTHER
+//     boundary edge's in-face inward NORMAL (identical to the old
+//     beveled-edge slide at a 90° corner, which is all the open quad and the
+//     2x1 grid it was measured on ever offered), and the cap's arc sweep
+//     interpolates its RADIUS linearly (identical to the old raw-spoke blend
+//     whenever the two radii are equal, which every earlier cell was, being
+//     mirror-symmetric about its apex).
 //   * `open_fan_K3_L1` — three adjacent spokes, whose cap INTERIOR routes
 //     through the builder register row 22 records as undecoded. Our K>=3 fan
 //     keeps the flat cap by the deliberate rule at the notch-plan site.
-// Those two asserts are closure assertions: if a later change makes either
-// match, this cell reddens and says to re-measure and close the row rather
-// than let a divergence close silently. Note which of the two is about
-// openness: only the first. The K>=3 cell is flat because the notch-plan site
-// records a cap interior at `K == 2` and nothing wider, a gate with no
-// `openFan` term in it at all -- so a CLOSED K>=3 fan gets the same flat cap.
-// It is a divergence in its own right, not a shape this capture's boundary
-// excludes.
+// That last assert is a closure assertion: if a later change makes it match,
+// this cell reddens and says to re-measure and close the row rather than let
+// a divergence close silently. It is NOT about openness — the K>=3 cell is
+// flat because the notch-plan site records a cap interior at `K == 2` and
+// nothing wider, a gate with no `openFan` term in it at all, so a CLOSED
+// K>=3 fan gets the same flat cap. It is a divergence in its own right, not a
+// shape this capture's boundary excludes.
 //
 // WHAT THE FIXTURE WITNESSES, AND WHAT IS TRANSCRIBED BY HAND. Every driven
 // parameter comes OUT of the fixture: `parameters.cells[].drove` carries the
@@ -52,11 +59,12 @@
 //
 // THE THRESHOLD IS NOT READ OFF THE MEASUREMENT IT JUDGES. `kTol` is 1e-5,
 // and both of its margins were measured before the number was written down:
-// the three matching cells come in at 6.0e-8, 6.0e-8 and 7.0e-9 worst, which
-// is float32 round-off on a coordinate of magnitude ~1, so 1e-5 sits two
-// decades above the noise; and the smallest genuine divergence anywhere in
-// this corpus is 0.0218 (the K=3 cell; the boundary cell is 0.0618), so it
-// sits three decades below the nearest real difference.
+// the four matching cells come in at 6.0e-8, 6.0e-8, 7.5e-9 and 3.0e-8 worst,
+// which is float32 round-off on a coordinate of magnitude ~1, so 1e-5 sits two
+// decades above the noise; and the only genuine divergence left in this corpus
+// is 0.0631 (the K=3 cell), so it sits three decades below the nearest real
+// difference. The two divergences task 4360 closed were 0.0618 and 0.0147, so
+// the threshold was never near either of them.
 //
 // MUTATIONS (each seen red under `dub test --config=tests` — the task card
 // carries the verbatim lines, the reddened line numbers and the module
@@ -68,6 +76,13 @@
 //     `compareToDump` short-circuits and the bijection assert is the one that
 //     speaks. `closed_fan_K2_interior_L1` ABOVE it stays green, which is why
 //     the closed control is first in the table.
+//   * (task 4360) put the rim free-end corner back on the beveled edge —
+//     `vp + safeNormalize(pred - vp) * width` — and `open_fan_K2_boundary_L1`
+//     reddens on the vertex-set compare at worst 0.061803, with the three
+//     cells above it green in the same run. Restoring the raw-spoke arc blend
+//     in `slerpAbout` reddens the SAME cell at worst 0.014728, again with the
+//     three above green; the two halves of the fix therefore have separate
+//     witnesses, at separate distances.
 //   * delete one cell from the fixture -> the population floor reddens: five
 //     driven cells is five, not "whatever the file happened to carry".
 //   * permute two corners BETWEEN two faces of `open_fan_K2_interior_L1` in
@@ -292,7 +307,7 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
         Cell("closed_fan_K2_interior_L1", [2u, 4u],     true),
         Cell("open_fan_K2_interior_L1",   [2u, 4u],     true),
         Cell("open_fan_K2_interior_L0",   [2u, 4u],     true),
-        Cell("open_fan_K2_boundary_L1",   [1u, 3u],     false),
+        Cell("open_fan_K2_boundary_L1",   [1u, 3u],     true),
         Cell("open_fan_K3_L1",            [2u, 3u, 4u], false),
     ];
 
@@ -399,15 +414,11 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
             ++diverged;
         }
 
-        // What we build for the two open rows, pinned so the divergence
+        // What we build for the ONE still-open row, pinned so the divergence
         // cannot drift unnoticed. Measured 2026-09-05 at the same widths and
-        // levels the capture used.
-        if (c.name == "open_fan_K2_boundary_L1")
-            assert(m.vertices.length == 12 && m.faces.length == 7,
-                format("%s: we build 12v/7f against the capture's 15v/10f; "
-                     ~ "got %sv/%sf -- the boundary-touching cap moved, so "
-                     ~ "re-measure register row 21's open half",
-                       c.name, m.vertices.length, m.faces.length));
+        // levels the capture used. (`open_fan_K2_boundary_L1` had such a pin
+        // here at 12v/7f until task 4360 closed it; it is now an equality
+        // above, and its counts are the capture's own 15v/10f.)
         // NOT a consequence of the fan being open, and the tally below says
         // so: every spoke here is interior. The ground is the notch-plan gate
         // in `source/mesh_ops/edge_bevel.d`, which records a cap interior at
@@ -437,8 +448,8 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
 
     // The match tally, so "every cell agreed" cannot be read off a loop that
     // ran over fewer cells than the corpus has.
-    assert(matched == 3 && diverged == 2 && matched + diverged == cells.length,
-        format("five driven cells: three that match the capture and two that "
-             ~ "do not -- counted %s matching and %s diverging",
+    assert(matched == 4 && diverged == 1 && matched + diverged == cells.length,
+        format("five driven cells: four that match the capture and one that "
+             ~ "does not -- counted %s matching and %s diverging",
                matched, diverged));
 }
