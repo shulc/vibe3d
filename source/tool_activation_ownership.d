@@ -125,11 +125,14 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         // PipeGizmoHost's own, so the GL owner the prepared resource effects
         // are validated against is already torn down when it fires.
         case ToolTransition.shutdownDrop:
-        // The remaining six have no driven cell of their own at all, which is
-        // a weaker position than the two above rather than a stronger one:
-        // for them a door change would be green before, green after, and green
-        // again when reverted. Cells first, then conversion: task 4240; the
-        // two rows just above, which need the DOOR fixed: 4241 and 4243.
+        // The remaining EIGHT — counted off the `case` labels below, which is
+        // the only count that cannot drift from the rows — have no driven cell
+        // of their own at all. That is a weaker position than the two above
+        // rather than a stronger one: for them a door change would be green
+        // before, green after, and green again when reverted. Cells first,
+        // then conversion: task 4240 (which owns all ten uncelled drops, the
+        // two just above included); the two rows that need the DOOR itself
+        // fixed: 4241 and 4243.
         case ToolTransition.replayDrop:
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.documentReplaceDisarm:
