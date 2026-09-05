@@ -245,3 +245,177 @@ unittest // resetSelection is Exact: a shrink TRUNCATES, and the stale tail cann
                 ~ "faceSetMask[5]=%d", m.facePart[5], m.faceMaterial[5],
                   m.faceSetMask[5]));
 }
+
+// ---------------------------------------------------------------------------
+// Block F — THE THIRD DOOR, and the one that deliberately grows NOTHING
+// (task 4192).
+//
+// `Mesh.addFace` / `Mesh.addFaceFast` append to `faces` and to the per-corner
+// maps and touch NO per-face plane. That is a CONVENTION, not a forgotten
+// line: the lazy length is stated at three declarations in the tree
+// (`facePart`'s "read sites defend fi<len?:0", and `resizeFaceSelection`'s
+// "Do not \"fix\" that by adding a grow line"), and putting
+// `appendFacePlanes(this)` inside `addFace` would change what a caller
+// OBSERVES — `faceMarks` would equal `faces.length` immediately instead of
+// after the caller's own `resetSelection` — and would add five length tests
+// per call on the loader paths that drive it in bulk.
+//
+// Until this block the convention lived in those three comments and in NO
+// check, which is the whole of task 4192: a convention nothing can see broken
+// is indistinguishable from an oversight, and the next reader to notice the
+// asymmetry "fixes" it.
+//
+// THE PLANE NAMES ARE SPELLED OUT BY HAND here too, for the reason this
+// file's header gives: a loop over `kFacePlanes` would shrink together with
+// the table it is meant to guard.
+//
+// TWO CELLS, NOT ONE. `addFaceFast` is a separate door with its own body — it
+// keeps its own scratch edge lookup and marks `edgeMapState_` Stale rather
+// than re-stamping it — so a mutation of `addFace` says nothing whatever
+// about it, exactly as this repository's two selection-draw entry points each
+// need their own pass.
+// ---------------------------------------------------------------------------
+
+unittest // addFace appends a face and grows NO per-face plane
+{
+    Mesh m = makeCube();
+    m.resetSelection();
+
+    // NON-VACUITY, and it is why `resetSelection` runs first. On a fresh cube
+    // every per-face plane is EMPTY, and "the planes did not grow" is then
+    // true of arrays that were never populated — the vacuous pass this
+    // repository pays for most. Settling them to 6 first is what makes the
+    // lag below a measurement.
+    assert(m.faces.length == 6,
+           format("fixture: makeCube must give 6 faces, got %d", m.faces.length));
+    assert(m.faceMarks.length == 6 && m.faceMaterial.length == 6
+        && m.facePart.length == 6 && m.faceSelectionOrder.length == 6
+        && m.faceSetMask.length == 6,
+           format("fixture: resetSelection must settle all five planes to 6; "
+                ~ "got marks=%d material=%d part=%d order=%d setMask=%d",
+                  m.faceMarks.length, m.faceMaterial.length, m.facePart.length,
+                  m.faceSelectionOrder.length, m.faceSetMask.length));
+
+    // Markers on the last settled slot, so a grow that also RESHUFFLED would
+    // be caught below rather than merely a grow that appended.
+    m.facePart[5]           = 7u;
+    m.faceMaterial[5]       = 9u;
+    m.faceSetMask[5]        = 0x20UL;
+    m.faceSelectionOrder[5] = 4;
+
+    m.addFace([0u, 1u, 2u, 3u]);
+
+    assert(m.faces.length == 7,
+           format("fixture: addFace must have appended one face, faces=%d",
+                  m.faces.length));
+
+    // THE MUTATION TARGET (task 4192 `## Мутация`). Adding
+    // `appendFacePlanes(this);` to `Mesh.addFace` brings each of these to 7
+    // and reddens this block naming the door.
+    assert(m.faceMarks.length == 6,
+           format("addFace grew `faceMarks` to %d against %d faces. The third "
+                ~ "door grows NO per-face plane — the lazy length is the "
+                ~ "convention (task 4192), and read sites defend with "
+                ~ "`fi < len ? … : 0`. If this is now deliberate, the three "
+                ~ "declarations that state the convention have to change with "
+                ~ "it.", m.faceMarks.length, m.faces.length));
+    assert(m.faceMaterial.length == 6,
+           format("addFace grew `faceMaterial` to %d against %d faces — see "
+                ~ "the faceMarks assertion above", m.faceMaterial.length,
+                  m.faces.length));
+    assert(m.facePart.length == 6,
+           format("addFace grew `facePart` to %d against %d faces — see the "
+                ~ "faceMarks assertion above", m.facePart.length,
+                  m.faces.length));
+    assert(m.faceSelectionOrder.length == 6,
+           format("addFace grew `faceSelectionOrder` to %d against %d faces — "
+                ~ "see the faceMarks assertion above",
+                  m.faceSelectionOrder.length, m.faces.length));
+    assert(m.faceSetMask.length == 6,
+           format("addFace grew `faceSetMask` to %d against %d faces — see "
+                ~ "the faceMarks assertion above", m.faceSetMask.length,
+                  m.faces.length));
+
+    // THE OTHER HALF OF THE CONVENTION, without which the block above would
+    // also pass over a mesh whose planes simply never settle: the caller's own
+    // `resetSelection` is what closes the gap, the new face reads `T.init`,
+    // and the markers written before the append are still where they were.
+    m.resetSelection();
+    assert(m.facePart.length == 7 && m.faceMaterial.length == 7
+        && m.faceSetMask.length == 7 && m.faceSelectionOrder.length == 7
+        && m.faceMarks.length == 7,
+           format("the caller's resetSelection must close the lag; got "
+                ~ "marks=%d material=%d part=%d order=%d setMask=%d against "
+                ~ "%d faces", m.faceMarks.length, m.faceMaterial.length,
+                  m.facePart.length, m.faceSelectionOrder.length,
+                  m.faceSetMask.length, m.faces.length));
+    assert(m.facePart[6] == 0u && m.faceMaterial[6] == 0u
+        && m.faceSetMask[6] == 0UL && m.faceSelectionOrder[6] == 0,
+           format("the appended face must read T.init after the settle: "
+                ~ "part=%d material=%d setMask=%d order=%d", m.facePart[6],
+                  m.faceMaterial[6], m.faceSetMask[6], m.faceSelectionOrder[6]));
+    assert(m.facePart[5] == 7u && m.faceMaterial[5] == 9u
+        && m.faceSetMask[5] == 0x20UL,
+           format("the settle moved values that were already on the planes: "
+                ~ "part[5]=%d material[5]=%d setMask[5]=%d",
+                  m.facePart[5], m.faceMaterial[5], m.faceSetMask[5]));
+
+    // …with ONE measured exception, and it is not a blemish on the assertion
+    // above — it is what makes `resetSelection` a SELECTION reset. Its
+    // `clearFaceSelection()` zeroes `faceSelectionOrder` wholesale, so the
+    // stamp written at index 5 before the append does NOT survive, while
+    // `facePart` / `faceMaterial` / `faceSetMask` (which the same door
+    // deliberately does not wipe — see the `faceMaterial` note in
+    // `Mesh.resetSelection`) do.
+    //
+    // MEASURED, not assumed: this cell was first written asserting the stamp
+    // survived alongside the other three and reddened on exactly this value
+    // — `the settle moved values that were already on the planes: part[5]=7
+    // material[5]=9 setMask[5]=32 order[5]=0`. Recorded here rather than
+    // quietly dropped, because "the order plane is not carried" is the sort
+    // of asymmetry a later reader would otherwise re-derive.
+    assert(m.faceSelectionOrder[5] == 0,
+           format("`resetSelection` is expected to zero `faceSelectionOrder` "
+                ~ "through `clearFaceSelection()`; it left %d at index 5. If "
+                ~ "the order plane now survives a selection reset, that is a "
+                ~ "change in what `resetSelection` means, not a fixture "
+                ~ "detail.", m.faceSelectionOrder[5]));
+}
+
+unittest // addFaceFast is the same door and needs its own arm
+{
+    Mesh m = makeCube();
+    m.resetSelection();
+
+    assert(m.faces.length == 6 && m.faceMarks.length == 6
+        && m.faceSetMask.length == 6,
+           format("fixture: 6 faces with settled planes; got faces=%d "
+                ~ "marks=%d setMask=%d", m.faces.length, m.faceMarks.length,
+                  m.faceSetMask.length));
+
+    uint[ulong] scratch;
+    m.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+
+    assert(m.faces.length == 7,
+           format("fixture: addFaceFast must have appended one face, faces=%d",
+                  m.faces.length));
+
+    // Same mutation target, second door.
+    assert(m.faceMarks.length == 6,
+           format("addFaceFast grew `faceMarks` to %d against %d faces. It is "
+                ~ "the SECOND door of task 4192's convention and carries its "
+                ~ "own body, so `addFace` staying correct says nothing about "
+                ~ "it.", m.faceMarks.length, m.faces.length));
+    assert(m.faceMaterial.length == 6,
+           format("addFaceFast grew `faceMaterial` to %d against %d faces",
+                  m.faceMaterial.length, m.faces.length));
+    assert(m.facePart.length == 6,
+           format("addFaceFast grew `facePart` to %d against %d faces",
+                  m.facePart.length, m.faces.length));
+    assert(m.faceSelectionOrder.length == 6,
+           format("addFaceFast grew `faceSelectionOrder` to %d against %d "
+                ~ "faces", m.faceSelectionOrder.length, m.faces.length));
+    assert(m.faceSetMask.length == 6,
+           format("addFaceFast grew `faceSetMask` to %d against %d faces",
+                  m.faceSetMask.length, m.faces.length));
+}
