@@ -41,7 +41,7 @@
 //   * add a seventh reader to the seam ⇒ the declaration-set assertion reddens.
 module tests.unit.document_seam_census_test;
 
-import std.algorithm : canFind, sort;
+import std.algorithm : canFind, sort, startsWith;
 import std.array : appender, join;
 import std.file : dirEntries, exists, isDir, readText, SpanMode;
 import std.format : format;
@@ -57,7 +57,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum seamDecl = "source/document.d";
 private enum seamCaller = "tests/unit/document_test.d";
 
-/// The six readers. Data, deliberately: spelled as string literals so that
+/// The six accessors. Data, deliberately: spelled as string literals so that
 /// this census is not itself a caller of the thing it is counting.
 private immutable string[] seamReaders = [
     "testHistoryBucketHolds",
@@ -88,25 +88,79 @@ private size_t count(R)(R range)
     return n;
 }
 
-/// The reader names declared by the `version (unittest)` seam at the tail of
+/// The accessor names declared by the `version (unittest)` seam at the tail of
 /// `source/document.d`, read out of the file rather than trusted from a list.
-private string[] declaredSeamReaders(string text)
+///
+/// PARSED BY NAME CONVENTION, NOT BY RETURN TYPE, and that is the whole point
+/// of this function's second draft. The first matched `^    Ident\*? +name\(`,
+/// so it saw only a BARE-IDENTIFIER return type: `const(Layer) testStray(` and
+/// `ref Mesh testStrayRef(` parsed to nothing at all, `declared == listed`
+/// still held over the six it did see, and a seventh accessor was born
+/// uncensused — exactly the failure the caller below exists to prevent. Not
+/// inferred: both spellings were added to the live seam and this census stayed
+/// GREEN both times (task 4120 review, cells C1 and C2).
+///
+/// Three guards replace it, and the middle one is the one that generalises:
+///
+///   * the header must be UNIQUE in the file. The predecessor took the LAST
+///     `version (unittest) {` line, so a second such block anywhere above the
+///     seam silently moved the parse window past it and the seam went unread;
+///   * every line that COULD be a declaration must yield a name. Matching a
+///     convention can only ever miss, so the miss is made loud: an indent-4
+///     line carrying a `(` and no `test<Upper>` name is a failure, not a
+///     silent zero. That is what stops the next unforeseen spelling;
+///   * the block is bounded by its own closing brace rather than running to
+///     end of file, so a declaration added BELOW the seam is out of scope
+///     instead of being counted into it.
+private string[] declaredSeamReaders(string rawText)
 {
     enum head = "version (unittest) {";
-    const at = text.canFind(head);
-    assert(at, seamDecl ~ " no longer contains a `version (unittest) {` block; "
-             ~ "the seam census cannot locate the seam");
-    size_t i = 0;
-    foreach (n, line; text.splitLines)
-        if (line.strip == head) i = n;
+    // Comments and string literals blanked first: `source/document.d` names
+    // this very header inside the prose above the seam, and a parse that read
+    // raw text would locate the block in a paragraph about the block.
+    const text = blankNonCode(rawText);
+    auto lines = text.splitLines;
+
+    size_t[] headLines;
+    foreach (n, line; lines)
+        if (line.strip == head) headLines ~= n + 1;
+    assert(headLines.length == 1,
+        format("%s must hold exactly ONE `%s` header for this census to know "
+             ~ "which block it is reading; found %d (lines %s). A second block "
+             ~ "would leave one of them unenumerated.",
+               seamDecl, head, headLines.length, headLines));
+    const start = headLines[0] - 1;
+
+    size_t end = lines.length;
+    foreach (n; start + 1 .. lines.length)
+        if (lines[n] == "}") { end = n; break; }
+    assert(end < lines.length,
+        format("the `%s` block in %s is not closed by a column-0 `}`; this "
+             ~ "census cannot bound the seam and would read the rest of the "
+             ~ "file as part of it.", head, seamDecl));
+
     auto names = appender!(string[]);
-    // A declaration inside the block: four spaces, a return type (possibly
-    // `Mesh*`), a space, the name, an open paren.
-    enum declRe = ctRegex!(`^    [A-Za-z_][A-Za-z0-9_]*\*? +([A-Za-z_][A-Za-z0-9_]*)\(`);
-    foreach (line; text.splitLines[i + 1 .. $])
+    // The seam's naming convention, and the only thing the parse keys on:
+    // `test` then an upper-case letter. Every return-type spelling therefore
+    // parses — `const(Layer)`, `ref Mesh`, `inout(Mesh)*`, an attribute in
+    // front of any of them.
+    enum nameRe = ctRegex!(`\btest[A-Z][A-Za-z0-9_]*\s*\(`);
+    foreach (n; start + 1 .. end)
     {
-        auto m = matchAll(line, declRe);
-        if (!m.empty) names.put(m.front[1].idup);
+        const line = lines[n];
+        // Declarations sit at indent 4; bodies are deeper and closing braces
+        // carry no `(`.
+        if (!line.startsWith("    ") || line.startsWith("     ")) continue;
+        if (!line.canFind('(')) continue;
+        auto m = matchAll(line, nameRe);
+        assert(!m.empty,
+            format("%s:%d is an indent-4 declaration line in the seam and "
+                 ~ "yields no `test<Upper>` name: `%s`. Seam accessors are "
+                 ~ "recognised BY THAT CONVENTION, so an accessor named "
+                 ~ "otherwise would be invisible here; rename it, or move it "
+                 ~ "out of the seam.", seamDecl, n + 1, line.strip));
+        const hit = m.front[0];
+        names.put(hit[0 .. $ - 1].strip.idup);
     }
     auto result = names.data;
     result.sort();
