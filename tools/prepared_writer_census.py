@@ -146,7 +146,14 @@ def _methods(path, names):
     return rows
 
 def scan(root):
-    root = Path(root)
+    # RESOLVE, don't just wrap. Every classification below keys on path
+    # EQUALITY against `root / "source/..."`, and `rglob` yields paths
+    # built from the root it was handed. A relative root therefore compares
+    # a relative path against a relative one only by luck: measured on this
+    # tree, `.` gave 4 bypasses / 0 internal publishers where the absolute
+    # root gives 2 / 2 — the internal-publisher arm never fired, so a
+    # publisher inside the transition module read as an unreviewed bypass.
+    root = Path(root).resolve()
     tool_files = sorted((root / "source/tools").rglob("*.d"))
     hooks = []
     for p in [root / "source/tool.d", *tool_files]:
