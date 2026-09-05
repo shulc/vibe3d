@@ -201,9 +201,9 @@ unittest // the reference builds a cap on an open fan, and it is the closed one
     }
     assert(inOrder > tol,
         format("the emission ORDER must differ even though the SET does not "
-             ~ "-- index-wise the two dumps are %s apart, and if that ever "
-             ~ "reads zero the ordering note above has stopped being true",
-               inOrder));
+             ~ "-- index-wise the two dumps are %s apart under the "
+             ~ "permutation %s, and if that ever reads zero the ordering "
+             ~ "note above has stopped being true", inOrder, image));
 
     // ...and exactly one face differs, the base polygon that was removed.
     assert(cast(int) num(fx["faces_only_in_closed"]) == 1
