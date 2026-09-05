@@ -204,16 +204,27 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         throw new Exception("prepared no-op pose boundary refused");
     }
 
+    // TASK 4482 — each of these five names WHICH transaction refused, and now
+    // also WHICH CHECK inside it did. Without the second half a refusal is
+    // indistinguishable from its four siblings inside `validate()`, and the
+    // only way to read it was a debugger with conditional breakpoints. The
+    // tool id travels with the message for the same reason: the door that
+    // catches this logs it, and "which tool" is the first thing asked.
     if (!result.pipe_.validate())
-        throw new Exception("prepared tool arm pipe validation refused");
+        throw new Exception("prepared tool arm pipe validation refused for '" ~
+            id ~ "': " ~ result.pipe_.validateFailureReason());
     if (result.outgoing_ !is null && !result.outgoing_.validate())
-        throw new Exception("prepared tool arm outgoing validation refused");
+        throw new Exception("prepared tool arm outgoing validation refused for '"
+            ~ id ~ "': " ~ result.outgoing_.validateFailureReason());
     if (!result.incoming_.validate())
-        throw new Exception("prepared tool arm incoming validation refused");
+        throw new Exception("prepared tool arm incoming validation refused for '"
+            ~ id ~ "': " ~ result.incoming_.validateFailureReason());
     if (!result.params_.validate())
-        throw new Exception("prepared tool arm params validation refused");
+        throw new Exception("prepared tool arm params validation refused for '" ~
+            id ~ "': " ~ result.params_.validateFailureReason());
     if (!result.pose_.validate())
-        throw new Exception("prepared tool arm pose validation refused");
+        throw new Exception("prepared tool arm pose validation refused for '" ~
+            id ~ "': " ~ result.pose_.validateFailureReason());
 
     cleanupArmed = false;
     return result;

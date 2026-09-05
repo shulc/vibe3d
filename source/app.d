@@ -3933,7 +3933,36 @@ void main(string[] args) {
     };
     toolHost.activate = (string id) {
         JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
-        armPreparedTool(ToolTransition.interactiveArm, id, noNamed);
+        // TASK 4482 — REFUSAL-AS-NOOP, and only on THIS door.
+        //
+        // This is the interactive arm: a tool hotkey, a tool button, the
+        // panel. Its caller is a key handler, and an exception escaping a key
+        // handler is not a diagnostic — it is the user's unsaved work, gone.
+        // Shift+B on a cube exited the process with code 1 (owner, 2026-09-05);
+        // the same log under `--test` did not, because `--test` gates the whole
+        // UI chrome, which is why no test could see it. `prepareArm` rolls its
+        // own transaction back on the way out (its `scope(failure)` abandons
+        // all five contexts and discards the candidate), so nothing was
+        // published and NOT arming is a complete, consistent outcome.
+        //
+        // The shape deliberately matches the registry refusal a few hundred
+        // lines below in `activateToolById`, which already logs and declines
+        // rather than throwing. This is the owner's door contract from card
+        // 4241: a door that cannot prepare an arm refuses, it does not kill
+        // the process.
+        //
+        // THE COMMAND DOOR IS NOT COVERED, and that is the point. `tool.set`
+        // arrives through `toolHost.activatePrepared` above and must keep
+        // throwing: the command funnel turns a throw into `status:error` with
+        // no history entry, and swallowing it here would make the command
+        // answer `ok` while arming nothing — a state the command model does
+        // not have. `Error` is not caught either; an assert or an OOM must
+        // still take the process down.
+        try {
+            armPreparedTool(ToolTransition.interactiveArm, id, noNamed);
+        } catch (Exception e) {
+            logWarn("tool", "'" ~ id ~ "' not armed: " ~ e.msg);
+        }
     };
     toolHost.deactivate = () {
         dropActiveTool(ToolTransition.explicitDrop);

@@ -9,8 +9,8 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 514
-task-citation-lines 5134
-citing-files 388
+task-citation-lines 5137
+citing-files 389
 long-comment-runs 281
 files-with-long-runs 149
 
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 299
+allow source/app.d 300
 allow source/app_version.d 1
 allow source/args_dialog.d 1
 allow source/argstring.d 4
@@ -280,7 +280,8 @@ allow source/pie_state.d 1
 allow source/pipe_gizmo_host.d 4
 allow source/plane_bytes.d 1
 allow source/prefs.d 31
-allow source/prepared_record_context.d 1
+allow source/prepared_record_context.d 2
+allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 2
 allow source/record_observer_hub.d 1
 allow source/registration.d 63

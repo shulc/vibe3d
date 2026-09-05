@@ -338,6 +338,19 @@ private:
     bool inheritedHistoryInstall_;
     PreparedXfrmActivationSessionOwner xfrmLayoutOwner_;
     ubyte xfrmLayoutStage_; // 0=absent, 1=pre, 2=marker, 3=post
+
+    // WHICH check refused (task 4482). `validate()` has four `return false`
+    // paths and its callers had one message between them, so a refusal named
+    // the transaction and not the reason: reading it cost a debugger session
+    // with conditional breakpoints, because the per-resource line executes on
+    // every iteration and a plain breakpoint stops on the SUCCESSFUL calls
+    // first. These two fields are written at each refusal and read only by
+    // `validateFailureReason` at throw time. A string LITERAL assignment
+    // allocates nothing, so `validate()` stays `nothrow @nogc`; the enum name
+    // is resolved later, where allocating is allowed.
+    string validateFailure_;
+    PreparedResourceKind validateFailureKind_;
+    bool validateFailureHasKind_;
     version (unittest) {
         static bool failAfterResourceBegin_;
         ubyte[16] installTrace_;
@@ -1359,14 +1372,42 @@ public:
         return history_.prepareNextRun(token_);
     }
 
+    /// Why the last `validate()` refused, for an exception message (task
+    /// 4482). Empty when it has not refused. Allocates, so it is never called
+    /// from the `nothrow @nogc` check itself — only from the throw site.
+    string validateFailureReason() const {
+        if (validateFailure_ is null) return "";
+        if (!validateFailureHasKind_) return validateFailure_;
+        import std.conv : to;
+        return validateFailure_ ~ ": " ~ validateFailureKind_.to!string
+            ~ " (kind " ~ (cast(int)validateFailureKind_).to!string ~ ")";
+    }
+
+    private void noteResourceRefusal(PreparedResourceKind kind) nothrow @nogc {
+        validateFailure_ = "an enlisted resource refused";
+        validateFailureKind_ = kind;
+        validateFailureHasKind_ = true;
+    }
+
     bool validate() nothrow @nogc {
-        if (!begun_ || validated_Once) return false;
+        validateFailure_ = null;
+        validateFailureHasKind_ = false;
+        if (!begun_ || validated_Once) {
+            validateFailure_ = !begun_
+                ? "transaction was never begun"
+                : "transaction was already validated once";
+            return false;
+        }
         if (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 3) {
+            validateFailure_ = "transform layout stage is mid-flight "
+                ~ "(expected absent or post)";
             invalidateTransaction();
             return false;
         }
         if (resources_.length > 0 && !historyMarker_) {
             if (!noHistoryMarker_) {
+                validateFailure_ =
+                    "resources enlisted but no history boundary was marked";
                 invalidateTransaction();
                 return false;
             }
@@ -1582,6 +1623,12 @@ public:
             case PreparedResourceKind.BoxParamState:
                 ok = e.boxParam !is null && e.boxParam.validate(); break;
             }
+            // Record WHICH kind refused BEFORE the line below. That line is
+            // pinned byte-for-byte by the prepared-protocol census
+            // (P1.0b.4c.1, `tools/check_prepared_protocol.py`), which counts
+            // the literal exactly once: the invalidate-then-refuse shape is
+            // the contract, and a diagnostic is not a reason to change it.
+            if (!ok) noteResourceRefusal(e.kind);
             if (!ok) { invalidateTransaction(); return false; }
         }
         if (noHistoryMarker_) validated_Once = true;
