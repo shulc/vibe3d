@@ -293,6 +293,15 @@ private size_t occurrences(string hay, string needle) {
 /// holds 871 backticks, nearly all of them Ddoc prose, so a masker that
 /// looked for strings first would mis-lex the file wholesale. Consuming
 /// whichever construct starts first settles both at once.
+///
+/// MEASURED LIMIT, and both halves of it belong here. The wysiwyg arm scans
+/// to the next plain `"`, so a DELIMITED `q"(…)"` or a heredoc whose BODY
+/// holds a `"` closes early and that literal's tail is then lexed as code.
+/// The error direction is UNDER-masking, which can only make a count too high
+/// — it cannot hide a call. And the corpus this masker is pointed at has ZERO
+/// such sites: `source/**.d` holds no wysiwyg literal at all (2026-09-05 —
+/// `grep -rhoE '(^|[^A-Za-z0-9_])q"([({\[<]|[A-Za-z_])' source/` counts 0,
+/// against 92 under `tests/`, which this census does not read).
 private string maskComments(string src) {
     auto masked = src.dup;
     void blank(size_t from, size_t to) {
@@ -331,6 +340,17 @@ private string maskComments(string src) {
         }
         // Wysiwyg `r"…"` / `q"…"`: no escape processing inside. Guarded on the
         // preceding byte so the `r` ending an identifier cannot open one.
+        //
+        // NO CELL COVERS THIS ARM, and that is deliberate rather than a hole:
+        // delete the arm, or just its guard, and the masked `source/` corpus
+        // is byte-identical — 514 files, 14 586 202 bytes, md5 7FF8C82F… all
+        // three ways (2026-09-05). source/ has no wysiwyg literal to lex: the
+        // five `q"` byte pairs are all `"seq"` inside another literal or a
+        // `///` comment, and the four `r"` are the tail of an ordinary
+        // string. So there is nothing here for a cell to discriminate, and
+        // the green is honest. The rig that says so IS discriminating: on a
+        // synthetic `seq"a\"b"` the guarded and unguarded builds differ
+        // (md5 A174F5BB vs 945FD296). Task 4244 carries the numbers.
         if ((c == 'r' || c == 'q') && i + 1 < src.length && src[i + 1] == '"'
             && !(i > 0 && identChar(src[i - 1]))) {
             size_t j = i + 2;
@@ -383,6 +403,38 @@ unittest {
         "task 4053: an apostrophe in a comment must not open a char literal");
     assert(maskComments("// a `b\nc();").canFind("c();"),
         "task 4053: a backtick in a comment must not open a wysiwyg string");
+
+    // ---- and the SAME two hazards in CODE position ------------------------
+    // The four cells above put the apostrophe and the backtick inside a
+    // COMMENT, so the comment arm consumes them before the arm under test is
+    // ever reached: a second, unnamed guard refuses first, and neither cell
+    // can fail for its own arm. Measured 2026-09-05 — with the char arm
+    // deleted, and again with the backtick arm deleted, this module still
+    // said `1 modules passed unittests`, while the masked source/ corpus
+    // differed in 20 414 and 5 929 of its 14 586 202 bytes respectively —
+    // the LENGTH is invariant by construction, so the mutant is caught by a
+    // byte compare, never by a size. The four cells below put the
+    // literal where the arm actually has to lex it, and each pair goes red
+    // exactly when its arm goes; the offset assert above each is the half
+    // that must stay GREEN, so one run buys both. Task 4053 §Мутация quotes
+    // the two reds verbatim.
+    enum charInCode = `char q = '"'; k(); // z();`;
+    assert(maskComments(charInCode).length == charInCode.length,
+        "task 4053: masking a char literal must preserve offsets");
+    assert(!maskComments(charInCode).canFind("z();"),
+        "task 4053: a quote inside a CHAR literal must not open a string. "
+      ~ `Delete the char arm — the "|| c == '\''" half of the escaped-`
+      ~ "literal test — and that quote opens a literal which never closes, "
+      ~ "so every comment after it in the file stops being masked and every "
+      ~ "commented-out call from there on counts as a call.");
+    enum tickInCode = "s = `// b();`; c();";
+    assert(maskComments(tickInCode).length == tickInCode.length,
+        "task 4053: masking a backtick string must preserve offsets");
+    assert(maskComments(tickInCode).canFind("c();"),
+        "task 4053: a // inside a BACKTICK string must not eat the rest of "
+      ~ "the line. Delete the backtick arm and the comment arm opens at that "
+      ~ "//, masking the code that follows the literal. app.d alone holds "
+      ~ "871 backticks, so this arm is load-bearing on the real corpus.");
 }
 
 unittest {
