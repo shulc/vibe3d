@@ -1,0 +1,130 @@
+{
+  "name": "backdrop_display_slots",
+  "description": "How the reference editor draws a NON-FOREGROUND (background) layer, and what it does under the weight/vertex-map surface style. Read STATICALLY off the reference's own unstripped shipped libraries and its shipped resource configs -- no engine boot, no display, no behavioural stand. Two things this settles that we had guessed: there is NO brightness multiplier for a background layer (it gets a second, complete display state instead), and the coarse background-layer control is a FACADE over that same state rather than an independent axis.",
+  "source": "Static disassembly of the reference editor's shipped libraries (objdump/nm over the unstripped symbol tables) plus its shipped resource configuration. Zero boots.",
+  "tolerance": 0,
+  "read_from": "Read at the reference's own compute sites: the mesh model-draw callback (where the foreground/background slot is derived and the draw pass is gated), the shaded mesh-bin callback (where the weight ramp is gated), the command handlers that write the per-slot fields, the surface-state setter that carries the alpha, and the surface-style registry constructor. Routine names, libraries, addresses and field offsets live in the PRIVATE toolcard for this task -- they are the reference's own identifiers and deliberately do not cross into this tree. What is reproducible from here is the LAW.",
+
+  "display_slots": {
+    "law": "The viewport carries TWO complete display states, indexed by a slot argument that every per-viewport display command accepts: slot 0 is the active mesh, slot 1 the inactive (background) mesh. The two are the same struct at a fixed stride, so every knob the active mesh has, the background mesh has too -- surface style, wireframe overlay, wireframe opacity, wireframe colour, vertex-map display, weight display, point size and the rest.",
+    "slot_count": 2,
+    "active_slot": 0,
+    "inactive_slot": 1,
+    "mirrored_controls": [
+      "surfaceStyle", "wireOverlayMode", "wireOpacity", "wireColour",
+      "currentVertexMapChoice", "smoothShading", "weightColouring",
+      "vertexMapChannelChoice", "subdivisionMaskDisplay", "uvBoundaryDisplay",
+      "geometryBoundaryDisplay", "uvDistortionDisplay", "perViewportDotSize",
+      "dotSizeValue", "vertexDotDisplay", "cageDisplay", "guideDisplay",
+      "independentStyleFlag"
+    ],
+    "mirrored_control_count": 18
+  },
+
+  "surface_styles": {
+    "law": "The surface-style choice is an index into one list of eleven styles, per slot. The weight/vertex-map style is index 2.",
+    "count": 11,
+    "order": ["wireframe", "solid", "vertexMap", "shaded", "textured", "texturedModulate", "advancedGl", "gnzGl", "extra1", "extra2", "extra3"],
+    "vertex_map_style_index": 2,
+    "solid_style_index": 1,
+    "out_of_range_is_refused": true
+  },
+
+  "coarse_control": {
+    "law": "There IS a coarse 'how are background layers drawn' control with four modes, and it is NOT a second, independent axis: two of its modes write a display preset into the inactive slot's own state, and the other two set one of two flags. So the coarse control and the per-slot commands are ONE control system, the coarse one expressed in terms of the fine one.",
+    "mode_count": 4,
+    "reference_mode_ordinals": {
+      "wireframe": 0,
+      "flat": 1,
+      "mirrorActive": 2,
+      "hidden": 3
+    },
+    "wireframe_and_flat_write_the_inactive_slot": true,
+    "mirror_active_sets_a_flag": true,
+    "hidden_sets_a_flag": true,
+    "out_of_range_is_refused": true,
+    "ours_mode_ordinals": {
+      "mirrorActive": 0,
+      "wireframe": 1,
+      "flat": 2,
+      "hidden": 3
+    },
+    "ordinals_agree": false,
+    "ordinals_note": "The four modes correspond one-to-one; only the declared ORDER differs. Frozen on both sides so that renaming or reordering either one reddens instead of drifting."
+  },
+
+  "draw_gate": {
+    "law": "The model draw runs in passes. The background pass draws ONLY slot-1 meshes; the main pass draws only slot-0 meshes (one whole-viewport renderer choice excepted). The 'same as active' flag folds slot 1 to slot 0 BEFORE that gate. Therefore, under 'same as active', every mesh has slot 0: the background pass draws nothing at all, and background meshes are drawn in the MAIN pass with the ACTIVE slot's state.",
+    "background_pass_draws_slot": 1,
+    "main_pass_draws_slot": 0,
+    "same_as_active_folds_slot_before_the_gate": true,
+    "under_same_as_active_background_meshes_draw_in_the_main_pass": true,
+    "invisible_flag_culls_the_item_before_any_of_this": true
+  },
+
+  "brightness": {
+    "law": "There is no dim term on the item SURFACE path. The alpha it sets is the literal 1.0 for foreground and background alike -- the same constant, at every one of the four sites read -- and no branch on that path tests the foreground bit. The base colour comes from a scheme entry, or the item's own colour, or the selected-item scheme entry, again with no foreground/background term. A background layer is distinguished by resolving a DIFFERENT display state, never by being dimmed.",
+    "reference_background_brightness_multiplier": 1.0,
+    "alpha_sites_agreeing": 4,
+    "branches_on_foreground_near_the_alpha": 0,
+    "the_one_foreground_dependent_alpha_found": {
+      "note": "Searched for, found once, and it goes the OTHER way -- recorded so that a later reader does not present it as the backdrop dim. It is on the SILHOUETTE/overlay bin, not the surface path; it is gated on a viewport MODE flag as well as on the foreground bit; it applies to FOREGROUND items only; and its value is 1.0 minus a user preference, not a constant.",
+      "applies_to": "foreground",
+      "on_the_surface_path": false,
+      "value_is_a_constant": false,
+      "gated_on_a_mode_flag": true
+    },
+    "ours_background_brightness_multiplier": 0.45,
+    "ours_is_a_declared_divergence": true
+  },
+
+  "weight_style_backdrop": {
+    "law": "Whether a mesh gets the weight ramp is a per-slot BOOLEAN, read from the slot the gate resolved: if it is zero the whole weight path is skipped for that mesh. Under 'same as active' the background mesh resolves slot 0, so it takes the active mesh's surface style AND the active mesh's weight flag. The answer to 'two layers, one background, active style = the weight style: does the background layer's surface fill?' is therefore YES -- it fills, it takes the weight ramp, and it is not dimmed.",
+    "weight_display_is_a_per_slot_boolean": true,
+    "backdrop_fills_under_weight_and_same_as_active": true,
+    "backdrop_takes_the_weight_ramp_under_same_as_active": true,
+    "backdrop_is_dimmed": false
+  },
+
+  "style_registry_subpasses": {
+    "law": "Each registered surface style installs a list of model-draw sub-passes. The shaded styles install three -- a background one, a main one and a transparency one. The unshaded solid style and the vertex-map (weight) style each install exactly ONE, the main one, and neither installs a light setup. Read as a COUNT this is right; read as 'the backdrop's face pass is withdrawn' it is wrong, because the background sub-pass is the pass slot-1 meshes draw in, and under 'same as active' there are no slot-1 meshes.",
+    "shaded_style_subpass_count": 3,
+    "solid_style_subpass_count": 1,
+    "weight_style_subpass_count": 1,
+    "solid_style_installs_a_light_setup": false,
+    "weight_style_installs_a_light_setup": false,
+    "background_subpass_is_the_slot_1_pass": true
+  },
+
+  "ours_divergences": {
+    "note": "Both entries are pinned by the reader beside this file, in the DIVERGENCE direction: they redden if our behaviour changes without this block changing with it. Neither is a parity assertion.",
+    "backdrop_dim": {
+      "ours": 0.45,
+      "reference": 1.0,
+      "status": "divergence-deliberate, declared since task 0559"
+    },
+    "solid_withdraws_the_backdrop_face_pass": {
+      "ours": true,
+      "reference": false,
+      "status": "REFUTED by this read; see the follow-up task in the register",
+      "why": "The rule reads the sub-pass count correctly and applies it to the one configuration -- 'same as active' -- in which that sub-pass is never used. Under 'same as active' the reference draws background meshes in the MAIN pass, so their faces fill."
+    }
+  },
+
+  "parameters": {
+    "schema": 1,
+    "state": "none",
+    "why": "provenance.method is 'static-read': every statement here was decoded from the reference's own shipped, unstripped libraries under objdump, or read out of its shipped resource configuration. No engine was launched, no tool was armed and no gesture was delivered, so there is no tool parameter this fixture could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody had looked (task 3010)."
+  },
+
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "static-read",
+    "captured_utc": "2026-09-05",
+    "harness": "objdump -d / nm -S over the shipped unstripped libraries, plus the shipped resource configs and a committed replay of the surface-style registry constructor; no process was started",
+    "task": "2660",
+    "notes": "INSTRUMENT: static disassembly. No engine was launched, no display opened, no pointer injected and no trace recorded. The row this closes forbade, by name, deriving the sub-pass count from a colour property; this read takes the route the row asked for instead -- the caller that draws a non-foreground layer -- and the sub-pass table appears here only as corroboration, with the misreading it caused recorded beside it. See the private toolcard for the symbols, libraries, addresses and field offsets."
+  }
+}
