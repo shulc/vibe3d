@@ -91,22 +91,19 @@ def module_path(root, *module_names):
     """Resolve one D module by declaration so package moves do not alter identity."""
     root = Path(root).resolve()
     accepted = set(module_names)
-    direct = [root / "source" / (name.replace(".", "/") + ".d")
-              for name in accepted]
-    direct = [path for path in direct if path.is_file()]
-    if len(direct) == 1:
-        head = re.search(r"^\s*module\s+([\w.]+)\s*;", direct[0].read_text(), re.M)
-        if head and head.group(1) in accepted:
-            return direct[0]
     if root not in _MODULE_INDEX_CACHE:
         index = {}
         for path in sorted((root / "source").rglob("*.d")):
-            head = re.search(r"^\s*module\s+([\w.]+)\s*;", path.read_text(), re.M)
+            # Module declarations precede imports in this tree. Reading only
+            # the header keeps exact duplicate detection cheap in mutation roots.
+            with path.open(errors="replace") as source_file:
+                header = source_file.read(8192)
+            head = re.search(r"^\s*module\s+([\w.]+)\s*;", header, re.M)
             if head:
                 index.setdefault(head.group(1), []).append(path)
         _MODULE_INDEX_CACHE[root] = index
     index = _MODULE_INDEX_CACHE[root]
-    matches = [path for name in accepted for path in index.get(name, [])]
+    matches = [path for name in sorted(accepted) for path in index.get(name, [])]
     if len(matches) != 1:
         raise ValueError(
             f"module {sorted(accepted)} resolved to {len(matches)} files: "
