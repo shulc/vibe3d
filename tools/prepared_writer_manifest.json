@@ -1,22 +1,12 @@
 {
   "bypasses": [
     {
-      "line": 2682,
-      "path": "source/app.d",
-      "symbol": "prepareDrop"
-    },
-    {
-      "line": 2686,
-      "path": "source/app.d",
-      "symbol": "commitPreparedDrop"
-    },
-    {
-      "line": 3922,
+      "line": 3904,
       "path": "source/app.d",
       "symbol": "prepareArm"
     },
     {
-      "line": 3938,
+      "line": 3920,
       "path": "source/app.d",
       "symbol": "commitPreparedArm"
     }
@@ -1251,18 +1241,6 @@
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
-    },
-    {
-      "line": 271,
-      "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "347f261b886469536eda2a6f9acdb52dffd92da0555343a55366e5c4c5290812",
-      "symbol": "prepareDrop"
-    },
-    {
-      "line": 298,
-      "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "9969606358c523ae55afc6fb602c21e706a1d175bcc71952614e1cd38be12a7d",
-      "symbol": "commitPreparedDrop"
     }
   ],
   "lifecycle_classifier": {

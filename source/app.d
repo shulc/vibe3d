@@ -2670,23 +2670,6 @@ void main(string[] args) {
         captureStickyToolDefaults();
         if (activeTool) {
             final switch (activationDoorFor(why)) {
-                case ActivationDoor.preparedDrop: {
-                    // The same door a tool SWITCH has always used for its
-                    // outgoing tool. `document.primary` is the layer whose
-                    // mesh the tool was armed on for exactly the transitions
-                    // the table routes here — the prepared deactivation
-                    // producers guard on that and would refuse otherwise.
-                    import core.thread : Thread;
-                    import prepared_tool_transition : prepareDrop,
-                        commitPreparedDrop;
-                    auto prepared = prepareDrop(activeTool, history,
-                        recordObserverHub, document.primary,
-                        cast(ulong)cast(void*)Thread.getThis(),
-                        cast(ulong)SDL_GL_GetCurrentContext());
-                    if (!commitPreparedDrop(activeTool, activeToolId, prepared))
-                        throw new Exception("prepared tool drop was already consumed");
-                    break;
-                }
                 case ActivationDoor.legacyDeactivate:
                     activeTool.deactivate();
                     activeTool.destroy();
@@ -3897,7 +3880,6 @@ void main(string[] args) {
                          bool lifecycleReplay = false) {
         final switch (activationDoorFor(why)) {
             case ActivationDoor.preparedArm: break;
-            case ActivationDoor.preparedDrop:
             case ActivationDoor.legacyDeactivate:
                 assert(0, "a drop door cannot own an arm");
         }

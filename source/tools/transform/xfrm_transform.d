@@ -1228,22 +1228,20 @@ public:
         if (flagT) accepted = moveSub.prepareDeactivate(context).historyAccepted || accepted;
         if (flagR) accepted = rotateSub.prepareDeactivate(context).historyAccepted || accepted;
         if (flagS) accepted = scaleSub.prepareDeactivate(context).historyAccepted || accepted;
-        // TASK 4053 — the consolidate IS a history effect, and saying so is
-        // what makes this the twin of `deactivate()` rather than a near-twin.
-        // It prepares INTO the history token; a boundary that then chose
-        // `markNoHistoryInstall()` — which is what happens whenever the run
-        // recorded no NEW edit — makes `PreparedRecordContext.install` call
-        // `discardPreparedToken`, and the prepared consolidate goes with it.
-        // MEASURED, not reasoned: a two-gesture in-session rotate run dropped
-        // through the prepared door left THREE surviving undo entries where
-        // `deactivate()` leaves ONE — `tests/test_rs_insession_cancel.d:517`,
-        // "drop consolidates the two-gesture run into ONE surviving entry;
-        // floor=1 now=3". `deactivate()` consolidates unconditionally
-        // (`if (history !is null) history.consolidate(...)`, no gate on
-        // whether anything was recorded), so its twin must too.
+        // TASK 4053 measured what this line does NOT do, and left it alone.
+        // The consolidate prepares INTO the history token, and the door below
+        // picks `markNoHistoryInstall()` whenever the run recorded no NEW
+        // edit — at which point `PreparedRecordContext.install` calls
+        // `discardPreparedToken` and this consolidate goes with it, while
+        // `deactivate()` consolidates unconditionally. Counting it as a
+        // history effect DOES close that gap (it turned
+        // `tests/test_rs_insession_cancel.d:517` from "floor=1 now=3" back to
+        // green) but it is not this task's to land: the run id it passes is
+        // read off the LIVE history while the consolidate runs against the
+        // detached image, which is the second half of the same defect. Task
+        // 4243 owns both halves together.
         if (context !is null && history !is null)
-            accepted = context.consolidate(history.currentRunId).accepted
-                       || accepted;
+            context.consolidate(history.currentRunId);
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Xfrm, accepted);
     }

@@ -65,16 +65,12 @@ enum ToolTransition : ubyte {
     shutdownDrop,
 }
 
-/// The doors. There is exactly one arm door and, after this task, two drop
-/// doors — one converted, one not yet.
+/// The doors. One arm door, one drop door — and the drop door is the LEGACY
+/// one for every transition, which task 4053 measured rather than inherited.
 enum ActivationDoor : ubyte {
     /// `prepared_tool_transition.prepareArm` + `commitPreparedArm`. Owns the
     /// incoming candidate AND, on a switch, the outgoing tool's deactivation.
     preparedArm,
-    /// `prepared_tool_transition.prepareDrop` + `commitPreparedDrop`. The same
-    /// `PreparedToolDoorClient.prepareDoorDeactivate` the switch uses, with no
-    /// incoming candidate.
-    preparedDrop,
     /// `Tool.deactivate()` called live, then `destroy()`.
     legacyDeactivate,
 }
@@ -93,17 +89,31 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         case ToolTransition.resetRearm:
             return ActivationDoor.preparedArm;
 
-        // ---- converted drops ----------------------------------------------
-        // Both hold the invariant every prepared deactivation door is written
-        // against: `document.primary` is non-null and its mesh is the mesh the
-        // tool was armed on. A tool SWITCH already runs every one of those
-        // doors with exactly that layer, so these two transitions add no door
-        // that was not already production.
+        // ---- EVERY drop is still on the legacy door, and this task MEASURED
+        // ---- why rather than assuming it ----------------------------------
+        // `explicitDrop` and `sameIdToggleDrop` were converted and reverted in
+        // this same task. They hold the layer invariant, the switch already
+        // runs every one of those doors with exactly that layer, and the
+        // conversion still broke TWO driven cells, because the prepared
+        // deactivation is not a faithful twin of `deactivate()`:
+        //
+        //   tests/test_item_drag_undo.d(288) — "a panel rotate edit must
+        //   surface one arm plus exactly ONE edit … before=1 after=2". The
+        //   prepared consolidate reads `history.currentRunId` off the LIVE
+        //   history while it consolidates the DETACHED image the record went
+        //   into, so it gathers the wrong run.
+        //
+        //   tests/test_tool_gesture_g2.d(388) — the mirror drop "ticked 0
+        //   unbatched geometry commits" on the DOCUMENT mesh. The prepared
+        //   door installs a stamped mesh IMAGE where `deactivate()` writes
+        //   through the live mesh primitives, so the change-bus counter the
+        //   measured delivery law is stated in never moves.
+        //
+        // Both divergences exist on the SWITCH transition today, where nothing
+        // measures them. Tasks 4240 (cells first, then conversion) and 4243
+        // (the two divergences themselves) own the rest.
         case ToolTransition.explicitDrop:
         case ToolTransition.sameIdToggleDrop:
-            return ActivationDoor.preparedDrop;
-
-        // ---- drops still on the legacy door, each for a measured reason ----
         // `activeLayerChangedDrop` fires exactly WHEN the primary moved or went
         // away, so `document.primary` is either null or a different layer than
         // the tool's mesh — and the prepared doors guard on
@@ -115,14 +125,11 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         // PipeGizmoHost's own, so the GL owner the prepared resource effects
         // are validated against is already torn down when it fires.
         case ToolTransition.shutdownDrop:
-        // The remaining SIX hold that same invariant by reading, and stay
-        // legacy for one reason only: none of them has a driven cell that can
-        // tell the two doors apart, and a door change nobody can see is green
-        // before it, green after it and green again when it is reverted. That
-        // is not caution in the abstract — converting the seventh
-        // (`explicitDrop`) reddened `tests/test_rs_insession_cancel.d:517` and
-        // exposed a real divergence. Cells and conversions: task 4240; the two
-        // rows above, which need the DOOR changed rather than a cell: 4241.
+        // The remaining six have no driven cell of their own at all, which is
+        // a weaker position than the two above rather than a stronger one:
+        // for them a door change would be green before, green after, and green
+        // again when reverted. Cells first, then conversion: task 4240; the
+        // two rows just above, which need the DOOR fixed: 4241 and 4243.
         case ToolTransition.replayDrop:
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.documentReplaceDisarm:

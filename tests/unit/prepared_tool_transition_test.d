@@ -358,10 +358,6 @@ static assert(!__traits(isCopyable, PreparedArm),
     "PreparedArm became copyable: restore `@disable this(this)`");
 static assert(!__traits(isCopyable, PreparedCandidateOwner),
     "PreparedCandidateOwner became copyable: restore `@disable this(this)`");
-// Task 4053 — the drop half of the door owns a boundary exactly as the arm
-// half does, so it carries the same lifetime rule.
-static assert(!__traits(isCopyable, PreparedDrop),
-    "PreparedDrop became copyable: restore `@disable this(this)`");
 static assert(!__traits(isCopyable, PreparedHistoryImage),
     "PreparedHistoryImage became copyable: restore `@disable this(this)`");
 static assert(!__traits(isCopyable, PreparedLayerReadScope),

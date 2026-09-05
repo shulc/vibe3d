@@ -147,3 +147,19 @@ drop 0 3 4062 the oneStringArg unittest in source/http_providers.d, deleted with
 # realised in two modules). Net -1 assert, and the coverage is strictly wider:
 # the old lookup could not see a deleted declaration at all.
 drop 0 1 4100 commit_seam widening block derives its declaring file from publicDecl instead of naming it as a path; three table-consistency/exists asserts replaced by two tree-facing ones
+
+# Task 4053 — the DROP conversion was landed, measured, and reverted inside the
+# same task, so three asserts that only had a subject while it stood go with it.
+# The three: `PreparedDrop`'s non-copyable `static assert` in
+# tests/unit/prepared_tool_transition_test.d and the matching `static assert`
+# on `commitPreparedDrop`'s nothrow function type in
+# source/prepared_tool_transition.d, both of which pinned a type that no longer
+# exists; and one row of the ownership ledger's partition count, which went
+# from three doors (arm / prepared drop / legacy drop) to two, so its third
+# count has nothing to count. Nothing that survived lost a check: the partition
+# is still pinned in both directions (kArms, kLegacyDrops), the arm pair keeps
+# its own nothrow and non-copyable asserts, and the reason for the revert is
+# pinned by three DRIVEN cells that the conversion reddened —
+# tests/test_rs_insession_cancel.d:517, tests/test_item_drag_undo.d:288 and
+# tests/test_tool_gesture_g2.d:388.
+drop 0 3 4053 PreparedDrop's non-copyable assert, commitPreparedDrop's nothrow function-type assert, and the ownership ledger's third door count — all three pinned the prepared drop transaction that this same task measured as not yet a faithful twin of Tool.deactivate() and removed again

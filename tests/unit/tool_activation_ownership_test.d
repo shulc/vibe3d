@@ -8,15 +8,18 @@
 //
 // It is deliberately NOT the discriminating check for the cutover. A text
 // census cannot tell a prepared drop from a legacy one — that needs a driven
-// gesture. The one on record is tests/test_rs_insession_cancel.d:517, which
-// went red the moment `explicitDrop` moved to the prepared door and named the
-// exact divergence ("drop consolidates the two-gesture run into ONE surviving
-// entry; floor=1 now=3"). What this module buys is that neither the table nor
-// its call sites can drift silently.
+// gesture, and task 4053 ran three of them. All three went red when the drop
+// was routed through the prepared door, and all three named a different
+// divergence: test_rs_insession_cancel.d:517 (a two-gesture run left THREE
+// surviving entries, not one), test_item_drag_undo.d:288 (a panel rotate
+// surfaced ONE row where the arm plus its edit are two) and
+// test_tool_gesture_g2.d:388 (the mirror drop ticked ZERO unbatched geometry
+// commits on the document mesh). What this module buys is that neither the
+// table nor its call sites can drift silently.
 //
 // Every count below is a LEDGER: it may change, but only in the commit that
-// argues for it. Converting a drop to the prepared door lowers
-// `kLegacyDrops` and raises `kPreparedDrops` in the same edit.
+// argues for it. Converting a drop to the prepared door lowers `kLegacyDrops`
+// in the same edit — and, on this evidence, only after that drop has a cell.
 module tests.unit.tool_activation_ownership_test;
 
 import std.algorithm : canFind, sort;
@@ -32,13 +35,12 @@ import tool_activation_ownership;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-// The recorded partition. Read at 2026-09-05: four arms, two converted drops,
-// ten drops still on the legacy door — each of the ten with its measured
-// reason at its case label in the table.
-private enum size_t kTransitions   = 16;
-private enum size_t kArms          = 4;
-private enum size_t kPreparedDrops = 2;
-private enum size_t kLegacyDrops   = 10;
+// The recorded partition. Read at 2026-09-05: four arms through the prepared
+// transaction, twelve drops through the legacy `Tool.deactivate()` — with the
+// measured reason at each group's case label in the table.
+private enum size_t kTransitions = 16;
+private enum size_t kArms        = 4;
+private enum size_t kLegacyDrops = 12;
 
 private string[] productionSources() {
     string[] files;
@@ -58,30 +60,27 @@ unittest {
                EnumMembers!ToolTransition.length, kTransitions));
 
     // ---- every transition has an owner, and the partition is not vacuous --
-    size_t arms, preparedDrops, legacyDrops;
+    size_t arms, legacyDrops;
     foreach (t; EnumMembers!ToolTransition) {
         final switch (activationDoorFor(t)) {
-            case ActivationDoor.preparedArm:      ++arms;          break;
-            case ActivationDoor.preparedDrop:     ++preparedDrops; break;
-            case ActivationDoor.legacyDeactivate: ++legacyDrops;   break;
+            case ActivationDoor.preparedArm:      ++arms;        break;
+            case ActivationDoor.legacyDeactivate: ++legacyDrops; break;
         }
     }
-    assert(arms + preparedDrops + legacyDrops == kTransitions);
+    assert(arms + legacyDrops == kTransitions);
     assert(arms == kArms,
         format("task 4053: arm rows moved: %s, recorded %s", arms, kArms));
-    assert(preparedDrops == kPreparedDrops,
-        format("task 4053: a drop changed door: %s prepared, recorded %s — "
-               ~ "converting one is a deliberate edit here AND a driven cell — "
-               ~ "tests/test_rs_insession_cancel.d is the one that caught the "
-               ~ "last conversion",
-               preparedDrops, kPreparedDrops));
     assert(legacyDrops == kLegacyDrops,
-        format("task 4053: a drop changed door: %s legacy, recorded %s",
+        format("task 4053: a drop changed door: %s legacy, recorded %s — "
+               ~ "moving one is a deliberate edit here AND a driven cell; "
+               ~ "tests/test_rs_insession_cancel.d, test_item_drag_undo.d and "
+               ~ "test_tool_gesture_g2.d each caught the last attempt",
                legacyDrops, kLegacyDrops));
-    // The rule the two counts above exist to state: a table whose rows all
-    // carry one door would satisfy "every transition has an owner" and mean
-    // nothing.
-    assert(preparedDrops > 0 && legacyDrops > 0 && arms > 0,
+    // The rule the two counts exist to state: a table whose rows all carried
+    // ONE door would satisfy "every transition has an owner" and mean nothing.
+    // This one uses both doors it declares, which is what makes the partition
+    // a fact rather than a formality.
+    assert(arms > 0 && legacyDrops > 0,
         "task 4053: the partition must use every door it declares");
 
     // ---- isArm agrees with the table --------------------------------------

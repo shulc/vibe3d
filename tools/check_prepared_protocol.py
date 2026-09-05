@@ -603,10 +603,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/transform/move":"bbea8820c86c337a470a96ba2fa1791c0c981d6e90235502f34005f74a464260",
     "tools/transform/rotate":"e04de99122832355fb43cb7546a1c99f303aeb6252e0334141ce6e522a31ae50",
     "tools/transform/scale":"02f3b4fcce5380905aba0a2a7c86530a6d386be63b87332c1c12a66bee7a930a",
-    # Task 4053: the prepared consolidate is now counted as a history effect,
-    # so `prepareDeactivate` is the twin of `deactivate()` on the drop too.
-    # Measured red before the change: tests/test_rs_insession_cancel.d:517.
-    "tools/transform/xfrm_transform":"5365d0889d66415759e8b73dd8026293b309789275da37ceb444a554376efe2e",
+    "tools/transform/xfrm_transform":"66269524a4698244927959e9bf1b07d13d8e39b0b56c165cf20f5739dcbae844",
     "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
 }
 def validate_b3d_producers(sources, only=None):
@@ -818,11 +815,7 @@ for path, hub_text in prepared_source_texts.items():
         if "RecordObserverHub" in hub_text:
             production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
 macro_source = (ROOT / "source/macro_recorder.d").read_text()
-# Task 4053: 8, not 7. The breakdown, from the same scan this line reads —
-# app.d 2, macro_recorder.d 3, prepared_tool_transition.d 3 — and the new one
-# is `prepareDrop`'s own `RecordObserverHub observers` parameter, which the
-# drop half of the door takes exactly as the arm half does.
-if production_hub_refs != 8 or not all(x in app_source for x in (
+if production_hub_refs != 7 or not all(x in app_source for x in (
         "auto recordObserverHub = new RecordObserverHub();",
         "macroRecorder.bindObserverHub(recordObserverHub);")) or not all(
             x in macro_source for x in (
@@ -1402,9 +1395,6 @@ if bypass_gate("void mutant() { prepareArm(); }"):
 MANIFEST = {
     "prepared_tool_transition.prepareArm",
     "prepared_tool_transition.commitPreparedArm",
-    # Task 4053 — the drop half of the same door.
-    "prepared_tool_transition.prepareDrop",
-    "prepared_tool_transition.commitPreparedDrop",
 }
 
 # P1.0c production form: exactly one shared caller owns both command and
@@ -1412,6 +1402,10 @@ MANIFEST = {
 # invoked installer/disposer are nothrow; the ordered-body census prevents a
 # second publisher or an imperative tail from hiding behind that signature.
 transition = prepared_module_source("prepared_tool_transition")
+# The `PreparedDrop` / `*Drop` alternatives match nothing today and are a
+# GUARD, not a leftover — see the same pair in tools/prepared_writer_census.py.
+# If a drop publisher comes back, MANIFEST does not list it and this compares
+# unequal on its first commit.
 found = {
     "prepared_tool_transition." + name
     for name in re.findall(
@@ -1422,16 +1416,13 @@ found = {
 if found != MANIFEST:
     fail(f"prepared protocol manifest mismatch: missing={sorted(MANIFEST-found)} surplus={sorted(found-MANIFEST)}")
 
-# Task 4053: FOUR callers, not two. The arm pair is `armPreparedTool`, which
-# both public arm doors enter; the drop pair is `dropActiveTool`'s
-# `ActivationDoor.preparedDrop` arm, which every transition the ownership table
-# routes there enters. Any fifth row is an unreviewed publisher of the active
-# tool, which is exactly what this census exists to refuse.
+# Two callers, both `armPreparedTool`: every DROP is still the legacy door
+# (source/tool_activation_ownership.d says which transition takes which, and
+# task 4053 measured why the drop cannot move yet). Any third row is an
+# unreviewed publisher of the active tool, which is what this census refuses.
 expected_callers = [
-    {"path": "source/app.d", "line": 2682, "symbol": "prepareDrop"},
-    {"path": "source/app.d", "line": 2686, "symbol": "commitPreparedDrop"},
-    {"path": "source/app.d", "line": 3922, "symbol": "prepareArm"},
-    {"path": "source/app.d", "line": 3938, "symbol": "commitPreparedArm"},
+    {"path": "source/app.d", "line": 3904, "symbol": "prepareArm"},
+    {"path": "source/app.d", "line": 3920, "symbol": "commitPreparedArm"},
 ]
 if CURRENT_WRITERS.get("bypasses") != expected_callers:
     fail("P1.0c both public doors no longer share the exact prepared funnel")
@@ -1475,41 +1466,6 @@ for forbidden in ("resetTransientPipeStages(", "applyStickyToolDefaults(",
                   ".activate(", ".deactivate(", "onParamChanged("):
     if forbidden in prepare_body:
         fail("P1.0c prepareArm contains a legacy live-write bypass: " + forbidden)
-
-# Task 4053 — the same three gates over the DROP half. Without them the drop
-# publisher could regain a throwing tail, lose its nothrow signature, or start
-# calling the very legacy hook the cutover took it off, and the census would
-# still read PASS because it only ever looked at the arm.
-drop_commit_start = transition.find("bool commitPreparedDrop(")
-drop_commit_open = transition.find("{", drop_commit_start) + 1
-drop_commit_body = transition[
-    drop_commit_open:balanced_source(transition, drop_commit_open) - 1]
-drop_commit_order = [
-    "prepared.outgoing_.install();",
-    "active = null;",
-    'activeId = "";',
-    "destroy(prepared.retained_);",
-]
-drop_positions = [drop_commit_body.find(item) for item in drop_commit_order]
-if any(p < 0 for p in drop_positions) or drop_positions != sorted(drop_positions):
-    fail("P1.0c prepared drop commit order drifted")
-if any(token in drop_commit_body for token in
-       ("throw ", "new ", ".activate(", ".deactivate(", "onParamChanged(")):
-    fail("P1.0c prepared drop commit regained an imperative/throwing tail")
-if "bool function(\n    ref Tool, ref string, ref PreparedDrop) nothrow" not in transition:
-    fail("P1.0c prepared drop lost its compiler-checked nothrow signature")
-
-drop_prepare_start = transition.find("PreparedDrop prepareDrop(")
-drop_prepare_open = transition.find("{", drop_prepare_start) + 1
-drop_prepare_body = transition[
-    drop_prepare_open:balanced_source(transition, drop_prepare_open) - 1]
-for required in ("door.prepareDoorDeactivate", "result.outgoing_.validate()"):
-    if required not in drop_prepare_body:
-        fail("P1.0c prepared drop omitted domain: " + required)
-for forbidden in ("resetTransientPipeStages(", "applyStickyToolDefaults(",
-                  ".activate(", ".deactivate(", "onParamChanged("):
-    if forbidden in drop_prepare_body:
-        fail("P1.0c prepareDrop contains a legacy live-write bypass: " + forbidden)
 
 # Retained below as the P1.0a historical scanner specimen. Its synthetic
 # stubs described the former inert seam and are intentionally not executable
@@ -1760,7 +1716,6 @@ NON_TOKEN_NONCOPYABLE = {
     ("command_history", "PreparedHistoryBatch"): False,
     ("document", "PreparedLayerReadScope"): True,
     ("prepared_tool_transition", "PreparedArm"): True,
-    ("prepared_tool_transition", "PreparedDrop"): True,   # task 4053
     ("prepared_tool_transition", "PreparedCandidateOwner"): True,
     ("record_observer_hub", "PreparedRecordObserverImage"): True,
     ("tools.create.vertex_place", "ValidatedVertexActivate"): False,

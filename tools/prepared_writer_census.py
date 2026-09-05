@@ -273,9 +273,14 @@ def scan(root):
 
     bypasses = []
     internal_publishers = []
-    # Task 4053 added the DROP half of the door. It publishes the active tool
-    # exactly as the arm half does, so it is scanned by the same pattern —
-    # a publisher the census cannot see is a publisher nobody reviews.
+    # `prepareDrop` / `commitPreparedDrop` MATCH NOTHING TODAY, deliberately.
+    # Task 4053 wrote that pair, measured that the prepared deactivation is
+    # not yet a faithful twin of `Tool.deactivate()` on a drop, and removed
+    # it again. The names stay in the pattern so the NEXT attempt is seen by
+    # this census on its first commit rather than after it ships: a publisher
+    # of the active tool that the census cannot see is a publisher nobody
+    # reviews. A pattern that matches nothing is normally a defect; this one
+    # is a guard, and saying so is what makes the difference checkable.
     bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|prepareDrop|commitPreparedDrop|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
     for path in sorted((root / "source").rglob("*.d")):
         text = _mask_comments(path.read_text())
