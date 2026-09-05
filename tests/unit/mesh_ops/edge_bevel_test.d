@@ -6115,7 +6115,6 @@ unittest { // the OPEN (boundary) fan cap is BUILT, not refused (task 4335)
         bool[] mmask; mmask.length = mm.edges.length; mmask[] = false;
         mmask[findEdge(mm, 0, 3)] = true; // an INTERIOR hub spoke (not a rim edge)
 
-        immutable size_t facesBefore = mm.faces.length;
         MeshEditTracker recorder;
         mm.beginEditBatch(&recorder, MeshEditScope.Geometry);
         assert(mm.isRecordingEdits());
@@ -6126,12 +6125,15 @@ unittest { // the OPEN (boundary) fan cap is BUILT, not refused (task 4335)
             "open-fan cap at L" ~ level.to!string ~ ": expected " ~
             wantV[level].to!string ~ "v/" ~ wantF[level].to!string ~ "f, got " ~
             mm.vertices.length.to!string ~ "v/" ~ mm.faces.length.to!string ~ "f");
-        // The chamfer strip is one face; anything above that is the cap. A
-        // count that only grew by one would mean the strip landed and the cap
-        // did not -- which is the old refusal wearing a new shape.
-        assert(mm.faces.length >= facesBefore + 2,
-            "the open fan must gain BOTH a chamfer strip and a cap face at L" ~
-            level.to!string);
+        // Read the counts above as +2 faces at L0 and +3 at L1 -- a chamfer
+        // strip plus a cap, not a strip alone. The baseline that makes that
+        // reading sound is pinned already: the premise block above asserts
+        // d == 4 for the hub fan, and every face of this half-disk touches the
+        // hub, so the mesh starts at 4. NO further assert is added for it, on
+        // purpose. A `faces.length >= before + 2` beside an EXACT `wantF` pin
+        // cannot come out differently, and neither could a `before == 4`
+        // beside that premise -- either would be green whatever the code does.
+
         // Every parallel face plane still tracks `faces` after the rewrite.
         assert(mm.faceMaterial.length == mm.faces.length &&
                mm.facePart.length == mm.faces.length &&
