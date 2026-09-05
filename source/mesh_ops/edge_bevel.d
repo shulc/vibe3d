@@ -434,50 +434,23 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         affected[ed.edges[i][1]] = true;
     }
 
-    // Safety preflight. Two supported fan shapes reach the per-vertex pass
-    // below: CLOSED (interior vertex, nE == d) and OPEN (boundary vertex,
-    // nE == d + 1 — `VertexEdgeRange` anchors at the open start of the fan
-    // and emits one extra rim edge). In both, face f_k is bordered by edge
-    // slots k and k+1; only the closed fan wraps.
-    foreach (V; 0 .. cast(uint)ed.vertices.length) {
-        if (V >= affected.length || !affected[V]) continue;
-        size_t d = 0;
-        foreach (fi; ed.facesAroundVertex(V)) ++d;
-        bool[] fanSelected;
-        foreach (ei; ed.edgesAroundVertex(V))
-            fanSelected ~= (ei < qualifies.length && qualifies[ei]);
-        immutable bool openFan = (fanSelected.length == d + 1);
-        // Malformed fan stays on the existing per-span silent-skip path
-        // below; the tests here need a well-formed closed or open fan.
-        if (!openFan && fanSelected.length != d) continue;
-        size_t K = 0;
-        foreach (s; fanSelected) if (s) ++K;
-        if (K == 0 || (!openFan && K == d)) continue; // untouched, or a full hub
-
-        // The partial-notch `keep V` guard that used to live here is
-        // GONE (task 0439, Decision A/C, doc/edge_bevel_freeend_cap_plan.md):
-        // every both-unselected face now gets an unconditional two-slide
-        // cut, and the resulting ring of corners is capped (Decision B,
-        // per-vertex pass below). The one shape that STAYS refused is a
-        // cap on a BOUNDARY (open-fan) vertex: its corner chain
-        // terminates on the two rim edges instead of closing into a
-        // ring, and no reference dump exists for capping it anyway
-        // (§A-5). `ringLen` mirrors the per-vertex ring-collection rule
-        // (Decision B) but is computed here from `fanSelected` alone,
-        // before `cornerAtVF` exists: one entry per unselected slot,
-        // plus one per face whose two bordering edges are both selected
-        // (a miter).
-        if (openFan) {
-            immutable size_t nSlots = fanSelected.length;
-            size_t ringLen = 0;
-            foreach (k; 0 .. nSlots) if (!fanSelected[k]) ++ringLen;
-            foreach (k; 0 .. d) {
-                immutable size_t kr = k + 1; // linear on an open fan, no wrap
-                if (fanSelected[k] && fanSelected[kr]) ++ringLen;
-            }
-            if (ringLen >= 3) return 0;
-        }
-    }
+    // THE OPEN-FAN REFUSAL IS GONE (task 4335). A preflight loop stood here
+    // and returned 0 — the whole op, before any mutation — whenever a
+    // BOUNDARY (open) fan's cap ring would have reached three corners. Its
+    // stated grounds were that no reference dump existed for capping such a
+    // vertex (§A-5). Five exist now and the reference does NOT refuse: it
+    // builds the cap, and with the selected spokes INTERIOR it builds the
+    // SAME cap as the closed fan, vertex for vertex. Frozen in
+    // `tests/fixtures/edge_bevel_open_fan_cap.json`; the law itself is read
+    // by `tests/unit/edge_bevel_open_fan_cap_test.d` and our side of it by
+    // `tests/unit/edge_bevel_open_fan_cap_parity_test.d`. Register row 21.
+    //
+    // The two fan shapes the per-vertex pass supports are unchanged: CLOSED
+    // (interior vertex, nE == d) and OPEN (boundary vertex, nE == d + 1 —
+    // `VertexEdgeRange` anchors at the open start of the fan and emits one
+    // extra rim edge). In both, face f_k is bordered by edge slots k and
+    // k+1; only the closed fan wraps. A malformed fan is still declined,
+    // per-vertex, by the shape check inside that pass.
 
     // Overshoot guard: a SLIDE corner cannot travel past the far end of
     // its non-bevel neighbor edge, so `width` is capped PER-DIRECTION —
@@ -1246,9 +1219,17 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         if (!openFan && K == d && d >= 3) {
             // Full ring: every face at V is a MITER — its per-face
             // corners trace a closed K-gon needing exactly one cap face.
-            // An OPEN fan can never form one: its corner chain terminates
-            // on the two rim edges instead of closing, so it takes the
-            // ordinary per-face SLIDE/MITER path with no hub cap.
+            // An OPEN fan cannot reach this branch and would have nothing
+            // to build if it did: every face is a miter only when all `nE`
+            // slots are selected, and there `K == nE == d + 1`, so `K == d`
+            // is false — and that all-miter chain terminates on the two rim
+            // edges instead of closing into a ring. `K == nE` therefore gets
+            // no cap from either branch (the free-end one below wants
+            // `K < nE`). That shape has no capture and is not claimed to
+            // match one; it is sound — 0 edge over-uses and 0 orphans at
+            // L0/L1/L2 on a valence-5 open fan. Every SMALLER K on an open
+            // fan does get the free-end cap below, whose comment carries
+            // the measurement and its id.
             // Covered (task 0456): d==3 rounds via `junctionRing`; d>=4
             // rounds via `junctionRingN` — even/odd fixtures (K4/K5/mixed)
             // in mesh.d + the full-hub Round-Level census lane
@@ -1293,14 +1274,24 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
             }
         }
 
-        // Free-end / partial-fan cap (task 0439, Decision B): a CLOSED
-        // fan (`nE == d`, so `K < nE` is exactly `K < d` and disjoint
-        // from the hub-cap `K == d` case above — a vertex is never both)
-        // with `0 < K < nE` gets one flat cap threading the ring of
+        // Free-end / partial-fan cap (task 0439, Decision B): a fan with
+        // `0 < K < nE` gets one flat cap threading the ring of
         // unselected-slot slides and both-selected-neighbours miters.
         // The `K < nE` guard here is load-bearing, not decorative:
-        // removing it lets a vertex emit BOTH this cap and the hub cap.
-        if (!openFan && K > 0 && K < nE) {
+        // removing it lets a vertex emit BOTH this cap and the hub cap
+        // (`K == d` on a CLOSED fan, where `K < nE` is exactly `K < d`,
+        // so the two stay disjoint — a vertex is never both).
+        //
+        // OPEN FANS TAKE THIS PATH TOO since task 4335, and the ring they
+        // build is the closed fan's: the slot walk below is already linear
+        // (`k < d` gates the miter, so slot nE-1 has no successor face),
+        // and the ring closes across the gap the missing base polygon
+        // leaves. That is what the reference does — measured, five dumps,
+        // `tests/fixtures/edge_bevel_open_fan_cap.json`. The identity with
+        // the closed fan is captured for INTERIOR selected spokes only; a
+        // selection touching the boundary has no closed twin and is pinned
+        // by its own frozen case rather than by that identity.
+        if (K > 0 && K < nE) {
             uint[] cap;
             // Per-corner island for the cap (task 0697). A slide on edge
             // slot k borders BOTH f_{k-1} and f_k, so a corner cap standing

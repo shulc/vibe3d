@@ -6056,16 +6056,22 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
     }
 }
 
-unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_cap_plan.md
-           // §E): a cap on an OPEN (boundary) fan has no reference dump and
-           // must be refused BEFORE any mutation — this is the ONLY new
-           // reject task 0439 adds. Modeled on the (pre-0439) non-adjacent-K2
-           // octahedron test, the strongest byte-stability battery in this
-           // file: every parallel array, every selection set, every version
-           // counter, and the edit recorder must all be untouched. The input
-           // mesh carries non-empty faceMaterial/facePart, a subpatch bit and
-           // a pre-selected face so this battery actually exercises those
-           // checks instead of comparing zeros to zeros.
+unittest { // the OPEN (boundary) fan cap is BUILT, not refused (task 4335)
+           //
+           // WAS "byte-stable reject test 14" (Decision A-5,
+           // doc/edge_bevel_freeend_cap_plan.md §E): this block used to assert
+           // that a cap on an open fan was refused BEFORE any mutation, with a
+           // full byte-stability battery under it. Its stated ground was that
+           // no reference dump existed for the shape. Five exist now and the
+           // reference does NOT refuse -- it builds the cap, and on interior
+           // spokes it builds the closed fan's own cap, vertex for vertex.
+           // The dumps are `tests/fixtures/edge_bevel_open_fan_cap.json`; the
+           // law is read by `tests/unit/edge_bevel_open_fan_cap_test.d` and our
+           // side of it by `tests/unit/edge_bevel_open_fan_cap_parity_test.d`,
+           // which is where reference PARITY is asserted. This block keeps the
+           // half-disk -- a shape no capture covers -- and pins the two things
+           // that survive its removal: the op runs, and the result is a sound
+           // open mesh at both round levels.
     import std.math : cos, sin, PI;
     import std.conv : to;
     Mesh halfDisk() {
@@ -6086,80 +6092,66 @@ unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_c
         m.selectFace(1);
         return m;
     }
-    auto m = halfDisk();
     // Premise: the hub really does present an OPEN fan, and the selected
-    // edge's ring (3 unselected slots, K=1, no miter) is >= 3.
+    // edge's ring (4 unselected slots, K=1, no miter) is >= 3 -- the exact
+    // shape the old preflight rejected.
     {
+        auto m = halfDisk();
         size_t d = 0, e = 0;
         foreach (fi; m.facesAroundVertex(0)) ++d;
         foreach (ei; m.edgesAroundVertex(0)) ++e;
         assert(e == d + 1, "half-disk hub must present an OPEN fan");
+        assert(d == 4 && e == 5,
+            "the discriminating shape is d=4/e=5: a ring of 4 unselected slots, "
+          ~ "which is what used to trip `ringLen >= 3`");
     }
-    bool[] mask; mask.length = m.edges.length; mask[] = false;
-    mask[findEdge(m, 0, 3)] = true; // an INTERIOR hub spoke (not a rim edge)
 
+    // L0 first and L1 second, so a change that only reaches the rounded path
+    // leaves the flat assert green above the red one.
+    static immutable size_t[2] wantV = [10, 12];
+    static immutable size_t[2] wantF = [ 6,  7];
     foreach (level; 0 .. 2) {
         auto mm = halfDisk();
         bool[] mmask; mmask.length = mm.edges.length; mmask[] = false;
-        mmask[findEdge(mm, 0, 3)] = true;
+        mmask[findEdge(mm, 0, 3)] = true; // an INTERIOR hub spoke (not a rim edge)
 
-        auto vertsBefore = mm.vertices.dup;
-        auto edgesBefore = mm.edges.dup;
-        auto facesBefore = mm.faces._store.dup;
-        auto vertexMarksBefore = mm.vertexMarks.dup;
-        auto edgeMarksBefore = mm.edgeMarks.dup;
-        auto faceMarksBefore = mm.faceMarks.dup;
-        auto vertexSelectionOrderBefore = mm.vertexSelectionOrder.dup;
-        auto edgeSelectionOrderBefore = mm.edgeSelectionOrder.dup;
-        auto faceSelectionOrderBefore = mm.faceSelectionOrder.dup;
-        auto faceMaterialBefore = mm.faceMaterial.dup;
-        auto facePartBefore = mm.facePart.dup;
-        auto selectedVerticesBefore = mm.selectedVertices;
-        auto selectedEdgesBefore = mm.selectedEdges;
-        auto selectedFacesBefore = mm.selectedFaces;
-        immutable ulong mutationBefore = mm.mutationVersion;
-        immutable ulong topologyBefore = mm.topologyVersion;
-        immutable ulong structBefore = mm.structVersion;
-        immutable uint pendingBefore = mm.undeliveredChanges_;
-        immutable uint pendingSelBefore = mm.undeliveredSelDomains_;
+        immutable size_t facesBefore = mm.faces.length;
         MeshEditTracker recorder;
         mm.beginEditBatch(&recorder, MeshEditScope.Geometry);
         assert(mm.isRecordingEdits());
 
-        assert(bevelEdgesOnce(mm, mmask, 0.1f, cast(int)level) == 0,
-            "an open-fan cap must be refused before any mutation, at L" ~ level.to!string);
-        assert(mm.vertices == vertsBefore && mm.edges == edgesBefore &&
-               mm.faces._store == facesBefore,
-            "open-fan cap preflight must leave geometry byte-identical");
-        assert(mm.vertexMarks == vertexMarksBefore && mm.edgeMarks == edgeMarksBefore &&
-               mm.faceMarks == faceMarksBefore &&
-               mm.vertexSelectionOrder == vertexSelectionOrderBefore &&
-               mm.edgeSelectionOrder == edgeSelectionOrderBefore &&
-               mm.faceSelectionOrder == faceSelectionOrderBefore &&
-               mm.faceMaterial == faceMaterialBefore && mm.facePart == facePartBefore,
-            "open-fan cap preflight must leave parallel attributes byte-identical");
-        assert(mm.selectedVertices == selectedVerticesBefore &&
-               mm.selectedEdges == selectedEdgesBefore &&
-               mm.selectedFaces == selectedFacesBefore,
-            "open-fan cap preflight must leave selection byte-identical");
-        assert(mm.mutationVersion == mutationBefore && mm.topologyVersion == topologyBefore &&
-               mm.structVersion == structBefore && mm.undeliveredChanges_ == pendingBefore &&
-               mm.undeliveredSelDomains_ == pendingSelBefore,
-            "open-fan cap preflight must not bump versions or pending changes");
-        assert(recorder.isEmpty(), "open-fan cap preflight must not write an edit record");
-        assert(mm.endEditBatch().isEmpty(), "open-fan cap preflight must finish with an empty delta");
-        assertBevelManifoldCleanOpen(mm, "half-disk open-fan cap reject, unchanged input", 1);
+        assert(bevelEdgesOnce(mm, mmask, 0.1f, cast(int)level) == 1,
+            "an open-fan cap must now be BUILT, not refused, at L" ~ level.to!string);
+        assert(mm.vertices.length == wantV[level] && mm.faces.length == wantF[level],
+            "open-fan cap at L" ~ level.to!string ~ ": expected " ~
+            wantV[level].to!string ~ "v/" ~ wantF[level].to!string ~ "f, got " ~
+            mm.vertices.length.to!string ~ "v/" ~ mm.faces.length.to!string ~ "f");
+        // The chamfer strip is one face; anything above that is the cap. A
+        // count that only grew by one would mean the strip landed and the cap
+        // did not -- which is the old refusal wearing a new shape.
+        assert(mm.faces.length >= facesBefore + 2,
+            "the open fan must gain BOTH a chamfer strip and a cap face at L" ~
+            level.to!string);
+        // Every parallel face plane still tracks `faces` after the rewrite.
+        assert(mm.faceMaterial.length == mm.faces.length &&
+               mm.facePart.length == mm.faces.length &&
+               mm.faceMarks.length == mm.faces.length,
+            "open-fan cap must resize every parallel face plane at L" ~ level.to!string);
+        assert(!recorder.isEmpty(), "an accepted bevel must write an edit record");
+        assert(!mm.endEditBatch().isEmpty(),
+            "an accepted bevel must finish with a non-empty delta");
+        assertBevelManifoldCleanOpen(mm, "half-disk open-fan cap, accepted", 1);
     }
 
-    // Verify the 15 open-mesh reference cases' own shapes (boundary ring <=
-    // 2) are NOT caught by this new reject — they stay accepted.
+    // A rim vertex is an open fan too, with a ring of at most 2 -- it was
+    // never near the old threshold and its handling is unchanged.
     {
         auto md = halfDisk();
         size_t d = 0, e = 0;
         foreach (fi; md.facesAroundVertex(1)) ++d; // a rim vertex
         foreach (ei; md.edgesAroundVertex(1)) ++e;
         assert(e == d + 1, "rim vertex must itself be an open fan");
-        assert(d <= 2, "a rim vertex on this half-disk has ring <= 2, below the reject threshold");
+        assert(d <= 2, "a rim vertex on this half-disk has ring <= 2");
     }
 }
 
