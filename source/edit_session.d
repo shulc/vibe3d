@@ -224,8 +224,11 @@ final class EditSession {
     // blocks it absorbed re-read `activeTool`.
     private Tool delegate() tool_;
     private CommandHistory  history_;
-    // Bound to app.d's { dropActiveTool(ToolTransition.editCancelDrop); } —
-    // the app's tool-drop verb.
+    // Bound in app.d to a drop under the editCancelDrop transition — the
+    // app's tool-drop verb. Spelled without the `ToolTransition.` prefix
+    // deliberately: the per-transition site census in
+    // tests/unit/tool_activation_ownership_test.d counts MENTIONS raw, and
+    // its editCancelDrop row records the CALL site, not this pointer to it.
     private void delegate() dropTool_;
     // The ONLY state EditSession owns: the refire driver-bracket bit
     // (tryRefireDispatch's non-reentrancy tripwire). Everything else is
