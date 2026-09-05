@@ -901,7 +901,7 @@
   "The meaning of the per-slot and per-vertex flag bits used by the routing gates; only their arithmetic and their branches are read.",
   "The geometry produced by the exits other than the corner patch -- the three-used-slots-of-five exit and the marker exit in particular, which is what register row 22 still needs.",
   "Which of the vertex flags marks an OPEN (boundary) fan. Two flags decline outright and a third adds one boundary point and one slot, so a boundary-specific adjustment demonstrably exists -- but the static read does not say which bit it is, and that is register row 21's whole question. The channel that answers it is a headless behavioural probe on an open fan, not more disassembly.",
-  "The scalar blend factor the miter and partial-fan builder uses between its two rail ends. That builder evaluates the already-closed rail routine only at the two ENDS and produces its interior samples from an inline affine step under a DIFFERENT mid-vertex callback from the one the corner-patch path uses -- register row 17."
+  "WHICH two points the miter and partial-fan builder interpolates between. That builder evaluates the already-closed rail routine only at the two ENDS and produces each interior sample as an EXACT LINEAR interpolation between two held points, at the same parameter it hands the mid-vertex inserter -- no sine, no angular term. The two points are demonstrably not the two rail outputs computed immediately above them, so 'a lerp between the profile's two ends' is refused rather than adopted: it would make the rounded profile a straight chord. Register row 17."
  ],
  "parameters": {
   "schema": 1,
