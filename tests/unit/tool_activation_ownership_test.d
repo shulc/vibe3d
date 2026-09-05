@@ -148,6 +148,11 @@ unittest {
                               t.to!string));
     }
 
+    // RAW on purpose — this scan counts MENTIONS, and `shutdownDrop`'s two
+    // hits are a comment and an assert. Masking here would drop the comment
+    // half and break the very row that records the drop with no call. The
+    // CALL counts further down are the masked ones; the difference between
+    // the two scans is the point of having both.
     size_t[string] named;
     size_t scanned;
     foreach (f; files) {
@@ -217,10 +222,22 @@ unittest {
     // so a transition named only in a comment would satisfy it. These two
     // count CALLS, and the arithmetic closing is what says the 26 wired rows
     // are wired rather than merely written down.
+    //
+    // WHICH IS WHY THEY SCAN THE MASKED TEXT, and the scan above does not.
+    // The first form of this block read the raw file, so "counts CALLS" was
+    // false as written: task 4053's re-reviewer commented out a real call
+    // (`// dropActiveTool(ToolTransition.panelDrop);`) and the count did not
+    // move, because a commented-out call is still the same bytes. Masking is
+    // what makes the sentence above true. It is deliberately NOT applied to
+    // the MENTION scan, whose `shutdownDrop` row is TWO hits of which one IS a
+    // comment — masking there would break the row it is meant to count.
+    //
+    // Read 2026-09-05: masking moves no number on this tree — 22 and 4 both
+    // ways — so it is a change of INSTRUMENT, not of ledger.
     size_t dropCalls, armCalls;
     foreach (f; files) {
         if (f.canFind("tool_activation_ownership.d")) continue;
-        auto text = readText(f);
+        auto text = maskComments(readText(f));
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
@@ -262,6 +279,112 @@ private size_t occurrences(string hay, string needle) {
     }
 }
 
+/// `src` with every COMMENT byte replaced by a space and every string / char
+/// literal left intact, so a call that has been commented out stops counting
+/// as a call. Newlines survive and nothing is inserted or removed, so the
+/// result is byte-for-byte the same LENGTH as its input and every offset —
+/// anchor indices, `bodyAt` brace matching — means the same thing in both.
+/// That is the property the callers below rely on, and the reason masking
+/// could be introduced without re-deriving a single recorded number.
+///
+/// It is one left-to-right pass rather than a regex because the two hazards
+/// are mutual: a `//` inside a string must NOT open a comment, and a stray
+/// quote or backtick inside a comment must NOT open a string. app.d alone
+/// holds 871 backticks, nearly all of them Ddoc prose, so a masker that
+/// looked for strings first would mis-lex the file wholesale. Consuming
+/// whichever construct starts first settles both at once.
+private string maskComments(string src) {
+    auto masked = src.dup;
+    void blank(size_t from, size_t to) {
+        foreach (k; from .. to) if (masked[k] != '\n') masked[k] = ' ';
+    }
+    static bool identChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '_';
+    }
+    size_t i;
+    while (i < src.length) {
+        const c = src[i];
+        if (c == '/' && i + 1 < src.length) {
+            if (src[i + 1] == '/') {                      // line comment
+                size_t j = i;
+                while (j < src.length && src[j] != '\n') ++j;
+                blank(i, j); i = j; continue;
+            }
+            if (src[i + 1] == '*') {                      // block comment
+                size_t j = i + 2;
+                while (j + 1 < src.length && !(src[j] == '*' && src[j + 1] == '/')) ++j;
+                j = (j + 1 < src.length) ? j + 2 : src.length;
+                blank(i, j); i = j; continue;
+            }
+            if (src[i + 1] == '+') {                      // nesting comment
+                size_t depth = 1, j = i + 2;
+                while (j + 1 < src.length && depth > 0) {
+                    if (src[j] == '/' && src[j + 1] == '+')      { ++depth; j += 2; }
+                    else if (src[j] == '+' && src[j + 1] == '/') { --depth; j += 2; }
+                    else ++j;
+                }
+                if (depth > 0) j = src.length;
+                blank(i, j); i = j; continue;
+            }
+            ++i; continue;
+        }
+        // Wysiwyg `r"…"` / `q"…"`: no escape processing inside. Guarded on the
+        // preceding byte so the `r` ending an identifier cannot open one.
+        if ((c == 'r' || c == 'q') && i + 1 < src.length && src[i + 1] == '"'
+            && !(i > 0 && identChar(src[i - 1]))) {
+            size_t j = i + 2;
+            while (j < src.length && src[j] != '"') ++j;
+            i = (j < src.length) ? j + 1 : src.length; continue;
+        }
+        if (c == '`') {                                   // backtick wysiwyg
+            size_t j = i + 1;
+            while (j < src.length && src[j] != '`') ++j;
+            i = (j < src.length) ? j + 1 : src.length; continue;
+        }
+        if (c == '"' || c == '\'') {                      // escaped literals
+            size_t j = i + 1;
+            while (j < src.length) {
+                if (src[j] == '\\') { j += 2; continue; }
+                if (src[j] == c) { ++j; break; }
+                ++j;
+            }
+            i = j; continue;
+        }
+        ++i;
+    }
+    return cast(string)masked;
+}
+
+unittest {
+    // The masker's own floor, because everything it is used for below is a
+    // count that reads as "unchanged" when the instrument is broken. Each
+    // cell is one of the two hazards named at the declaration.
+    assert(maskComments("a(); // b();").length == "a(); // b();".length,
+        "task 4053: the masker must preserve offsets");
+    assert(maskComments("a(); // b();").canFind("a();"));
+    assert(!maskComments("a(); // b();").canFind("b();"),
+        "task 4053: a line comment must not survive masking");
+    assert(!maskComments("a(); /* b();\n c(); */ d();").canFind("b();"));
+    assert(!maskComments("a(); /* b();\n c(); */ d();").canFind("c();"),
+        "task 4053: a block comment must be masked across its newline");
+    assert(maskComments("a(); /* b();\n c(); */ d();").canFind("d();"),
+        "task 4053: code after a block comment must survive");
+    assert(!maskComments("/+ a(); /+ b(); +/ c(); +/ d();").canFind("c();"),
+        "task 4053: a nesting comment must not close on its inner +/");
+    assert(maskComments("/+ a(); /+ b(); +/ c(); +/ d();").canFind("d();"));
+    // The mutual hazard: a `//` inside a literal is not a comment, and a
+    // quote inside a comment does not open one.
+    assert(maskComments(`s = "// b();"; c();`).canFind("c();"),
+        "task 4053: a // inside a string must not eat the rest of the line");
+    assert(maskComments(`s = "// b();"; c();`).canFind("b();"),
+        "task 4053: string contents are left intact on purpose");
+    assert(maskComments("// it's fine\nc();").canFind("c();"),
+        "task 4053: an apostrophe in a comment must not open a char literal");
+    assert(maskComments("// a `b\nc();").canFind("c();"),
+        "task 4053: a backtick in a comment must not open a wysiwyg string");
+}
+
 unittest {
     // ---- the arm door is single, and this is the mechanical form of it ----
     // The card's ready criterion was `override void activate()` reaching zero.
@@ -282,7 +405,16 @@ unittest {
     // `activeTool` is a local — no other module can tear the tool down except
     // through one of them (`toolHost.deactivate` forwards to `dropActiveTool`).
     // That is what bounds this census to one file.
-    const app = readText(repoRoot ~ "/source/app.d");
+    //
+    // AND IT READS THE MASKED FILE. The raw form of this block was green over
+    // a drop door whose own `activeTool.deactivate();` had been commented out
+    // — the reviewer's cell R9, and the worst of the two, because seeing
+    // exactly that is why the block exists. Masking is applied to the WHOLE
+    // file, once, so the anchors, the brace matching inside `bodyAt` and the
+    // outside-the-doors counts all read code rather than prose; the masker
+    // preserves offsets, so this changed no recorded number (verified
+    // 2026-09-05, every count and every anchor offset identical either way).
+    const app = maskComments(readText(repoRoot ~ "/source/app.d"));
 
     const dropAnchor = app.indexOf("void dropActiveTool(ToolTransition why) {");
     const armAnchor  = app.indexOf("void armPreparedTool(ToolTransition why, string id,");
