@@ -37,8 +37,6 @@ final class ViewportViewPreset : ViewportCommand {
         );
     }
 
-    void setPreset(string preset) { preset_ = preset; }
-
     protected override bool applyImpl() {
         import view     : ProjKind, ViewPreset;
         import viewport : applyCellViewPreset;

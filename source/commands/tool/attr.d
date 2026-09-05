@@ -70,7 +70,6 @@ class ToolAttrCommand : Command {
         );
     }
 
-    void setToolId(string id)       { toolId_   = id; }
     void setAttrName(string n)      { attrName_ = n; }
     void setAttrValue(JSONValue v)  { attrValue_ = v; attrValueJson_ = v.toString(); }
     // Programmatic-only: marks this attr write as originating from an

@@ -49,9 +49,6 @@ final class UiPieCommand : Command {
         return [ Param.string_("menu", "Menu", &menu_, "") ];
     }
 
-    /// Positional arg: a menu id from config/pies.yaml, or "close".
-    void setMenu(string arg) { menu_ = arg.strip; }
-
     protected override bool applyImpl() {
         import pie_menus : findPieMenu;
 

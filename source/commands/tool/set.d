@@ -56,10 +56,6 @@ class ToolSetCommand : Command {
     /// tool's own `params()` at activation.
     override void setUnboundArgs(JSONValue named) { namedArgs_ = named; }
 
-    void setToolId(string id)      { toolId_  = id; }
-    void setTurnOff(bool v)        { turnOff_ = v; }
-    void setNamedArgs(JSONValue pj) { namedArgs_ = pj; }
-
     protected override bool applyImpl() {
         // `tool.set <id> off` — the second positional is the literal token
         // "off" and nothing else turns a tool off, verbatim from the injector

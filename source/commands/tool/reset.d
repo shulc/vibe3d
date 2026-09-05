@@ -38,8 +38,6 @@ class ToolResetCommand : Command {
         );
     }
 
-    void setToolId(string id) { optToolId_ = id; }
-
     protected override bool applyImpl() {
         return toolHost.resetActiveTool(optToolId_);
     }
