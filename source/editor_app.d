@@ -21,7 +21,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
-import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome, GuardSettle;
 import log : logInfo, logWarn, logError;
 import prefs;

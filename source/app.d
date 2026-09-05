@@ -2668,15 +2668,23 @@ void main(string[] args) {
         // dropped. This is a single cancel per drop, NOT a per-frame guard.
         pipeGizmoHost.cancelDrag();
         captureStickyToolDefaults();
-        if (activeTool) {
-            final switch (activationDoorFor(why)) {
-                case ActivationDoor.legacyDeactivate:
+        // The `final switch` is OUTSIDE `if (activeTool)` deliberately. It used
+        // to sit inside it, which made the routing refusal below unreachable on
+        // every drop that runs with nothing armed — and those are the majority
+        // (a scene reset, a front-flip, a panel action all fire whether or not
+        // a tool is up). A table row mis-assigned to the arm door is a defect
+        // of the TABLE, not of this particular call, so it must be refused on
+        // the transition alone. The switch keeps its compile-time job either
+        // way: a transition with no owner does not build.
+        final switch (activationDoorFor(why)) {
+            case ActivationDoor.legacyDeactivate:
+                if (activeTool) {
                     activeTool.deactivate();
                     activeTool.destroy();
-                    break;
-                case ActivationDoor.preparedArm:
-                    assert(0, "the arm door cannot own a drop");
-            }
+                }
+                break;
+            case ActivationDoor.preparedArm:
+                assert(0, "the arm door cannot own a drop");
         }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
         // next tool starts from defaults.

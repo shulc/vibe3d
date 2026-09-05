@@ -7,13 +7,16 @@ import std.algorithm.mutation : move;
 // It was written as a DORMANT one, and this header used to say so — "production
 // activation doors do not import or construct this until the single P1.0c
 // unified cutover". That has been false since commit 7844bfee: `armPreparedTool`
-// constructs five of these on every arm and every tool switch, and since task
-// 4053 `dropActiveTool` constructs one on the drop transitions the ownership
-// table (source/tool_activation_ownership.d) routes to the prepared door. The
-// 97 importers under source/ are not a violation of the header; the header was
-// stale. What is still true is the SPLIT: a transition owned by
-// `ActivationDoor.legacyDeactivate` reaches none of this and runs
-// `Tool.deactivate()` live.
+// constructs five of these on every arm and every tool switch. The 97 importers
+// under source/ are not a violation of the header; the header was stale.
+//
+// What is still true is the SPLIT, and it is measured rather than assumed: a
+// split by TRANSITION, not by tool. Every ARM is prepared and reaches this; the
+// outgoing tool of a SWITCH reaches it too, through the `prepareDoorDeactivate`
+// call inside `prepareArm`. Every DROP is owned by
+// `ActivationDoor.legacyDeactivate`, reaches none of this, and runs
+// `Tool.deactivate()` live — zero drop transitions route here. The table is
+// source/tool_activation_ownership.d.
 import command : Command;
 import command_history : CommandHistory, PreparedHistoryKind,
                          PreparedHistoryResult, PreparedHistoryToken,

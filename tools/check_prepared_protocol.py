@@ -1421,8 +1421,8 @@ if found != MANIFEST:
 # task 4053 measured why the drop cannot move yet). Any third row is an
 # unreviewed publisher of the active tool, which is what this census refuses.
 expected_callers = [
-    {"path": "source/app.d", "line": 3904, "symbol": "prepareArm"},
-    {"path": "source/app.d", "line": 3920, "symbol": "commitPreparedArm"},
+    {"path": "source/app.d", "line": 3912, "symbol": "prepareArm"},
+    {"path": "source/app.d", "line": 3928, "symbol": "commitPreparedArm"},
 ]
 if CURRENT_WRITERS.get("bypasses") != expected_callers:
     fail("P1.0c both public doors no longer share the exact prepared funnel")

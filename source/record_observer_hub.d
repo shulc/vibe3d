@@ -19,8 +19,9 @@ public:
 
 /// The prepared-path observer owner. Legacy `CommandHistory.onRecord` is still
 /// wired beside it, and a production caller DOES reach this now: app.d builds
-/// one hub and hands it to every `prepareArm` and, since task 4053, to
-/// `prepareDrop`.
+/// one hub and hands it to every `prepareArm`. Every DROP transition is owned
+/// by the LEGACY door and reaches none of this — task 4053 measured why, and
+/// source/tool_activation_ownership.d is the table that says so.
 final class RecordObserverHub {
 private:
     immutable ulong owner_;

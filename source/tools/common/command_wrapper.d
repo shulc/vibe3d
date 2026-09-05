@@ -352,12 +352,14 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         lastAppliedFalloffs.length = 0;
     }
 
-    /// The P1.0b.4c.2 producer, and NOT dormant since 7844bfee: a tool switch
-    /// deactivates the outgoing wrapper through this, and task 4053 added the
-    /// drop transitions the ownership table routes to the prepared door.
-    /// `deactivate()` above still owns the remaining drops. The scalar reset
-    /// the effect represents is never installed on this path and does not need
-    /// to be: the tool is destroyed immediately after, on both doors.
+    /// The P1.0b.4c.2 producer, and NOT dormant since 7844bfee: a tool SWITCH
+    /// deactivates the outgoing wrapper through this, from inside `prepareArm`.
+    /// That switch is its only production caller — every DROP transition is
+    /// owned by `ActivationDoor.legacyDeactivate` and runs `deactivate()` above
+    /// instead (task 4053 measured why; the table is
+    /// source/tool_activation_ownership.d). The scalar reset the effect
+    /// represents is never installed on this path and does not need to be: the
+    /// tool is destroyed immediately after, on both doors.
     final PreparedDeactivateEffect prepareDeactivate(
             PreparedRecordContext context, ClickPointResourceOwner clickOwner) {
         if (context is null) return PreparedDeactivateEffect(

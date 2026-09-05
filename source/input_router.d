@@ -1,6 +1,6 @@
 module input_router;
 
-import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+import tool_activation_ownership : ToolTransition;
 
 // Task 0781 (campaign 0407 §V1 4.3, chain from 0678 §2C A10 / 0722): the
 // input-router cluster. 0722 measured that the seven SDL-event handlers

@@ -1,6 +1,6 @@
 module registration;
 
-import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+import tool_activation_ownership : ToolTransition;
 
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration previously inline in app.d's

@@ -1,6 +1,6 @@
 module ui.panels;
 
-import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+import tool_activation_ownership : ToolTransition;
 
 // Task 0419 (campaign 0407 §V1.2, continuation of 0415): the UI-panel block
 // that used to live as 23 nested functions inside app.d's main()
