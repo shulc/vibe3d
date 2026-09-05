@@ -1,0 +1,921 @@
+{
+ "name": "edge_bevel_corner_patch_law",
+ "description": "How the reference builds the ROUNDED cap over a bevelled vertex whose ring needs a filled patch: what it hands to its N-sided surface interpolator, which route a given ring shape takes to get there, and the scalar comparator every precondition on that path is written in terms of. Read statically at the reference's own compute sites; no engine was launched.",
+ "source": "Static disassembly of the reference editor's shipped unstripped libraries. Zero boots, zero traces, zero displays.",
+ "tolerance": 1e-12,
+ "read_from": "Seventeen routines across three shipped libraries were read: the corner-patch builder and its single caller's whole gate chain, the routine that turns one side of the ring into a curve, the spline encoder with its arc-length reparameteriser and its derivative evaluator, the per-knot tangent estimator and the end-knot synthesiser beside it, the endpoint+tangent cubic constructor, the power-basis to Bezier converter, the N-sided dispatch and the three-sided routine's precondition, the three small shared routines that supply the scalar comparison, and the vertex bevel's attribute and handle vtable slots. Their names, libraries and addresses are recorded in the PRIVATE toolcard for this task; they are the reference's own identifiers and deliberately do not cross into this tree. What is reproducible from here is the LAW; what is auditable is the private card beside it.",
+ "boundary_curve_construction": {
+  "register_row": 20,
+  "symbol_exists": true,
+  "law": "The builder is handed the cap's whole ordered ring of boundary vertices plus an array of CORNER INDICES that cuts the ring into N sides. It copies every ring vertex's position into an array of N_points+1 entries whose last entry repeats the first (the loop closure). Then, for EACH side independently, it collapses the side's own polyline to a SINGLE cubic: it builds an interpolating piecewise-cubic through that side's points, reparameterises the whole chain by normalised arc length onto [0,1], reads the first derivative at t=0 and at t=1, and fits one endpoint+tangent cubic to (first point, last point, those two derivatives). Those N cubics are the ONLY thing the interpolator receives.",
+  "there_are_no_separate_poles_or_handles": true,
+  "poles_note": "The follow-up this row asked for was phrased as 'which poles and handles it hands the interpolator'. The read answers that there are none to hand: the interpolator derives its own Bezier control points from each side's cubic (see power_to_bezier_conversion). The only inputs are the side count and the N cubics.",
+  "refutes": "The natural reading recorded as the open hypothesis -- that a wide gap's own POLYLINE stands in as the third boundary curve -- is refuted. The polyline is used only to derive the two END TANGENTS and the two endpoints; a side of three or more points is APPROXIMATED, and the curve handed across does not pass through the side's interior points in general.",
+  "ring_array_repeats_first_point_at_the_end": true,
+  "side_span": "side i runs from corner_index[i] to corner_index[i+1] inclusive; the last side runs from corner_index[N-1] to the repeated first entry, so its point count is n_points - corner_index[N-1] + 1",
+  "minimum_points_per_side": 2,
+  "fewer_than_two_points_per_side_aborts": true,
+  "end_tangent_magnitude_law": "Because the reparameterisation is by NORMALISED arc length and the derivative is taken with respect to that normalised parameter, both end tangents have the SAME magnitude, equal to the side curve's total arc length. Their DIRECTIONS are the curve's own unit end tangents.",
+  "end_tangent_magnitudes_are_equal": true,
+  "arc_length_samples_per_segment": 200,
+  "parameter_domain": [
+   0.0,
+   1.0
+  ]
+ },
+ "hermite_cubic": {
+  "law": "Given the two endpoints P0, P1 and the two tangents T0, T1, the curve is stored in the power basis as c0 = P0; c1 = T0; c2 = 3*(P1-P0) - 2*T0 - T1; c3 = 2*(P0-P1) + T0 + T1, evaluated as p(t) = c0 + c1*t + c2*t^2 + c3*t^3.",
+  "consequences": [
+   "p(0) == P0 and p(1) == P1 exactly",
+   "p'(0) == T0 and p'(1) == T1 exactly"
+  ],
+  "weak_check_warning": "'the curve passes through both endpoints' holds for EVERY tangent pair, including both zero -- see the zero_tangents cell. It is not evidence for the tangent law.",
+  "cells": [
+   {
+    "name": "asymmetric_tangents",
+    "note": "A generic side: both endpoints and both tangents distinct, so every one of the four coefficients is non-zero and a transposed or mis-signed term shows up immediately.",
+    "start_point": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "end_point": [
+     2.0,
+     1.0,
+     0.5
+    ],
+    "start_tangent": [
+     1.0,
+     3.0,
+     0.0
+    ],
+    "end_tangent": [
+     2.0,
+     -1.0,
+     1.0
+    ],
+    "power_coefficients": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      3.0,
+      0.0
+     ],
+     [
+      2.0,
+      -2.0,
+      0.5
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "bezier_control_points": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.3333333333333333,
+      1.0,
+      0.0
+     ],
+     [
+      1.3333333333333333,
+      1.3333333333333335,
+      0.16666666666666666
+     ],
+     [
+      2.0,
+      1.0,
+      0.5
+     ]
+    ],
+    "value_at_half": [
+     0.875,
+     1.0,
+     0.125
+    ]
+   },
+   {
+    "name": "two_point_side_straight",
+    "note": "A side with exactly two points. The read makes its two end tangents BOTH equal to the chord (see two_point_side_law), and the consequence is that the quadratic and cubic coefficients are identically zero -- the curve handed across is the straight segment. A rival that supplies UNIT tangents instead leaves both non-zero; see the refuted list.",
+    "start_point": [
+     0.25,
+     -0.5,
+     1.5
+    ],
+    "end_point": [
+     2.75,
+     0.5,
+     -0.5
+    ],
+    "start_tangent": [
+     2.5,
+     1.0,
+     -2.0
+    ],
+    "end_tangent": [
+     2.5,
+     1.0,
+     -2.0
+    ],
+    "power_coefficients": [
+     [
+      0.25,
+      -0.5,
+      1.5
+     ],
+     [
+      2.5,
+      1.0,
+      -2.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "bezier_control_points": [
+     [
+      0.25,
+      -0.5,
+      1.5
+     ],
+     [
+      1.0833333333333335,
+      -0.16666666666666669,
+      0.8333333333333334
+     ],
+     [
+      1.9166666666666667,
+      0.16666666666666663,
+      0.16666666666666674
+     ],
+     [
+      2.75,
+      0.5,
+      -0.5
+     ]
+    ],
+    "value_at_half": [
+     1.5,
+     0.0,
+     0.5
+    ]
+   },
+   {
+    "name": "zero_tangents",
+    "note": "The degenerate supply: both tangents zero. The curve is still endpoint-interpolating (it is the smoothstep between them), which is what makes 'the curve passes through its two endpoints' a WEAK check -- it holds for every tangent pair, so it cannot separate any two tangent laws on its own.",
+    "start_point": [
+     1.0,
+     2.0,
+     3.0
+    ],
+    "end_point": [
+     4.0,
+     0.0,
+     -1.0
+    ],
+    "start_tangent": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "end_tangent": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "power_coefficients": [
+     [
+      1.0,
+      2.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      9.0,
+      -6.0,
+      -12.0
+     ],
+     [
+      -6.0,
+      4.0,
+      8.0
+     ]
+    ],
+    "bezier_control_points": [
+     [
+      1.0,
+      2.0,
+      3.0
+     ],
+     [
+      1.0,
+      2.0,
+      3.0
+     ],
+     [
+      4.0,
+      0.0,
+      -1.0
+     ],
+     [
+      4.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "value_at_half": [
+     2.5,
+     1.0,
+     1.0
+    ]
+   }
+  ]
+ },
+ "power_to_bezier_conversion": {
+  "law": "B0 = c0; B1 = c0 + c1/3; B2 = c0 + 2*c1/3 + c2/3; B3 = c0 + c1 + c2 + c3. This is the standard conversion, so B0 == p(0) == P0 and B3 == p(1) == P1: the interpolator's closure precondition below is therefore a test on the sides' ENDPOINTS, not on any interior control point.",
+  "first_control_point_is_the_start_point": true,
+  "last_control_point_is_the_end_point": true
+ },
+ "knot_tangent": {
+  "law": "At an interior knot with previous chord d_prev = P - P_prev and next chord d_next = P_next - P, of lengths L_prev and L_next, the tangent is T = (L_next*d_prev + L_prev*d_next) / (L_prev + L_next). Each chord is weighted by the OPPOSITE chord's length, which makes T parallel to the sum of the two UNIT chord directions -- the angle bisector -- with magnitude L_prev*L_next/(L_prev+L_next) times the length of that unit sum.",
+  "direction_is_the_unit_chord_bisector": true,
+  "if_chord_lengths_sum_to_zero_tangent_is_zero": true,
+  "zero_test_uses_the_scalar_comparator": true,
+  "refuted_candidates": [
+   {
+    "name": "symmetric_difference",
+    "formula": "T = (P_next - P_prev) / 2",
+    "refuted_by": "asymmetric_corner_3_to_1",
+    "margin_degrees": 26.565051177077994,
+    "note": "This is the textbook uniform Catmull-Rom tangent and the first thing anyone writes. It leans toward the longer chord; the read's tangent does not lean at all."
+   },
+   {
+    "name": "unit_tangents",
+    "formula": "|T0| = |T1| = 1",
+    "refuted_by": "two_point_side_straight",
+    "note": "Unit end tangents would leave the quadratic and cubic coefficients of a two-point side non-zero unless the chord happened to have length exactly 1, so the straight segment would be handed across as a curve that bulges."
+   }
+  ],
+  "cells": [
+   {
+    "name": "asymmetric_corner_3_to_1",
+    "note": "THE DISCRIMINATING CELL. The two chords meet at a right angle and differ in length by 3:1. The read's tangent lies on the bisector of the two UNIT chord directions; the symmetric-difference rival leans towards the LONGER chord. They are more than 26 degrees apart, which no rounding can explain.",
+    "previous_point": [
+     -3.0,
+     0.0,
+     0.0
+    ],
+    "point": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "next_point": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "chord_length_previous": 3.0,
+    "chord_length_next": 1.0,
+    "tangent": [
+     0.75,
+     0.75,
+     0.0
+    ],
+    "tangent_length": 1.0606601717798212,
+    "rival_symmetric_difference": [
+     1.5,
+     0.5,
+     0.0
+    ],
+    "degrees_between_read_and_rival": 26.56505117707798,
+    "unit_chord_bisector": [
+     1.0,
+     1.0,
+     0.0
+    ],
+    "degrees_between_read_and_unit_bisector": 0.0
+   },
+   {
+    "name": "symmetric_corner_THE_INERT_CELL",
+    "note": "The same right-angle corner with the two chords EQUAL in length. The read and the symmetric-difference rival agree exactly -- zero degrees apart, identical vectors. This is the stand a corner of a regular polygon gives you for free, and it is why the tangent law cannot be settled on a symmetric junction: the cell is satisfied by both candidates. Kept in the fixture on purpose so nobody rebuilds it thinking it proves something.",
+    "previous_point": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "point": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "next_point": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "chord_length_previous": 1.0,
+    "chord_length_next": 1.0,
+    "tangent": [
+     0.5,
+     0.5,
+     0.0
+    ],
+    "tangent_length": 0.7071067811865476,
+    "rival_symmetric_difference": [
+     0.5,
+     0.5,
+     0.0
+    ],
+    "degrees_between_read_and_rival": 1.2074182697257333e-06,
+    "unit_chord_bisector": [
+     1.0,
+     1.0,
+     0.0
+    ],
+    "degrees_between_read_and_unit_bisector": 1.2074182697257333e-06
+   },
+   {
+    "name": "collinear_unequal_chords",
+    "note": "Both chords along one line, 4:1. Direction cannot separate the two candidates here (both point along the line) but MAGNITUDE can: the read gives 1.6, the symmetric difference gives 2.5. A stand that compares directions only would call this a match.",
+    "previous_point": [
+     -4.0,
+     0.0,
+     0.0
+    ],
+    "point": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "next_point": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "chord_length_previous": 4.0,
+    "chord_length_next": 1.0,
+    "tangent": [
+     1.6,
+     0.0,
+     0.0
+    ],
+    "tangent_length": 1.6,
+    "rival_symmetric_difference": [
+     2.5,
+     0.0,
+     0.0
+    ],
+    "degrees_between_read_and_rival": 0.0,
+    "unit_chord_bisector": [
+     2.0,
+     0.0,
+     0.0
+    ],
+    "degrees_between_read_and_unit_bisector": 0.0
+   },
+   {
+    "name": "degenerate_coincident",
+    "note": "All three knots coincident. The sum of the two chord lengths is zero under the engine's own scalar comparator and the tangent is returned as the zero vector -- an explicit early exit, not a division that happens to produce a NaN.",
+    "previous_point": [
+     1.0,
+     2.0,
+     3.0
+    ],
+    "point": [
+     1.0,
+     2.0,
+     3.0
+    ],
+    "next_point": [
+     1.0,
+     2.0,
+     3.0
+    ],
+    "chord_length_previous": 0.0,
+    "chord_length_next": 0.0,
+    "tangent": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "tangent_length": 0.0,
+    "rival_symmetric_difference": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "degrees_between_read_and_rival": 0.0,
+    "unit_chord_bisector": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "degrees_between_read_and_unit_bisector": 0.0
+   }
+  ]
+ },
+ "two_point_side_law": {
+  "law": "A side of exactly two points is handed across as the STRAIGHT segment. The knot before the first and after the last are SYNTHESISED, and for a chain of fewer than three points the synthesis is a reflection: P_before = 2*P_first - P_second, and symmetrically at the far end. Both chords at each end are then equal, so the tangent law above returns the chord itself at both ends, and the cubic's quadratic and cubic coefficients are identically zero.",
+  "synthesised_knot_is_a_reflection_when_fewer_than_three_points": true,
+  "synthesised_knot_reflection": "P_before = 2*P_first - P_second",
+  "synthesis_is_computed_in_single_precision": true,
+  "single_precision_note": "The synthesised knot is rounded to single precision on the way in. In exact arithmetic the two coefficients are zero; in the reference they are zero to about one part in 1e7 of the chord length. A parity band on this construction must be a single-precision band, not a double-precision one, and that is a property of the READ, not a measurement artefact.",
+  "single_precision_band_relative": 1e-06,
+  "three_or_more_points_uses_a_different_synthesis": true,
+  "what_remains_open": "The end-knot synthesis for a chain of THREE OR MORE points takes a longer branch that was not decoded this pass. Every side of three or more points therefore has its end tangent DIRECTION unpinned, while its magnitude law (equal at both ends, equal to the arc length) is pinned. This is named as the next narrow read, deliberately not guessed."
+ },
+ "side_count_dispatch": {
+  "law": "The interpolator branches on the side count N before doing any work: N < 3 refuses outright and returns failure; N == 3 goes to a DEDICATED three-sided routine; N >= 4 goes to the general N-sided routine. The two are different code, not one routine with a parameter.",
+  "routes": [
+   {
+    "sides": 0,
+    "route": "refused"
+   },
+   {
+    "sides": 1,
+    "route": "refused"
+   },
+   {
+    "sides": 2,
+    "route": "refused"
+   },
+   {
+    "sides": 3,
+    "route": "three_sided"
+   },
+   {
+    "sides": 4,
+    "route": "general_n_sided"
+   },
+   {
+    "sides": 5,
+    "route": "general_n_sided"
+   },
+   {
+    "sides": 8,
+    "route": "general_n_sided"
+   }
+  ],
+  "caller_never_offers_fewer_than_three": true
+ },
+ "three_sided_closure_precondition": {
+  "law": "The three-sided routine converts each of its three cubics to Bezier control points and then REFUSES unless the ring closes: each side's first control point must equal the previous side's last control point, componentwise, under the engine's own scalar comparator. All three tests must pass; any one failure returns failure and no patch is built.",
+  "tests": [
+   "side0.start == side2.end",
+   "side1.start == side0.end",
+   "side2.start == side1.end"
+  ],
+  "comparison_is_componentwise": true,
+  "comparison_uses_the_scalar_comparator": true,
+  "failure_is_silent_and_returns_no_patch": true
+ },
+ "scalar_comparator": {
+  "law": "Two doubles are EQUAL iff |a - b| < tol, where tol = max(max(|a|,|b|) / 3360000, 1e-10). The comparator returns -1, 0 or +1 and every equality on the corner-patch path is written in terms of it -- the closure precondition above and the degenerate-knot test in the tangent law both.",
+  "relative_divisor": 3360000.0,
+  "absolute_floor": 1e-10,
+  "tolerance_scale_is_the_larger_magnitude": true,
+  "crossover_magnitude": 0.00033600000000000004,
+  "crossover_note": "Below a magnitude of about 3.36e-4 the floor dominates and the comparator is effectively absolute; above it the comparator is effectively relative. Both regimes have a cell below.",
+  "refuted_candidates": [
+   {
+    "name": "bit_equality",
+    "formula": "a == b",
+    "refuted_by": "unit_scale_offset_1e_minus_7_EQUAL"
+   },
+   {
+    "name": "absolute_1e_minus_6",
+    "formula": "|a-b| < 1e-6",
+    "refuted_by": "unit_scale_offset_1e_minus_6_NOT_EQUAL"
+   },
+   {
+    "name": "pure_relative_no_floor",
+    "formula": "|a-b| < max(|a|,|b|)/3360000",
+    "refuted_by": "tiny_scale_floor_active_EQUAL"
+   }
+  ],
+  "cells": [
+   {
+    "name": "unit_scale_offset_1e_minus_7_EQUAL",
+    "note": "At unit scale the tolerance is about 2.98e-7, so a 1e-7 offset is EQUAL. A rival that demanded bit-equality would refuse this, and the three-sided precondition below would then reject rings the reference accepts.",
+    "a": 1.0,
+    "b": 1.0000001,
+    "difference": -1.0000000005838672e-07,
+    "tolerance": 2.976190773809524e-07,
+    "equal": true,
+    "compare": 0
+   },
+   {
+    "name": "unit_scale_offset_1e_minus_6_NOT_EQUAL",
+    "note": "The same construction one decade coarser: 1e-6 exceeds the unit-scale tolerance and is NOT equal.",
+    "a": 1.0,
+    "b": 1.000001,
+    "difference": -9.999999999177334e-07,
+    "tolerance": 2.9761934523809524e-07,
+    "equal": false,
+    "compare": -1
+   },
+   {
+    "name": "scale_1000_offset_1e_minus_6_EQUAL",
+    "note": "THE DISCRIMINATING PAIR, with the cell above. The SAME absolute offset of 1e-6 is refused at unit scale and accepted at scale 1000, because the tolerance is a fraction of the larger magnitude. No absolute-tolerance rival can produce both verdicts.",
+    "a": 1000.0,
+    "b": 1000.000001,
+    "difference": -9.999999974752427e-07,
+    "tolerance": 0.00029761904791666667,
+    "equal": true,
+    "compare": 0
+   },
+   {
+    "name": "tiny_scale_floor_active_EQUAL",
+    "note": "Below about 3.4e-4 the relative term falls under the floor and the floor takes over: two values 1e-11 apart are equal because the tolerance is pinned at 1e-10, not because they are close relative to their own size.",
+    "a": 1e-11,
+    "b": 2e-11,
+    "difference": -1e-11,
+    "tolerance": 1e-10,
+    "equal": true,
+    "compare": 0
+   },
+   {
+    "name": "tiny_scale_floor_active_NOT_EQUAL",
+    "note": "The floor's other side: 1e-9 apart at the same tiny scale is NOT equal, because the floor is 1e-10 and the relative term is far smaller. A pure-relative rival with no floor would call this equal.",
+    "a": 1e-09,
+    "b": 2e-09,
+    "difference": -1e-09,
+    "tolerance": 1e-10,
+    "equal": false,
+    "compare": -1
+   }
+  ]
+ },
+ "ring_shape_routing": {
+  "register_row": 22,
+  "law": "A bevelled vertex's cap is NOT built by one uniform routine. The builder that owns the vertex runs an ORDERED chain of predicates, and a ring reaches the corner-patch construction above only if it survives every one of them. Several of the earlier predicates read the ring's SHAPE -- how many of the vertex's slots are in use, how many slots the vertex has in total, how many carry a per-slot marker -- so two rings of the same size can leave by different exits.",
+  "refutes": "Our shipped model registers every free-end cap ring as a rail-support consumer UNIFORMLY, regardless of ring shape, and routes every boundary rail through one per-vertex fillet law. The read refutes that IN KIND, not in degree: there is a dedicated exit for the case of exactly three used slots on a five-slot vertex, a separate exit when any per-slot marker is set, a separate exit for the closed configuration, and a separate exit under the round-vertex-cap predicate. A model with one route cannot be a simplification of a dispatcher with several; it is a different construction that happens to agree on the shapes we tested.",
+  "gate_order_note": "The gates are listed in the order the reference evaluates them, and the order is load-bearing: the three-used-slots-of-five exit is tested BEFORE the marker exit, so a five-slot vertex with three used slots takes the special exit even when a marker is set. A dispatcher that reorders them answers differently on that shape.",
+  "marker_semantics_not_decoded": "The per-slot and per-vertex flag bits are read as arithmetic and as branches; what each bit MEANS was not decoded and is not claimed here. The routing law does not depend on their meaning.",
+  "gates": [
+   {
+    "index": 1,
+    "test": "width_positive == false",
+    "route": "decline"
+   },
+   {
+    "index": 2,
+    "test": "vertex_flag_a",
+    "route": "decline"
+   },
+   {
+    "index": 3,
+    "test": "vertex_flag_b",
+    "route": "decline"
+   },
+   {
+    "index": 4,
+    "test": "boundary_points < 3",
+    "route": "decline"
+   },
+   {
+    "index": 5,
+    "test": "slot_tally < 3",
+    "route": "decline"
+   },
+   {
+    "index": 6,
+    "test": "round_vertex_cap_predicate",
+    "route": "round_vertex_cap"
+   },
+   {
+    "index": 7,
+    "test": "fully_accounted",
+    "route": "closed_ring"
+   },
+   {
+    "index": 8,
+    "test": "round_segments <= 0",
+    "route": "flat_level"
+   },
+   {
+    "index": 9,
+    "test": "used_slots == 3 and total_slots == 5",
+    "route": "three_of_five"
+   },
+   {
+    "index": 10,
+    "test": "slot_marker_count_b != 0",
+    "route": "marker"
+   },
+   {
+    "index": 11,
+    "test": "vertex_flag_pair_both_set",
+    "route": "twin_flag"
+   },
+   {
+    "index": 12,
+    "test": "used_slots == 0",
+    "route": "marker"
+   },
+   {
+    "index": 13,
+    "test": "ring_points <= 2",
+    "route": "plain_corner"
+   },
+   {
+    "index": 14,
+    "test": "round_segments <= 0",
+    "route": "no_patch"
+   },
+   {
+    "index": 15,
+    "test": "corners <= 2",
+    "route": "no_patch"
+   },
+   {
+    "index": 16,
+    "test": "arc_sides <= 1",
+    "route": "no_patch"
+   },
+   {
+    "index": 17,
+    "test": "otherwise",
+    "route": "corner_patch"
+   }
+  ],
+  "derived_terms": {
+   "boundary_points": "used_slots * (round_segments + 1), plus 1 when the vertex's third flag is set",
+   "slot_tally": "used_slots, plus 1 when the vertex's third flag is set. It is a SEPARATE tally from used_slots and gate 5 tests this one, so a vertex with two used slots and the third flag set survives gate 5 -- which is what keeps gate 12 reachable.",
+   "fully_accounted": "round_segments > 0 and (slot_marker_count_a + vertex_extra_count + slot_marker_count_b) == total_slots"
+  },
+  "unreachable_gate_note": "Two of the seventeen gates can never fire and are listed anyway, because they are in the read and leaving them out would make the chain look tighter than it is. Gate 14 repeats gate 8's test verbatim. Gate 12 is unreachable behind gate 5: the slot tally exceeds the used-slot count by at most one, so a zero used-slot count always fails gate 5 first. Neither is a discriminator and no cell below exercises them.",
+  "cells": [
+   {
+    "name": "wide_notch_reaches_the_patch",
+    "note": "The shape row 20 is about: a bevelled vertex whose ring needs a filled interior at a non-zero round level.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 9,
+     "corners": 3,
+     "arc_sides": 3
+    },
+    "route": "corner_patch"
+   },
+   {
+    "name": "three_used_slots_of_five_takes_its_own_exit",
+    "note": "THE CELL THAT REFUTES UNIFORMITY. Identical in every field to the cell above except that the vertex has FIVE slots instead of six, and it leaves by a different exit. A uniform model answers 'corner_patch' for both.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 5,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 9,
+     "corners": 3,
+     "arc_sides": 3
+    },
+    "route": "three_of_five"
+   },
+   {
+    "name": "a_marked_slot_diverts",
+    "note": "The same six-slot ring with one per-slot marker set. It never reaches the patch construction.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 1,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 9,
+     "corners": 3,
+     "arc_sides": 3
+    },
+    "route": "marker"
+   },
+   {
+    "name": "flat_level_never_reaches_the_patch",
+    "note": "Round level zero leaves before the patch gates are even evaluated, which is why every flat-level cap agrees with a uniform model and why the flat corpus could not have detected this.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 6,
+     "round_segments": 0,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 3,
+     "corners": 3,
+     "arc_sides": 3
+    },
+    "route": "flat_level"
+   },
+   {
+    "name": "two_used_slots_declines_before_anything",
+    "note": "A ring with fewer than three used slots is declined at gate five, ahead of every shape-sensitive gate.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 2,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 6,
+     "corners": 2,
+     "arc_sides": 2
+    },
+    "route": "decline"
+   },
+   {
+    "name": "zero_width_declines_first",
+    "note": "The very first gate. A zero or negative width declines before any counting happens.",
+    "shape": {
+     "width_positive": false,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 9,
+     "corners": 3,
+     "arc_sides": 3
+    },
+    "route": "decline"
+   },
+   {
+    "name": "closed_configuration_takes_the_closed_exit",
+    "note": "When the per-slot marker counts and the vertex's own extra count add up to the total slot count, the ring is the closed configuration and leaves ahead of the level and shape gates.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 6,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 6,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 18,
+     "corners": 6,
+     "arc_sides": 6
+    },
+    "route": "closed_ring"
+   },
+   {
+    "name": "one_arc_side_is_not_enough",
+    "note": "The last gate before the patch. A ring that reaches the construction with only one arc-bearing side is turned away, so 'has three corners' is NOT sufficient.",
+    "shape": {
+     "width_positive": true,
+     "vertex_flag_a": false,
+     "vertex_flag_b": false,
+     "vertex_flag_c": false,
+     "used_slots": 3,
+     "total_slots": 6,
+     "round_segments": 2,
+     "round_vertex_cap_predicate": false,
+     "slot_marker_count_a": 0,
+     "slot_marker_count_b": 0,
+     "vertex_extra_count": 0,
+     "vertex_flag_pair_both_set": false,
+     "ring_points": 9,
+     "corners": 3,
+     "arc_sides": 1
+    },
+    "route": "no_patch"
+   }
+  ]
+ },
+ "interior_vertex": {
+  "register_row": 20,
+  "law": "Exactly ONE new interior vertex is created from the interpolator's own output, and its position is the first returned patch's stored hub point -- the same hub the already-closed junction work reads. The builder does not evaluate the surface at any parameter to place it.",
+  "count": 1,
+  "position_source": "first returned patch's stored hub point",
+  "surface_is_not_evaluated_to_place_it": true,
+  "what_remains_open": "How the three-sided routine's own interior construction fills the hub from the three cubics was not decoded this pass; the general N-sided hub law is already closed elsewhere and the three-sided routine is separate code."
+ },
+ "vertex_bevel_attributes": {
+  "register_row": 12,
+  "symbol_exists": true,
+  "law": "The reference's vertex bevel declares exactly FOUR attributes, and Round Level is one of them -- a plain integer, index 3. Its SETTER floors a negative at zero (it stores max(value, 0)); the boolean at index 1 is stored raw. The clamp is therefore per-attribute, not a property of the tool's setter.",
+  "attribute_count": 4,
+  "attributes": [
+   {
+    "index": 0,
+    "role": "inset amount",
+    "type": "distance",
+    "setter_floors_negative_at_zero": false
+   },
+   {
+    "index": 1,
+    "role": "use material",
+    "type": "boolean",
+    "setter_floors_negative_at_zero": false
+   },
+   {
+    "index": 2,
+    "role": "material name",
+    "type": "string",
+    "setter_floors_negative_at_zero": false
+   },
+   {
+    "index": 3,
+    "role": "round level",
+    "type": "integer",
+    "setter_floors_negative_at_zero": true
+   }
+  ],
+  "round_level_attribute_index": 3,
+  "round_level_setter_floors_negative_at_zero": true,
+  "viewport_handle_count": 1,
+  "viewport_handle_role": "inset amount",
+  "round_level_has_no_viewport_handle": true,
+  "handle_note": "The draw and hit-test routines are byte-for-byte parallel and each contains exactly ONE handle call, of the SCALE handle kind, and the shipped tool help lists exactly one handle tooltip for this tool -- the inset one. So Round Level is a panel-only attribute in the REFERENCE too. Our own tool exposing only an inset handle is not a shortfall against the reference's handle map; it MATCHES it, and the register row that asserted this 'by design' can now say it was checked.",
+  "kernel_shares_the_edge_bevel_transform_routines": true,
+  "kernel_note": "The vertex-bevel mesh kernel calls two of the EDGE bevel's own point-transform routines rather than owning its own, which is the same shared-machinery pattern already recorded for the vertex extrude.",
+  "what_remains_open": "The per-vertex geometry Round Level produces under a multi-adjacent selection -- the actual subject of the register row -- is untouched by this read. What the read closes is the surrounding question the row also asserted: whether our single-handle map diverges from the reference's. It does not."
+ },
+ "what_this_read_did_not_settle": [
+  "The end-knot synthesis for a side of three or more points.",
+  "The three-sided interpolator's own interior construction.",
+  "The meaning of the per-slot and per-vertex flag bits used by the routing gates; only their arithmetic and their branches are read.",
+  "The geometry produced by the exits other than the corner patch -- the three-used-slots-of-five exit and the marker exit in particular, which is what register row 22 still needs.",
+  "Which of the vertex flags marks an OPEN (boundary) fan. Two flags decline outright and a third adds one boundary point and one slot, so a boundary-specific adjustment demonstrably exists -- but the static read does not say which bit it is, and that is register row 21's whole question. The channel that answers it is a headless behavioural probe on an open fan, not more disassembly.",
+  "The scalar blend factor the miter and partial-fan builder uses between its two rail ends. That builder evaluates the already-closed rail routine only at the two ENDS and produces its interior samples from an inline affine step under a DIFFERENT mid-vertex callback from the one the corner-patch path uses -- register row 17."
+ ],
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "provenance.method is 'static-read': every value here was decoded from the reference's own shipped, unstripped libraries under objdump. No engine was launched, no tool was armed and no gesture was delivered, so there is no tool parameter this fixture could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody had looked (task 3010)."
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "static-read",
+  "captured_utc": "2026-09-05",
+  "harness": "tools/local/fixture_gen/corner_patch/gen.py (objdump/nm over the shipped unstripped libraries; no process was started)",
+  "task": "4330",
+  "notes": "INSTRUMENT: static disassembly. Six routines plus two shared helpers were read at their own compute sites. No engine was launched, no display opened, no pointer injected, no trace recorded; there is no behavioural fit anywhere in this file, so none of it can be an artefact of which stands happened to get built. Every constant here was decoded from the read bytes rather than inferred from a name -- including the tolerance divisor, which is a plain literal at its own site. The private toolcard records the routine names, libraries and addresses."
+ }
+}
