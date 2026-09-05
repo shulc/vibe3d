@@ -122,8 +122,10 @@ double[3] actionCentre() {
 /// is answered straight off the HTTP thread from the tool's resident fields,
 /// so a read issued the instant after `tool.set` returns can land before the
 /// frame loop has ticked the tool. That is a PRODUCT hazard, it was fixed in
-/// the product (app.d's `armedToolPoseHook` poses the fresh tool at arm time),
-/// and a settle alone would have hidden it: the poll would simply have waited
+/// the product (the prepared arm poses the fresh tool before it returns —
+/// `PreparedToolPoseDoorClient.prepareDoorInitialPose`, called from
+/// `prepareArm`; task 1670's `armedToolPoseHook` did this until 4053 deleted
+/// it with the legacy arm branch), and a settle alone would have hidden it: the poll would simply have waited
 /// out the wrong answer and gone green over a race every other consumer of
 /// that route still had. The sibling fix on 2026-08-08 landed both halves for
 /// the same reason, and this is the matching pair.
@@ -234,8 +236,10 @@ unittest {
              ~ "binding is the suspect; if it reports the plane's pivot while "
              ~ "this reads zero, the tool was READ BEFORE ITS FIRST TICK. "
              ~ "Every `tool.set` builds a NEW tool whose pose starts at the "
-             ~ "origin, and app.d's `armedToolPoseHook` is what ticks it "
-             ~ "before `tool.set` returns. T-X7 below is the row that pins "
+             ~ "origin, and the prepared arm's initial-pose door — "
+             ~ "`PreparedToolPoseDoorClient.prepareDoorInitialPose`, called "
+             ~ "from `prepareArm` — is what poses it before `tool.set` "
+             ~ "returns. T-X7 below is the row that pins "
              ~ "that half, and it fails on its own terms.", piv[0], piv[1], piv[2]));
 }
 
