@@ -85,6 +85,34 @@ def _semantic_digest(body):
     tokens = " ".join(tokens.split())
     return hashlib.sha256(tokens.encode()).hexdigest()
 
+_MODULE_INDEX_CACHE = {}
+
+def module_path(root, *module_names):
+    """Resolve one D module by declaration so package moves do not alter identity."""
+    root = Path(root).resolve()
+    accepted = set(module_names)
+    direct = [root / "source" / (name.replace(".", "/") + ".d")
+              for name in accepted]
+    direct = [path for path in direct if path.is_file()]
+    if len(direct) == 1:
+        head = re.search(r"^\s*module\s+([\w.]+)\s*;", direct[0].read_text(), re.M)
+        if head and head.group(1) in accepted:
+            return direct[0]
+    if root not in _MODULE_INDEX_CACHE:
+        index = {}
+        for path in sorted((root / "source").rglob("*.d")):
+            head = re.search(r"^\s*module\s+([\w.]+)\s*;", path.read_text(), re.M)
+            if head:
+                index.setdefault(head.group(1), []).append(path)
+        _MODULE_INDEX_CACHE[root] = index
+    index = _MODULE_INDEX_CACHE[root]
+    matches = [path for name in accepted for path in index.get(name, [])]
+    if len(matches) != 1:
+        raise ValueError(
+            f"module {sorted(accepted)} resolved to {len(matches)} files: "
+            f"{[str(path.relative_to(root)) for path in matches]}")
+    return matches[0]
+
 def _domains(body):
     """Ordered conservative writer-domain word, statement by statement."""
     word = []
@@ -208,7 +236,11 @@ def scan(root):
                          "semantic_sha256": _semantic_digest(body),
                          "prepared_delegations": len(re.findall(
                              r"\b(?:prepareArm|commitPreparedArm|producePreparedEffects|installLegacyPreparedEffects)\s*\(", body))})
-    transition_path = root / "source/prepared_tool_transition.d"
+    transition_path = module_path(
+        root, "prepared_tool_transition", "prepared.tool_transition")
+    # The manifest keys this declaration by module identity. Keep the existing
+    # logical spelling stable when the module moves into source/prepared/.
+    transition_manifest_path = "source/prepared_tool_transition.d"
     transition = _mask_comments(transition_path.read_text())
     classifier = re.search(
         r"\bbool\s+toolArmEmitsLifecycle\s*\([^;{}]*\)[^{;]*\{", transition)
@@ -217,7 +249,7 @@ def scan(root):
     classifier_open = classifier.end() - 1
     classifier_end = _balanced(transition, classifier_open + 1)
     lifecycle_classifier = {
-        "path": str(transition_path.relative_to(root)),
+        "path": transition_manifest_path,
         "symbol": "toolArmEmitsLifecycle",
         "line": transition.count("\n", 0, classifier.start()) + 1,
         "semantic_sha256": _semantic_digest(
@@ -249,12 +281,13 @@ def scan(root):
     for path in sorted((root / "source").rglob("*.d")):
         text = _mask_comments(path.read_text())
         for match in bypass_pattern.finditer(text):
-            row = {"path": str(path.relative_to(root)),
+            row = {"path": transition_manifest_path if path == transition_path
+                   else str(path.relative_to(root)),
                    "symbol": match.group(0).split("(")[0].strip(),
                    "line": text.count("\n", 0, match.start()) + 1}
             line_start = text.rfind("\n", 0, match.start()) + 1
             prefix = text[line_start:match.start()].strip()
-            if path.name == "prepared_tool_transition.d" and (
+            if path == transition_path and (
                     (row["symbol"] == "prepareArm" and prefix == "PreparedArm") or
                     (row["symbol"] == "commitPreparedArm" and prefix == "bool")):
                 body_open = text.find("{", match.end())

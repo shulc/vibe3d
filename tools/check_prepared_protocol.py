@@ -12,7 +12,7 @@ import hashlib
 
 from prepared_writer_census import (scan as scan_writer_graph,
     canonical as canonical_writer_graph, _balanced as balanced_source,
-    _semantic_digest as semantic_digest)
+    _semantic_digest as semantic_digest, module_path)
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -39,6 +39,103 @@ if _stray:
 
 def fail(message):
     raise SystemExit(message)
+
+def mask_d_noncode(source):
+    """Blank comments and quoted strings while preserving source offsets."""
+    pattern = re.compile(
+        r'//[^\n]*|/\*.*?\*/|/\+.*?\+/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+        re.S)
+    return pattern.sub(lambda match: "".join(
+        "\n" if char == "\n" else " " for char in match.group()), source)
+
+def mask_d_comments(source):
+    pattern = re.compile(r"//[^\n]*|/\*.*?\*/|/\+.*?\+/", re.S)
+    return pattern.sub(lambda match: "".join(
+        "\n" if char == "\n" else " " for char in match.group()), source)
+
+def d_declaration_span(source, kind, name):
+    """Return one parsed aggregate declaration span, or None on absence/ambiguity."""
+    visible = mask_d_noncode(source)
+    qualifier = r"(?:\b(?:private|package|protected|public|static|final)\s+)*"
+    matches = list(re.finditer(
+        qualifier + rf"\b{re.escape(kind)}\s+{re.escape(name)}\b[^{{;]*\{{",
+        visible))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    try:
+        return match.start(), balanced_source(source, match.end())
+    except ValueError:
+        return None
+
+def has_final_class(source, name):
+    """Whether name is declared exactly once as a named final class."""
+    span = d_declaration_span(source, "class", name)
+    if span is None:
+        return False
+    prefix = mask_d_noncode(source[span[0]:source.find("{", span[0])])
+    return re.search(r"\bfinal\s+class\s+" + re.escape(name) + r"\b", prefix) is not None
+
+def before_declaration(source, kind, name):
+    span = d_declaration_span(source, kind, name)
+    return None if span is None else source[:span[0]]
+
+def from_declaration(source, kind, name):
+    span = d_declaration_span(source, kind, name)
+    return None if span is None else source[span[0]:]
+
+def has_prepared_token_pair(source, stem):
+    """Recognize either today's named pair or the package refactor's pair mixin."""
+    prepared = d_declaration_span(source, "struct", f"Prepared{stem}Token")
+    validated = d_declaration_span(source, "struct", f"Validated{stem}Token")
+    if prepared is not None and validated is not None:
+        return True
+    visible = mask_d_comments(source)
+    return re.search(
+        r'\bmixin\s+PreparedTokenPair\s*!\s*"' + re.escape(stem) + r'"\s*;',
+        visible) is not None
+
+def exact_class_guard_types(source):
+    """Concrete products guarded directly or supplied to PreparedOwner mixins."""
+    visible = mask_d_noncode(source)
+    direct = re.findall(r"\btarget_?\.classinfo\s*!is\s*(\w+)\.classinfo", visible)
+    mixed = re.findall(r"\bmixin\s+PreparedOwner\s*!\s*\(\s*(\w+)\s*,", visible)
+    return direct + mixed
+
+def prepared_module_source(legacy_module):
+    """Read a prepared module by declaration, independent of its package path."""
+    suffix = legacy_module.removeprefix("prepared_")
+    try:
+        path = module_path(ROOT, legacy_module, f"prepared.{suffix}")
+    except ValueError as error:
+        fail(f"P1.0b {error}")
+    return path.read_text()
+
+def legacy_prepared_module_name(module_name):
+    return ("prepared_" + module_name.removeprefix("prepared.")) \
+        if module_name.startswith("prepared.") else module_name
+
+def source_module_name(path, source):
+    head = re.search(r"^\s*module\s+([\w.]+)\s*;", source, re.M)
+    if not head:
+        return str(path.relative_to(ROOT / "source")).removesuffix(".d").replace("/", ".")
+    return legacy_prepared_module_name(head.group(1))
+
+def imports_prepared_module(source, legacy_module):
+    suffix = legacy_module.removeprefix("prepared_")
+    return re.search(
+        r"^\s*(?:public\s+|static\s+)?import\s+(?:[A-Za-z_]\w*\s*=\s*)?"
+        rf"(?:{re.escape(legacy_module)}|prepared\.{re.escape(suffix)})\b",
+        mask_d_noncode(source), re.M) is not None
+
+# These declarations are scanner boundaries, not content searches. A missing
+# boundary must stop before any body slice can widen to the file tail (4051).
+for anchor_module, anchor_name in (
+        ("prepared_bridge_activation", "PreparedBridgeDeactivateToken"),
+        ("prepared_mirror_activation", "PreparedMirrorDeactivateToken")):
+    if d_declaration_span(prepared_module_source(anchor_module),
+                          "struct", anchor_name) is None:
+        fail(f"P1.0b.5d prepared slice anchor missing: {anchor_name}")
 
 WRITER_MANIFEST_PATH = ROOT / "tools/prepared_writer_manifest.json"
 
@@ -87,7 +184,10 @@ def validate_writer_graph(actual, expected):
         fail("P1.0b.0 direct-body/product census changed with names intact")
 
 WRITER_MANIFEST = json.loads(WRITER_MANIFEST_PATH.read_text())
-CURRENT_WRITERS = scan_writer_graph(ROOT)
+try:
+    CURRENT_WRITERS = scan_writer_graph(ROOT)
+except ValueError as error:
+    fail(f"P1.0b.0 writer census could not resolve source identity: {error}")
 validate_writer_graph(CURRENT_WRITERS, WRITER_MANIFEST)
 
 # One real compiler-backed ownership/signature gate for every reviewed root and
@@ -504,8 +604,8 @@ def without_unittests(source):
 prepared_source_texts = {path: path.read_text()
                          for path in (ROOT / "source").rglob("*.d")}
 for path, text in prepared_source_texts.items():
-    module = str(path.relative_to(ROOT / "source")).removesuffix(".d").replace("/", ".")
-    if "import prepared_record_context" in text and module not in b3d_modules | {
+    module = source_module_name(path, text)
+    if imports_prepared_module(text, "prepared_record_context") and module not in b3d_modules | {
             "prepared_record_context", "tools.transform.transform",
             "tools.common.command_wrapper", "tools.edit.tack",
             "tools.create.vertex_place", "tools.create.pen", "tools.create.arc",
@@ -677,8 +777,9 @@ for label, mutant in (
 observer_source = (ROOT / "source/record_observer_hub.d").read_text()
 production_hub_refs = 0
 for path, hub_text in prepared_source_texts.items():
-    if path.name not in ("record_observer_hub.d", "command_history.d",
-                         "prepared_record_context.d"):
+    hub_module = source_module_name(path, hub_text)
+    if hub_module not in ("record_observer_hub", "command_history",
+                          "prepared_record_context"):
         if "RecordObserverHub" in hub_text:
             production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
 macro_source = (ROOT / "source/macro_recorder.d").read_text()
@@ -1102,8 +1203,13 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
         shutil.copytree(ROOT / "source/tools", mutant_root / "source/tools")
-        for name in ("tool.d", "registration.d", "tool_presets.d", "prepared_tool_transition.d"):
+        for name in ("tool.d", "registration.d", "tool_presets.d"):
             shutil.copy2(ROOT / "source" / name, mutant_root / "source" / name)
+        transition_path = module_path(
+            ROOT, "prepared_tool_transition", "prepared.tool_transition")
+        transition_relative = transition_path.relative_to(ROOT)
+        (mutant_root / transition_relative.parent).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(transition_path, mutant_root / transition_relative)
         shutil.copy2(ROOT / "source/app.d", mutant_root / "source/app.d")
         (mutant_root / "source/commands/tool").mkdir(parents=True)
         shutil.copy2(ROOT / "source/commands/tool/set.d",
@@ -1239,7 +1345,7 @@ if not mutation_rejected(add_ref_escape_without_renaming, "direct-body/product c
     fail("P1.0b.0 name-preserving ref escape mutation did not fail")
 
 def add_bypass_callsite(root):
-    p = root / "source/prepared_tool_transition.d"
+    p = module_path(root, "prepared_tool_transition", "prepared.tool_transition")
     p.write_text(p.read_text() +
         "\nbool p1Unauthorized(ref Tool active, ref string id, "
         "ref PreparedArm prepared) nothrow { return commitPreparedArm(active, id, prepared); }\n")
@@ -1263,7 +1369,7 @@ MANIFEST = {
 # interactive arms. D's type checker proves the real commit suffix and every
 # invoked installer/disposer are nothrow; the ordered-body census prevents a
 # second publisher or an imperative tail from hiding behind that signature.
-transition = (ROOT / "source/prepared_tool_transition.d").read_text()
+transition = prepared_module_source("prepared_tool_transition")
 found = {
     "prepared_tool_transition." + name
     for name in re.findall(r"^(?:PreparedArm|bool)\s+(prepareArm|commitPreparedArm)\s*\(",
@@ -1478,20 +1584,52 @@ for module, symbol, _ in NO_LIVE_LEAVES:
 TOKEN_CENSUS_D = ROOT / "tests/unit/prepared_tool_transition_test.d"
 TOKEN_NAME_RE = re.compile(r"\bstruct\s+((?:Prepared|Validated)\w*Token)\b\s*"
                            r"(?:\([^)]*\))?\s*\{")
+TOKEN_PAIR_MIXIN_RE = re.compile(
+    r'\bmixin\s+PreparedTokenPair\s*!\s*"([A-Za-z_]\w*)"\s*;')
 
 def prepared_token_declarations():
     """{(module, TypeName): has a disabled copy} for every Prepared*Token /
     Validated*Token struct under source/. The name pattern is the D census's
     own predicate, spelled here over the tree instead of over one module."""
     rows = {}
-    for path in sorted(ROOT.glob("source/**/*.d")):
-        text = path.read_text()
+    sources = [(path, path.read_text())
+               for path in sorted(ROOT.glob("source/**/*.d"))]
+    pair_uses = [(path, text, use.group(1)) for path, text in sources
+                 for use in TOKEN_PAIR_MIXIN_RE.finditer(mask_d_comments(text))]
+    pair_template_disabled = False
+    if pair_uses:
+        definitions = []
+        for path, text in sources:
+            visible = mask_d_noncode(text)
+            match = re.search(
+                r"\bmixin\s+template\s+PreparedTokenPair\s*\([^;{}]*\)\s*\{",
+                visible)
+            if match:
+                try:
+                    body = text[match.end():balanced_source(text, match.end()) - 1]
+                except ValueError:
+                    body = ""
+                definitions.append((path, body))
+        if len(definitions) != 1:
+            fail(f"PreparedTokenPair resolved to {len(definitions)} template definitions")
+        pair_template_disabled = definitions[0][1].count("@disable this(this)") == 2
+    for path, text in sources:
         head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
         if not head:
             continue
+        census_module = legacy_prepared_module_name(head.group(1))
         for decl in TOKEN_NAME_RE.finditer(text):
             body = text[decl.end():balanced_source(text, decl.end()) - 1]
-            rows[(head.group(1), decl.group(1))] = "@disable this(this)" in body
+            key = (census_module, decl.group(1))
+            if key in rows:
+                fail(f"duplicate prepared token declaration: {key[0]}.{key[1]}")
+            rows[key] = "@disable this(this)" in body
+        for use in TOKEN_PAIR_MIXIN_RE.finditer(mask_d_comments(text)):
+            for prefix in ("Prepared", "Validated"):
+                key = (census_module, f"{prefix}{use.group(1)}Token")
+                if key in rows:
+                    fail(f"duplicate prepared token declaration: {key[0]}.{key[1]}")
+                rows[key] = pair_template_disabled
     return rows
 
 # NON-`*Token` PREPARED AGGREGATES. Seven structs under source/ disable their
@@ -1517,12 +1655,13 @@ def prepared_non_token_noncopyable():
         head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
         if not head:
             continue
+        census_module = legacy_prepared_module_name(head.group(1))
         for decl in NON_TOKEN_AGGREGATE_RE.finditer(text):
             if decl.group(1).endswith("Token"):
                 continue
             body = text[decl.end():balanced_source(text, decl.end()) - 1]
             if "@disable this(this)" in body:
-                rows.add((head.group(1), decl.group(1)))
+                rows.add((census_module, decl.group(1)))
     return rows
 
 # True == the D census can name the type, so the compiler states the property
@@ -1631,7 +1770,7 @@ def token_census_gate(source, declared, stray_fixtures, non_token):
             bad.append(f"{aggregate} lost its non-copyable assert")
     # The seven retired shape fixtures pinned the diagnostic TEXT as well as the
     # refusal; `__traits(compiles)` cannot see a message, so it is pinned here.
-    effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+    effect = prepared_module_source("prepared_tool_effect")
     if "prepared effect field is not owned" not in effect:
         bad.append("the prepared-effect diagnostic text is gone from "
                    "source/prepared_tool_effect.d")
@@ -1725,7 +1864,7 @@ for label, mutate_source, mutate_walk in (
 # Potency against the ACTUAL admitted payload, not merely a new rejected type:
 # inject a class reference into PreparedScalar while retaining its name/UDA.
 with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-carrier-mut-") as td:
-    mutant = (ROOT / "source/prepared_tool_effect.d").read_text().replace(
+    mutant = prepared_module_source("prepared_tool_effect").replace(
         "@PreparedAggregate struct PreparedScalar { OwnedId owner; ulong value; }",
         "@PreparedAggregate struct PreparedScalar { OwnedId owner; ulong value; Object borrowed; }")
     if "Object borrowed" not in mutant:
@@ -1782,7 +1921,7 @@ for old, new, label in (
 # P1.0b.4c.1 dormant heterogeneous resource journal. Owner references remain
 # private to PreparedRecordContext; the journal vocabulary is closed and the
 # eventual consumer performs one validation pass before deterministic install.
-record_context = (ROOT / "source/prepared_record_context.d").read_text()
+record_context = prepared_module_source("prepared_record_context")
 handler_shapes = (ROOT / "source/handles/shapes.d").read_text()
 resource_contracts = (
     "private enum PreparedResourceKind : ubyte {",
@@ -1945,7 +2084,7 @@ for relative, old, new, label in (
 # installs history -> Mesh -> delivery. The dormant Transform producer closes
 # both upload and suppress branches without entering a legacy hook.
 b5_sources = {
-    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+    "effect": prepared_module_source("prepared_tool_effect"),
     "bus": (ROOT / "source/change_bus.d").read_text(),
     "mesh": (ROOT / "source/mesh.d").read_text(),
     "document": (ROOT / "source/document.d").read_text(),
@@ -2163,7 +2302,7 @@ def box_activation_gate(box, private, context):
         not any(x in producer
                 for x in ("context.validate(", "context.install(", "activate();")))
 if not box_activation_gate(box_activation,
-        (ROOT / "source/prepared_private_state.d").read_text(), record_context):
+        prepared_module_source("prepared_private_state"), record_context):
     fail("Box activation prepared contract drift")
 for target, old, new, label in (
     ("box", "gpuOwner.owns(&previewGpu)", "true", "drop preview GPU identity"),
@@ -2195,7 +2334,7 @@ for target, old, new, label in (
      "broaden Box admission"),
 ):
     box, private, context = (box_activation,
-        (ROOT / "source/prepared_private_state.d").read_text(), record_context)
+        prepared_module_source("prepared_private_state"), record_context)
     if target == "box": box = box.replace(old, new, 1)
     elif target == "private": private = private.replace(old, new, 1)
     else: context = context.replace(old, new, 1)
@@ -2237,7 +2376,7 @@ def pen_activation_gate(pen, private, context):
         "e.privateState.install();" in context and "e.gpuCreate.installEnlisted();" in context and
         not any(x in producer for x in ("context.validate(", "context.install(", "activate();")))
 if not pen_activation_gate(pen_activation,
-        (ROOT / "source/prepared_private_state.d").read_text(), record_context):
+        prepared_module_source("prepared_private_state"), record_context):
     fail("Pen activation prepared contract drift")
 for target, old, new, label in (
     ("pen", "gpuOwner !is null", "true", "drop null GPU guard"),
@@ -2264,7 +2403,7 @@ for target, old, new, label in (
      "broaden Pen admission"),
 ):
     pen, private, context = (pen_activation,
-        (ROOT / "source/prepared_private_state.d").read_text(), record_context)
+        prepared_module_source("prepared_private_state"), record_context)
     if target == "pen": pen = pen.replace(old, new, 1)
     elif target == "private": private = private.replace(old, new, 1)
     else: context = context.replace(old, new, 1)
@@ -2311,8 +2450,8 @@ def pen_param_gate(pen, private, effect):
             "enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }" in effect and
             "PreparedPenParamKind kind;" in effect)
 pen_param_sources = (pen_activation,
-    (ROOT / "source/prepared_private_state.d").read_text(),
-    (ROOT / "source/prepared_tool_effect.d").read_text())
+    prepared_module_source("prepared_private_state"),
+    prepared_module_source("prepared_tool_effect"))
 if not pen_param_gate(*pen_param_sources):
     fail("Pen onParamChanged prepared contract drift")
 for target, old, new, label in (
@@ -2343,7 +2482,7 @@ for target, old, new, label in (
 # layer image, private `built` flag, GPU upload and NoHistory install in order.
 array_param_sources = {
     "tool": (ROOT / "source/tools/alignment/array_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_array_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_array_param_update"),
     "context": record_context,
     "snapshot": (ROOT / "source/snapshot.d").read_text(),
 }
@@ -2415,7 +2554,7 @@ for target, old, new, label in (
 # detached mesh and installs mesh, gesture state, upload, then NoHistory.
 magnet_param_sources = {
     "tool": (ROOT / "source/tools/deform/magnet.d").read_text(),
-    "owner": (ROOT / "source/prepared_magnet_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_magnet_param_update"),
     "context": record_context,
 }
 def magnet_param_gate(s):
@@ -2482,7 +2621,7 @@ for target, old, new, label in (
 
 smooth_shift_param_sources = {
     "tool": (ROOT / "source/tools/deform/smooth_shift_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_smooth_shift_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_smooth_shift_param_update"),
     "context": record_context,
 }
 def smooth_shift_param_gate(s):
@@ -2548,7 +2687,7 @@ for target, old, new, label in (
 
 edge_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_bevel.d").read_text(),
-    "owner": (ROOT / "source/prepared_edge_bevel_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_bevel_param_update"),
     "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
 }
@@ -2620,7 +2759,7 @@ for target, old, new, label in (
 
 edge_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extrude.d").read_text(),
-    "owner": (ROOT / "source/prepared_edge_extrude_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_extrude_param_update"),
     "context": record_context,
 }
 def edge_extrude_param_gate(s):
@@ -2683,7 +2822,7 @@ for target, old, new, label in (
 
 poly_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_bevel.d").read_text(),
-    "owner": (ROOT / "source/prepared_poly_bevel_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_poly_bevel_param_update"),
     "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
 }
@@ -2751,7 +2890,7 @@ for target, old, new, label in (
 
 poly_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_extrude.d").read_text(),
-    "owner": (ROOT / "source/prepared_poly_extrude_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_poly_extrude_param_update"),
     "context": record_context,
 }
 def poly_extrude_param_gate(s):
@@ -2814,7 +2953,7 @@ for target, old, new, label in (
 
 poly_inset_param_sources = {
     "tool": (ROOT / "source/tools/edit/poly_inset_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_poly_inset_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_poly_inset_param_update"),
     "context": record_context,
 }
 def poly_inset_param_gate(s):
@@ -2881,9 +3020,9 @@ for target, old, new, label in (
 
 slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_slice_deactivate.d").read_text(),
+    "owner": prepared_module_source("prepared_slice_deactivate"),
     "context": record_context,
-    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+    "effect": prepared_module_source("prepared_tool_effect"),
 }
 def slice_deactivate_gate(s):
     tool, owner, context, effect = (s[k] for k in
@@ -2971,9 +3110,9 @@ for target, old, new, label in (
 
 edge_slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/edge_slice_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_edge_slice_deactivate.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_slice_deactivate"),
     "context": record_context,
-    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+    "effect": prepared_module_source("prepared_tool_effect"),
 }
 def edge_slice_deactivate_gate(s):
     tool, owner, context, effect = (s[k] for k in
@@ -3027,7 +3166,7 @@ for target, old, new, label in (
 
 loop_slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_loop_slice_deactivate.d").read_text(),
+    "owner": prepared_module_source("prepared_loop_slice_deactivate"),
     "context": record_context,
     "effect": edge_slice_deactivate_sources["effect"],
 }
@@ -3088,7 +3227,7 @@ for target, old, new, label in (
 
 edge_slice_param_sources = {
     "tool": edge_slice_deactivate_sources["tool"],
-    "owner": (ROOT / "source/prepared_edge_slice_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_slice_param_update"),
     "context": record_context,
     "history": (ROOT / "source/command_history.d").read_text(),
     "effect": edge_slice_deactivate_sources["effect"],
@@ -3154,7 +3293,7 @@ for target, old, new, label in (
 
 loop_slice_param_sources = {
     "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_loop_slice_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_loop_slice_param_update"),
     "context": record_context,
     "effect": edge_slice_deactivate_sources["effect"],
 }
@@ -3216,7 +3355,7 @@ for target, old, new, label in (
 
 edge_extend_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
-    "owner": (ROOT / "source/prepared_edge_extend_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_extend_param_update"),
     "context": record_context,
     "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
     "effect": edge_slice_deactivate_sources["effect"],
@@ -3279,7 +3418,7 @@ for target, old, new, label in (
 
 edge_extend_deactivate_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
-    "owner": (ROOT / "source/prepared_edge_extend_deactivate.d").read_text(),
+    "owner": prepared_module_source("prepared_edge_extend_deactivate"),
     "context": record_context,
     "xfrm": (ROOT / "source/tools/transform/xfrm_transform.d").read_text(),
     "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
@@ -3358,7 +3497,7 @@ for target, old, new, label in (
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_vertex_extrude_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_vertex_extrude_param_update"),
     "context": record_context,
 }
 def vertex_extrude_param_gate(s):
@@ -3433,7 +3572,7 @@ for target, old, new, label in (
 
 vertex_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_bevel_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_vertex_bevel_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_vertex_bevel_param_update"),
     "context": record_context,
 }
 def vertex_bevel_param_gate(s):
@@ -3506,7 +3645,7 @@ for target, old, new, label in (
 
 vertex_merge_param_sources = {
     "tool": (ROOT / "source/tools/edit/vert_merge_tool.d").read_text(),
-    "owner": (ROOT / "source/prepared_vertex_merge_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_vertex_merge_param_update"),
     "context": record_context,
 }
 def vertex_merge_param_gate(s):
@@ -3572,7 +3711,7 @@ for target, old, new, label in (
 
 reduction_param_sources = {
     "tool": (ROOT / "source/tools/edit/reduce.d").read_text(),
-    "owner": (ROOT / "source/prepared_reduction_param_update.d").read_text(),
+    "owner": prepared_module_source("prepared_reduction_param_update"),
     "context": record_context,
 }
 def reduction_param_gate(s):
@@ -3641,7 +3780,7 @@ for target, old, new, label in (
 # installs private state -> legacy-init GL header -> NoHistory atomically.
 primitive_activation_sources = {
     "base": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
-    "private": (ROOT / "source/prepared_private_state.d").read_text(),
+    "private": prepared_module_source("prepared_private_state"),
     "sphere": (ROOT / "source/tools/create/sphere.d").read_text(),
     "torus": (ROOT / "source/tools/create/torus.d").read_text(),
     "tube": (ROOT / "source/tools/create/tube.d").read_text(),
@@ -3736,8 +3875,7 @@ for name, old, new, label in (
 
 # Exact StrokeExtrude activation: a deep cage snapshot plus fixed session
 # reset, followed by NoHistory. Production activate stays legacy until cutover.
-stroke_activation_owner = (ROOT /
-    "source/prepared_stroke_extrude_activation.d").read_text()
+stroke_activation_owner = prepared_module_source("prepared_stroke_extrude_activation")
 stroke_activation_tool = (ROOT /
     "source/tools/deform/stroke_extrude_tool.d").read_text()
 stroke_activation_snapshot = (ROOT / "source/snapshot.d").read_text()
@@ -3771,8 +3909,8 @@ def stroke_activation_gate(owner, context, tool, snapshot=stroke_activation_snap
     legacy_body = production_tool[legacy.end():balanced_source(
         production_tool, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedStrokeExtrudeActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedStrokeExtrudeActivationOwner") and
+        has_prepared_token_pair(owner, "StrokeExtrudeActivation") and
         not any(x in production_owner for x in
                 (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is StrokeExtrudeTool.classinfo" in owner and
@@ -3865,8 +4003,7 @@ for check in stroke_snapshot_match_checks:
 
 # Exact VertexMerge activation: full cage baseline plus the four-field legacy
 # reset, followed by NoHistory. The production hook remains frozen for cutover.
-vertex_merge_activation_owner = (ROOT /
-    "source/prepared_vertex_merge_activation.d").read_text()
+vertex_merge_activation_owner = prepared_module_source("prepared_vertex_merge_activation")
 vertex_merge_activation_tool = (ROOT /
     "source/tools/edit/vert_merge_tool.d").read_text()
 def vertex_merge_activation_gate(owner, context, tool):
@@ -3877,8 +4014,8 @@ def vertex_merge_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedVertexMergeActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedVertexMergeActivationOwner") and
+        has_prepared_token_pair(owner, "VertexMergeActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is VertexMergeTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -3949,8 +4086,7 @@ for target, old, new, label in (
 
 # Exact PolyInset activation uses the same deep-baseline atomic grammar, but
 # its closed product/reset/effect are independently mutation-proven.
-poly_inset_activation_owner = (ROOT /
-    "source/prepared_poly_inset_activation.d").read_text()
+poly_inset_activation_owner = prepared_module_source("prepared_poly_inset_activation")
 poly_inset_activation_tool = (ROOT /
     "source/tools/edit/poly_inset_tool.d").read_text()
 def poly_inset_activation_gate(owner, context, tool):
@@ -3961,8 +4097,8 @@ def poly_inset_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedPolyInsetActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedPolyInsetActivationOwner") and
+        has_prepared_token_pair(owner, "PolyInsetActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is PolyInsetTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4034,8 +4170,7 @@ for target, old, new, label in (
 # Exact PolyExtrude activation additionally owns its selection-derived gizmo
 # frame. Pin both the atomic snapshot grammar and the shared legacy/prepared
 # formula so a cutover cannot silently move the handle or its extrusion axis.
-poly_extrude_activation_owner = (ROOT /
-    "source/prepared_poly_extrude_activation.d").read_text()
+poly_extrude_activation_owner = prepared_module_source("prepared_poly_extrude_activation")
 poly_extrude_activation_tool = (ROOT /
     "source/tools/edit/poly_extrude.d").read_text()
 def poly_extrude_activation_gate(owner, context, tool):
@@ -4053,8 +4188,8 @@ def poly_extrude_activation_gate(owner, context, tool):
     formula = pt[pt.find("private static void computePreparedGizmoFrame"):
         pt.find("public:\n    version(unittest)")]
     return (
-        "final class PreparedPolyExtrudeActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedPolyExtrudeActivationOwner") and
+        has_prepared_token_pair(owner, "PolyExtrudeActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is PolyExtrudeTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4174,8 +4309,7 @@ for target, old, new, label in (
 
 # Exact SmoothShift activation owns the cage baseline and its five-vector
 # selection frame while preserving all five preset/sticky parameter fields.
-smooth_shift_activation_owner = (ROOT /
-    "source/prepared_smooth_shift_activation.d").read_text()
+smooth_shift_activation_owner = prepared_module_source("prepared_smooth_shift_activation")
 smooth_shift_activation_tool = (ROOT /
     "source/tools/deform/smooth_shift_tool.d").read_text()
 def smooth_shift_activation_gate(owner, context, tool):
@@ -4195,8 +4329,8 @@ def smooth_shift_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedSmoothShiftActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedSmoothShiftActivationOwner") and
+        has_prepared_token_pair(owner, "SmoothShiftActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is SmoothShiftTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4318,8 +4452,7 @@ for target, old, new, label in (
 
 # Exact EdgeBevel activation also resets its private PreviewRebuild scratch;
 # that destructive release belongs only to install, never detached prepare.
-edge_bevel_activation_owner = (ROOT /
-    "source/prepared_edge_bevel_activation.d").read_text()
+edge_bevel_activation_owner = prepared_module_source("prepared_edge_bevel_activation")
 edge_bevel_activation_tool = (ROOT /
     "source/tools/edit/edge_bevel.d").read_text()
 preview_rebuild_source = (ROOT /
@@ -4341,8 +4474,8 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedEdgeBevelActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedEdgeBevelActivationOwner") and
+        has_prepared_token_pair(owner, "EdgeBevelActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is EdgeBevelTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4470,8 +4603,7 @@ for target, old, new, label in (
 
 # Exact PolyBevel activation detaches the undo baseline and polygon gizmo
 # frame while preserving the user's group/segments/square presets.
-poly_bevel_activation_owner = (ROOT /
-    "source/prepared_poly_bevel_activation.d").read_text()
+poly_bevel_activation_owner = prepared_module_source("prepared_poly_bevel_activation")
 poly_bevel_activation_tool = (ROOT /
     "source/tools/edit/poly_bevel.d").read_text()
 def poly_bevel_activation_gate(owner, context, tool):
@@ -4491,8 +4623,8 @@ def poly_bevel_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedPolyBevelActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedPolyBevelActivationOwner") and
+        has_prepared_token_pair(owner, "PolyBevelActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is PolyBevelTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4609,8 +4741,7 @@ for target, old, new, label in (
 
 # Exact VertexBevel activation owns its detached baseline and vertex-normal
 # gizmo frame; prepare must not touch any live session field.
-vertex_bevel_activation_owner = (ROOT /
-    "source/prepared_vertex_bevel_activation.d").read_text()
+vertex_bevel_activation_owner = prepared_module_source("prepared_vertex_bevel_activation")
 vertex_bevel_activation_tool = (ROOT /
     "source/tools/edit/vertex_bevel_tool.d").read_text()
 def vertex_bevel_activation_gate(owner, context, tool):
@@ -4630,8 +4761,8 @@ def vertex_bevel_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedVertexBevelActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedVertexBevelActivationOwner") and
+        has_prepared_token_pair(owner, "VertexBevelActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is VertexBevelTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4732,8 +4863,7 @@ for target, old, new, label in (
 
 # Exact VertexExtrude activation detaches the baseline and the two-axis
 # vertex-normal frame while preserving every drag/viewport field.
-vertex_extrude_activation_owner = (ROOT /
-    "source/prepared_vertex_extrude_activation.d").read_text()
+vertex_extrude_activation_owner = prepared_module_source("prepared_vertex_extrude_activation")
 vertex_extrude_activation_tool = (ROOT /
     "source/tools/edit/vertex_extrude_tool.d").read_text()
 def vertex_extrude_activation_gate(owner, context, tool):
@@ -4753,8 +4883,8 @@ def vertex_extrude_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedVertexExtrudeActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedVertexExtrudeActivationOwner") and
+        has_prepared_token_pair(owner, "VertexExtrudeActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is VertexExtrudeTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4862,8 +4992,7 @@ for target, old, new, label in (
          t == vertex_extrude_activation_tool) or vertex_extrude_activation_gate(o,c,t)):
         fail(f"VertexExtrude activation mutation did not RED: {label}")
 
-edge_extrude_activation_owner = (ROOT /
-    "source/prepared_edge_extrude_activation.d").read_text()
+edge_extrude_activation_owner = prepared_module_source("prepared_edge_extrude_activation")
 edge_extrude_activation_tool = (ROOT /
     "source/tools/edit/edge_extrude.d").read_text()
 def edge_extrude_activation_gate(owner, context, tool):
@@ -4883,8 +5012,8 @@ def edge_extrude_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedEdgeExtrudeActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedEdgeExtrudeActivationOwner") and
+        has_prepared_token_pair(owner, "EdgeExtrudeActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is EdgeExtrudeTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
@@ -4997,8 +5126,7 @@ for target, old, new, label in (
          t == edge_extrude_activation_tool) or edge_extrude_activation_gate(o,c,t)):
         fail(f"EdgeExtrude activation mutation did not RED: {label}")
 
-edge_slice_activation_owner = (ROOT /
-    "source/prepared_edge_slice_activation.d").read_text()
+edge_slice_activation_owner = prepared_module_source("prepared_edge_slice_activation")
 edge_slice_activation_tool = (ROOT /
     "source/tools/slice/edge_slice_tool.d").read_text()
 def edge_slice_activation_gate(owner, context, tool):
@@ -5015,8 +5143,8 @@ def edge_slice_activation_gate(owner, context, tool):
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
     return (
-        "final class PreparedEdgeSliceActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedEdgeSliceActivationOwner") and
+        has_prepared_token_pair(owner, "EdgeSliceActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is EdgeSliceTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation();" in owner and
@@ -5101,8 +5229,7 @@ for target, old, new, label in (
          t == edge_slice_activation_tool) or edge_slice_activation_gate(o,c,t)):
         fail(f"EdgeSlice activation mutation did not RED: {label}")
 
-loop_slice_activation_owner = (ROOT /
-    "source/prepared_loop_slice_activation.d").read_text()
+loop_slice_activation_owner = prepared_module_source("prepared_loop_slice_activation")
 loop_slice_activation_tool = (ROOT /
     "source/tools/slice/loop_slice_tool.d").read_text()
 def loop_slice_activation_gate(owner, context, tool):
@@ -5117,8 +5244,8 @@ def loop_slice_activation_gate(owner, context, tool):
     installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
     producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
     return (
-        "final class PreparedLoopSliceActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedLoopSliceActivationOwner") and
+        has_prepared_token_pair(owner, "LoopSliceActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is LoopSliceTool.classinfo" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
@@ -5201,7 +5328,7 @@ for target, old, new, label in (
          t == loop_slice_activation_tool) or loop_slice_activation_gate(o,c,t)):
         fail(f"LoopSlice activation mutation did not RED: {label}")
 
-slice_activation_owner = (ROOT / "source/prepared_slice_activation.d").read_text()
+slice_activation_owner = prepared_module_source("prepared_slice_activation")
 slice_activation_tool = (ROOT / "source/tools/slice/slice_tool.d").read_text()
 def slice_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
@@ -5215,8 +5342,8 @@ def slice_activation_gate(owner, context, tool):
     installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
     producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
     return (
-        "final class PreparedSliceActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedSliceActivationOwner") and
+        has_prepared_token_pair(owner, "SliceActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is SliceTool.classinfo" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
@@ -5292,7 +5419,7 @@ for target, old, new, label in (
          t == slice_activation_tool) or slice_activation_gate(o,c,t)):
         fail(f"Slice activation mutation did not RED: {label}")
 
-tack_activation_owner = (ROOT / "source/prepared_tack_activation.d").read_text()
+tack_activation_owner = prepared_module_source("prepared_tack_activation")
 tack_activation_tool = (ROOT / "source/tools/edit/tack.d").read_text()
 def tack_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
@@ -5306,8 +5433,8 @@ def tack_activation_gate(owner, context, tool):
     installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
     producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
     return (
-        "final class PreparedTackActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedTackActivationOwner") and
+        has_prepared_token_pair(owner, "TackActivation") and
         not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo !is TackTool.classinfo" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
@@ -5388,12 +5515,12 @@ for target, old, new, label in (
 # product roster is closed here and in the owner; ClickPointHandler has no GL
 # allocation until draw(), so this transition intentionally has no GPU arm.
 command_wrapper_activation_owner = \
-    (ROOT / "source/prepared_command_wrapper_activation.d").read_text()
+    prepared_module_source("prepared_command_wrapper_activation")
 command_wrapper_activation_tool = \
     (ROOT / "source/tools/common/command_wrapper.d").read_text()
 def command_wrapper_activation_gate(owner, context, tool):
-    return (owner.count("@disable this(this)") == 2 and
-        "final class PreparedCommandWrapperActivationOwner" in owner and
+    return (has_prepared_token_pair(owner, "CommandWrapperActivation") and
+        has_final_class(owner, "PreparedCommandWrapperActivationOwner") and
         all(("target.classinfo is " + product + ".classinfo") in owner for product in
             ("XfrmSmoothTool", "XfrmJitterTool", "XfrmQuantizeTool", "EdgeSlideTool")) and
         "result.source_ = target.preparedActivationMesh();" in owner and
@@ -5443,15 +5570,18 @@ for target, old, new, label in (
             command_wrapper_activation_gate(o, c, t)):
         fail(f"CommandWrapper activation mutation did not RED: {label}")
 
-bridge_activation_owner = (ROOT / "source/prepared_bridge_activation.d").read_text()
+bridge_activation_owner = prepared_module_source("prepared_bridge_activation")
 bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
 def bridge_activation_gate(owner, context, tool, gpu):
     gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
-    activation_block = owner[:owner.find("struct PreparedBridgeDeactivateToken")]
+    activation_block = before_declaration(
+        owner, "struct", "PreparedBridgeDeactivateToken")
+    if activation_block is None:
+        return False
     tool_activation_block = tool[:tool.find(
         "final PreparedBridgeDeactivateImage buildPreparedDeactivateState")]
-    return (activation_block.count("@disable this(this)") == 2 and
-        "final class PreparedBridgeActivationOwner" in owner and
+    return (has_prepared_token_pair(owner, "BridgeActivation") and
+        has_final_class(owner, "PreparedBridgeActivationOwner") and
         "target.classinfo !is BridgeTool.classinfo" in activation_block and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
@@ -5518,15 +5648,18 @@ for target, old, new, label in (
     if bridge_activation_gate(o, c, t, g):
         fail(f"Bridge activation mutation did not RED: {label}")
 
-mirror_activation_owner = (ROOT / "source/prepared_mirror_activation.d").read_text()
+mirror_activation_owner = prepared_module_source("prepared_mirror_activation")
 mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
 def mirror_activation_gate(owner, context, tool, gpu):
     gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
-    activation_block = owner[:owner.find("struct PreparedMirrorDeactivateToken")]
+    activation_block = before_declaration(
+        owner, "struct", "PreparedMirrorDeactivateToken")
+    if activation_block is None:
+        return False
     tool_activation_block = tool[:tool.find(
         "final PreparedMirrorDeactivateImage buildPreparedDeactivateState")]
-    return (activation_block.count("@disable this(this)") == 2 and
-        "final class PreparedMirrorActivationOwner" in owner and
+    return (has_prepared_token_pair(owner, "MirrorActivation") and
+        has_final_class(owner, "PreparedMirrorActivationOwner") and
         "target.classinfo !is MirrorTool.classinfo" in activation_block and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
@@ -5596,9 +5729,11 @@ for target, old, new, label in (
         fail(f"Mirror activation mutation did not RED: {label}")
 
 def mirror_deactivate_state_gate(owner, context, tool):
-    block = owner[owner.find("struct PreparedMirrorDeactivateToken"):]
-    return (block.count("@disable this(this)") == 2 and
-        "final class PreparedMirrorDeactivateOwner" in block and
+    block = from_declaration(owner, "struct", "PreparedMirrorDeactivateToken")
+    if block is None:
+        return False
+    return (has_prepared_token_pair(owner, "MirrorDeactivate") and
+        has_final_class(block, "PreparedMirrorDeactivateOwner") and
         "target.classinfo !is MirrorTool.classinfo" in block and
         "result.image_ = target.buildPreparedDeactivateState();" in block and
         "!target_.preparedDeactivateStateMatches(image_)" in block and
@@ -5637,9 +5772,11 @@ for target, old, new, label in (
         fail(f"Mirror deactivation state mutation did not RED: {label}")
 
 def bridge_deactivate_state_gate(owner, context, tool):
-    block = owner[owner.find("struct PreparedBridgeDeactivateToken"):]
-    return (block.count("@disable this(this)") == 2 and
-        "final class PreparedBridgeDeactivateOwner" in block and
+    block = from_declaration(owner, "struct", "PreparedBridgeDeactivateToken")
+    if block is None:
+        return False
+    return (has_prepared_token_pair(owner, "BridgeDeactivate") and
+        has_final_class(block, "PreparedBridgeDeactivateOwner") and
         "target.classinfo !is BridgeTool.classinfo" in block and
         "result.image_ = target.buildPreparedDeactivateState();" in block and
         "!target_.preparedDeactivateStateMatches(image_)" in block and
@@ -5710,7 +5847,7 @@ def bridge_deactivate_producer_gate(tool, effect):
             body.find("context.markHistoryInstall()") <
             body.find("context.prepareBridgeDeactivate(stateOwner)") and
         "PreparedDeactivateKind.Bridge, historyPrepared, ok);" in body)
-bridge_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+bridge_deactivate_effect = prepared_module_source("prepared_tool_effect")
 if not bridge_deactivate_producer_gate(bridge_activation_tool,
                                        bridge_deactivate_effect):
     fail("Bridge deactivation producer contract drift")
@@ -5742,8 +5879,8 @@ for target, old, new, label in (
         fail(f"Bridge deactivation producer mutation did not RED: {label}")
 
 box_deactivate_tool = (ROOT / "source/tools/create/box.d").read_text()
-box_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
-box_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+box_deactivate_owner = prepared_module_source("prepared_private_state")
+box_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def box_deactivate_gate(tool, owner, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
@@ -5826,8 +5963,8 @@ for target, old, new, label in (
         fail(f"Box deactivation mutation did not RED: {label}")
 
 pen_deactivate_tool = (ROOT / "source/tools/create/pen.d").read_text()
-pen_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
-pen_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+pen_deactivate_owner = prepared_module_source("prepared_private_state")
+pen_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def pen_deactivate_gate(tool, owner, effect, context, handlers):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
@@ -5926,8 +6063,8 @@ for target, old, new, label in (
         fail(f"Pen deactivation mutation did not RED: {label}")
 
 primitive_deactivate_tool = (ROOT / "source/tools/create/primitive_create_tool.d").read_text()
-primitive_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
-primitive_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+primitive_deactivate_owner = prepared_module_source("prepared_private_state")
+primitive_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def primitive_deactivate_gate(tool, owner, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     body = tool[start:tool.find("override void evaluate()", start)]
@@ -6004,8 +6141,8 @@ for target, old, new, label in (
         fail(f"Primitive deactivation mutation did not RED: {label}")
 
 topology_update_tool = (ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
-topology_update_owner = (ROOT / "source/prepared_topology_pen_update.d").read_text()
-topology_update_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+topology_update_owner = prepared_module_source("prepared_topology_pen_update")
+topology_update_effect = prepared_module_source("prepared_tool_effect")
 def topology_update_gate(tool, owner, context, effect):
     start = tool.find("final PreparedTopologyPenUpdateImage buildPreparedUpdate(")
     end = tool.find("// ---------------------------------------------------------------------", start)
@@ -6024,7 +6161,7 @@ def topology_update_gate(tool, owner, context, effect):
         "target.classinfo !is TopologyPenTool.classinfo" in owner and
         "target_.preparedUpdateMatches(image_)" in owner and
         "target_.installPreparedUpdate(image_); consume();" in owner and
-        owner.count("@disable this(this)") == 2 and
+        has_prepared_token_pair(owner, "TopologyPenUpdate") and
         "bool prepareTopologyPenUpdate(PreparedTopologyPenUpdateOwner owner)" in context and
         "case PreparedResourceKind.TopologyPenUpdateState:" in context and
         "e.topologyPenUpdate.validate();" in context and
@@ -6054,7 +6191,7 @@ for target, old, new, label in (
     if topology_update_gate(t, o, c, topology_update_effect):
         fail(f"TopologyPen update mutation did not RED: {label}")
 
-mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+mirror_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
@@ -6114,13 +6251,14 @@ for target, old, new, label in (
     if mirror_deactivate_producer_gate(t, e):
         fail(f"Mirror deactivation producer mutation did not RED: {label}")
 
-edge_extend_tool_activation_owner = (
-    ROOT / "source/prepared_edge_extend_tool_activation.d").read_text()
+edge_extend_tool_activation_owner = prepared_module_source(
+    "prepared_edge_extend_tool_activation")
 edge_extend_tool_activation_tool = (
     ROOT / "source/tools/edit/edge_extend.d").read_text()
 def edge_extend_tool_activation_gate(owner, context, tool):
-    return (owner.count("@disable this(this)") == 4 and
-        "final class PreparedEdgeExtendToolActivationOwner" in owner and
+    return (has_prepared_token_pair(owner, "EdgeExtendToolActivationPre") and
+        has_prepared_token_pair(owner, "EdgeExtendToolActivationPost") and
+        has_final_class(owner, "PreparedEdgeExtendToolActivationOwner") and
         "target.classinfo !is EdgeExtendTool.classinfo" in owner and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
         "PreparedXfrmActivationSessionOwner.prepare(" in owner and
@@ -6198,8 +6336,8 @@ for target, old, new, label in (
     if edge_extend_tool_activation_gate(o, c, t):
         fail(f"EdgeExtend activation mutation did not RED: {label}")
 
-topology_pen_activation_owner = (
-    ROOT / "source/prepared_topology_pen_activation.d").read_text()
+topology_pen_activation_owner = prepared_module_source(
+    "prepared_topology_pen_activation")
 topology_pen_activation_tool = (
     ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
 topology_pen_snap = (ROOT / "source/toolpipe/stages/snap.d").read_text()
@@ -6217,8 +6355,8 @@ def topology_pen_activation_gate(owner, context, tool, snap, constrain,
     activation_state_start = tool.find(
         "final PreparedTopologyPenActivationImage buildPreparedActivation")
     activation_state = tool[activation_state_start:activation_end]
-    return (owner.count("@disable this(this)") == 2 and
-        "final class PreparedTopologyPenActivationOwner" in owner and
+    return (has_prepared_token_pair(owner, "TopologyPenActivation") and
+        has_final_class(owner, "PreparedTopologyPenActivationOwner") and
         "target.classinfo !is TopologyPenTool.classinfo" in owner and
         "result.pipe_ = g_pipeCtx;" in owner and
         "capturePreparedPushProjection()" in owner and
@@ -6302,7 +6440,7 @@ for target, old, new, label in (
 # frozen Primitive product/reset projection set. Install never dispatches the
 # legacy resetSession virtual.
 b5d1_sources = {
-    "owner": (ROOT / "source/prepared_private_state.d").read_text(),
+    "owner": prepared_module_source("prepared_private_state"),
     "context": record_context,
     "document": (ROOT / "source/document.d").read_text(),
     "primitive": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
@@ -6322,7 +6460,7 @@ def b5d1_gate(s):
             all(kind in s["owner"] for kind in
                 ("Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,", "Vertex", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
-            s["owner"].count("@disable this(this)") == 2 and
+            has_prepared_token_pair(s["owner"], "PrivateState") and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
             "cast(void*)" not in s["owner"] and
             "void install() nothrow @nogc" in s["owner"] and
@@ -6351,7 +6489,8 @@ def b5d1_gate(s):
 if not b5d1_gate(b5d1_sources):
     fail("P1.0b.5d.1 private-state/topology infrastructure drift")
 for name, old, new, label in (
-    ("owner", "@disable this(this);", "", "make private-state token copyable"),
+    ("owner", "struct PreparedPrivateStateToken",
+     "struct PreparedPrivateStateHandle", "drop private-state token identity"),
     ("owner", "validatedToken.generation != generation", "false", "drop one-shot generation"),
     ("owner", "pending = validated = false;", "",
      "drop private-state consumption"),
@@ -6438,7 +6577,7 @@ for target, old, new, label in (
 # P1.0b.5e isolated activation-session image infrastructure. Exactly four
 # concrete products share the closed flags + detached MeshSnapshot effect;
 # no lifecycle hook calls these owners before producer review.
-b5e_owner = (ROOT / "source/prepared_private_state.d").read_text()
+b5e_owner = prepared_module_source("prepared_private_state")
 b5e_context = record_context
 b5e_tools = {
     name: (ROOT / path).read_text() for name, path in {
@@ -6453,7 +6592,9 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 9 and
+            sorted(exact_class_guard_types(owner)) == [
+                "ArcTool", "BoxTool", "BoxTool", "CloneTool", "MagnetTool",
+                "PenTool", "PenTool", "PenTool", "ReductionTool"] and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
@@ -6550,8 +6691,8 @@ for name, source in b5e_tools.items():
         fail(f"P1.0b.5f {name} legacy activation calls dormant producer")
 
 # P1.0b.5g isolated closed Radial Sweep selection/profile session owner.
-b5g_owner = (ROOT / "source/prepared_selection_profile.d").read_text()
-b5g_image = (ROOT / "source/prepared_selection_profile_image.d").read_text()
+b5g_owner = prepared_module_source("prepared_selection_profile")
+b5g_image = prepared_module_source("prepared_selection_profile_image")
 b5g_tool = (ROOT / "source/tools/alignment/radial_sweep_tool.d").read_text()
 def b5g_gate(owner, image, context, tool):
     forbidden = ("void*", "delegate", "function(", "Variant", "ubyte[] payload")
@@ -6605,7 +6746,7 @@ for hook in ("override void activate()", "override void resyncSession()"):
         fail("P1.0b.5g owner reached from production hook")
 
 # P1.0b.5h isolated full Radial Sweep private transition owner.
-b5h_owner = (ROOT / "source/prepared_radial_sweep_transition.d").read_text()
+b5h_owner = prepared_module_source("prepared_radial_sweep_transition")
 def b5h_gate(owner, context, tool):
     production = without_unittests(owner)
     ds = tool.find("final RadialSweepTransitionImage buildPreparedDeactivateImage()")
@@ -6761,9 +6902,7 @@ def combined_upload_gate(gpu, context):
     start = gpu.find("final class GpuCreateUploadOwner")
     block = gpu[start:] if start >= 0 else ""
     return (start >= 0 and
-            "struct PreparedGpuCreateUploadToken" in gpu and
-            "struct ValidatedGpuCreateUploadToken" in gpu and
-            gpu.count("@disable this(this);") >= 6 and
+            has_prepared_token_pair(gpu, "GpuCreateUpload") and
             "GpuMeshNames created, expectedTarget;" in block and
             "GpuMesh prepared;" in block and
             "private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu)" in gpu and
@@ -6818,22 +6957,25 @@ for target, old, new, label in (
     if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
         fail(f"combined GPU create-upload mutation did not RED: {label}")
 for path in (ROOT / "source").rglob("*.d"):
-    if path.name in ("mesh_gpu.d", "prepared_record_context.d",
-                     "radial_sweep_tool.d", "bridge_tool.d", "mirror.d"): continue
-    if ".prepareCreateUpload(" in without_unittests(path.read_text()):
+    caller_text = path.read_text()
+    caller_module = source_module_name(path, caller_text)
+    if caller_module in ("mesh_gpu", "prepared_record_context",
+                         "tools.alignment.radial_sweep_tool",
+                         "tools.edit.bridge_tool", "tools.alignment.mirror"): continue
+    if ".prepareCreateUpload(" in without_unittests(caller_text):
         fail("combined GPU create-upload gained a pre-cutover caller")
 
 # Isolated RadialArray shared session transition owner. This owner unlocks the
 # activate/deactivate private projections for later producers; topology/GPU/
 # history remain separate reviewed effects and the ledger is unchanged here.
-radial_array_owner = (ROOT / "source/prepared_radial_array_transition.d").read_text()
+radial_array_owner = prepared_module_source("prepared_radial_array_transition")
 radial_array_tool = (ROOT / "source/tools/alignment/radial_array_tool.d").read_text()
 def radial_array_owner_gate(owner, context, tool):
     production = without_unittests(owner)
-    return ("final class PreparedRadialArrayTransitionOwner" in owner and
+    return (has_final_class(owner, "PreparedRadialArrayTransitionOwner") and
             "struct PreparedRadialArrayTransitionToken" in owner and
             "struct ValidatedRadialArrayTransitionToken" in owner and
-            owner.count("@disable this(this);") == 2 and
+            has_prepared_token_pair(owner, "RadialArrayTransition") and
             not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
             "target.classinfo is RadialArrayTool.classinfo" in owner and
             "target.ownsPreparedMesh(&source)" in owner and
@@ -6932,7 +7074,7 @@ def radial_array_param_gate(owner, tool, context):
                 producer.find("context.prepareUpload(uploadOwner") <
                 producer.find("context.markNoHistoryInstall()") and
             "PreparedRadialArrayKind : ubyte { Activate, Param, Deactivate }" in
-                (ROOT / "source/prepared_tool_effect.d").read_text())
+                prepared_module_source("prepared_tool_effect"))
 if not radial_array_param_gate(radial_array_owner, radial_array_tool,
                                record_context):
     fail("RadialArray onParamChanged prepared contract drift")
@@ -6968,7 +7110,7 @@ for hook in ("override void activate()", "override void deactivate()",
 
 # Isolated shared activation projection for the exact registered LinearAlign
 # and RadialAlign products. No producer/hook calls it yet.
-transform_activation_owner = (ROOT / "source/prepared_transform_activation.d").read_text()
+transform_activation_owner = prepared_module_source("prepared_transform_activation")
 transform_tool = (ROOT / "source/tools/transform/transform.d").read_text()
 linear_align_tool = (ROOT / "source/tools/alignment/linear_align_tool.d").read_text()
 radial_align_tool = (ROOT / "source/tools/alignment/radial_align_tool.d").read_text()
@@ -6993,8 +7135,8 @@ def transform_activation_gate(owner, context, tool):
         "        needsGpuUpdate = image.needsGpuUpdate; centerManual = image.centerManual;\n"
         "        wholeMeshDrag = image.wholeMeshDrag; propsDragging = image.propsDragging;\n"
         "        image.clear();")
-    return ("final class PreparedTransformActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+    return (has_final_class(owner, "PreparedTransformActivationOwner") and
+        has_prepared_token_pair(owner, "TransformActivation") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo is LinearAlignTool.classinfo" in owner and
         "target.classinfo is RadialAlignTool.classinfo" in owner and
@@ -7197,7 +7339,7 @@ for target, old, new, label in (
 
 # Exact two-phase Xfrm activation/session composition. The prepared history
 # marker remains between pre and post, matching legacy nextRun placement.
-xfrm_activation_owner = (ROOT / "source/prepared_xfrm_activation_session.d").read_text()
+xfrm_activation_owner = prepared_module_source("prepared_xfrm_activation_session")
 def xfrm_activation_session_gate(owner, context, xfrm, transform):
     def method_body(source, signature):
         start = source.find(signature)
@@ -7210,8 +7352,9 @@ def xfrm_activation_session_gate(owner, context, xfrm, transform):
     pre_install = method_body(owner, "void installPre() nothrow @nogc")
     post_install = method_body(owner, "void installPost() nothrow @nogc")
     return (
-        "final class PreparedXfrmActivationSessionOwner" in owner and
-        owner.count("@disable this(this);") == 4 and
+        has_final_class(owner, "PreparedXfrmActivationSessionOwner") and
+        has_prepared_token_pair(owner, "XfrmActivationPre") and
+        has_prepared_token_pair(owner, "XfrmActivationPost") and
         "target.classinfo !is XfrmTransformTool.classinfo" in owner and
         "owner.flags_ & 1" in owner and "owner.flags_ & 2" in owner and
         "owner.flags_ & 4" in owner and
@@ -7338,14 +7481,14 @@ for target, old, new, label in (
 
 # Exact Move/Rotate/Scale activation owner infrastructure. Xfrm is excluded:
 # its activation owns subtool wiring and history-run lifecycle beyond this image.
-transform_product_owner = (ROOT / "source/prepared_transform_product_activation.d").read_text()
+transform_product_owner = prepared_module_source("prepared_transform_product_activation")
 move_tool = (ROOT / "source/tools/transform/move.d").read_text()
 rotate_tool = (ROOT / "source/tools/transform/rotate.d").read_text()
 scale_tool = (ROOT / "source/tools/transform/scale.d").read_text()
 def transform_product_gate(owner, context, move, rotate, scale):
     production = without_unittests(owner)
-    return ("final class PreparedTransformProductActivationOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+    return (has_final_class(owner, "PreparedTransformProductActivationOwner") and
+        has_prepared_token_pair(owner, "TransformProductActivation") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo is MoveTool.classinfo" in owner and
         "target.classinfo is RotateTool.classinfo" in owner and
@@ -7494,15 +7637,15 @@ for source, name in ((move_tool, "Move"), (rotate_tool, "Rotate"), (scale_tool, 
 
 # Exact Move update owner plus dormant Prepared+Legacy producer. The production
 # update root itself remains Legacy until P1.0c.
-move_update_owner = (ROOT / "source/prepared_move_update.d").read_text()
+move_update_owner = prepared_module_source("prepared_move_update")
 def move_update_gate(owner, context, move):
     production = without_unittests(owner)
     update_match = re.search(r"override\s+void\s+update\s*\(ref VectorStack vts\)\s*\{", move)
     if not update_match: return False
     update_body = move[update_match.end():balanced_source(move, update_match.end())-1]
     return (
-        "final class PreparedMoveUpdateOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedMoveUpdateOwner") and
+        has_prepared_token_pair(owner, "MoveUpdate") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         production.count("VectorStack") == 2 and
         "target.classinfo !is MoveTool.classinfo" in owner and
@@ -7620,9 +7763,9 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
     if not update_match: return False
     update_body = tool_source[update_match.end():balanced_source(
         tool_source, update_match.end())-1]
-    return all(x in owner for x in (
-        f"final class Prepared{stem}UpdateOwner",
-        "@disable this(this);",
+    return has_final_class(owner, f"Prepared{stem}UpdateOwner") and \
+        has_prepared_token_pair(owner, f"{stem}Update") and \
+        all(x in owner for x in (
         f"target.classinfo !is {cls}.classinfo",
         "mesh_ !is &layer_.meshRef()",
         "target_.preparedWrapperForUpdate() !is wrapper_",
@@ -7648,11 +7791,11 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
         not any(x in update_body for x in (
             f"Prepared{stem}UpdateOwner", f"prepare{stem}Update"))
 
-for stem, cls, owner_path, tool_source in (
-    ("Rotate", "RotateTool", "source/prepared_rotate_update.d", rotate_tool),
-    ("Scale", "ScaleTool", "source/prepared_scale_update.d", scale_tool),
+for stem, cls, owner_module, tool_source in (
+    ("Rotate", "RotateTool", "prepared_rotate_update", rotate_tool),
+    ("Scale", "ScaleTool", "prepared_scale_update", scale_tool),
 ):
-    rs_owner = (ROOT / owner_path).read_text()
+    rs_owner = prepared_module_source(owner_module)
     if not rs_update_gate(rs_owner, record_context, tool_source, stem, cls):
         fail(f"{stem} update owner contract drift")
     for target, old, new, label in (
@@ -7680,15 +7823,15 @@ for stem, cls, owner_path, tool_source in (
 
 # TopologyPen drop jointly closes an optional live-move history carrier and
 # restores two SnapStage planes (guide registry + startup enable push).
-topopen_deact_owner = (ROOT / "source/prepared_topology_pen_deactivate.d").read_text()
+topopen_deact_owner = prepared_module_source("prepared_topology_pen_deactivate")
 topopen_tool = prepared_source_texts[ROOT / "source/tools/edit/topology_pen/tool.d"]
 def topopen_deact_gate(owner, context, tool_source, snap_source):
     production = without_unittests(owner)
     hook = re.search(r"override\s+void\s+deactivate\s*\(\)\s*\{", tool_source)
     if not hook: return False
     hook_body = tool_source[hook.end():balanced_source(tool_source, hook.end())-1]
-    return all(x in owner for x in (
-        "final class PreparedTopologyPenDeactivateOwner",
+    return has_final_class(owner, "PreparedTopologyPenDeactivateOwner") and \
+        all(x in owner for x in (
         "target.classinfo !is TopologyPenTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_", "validatedToken_.generation != generation_",
@@ -7750,7 +7893,7 @@ for target, old, new, label in (
 
 # Xfrm update tail is the fixed final phase after the typed T/R/S owners:
 # subject cache -> shared pose -> wrapper GPU projection.
-xfrm_tail_owner = (ROOT / "source/prepared_xfrm_update_tail.d").read_text()
+xfrm_tail_owner = prepared_module_source("prepared_xfrm_update_tail")
 xfrm_tail_handles = (ROOT / "source/tools/transform/xfrm_handles.d").read_text()
 def xfrm_update_tail_gate(owner, context, xfrm, handles):
     production = without_unittests(owner)
@@ -7759,8 +7902,8 @@ def xfrm_update_tail_gate(owner, context, xfrm, handles):
     prepared_handles_body = handles[
         prepared_handles_start:balanced_source(
             handles, handles.find("{", prepared_handles_start) + 1)]
-    return all(x in owner for x in (
-        "final class PreparedXfrmUpdateTailOwner",
+    return has_final_class(owner, "PreparedXfrmUpdateTailOwner") and \
+        all(x in owner for x in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
@@ -7820,7 +7963,7 @@ for target, old, new, label in (
     if xfrm_update_tail_gate(o, c, x, h):
         fail(f"Xfrm update tail mutation did not RED: {label}")
 
-xfrm_close_owner = (ROOT / "source/prepared_xfrm_update_edit_close.d").read_text()
+xfrm_close_owner = prepared_module_source("prepared_xfrm_update_edit_close")
 xfrm_transform_base = (ROOT / "source/tools/transform/transform.d").read_text()
 xfrm_item_source = (ROOT / "source/tools/transform/xfrm_item.d").read_text()
 def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
@@ -7828,8 +7971,8 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
     item_start = item.find("private LayerXformEdit buildPreparedItemEditCmd()")
     item_end = item.find("// Task 0614 Phase 3", item_start)
     prepared_item = item[item_start:item_end]
-    return all(x in owner for x in (
-        "final class PreparedXfrmUpdateEditCloseOwner",
+    return has_final_class(owner, "PreparedXfrmUpdateEditCloseOwner") and \
+        all(x in owner for x in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
@@ -7900,10 +8043,10 @@ for target, old, new, label in (
     if xfrm_update_edit_close_gate(o, c, x, b, i):
         fail(f"Xfrm update edit-close mutation did not RED: {label}")
 
-xfrm_slot_owner = (ROOT / "source/prepared_xfrm_slot_poll.d").read_text()
+xfrm_slot_owner = prepared_module_source("prepared_xfrm_slot_poll")
 def xfrm_slot_poll_gate(owner, context, xfrm):
-    return all(s in owner for s in (
-        "final class PreparedXfrmSlotPollOwner",
+    return has_final_class(owner, "PreparedXfrmSlotPollOwner") and \
+        all(s in owner for s in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
@@ -7943,13 +8086,13 @@ for target, old, new, label in (
     if xfrm_slot_poll_gate(o, c, x):
         fail(f"Xfrm slot-poll mutation did not RED: {label}")
 
-xfrm_boundary_owner = (ROOT / "source/prepared_xfrm_update_boundary.d").read_text()
+xfrm_boundary_owner = prepared_module_source("prepared_xfrm_update_boundary")
 def xfrm_update_boundary_gate(owner, context, xfrm, acen):
     acen_start = acen.find("void installPreparedClearSoftPlaced()")
     acen_end = acen.find("/// True iff", acen_start)
     prepared_acen = acen[acen_start:acen_end]
-    return all(s in owner for s in (
-        "final class PreparedXfrmUpdateBoundaryOwner",
+    return has_final_class(owner, "PreparedXfrmUpdateBoundaryOwner") and \
+        all(s in owner for s in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
@@ -8023,10 +8166,10 @@ for target, old, new, label in (
     if xfrm_update_boundary_gate(o, c, x, a):
         fail(f"Xfrm update boundary mutation did not RED: {label}")
 
-xfrm_move_regrade_owner = (ROOT / "source/prepared_xfrm_move_regrade.d").read_text()
+xfrm_move_regrade_owner = prepared_module_source("prepared_xfrm_move_regrade")
 def xfrm_move_regrade_gate(owner, context, xfrm):
-    return all(s in owner for s in (
-        "final class PreparedXfrmMoveRegradeOwner",
+    return has_final_class(owner, "PreparedXfrmMoveRegradeOwner") and \
+        all(s in owner for s in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "target.preparedMeshForUpdate() !is &layer.meshRef()",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
@@ -8174,7 +8317,7 @@ for old, new, label in (
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;
 # this tranche deliberately has no producer or ledger claim yet.
-inherited_noop_owner = (ROOT / "source/prepared_inherited_noop.d").read_text()
+inherited_noop_owner = prepared_module_source("prepared_inherited_noop")
 def inherited_noop_gate(owner, context):
     production = without_unittests(owner)
     install_match = re.search(r"void install\(\) nothrow @nogc\s*\{", production)
@@ -8196,8 +8339,8 @@ def inherited_noop_gate(owner, context):
     expected_admitted = sorted(list(BASE_TOOL_EFFECTIVE_PRODUCTS["update"]) +
                                ["DragWeldTool"])
     return (
-        "final class PreparedInheritedNoopOwner" in owner and
-        owner.count("@disable this(this);") == 2 and
+        has_final_class(owner, "PreparedInheritedNoopOwner") and
+        has_prepared_token_pair(owner, "InheritedNoop") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "if (kind != PreparedInheritedNoopKind.Update)\n"
         "            return target.classinfo is DragWeldTool.classinfo;" in owner and
@@ -8527,7 +8670,7 @@ def p10c_door_capability_gate(context, sources, xfrm):
     if "prepareActivate(context, create, upload).accepted" not in bridge or \
             "prepareDeactivate(context, layer, upload, destroy).resourceAccepted" not in bridge:
         return False
-    arc_owner = (ROOT / "source/prepared_private_state.d").read_text()
+    arc_owner = prepared_module_source("prepared_private_state")
     if not all(x in arc_owner for x in (
             "ArcIdle", "static PreparedPrivateStateOwner arcIdle(ArcTool target)",
             "arcStateWitness = target.preparedArcStateWitness()",
