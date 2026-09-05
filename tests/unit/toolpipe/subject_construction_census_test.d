@@ -115,7 +115,9 @@ import std.string    : indexOf, strip;
 import std.traits    : FieldNameTuple;
 
 import toolpipe.packets : SubjectPacket;
-import tests.unit.census_symbols : stripCommentsAndStrings = blankNonCode;
+import tests.unit.census_symbols : LedgerHit, LedgerRow,
+    stripCommentsAndStrings = blankNonCode, enclosingSymbols, reconcile,
+    symbolAt, symbolTokenHits;
 
 // ---------------------------------------------------------------------------
 // Shared low-level scan: comments and string/char literals are replaced by
@@ -356,53 +358,6 @@ private EvalCallSite[] findEvaluateCalls(string relFile, string stripped) {
 }
 
 // ---------------------------------------------------------------------------
-// Assertion (c) — the two workplane pickers go through viewOnlySubject(.
-// ---------------------------------------------------------------------------
-
-/// The `{ ... }` body of the first top-level definition of `fnName` in
-/// `stripped` — i.e. `fnName(` followed (after its balanced parameter
-/// list, and any trailing qualifiers up to the next `{`) by a function
-/// body. Returns null if not found. Scoped deliberately to a narrow shape
-/// (signature directly followed by `{`, no `;` forward declaration in
-/// between) — sufficient for the two named functions this assertion checks,
-/// not a general D parser.
-private string functionBodyOf(string stripped, string fnName) {
-    size_t i = 0;
-    while (i < stripped.length) {
-        if (wordAt(stripped, i, fnName)) {
-            size_t j = i + fnName.length;
-            skipWs(stripped, j);
-            if (j < stripped.length && stripped[j] == '(') {
-                int depth = 1;
-                j++;
-                while (j < stripped.length && depth > 0) {
-                    if (stripped[j] == '(') depth++;
-                    else if (stripped[j] == ')') depth--;
-                    j++;
-                }
-                skipWs(stripped, j);
-                if (j < stripped.length && stripped[j] == '{') {
-                    immutable size_t bodyStart = j;
-                    int bdepth = 1;
-                    j++;
-                    while (j < stripped.length && bdepth > 0) {
-                        if (stripped[j] == '{') bdepth++;
-                        else if (stripped[j] == '}') {
-                            bdepth--;
-                            if (bdepth == 0) { j++; break; }
-                        }
-                        j++;
-                    }
-                    return stripped[bodyStart .. j];
-                }
-            }
-        }
-        i++;
-    }
-    return null;
-}
-
-// ---------------------------------------------------------------------------
 // Self-tests: the scanners are not allowed to be inert either.
 // ---------------------------------------------------------------------------
 
@@ -523,42 +478,28 @@ unittest {
     assert(findEvaluateCalls("x.d", s2).length == 2, "both call sites must be found");
 }
 
-unittest {
-    // (c) function-body extraction and the viewOnlySubject / SubjectSource
-    // presence checks.
-    auto s = stripCommentsAndStrings(
-        "BuildPlane pickWorkplane(const ref Viewport vp) {\n"
-        ~ "    SubjectPacket subj;\n"
-        ~ "    evaluateSubject(subj, vts, viewOnlySubject(vp));\n"
-        ~ "}\n"
-        ~ "WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {\n"
-        ~ "    SubjectPacket subj;\n"
-        ~ "    evaluateSubject(subj, vts, viewOnlySubject(vp));\n"
-        ~ "}\n");
-    auto b1 = functionBodyOf(s, "pickWorkplane");
-    auto b2 = functionBodyOf(s, "pickWorkplaneFrame");
-    assert(b1 !is null && b2 !is null);
-    assert(b1.canFind("viewOnlySubject(") && !b1.canFind("SubjectSource("));
-    assert(b2.canFind("viewOnlySubject(") && !b2.canFind("SubjectSource("));
-
-    // The mutation (M6): a four-argument SubjectSource( literal with live
-    // values inlined at the call site instead of viewOnlySubject(.
-    auto sMut = stripCommentsAndStrings(
-        "BuildPlane pickWorkplane(const ref Viewport vp) {\n"
-        ~ "    SubjectPacket subj;\n"
-        ~ "    evaluateSubject(subj, vts, "
-        ~ "SubjectSource(null, EditMode.Vertices, currentSelType(o), vp));\n"
-        ~ "}\n");
-    auto bMut = functionBodyOf(sMut, "pickWorkplane");
-    assert(!bMut.canFind("viewOnlySubject("), "the mutated body must fail the check");
-    assert(bMut.canFind("SubjectSource("), "and be caught for the right reason");
-}
-
 // ---------------------------------------------------------------------------
 // The census itself.
 // ---------------------------------------------------------------------------
 
 private enum censusRepoRoot = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
+
+private static immutable LedgerRow[] kAssignmentLedger = [
+    LedgerRow("fillSubject|assignment", 9,
+        "the seven always-set fields plus two opt-in morph fields"),
+];
+
+private static immutable LedgerRow[] kEvaluateLedger = [
+    LedgerRow("evaluateSubject|pipeline.evaluate", 1,
+        "the single Pipeline.evaluate funnel"),
+];
+
+private static immutable LedgerRow[] kWorkplaneLedger = [
+    LedgerRow("pickWorkplane|viewOnlySubject", 1,
+        "the frozen view-only workplane source"),
+    LedgerRow("pickWorkplaneFrame|viewOnlySubject", 1,
+        "the frozen view-only workplane-frame source"),
+];
 
 unittest {
     // Non-vacuity: prove the walk actually reaches source/ before trusting
@@ -568,12 +509,10 @@ unittest {
         "the census cannot find source/ at " ~ dir ~ " — it is measuring "
         ~ "nothing, which is worse than being absent");
 
-    enum allowlistRelPath = "source/toolpipe/subject.d";
-
     size_t filesScanned;
-    string[] outsideViolations;      // assertion (a)
-    size_t   positiveControlCount;   // assertion (a), inside subject.d itself
-    EvalCallSite[] evalCalls;        // assertion (b)
+    LedgerHit[] assignmentHits;      // assertion (a)
+    LedgerHit[] evalHits;            // assertion (b)
+    LedgerHit[] workplaneHits;       // assertion (c)
 
     foreach (entry; dirEntries(dir, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
@@ -583,82 +522,65 @@ unittest {
         immutable relPath = relativePath(entry.name, censusRepoRoot);
         immutable src      = readText(entry.name);
         immutable stripped = stripCommentsAndStrings(src);
+        const     symbols  = enclosingSymbols(stripped);
         const     declared = declaredSubjectPacketVars(stripped);
 
         auto assigns = scanFieldAssignments(stripped, declared);
-        if (relPath == allowlistRelPath) {
-            positiveControlCount = assigns.length;
-        } else {
-            foreach (a; assigns)
-                outsideViolations ~= format("%s:%d  %s.%s  [%s]",
-                    relPath, a.line, a.varName, a.fieldName, a.text);
-        }
+        foreach (a; assigns)
+            assignmentHits ~= LedgerHit(
+                symbolAt(symbols, a.line - 1) ~ "|assignment",
+                relPath, a.line, a.varName ~ "." ~ a.fieldName ~ "  [" ~ a.text ~ "]");
 
-        evalCalls ~= findEvaluateCalls(relPath, stripped);
+        foreach (e; findEvaluateCalls(relPath, stripped))
+            evalHits ~= LedgerHit(
+                symbolAt(symbols, e.line - 1) ~ "|pipeline.evaluate",
+                relPath, e.line, "pipeline.evaluate(");
+
+        foreach (h; symbolTokenHits(stripped, relPath,
+                                    "viewOnlySubject(", "viewOnlySubject"))
+            if (h.key == "pickWorkplane|viewOnlySubject"
+                || h.key == "pickWorkplaneFrame|viewOnlySubject")
+                workplaneHits ~= h;
+        foreach (h; symbolTokenHits(stripped, relPath,
+                                    "SubjectSource(", "SubjectSource"))
+            if (h.key == "pickWorkplane|SubjectSource"
+                || h.key == "pickWorkplaneFrame|SubjectSource")
+                workplaneHits ~= h;
     }
 
     assert(filesScanned > 100,
         format("only %d .d files under source/ — the walk is not reaching "
                ~ "the tree it claims to be guarding", filesScanned));
 
-    // Positive control: the scanner must SEE the assignments it is meant to
-    // allow inside subject.d, or it is trusted for nothing. `fillSubject`
-    // assigns all 7 always-set fields plus the 2 opt-in morph fields inside
-    // its `if` guard = 9.
-    assert(positiveControlCount == 9,
-        format("positive control failed: expected to see 9 SubjectPacket "
-               ~ "field assignments inside %s (fillSubject's 7 unconditional "
-               ~ "+ 2 morph-target fields), saw %d — a scanner that cannot "
-               ~ "see the assignments it is supposed to ALLOW cannot be "
-               ~ "trusted to catch the ones it must FORBID",
-               allowlistRelPath, positiveControlCount));
-
-    // Assertion (a): zero field assignments anywhere else.
-    assert(outsideViolations.length == 0,
-        "a SubjectPacket field is being assigned OUTSIDE "
-        ~ allowlistRelPath ~ " and outside a unittest{} body — task 1904 "
-        ~ "made fillSubject/evaluateSubject (source/toolpipe/subject.d) the "
-        ~ "single place that decides what the subject is; re-inlining a "
-        ~ "hand-built subject anywhere else re-opens the six divergences "
-        ~ "the migration collapsed. Reuse evaluateSubject/fillSubject "
-        ~ "instead.\n  " ~ outsideViolations.length.format!"%d site(s):\n  "
-        ~ outsideViolations.join("\n  "));
+    string assignmentProblems = reconcile(kAssignmentLedger, assignmentHits);
+    if (assignmentHits.length != 9)
+        assignmentProblems ~= format("\n    assignment population — recorded 9, "
+                                   ~ "scanner found %d", assignmentHits.length);
+    assert(assignmentProblems.length == 0,
+        "a SubjectPacket field assignment moved outside the declaring "
+      ~ "fillSubject symbol, or that symbol's nine-field contract changed. "
+      ~ "Task 1904 made fillSubject/evaluateSubject the single place that "
+      ~ "decides what the subject is; reuse that funnel instead."
+      ~ assignmentProblems);
 
     // Assertion (b): exactly one pipeline.evaluate( call site, and it must
     // be the one inside evaluateSubject.
-    assert(evalCalls.length == 1,
-        format("expected exactly 1 `pipeline.evaluate(` call site in "
-               ~ "source/** (inside evaluateSubject) — found %d: %s. Every "
-               ~ "pipe evaluation must go through "
-               ~ "toolpipe.subject.evaluateSubject (plan §5); a second "
-               ~ "direct call re-opens the very fan-out task 1904 collapsed.",
-               evalCalls.length, evalCalls));
-    assert(evalCalls[0].file == allowlistRelPath,
-        format("the one surviving `pipeline.evaluate(` call site must be in "
-               ~ "%s (evaluateSubject), found it in %s instead",
-               allowlistRelPath, evalCalls[0].file));
+    string evalProblems = reconcile(kEvaluateLedger, evalHits);
+    if (evalHits.length != 1)
+        evalProblems ~= format("\n    evaluate population — recorded 1, scanner "
+                             ~ "found %d", evalHits.length);
+    assert(evalProblems.length == 0,
+        "every pipe evaluation must go through the evaluateSubject declaration "
+      ~ "(plan §5); a second direct call re-opens the fan-out task 1904 "
+      ~ "collapsed." ~ evalProblems);
 
     // Assertion (c): the two workplane pickers (plan §1.3a).
-    immutable createCommonRel = "source/tools/create/create_common.d";
-    immutable createCommonPath = buildPath(censusRepoRoot, createCommonRel);
-    assert(exists(createCommonPath),
-        "cannot find " ~ createCommonRel ~ " — assertion (c) is measuring nothing");
-    immutable ccStripped = stripCommentsAndStrings(readText(createCommonPath));
-
-    foreach (fn; ["pickWorkplane", "pickWorkplaneFrame"]) {
-        auto body_ = functionBodyOf(ccStripped, fn);
-        assert(body_ !is null,
-            "could not find the body of " ~ createCommonRel ~ " :: " ~ fn
-            ~ " — assertion (c) is measuring nothing for this function");
-        assert(body_.canFind("viewOnlySubject("),
-            "§1.3a: " ~ createCommonRel ~ " :: " ~ fn
-            ~ " must build its subject through viewOnlySubject(vp) — the "
-            ~ "frozen null-mesh / Vertices / Vertex source. It does not.");
-        assert(!body_.canFind("SubjectSource("),
-            "§1.3a: " ~ createCommonRel ~ " :: " ~ fn
-            ~ " contains a four-argument SubjectSource( literal — the two "
-            ~ "workplane pickers must reach the funnel ONLY through the "
-            ~ "named, frozen viewOnlySubject(vp), never an inline literal "
-            ~ "that could silently wire live editor state (plan §1.3a).");
-    }
+    string workplaneProblems = reconcile(kWorkplaneLedger, workplaneHits);
+    if (workplaneHits.length != 2)
+        workplaneProblems ~= format("\n    workplane population — recorded 2, "
+                                  ~ "scanner found %d", workplaneHits.length);
+    assert(workplaneProblems.length == 0,
+        "§1.3a: the two workplane picker declarations must reach the funnel "
+      ~ "only through the named frozen viewOnlySubject(vp), never an inline "
+      ~ "SubjectSource literal." ~ workplaneProblems);
 }

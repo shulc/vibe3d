@@ -175,3 +175,10 @@ drop 0 3 4053 PreparedDrop's non-copyable assert, commitPreparedDrop's nothrow f
 # face of that half-disk touches the hub. No replacement `facesBefore == 4`
 # was added, because that would be the same defect one step along.
 drop 0 1 4335 the open-fan cap block's `faces.length >= facesBefore + 2`, which an exact wantF pin two lines above already fixed — a check that could not come out differently
+
+# Task 4170 removed subject_construction_census_test's private
+# functionBodyOf parser and its synthetic block after assertion (c) moved to
+# census_symbols.symbolTokenHits. The 17 assertions exercised only that local
+# parser; the two real workplane declarations remain pinned in both directions
+# by the shared LedgerRow/reconcile census and its exact population of two.
+drop 1 17 4170 subject construction assertion (c) uses the shared declaration-keyed scanner; its private function-body parser and synthetic self-test block are gone

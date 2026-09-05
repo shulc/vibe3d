@@ -37,7 +37,7 @@
 // endpoint body.
 module tests.unit.json_emitter_scan_test;
 
-import std.algorithm : canFind, sort;
+import std.algorithm : canFind;
 import std.array     : appender, array, join;
 import std.ascii     : isAlphaNum, isDigit;
 import std.conv      : to;
@@ -45,6 +45,9 @@ import std.file      : exists, isFile, readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf, splitLines, strip;
+
+import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
+    enclosingSymbols, reconcile, symbolAt;
 
 // ---------------------------------------------------------------------------
 // Scanner
@@ -366,11 +369,18 @@ private immutable string[] kScanned = [
     "source/command_args.d",
 ];
 
+private static immutable LedgerRow[] kExemptionLedger = [
+    LedgerRow("scalarArgToString|exempt", 1,
+        "builds an argstring, not a JSON body"),
+    LedgerRow("wireToolpipeProviders.setToolPipeEvalProvider|exempt", 1,
+        "clamped to the [0,1] weight contract above, task 1550 decision 4.1"),
+];
+
 unittest {
     size_t   filesScanned;
     size_t   totalSpecsSeen;
     string[] violations;
-    string[] exemptions;      // "file :: reason"
+    LedgerHit[] exemptionHits;
     size_t[string][string] census;   // file -> spec -> count
     size_t   canaryLine;             // derived by READING json_num.d
 
@@ -380,9 +390,10 @@ unittest {
             "the gate cannot find " ~ p ~ " — it is measuring nothing, which "
           ~ "is worse than being absent");
         const src = readText(p);
+        const symbols = enclosingSymbols(blankNonCode(src));
         filesScanned++;
 
-        if (rel == "source/json_num.d") {
+        if (rel == kScanned[0]) {
             foreach (i, l; src.splitLines)
                 if (l.canFind("jsonNumScannerCanary")
                     && l.canFind("enum")) { canaryLine = i + 1; break; }
@@ -390,7 +401,12 @@ unittest {
 
         foreach (h; scanJsonFloatEmitters(src)) {
             totalSpecsSeen++;
-            if (h.exempt) { exemptions ~= rel ~ " :: " ~ h.reason; continue; }
+            if (h.exempt) {
+                exemptionHits ~= LedgerHit(
+                    symbolAt(symbols, h.line - 1) ~ "|exempt",
+                    rel, h.line, h.reason);
+                continue;
+            }
             if (h.viaJsonNum) { census[rel][h.spec]++; continue; }
             violations ~= format("%s:%d  %s  %s", rel, h.line, h.spec, h.text);
         }
@@ -436,33 +452,30 @@ unittest {
                canaryLine, kExemptMarker, violations.length,
                violations.join("\n  ")));
 
-    // --- (c) exemptions: frozen at 2, matched by FILE + REASON -------------
-    // Not by line number, which drifts. A third exemption is a red test, so
-    // the allowlist cannot grow by quiet editing.
-    auto ex = exemptions.dup;
-    ex.sort();
-    assert(ex.length == 2,
-        format("the exemption list is frozen at 2 sites. A new "
-             ~ "`%s` marker is a deliberate act: write the reason in the task "
-             ~ "card and raise this number on purpose.\n%d exemption(s):\n  %s",
-               kExemptMarker, ex.length, ex.join("\n  ")));
-    assert(ex[0] == "source/command_args.d :: builds an argstring, not a "
-                  ~ "JSON body", ex[0]);
-    assert(ex[1] == "source/http_providers.d :: clamped to the [0,1] weight "
-                  ~ "contract above, task 1550 decision 4.1", ex[1]);
+    // --- (c) exemptions: frozen at 2, keyed by DECLARING SYMBOL ------------
+    // The diagnostic still carries file + line, but a pure declaration move
+    // does not turn into a policy change (task 4170).
+    string exemptionProblems = reconcile(kExemptionLedger, exemptionHits);
+    if (exemptionHits.length != 2)
+        exemptionProblems ~= format("\n    exemption population — recorded 2, "
+                                  ~ "scanner found %d", exemptionHits.length);
+    assert(exemptionProblems.length == 0,
+        format("the exemption ledger changed. A new `%s` marker is a "
+             ~ "deliberate act: write the reason in the task card and add its "
+             ~ "declaring symbol on purpose.%s",
+               kExemptMarker, exemptionProblems));
 }
 
 // ---------------------------------------------------------------------------
-// 4.3 — the frozen per-file census. THE SECOND WITNESS OF SPECIFIER DRIFT.
+// 4.3 — the frozen per-symbol census. THE SECOND WITNESS OF SPECIFIER DRIFT.
 //
-// Keyed on file + specifier and NOT on line number, so moving code around does
-// not break it. Its whole reason to exist is the class of change no
+// Keyed on enclosing declaration + specifier, so moving code between files
+// does not break it (task 4170). Its whole reason to exist is the class of change no
 // behavioural test can see: `%f` and `%.6f` produce BYTE-IDENTICAL output, so
 // a site switched between them is invisible to every parser downstream and
 // visible only here.
 // ---------------------------------------------------------------------------
 unittest {
-    static struct Expect { string file; string spec; size_t count; }
     // Measured over the converted tree; 100 specifiers over 24 call sites.
     // Task 1903 Stage B raised it to 111: `http_json.meshPlanesJson` emits 11
     // floats at `%.9g` — 3 vertex components, 3 surface baseColor components
@@ -473,14 +486,39 @@ unittest {
     // against a later run. `%f` is six decimal places, so two genuinely
     // different floats can print identically and a dropped plane carry would
     // compare equal to the plane that carried; `%.9g` round-trips a `float`.
-    static immutable Expect[] kFrozen = [
-        Expect("source/http_json.d",      "%f",   10),
-        Expect("source/http_json.d",      "%.9g", 11),
-        Expect("source/view.d",           "%.9g",  9),
-        Expect("source/view.d",           "%f",   10),
-        Expect("source/http_providers.d", "%.6f", 41),
-        Expect("source/http_providers.d", "%.9g",  5),
-        Expect("source/http_providers.d", "%f",   25),
+    static immutable LedgerRow[] kFrozen = [
+        LedgerRow("meshToJsonDetailed|%f", 10, "detailed mesh JSON"),
+        LedgerRow("meshPlanesJson|%.9g", 11, "lossless mesh-plane JSON"),
+        LedgerRow("orientationToJson|%.9g", 9, "orientation matrix"),
+        LedgerRow("View.toJsonWith|%f", 10, "view state"),
+        LedgerRow("wireModelProviders.setLayersDataProvider|%.6f", 13,
+            "layer transforms"),
+        LedgerRow("wireModelProviders.setImagePlaneProvider.vec|%.6f", 3,
+            "image-plane vector helper"),
+        LedgerRow("wireModelProviders.setImagePlaneProvider|%.6f", 3,
+            "image-plane scalar fields"),
+        LedgerRow("wireViewportProviders.setGpuSurfaceProvider.putTriples|%.6f", 3,
+            "GPU surface triple helper"),
+        LedgerRow("wireViewportProviders.setGpuSurfaceProvider|%.6f", 4,
+            "GPU surface scalars"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.planJson|%.6f", 8,
+            "viewport draw plan"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.stateJson|%.6f", 1,
+            "viewport display state"),
+        LedgerRow("wireViewportProviders.setViewportDisplayProvider.gridJson|%.9g", 5,
+            "viewport grid"),
+        LedgerRow("wireViewportProviders.setSurfaceRaycastProvider|%.6f", 6,
+            "surface raycast"),
+        LedgerRow("wireToolpipeProviders.setToolPipeEvalProvider.putVec3|%f", 3,
+            "toolpipe vector helper"),
+        LedgerRow("wireToolpipeProviders.setSnapQueryProvider|%f", 6,
+            "snap query"),
+        LedgerRow("wireToolpipeProviders.setSnapLastProvider|%f", 6,
+            "last snap"),
+        LedgerRow("wireToolpipeProviders.setConstrainQueryProvider|%f", 3,
+            "constraint query"),
+        LedgerRow("wireToolpipeProviders.setPathQueryProvider|%f", 7,
+            "path query"),
     ];
 
     // `source/json_num.d` is deliberately NOT censused. It is scanned by the
@@ -488,46 +526,36 @@ unittest {
     // the helper itself), but its `jsonNum(x, "%.3f")` occurrences are the
     // helper's own unittests, not wire sites — freezing them would make every
     // added test case a red gate for no contract reason.
-    static immutable string[] kCensused = [
-        "source/http_json.d", "source/http_providers.d", "source/view.d",
-    ];
-
-    size_t[string][string] census;
-    foreach (rel; kCensused) {
+    LedgerHit[] censusHits;
+    foreach (rel; kScanned) {
+        // This module carries the scanner's own tests, not wire emitters. Its
+        // place in kScanned is the intentional helper/canary scope above.
+        if (rel == kScanned[0]) continue;
         const src = readText(buildPath(gateRepoRoot, rel));
+        const symbols = enclosingSymbols(blankNonCode(src));
         foreach (h; scanJsonFloatEmitters(src))
-            if (h.viaJsonNum && !h.exempt) census[rel][h.spec]++;
+            if (h.viaJsonNum && !h.exempt)
+                censusHits ~= LedgerHit(
+                    symbolAt(symbols, h.line - 1) ~ "|" ~ h.spec,
+                    rel, h.line, h.text);
     }
 
-    string[] drift;
     size_t   total;
-    foreach (e; kFrozen) {
-        const got = (e.file in census) && (e.spec in census[e.file])
-                  ? census[e.file][e.spec] : 0;
-        total += e.count;
-        if (got != e.count)
-            drift ~= format("%s  %s: frozen %d, found %d",
-                            e.file, e.spec, e.count, got);
-    }
-    // And nothing OUTSIDE the frozen table, or a new specifier family could
-    // appear without moving any frozen number.
-    foreach (f, m; census)
-        foreach (s, n; m) {
-            bool known;
-            foreach (e; kFrozen) if (e.file == f && e.spec == s) known = true;
-            if (!known) drift ~= format("%s  %s: %d occurrence(s), not in the "
-                                      ~ "frozen census", f, s, n);
-        }
+    foreach (e; kFrozen) total += e.count;
 
     assert(total == 111, format("the frozen table must add up to the 111 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
                               ~ "1903 Stage B), got %d", total));
+    string drift = reconcile(kFrozen, censusHits);
+    if (censusHits.length != 111)
+        drift ~= format("\n    specifier population — recorded 111, scanner "
+                      ~ "found %d", censusHits.length);
     assert(drift.length == 0,
-        "the per-file specifier census moved. This is the ONLY check that can "
+        "the per-symbol specifier census moved. This is the ONLY check that can "
       ~ "see a specifier change whose OUTPUT is identical (`%f` <-> `%.6f`), "
       ~ "so a surprise here is worth reading carefully: either a call site's "
       ~ "precision changed, or an emitter was added or removed. Update the "
-      ~ "frozen table deliberately, in the same commit as the change.\n  "
-      ~ drift.join("\n  "));
+      ~ "frozen table deliberately, in the same commit as the change."
+      ~ drift);
 }

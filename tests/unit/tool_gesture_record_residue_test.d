@@ -56,13 +56,13 @@
 module tests.unit.tool_gesture_record_residue_test;
 
 import std.algorithm : sort;
-import std.array     : appender;
 import std.conv      : to;
 import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
 
-import tests.unit.census_symbols : blankNonCode, isIdentChar;
+import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
+    enclosingSymbols, isIdentChar, reconcile, symbolAt;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -141,21 +141,19 @@ private bool isWritingPrimitive(string name) {
     }
 }
 
-private struct ResidueRow { string path; string name; size_t count; string why; }
-
-private enum ResidueRow[] kResidue = [
+private enum LedgerRow[] kResidue = [
     // ---- THE ONE SITE ------------------------------------------------------
     // `Tool.recordGestureEdit`. One method, three primitives, one per
     // `GestureRecordMode` member — which is why the plan counts it as ONE SITE
     // and this roster as three rows. A mode losing its arm shows up here as a
     // count going 1 -> 0, which no runtime test can see: the two remaining
     // modes still record, so every undo depth in the suite is unchanged.
-    ResidueRow("source/tool.d", "record", 1,
+    LedgerRow("Tool.recordGestureEdit|record", 1,
         "GestureRecordMode.Plain — the mode every family but box's live run uses"),
-    ResidueRow("source/tool.d", "recordInSession", 1,
+    LedgerRow("Tool.recordGestureEdit|recordInSession", 1,
         "GestureRecordMode.InSession — a record that OPENS a run; it cannot be "
       ~ "derived from history state, which is why `mode` has no default"),
-    ResidueRow("source/tool.d", "replaceInSessionTailWith", 1,
+    LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1,
         "GestureRecordMode.ReplaceRunTail — one site in the whole tree "
       ~ "(box's commit while a live run is open), and the licence for the "
       ~ "plan's M2 mutation predicting exactly one reddened fixture cell"),
@@ -167,13 +165,13 @@ private enum ResidueRow[] kResidue = [
     // over one place cost more than one. These rows are what stop that
     // deferral from becoming a hole: the zone may keep the three it has and
     // may not grow a fourth without saying so here.
-    ResidueRow("source/tools/transform/transform.d", "recordInSession", 1,
+    LedgerRow("TransformTool.recordCommit|recordInSession", 1,
         "TransformTool.commitEdit's in-session arm — REJECTED by D1, "
       ~ "transform zone, moves with T2"),
-    ResidueRow("source/tools/transform/transform.d", "record", 1,
+    LedgerRow("TransformTool.recordCommit|record", 1,
         "TransformTool.commitEdit's plain arm — REJECTED by D1, transform "
       ~ "zone, moves with T2"),
-    ResidueRow("source/tools/transform/xfrm_transform.d", "replaceInSessionTail", 1,
+    LedgerRow("XfrmTransformTool.recordPipeRefire|replaceInSessionTail", 1,
         "the run-tail splice — REJECTED by D1. It is also the site the plan's "
       ~ "round-3 predicate `history_?\\.record` could not see at all, which is "
       ~ "why this file keys on the whole call surface and filters by name "
@@ -184,59 +182,37 @@ private enum ResidueRow[] kResidue = [
 // 1. THE RESIDUE IS ENUMERATED, NOT MERELY PERMITTED.
 // ---------------------------------------------------------------------------
 unittest {
-    string[] problems;
-    size_t   totalWriting = 0, totalSurface = 0, filesRead = 0;
+    string[] populationProblems;
+    LedgerHit[] ledgerHits;
 
     foreach (rel; population()) {
         immutable full = buildPath(repoRoot, rel);
         if (!exists(full)) {
-            problems ~= "    · population member vanished: " ~ rel;
+            populationProblems ~= "    · population member vanished: " ~ rel;
             continue;
         }
-        ++filesRead;
         auto src  = stripCommentsAndStrings(readText(full));
         auto hits = historySurface(src);
-        totalSurface += hits.length;
+        const symbols = enclosingSymbols(src);
 
         foreach (h; hits) {
             if (!isWritingPrimitive(h.name)) continue;
-            ++totalWriting;
-            bool rostered = false;
-            foreach (row; kResidue)
-                if (row.path == rel && row.name == h.name) { rostered = true; break; }
-            if (!rostered)
-                problems ~= "    · UNROSTERED WRITING PRIMITIVE: `history."
-                          ~ h.name ~ "(` at " ~ rel ~ ":" ~ h.line.to!string
-                          ~ "\n        Criterion 1 of task 1905 is: ONE site "
-                          ~ "(`Tool.recordGestureEdit`) plus the THREE the "
-                          ~ "transform zone keeps by decision D1. A tool that "
-                          ~ "writes to the undo stack itself is back to the "
-                          ~ "shape the whole task removed — the mesh is already "
-                          ~ "mutated when the call is reached, so a tool that "
-                          ~ "gets this wrong loses the entry SILENTLY. Route it "
-                          ~ "through `recordGestureEdit(cmd, mode)`, or add a "
-                          ~ "row here with the reason it cannot be.";
-        }
-
-        foreach (row; kResidue) {
-            if (row.path != rel) continue;
-            size_t n = 0;
-            foreach (h; hits) if (h.name == row.name) ++n;
-            if (n != row.count)
-                problems ~= "    · " ~ rel ~ ": `history." ~ row.name ~ "(` x "
-                          ~ n.to!string ~ ", roster says " ~ row.count.to!string
-                          ~ "\n        (" ~ row.why ~ ")";
+            const symbol = symbolAt(symbols, h.line - 1);
+            ledgerHits ~= LedgerHit(symbol ~ "|" ~ h.name, rel, h.line,
+                "history." ~ h.name ~ "(");
         }
     }
 
-    foreach (row; kResidue)
-        if (!exists(buildPath(repoRoot, row.path)))
-            problems ~= "    · rostered file is gone from the tree: " ~ row.path
-                      ~ "  (was: " ~ row.why ~ ")";
+    string problems = reconcile(kResidue, ledgerHits);
+    if (ledgerHits.length != 6)
+        problems ~= "\n    writing-primitive population — recorded 6, scanner found "
+                  ~ ledgerHits.length.to!string;
+    if (populationProblems.length)
+        problems ~= "\n" ~ joinLines(populationProblems);
 
     assert(problems.length == 0,
         "task 1905 criterion 1: the writing-primitive residue moved.\n"
-      ~ joinLines(problems)
+      ~ problems
       ~ "\n  The criterion is NOT \"zero under source/tools/**\" — that form is "
       ~ "unreachable inside the plan's own scope, because decision D1 puts the "
       ~ "transform zone out of it and the zone holds every remaining writer. "

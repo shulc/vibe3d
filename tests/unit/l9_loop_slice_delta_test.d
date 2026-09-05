@@ -37,6 +37,8 @@ import editmode;
 import change_bus : changeBus;
 
 import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes, diffMeshPlanes;
+import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
+    enclosingSymbols, reconcile, symbolAt;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 
 /// Edge 1 (`[1, 5]`) is interior on this stand; edge 0 (`[0, 1]`) is on the rim.
@@ -429,193 +431,148 @@ unittest
 // The row for that function reddens by NAME. (Or delete a table row: the
 // scanner then reports an unaccounted site.)
 // ---------------------------------------------------------------------------
-private struct SeamRow { string file; string func; size_t unrecorded; size_t recording; string why; }
-
-private static immutable SeamRow[] kL9Seam = [
-    SeamRow("source/commands/mesh/loop_slice.d", "evaluate", 2, 2,
+private static immutable LedgerRow[] kL9Seam = [
+    LedgerRow("MeshAddLoop.evaluate|unrecorded", 1,
         "MeshAddLoop and MeshLoopSlice: one RECORDING open each (the commit "
       ~ "path, stage L9-a/-b) and one UNRECORDED each (the redo arm, which "
       ~ "re-runs the kernel batchless and keeps the first delta)"),
-    SeamRow("source/tools/slice/loop_slice_tool.d", "applyHeadless", 1, 0,
+    LedgerRow("MeshAddLoop.evaluate|recording", 1,
+        "MeshAddLoop commit path, stage L9-b"),
+    LedgerRow("MeshLoopSlice.evaluate|unrecorded", 1,
+        "MeshLoopSlice redo arm, which re-runs the kernel batchless"),
+    LedgerRow("MeshLoopSlice.evaluate|recording", 1,
+        "MeshLoopSlice commit path, stage L9-a"),
+    LedgerRow("LoopSliceTool.applyHeadless|unrecorded", 1,
         "the `tool.doApply` path — declined on axis 2 for OPACITY (plan "
       ~ "§6.2 item 2), not because it cannot be recorded"),
-    SeamRow("source/tools/slice/loop_slice_tool.d", "rebuildCut", 1, 0,
+    LedgerRow("LoopSliceTool.rebuildCut|unrecorded", 1,
         "the per-frame interactive PREVIEW — plan §9: a recording batch here "
       ~ "builds and discards a full op-log at 60 Hz"),
-    SeamRow("source/tools/edit/topology_pen/tool.d", "commitAddLoop", 1, 0,
+    LedgerRow("TopologyPenTool.commitAddLoop|unrecorded", 1,
         "Topology Pen's Add Loop — its own family, stage M / task 1905"),
 ];
 
 unittest
 {
-    import std.array : appender;
-    import std.file  : exists, readText;
-    import std.path  : buildPath, dirName;
-    import std.string: strip;
-    import tests.unit.census_symbols : blankNonCode;
+    import std.file  : dirEntries, exists, isDir, readText, SpanMode;
+    import std.path  : buildPath, dirName, relativePath;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-    // (file, func) -> [unrecorded, recording]
-    size_t[2][string] found;
+    LedgerHit[] hits;
     size_t scannedBytes = 0;
-    bool[string] seenPath;
+    size_t filesScanned;
+    bool[string] recordedSymbols;
+    foreach (ref row; kL9Seam) {
+        immutable pipe = row.key.indexOfSubPos("|");
+        assert(pipe != size_t.max, "every L9 ledger key must carry a category");
+        recordedSymbols[row.key[0 .. pipe]] = true;
+    }
+    static immutable string[] kScopeModules = [
+        "commands.mesh.loop_slice",
+        "tools.slice.loop_slice_tool",
+        "tools.edit.topology_pen.tool",
+    ];
+    bool[string] seenScopeModules;
+    immutable sourceDir = buildPath(repoRoot, "source");
+    assert(sourceDir.exists && sourceDir.isDir,
+        "the L9 seam census cannot find source/ — it is measuring nothing");
 
-    foreach (ref r; kL9Seam) {
-        if (r.file in seenPath) continue;
-        seenPath[r.file] = true;
-        immutable abs = buildPath(repoRoot, r.file);
-        assert(abs.exists, "the L9 seam census names " ~ r.file
-                         ~ " and that file is gone — move the row(s)");
-        immutable raw  = readText(abs);
+    foreach (de; dirEntries(sourceDir, "*.d", SpanMode.depth)) {
+        immutable rel = relativePath(de.name, repoRoot);
+        immutable raw  = readText(de.name);
         immutable code = blankNonCode(raw);
-        scannedBytes += raw.length;
-
-        // Brace-walk to the nearest enclosing CALLABLE. The header
-        // accumulator resets on `{`, `}` and `;` and NOT on a newline — a
-        // multi-line signature would otherwise lose its own start. This is
-        // `revert_entry_census_test`'s heuristic, duplicated rather than
-        // imported, which is the accepted pattern between census files (see
-        // that file's own header). It only has to be DETERMINISTIC: a
-        // misresolved site still reddens, because the pair it reports will
-        // not be in the table.
-        ScopeEntry[] stack;
-        string header;
-        size_t i = 0;
-        void note(size_t which) {
-            string fn = "<module-level>";
-            foreach_reverse (ref e; stack) if (e.isFunc) { fn = e.name; break; }
-            immutable key = r.file ~ "\0" ~ fn;
-            auto p = key in found;
-            if (p is null) { size_t[2] z = [0, 0]; z[which] = 1; found[key] = z; }
-            else (*p)[which] += 1;
-        }
-        while (i < code.length) {
-            immutable char c = code[i];
-            if (c == '{') {
-                immutable h = header.strip;
-                stack ~= ScopeEntry(looksLikeFunc(h) ? nameOf(h) : h, looksLikeFunc(h));
-                header = ""; ++i; continue;
+        immutable moduleName = moduleNameOf(code);
+        bool inScopeModule;
+        foreach (scopeModule; kScopeModules)
+            if (moduleName == scopeModule) {
+                inScopeModule = true;
+                seenScopeModules[moduleName] = true;
             }
-            if (c == '}') { if (stack.length) stack = stack[0 .. $ - 1];
-                            header = ""; ++i; continue; }
-            if (c == ';') { header = ""; ++i; continue; }
+        const symbols = enclosingSymbols(code);
+        scannedBytes += raw.length;
+        filesScanned++;
+
+        size_t i, line0;
+        while (i < code.length) {
+            if (code[i] == '\n') { line0++; i++; continue; }
 
             // The statement this open belongs to, up to its `;`.
+            bool matched;
+            string kind;
             if (code[i .. $].length > 14 && code[i .. i + 14] == "MeshEditBatch.") {
                 size_t semi = i;
                 while (semi < code.length && code[semi] != ';') ++semi;
                 if (code[i .. semi].indexOfSub("kLoopSliceEditScope")
-                 && code[i .. semi].indexOfSub("unrecorded(")) note(0);
+                 && code[i .. semi].indexOfSub("unrecorded(")) {
+                    matched = true;
+                    kind = "unrecorded";
+                }
             } else if (code[i .. $].length > 14
                     && code[i .. i + 14] == "MeshEditBatch(") {
                 size_t semi = i;
                 while (semi < code.length && code[semi] != ';') ++semi;
-                if (code[i .. semi].indexOfSub("kLoopSliceEditScope")) note(1);
+                if (code[i .. semi].indexOfSub("kLoopSliceEditScope")) {
+                    matched = true;
+                    kind = "recording";
+                }
             }
-            header ~= c;
+            if (matched) {
+                immutable symbol = symbolAt(symbols, line0);
+                if (inScopeModule || symbol in recordedSymbols)
+                    hits ~= LedgerHit(symbol ~ "|" ~ kind, rel, line0 + 1,
+                                      "MeshEditBatch " ~ kind);
+            }
             ++i;
         }
     }
 
-    // Vacuity floor: a scanner that lost its place reports nothing and every
-    // comparison below passes for the wrong reason.
-    assert(scannedBytes >= 100_000, format(
-        "the L9 seam scanner read only %d byte(s) over %d distinct path(s) — "
-      ~ "the three files together are far larger, so the walk lost its place "
-      ~ "and this census is vacuous. Fix the walk, do not lower the floor",
-        scannedBytes, seenPath.length));
-    assert(seenPath.length == 3, format(
-        "the table names %d distinct path(s), expected 3 — a duplicated path "
-      ~ "literal would leave a file unscanned and this census green forever",
-        seenPath.length));
-
-    auto bad = appender!string;
-    foreach (ref r; kL9Seam) {
-        immutable key = r.file ~ "\0" ~ r.func;
-        auto p = key in found;
-        immutable size_t u = p is null ? 0 : (*p)[0];
-        immutable size_t g = p is null ? 0 : (*p)[1];
-        if (u != r.unrecorded || g != r.recording)
-            bad.put(format("\n    %s :: %s — recorded %d unrecorded / %d "
-                         ~ "recording, scanner found %d / %d\n        (%s)",
-                           r.file, r.func, r.unrecorded, r.recording, u, g,
-                           r.why));
-    }
-    foreach (key, counts; found) {
-        bool known = false;
-        foreach (ref r; kL9Seam)
-            if (key == r.file ~ "\0" ~ r.func) known = true;
-        if (!known) {
-            auto parts = splitKey(key);
-            bad.put(format("\n    %s :: %s — NOT IN THE TABLE, scanner found "
-                         ~ "%d unrecorded / %d recording", parts[0], parts[1],
-                           counts[0], counts[1]));
-        }
-    }
-    assert(bad.data.length == 0, format(
+    string bad = reconcile(kL9Seam, hits);
+    if (hits.length != 7)
+        bad ~= format("\n    batch-open population — recorded 7, scanner found %d",
+                      hits.length);
+    if (filesScanned < 400 || scannedBytes < 1_000_000)
+        bad ~= format("\n    source population — scanned %d file(s), %d byte(s)",
+                      filesScanned, scannedBytes);
+    if (seenScopeModules.length != kScopeModules.length)
+        bad ~= format("\n    module scope — expected %d module(s), found %d",
+                      kScopeModules.length, seenScopeModules.length);
+    assert(bad.length == 0, format(
         "task 1903 L9 (W-9-SEAM): the loop-slice family's batch-open SET no "
-      ~ "longer matches the recorded table.%s\n\n  A recording batch on the "
+      ~ "longer matches the recorded table.\n\n  A recording batch on the "
       ~ "PREVIEW path builds and discards a full op-log at 60 Hz and NOTHING "
       ~ "else in either lane reddens on it; an `unrecorded` batch on a COMMIT "
       ~ "path silently drops that command's undo. Neither is visible from a "
-      ~ "counter, which is why this is a text census.", bad.data));
-}
-
-private struct ScopeEntry { string name; bool isFunc; }
-
-private bool isIdentCh(char c)
-{
-    return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9');
-}
-
-/// Keywords that open a CONTROL-FLOW or non-callable block. Duplicated from
-/// `revert_entry_census_test.kControlKeywords` — the accepted pattern between
-/// census files.
-private static immutable string[] kControlKw = [
-    "if", "for", "foreach", "foreach_reverse", "while", "switch", "catch",
-    "else", "try", "finally", "scope", "version", "debug", "synchronized",
-    "with", "do", "case", "default", "class", "struct", "interface",
-    "template", "union", "enum", "mixin", "static", "align", "extern",
-    "import", "module", "unittest", "invariant", "in", "out", "body", "asm",
-];
-
-private bool looksLikeFunc(string h)
-{
-    if (h.length == 0) return false;
-    size_t i = 0;
-    while (i < h.length && isIdentCh(h[i])) ++i;
-    if (i == 0) return false;
-    foreach (kw; kControlKw) if (h[0 .. i] == kw) return false;
-    return h.indexOfSub("(");
+      ~ "counter, which is why this is a text census.%s", bad));
 }
 
 /// True when `hay` contains `needle` — a local three-liner so this census
 /// carries no import that could pull a different `indexOf` overload in.
 private bool indexOfSub(string hay, string needle)
 {
-    if (needle.length > hay.length) return false;
+    return indexOfSubPos(hay, needle) != size_t.max;
+}
+
+private size_t indexOfSubPos(string hay, string needle)
+{
+    if (needle.length > hay.length) return size_t.max;
     foreach (i; 0 .. hay.length - needle.length + 1)
-        if (hay[i .. i + needle.length] == needle) return true;
-    return false;
+        if (hay[i .. i + needle.length] == needle) return i;
+    return size_t.max;
+}
+
+/// Read a D module declaration without coupling the census to its file path.
+private string moduleNameOf(string code)
+{
+    import std.string : strip;
+
+    enum marker = "module ";
+    immutable start0 = code.indexOfSubPos(marker);
+    if (start0 == size_t.max) return "";
+    immutable start = start0 + marker.length;
+    size_t end = start;
+    while (end < code.length && code[end] != ';') ++end;
+    return code[start .. end].strip;
 }
 
 /// `"private bool foo(int x)"` -> `"foo"`.
-private string nameOf(string header)
-{
-    import std.string : strip;
-    size_t paren = 0;
-    while (paren < header.length && header[paren] != '(') ++paren;
-    if (paren == header.length) return header.strip;
-    string before = header[0 .. paren].strip;
-    size_t e = before.length, s = e;
-    while (s > 0 && isIdentCh(before[s - 1])) --s;
-    return s < e ? before[s .. e] : "<anonymous>";
-}
-
-private string[2] splitKey(string key)
-{
-    foreach (i, c; key) if (c == '\0') return [key[0 .. i], key[i + 1 .. $]];
-    return [key, ""];
-}

@@ -48,15 +48,15 @@
 // red by design, but as a CLOSED census of the blocks they open on purpose.
 module tests.unit.app_with_app_scan_test;
 
-import std.algorithm : canFind, count;
 import std.array     : appender;
 import std.ascii     : isAlphaNum;
-import std.file      : exists, isFile, readText;
+import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
-import std.path      : buildPath, dirName;
-import std.string    : strip;
+import std.path      : buildPath, dirName, relativePath;
+import std.string    : indexOf, strip;
 
-import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode;
+import tests.unit.census_symbols : LedgerHit, LedgerRow,
+    sharedBlankNonCode = blankNonCode, enclosingSymbols, reconcile, symbolAt;
 
 // ---------------------------------------------------------------------------
 // Scanner
@@ -248,60 +248,97 @@ unittest {
 // grows or a comment that lands above a block shifts every line and changes
 // nothing about how many blocks exist.
 
-private struct WithAppCensusRow { string file; size_t live; }
-
 /// Measured 2026-09-04 with `scanLiveWith` over the committed files:
 /// `grep -c 'with (app)'` reads 17 and 18 for the two files, but three of
 /// registration.d's and fifteen of input_router.d's are comments and doc
 /// lines — the scanner is what separates them, which is why the recorded
 /// numbers are the scanner's and not grep's.
-private static immutable WithAppCensusRow[] kWithAppCensus = [
-    WithAppCensusRow("source/registration.d", 14),
-    WithAppCensusRow("source/input_router.d",  3),
+private static immutable LedgerRow[] kWithAppCensus = [
+    LedgerRow("registerTransformTools", 1, "transform registrations"),
+    LedgerRow("registerGeneratorTools", 1, "generator registrations"),
+    LedgerRow("registerPrimitiveTools", 1, "primitive registrations"),
+    LedgerRow("registerEditTools", 1, "edit-tool registrations"),
+    LedgerRow("registerCommands", 1, "top-level command registrations"),
+    LedgerRow("registerToolLifecycleCommands", 1, "tool lifecycle commands"),
+    LedgerRow("registerItemCommands", 1, "item commands"),
+    LedgerRow("registerPipeStageCommands", 1, "pipe-stage commands"),
+    LedgerRow("registerSelectionCommands", 1, "selection commands"),
+    LedgerRow("registerViewCommands", 1, "view commands"),
+    LedgerRow("registerFileCommands", 1, "file commands"),
+    LedgerRow("registerMeshCommands", 1, "mesh commands"),
+    LedgerRow("registerHistoryCommands", 1, "history commands"),
+    LedgerRow("registerSelfTestCommands", 1, "self-test commands"),
+    LedgerRow("InputRouter.handleWindowEvent", 1, "window-event handler"),
+    LedgerRow("InputRouter.handleMouseWheel", 1, "mouse-wheel handler"),
+    LedgerRow("InputRouter.handleKeyDown", 1, "key-down handler"),
 ];
 
+private string moduleNameOf(string code) {
+    auto at = code.indexOf("module ");
+    if (at < 0) return null;
+    immutable start = cast(size_t) at + "module ".length;
+    auto semi = code.indexOf(';', start);
+    return semi < 0 ? null : code[start .. cast(size_t) semi].strip;
+}
+
 unittest {
-    foreach (row; kWithAppCensus) {
-        const p = buildPath(gateRepoRoot, row.file);
-        assert(exists(p) && isFile(p),
-            "the census cannot find " ~ p ~ " — it is measuring nothing");
-        const src = readText(p);
-        assert(src.length > 10_000,
-            format("%s read as only %d bytes — the census is scanning the "
-                 ~ "wrong file", row.file, src.length));
+    LedgerHit[] ledgerHits;
+    size_t filesScanned;
+    size_t scopeModulesScanned;
+    const sourceDir = buildPath(gateRepoRoot, "source");
+    foreach (de; dirEntries(sourceDir, "*.d", SpanMode.depth)) {
+        filesScanned++;
+        const rel = relativePath(de.name, gateRepoRoot);
+        const src = readText(de.name);
+        const code = blankNonCode(src);
+        const symbols = enclosingSymbols(code);
+        const moduleName = moduleNameOf(code);
+        const inOriginalScope = moduleName == "registration"
+                             || moduleName == "input_router";
+        if (inOriginalScope) scopeModulesScanned++;
 
-        string[] live;
-        foreach (h; scanLiveWith(src))
-            if (h.subject == "app")
-                live ~= format("%s:%d", row.file, h.line);
+        const live = scanLiveWith(src);
+        foreach (h; live) {
+            if (h.subject != "app") continue;
+            const symbol = symbolAt(symbols, h.line - 1);
+            bool recorded;
+            foreach (row; kWithAppCensus)
+                if (row.key == symbol) { recorded = true; break; }
+            if (recorded || inOriginalScope)
+                ledgerHits ~= LedgerHit(symbol, rel, h.line, "with (app)");
+        }
 
-        // The same differential canary as gate (c): appending one live block
-        // must raise THIS file's count by exactly one, so the number below
-        // is a measurement of this file's content and not a scanner no-op.
-        const canaried = src ~ "\nvoid _guardCanary() { with (app) { hoveredVertex = -1; } }\n";
-        size_t canaryHits;
-        foreach (h; scanLiveWith(canaried))
-            if (h.subject == "app") canaryHits++;
-        assert(canaryHits == live.length + 1,
-            format("appending one live `with (app)` to %s must raise the hit "
-                 ~ "count from %d to %d; the scanner saw %d — the scanner is "
-                 ~ "broken and the census below cannot fail",
-                   row.file, live.length, live.length + 1, canaryHits));
-
-        // POPULATION FLOOR. A row recording zero is the app.d gate in (c),
-        // not a census; a file that opens no block has no business here.
-        assert(row.live > 0,
-            row.file ~ " is recorded with zero live blocks — that is gate (c)'s "
-          ~ "contract, not a census row; delete the row or record the count");
-
-        assert(live.length == row.live,
-            format("%s opens %d live `with (app)` block(s); the census records "
-                 ~ "%d. Live sites: %s. Inside such a block a bare "
-                 ~ "hoveredVertex / hoveredEdge / hoveredFace / buildToolVts "
-                 ~ "rebinds to the EditorApp member of that name without a "
-                 ~ "compile error, so a new block is a decision: write "
-                 ~ "`app.X` explicitly, or update the recorded count here and "
-                 ~ "say why in the commit (task 4066, extending task 0781).",
-                   row.file, live.length, row.live, live));
+        // Keep the original differential canary on both scoped modules, but
+        // discover them by their D module declaration instead of their path.
+        if (inOriginalScope) {
+            const canaried = src
+                ~ "\nvoid _guardCanary() { with (app) { hoveredVertex = -1; } }\n";
+            size_t liveApp, canaryApp;
+            foreach (h; live) if (h.subject == "app") liveApp++;
+            foreach (h; scanLiveWith(canaried))
+                if (h.subject == "app") canaryApp++;
+            assert(canaryApp == liveApp + 1,
+                format("appending one live `with (app)` to module %s must "
+                     ~ "raise the hit count from %d to %d; the scanner saw %d",
+                       moduleName, liveApp, liveApp + 1, canaryApp));
+        }
     }
+
+    string problems = reconcile(kWithAppCensus, ledgerHits);
+    if (ledgerHits.length != 17)
+        problems ~= format("\n    with(app) population — recorded 17, scanner "
+                         ~ "found %d", ledgerHits.length);
+    if (filesScanned < 400)
+        problems ~= format("\n    source population — scanned only %d file(s)",
+                           filesScanned);
+    if (scopeModulesScanned != 2)
+        problems ~= format("\n    module population — recorded 2 scoped "
+                         ~ "modules, scanner found %d", scopeModulesScanned);
+    assert(problems.length == 0,
+        "the declaration-keyed `with (app)` census changed. Inside such a "
+      ~ "block a bare hoveredVertex / hoveredEdge / hoveredFace / buildToolVts "
+      ~ "rebinds to the EditorApp member of that name without a compile error, "
+      ~ "so a new block is a decision: write `app.X` explicitly, or update the "
+      ~ "recorded declaration and say why in the commit (task 4066, extended "
+      ~ "by task 4170)." ~ problems);
 }
