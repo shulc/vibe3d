@@ -73,12 +73,35 @@
 // ===========================================================================
 // MUTATION (task 4191 `## Мутация`)
 // ===========================================================================
-// See the `## Мутация` section of `doc/tasks/work/4191-…` for the run. The
-// drill is: change `Mesh.compactUnreferenced`'s `rebuildEdges();` to
+// The drill is: change `Mesh.compactUnreferenced`'s `rebuildEdges();` to
 // `rebuildEdges(EdgePlaneCarry.byKey);` — i.e. arm the key carry inside the
 // one kernel that renumbers every vertex it keeps. That is the exact defect
-// this file exists to catch, it compiles, and every behavioural test in the
-// tree stays green on it.
+// this file exists to catch, and it compiles.
+//
+// SEEN RED, 2026-09-05:
+//
+//   core.exception.AssertError@tests/unit/edge_plane_rekey_census_test.d(324):
+//   SOUNDNESS BOUNDARY BROKEN: `Mesh.compactUnreferenced` asks `rebuildEdges`
+//   for `EdgePlaneCarry.byKey` AND renumbers vertices (it calls
+//   `selSetRekeyEdges(`).
+//
+// AND THE ORDER OF THE ASSERTS WAS FIXED BY THAT RUN, not by taste. The first
+// attempt put the exact-count floors above the predicate, and the same
+// mutation reddened `requesters.length == 2` instead — druntime stopped the
+// module there, so the assertion carrying the LAW never ran and its
+// explanation was never printed. A count that says "found 3" is a worse
+// failure message than one that says which declaration is unsound and why.
+// The counts now sit below the predicate; the only floor above it is
+// non-emptiness, which is all that is needed to kill the vacuous pass.
+//
+// THE DEFECT IS REAL AND NOT MERELY DETECTED, which the same run also shows:
+// arming that carry moved SEVEN rows of the frozen undo-parity corpus
+// (`weld_merge`, `delete_remove`, `slice_cut`, `cleanup`, `bevel`,
+// `vertex_bevel`, `extrude_extend`), each on `edgePlanes[N].order`, and put
+// `edgeSelectionOrder` into `face_reindex_arming_test`'s armed-revert
+// residual. That is the "eight rows of the corpus move" that
+// `mesh_planes.EdgePlaneCarry`'s own header predicts for an unconditional
+// carry, observed.
 module tests.unit.edge_plane_rekey_census_test;
 
 import std.algorithm : canFind, sort;
@@ -294,27 +317,29 @@ unittest {
     foreach (d; declsWith(hits, kRekey))
         if (d != kModuleScope) renumberers ~= d;
 
-    // BOTH FLOORS BEFORE THE PREDICATE. Disjointness is true of two empty
-    // sets, so without these a stripper fault reads as a clean bill of
-    // health.
-    assert(requesters.length == 2, format(
-        "POPULATION FLOOR: exactly two declarations may ask `rebuildEdges` "
-      ~ "for `%s` — `Mesh.spinEdge` and `Mesh.spinEdgesByKeys`, the two "
-      ~ "kernels that rewrite windings only. The scanner found %d: %s\n"
-      ~ "    A NEW requester is not automatically wrong, but it owes the "
-      ~ "argument that its kernel renumbers no vertex, and a row here.",
-        kByKey, requesters.length, requesters));
-    assert(requesters == ["Mesh.spinEdge", "Mesh.spinEdgesByKeys"], format(
-        "the two carry requesters are recorded as `Mesh.spinEdge` and "
-      ~ "`Mesh.spinEdgesByKeys`; the scanner found %s", requesters));
+    // NON-EMPTINESS FIRST, AND ONLY NON-EMPTINESS. Disjointness is true of
+    // two empty sets, so a stripper fault that ate a file would otherwise
+    // read as a clean bill of health. This is the floor that kills that
+    // vacuity, and it is deliberately the WEAKEST statement that does —
+    // see the ORDERING note below for why the exact counts sit lower.
+    assert(requesters.length > 0 && renumberers.length > 0, format(
+        "POPULATION FLOOR: the disjointness below is vacuously true over an "
+      ~ "empty set. Requesters of `%s`: %s. Declarations that renumber "
+      ~ "vertices (they call `%s`): %s. Both must be non-empty for this "
+      ~ "module to be asserting anything at all; a zero here is a scanner "
+      ~ "fault, not a clean tree.",
+        kByKey, requesters, kRekey, renumberers));
 
-    assert(renumberers.length == 8, format(
-        "POPULATION FLOOR: eight declarations renumber vertices today (three "
-      ~ "live kernels in `mesh.d`, five replay twins in "
-      ~ "`mesh_edit_delta.d`). The scanner found %d: %s\n"
-      ~ "    If this fell to zero the disjointness below would pass over "
-      ~ "nothing at all.", renumberers.length, renumberers));
-
+    // THE PREDICATE, ABOVE THE EXACT COUNTS AND NOT BELOW THEM. Ordering is
+    // load-bearing here and it was fixed by a measurement, not by taste: with
+    // the exact-count floors first, arming the carry in
+    // `Mesh.compactUnreferenced` reddened `requesters.length == 2` and
+    // druntime stopped the module there, so the assertion that states the
+    // actual LAW never ran and its message — the one that explains why a key
+    // carry over a renumbering is unsound — was never printed. The counts
+    // still guard drift; they just do it after the thing they are guarding
+    // has had its say.
+    //
     // THE PREDICATE. An edge key is a pair of vertex indices, so a kernel
     // that renumbers vertices and asks for the key carry hands
     // `applyEdgePlanes` OLD keys to look up in a NEW index space.
@@ -333,6 +358,24 @@ unittest {
           ~ "4191. Either re-key the edge endpoints through the same "
           ~ "permutation BEFORE `rebuildEdges`, or leave this kernel at "
           ~ "`EdgePlaneCarry.leaveIndexed`.", r, kByKey, kRekey));
+
+    // …and only now the EXACT counts. A new requester that renumbers nothing
+    // is not unsound, so it does not trip the predicate above — but it is
+    // still a decision somebody owes an argument for, and this is where it
+    // gets asked.
+    assert(requesters == ["Mesh.spinEdge", "Mesh.spinEdgesByKeys"], format(
+        "exactly two declarations may ask `rebuildEdges` for `%s` — "
+      ~ "`Mesh.spinEdge` and `Mesh.spinEdgesByKeys`, the two kernels that "
+      ~ "rewrite windings only. The scanner found %s.\n"
+      ~ "    A NEW requester is not automatically wrong — the predicate above "
+      ~ "stayed green, so whatever was added renumbers no vertex — but it "
+      ~ "owes the argument that this is so, and a row in `kSites`.",
+        kByKey, requesters));
+
+    assert(renumberers.length == 8, format(
+        "eight declarations renumber vertices today (three live kernels in "
+      ~ "`mesh.d`, five replay twins in `mesh_edit_delta.d`). The scanner "
+      ~ "found %d: %s", renumberers.length, renumberers));
 }
 
 // ===========================================================================

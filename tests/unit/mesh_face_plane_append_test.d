@@ -274,6 +274,29 @@ unittest // resetSelection is Exact: a shrink TRUNCATES, and the stale tail cann
 // than re-stamping it — so a mutation of `addFace` says nothing whatever
 // about it, exactly as this repository's two selection-draw entry points each
 // need their own pass.
+//
+// SEEN RED, 2026-09-05, adding `appendFacePlanes(this, PlaneFit.Exact);` to
+// `Mesh.addFace`:
+//
+//   core.exception.AssertError@tests/unit/mesh_face_plane_append_test.d(315):
+//   addFace grew `faceMarks` to 7 against 7 faces. The third door grows NO
+//   per-face plane …
+//
+// AND IT HAD TO BE RUN IN ISOLATION TO SEE THAT, which is worth knowing
+// before anyone repeats the drill. `makeCube()` itself calls `addFace`, so
+// under this mutation a fresh cube arrives with its planes already settled
+// and BLOCK A's non-vacuity guard — "a fresh cube's faceSetMask must start
+// SHORTER than faces" — fires first. druntime stops a module at its first
+// failed assert, so on a whole-file run Block F never executes and the
+// mutation looks caught by a guard four blocks above the one that means it.
+// The drill above was taken with blocks A–E temporarily under
+// `version(none)`. This is `CLAUDE.md`'s "a second, unnamed guard refuses
+// first" shape, met head-on rather than reported as a pass.
+//
+// The mutation is observable well beyond this file, which is the empirical
+// case that the lazy length is load-bearing rather than incidental: the same
+// run reddened `mark_view_test`, `mesh_stats_test` and `ui/stat_rows_test`,
+// each on its own fixture premise that the marks arrays start SHORT.
 // ---------------------------------------------------------------------------
 
 unittest // addFace appends a face and grows NO per-face plane
