@@ -143,9 +143,30 @@ unittest { // typeFrom unknown type returns error
     assert(j["status"].str == "error",
         badIndexedAlias ~ ": expected error, got: " ~ resp);
     assert(j["message"].str.canFind(
-            "`select.element <type> set <idx>`"),
+            "`select.element vertex|edge|polygon set <idx>`"),
         badIndexedAlias ~ " must name the indexed-selection replacement; got: "
         ~ j["message"].str);
+
+    // The hint used to say `select.element <type> set <idx>` for ALL FOUR types
+    // the same message enumerates, and for `item` that is a DEAD END: driven,
+    // `select.element item set 0` answers
+    //   select.element: unknown type 'item' — expected vertex, edge, or polygon
+    // while `layer.select {index, mode}` answers ok. Naming an unexecutable form
+    // is the exact defect this task exists to remove, so the two halves are
+    // pinned separately and BOTH are driven below rather than read.
+    assert(j["message"].str.canFind("`layer.select {index, mode}`"),
+        badIndexedAlias ~ " must name the ITEM replacement too; got: "
+        ~ j["message"].str);
+
+    // Both recommended forms must actually execute. A hint is only worth its
+    // words if the words run.
+    resp = postCommandRaw("select.element polygon set 0");
+    assert(parseJSON(resp)["status"].str == "ok",
+        "the hint's element form must execute; got: " ~ resp);
+    resp = postCommandRaw(
+        `{"id":"layer.select","params":{"index":0,"mode":"set"}}`);
+    assert(parseJSON(resp)["status"].str == "ok",
+        "the hint's item form must execute; got: " ~ resp);
 }
 
 unittest { // dedicated edit-mode commands used by statusline buttons

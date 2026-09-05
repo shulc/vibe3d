@@ -96,7 +96,9 @@ class SelectTypeFromCommand : Command {
                     "select.typeFrom: unknown type '" ~ targetType ~
                     "' — expected vertex, edge, polygon, or item; "
                     ~ "to select an indexed element, use "
-                    ~ "`select.element <type> set <idx>`");
+                    ~ "`select.element vertex|edge|polygon set <idx>`, "
+                    ~ "and for an item `layer.select {index, mode}` "
+                    ~ "(select.element does NOT take item)");
         }
         if (applyHook !is null) applyHook(mode);
         else                    *editModePtr = mode;
