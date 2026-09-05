@@ -52,6 +52,7 @@ public:
     }
 
     /// Parse a comma-separated list of uint vertex indices.
+    /// Kept for the live call from `PathDefineCommand.applyImpl`.
     void setVertsCsv(string csv) {
         import std.string : split, strip;
         import std.conv   : to;
@@ -63,6 +64,7 @@ public:
         }
     }
 
+    /// Kept for the live call from `PathDefineCommand.applyImpl`.
     void setClosed(bool c) { closed_ = c; }
 
     protected override bool applyImpl() {
