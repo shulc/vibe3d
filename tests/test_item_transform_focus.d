@@ -125,8 +125,9 @@ double[3] actionCentre() {
 /// the product (the prepared arm poses the fresh tool before it returns —
 /// `PreparedToolPoseDoorClient.prepareDoorInitialPose`, called from
 /// `prepareArm`; task 1670's `armedToolPoseHook` did this until 4053 deleted
-/// it with the legacy arm branch), and a settle alone would have hidden it: the poll would simply have waited
-/// out the wrong answer and gone green over a race every other consumer of
+/// it with the legacy arm branch), and a settle alone would have hidden it:
+/// the poll would simply have waited out the wrong answer and gone green over
+/// a race every other consumer of
 /// that route still had. The sibling fix on 2026-08-08 landed both halves for
 /// the same reason, and this is the matching pair.
 ///

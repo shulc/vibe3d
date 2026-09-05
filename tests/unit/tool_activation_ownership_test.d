@@ -415,9 +415,15 @@ unittest {
     // the LENGTH is invariant by construction, so the mutant is caught by a
     // byte compare, never by a size. The four cells below put the
     // literal where the arm actually has to lex it, and each pair goes red
-    // exactly when its arm goes; the offset assert above each is the half
-    // that must stay GREEN, so one run buys both. Task 4053 §Мутация quotes
-    // the two reds verbatim.
+    // exactly when its arm goes. Task 4053 §Мутация quotes the two reds
+    // verbatim.
+    //
+    // The two `.length` asserts are BY-CONSTRUCTION guards, not the green
+    // half of a one-run pair: `maskComments` rewrites a `.dup` in place, so
+    // `.length == src.length` holds under every mutation of its body and
+    // cannot distinguish anything. The half that really rides above the red
+    // is the CHAR pair below, which IS arm-sensitive and passed in the same
+    // run that reddened the backtick assert.
     enum charInCode = `char q = '"'; k(); // z();`;
     assert(maskComments(charInCode).length == charInCode.length,
         "task 4053: masking a char literal must preserve offsets");
