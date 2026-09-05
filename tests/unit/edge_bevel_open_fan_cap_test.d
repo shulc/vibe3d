@@ -13,9 +13,26 @@
 // the closed one is a permutation of all sixteen indices and every one of
 // those sixteen distances is 0.0. The only face that differs is the one base
 // polygon that was deleted to open the fan in the first place. So the cap
-// construction does not consult the fan's openness at all -- which makes our
-// refusal a DIVERGENCE, not a simplification, and makes this fixture target
-// geometry rather than a regression lock. Nothing in vibe3d is pinned by it.
+// construction does not consult the fan's openness at all -- which made our
+// refusal a DIVERGENCE rather than a simplification.
+//
+// WHAT CHANGED UNDER IT, and it is the reason three sentences here are in the
+// past tense (task 4335). The refusal is GONE: vibe3d builds the cap on an
+// open fan, and three of the five driven cells now reproduce these dumps
+// vertex for vertex and face for face. So this file is no longer only target
+// geometry -- for those three it is a regression lock. Two cells still
+// diverge and stay target geometry: `open_fan_K2_boundary_L1`, a spoke ON the
+// rim, which the identity above never covered; and `open_fan_K3_L1`, where
+// our cap interior is recorded only at K == 2 and every wider fan keeps a
+// flat cap -- on CLOSED fans as much as open ones, so that one is a separate
+// divergence and not a leftover of openness.
+//
+// STILL TRUE OF *THIS* CELL: it is pinned to nothing in vibe3d. It imports
+// std.{json,file,math,format} and reads the fixture; it cannot see our
+// geometry and stayed green through the whole of task 4335, which is exactly
+// why it could not serve as that task's mutation witness. The cell that CAN
+// is the sibling `tests/unit/edge_bevel_open_fan_cap_parity_test.d`, which
+// builds each shape here and compares it to these dumps.
 //
 // SET EQUALITY, NOT A SWEEP -- the claim above is stated at the strength the
 // cell actually asserts. An earlier version took only the one-sided
