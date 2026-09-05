@@ -29,10 +29,25 @@ class FileQuit : Command {
     // it in place would have asked twice, and — measured on rev.1 of the plan
     // — would have kept the guard at TWO points, so the mutation that removes
     // the guard reddened two of three paths instead of three.
-    override bool discardsUnsavedWork() const { return true; }
+    // THE ONE EXEMPTION, AND IT IS THE HARNESS'S SHUTDOWN ROUTE (task 4380).
+    // `--test` suppresses the modal but still HOLDS the action, and the held
+    // action is what the answer performs — so on the route that has no user to
+    // answer it, the question is a permanent hold. SIGTERM reaches a running
+    // editor as SDL_QUIT and arrives here with `fromWindowClose`, so ONE
+    // recorded mesh edit (dirty ⇒ prompt) made every `--test` instance outlive
+    // its own kill: measured 3/3 survivals after a single `mesh.select` against
+    // 0/3 with no edit, the survivor's `/api/ui/policy` reading
+    // `verdict:"prompt" outcome:"deferred"`. Every OTHER route keeps the
+    // question, including a `file.quit` a test dispatches itself — that one is
+    // suppressed in `applyImpl` below and takes nothing down.
+    override bool discardsUnsavedWork() const {
+        if (fromWindowClose_ && command.g_testMode) return false;
+        return true;
+    }
 
-    /// The window [X] / SIGINT route sets this. It changes exactly one thing:
-    /// whether `--test` suppresses the exit (see `apply()`).
+    /// The window [X] / SIGINT route sets this. It changes exactly two things:
+    /// whether `--test` suppresses the exit (see `apply()`), and whether the
+    /// unsaved-work guard is asked at all under `--test` (see above).
     void setFromWindowClose(bool v) { fromWindowClose_ = v; }
     private bool fromWindowClose_;
 
