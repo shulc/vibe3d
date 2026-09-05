@@ -133,6 +133,19 @@ unittest { // typeFrom unknown type returns error
     auto resp = postCommandRaw(`{"id":"select.typeFrom","params":{"_positional":["bogus"]}}`);
     assert(parseJSON(resp)["status"].str == "error",
         "typeFrom bogus: expected error, got: " ~ resp);
+
+    // A numeric argument on a dedicated type command is an attempted indexed
+    // selection, not a second type slot. Keep the replacement syntax in the
+    // refusal so the rejected call tells the user which command to issue.
+    enum badIndexedAlias = "select.polygon " ~ "0";
+    resp = postCommandRaw(badIndexedAlias);
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "error",
+        badIndexedAlias ~ ": expected error, got: " ~ resp);
+    assert(j["message"].str.canFind(
+            "`select.element <type> set <idx>`"),
+        badIndexedAlias ~ " must name the indexed-selection replacement; got: "
+        ~ j["message"].str);
 }
 
 unittest { // dedicated edit-mode commands used by statusline buttons

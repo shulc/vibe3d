@@ -94,7 +94,9 @@ class SelectTypeFromCommand : Command {
             default:
                 throw new Exception(
                     "select.typeFrom: unknown type '" ~ targetType ~
-                    "' — expected vertex, edge, polygon, or item");
+                    "' — expected vertex, edge, polygon, or item; "
+                    ~ "to select an indexed element, use "
+                    ~ "`select.element <type> set <idx>`");
         }
         if (applyHook !is null) applyHook(mode);
         else                    *editModePtr = mode;
