@@ -43,6 +43,9 @@
 //   * hand the raw polyline midpoint to `hermitePower` as a third
 //     constraint -> `a side of three or more points is APPROXIMATED`
 //     reddens.
+//   * drop the clamp from `endKnotLong` -> `but SHORTENING it must move the
+//     knot off the mirror` reddens, while the three cells that AGREE with
+//     the rival stay green above it.
 //   * mark every vertex-bevel setter as flooring its negatives -> `exactly
 //     one of the four setters floors a negative` reddens, which is the
 //     control that keeps a per-attribute law from being read as a tool-wide
@@ -161,6 +164,21 @@ private V3 knotTangent(V3 pprev, V3 pcur, V3 pnext,
     V3 t;
     foreach (k; 0 .. 3) t[k] = (ln * dp[k] + lp * dn[k]) / s;
     return t;
+}
+
+// The synthesised knot before a chain's first point. The branch is on the
+// chain's POINT COUNT, not on its shape.
+private V3 endKnotShort(V3 p0, V3 p1) {
+    return sub(scale(p0, 2.0), p1);
+}
+
+private V3 endKnotLong(V3 p0, V3 p1, V3 p2, out double kOut) {
+    const V3 d = sub(p0, p1);
+    const V3 e = sub(p1, p2);
+    double k = norm(e) / norm(d) + 2.0;
+    if (k < 3.0) k = 3.0;              // the clamp -- see the discriminator
+    kOut = k;
+    return add(p2, scale(d, k));
 }
 
 // The refuted rival, kept as code so the gap is computed rather than quoted.
@@ -610,6 +628,81 @@ unittest // the side-count dispatch and the three-sided closure precondition
     assert(!closes(starts, ends),
         "a ring open by 1e-6 at unit scale must be refused, silently, with "
       ~ "no patch built");
+}
+
+unittest // the synthesised end knot, and the clamp that separates it from a mirror
+{
+    auto fx  = fixture();
+    auto blk = fx["end_knot_synthesis"];
+    const double eps = num(fx["tolerance"]);
+
+    assert(blk["branch_is_on_point_count_not_shape"].boolean
+        && blk["clamp_is_continuous_at_the_join"].boolean,
+        "both structural facts must stay recorded: the branch is on the "
+      ~ "chain LENGTH, and the two arms meet without a jump");
+
+    // ORDER MATTERS. Every cell that AGREES with the refuted candidate is
+    // asserted first, so a single run that reddens the clamp cell below has
+    // already shown the agreeing cells agreeing.
+    int agreeing = 0, clamped = 0;
+    foreach (cell; blk["cells"].array) {
+        const string nm = cell["name"].str;
+        const V3 p0 = vec(cell["p0"]);
+        const V3 p1 = vec(cell["p1"]);
+        V3 got;
+        double k = 0.0;
+        if (cast(int) num(cell["chain_length"]) == 2) {
+            got = endKnotShort(p0, p1);
+        } else {
+            got = endKnotLong(p0, p1, vec(cell["p2"]), k);
+            assert(abs(k - num(cell["k"])) < eps,
+                format("%s: the frozen k must match max(|far|/|near| + 2, 3)", nm));
+            if (cell["clamp_engaged"].boolean) ++clamped;
+        }
+        assert(dist(got, vec(cell["synthesised_knot"])) < eps,
+            format("%s: the synthesised knot must match the read law", nm));
+
+        const V3 mirror = endKnotShort(p0, p1);
+        assert(dist(mirror, vec(cell["mirror_of_p1_about_p0"])) < eps,
+            format("%s: the frozen mirror must be the mirror", nm));
+        if (dist(got, mirror) < eps) ++agreeing;
+    }
+
+    assert(agreeing >= 3,
+        format("at least three of these cells must AGREE with the refuted "
+             ~ "'always the mirror' candidate -- a corpus that never agrees "
+             ~ "with the rival is not showing you how easy it is to believe "
+             ~ "it; got %s", agreeing));
+    assert(clamped == 1,
+        format("exactly one cell may have the clamp engaged, or the "
+             ~ "discriminator is not isolated; got %s", clamped));
+
+    // THE DISCRIMINATOR: shorten the FAR segment and the clamp holds k at 3,
+    // pushing the synthesised knot past the mirror. Lengthening it -- the
+    // obvious next stand -- does NOT separate them, and the cell above proves
+    // that rather than asserting it.
+    double kShort, kLong;
+    const V3 p0 = [0.0, 0.0, 0.0];
+    const V3 p1 = [1.0, 0.0, 0.0];
+    const V3 farLonger  = endKnotLong(p0, p1, [4.0, 0.0, 0.0], kLong);
+    const V3 farShorter = endKnotLong(p0, p1, [1.5, 0.0, 0.0], kShort);
+    const V3 mirror     = endKnotShort(p0, p1);
+    assert(dist(farLonger, mirror) < eps,
+        format("stretching the far segment must leave the synthesised knot "
+             ~ "ON the mirror -- got %s against %s", farLonger, mirror));
+    assert(dist(farShorter, mirror) > 0.25,
+        format("but SHORTENING it must move the knot off the mirror, or the "
+             ~ "clamp does nothing and 'always the mirror' survives -- got "
+             ~ "%s against %s", farShorter, mirror));
+    assert(kShort == num(blk["clamp_lower_bound"]),
+        "and the clamped cell must sit exactly on the recorded bound");
+
+    // The join is continuous: approach |far| == |near| from the free side.
+    double kA, kB;
+    endKnotLong(p0, p1, [2.0 - 1e-9, 0.0, 0.0], kA);
+    endKnotLong(p0, p1, [2.0 + 1e-9, 0.0, 0.0], kB);
+    assert(abs(kA - kB) < 1e-6,
+        format("the two arms must meet without a jump: %s vs %s", kA, kB));
 }
 
 unittest // register row 12: the vertex bevel's attribute table and handle map

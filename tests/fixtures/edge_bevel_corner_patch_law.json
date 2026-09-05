@@ -444,7 +444,193 @@
   "single_precision_note": "The synthesised knot is rounded to single precision on the way in. In exact arithmetic the two coefficients are zero; in the reference they are zero to about one part in 1e7 of the chord length. A parity band on this construction must be a single-precision band, not a double-precision one, and that is a property of the READ, not a measurement artefact.",
   "single_precision_band_relative": 1e-06,
   "three_or_more_points_uses_a_different_synthesis": true,
-  "what_remains_open": "The end-knot synthesis for a chain of THREE OR MORE points takes a longer branch that was not decoded this pass. Every side of three or more points therefore has its end tangent DIRECTION unpinned, while its magnitude law (equal at both ends, equal to the arc length) is pinned. This is named as the next narrow read, deliberately not guessed."
+  "what_remains_open": "Nothing. The three-or-more-point branch was read too -- see end_knot_synthesis below."
+ },
+ "end_knot_synthesis": {
+  "law": "A side's spline needs a knot BEFORE its first point and AFTER its last; both are synthesised, and the rule branches on the chain's POINT COUNT, not on its shape. With P0, P1, P2 the first three points (mirrored at the far end): for fewer than three points, P_before = 2*P0 - P1 exactly; for three or more, P_before = P2 + k * (P0 - P1) with k = max(|P1 - P2| / |P0 - P1| + 2, 3). The differences are formed in SINGLE precision; k and the final combination are double.",
+  "short_chain_rule": "2*P0 - P1",
+  "long_chain_rule": "P2 + max(|P1-P2|/|P0-P1| + 2, 3) * (P0 - P1)",
+  "branch_is_on_point_count_not_shape": true,
+  "clamp_lower_bound": 3.0,
+  "clamp_is_continuous_at_the_join": true,
+  "clamp_note": "The two arms meet exactly where |P1-P2| == |P0-P1|, so the rule is one continuous clamped expression rather than two cases with a jump. That is worth stating because a reader who only ever tries chains with a LONGER far segment never leaves the unclamped arm and will conclude the synthesised knot is always the mirror of P1 about P0.",
+  "refuted_candidates": [
+   {
+    "name": "always_the_mirror",
+    "formula": "P_before = 2*P0 - P1 for every chain length",
+    "refuted_by": "collinear_far_segment_shorter_THE_CLAMP",
+    "note": "True for a short chain, and true for a long COLLINEAR chain whose far segment is at least as long as the near one -- which is most of the stands anyone builds. It fails only once the clamp engages."
+   }
+  ],
+  "cells": [
+   {
+    "name": "two_point_chain_is_the_plain_mirror",
+    "note": "The short-chain arm, and the one the two-point side law rests on.",
+    "chain_length": 2,
+    "p0": [
+     0.25,
+     -0.5,
+     1.5
+    ],
+    "p1": [
+     2.75,
+     0.5,
+     -0.5
+    ],
+    "synthesised_knot": [
+     -2.25,
+     -1.5,
+     3.5
+    ],
+    "k": null,
+    "mirror_of_p1_about_p0": [
+     -2.25,
+     -1.5,
+     3.5
+    ],
+    "distance_from_mirror": 0.0
+   },
+   {
+    "name": "collinear_uniform",
+    "note": "A straight, evenly spaced chain. k lands exactly on the clamp bound and the synthesised knot IS the mirror -- so this cell agrees with the refuted candidate and separates nothing on its own.",
+    "chain_length": 3,
+    "p0": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "p1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "p2": [
+     2.0,
+     0.0,
+     0.0
+    ],
+    "near_segment_length": 1.0,
+    "far_segment_length": 1.0,
+    "k": 3.0,
+    "clamp_engaged": false,
+    "synthesised_knot": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "mirror_of_p1_about_p0": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "distance_from_mirror": 0.0
+   },
+   {
+    "name": "collinear_far_segment_longer",
+    "note": "Straight but with the FAR segment three times the near one. k rises to 5 and the synthesised knot is STILL exactly the mirror -- the ratio term and the P2 offset cancel. So stretching the far segment, the obvious next stand, still cannot separate the candidates.",
+    "chain_length": 3,
+    "p0": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "p1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "p2": [
+     4.0,
+     0.0,
+     0.0
+    ],
+    "near_segment_length": 1.0,
+    "far_segment_length": 3.0,
+    "k": 5.0,
+    "clamp_engaged": false,
+    "synthesised_knot": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "mirror_of_p1_about_p0": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "distance_from_mirror": 0.0
+   },
+   {
+    "name": "collinear_far_segment_shorter_THE_CLAMP",
+    "note": "THE DISCRIMINATING CELL. The far segment is HALF the near one, so the ratio arm would give 2.5 and the clamp holds k at 3. The synthesised knot is now half a unit past the mirror. Every other cell here agrees with 'always the mirror'; only this one does not.",
+    "chain_length": 3,
+    "p0": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "p1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "p2": [
+     1.5,
+     0.0,
+     0.0
+    ],
+    "near_segment_length": 1.0,
+    "far_segment_length": 0.5,
+    "k": 3.0,
+    "clamp_engaged": true,
+    "synthesised_knot": [
+     -1.5,
+     0.0,
+     0.0
+    ],
+    "mirror_of_p1_about_p0": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "distance_from_mirror": 0.5
+   },
+   {
+    "name": "non_collinear_corner",
+    "note": "A right-angle corner with unequal arms, to show the rule is not a reflection of any kind once the chain bends.",
+    "chain_length": 3,
+    "p0": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "p1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "p2": [
+     1.0,
+     2.0,
+     0.0
+    ],
+    "near_segment_length": 1.0,
+    "far_segment_length": 2.0,
+    "k": 4.0,
+    "clamp_engaged": false,
+    "synthesised_knot": [
+     -3.0,
+     2.0,
+     0.0
+    ],
+    "mirror_of_p1_about_p0": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "distance_from_mirror": 2.8284271247461903
+   }
+  ]
  },
  "side_count_dispatch": {
   "law": "The interpolator branches on the side count N before doing any work: N < 3 refuses outright and returns failure; N == 3 goes to a DEDICATED three-sided routine; N >= 4 goes to the general N-sided routine. The two are different code, not one routine with a parameter.",
@@ -896,7 +1082,6 @@
   "what_remains_open": "The per-vertex geometry Round Level produces under a multi-adjacent selection -- the actual subject of the register row -- is untouched by this read. What the read closes is the surrounding question the row also asserted: whether our single-handle map diverges from the reference's. It does not."
  },
  "what_this_read_did_not_settle": [
-  "The end-knot synthesis for a side of three or more points.",
   "The three-sided interpolator's own interior construction.",
   "The meaning of the per-slot and per-vertex flag bits used by the routing gates; only their arithmetic and their branches are read.",
   "The geometry produced by the exits other than the corner patch -- the three-used-slots-of-five exit and the marker exit in particular, which is what register row 22 still needs.",
