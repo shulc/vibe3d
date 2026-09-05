@@ -34,10 +34,15 @@ module tests.unit.edge_bevel_miter_and_patch_law_test;
 
 import std.json;
 import std.file   : readText;
-import std.math   : abs, fabs;
+import std.math   : fabs;
 import std.format : format;
+import std.algorithm : canFind, sort;
+import std.array     : join;
 
 private enum string kFixture = "tests/fixtures/edge_bevel_miter_and_patch_law.json";
+// The reader reads its OWN source, for the key census at the bottom of this
+// file. Both paths are repo-root relative, like every other fixture reader.
+private enum string kReader  = "tests/unit/edge_bevel_miter_and_patch_law_test.d";
 
 private double num(JSONValue v) {
     switch (v.type) {
@@ -90,12 +95,43 @@ private V3 negated(V3 d) { return [-d[0], -d[1], -d[2]]; }
 
 // Row 22, the router. Only the two gates this row is about, in the order the
 // routine tests them: the ring SHAPE gate first, the marker gate second.
-private string capRoute(int builtPolygons, int slotCount, int marker) {
-    if (builtPolygons == 3 && slotCount == 5) return "tri_cap_family";
-    if (marker != 0)                          return "common_tail_no_cap";
-    if (builtPolygons == 0)                   return "common_tail_no_cap";
+//
+// THE TWO THRESHOLDS ARE PARAMETERS, NOT LITERALS, and that is deliberate. They
+// used to be written 3 and 5 here while the fixture ALSO carried them as
+// `required_built_polygon_count` / `required_slot_count` -- keys that read to
+// any later maintainer as the place the values are pinned, and pinned nothing:
+// editing either fixture number moved no test. A key whose name claims
+// enforcement is worse than an absent check, because it stops anyone adding the
+// real one. Every caller below passes the fixture's own values in.
+private string capRoute(int builtPolygons, int slotCount, int marker,
+                        int requiredBuilt, int requiredSlots) {
+    if (builtPolygons == requiredBuilt && slotCount == requiredSlots)
+        return "tri_cap_family";                       // the SHAPE gate, first
+    foreach (g; kDirectTailGates)
+        if (g.fires(builtPolygons, slotCount, marker))
+            return "common_tail_no_cap";
     return "corner_patch";
 }
+
+// The gates that branch DIRECTLY to the common tail, in the order the routine
+// tests them. They are an array rather than two more `if`s so that their COUNT
+// is a value the fixture's `gates_reaching_the_common_tail_directly` can be
+// checked against, and so that each one can be shown to decide at least one
+// frozen ring -- a gate no cell exercises is a gate the corpus does not pin.
+private struct TailGate {
+    string name;
+    bool function(int, int, int) fires;
+}
+private bool gateMarkerSet(int builtPolygons, int slotCount, int marker) {
+    return marker != 0;
+}
+private bool gateEmptyRing(int builtPolygons, int slotCount, int marker) {
+    return builtPolygons == 0;
+}
+private immutable TailGate[] kDirectTailGates = [
+    TailGate("marker_set",  &gateMarkerSet),
+    TailGate("empty_ring",  &gateEmptyRing),
+];
 
 // ---------------------------------------------------------------------------
 // The REFUTED RIVALS, written out so they can be shown to disagree.
@@ -124,19 +160,43 @@ private V3 rivalMidpoint(V3 a, V3 b, double s) {
 private double rivalSecondRailAtOne(double s) { return 1.0; }
 
 // Testing the marker before the ring shape.
-private string rivalRouteMarkerFirst(int builtPolygons, int slotCount, int marker) {
-    if (marker != 0)                          return "common_tail_no_cap";
-    if (builtPolygons == 3 && slotCount == 5) return "tri_cap_family";
-    if (builtPolygons == 0)                   return "common_tail_no_cap";
+private string rivalRouteMarkerFirst(int builtPolygons, int slotCount, int marker,
+                                     int requiredBuilt, int requiredSlots) {
+    if (marker != 0) return "common_tail_no_cap";
+    if (builtPolygons == requiredBuilt && slotCount == requiredSlots)
+        return "tri_cap_family";
+    if (builtPolygons == 0) return "common_tail_no_cap";
     return "corner_patch";
 }
 
 // Selecting on the slot count alone, ignoring the built-polygon count.
-private string rivalRouteSlotCountAlone(int builtPolygons, int slotCount, int marker) {
-    if (slotCount == 5)     return "tri_cap_family";
-    if (marker != 0)        return "common_tail_no_cap";
-    if (builtPolygons == 0) return "common_tail_no_cap";
+private string rivalRouteSlotCountAlone(int builtPolygons, int slotCount, int marker,
+                                        int requiredBuilt, int requiredSlots) {
+    if (slotCount == requiredSlots) return "tri_cap_family";
+    if (marker != 0)                return "common_tail_no_cap";
+    if (builtPolygons == 0)         return "common_tail_no_cap";
     return "corner_patch";
+}
+
+// ---------------------------------------------------------------------------
+// The key census, at the bottom of this file. Collect every distinct object key
+// the fixture carries and count how many the reader actually indexes.
+// ---------------------------------------------------------------------------
+
+private void collectKeys(JSONValue v, ref bool[string] keys) {
+    if (v.type == JSONType.object) {
+        foreach (k, sub; v.object) { keys[k] = true; collectKeys(sub, keys); }
+    } else if (v.type == JSONType.array) {
+        foreach (sub; v.array) collectKeys(sub, keys);
+    }
+}
+
+// A key counts as READ only when the source INDEXES it -- as `["key"]` or as
+// the membership test `"key" in`. A mention in prose or in a comment does not
+// count, which is the whole point: the census must not be satisfiable by
+// writing the key's name in a sentence.
+private bool keyIsRead(string key, string src) {
+    return src.canFind(`["` ~ key ~ `"]`) || src.canFind(`"` ~ key ~ `" in `);
 }
 
 // ===========================================================================
@@ -345,6 +405,22 @@ unittest {
         "the three quads share their internal boundaries, which is what keeps "
       ~ "the split watertight");
 
+    // The ORDER of the two steps. Until this assert existed the claim lived
+    // only in the toolcard's prose, so a future re-derivation of the WRONG
+    // order -- which is the order an earlier draft of that read actually had --
+    // would have reddened nothing. Prose that nothing tests is how the claim
+    // this task overturned survived as long as it did.
+    assert(threeSid["splitter_runs_after_patches_exist"].boolean,
+        "the splitting routine runs AFTER the three patches exist and writes "
+      ~ "into their records; it is NOT a routine that computes a net for them "
+      ~ "to be built from. A port that runs it first has the data flow "
+      ~ "backwards and will have nothing to write into");
+    assert(threeSid["splitter_order_evidence"].str.length > 40,
+        "the ORDER must carry its evidence, because the thing that establishes "
+      ~ "it is the stores and the absence of a branch -- not the position of "
+      ~ "the calls in the listing, which would be address order masquerading "
+      ~ "as execution order");
+
     assert(threeSid["closure_precondition"]["endpoint_equality_tests"].integer == 3,
         "one endpoint equality test per side");
     assert(threeSid["closure_precondition"]["failure_is_silent"].boolean,
@@ -387,20 +463,88 @@ unittest {
         "that exit is served by a different builder family; the N-sided patch "
       ~ "construction is never reached on it");
 
-    // The law reproduces every frozen ring's route.
-    int routeChecked = 0;
+    // The two thresholds come OUT of the fixture and are handed to the law and
+    // to both rivals. They were literals in this file until a key sweep found
+    // them sitting in the fixture under `required_*` names with nothing reading
+    // them: a field that looks like the ratchet and is not, which is worse than
+    // no field at all because it stops the real assert being written.
+    const int reqBuilt = cast(int) tof["required_built_polygon_count"].integer;
+    const int reqSlots = cast(int) tof["required_slot_count"].integer;
+
+    // The gates that reach the tail directly are a counted set, not two
+    // anonymous `if`s, so the fixture's count is checked against something.
+    assert(kDirectTailGates.length
+             == cast(size_t) router["gates_reaching_the_common_tail_directly"].integer,
+        format("the fixture records %s gates branching straight to the common "
+             ~ "tail, the law models %s -- a gate present in one and not the "
+             ~ "other is a routing difference nothing else here would see",
+               router["gates_reaching_the_common_tail_directly"].integer,
+               kDirectTailGates.length));
+
+    // The law reproduces every frozen ring's route. One cell states its route
+    // only NEGATIVELY -- see the fixture's `inference_boundary` on it: the
+    // gates below the marker gate are not modelled here, so its positive route
+    // name is inferred rather than read, and asserting it would buy a false RED
+    // the day someone models them. The negative is what the read supports and
+    // is also the whole of what that cell contributes.
+    int routeChecked = 0, routePositive = 0, routeNegativeOnly = 0;
     foreach (c; routeCells) {
         const int bp = cast(int) c["built_polygons"].integer;
         const int sc = cast(int) c["slot_count"].integer;
         const int mk = cast(int) c["marker"].integer;
-        const string want = c["route"].str;
-        const string got = capRoute(bp, sc, mk);
-        assert(got == want,
-            format("ring '%s' (built=%s slots=%s marker=%s): frozen route %s, "
-                 ~ "law produced %s", c["name"].str, bp, sc, mk, want, got));
+        const string got = capRoute(bp, sc, mk, reqBuilt, reqSlots);
+        const bool inferred = ("route_is_partly_inferred" in c.object) !is null
+                           && c["route_is_partly_inferred"].boolean;
+        if (inferred) {
+            const string forbidden = c["route_not"].str;
+            assert(got != forbidden,
+                format("ring '%s' (built=%s slots=%s marker=%s): the law routes "
+                     ~ "it to %s, which the fixture records it must NOT take",
+                       c["name"].str, bp, sc, mk, got));
+            assert(c["inference_boundary"].str.length > 40,
+                format("ring '%s' states its route only negatively, so it must "
+                     ~ "carry WHY -- an unexplained partial assertion is "
+                     ~ "indistinguishable from a weakened one",
+                       c["name"].str));
+            ++routeNegativeOnly;
+        } else {
+            const string want = c["route"].str;
+            assert(got == want,
+                format("ring '%s' (built=%s slots=%s marker=%s): frozen route "
+                     ~ "%s, law produced %s",
+                       c["name"].str, bp, sc, mk, want, got));
+            ++routePositive;
+        }
         ++routeChecked;
     }
     assert(routeChecked == 6, "every frozen ring must have been routed");
+    assert(routeNegativeOnly == 1,
+        format("exactly one frozen ring may state its route negatively; %s do. "
+             ~ "If that number grows the corpus is quietly weakening, one cell "
+             ~ "at a time, with every individual step looking reasonable",
+               routeNegativeOnly));
+    assert(routePositive == 5,
+        format("the other five rings must be asserted POSITIVELY, got %s",
+               routePositive));
+
+    // Each direct-tail gate must DECIDE at least one frozen ring. A gate no
+    // cell exercises is a gate the corpus does not pin, and the count assert
+    // above would still pass over it.
+    foreach (g; kDirectTailGates) {
+        bool decided = false;
+        foreach (c; routeCells) {
+            const int bp = cast(int) c["built_polygons"].integer;
+            const int sc = cast(int) c["slot_count"].integer;
+            const int mk = cast(int) c["marker"].integer;
+            // The shape gate is tested first, so a ring it claims never
+            // reaches the tail gates at all.
+            if (bp == reqBuilt && sc == reqSlots) continue;
+            if (g.fires(bp, sc, mk)) { decided = true; break; }
+        }
+        assert(decided,
+            format("no frozen ring reaches the '%s' tail gate, so nothing here "
+                 ~ "pins it", g.name));
+    }
 
     // The ONE-FIELD pair: two rings identical but for the slot count must land
     // in two different routes. This is what refutes a uniform cap model.
@@ -417,17 +561,18 @@ unittest {
       ~ "not a one-field comparison");
     assert(five["slot_count"].integer != six["slot_count"].integer,
         "the pair must differ in the slot count");
-    assert(capRoute(3, cast(int) five["slot_count"].integer, 0)
-        != capRoute(3, cast(int) six["slot_count"].integer, 0),
+    assert(capRoute(3, cast(int) five["slot_count"].integer, 0, reqBuilt, reqSlots)
+        != capRoute(3, cast(int) six["slot_count"].integer, 0, reqBuilt, reqSlots),
         "two rings identical but for the vertex's slot count must leave by "
       ~ "different exits; a model that routes every cap ring uniformly is not "
       ~ "a simplification of this, it is a different construction");
 
     // The two gates' ORDER is load-bearing, and one cell exists to pin it.
-    assert(capRoute(3, 5, 1) == "tri_cap_family",
+    assert(capRoute(reqBuilt, reqSlots, 1, reqBuilt, reqSlots) == "tri_cap_family",
         "the ring shape is tested BEFORE the marker, so a set marker does not "
       ~ "divert a three-of-five ring");
-    assert(rivalRouteMarkerFirst(3, 5, 1) != capRoute(3, 5, 1),
+    assert(rivalRouteMarkerFirst(reqBuilt, reqSlots, 1, reqBuilt, reqSlots)
+        != capRoute(reqBuilt, reqSlots, 1, reqBuilt, reqSlots),
         "the marker-first rival must disagree somewhere, or the gate ORDER is "
       ~ "unpinned and either order would pass");
 
@@ -437,7 +582,8 @@ unittest {
         const int bp = cast(int) c["built_polygons"].integer;
         const int sc = cast(int) c["slot_count"].integer;
         const int mk = cast(int) c["marker"].integer;
-        if (rivalRouteSlotCountAlone(bp, sc, mk) != capRoute(bp, sc, mk))
+        if (rivalRouteSlotCountAlone(bp, sc, mk, reqBuilt, reqSlots)
+              != capRoute(bp, sc, mk, reqBuilt, reqSlots))
             slotAloneDiffers = true;
     }
     assert(slotAloneDiffers,
@@ -448,4 +594,70 @@ unittest {
     assert(fx["what_this_read_did_not_settle"].array.length >= 4,
         "the read's boundary must stay in the file, so the next pass starts "
       ~ "from what is open rather than from a guess");
+
+    // =====================================================================
+    // The KEY CENSUS. Deliberately LAST: it is a coverage ratchet rather than
+    // a law, and it is the assert most likely to redden on an unrelated
+    // fixture edit. Put here, a census red still tells you every law above it
+    // ran and passed -- which is the half of the ordering rule that costs
+    // nothing.
+    //
+    // Why it exists. A key sweep of this file found 35 of its 89 keys that the
+    // reader never touched, and three of those -- the two `required_*` counts
+    // and the direct-tail gate count -- READ as ratchets while pinning
+    // nothing, because the reader carried the same numbers as literals.
+    // Changing the fixture moved no test and the green stayed green. That is a
+    // sharper defect than an absent check: a `required_*` key in a frozen
+    // fixture tells every later maintainer the value is already pinned, so
+    // nobody writes the assert that would pin it.
+    //
+    // The unread half is not a backlog. Prose, provenance and the named rivals
+    // are EVIDENCE, carried for the next reader; the rivals in particular are
+    // enforced through the rival functions written out above, not through
+    // their fixture text. What the census forbids is the third category: a key
+    // whose NAME claims enforcement, sitting unread.
+    // =====================================================================
+    auto contract = fx["reader_contract"];
+    assert(contract["convention"].str.length > 40,
+        "the split between enforced and evidence keys must be stated in the "
+      ~ "fixture, or the next reader has to guess which half a new key is in");
+    assert(contract["census_rule"].str.length > 40,
+        "the census rule must say what counts as READ, or the two numbers "
+      ~ "below are unreproducible");
+
+    bool[string] keySet;
+    collectKeys(fx, keySet);
+    const string readerSrc = readText(kReader);
+    assert(readerSrc.length > 1000,
+        "the census reads this file's own source; if that read came back "
+      ~ "empty the census would pass over nothing and mean nothing");
+
+    string[] unread;
+    size_t keysRead = 0;
+    foreach (k; keySet.keys) {
+        if (keyIsRead(k, readerSrc)) ++keysRead;
+        else unread ~= k;
+    }
+    sort(unread);
+
+    assert(keysRead == cast(size_t) contract["keys_read_by_the_reader"].integer,
+        format("the reader indexes %s of the fixture's keys, the fixture "
+             ~ "records %s. Unread now: %s",
+               keysRead, contract["keys_read_by_the_reader"].integer,
+               unread.join(", ")));
+    assert(keySet.length == cast(size_t) contract["keys_total"].integer,
+        format("the fixture carries %s distinct keys, it records %s. Unread: "
+             ~ "%s", keySet.length, contract["keys_total"].integer,
+               unread.join(", ")));
+
+    // And the rule the census exists to enforce, stated directly rather than
+    // left to the two numbers: no key whose name claims enforcement may be
+    // unread. This one does not need the frozen counts to be right.
+    foreach (k; unread) {
+        assert(!k.canFind("required_"),
+            format("fixture key '%s' names itself a requirement and nothing "
+                 ~ "reads it -- either read it or rename it to observed_*, "
+                 ~ "because a `required_` key that pins nothing is read by the "
+                 ~ "next maintainer as the check that already exists", k));
+    }
 }

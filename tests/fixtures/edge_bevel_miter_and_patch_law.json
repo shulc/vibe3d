@@ -171,6 +171,8 @@
   "interior_control_points_are_contiguous": true,
   "contiguity_note": "the six interior points occupy six consecutive same-sized slots, which is what identifies them as one array of 2-per-side rather than three unrelated pairs",
   "shared_internal_boundary": true,
+  "splitter_runs_after_patches_exist": true,
+  "splitter_order_evidence": "the three patch-creation calls each store their return value into consecutive slots of ONE three-element array, and the splitting routine is then handed the ADDRESS of that array's first slot, so it cannot run before the patches exist. The region containing all four calls is a single straight-line block: it holds no branch, and no jump anywhere in the routine targets an address inside it. This is stated because the position of the calls in the listing alone would NOT establish it -- address order is not execution order, and an earlier draft of this read had the order the other way round.",
   "shared_internal_boundary_note": "inside the splitting routine one computed row is stored to TWO different offsets of the same patch record, which is what makes the three quads share their internal boundaries and stay watertight",
   "divisors_present": [
    2,
@@ -257,6 +259,9 @@
     "slot_count": 5,
     "marker": 0,
     "route": "corner_patch",
+    "route_is_partly_inferred": true,
+    "route_not": "tri_cap_family",
+    "inference_boundary": "the two gates this fixture models place this ring outside the tri-cap exit; which exit it then reaches depends on gates that are NOT modelled here, so the positive route name on this row is inferred and is not asserted. The negative is what the read supports and is also the whole of what this cell contributes -- it is the conjunction separator.",
     "note": "slot count 5 but built-polygon count 4: the shape gate is a CONJUNCTION, so this ring does NOT take the tri-cap exit. Without this cell every frozen ring agrees with a rival that selects on the slot count alone, and the corpus would pin nothing about the conjunction -- the separation assert in the reader caught exactly that before this cell existed. The gates BELOW the marker gate are not modelled here, so this row states the route as far as the two gates this row is about carry it."
    }
   ],
@@ -265,6 +270,12 @@
    "gate_order_marker_first": "testing the marker before the ring shape -- which would divert the three-of-five-with-marker ring to the tail",
    "slot_count_alone": "selecting the tri-cap family on the slot count alone, ignoring the built-polygon count"
   }
+ },
+ "reader_contract": {
+  "keys_total": 99,
+  "keys_read_by_the_reader": 67,
+  "convention": "Every count, boolean and cell field this fixture states as a LAW is read and enforced by the reader beside it. The keys it does not read are evidence carried for the next reader: prose (law, note, description, the why_* reasons), provenance bookkeeping, and the named rivals -- whose refutation is enforced through the reader's own written-out rival functions rather than through their fixture text. No key whose NAME claims enforcement may sit in the unread half.",
+  "census_rule": "a key counts as READ when the reader's source contains it as a JSON index [\"key\"] or as a membership test \"key\" in; a mention in prose or in a comment does not count"
  },
  "what_this_read_did_not_settle": [
   "the exact rational coefficients the three-sided splitting routine uses for each interior control row -- the divisors and the three-fold average are read, the full per-row weights are not",
