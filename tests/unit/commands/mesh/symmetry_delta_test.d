@@ -423,7 +423,7 @@ unittest {
 // Stage N deleted the hatch. With no second in-process path the cell would set
 // the flag to the value it already has and compare a path against itself, so
 // it is DELETED rather than left to go vacuously green, and declared in
-// `tests/unit/census_ledger.txt`.
+// `tests/unit/unittest_census_ledger.txt`.
 //
 // WHAT STILL SEES THE PASS-2 DEFECT, because that is the question a deletion
 // here has to answer: W-b5 below, which replays the recorded delta FORWARD and

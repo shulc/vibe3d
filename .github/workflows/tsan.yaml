@@ -145,7 +145,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        # fetch-depth: 0 is REQUIRED, not tidiness. `tests/unit/census_gate.d`
+        # fetch-depth: 0 is REQUIRED, not tidiness. `tests/unit/unittest_census_gate.d`
         # guards against silently losing test coverage by walking the history
         # behind the branch point — and on a SHALLOW clone that walk is cut off
         # at a graft and returns a NUMBER instead of an error. It measured one

@@ -220,7 +220,7 @@ JSONValue selectGridBoundaryEdgeAndReturnPre() {
 // Stage N deleted the hatch, so there is one arm. Keeping the cell would have
 // left it issuing two commands that no longer exist and comparing the delta
 // path against itself, which is green whatever the delta does. Deleted, and
-// declared in `tests/unit/census_ledger.txt`.
+// declared in `tests/unit/unittest_census_ledger.txt`.
 //
 // The undo ROUND-TRIP it also asserted is not lost — cells 2 to 6 below each
 // carry `extrude → undo == pre` on the surviving path, and cell 5 is the

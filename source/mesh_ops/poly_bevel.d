@@ -67,7 +67,7 @@ import mesh_edit_delta : MeshEditScope;
 // of them MUTATE, so they cannot call a kernel on a bare `Mesh` any more;
 // they go through the ONE `bevelOnce` helper below, which is the single place
 // that says why their batch is `unrecorded`. The block count is what
-// `tests/unit/census_gate.d` counts and NONE was dropped — the gate's scan is
+// `tests/unit/unittest_census_gate.d` counts and NONE was dropped — the gate's scan is
 // lexical, so a block inside a `mixin template` and a block at module scope
 // count the same, and moving them within one file moves no number.
 //

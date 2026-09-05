@@ -42,7 +42,7 @@ import std.range : walkLength;
 import std.regex : ctRegex, matchAll;
 import std.string : endsWith, split, splitLines, strip;
 
-import tests.unit.census_gate : scanD;
+import tests.unit.unittest_census_gate : scanD;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -205,7 +205,7 @@ unittest // comments and literals do not impersonate compiler-visible guards
     // Every decoy carries an OPENING BRACE. Without one, `scanD` would not
     // count it even with the comment/string stripping deleted, and this whole
     // arm passes over tokens that were never countable — a fixture that cannot
-    // fail, which is the defect the task itself is about. `census_gate.d`'s own
+    // fail, which is the defect the task itself is about. `unittest_census_gate.d`'s own
     // decoys are braced for exactly this reason.
     enum fixture = q{
         unittest {}

@@ -49,7 +49,7 @@
 // under GitHub Actions goes RED instead of quiet.
 //
 // THE INVARIANT. Let A be the live count and D the sum of declared drops in
-// `tests/unit/census_ledger.txt`. The gate asserts
+// `tests/unit/unittest_census_ledger.txt`. The gate asserts
 //
 //     A(work) + D(work)  >=  max over lane revisions r of ( A(r) + D(r) )
 //
@@ -82,9 +82,9 @@
 //
 // STANDALONE USE (counting an arbitrary tree, e.g. a historical checkout):
 //
-//     rdmd -version=CensusTool tests/unit/census_gate.d <tree-root>
+//     rdmd -version=CensusTool tests/unit/unittest_census_gate.d <tree-root>
 //
-module tests.unit.census_gate;
+module tests.unit.unittest_census_gate;
 
 import std.array      : appender, array, join;
 import std.algorithm  : sort, filter, map, endsWith, startsWith;
@@ -250,7 +250,7 @@ private bool isAssertName(const(char)[] id) @safe pure nothrow @nogc
 }
 
 /// The helper half of `isAssertName`, for the REPORT only — it is not gated
-/// separately (that would need a third column in `census_ledger.txt` and would
+/// separately (that would need a third column in `unittest_census_ledger.txt` and would
 /// invalidate every line already in it). Its whole job is to let a failure
 /// message say WHICH kind of assertion went missing.
 private bool isHelperAssertName(const(char)[] id) @safe pure nothrow @nogc
@@ -556,12 +556,58 @@ Census total(const FileCensus[] files) @safe pure nothrow @nogc
 
 /// Repo-relative path of the ledger. It is read from the working tree AND from
 /// the branch point, and only the difference between the two grants anything.
-enum ledgerPath = "tests/unit/census_ledger.txt";
+enum ledgerPath = "tests/unit/unittest_census_ledger.txt";
+
+/// Every name this ledger has borne, current first.
+///
+/// WHY A LIST AND NOT A CONSTANT (task 4102). The baseline is git history, so
+/// the ledger is fetched BY NAME out of every lane revision — `git ls-tree`
+/// then `git cat-file`. A revision older than a rename carries the file under
+/// the previous name, `ls-tree` does not offer it, and `dropsOf` answers ZERO
+/// for that revision **without saying so**: the totals still print, the gate
+/// still passes, and the bar has quietly fallen by the whole size of the
+/// ledger. That is the vacuous-predicate shape, not a missing check — which is
+/// why the rename came with `revsWithLedger` below rather than with an
+/// argument that the arithmetic happens to survive it.
+///
+/// RETIRING AN ENTRY (task 4270) is safe only once no live lane's branch point
+/// predates the rename that added it; `revsWithLedger` is what will say so,
+/// loudly, if it is dropped too early.
+immutable string[] ledgerPathsHistoric = [
+    ledgerPath,
+    "tests/unit/census_ledger.txt",   // up to and including task 4102
+];
+
+/// Is `p` the ledger under any name this gate knows?
+private bool isLedgerPath(const(char)[] p) @safe pure nothrow @nogc
+{
+    foreach (name; ledgerPathsHistoric) if (p == name) return true;
+    return false;
+}
+
+/// What one ledger blob said. `found` is separate from a zero total on purpose:
+/// "no ledger at this revision" and "a ledger declaring nothing" are the same
+/// two numbers, and only one of them is a defect.
+struct LedgerRead
+{
+    Census drops;
+    size_t rows;    /// declaration lines, so a population can be asserted
+    bool   found;
+}
 
 /// Sum of the drops a ledger declares. Blank lines and `#` comments are
 /// ignored; anything else must be a well-formed `drop` line, so a typo in a
 /// declaration is loud instead of silently granting nothing.
 Census parseLedger(const(char)[] text, string origin)
+{
+    size_t rows;
+    return parseLedger(text, origin, rows);
+}
+
+/// ditto, also reporting how many declaration lines were parsed — the
+/// population behind the total, which a caller can then refuse to accept as
+/// empty.
+Census parseLedger(const(char)[] text, string origin, out size_t rows)
 {
     Census d;
     foreach (lineNo, line; text.splitLines)
@@ -602,6 +648,7 @@ Census parseLedger(const(char)[] text, string origin)
 
         d.blocks  += nums[0];
         d.asserts += nums[1];
+        ++rows;
     }
     return d;
 }
@@ -759,7 +806,8 @@ enum maxLaneRevisions = 512;
 /// One `git ls-tree` record under the census roots.
 private struct TreeEntry { string oid; string path; }
 
-/// Tree entries at `rev`: the `.d` files, plus the ledger if it exists there.
+/// Tree entries at `rev`: the `.d` files, plus the ledger under whichever of
+/// its names that revision used.
 private TreeEntry[] revEntries(string root, string rev)
 {
     auto ls = git(root, ["ls-tree", "-r", "-z", rev, "--"] ~ censusRoots.dup);
@@ -782,7 +830,7 @@ private TreeEntry[] revEntries(string root, string rev)
         if (sp < 0) continue;
         auto oid = head3[sp + 1 .. $];
 
-        if (path == ledgerPath || path.endsWith(".d"))
+        if (isLedgerPath(path) || path.endsWith(".d"))
             acc.put(TreeEntry(oid, path));
     }
     return acc.data;
@@ -796,14 +844,14 @@ private TreeEntry[] revEntries(string root, string rev)
 /// walking one revision costs, since adjacent commits share nearly every blob.
 private void fetchBlobs(string root, const(TreeEntry[])[] revs,
                         ref Census[string] blobCensus,
-                        ref Census[string] ledgerDrops)
+                        ref LedgerRead[string] ledgerDrops)
 {
     bool[string] wantLedger;
     auto order = appender!(string[]);
     foreach (entries; revs)
         foreach (ref e; entries)
         {
-            if (e.path == ledgerPath)
+            if (isLedgerPath(e.path))
             {
                 if (e.oid in ledgerDrops || e.oid in wantLedger) continue;
                 wantLedger[e.oid] = true;
@@ -841,8 +889,13 @@ private void fetchBlobs(string root, const(TreeEntry[])[] revs,
         auto text = cast(const(char)[]) blob[pos .. pos + size];
         pos += size + 1;                       // blob plus its trailing newline
 
-        if (oid in wantLedger) ledgerDrops[oid] = parseLedger(text, ledgerPath ~ " @" ~ oid[0 .. 8]);
-        else                   blobCensus[oid]  = scanD(text);
+        if (oid in wantLedger)
+        {
+            size_t rows;
+            const drops = parseLedger(text, ledgerPath ~ " @" ~ oid[0 .. 8], rows);
+            ledgerDrops[oid] = LedgerRead(drops, rows, true);
+        }
+        else blobCensus[oid] = scanD(text);
     }
 }
 
@@ -885,7 +938,7 @@ FileCensus[] scanRevision(string root, string rev)
     if (entries.length == 0) return null;
 
     Census[string] blobCensus;
-    Census[string] ledgerDrops;
+    LedgerRead[string] ledgerDrops;
     fetchBlobs(root, [entries], blobCensus, ledgerDrops);
     return filesOf(entries, blobCensus);
 }
@@ -896,7 +949,7 @@ private FileCensus[] filesOf(const(TreeEntry)[] entries, const Census[string] bl
     auto acc = appender!(FileCensus[]);
     foreach (ref e; entries)
     {
-        if (e.path == ledgerPath) continue;
+        if (isLedgerPath(e.path)) continue;
         if (auto c = e.oid in blobCensus) acc.put(FileCensus(e.path, *c));
     }
     auto files = acc.data;
@@ -904,13 +957,16 @@ private FileCensus[] filesOf(const(TreeEntry)[] entries, const Census[string] bl
     return files;
 }
 
-/// Drops declared by the ledger at a revision (zero when it has none).
-private Census dropsOf(const(TreeEntry)[] entries, const Census[string] ledgerDrops)
+/// Drops declared by the ledger at a revision, and whether one was there at
+/// all. The CURRENT name is preferred, so a legacy file resurrected by a rebase
+/// beside the live one cannot be spent as a second allowance.
+private LedgerRead dropsOf(const(TreeEntry)[] entries, const LedgerRead[string] ledgerDrops)
 {
-    foreach (ref e; entries)
-        if (e.path == ledgerPath)
-            if (auto d = e.oid in ledgerDrops) return *d;
-    return Census.init;
+    foreach (name; ledgerPathsHistoric)
+        foreach (ref e; entries)
+            if (e.path == name)
+                if (auto d = e.oid in ledgerDrops) return *d;
+    return LedgerRead.init;
 }
 
 private ptrdiff_t lastIndexOf(const(char)[] s, char c) @safe pure nothrow @nogc
@@ -947,6 +1003,12 @@ struct Verdict
     bool          shallowClone;       /// history is grafted, so any range is a guess
     string        baseRev;     /// the HIGH-WATER revision, the one that binds
     size_t        revsWalked;
+    /// How many of those revisions actually presented a ledger, under any name
+    /// in `ledgerPathsHistoric`. Below `revsWalked` means declared drops are
+    /// being read as zero somewhere in the walk (task 4102).
+    size_t        revsWithLedger;
+    size_t        baseLedgerRows;   /// declaration lines at the binding revision
+    size_t        workLedgerRows;   /// ... and in the working tree
     Census        work, base;  /// live counts
     Census        workDrops, baseDrops;
     FileCensus[]  workFiles, baseFiles;
@@ -988,35 +1050,40 @@ Verdict judge(string root)
     }
 
     Census[string] blobCensus;
-    Census[string] ledgerDrops;
+    LedgerRead[string] ledgerDrops;
     fetchBlobs(root, entries, blobCensus, ledgerDrops);
 
     size_t bestIx;
     long   bestBar = long.min;
-    Census bestLive, bestDrops;
+    Census bestLive;
+    LedgerRead bestLedger;
     foreach (i; 0 .. revs.length)
     {
-        const live  = total(filesOf(entries[i], blobCensus));
-        const drops = dropsOf(entries[i], ledgerDrops);
+        const live = total(filesOf(entries[i], blobCensus));
+        const led  = dropsOf(entries[i], ledgerDrops);
+        if (led.found) ++v.revsWithLedger;
         // One scalar picks the binding revision, so the failure message names a
         // single coherent baseline instead of two different ones.
-        const bar = (live.blocks + drops.blocks) + (live.asserts + drops.asserts);
-        if (bar > bestBar) { bestBar = bar; bestIx = i; bestLive = live; bestDrops = drops; }
+        const bar = (live.blocks + led.drops.blocks) + (live.asserts + led.drops.asserts);
+        if (bar > bestBar) { bestBar = bar; bestIx = i; bestLive = live; bestLedger = led; }
     }
 
     v.baseRev    = revs[bestIx];
     v.revsWalked = revs.length;
     v.baseFiles  = filesOf(entries[bestIx], blobCensus);
-    v.base       = bestLive;
-    v.baseDrops  = bestDrops;
+    v.base           = bestLive;
+    v.baseDrops      = bestLedger.drops;
+    v.baseLedgerRows = bestLedger.rows;
 
     v.workFiles  = scanWorkingTree(root);
     v.work       = total(v.workFiles);
 
     const workLedgerPath = buildPath(root, ledgerPath);
+    size_t workRows;
     v.workDrops = parseLedger(
         exists(workLedgerPath) ? cast(const(char)[]) read(workLedgerPath) : "",
-        ledgerPath ~ " (working tree)");
+        ledgerPath ~ " (working tree)", workRows);
+    v.workLedgerRows = workRows;
 
     v.ran = true;
     return v;
@@ -1028,7 +1095,8 @@ string report(const ref Verdict v)
 {
     auto s = appender!string;
     s.put("TEST CENSUS DROPPED (task 0835)\n");
-    s.put(format("  high-water rev : %s   (of %d lane revision(s))\n", v.baseRev, v.revsWalked));
+    s.put(format("  high-water rev : %s   (of %d lane revision(s), %d with a ledger)\n",
+                 v.baseRev, v.revsWalked, v.revsWithLedger));
     s.put(format("  blocks         : %d there -> %d now  (declared drops %d -> %d)  slack %d\n",
                  v.base.blocks, v.work.blocks, v.baseDrops.blocks, v.workDrops.blocks, v.blocksSlack));
     s.put(format("  asserts        : %d there -> %d now  (declared drops %d -> %d)  slack %d\n",
@@ -1131,6 +1199,33 @@ unittest
             "this build really has no baseline, say so with %s=none.",
             branchPointEnv, branchPointEnv));
     }
+
+    // THE POPULATION FLOOR (task 4102). Everything above compares two numbers;
+    // these two say the numbers were computed over something. The ledger is
+    // fetched out of git BY NAME at every lane revision, so a rename — or a
+    // path typo, or a lane whose branch point predates the ledger — makes
+    // `dropsOf` answer zero for a revision and every drop declared there stops
+    // counting. No other check here can see that: the totals still print, the
+    // verdict is still green, and the bar has fallen by the size of the ledger.
+    //
+    // The order matters. The working-tree floor sits ABOVE the walk's, because
+    // a rename that forgets `ledgerPathsHistoric` leaves the working tree
+    // perfectly readable and only the HISTORY blind — so a single run that
+    // stops on the second assert has already shown the first one passing.
+    assert(v.workLedgerRows > 0, format(
+        "census gate: the working-tree ledger %s parsed ZERO declaration rows. " ~
+        "Either nothing is there under that name or the file was emptied, and " ~
+        "both make every declared drop free.", ledgerPath));
+
+    assert(v.revsWithLedger == v.revsWalked, format(
+        "census gate: %d of %d lane revision(s) carry no ledger under any name " ~
+        "this gate knows (%s), so a drop declared at such a revision is being " ~
+        "read as zero and the bar has silently fallen by that much. If the " ~
+        "ledger was renamed, put the PREVIOUS path into `ledgerPathsHistoric`; " ~
+        "if a lane's branch point genuinely predates the ledger (task 0835), " ~
+        "pin a later one with VIBE3D_CENSUS_BASE=<rev>.",
+        v.revsWalked - v.revsWithLedger, v.revsWalked,
+        ledgerPathsHistoric.join(", ")));
 
     assert(v.ok, report(v));
 }
@@ -1539,9 +1634,14 @@ void main(string[] args)
     {
         auto v = judge(root);
         writefln("ran=%s degraded=%s supplied=%s unresolved=%s shallow=%s " ~
-                 "blindOnPurpose=%s ok=%s baseRev=%s revs=%d blocksSlack=%d assertsSlack=%d",
+                 "blindOnPurpose=%s ok=%s baseRev=%s revs=%d revsWithLedger=%d " ~
+                 "baseRows=%d workRows=%d baseDrops=%d/%d workDrops=%d/%d " ~
+                 "blocksSlack=%d assertsSlack=%d",
                  v.ran, v.degraded, v.baselineSupplied, v.baselineUnresolved,
                  v.shallowClone, v.blindOnPurpose, v.ok, v.baseRev, v.revsWalked,
+                 v.revsWithLedger, v.baseLedgerRows, v.workLedgerRows,
+                 v.baseDrops.blocks, v.baseDrops.asserts,
+                 v.workDrops.blocks, v.workDrops.asserts,
                  v.blocksSlack, v.assertsSlack);
         if (!v.ok) writeln(report(v));
         return;

@@ -1,6 +1,6 @@
 # Declared drops in the test census — the ledger the gate reads (task 0835).
 #
-# The gate lives in tests/unit/census_gate.d and runs inside
+# The gate lives in tests/unit/unittest_census_gate.d and runs inside
 # `dub test --config=tests`. It counts `unittest` blocks and assertion tokens
 # over source/ ∪ tests/unit/ in the working tree, counts them again at every
 # revision of the current lane (the branch point and each commit since) with

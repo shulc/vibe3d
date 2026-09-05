@@ -522,7 +522,7 @@ static assert(countArrayShapedFields!Mesh == 34,
 // lines — its largest single drop of the whole plan — while NEITHER number below
 // moved: 377 / 307 on `b14cc214` before it and 377 / 307 on `e7faf2fe` after it,
 // both measured here. This ratchet holds the DECLARED surface. The counter that
-// sees unittest blocks is `tests/unit/census_gate.d`, and it sums them
+// sees unittest blocks is `tests/unit/unittest_census_gate.d`, and it sums them
 // TREE-WIDE, so putting fifty of them back inside `struct Mesh` moves nothing
 // anywhere — a named gap, not a claim this block covers it.
 //

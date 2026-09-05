@@ -553,7 +553,7 @@ unittest {
 // happened" green this repo keeps paying for. The tracked copy is therefore
 // the one below; §3.6 of `doc/bus_sync_listeners_plan.md` carries the same
 // nineteen rows with a paragraph of reasoning each, and the two are edited
-// together. Precedent: `tests/unit/census_ledger.txt`.
+// together. Precedent: `tests/unit/unittest_census_ledger.txt`.
 //
 // WHY PER-SYMBOL COUNTS AND NOT `file:line`, AND NOT PER FILE EITHER. A
 // `file:line` table reddens on every unrelated edit ABOVE a row, which trains

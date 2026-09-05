@@ -287,7 +287,7 @@ unittest
     // number only refuses a run that looked at nothing. It is a floor rather
     // than an exact count on purpose: several lanes add fixtures concurrently,
     // and an exact count would be a rebase conflict per lane for no gain
-    // (`tests/unit/census_gate.d`'s header records that lesson).
+    // (`tests/unit/unittest_census_gate.d`'s header records that lesson).
     assert(s.files >= 100,
            format("fixture_parameters_census: the scan found only %d fixture "
                   ~ "JSON file(s) under %s -- a census that passes because it "

@@ -2198,7 +2198,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     }
 
     // THE SIX MOVED `unittest` BLOCKS (§2.7), and the ledger they must not
-    // move. `tests/unit/census_gate.d` counts blocks LEXICALLY over
+    // move. `tests/unit/unittest_census_gate.d` counts blocks LEXICALLY over
     // `source/ ∪ tests/unit/`, so a block inside a `mixin template` and a
     // block at module scope count the same and this move is a ledger no-op —
     // which is exactly the claim §2.7 makes ("Expected: 0 dropped") and which

@@ -40,7 +40,7 @@ import std.conv   : to;
 import std.string : startsWith;
 
 /// tests/unit/toolchain_floor_test.d -> tests/unit -> tests -> repo root.
-/// __FILE_FULL_PATH__ instead of cwd, matching census_gate.d's
+/// __FILE_FULL_PATH__ instead of cwd, matching unittest_census_gate.d's
 /// `censusRepoRoot`: `dub test` is expected to run from the repo root, but
 /// nothing here should quietly go blind if it is ever invoked from elsewhere.
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

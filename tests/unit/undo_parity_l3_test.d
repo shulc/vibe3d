@@ -172,7 +172,7 @@ enum uint[] kVertOperand = [2u, 5u];
 // druntime runs every unittest module in ONE process, so a cell that left the
 // flag set steered the other fifteen hatched files. The flag no longer exists,
 // so neither does the hazard, and the one block that witnessed the restore is
-// declared in `tests/unit/census_ledger.txt`.
+// declared in `tests/unit/unittest_census_ledger.txt`.
 //
 // The capture arm this file's `l3RunCell` used it for went with it — see that
 // function.

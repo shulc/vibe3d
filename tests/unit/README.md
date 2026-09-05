@@ -36,7 +36,7 @@ Naming: `tests/unit/<module_path>_test.d` mirroring the `source/` layout, with
 name starts at `tests.unit`.
 
 A file here without the `_test` suffix is a **harness** shared by the test
-modules around it (`census_gate.d`, `ui/headless_panel.d`), not a mirror of a
+modules around it (`unittest_census_gate.d`, `ui/headless_panel.d`), not a mirror of a
 `source/` module.
 
 One file mirrors nothing in `source/` on purpose: `run_test_scratch_test.d`
@@ -68,9 +68,9 @@ Scale X row and asserts the mesh. About 0.4 ms per gesture.
 
 ## The census gate (task 0835)
 
-`census_gate.d` counts `unittest` blocks and assertion tokens over
+`unittest_census_gate.d` counts `unittest` blocks and assertion tokens over
 `source/` ∪ `tests/unit/` and fails the run when that count falls below the
-highest this lane has already reached, unless a line in `census_ledger.txt`
+highest this lane has already reached, unless a line in `unittest_census_ledger.txt`
 accounts for the loss. It exists because task 0706 destroyed **279 blocks and
 1492 assertions** behind a clean build and 179 passing modules; the only thing
 that noticed was a human counting.
@@ -82,7 +82,7 @@ What it costs you:
 | adding tests | nothing — growth is free, no number to bump |
 | moving a block between files, splitting a module | nothing — the count is a sum over both roots, so a move is invisible |
 | editing a test | nothing — only the count matters, not the text |
-| **deleting tests** | one appended line in `census_ledger.txt` saying how many and why |
+| **deleting tests** | one appended line in `unittest_census_ledger.txt` saying how many and why |
 
 The last row is the whole ceremony. The numbers have to close exactly: the
 failure message prints the shortfall it still sees and names the files that
@@ -98,7 +98,7 @@ gate prints a `SKIPPED` line to stderr rather than passing quietly.
 To count a tree by hand, or a historical one:
 
 ```bash
-rdmd -version=CensusTool tests/unit/census_gate.d .                  # working tree
-rdmd -version=CensusTool tests/unit/census_gate.d . --rev <sha>      # any revision
-rdmd -version=CensusTool tests/unit/census_gate.d . --per-file       # per file
+rdmd -version=CensusTool tests/unit/unittest_census_gate.d .                  # working tree
+rdmd -version=CensusTool tests/unit/unittest_census_gate.d . --rev <sha>      # any revision
+rdmd -version=CensusTool tests/unit/unittest_census_gate.d . --per-file       # per file
 ```

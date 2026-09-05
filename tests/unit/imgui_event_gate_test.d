@@ -213,7 +213,7 @@ unittest {
     // the process's working directory: a cwd-relative walk either throws in a
     // different cwd or, softened with an existence check, scans nothing and
     // passes over an empty input. Same construction as
-    // `tests/unit/census_gate.d`. The denominator is asserted for the same
+    // `tests/unit/unittest_census_gate.d`. The denominator is asserted for the same
     // reason — a scan that reached zero files would satisfy every count below.
     import std.path : dirName, buildPath, relativePath;
     import std.file : dirEntries, SpanMode, readText, exists, isDir;

@@ -318,7 +318,7 @@ unittest {
 // compare against; keeping the cell would have made it flip the flag to the
 // value it already has and compare a path to itself — green before a defect
 // and green after it. It is DELETED, not weakened, and declared in
-// `tests/unit/census_ledger.txt`.
+// `tests/unit/unittest_census_ledger.txt`.
 //
 // WHAT STILL SEES THE DEFECT IT CAUGHT, so this is a removal and not a hole:
 // the FROZEN parity oracle `tests/fixtures/undo_parity/position_marks.json`,
