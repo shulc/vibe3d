@@ -991,8 +991,14 @@ ModelSpace primaryModelSpace() {
         ? primaryModelSpaceResolver() : ModelSpace.world();
 }
 
-// THE TEST-ACCESS SEAM. Six readers, one block, `version (unittest)` — and it
-// is the only thing in this file that exists for a test. Until task 4120 this
+// THE TEST-ACCESS SEAM. Six accessors, one block, `version (unittest)` — and
+// it is the only thing in this file that exists for a test. ACCESSORS, not
+// readers: `testExclusiveSelect` MUTATES, and two of the rest used to hand out
+// a writable `Mesh*` / `ImageData*` when their three call sites only ever
+// compared identity. Those two now answer the ADDRESS as a `size_t`, which is
+// what the cells were asking for, and the pending-image one answers
+// `const(Mesh)*`, so the only write surface the seam still exposes is the one
+// that is deliberately a mutator. Until task 4120 this
 // tail instead read `version (DocumentUnitTests) { import
 // tests.unit.document_test : DocumentTests; mixin DocumentTests; }`: a
 // production module importing a test module, and a live CYCLE, since that
@@ -1019,17 +1025,26 @@ ModelSpace primaryModelSpace() {
 // THE COST, PLAINLY. These six are public inside a `-unittest` build, so any
 // test module could call them; they exist in no shipped build, which is the
 // whole difference from `package`. The caller set is closed by
-// `tests/unit/document_seam_census_test.d` — one file may name them, and a
-// second one reddens that gate.
+// `tests/unit/document_seam_census_test.d` — one file may name them, a second
+// one reddens that gate, and a SEVENTH accessor added here reddens it too.
 version (unittest) {
     /// True iff the history bucket for `l`'s KIND holds `l`. The storage read
     /// the document oracle needs and that no public accessor can answer:
     /// `selectionState` resolves current-first by design, so it can never say
     /// that an item is in both lists.
     ///
-    /// Not a `deselected_` getter on purpose. Handing the bucket out would
-    /// have let a caller assert over an EMPTY one and call it a pass; this
-    /// spelling has no vacuous reading.
+    /// Not a `deselected_` getter on purpose: handing the whole bucket out
+    /// would widen the seam from one question to the storage itself.
+    ///
+    /// It does NOT, however, remove the vacuous reading, and this comment
+    /// claimed it did until the 4120 review measured otherwise.
+    /// `!testHistoryBucketHolds(d, l)` is truth-equivalent to the
+    /// `foreach (h; bucket) assert(h !is l)` it replaced — BOTH hold over an
+    /// empty bucket. What removes the vacuity is a POPULATION FLOOR at a call
+    /// site: the deselect cell asserts the POSITIVE direction on a bucket it
+    /// has just filled, so at least one run reaches this function over a
+    /// non-empty one and the oracle's negative clause is standing on
+    /// something.
     bool testHistoryBucketHolds(ref const Document d, const(Layer) l) {
         foreach (h; d.deselected_[l.kind]) if (h is l) return true;
         return false;
@@ -1048,15 +1063,18 @@ version (unittest) {
 
     /// The address of a layer's mesh FIELD, so a cell can assert that
     /// `meshOrNull()` and `meshRef()` alias the field itself rather than
-    /// agreeing with each other about a copy.
-    Mesh* testMeshField(Layer l) { return &l.mesh_; }
+    /// agreeing with each other about a copy. A `size_t` and not a `Mesh*`
+    /// because identity is the entire question the three call sites ask, and
+    /// a pointer would have handed them a write they never wanted.
+    size_t testMeshFieldAddr(Layer l) { return cast(size_t) &l.mesh_; }
 
     /// The same, for the image payload field.
-    ImageData* testImageField(Layer l) { return &l.image_; }
+    size_t testImageFieldAddr(Layer l) { return cast(size_t) &l.image_; }
 
     /// The pending prepared-mesh image, or `null` when nothing is pending.
-    Mesh* testPreparedPendingImage(Layer l) {
-        return l.preparedMeshPending_ is null
-            ? null : &l.preparedMeshPending_.image;
+    /// `const` because every cell that reads it only reads it.
+    const(Mesh)* testPreparedPendingImage(Layer l) {
+        if (l.preparedMeshPending_ is null) return null;
+        return &l.preparedMeshPending_.image;
     }
 }

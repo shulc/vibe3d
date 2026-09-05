@@ -63,8 +63,8 @@ private immutable string[] seamReaders = [
     "testHistoryBucketHolds",
     "testEditTargetCandidate",
     "testExclusiveSelect",
-    "testMeshField",
-    "testImageField",
+    "testMeshFieldAddr",
+    "testImageFieldAddr",
     "testPreparedPendingImage",
 ];
 

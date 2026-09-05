@@ -1197,6 +1197,20 @@ unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654
         ~ "current list's pointer and the current list is empty");
     assert(doc.selectionState(a) == SelState.History,
         "…and A moved into the mesh history bucket rather than out of existence");
+    // POPULATION FLOOR for the oracle's storage clause (4120 review). The
+    // oracle asserts the NEGATIVE — no CURRENT item also sits in its kind's
+    // bucket — and that is satisfied by an empty bucket just as happily as by
+    // a correct one, over every document in this file. This is the one place
+    // that pins the other side: A has just been deselected, so the bucket it
+    // reads is known non-empty and known to hold exactly A. Take this away and
+    // `testHistoryBucketHolds` is never once observed returning true.
+    assert(testHistoryBucketHolds(doc, a),
+        "the deselect really wrote A into its kind's history bucket — the "
+        ~ "STORAGE, not `selectionState`'s current-first resolution of it");
+    foreach (other; doc.layers[1 .. $])
+        assert(!testHistoryBucketHolds(doc, other),
+            "…and only A: a bucket that swallowed the untouched layers would "
+            ~ "satisfy the line above for the wrong reason");
     assert(doc.primary is a && doc.hasEditTarget(),
         "task 0671: the edit target is the head of [current ++ history], so it "
         ~ "is still A. A model that read `selected` would answer null here.");
@@ -1378,8 +1392,10 @@ unittest {  // a default-constructed Layer is a mesh item.
     assert(l.kind == ItemKind.Mesh, "new Layer defaults to ItemKind.Mesh");
     assert(l.hasMesh, "a default Layer has a mesh");
     assert(l.meshOrNull !is null, "meshOrNull is non-null for a mesh item");
-    assert(l.meshOrNull is testMeshField(l), "meshOrNull points at the mesh field");
-    assert(&l.meshRef() is testMeshField(l), "meshRef() aliases the same mesh field");
+    assert(cast(size_t) l.meshOrNull == testMeshFieldAddr(l),
+        "meshOrNull points at the mesh field");
+    assert(cast(size_t) &l.meshRef() == testMeshFieldAddr(l),
+        "meshRef() aliases the same mesh field");
 }
 
 
@@ -1424,7 +1440,8 @@ unittest {  // hasImage()/imageOrNull()/imageRef() mirror the mesh trio: a
     img.imageRef().storedPath = "logo.png";
     assert(img.imageOrNull !is null, "imageOrNull is non-null once imageRef() is assigned");
     assert(img.imageOrNull.storedPath == "logo.png", "imageOrNull aliases the same object imageRef() wrote");
-    assert(&img.imageRef() is testImageField(img), "imageRef() aliases the same image_ field");
+    assert(cast(size_t) &img.imageRef() == testImageFieldAddr(img),
+        "imageRef() aliases the same image_ field");
 }
 
 // ---------------------------------------------------------------------------
