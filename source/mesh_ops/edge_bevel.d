@@ -569,6 +569,11 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         bool valid;
         uint apex;              // shared corner slide (width-1 gap) — hub-arc meet
         uint gapEndL, gapEndR;  // the two ends of the width-2 base gap
+        // Task 4360: a hub arc crossing NO chamfer-bearing spoke — every
+        // selected slot it spans is a RIM edge, or it spans none at all —
+        // has no rail to wait for and is the plain circular arc about the
+        // source vertex instead. Only an OPEN fan can set these.
+        bool plainL, plainR;
     }
     NotchCapPlan[uint] notchCapPlans;
 
@@ -920,23 +925,37 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         return rev;
     }
 
-    // Sin-weighted circular slerp about a centre `C`, sweeping the short
-    // way from `PA` to `PB` at parameter `f` — the SAME arc law
-    // `railInterior` samples for a rounded rail (radius is interpolated
-    // when |PA-C| != |PB-C|). Reused for the narrow-notch cap's base-gap
-    // arc (centre = the source vertex) and its recursive interior fillet
-    // (centre = the apex corner). Parity task.
+    // Circular sweep about a centre `C`, the short way from `PA` to `PB` at
+    // parameter `f`: the DIRECTION is the slerp of the two UNIT spokes and
+    // the RADIUS is interpolated LINEARLY between |PA-C| and |PB-C|. Used
+    // for the narrow-notch cap's base-gap arc (centre = the source vertex)
+    // and its recursive interior fillet (centre = the apex corner).
+    //
+    // TASK 4360, and this is the shape of defect the project pays for most:
+    // the earlier form weighted the two RAW spokes by the sin weights, which
+    // is the same point as this one WHENEVER |PA-C| == |PB-C| — and every
+    // cell frozen for this builder before 4360 was radius-symmetric about
+    // its apex (the closed valence-5 gap-{1,2} notch is mirror-symmetric
+    // across the apex spoke at every round level, so L1–L3 could not tell
+    // the two laws apart). `open_fan_K2_boundary_L1` is the first cell whose
+    // two hub arcs reach the apex at DIFFERENT radii (0.09629 against
+    // 0.06180); its captured interior vertex is 0.0147 away from the raw-
+    // spoke blend and 1.8e-10 from this one. So the radius interpolation the
+    // old comment already claimed is now actually performed.
     Vec3 slerpAbout(Vec3 C, Vec3 PA, Vec3 PB, float f) {
         import std.math : sin, acos;
         immutable Vec3 rA = PA - C, rB = PB - C;
         immutable float lA = rA.length, lB = rB.length;
-        float co = (lA > 1e-12f && lB > 1e-12f) ? dot(rA, rB) / (lA * lB) : 1.0f;
+        if (lA <= 1e-12f || lB <= 1e-12f) return C + rA * (1.0f - f) + rB * f;
+        immutable Vec3 uA = rA * (1.0f / lA), uB = rB * (1.0f / lB);
+        float co = dot(uA, uB);
         if (co >  1.0f) co =  1.0f;
         if (co < -1.0f) co = -1.0f;
         immutable float Om = acos(co), sO = sin(Om);
+        immutable float rad = lA + (lB - lA) * f;
         if (sO < 1e-6f) return C + rA * (1.0f - f) + rB * f;
         immutable float wa = sin((1.0f - f) * Om) / sO, wb = sin(f * Om) / sO;
-        return C + rA * wa + rB * wb;
+        return C + (uA * wa + uB * wb) * rad;
     }
 
     foreach (V; 0 .. cast(uint)ed.vertices.length) {
@@ -1013,12 +1032,27 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                 } else {
                     // V = P1 (second, edge pred->V is the beveled one): two
                     // corners in the face's own traversal order — the
-                    // beveled-edge slide toward the selected predecessor
-                    // (NEVER clamped, measured), then the other-edge slide
-                    // toward the unselected successor (clamped like any
+                    // FIRST at width along the OTHER edge's in-face inward
+                    // NORMAL (never clamped, see below), then the other-edge
+                    // slide toward the unselected successor (clamped like any
                     // slide).
-                    immutable Vec3 bdir = safeNormalize(ed.vertices[predV] - vp);
-                    immutable uint nvBev = ed.addVertex(vp + bdir * width);
+                    //
+                    // TASK 4360, and this is a corrected law, not a new one.
+                    // The first corner used to be a slide along the BEVELED
+                    // edge (`vp + normalize(pred - vp) * width`). Both open
+                    // layouts that law was measured on — a single open quad
+                    // and a 2x1 open grid — meet their two boundary edges at
+                    // a RIGHT ANGLE, and at 90° the beveled-edge direction IS
+                    // the other edge's inward normal, so neither could tell
+                    // the two apart. `open_fan_K2_boundary_L1` meets at 54°
+                    // and separates them: the captured corner is 0.0618 from
+                    // the old law and 1.7e-8 from this one. The right-angled
+                    // fixtures stay byte-identical.
+                    immutable Vec3 odirN = safeNormalize(ed.vertices[succV] - vp);
+                    Vec3 inN = safeNormalize(cross(ed.faceNormal(fRim), odirN));
+                    if (dot(inN, safeNormalize(ed.vertices[predV] - vp)) < 0)
+                        inN = Vec3(-inN.x, -inN.y, -inN.z);
+                    immutable uint nvBev = ed.addVertex(vp + inN * width);
                     immutable Vec3 odir = safeNormalize(ed.vertices[succV] - vp);
                     immutable float ow = clampedWidth(V, succV);
                     immutable uint nvOth = ed.addVertex(vp + odir * ow);
@@ -1371,7 +1405,53 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                     int nxt(int kk) { return (kk + 1) % nE; }
                     immutable int gapFwd = s1 - s0 - 1;       // unselected slots s0→s1
                     immutable int gapBwd = nE - 2 - gapFwd;   // the wrap-around gap
-                    if (gapFwd == 1 && gapBwd == 2) {
+                    if (openFan &&
+                        ((gapFwd == 1 && gapBwd == 2) || (gapBwd == 1 && gapFwd == 2))) {
+                        // TASK 4360 — an OPEN fan's base gap is the ring edge
+                        // that SPANS THE HOLE, not the wider of the two
+                        // wrap-arithmetic gaps. The cap's base is the mesh
+                        // boundary there: the two ring edges either side of
+                        // the hole came out as genuine boundary edges of the
+                        // captured result, so the corner patch is anchored on
+                        // them. With K == 2 and the two selected slots
+                        // non-adjacent the L0 ring is exactly three slides in
+                        // slot order — first and last flank the hole (base),
+                        // the middle one is the apex.
+                        //
+                        // This is NOT a new rule for the interior cells: on
+                        // `open_fan_K2_interior_L1` the wrap gap IS the hole
+                        // gap, so apex and both gap ends come out the same
+                        // three vertices in the same L/R roles as the branch
+                        // below assigns, and that cell stays byte-identical.
+                        // `open_fan_K2_boundary_L1` is where the two part —
+                        // the wrap rule puts the base on the [0,4,5] face and
+                        // the apex at slot 1, the capture puts them the other
+                        // way round (its cap grid's two triangles meet at the
+                        // slot-3 slide).
+                        int[] unsel;
+                        foreach (kk; 0 .. nE) if (!selE[kk]) unsel ~= kk;
+                        if (unsel.length == 3) {
+                            // A hub arc is PLAIN when no slot it spans carries
+                            // a chamfer — i.e. every selected slot between its
+                            // two ends is a rim (single-face) edge, or there is
+                            // no selected slot between them at all. It then has
+                            // no rail to wait for and is the circular arc about
+                            // the hub. Measured on this cell: the slot-3→slot-4
+                            // arc (no selected slot at all) is the captured
+                            // 0.1-radius point on their bisector.
+                            bool chamferBetween(int a, int b) {
+                                foreach (kk; a + 1 .. b)
+                                    if (selE[kk] && vEdges[kk] < rimOnly.length
+                                        && !rimOnly[vEdges[kk]]) return true;
+                                return false;
+                            }
+                            auto pl = NotchCapPlan(true,
+                                getSlide(unsel[1]), getSlide(unsel[0]), getSlide(unsel[2]));
+                            pl.plainL = !chamferBetween(unsel[0], unsel[1]);
+                            pl.plainR = !chamferBetween(unsel[1], unsel[2]);
+                            notchCapPlans[V] = pl;
+                        }
+                    } else if (gapFwd == 1 && gapBwd == 2) {
                         // shared slot s0+1 == s1-1 is the apex; base gap is
                         // the wrap side (slots s1+1, s0-1).
                         notchCapPlans[V] = NotchCapPlan(true,
@@ -1555,6 +1635,29 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         import std.algorithm : reverse, min, max;
         foreach (Vn, plan; notchCapPlans) {
             if (!plan.valid) continue;
+            // Task 4360: a PLAIN hub arc (see `NotchCapPlan.plainL/R`) has no
+            // chamfer rail behind it, so nothing else will ever materialize
+            // it. It is the same circular arc about the source vertex the
+            // base gap below is, and it is registered the same way so
+            // `threadRails` puts its points into the neighbouring reduced
+            // face too — on the captured cell that neighbour is the reference's
+            // own 5-gon. Guarded on the flags, so a CLOSED fan's un-approved
+            // rail still drops its plan onto the flat path unchanged.
+            void plainHubArc(uint endV) {
+                immutable ulong hkey = pairKey(endV, plan.apex);
+                if (hkey in railInteriorMemo) return;
+                immutable int hn = 2 * roundLevel;
+                immutable Vec3 hpv = ed.vertices[Vn];
+                immutable uint hlo = min(endV, plan.apex), hhi = max(endV, plan.apex);
+                immutable Vec3 hloP = ed.vertices[hlo], hhiP = ed.vertices[hhi];
+                uint[] hint = new uint[](hn - 1);
+                foreach (t; 1 .. hn)
+                    hint[t - 1] = ed.addVertex(
+                        slerpAbout(hpv, hloP, hhiP, cast(float)t / cast(float)hn));
+                railInteriorMemo[hkey] = hint;
+            }
+            if (plan.plainL) plainHubArc(plan.gapEndL);
+            if (plan.plainR) plainHubArc(plan.gapEndR);
             if (!(pairKey(plan.gapEndL, plan.apex) in railInteriorMemo)) continue;
             if (!(pairKey(plan.gapEndR, plan.apex) in railInteriorMemo)) continue;
             immutable ulong gkey = pairKey(plan.gapEndL, plan.gapEndR);
