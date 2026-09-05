@@ -143,3 +143,4 @@ third_party/nfde/.dub/
 # task 3960 — build_check.sh writes the ENVIRONMENT/SOURCE class here for the
 # final CI gate step to read; it is a per-run artefact, never committed.
 build_class.txt
+.gesture-lane/
