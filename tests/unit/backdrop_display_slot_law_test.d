@@ -38,13 +38,26 @@
 // C pin still demonstrates that the parity half ran and passed: everything
 // above the first red line executed.
 //
-// MUTATIONS THAT REDDEN IT (both run and quoted in the task card):
-//   * `source/display_state.d`: widen the solid rule to the weight style
+// MUTATIONS THAT REDDEN IT -- FOUR, one per block, all run and quoted in the
+// task card with the assert MESSAGE as the identity (the line number is only a
+// pointer). Every block below is covered, which is the point: a pin nobody has
+// seen fail is indistinguishable from an absent one.
+//   * A  -- the fixture: `ordinals_agree` false -> true, code untouched. The
+//     reader COMPUTES that boolean from the four mode pairs and compares, so
+//     flipping the frozen claim reddens it. A hand-written boolean nobody
+//     recomputes is a check that cannot come out differently;
+//   * B  -- `source/display_state.d`: widen the solid rule to the weight style
 //     (`d.active.style == DisplayStyle.Solid || d.active.style ==
-//     DisplayStyle.Weight`) => block B reddens naming the fill. That is the
-//     exact move the register's row forbids;
-//   * `source/display_state.d`: `kBackdropDim` 0.45f -> 1.0f => block C1
-//     reddens naming both numbers.
+//     DisplayStyle.Weight`) => reddens naming the fill. That is the exact move
+//     the register's row forbids by name, and it reddens in the PARITY block,
+//     not in a divergence pin;
+//   * C1 -- `source/display_state.d`: `kBackdropDim` 0.45f -> 1.0f => reddens
+//     naming both numbers;
+//   * C2 -- `source/display_state.d`: neuter the rule
+//     (`if (false && solidRunsNoBackdropFacePass)`), which is the direction
+//     task 4340 will take => reddens naming which side withdraws the pass.
+//     This is the one that proves the REFUTED pin is alive, and block B above
+//     it stays green in the same run, so one run buys both halves.
 //
 // LANE: `dub test --config=tests`.
 module tests.unit.backdrop_display_slot_law_test;

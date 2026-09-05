@@ -40,11 +40,25 @@
 // buys both halves: druntime stops a module at its first failed assert, and
 // everything above a red line is known to have run and passed.
 //
-// MUTATIONS THAT REDDEN IT (both run and quoted in the task card):
+// MUTATIONS THAT REDDEN IT (both run, and quoted in the task card with the
+// assert MESSAGE as the identity -- the line number is only a pointer):
 //   * `source/mesh.d`, `kindInfo(MapKind.creaseWeight)`: `MapDomain.Edge` ->
 //     `MapDomain.Point` => block B1 reddens naming the count;
-//   * `source/mesh_topo.d`, `edgeKey`: drop the min/max canonicalisation
+//   * `source/mesh.d`, `Mesh.edgeIndex`: pack the lookup key directed
+//     (`a << 32 | b`) instead of calling the canonicalising `edgeKey`
 //     => block B2 reddens naming the two lookups that must agree.
+//
+// An earlier revision of this header named the second site as `edgeKey` in
+// `source/mesh_topo.d`. That is a DIFFERENT mutation and it was not the one
+// that ran. Both were run in the fix round, both redden this same assert, and
+// the printed values tell them apart -- which is worth knowing, because it
+// says the assert discriminates two failure MODES rather than one:
+//   * breaking the CALLER desynchronises one side only, so the reversed
+//     lookup MISSES:  `(0,3) -> 0 but (3,0) -> 4294967295`;
+//   * breaking `edgeKey` moves the map's keys too, so the reversed lookup HITS
+//     THE WRONG EDGE:  `(0,3) -> 0 but (3,0) -> 11`.
+// The second is the more dangerous shape in production and it is not a
+// "lookup failed" -- it silently returns a real, wrong index.
 //
 // LANE: `dub test --config=tests`.
 module tests.unit.edge_vertex_map_rows_test;
@@ -180,6 +194,18 @@ unittest
 
     const wantCount = cast(size_t) ours["edge_domain_map_kind_count"].integer;
     const want      = strList(ours["edge_domain_map_kinds"]);
+
+    // Second floor, on the FIXTURE side and above the two asserts it protects.
+    // The count assert below is satisfied by 0 == 0, and the name loop after it
+    // is then vacuous: an emptied `edge_domain_map_kinds` would let this block
+    // pass while asserting nothing about any kind. Pin the population and pin
+    // that the declared count and the declared list are the same size, so the
+    // loop cannot be short-circuited by disagreeing halves either.
+    assert(wantCount >= 1 && want.length == wantCount,
+           format("the frozen law must name at least one Edge-domain kind and "
+                  ~ "its count must match its list: count=%d, list=%s. With "
+                  ~ "either empty this block asserts nothing.",
+                  wantCount, want));
 
     assert(edgeKinds.length == wantCount,
            format("our MapKind registry declares %d Edge-domain kind(s) %s, "

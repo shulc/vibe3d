@@ -120,6 +120,7 @@
   "provenance": {
     "schema": 1,
     "source": "live-capture",
+    "source_note": "`source` is the fixture-classification enum (live-capture | simulated | analytic | unknown), read by `tests/unit/fixture_provenance_census_test.d` as PARITY-against-the-reference. It does NOT claim a process ran. This fixture was read statically, zero boots -- `method` is the field that says how, and it says static-read. All five static-read fixtures in the tree carry this same enum value for the same reason; the word is the vocabulary's, not a description of the instrument.",
     "reference": "ref-editor@11.2v3",
     "method": "static-read",
     "captured_utc": "2026-09-05",
