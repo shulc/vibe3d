@@ -1,12 +1,22 @@
 {
   "bypasses": [
     {
-      "line": 3903,
+      "line": 2682,
+      "path": "source/app.d",
+      "symbol": "prepareDrop"
+    },
+    {
+      "line": 2686,
+      "path": "source/app.d",
+      "symbol": "commitPreparedDrop"
+    },
+    {
+      "line": 3922,
       "path": "source/app.d",
       "symbol": "prepareArm"
     },
     {
-      "line": 3918,
+      "line": 3938,
       "path": "source/app.d",
       "symbol": "commitPreparedArm"
     }
@@ -1241,6 +1251,18 @@
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
+    },
+    {
+      "line": 271,
+      "path": "source/prepared_tool_transition.d",
+      "semantic_sha256": "347f261b886469536eda2a6f9acdb52dffd92da0555343a55366e5c4c5290812",
+      "symbol": "prepareDrop"
+    },
+    {
+      "line": 298,
+      "path": "source/prepared_tool_transition.d",
+      "semantic_sha256": "9969606358c523ae55afc6fb602c21e706a1d175bcc71952614e1cd38be12a7d",
+      "symbol": "commitPreparedDrop"
     }
   ],
   "lifecycle_classifier": {
@@ -1847,7 +1869,7 @@
       "classification": "LegacyDoor",
       "module": "app",
       "prepared_delegations": 0,
-      "semantic_sha256": "c4de786cb127f6a6e04d0f672934c92db4d7df4568fca0b9978e221cffe1d4e2",
+      "semantic_sha256": "8c1850179918137631bc0bbca143073c7d7a4fa525f94b8a9fce14633f0d9f4a",
       "symbol": "activateToolById"
     },
     {

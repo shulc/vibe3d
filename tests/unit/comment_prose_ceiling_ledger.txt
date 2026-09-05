@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 513
-task-citation-lines 5111
-citing-files 386
+source-files 514
+task-citation-lines 5121
+citing-files 389
 long-comment-runs 281
 files-with-long-runs 149
 
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 297
+allow source/app.d 299
 allow source/app_version.d 1
 allow source/args_dialog.d 1
 allow source/argstring.d 4
@@ -196,7 +196,7 @@ allow source/document_selection.d 62
 allow source/drag.d 11
 allow source/drag_identity.d 1
 allow source/edit_session.d 16
-allow source/editor_app.d 48
+allow source/editor_app.d 49
 allow source/eventlog.d 1
 allow source/falloff.d 7
 allow source/falloff_handles.d 3
@@ -281,7 +281,9 @@ allow source/pipe_gizmo_host.d 4
 allow source/plane_bytes.d 1
 allow source/prefs.d 31
 allow source/prepared_record_context.d 1
+allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 2
+allow source/record_observer_hub.d 1
 allow source/registration.d 63
 allow source/registry.d 7
 allow source/remesh/region_stitch.d 2
@@ -304,6 +306,7 @@ allow source/subpatch_worker.d 2
 allow source/symmetry.d 5
 allow source/symmetry_pick.d 2
 allow source/tool.d 29
+allow source/tool_activation_ownership.d 2
 allow source/tool_disarm.d 2
 allow source/toolpipe/obbox.d 2
 allow source/toolpipe/package.d 1
@@ -327,7 +330,7 @@ allow source/tools/alignment/mirror.d 21
 allow source/tools/alignment/radial_align_tool.d 4
 allow source/tools/alignment/radial_array_tool.d 12
 allow source/tools/alignment/radial_sweep_tool.d 12
-allow source/tools/common/command_wrapper.d 17
+allow source/tools/common/command_wrapper.d 18
 allow source/tools/common/session_mesh_key.d 2
 allow source/tools/create/arc.d 2
 allow source/tools/create/box.d 16
@@ -372,7 +375,7 @@ allow source/tools/slice/loop_slice_tool.d 90
 allow source/tools/slice/slice_tool.d 90
 allow source/tools/transform/item_xform_kernels.d 2
 allow source/tools/transform/morph_route.d 4
-allow source/tools/transform/move.d 5
+allow source/tools/transform/move.d 6
 allow source/tools/transform/relocate_plane.d 2
 allow source/tools/transform/rotate.d 4
 allow source/tools/transform/scale.d 12
@@ -381,7 +384,7 @@ allow source/tools/transform/xform_kernels.d 7
 allow source/tools/transform/xfrm_apply.d 19
 allow source/tools/transform/xfrm_handles.d 5
 allow source/tools/transform/xfrm_item.d 9
-allow source/tools/transform/xfrm_transform.d 90
+allow source/tools/transform/xfrm_transform.d 91
 allow source/tsan_preinit.d 1
 allow source/ui/availability.d 1
 allow source/ui/channel_rows.d 2

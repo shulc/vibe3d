@@ -1,5 +1,7 @@
 module input_router;
 
+import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+
 // Task 0781 (campaign 0407 §V1 4.3, chain from 0678 §2C A10 / 0722): the
 // input-router cluster. 0722 measured that the seven SDL-event handlers
 // nested in app.d's main() close over 27 of main()'s locals (7 of the 27
@@ -654,7 +656,7 @@ struct InputRouter {
                     // sync (the cycle always flips the front, hence always notes a
                     // current-type change; the tool is already null so the in-funnel
                     // tool-drop is a no-op).
-                    if (activeTool) setActiveTool(null);
+                    if (activeTool) dropActiveTool(ToolTransition.explicitDrop);
                     else switchGeometryType(
                         cast(EditMode)((cast(int)editMode + 1) % 3));
                     break;

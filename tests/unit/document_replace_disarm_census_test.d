@@ -94,6 +94,9 @@ private immutable LedgerRow[] kCommentSites = [
         "read 2026-09-03; true: defensive reset callback after the main seam"),
     LedgerRow("registerFileCommands.SceneReset|dropArmedPreview", 1,
         "read 2026-09-03; true: defensive fallback, not the main mechanism"),
+    LedgerRow("ToolTransition|tool_disarm", 1,
+        "read 2026-09-05 (task 4053); true: the ownership table's enum member "
+        ~ "for this seam names the transition it owns"),
     LedgerRow("(module scope).meshReplacement|onResetTool", 1,
         "read 2026-09-03; true: historical reproduction before the seam"),
     LedgerRow("(module scope).primaryIdentity|onResetTool", 1,

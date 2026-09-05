@@ -231,7 +231,7 @@ def scan(root):
                          "symbol": symbol, "classification": "LegacyDoor",
                          "semantic_sha256": _semantic_digest(body),
                          "prepared_delegations": len(re.findall(
-                             r"\b(?:prepareArm|commitPreparedArm|producePreparedEffects|installLegacyPreparedEffects)\s*\(", body))})
+                             r"\b(?:prepareArm|commitPreparedArm|prepareDrop|commitPreparedDrop|producePreparedEffects|installLegacyPreparedEffects)\s*\(", body))})
     transition_path = module_path(
         root, "prepared_tool_transition", "prepared.tool_transition")
     # The manifest keys this declaration by module identity. Keep the existing
@@ -273,7 +273,10 @@ def scan(root):
 
     bypasses = []
     internal_publishers = []
-    bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
+    # Task 4053 added the DROP half of the door. It publishes the active tool
+    # exactly as the arm half does, so it is scanned by the same pattern —
+    # a publisher the census cannot see is a publisher nobody reviews.
+    bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|prepareDrop|commitPreparedDrop|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
     for path in sorted((root / "source").rglob("*.d")):
         text = _mask_comments(path.read_text())
         for match in bypass_pattern.finditer(text):
@@ -285,7 +288,9 @@ def scan(root):
             prefix = text[line_start:match.start()].strip()
             if path == transition_path and (
                     (row["symbol"] == "prepareArm" and prefix == "PreparedArm") or
-                    (row["symbol"] == "commitPreparedArm" and prefix == "bool")):
+                    (row["symbol"] == "commitPreparedArm" and prefix == "bool") or
+                    (row["symbol"] == "prepareDrop" and prefix == "PreparedDrop") or
+                    (row["symbol"] == "commitPreparedDrop" and prefix == "bool")):
                 body_open = text.find("{", match.end())
                 body_end = _balanced(text, body_open + 1)
                 row["semantic_sha256"] = _semantic_digest(

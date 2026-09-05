@@ -21,6 +21,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
+import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
 import ui.discard_guard : UiRunOutcome, GuardSettle;
 import log : logInfo, logWarn, logError;
 import prefs;
@@ -935,7 +936,10 @@ struct EditorApp {
     //      `&funcName`; called bare (verbatim) inside the spans except
     //      promoteItemType, which is address-taken once (Edit-class 2:
     //      &promoteItemType -> promoteItemType at the one call site) ----
-    void delegate(Tool)         setActiveTool;
+    // TASK 4053 — the tool-DROP verb. It was `void delegate(Tool)
+    // setActiveTool` until the arm half became unreachable; the transition
+    // argument is what `tool_activation_ownership.activationDoorFor` reads.
+    void delegate(ToolTransition) dropActiveTool;
     void delegate()             promoteItemType;
     // Task 0642 — the deliberate item-mode door (`select.typeFrom item`, the
     // Items status-line button, the Items key). Distinct from promoteItemType

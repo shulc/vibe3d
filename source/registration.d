@@ -1,5 +1,7 @@
 module registration;
 
+import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration previously inline in app.d's
 // main() (~213 commandFactories + ~66 toolFactories assignments). Design +
@@ -1730,7 +1732,7 @@ private void registerFileCommands(EditorApp app) {
                                          lst.dropArmedPreview();
                                      if (auto est = cast(EdgeSliceTool) activeTool)
                                          est.dropArmedPreview();
-                                     setActiveTool(null);
+                                     dropActiveTool(ToolTransition.sceneResetDrop);
                                      resetAllPipeStages();
                                      // A reset is a clean slate: force the
                                      // subpatch preview OFF so a leftover
@@ -1809,7 +1811,7 @@ private void registerMeshCommands(EditorApp app) {
     with (remeshRefs) {
     reg.commandFactories["mesh.subdivide"] = () => cast(Command)
         new Subdivide(&mesh(), cameraView, editMode,
-                      () => setActiveTool(null));
+                      () => dropActiveTool(ToolTransition.meshRebuildDrop));
     // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
     // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
     // the ai3d drain for how the result lands); `mesh.remesh` is the
@@ -1818,7 +1820,7 @@ private void registerMeshCommands(EditorApp app) {
         new RemeshStart(&mesh(), cameraView, editMode, remeshJob);
     reg.commandFactories["mesh.remesh"] = () => cast(Command)
         new Remesh(&mesh(), cameraView, editMode,
-                   () => setActiveTool(null), remeshJob);
+                   () => dropActiveTool(ToolTransition.meshRebuildDrop), remeshJob);
     reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
         new RemeshOpen(&mesh(), cameraView, editMode, () {
             remeshModalOpen        = true;
@@ -1828,19 +1830,19 @@ private void registerMeshCommands(EditorApp app) {
         });
     reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
         new SubdivideFaceted(&mesh(), cameraView, editMode,
-                             () => setActiveTool(null));
+                             () => dropActiveTool(ToolTransition.meshRebuildDrop));
     reg.commandFactories["mesh.triple"] = () => cast(Command)
         new MeshTriple(&mesh(), cameraView, editMode,
-                       () => setActiveTool(null));
+                       () => dropActiveTool(ToolTransition.meshRebuildDrop));
     reg.commandFactories["mesh.quadruple"] = () => cast(Command)
         new MeshQuadruple(&mesh(), cameraView, editMode,
-                          () => setActiveTool(null));
+                          () => dropActiveTool(ToolTransition.meshRebuildDrop));
     reg.commandFactories["mesh.detriangulate"] = () => cast(Command)
         new MeshDetriangulate(&mesh(), cameraView, editMode,
-                              () => setActiveTool(null));
+                              () => dropActiveTool(ToolTransition.meshRebuildDrop));
     reg.commandFactories["mesh.mergeFaces"] = () => cast(Command)
         new MeshMergeFaces(&mesh(), cameraView, editMode,
-                           () => setActiveTool(null));
+                           () => dropActiveTool(ToolTransition.meshRebuildDrop));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.hide"] = () => cast(Command)
@@ -2102,7 +2104,7 @@ private void registerHistoryCommands(EditorApp app) {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                        &editMode(),
                        () {
-                           setActiveTool(null);
+                           dropActiveTool(ToolTransition.sceneResetDrop);
                            resetAllPipeStages();
                            // Clean slate: force the subpatch preview OFF (see
                            // SubpatchPreview.deactivate / the scene.reset hook).
@@ -2129,7 +2131,8 @@ private void registerHistoryCommands(EditorApp app) {
     };
     reg.commandFactories["scene.loadMesh"] = () => cast(Command)
         (new MeshLoadRaw(&mesh(), cameraView, editMode,
-                         &editMode(), &cameraView(), () => setActiveTool(null)))
+                         &editMode(), &cameraView(),
+                         () => dropActiveTool(ToolTransition.sceneResetDrop)))
         .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["history.undo"] = () => cast(Command)
         new HistoryUndo(&mesh(), cameraView, editMode, history);

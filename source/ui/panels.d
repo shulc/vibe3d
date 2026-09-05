@@ -1,5 +1,7 @@
 module ui.panels;
 
+import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+
 // Task 0419 (campaign 0407 §V1.2, continuation of 0415): the UI-panel block
 // that used to live as 23 nested functions inside app.d's main()
 // (drawSidePanel/drawStatusBar/drawTabPanel/drawLayerListPanel/
@@ -3049,7 +3051,7 @@ void drawStatusBar(EditorApp app) {
                                     uiCommandDelegate(action.id, "");
                             }
                             if (editModeId.length > 0)
-                                setActiveTool(null);
+                                dropActiveTool(ToolTransition.panelDrop);
                             break;
                         case ActionKind.script:
                             // typeFrom doesn't go through the args
@@ -3067,7 +3069,7 @@ void drawStatusBar(EditorApp app) {
                             // a tool change — drop any sticky tool
                             // too.
                             if (editModeId.length > 0)
-                                setActiveTool(null);
+                                dropActiveTool(ToolTransition.panelDrop);
                             break;
                         case ActionKind.popup:
                             ImGui.OpenPopup(popupId);

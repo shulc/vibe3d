@@ -8,6 +8,7 @@ import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
+import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
 import ui.discard_guard : UiRunOutcome, GuardSettle;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
@@ -2385,7 +2386,20 @@ void main(string[] args) {
     string activeToolId = "";
 
     scope(exit) {
-        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
+        if (activeTool) {
+            // TASK 4053 — `ToolTransition.shutdownDrop`. This is the ONE drop
+            // that cannot call `dropActiveTool`: the verb is a nested function
+            // declared far below, and this `scope(exit)` is deliberately
+            // declared ABOVE `pipeGizmoHost`'s own, so it runs AFTER the GL
+            // owner the prepared resource effects validate against is gone.
+            // The table still decides — flipping this row reddens here.
+            assert(activationDoorFor(ToolTransition.shutdownDrop)
+                   == ActivationDoor.legacyDeactivate,
+                   "shutdownDrop must stay on the legacy door: the GL owner "
+                   ~ "is already torn down when this runs");
+            activeTool.deactivate();
+            activeTool.destroy();
+        }
     }
     // Reset toolpipe stages whose state is TOOL-DRIVEN: ACEN, AXIS,
     // WGHT. Each preset configures them on activation (preActivate
@@ -2600,40 +2614,27 @@ void main(string[] args) {
     auto recordObserverHub = new RecordObserverHub();
 
     // -------------------------------------------------------------------------
-    // Task 1670 — POSE THE FRESH TOOL AT ARM TIME.
+    // Task 1670 — POSE THE FRESH TOOL AT ARM TIME, and task 4053 — WHO does it.
     //
-    // Every `tool.set` builds a NEW tool (the drop above destroys the old
-    // one), and `activate()` poses nothing. The tool's resident pose — for
-    // `xfrm.transform` that is `moveSub.handler.center`, written only by
-    // `setSharedGizmoPose` at the top of `update()`/`draw()` — therefore held
-    // its CONSTRUCTOR value, `Vec3(0,0,0)`, from the moment `setActiveTool`
-    // returned until the frame loop reached `activeTool.update(vts)`.
+    // INVARIANT: when an arm returns, the fresh tool's resident pose is already
+    // valid. `/api/tool/state` is answered STRAIGHT OFF THE HTTP THREAD from
+    // those resident fields, so a read served between the command bridge
+    // draining `tool.set` and that frame reaching `activeTool.update(vts)` used
+    // to report the constructor default — one `(0,0,0)` gizmo centre in 689
+    // tests on the nightly sanitizer lane, where software GL stretches the
+    // frame wide enough to hit a window that is sub-millisecond on hardware GL.
+    // Marshalling the ROUTE would not have closed it: a read can be picked up
+    // by a later bridge in the SAME `tickAll` pass and answered ahead of the
+    // tick regardless.
     //
-    // That is observable and it was observed. `/api/tool/state` is answered
-    // STRAIGHT OFF THE HTTP THREAD from those resident fields (deliberately —
-    // see http_server.d's route-contract comment), so a read served after the
-    // command bridge drained `tool.set` inside `httpServer.tickAll()` and
-    // before that same frame reached the tool tick reports the un-ticked
-    // default. It surfaced as one `(0,0,0)` gizmo centre in 689 tests on the
-    // nightly sanitizer lane, where software GL stretches the frame far
-    // enough to hit a window that is sub-millisecond on hardware GL.
-    //
-    // MARSHALLING THE ROUTE WOULD NOT HAVE CLOSED IT, which is why the fix is
-    // here and not in http_server.d (whose own comment suggests marshalling
-    // for this family of hazard). The bridges drain at the TOP of the frame,
-    // `foreach (b; bridges) b.tick()`; a read arriving right after the command
-    // reply can be picked up by a LATER bridge in the SAME `tickAll` pass and
-    // answered ahead of `update()` regardless. Posing at arm time closes the
-    // window for EVERY consumer of the tool's resident state — the route, the
-    // panels, anything that reads a freshly armed tool — instead of for one
-    // route on the frames where the draw order happens to help.
-    //
-    // Declared HERE and wired further down (next to `ifs.app`), because
-    // `buildToolVts` is a nested function declared much later in `main()`:
-    // the same null-until-wired hook pattern `lifecycleRecordHook` above uses.
-    // A `setActiveTool` that runs before the wiring behaves exactly as it did
-    // before this task.
-    void delegate() armedToolPoseHook;
+    // 1670 closed it with an `armedToolPoseHook` delegate called from the arm
+    // branch of `setActiveTool`. That branch became unreachable at commit
+    // 7844bfee, when both public arm doors moved to `armPreparedTool`, and the
+    // hook went with it — task 4053 deleted the orphan. The invariant is now
+    // discharged by `PreparedToolPoseDoorClient.prepareDoorInitialPose`, fed
+    // the same `ifs.buildToolVts` packet inside `prepareArm`; the products
+    // without that door are the ones whose `update` is `Tool.update`'s exact
+    // no-op, which is the census P1.0b closed.
 
     // Task 1670 — the instrument that makes the window above a DETERMINISTIC
     // cell instead of a lottery. Repetition is not an instrument here: 40 idle
@@ -2646,56 +2647,64 @@ void main(string[] args) {
     auto preToolTickStall =
         FrameStall.fromEnvironment("VIBE3D_STALL_PRE_TOOL_TICK_MS");
 
-    void setActiveTool(Tool t) {
+    // TASK 4053 — the tool-DROP verb. It used to be `setActiveTool(Tool t)`,
+    // and it used to arm as well as drop; since commit 7844bfee routed both
+    // public arm doors through `armPreparedTool`, NO caller ever passed a
+    // non-null tool, so the arm half was unreachable and is gone. Every call
+    // site names the TRANSITION it is, and `activationDoorFor` — the single
+    // ownership table in source/tool_activation_ownership.d — decides which
+    // door tears the tool down. The `final switch` below is the whole reason
+    // the table can be trusted: a transition with no owner does not compile.
+    void dropActiveTool(ToolTransition why) {
         // One-shot falloff-drag cancel at the universal tool
-        // activation/switch/drop chokepoint (BOTH activateToolById and
-        // toolHost.activate route through here, as does every drop). Step 4
-        // removed the per-frame cancel guard; without this, a no-tool-origin
-        // falloff drag (LMB held on a falloff handle while activeTool is null)
-        // would latch pipeGizmoHost.isDragging() forever if the incoming tool
-        // can't route events into the host (a primitive/pen/box tool never
-        // calls routeUp). A with-tool falloff drag can only BEGIN while a
-        // routing tool is already active, so activation never lands mid-with-
-        // tool-drag — the only live drag at this boundary is the no-tool one,
-        // which must be dropped. This is a single cancel per activation, NOT a
-        // per-frame guard.
+        // activation/switch/drop chokepoint. Step 4 removed the per-frame
+        // cancel guard; without this, a no-tool-origin falloff drag (LMB held
+        // on a falloff handle while activeTool is null) would latch
+        // pipeGizmoHost.isDragging() forever if the incoming tool can't route
+        // events into the host (a primitive/pen/box tool never calls routeUp).
+        // A with-tool falloff drag can only BEGIN while a routing tool is
+        // already active, so activation never lands mid-with-tool-drag — the
+        // only live drag at this boundary is the no-tool one, which must be
+        // dropped. This is a single cancel per drop, NOT a per-frame guard.
         pipeGizmoHost.cancelDrag();
-        if (t is null) captureStickyToolDefaults();
+        captureStickyToolDefaults();
         if (activeTool) {
-            activeTool.deactivate();
-            activeTool.destroy();
+            final switch (activationDoorFor(why)) {
+                case ActivationDoor.preparedDrop: {
+                    // The same door a tool SWITCH has always used for its
+                    // outgoing tool. `document.primary` is the layer whose
+                    // mesh the tool was armed on for exactly the transitions
+                    // the table routes here — the prepared deactivation
+                    // producers guard on that and would refuse otherwise.
+                    import core.thread : Thread;
+                    import prepared_tool_transition : prepareDrop,
+                        commitPreparedDrop;
+                    auto prepared = prepareDrop(activeTool, history,
+                        recordObserverHub, document.primary,
+                        cast(ulong)cast(void*)Thread.getThis(),
+                        cast(ulong)SDL_GL_GetCurrentContext());
+                    if (!commitPreparedDrop(activeTool, activeToolId, prepared))
+                        throw new Exception("prepared tool drop was already consumed");
+                    break;
+                }
+                case ActivationDoor.legacyDeactivate:
+                    activeTool.deactivate();
+                    activeTool.destroy();
+                    break;
+                case ActivationDoor.preparedArm:
+                    assert(0, "the arm door cannot own a drop");
+            }
         }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
-        // next tool starts from defaults. For tool switches via
-        // activateToolById, this fires AGAIN below — harmless since
-        // preActivate hasn't run yet, and the caller's reset already
-        // wiped state.
-        if (t is null) resetTransientPipeStages();
-        activeTool   = t;
+        // next tool starts from defaults.
+        resetTransientPipeStages();
+        activeTool   = null;
         activeToolId = "";
-        if (activeTool) {
-            activeTool.activate();
-            // Task 1670 — tick the fresh tool ONCE, right here, with the same
-            // (SubjectPacket, VectorStack) pair the frame loop builds for its
-            // own `activeTool.update(vts)`. Only the MOMENT differs: the pose
-            // and `cachedSubjType_` are now valid the instant `tool.set`
-            // returns. See `armedToolPoseHook`'s declaration above for the
-            // window this closes and why the route was the wrong place.
-            //
-            // Not re-entrant by inspection: no tool's `update()` reaches
-            // `setActiveTool` (nothing under source/tools/ touches
-            // `resetActiveTool` or a tool drop), so this cannot recurse.
-            if (armedToolPoseHook !is null) armedToolPoseHook();
-            // …and tell the stall a tool was armed, so a test run with
-            // VIBE3D_STALL_PRE_TOOL_TICK_MS set widens EXACTLY this window
-            // once, rather than pausing every frame of the run.
-            preToolTickStall.arm();
-        }
         // deactivate() may have added geometry. We no longer syncSelection
         // here (change-notification bus, Stage 2): any geometry a tool appended
         // on deactivate went through mesh primitives that publish a Geometry
         // change, so the per-frame bus flush drives it in the loop's
-        // mesh-change block on the same frame (setActiveTool runs during event
+        // mesh-change block on the same frame (the drop runs during event
         // dispatch, before the flush). One source of truth.
     }
 
@@ -2746,7 +2755,7 @@ void main(string[] args) {
         // keeps the lockstep invariant even on a no-flip).
         setEditModeFromOrder();
         if (flipped) {
-            setActiveTool(null);          // tool-drop on a front-flip (B2)
+            dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
             noteCurrentType(t);           // current-type changed (bus, drained at flush)
         }
     }
@@ -2823,7 +2832,7 @@ void main(string[] args) {
         import change_bus : noteCurrentType;
         const flipped = selTypeOrder.touch(SelType.Item);
         if (flipped) {
-            setActiveTool(null);          // tool-drop on a front-flip (B2)
+            dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
             noteCurrentType(SelType.Item);
         }
     }
@@ -2909,8 +2918,7 @@ void main(string[] args) {
         // tool.attr); after the drop activeTool is null so the tool's own
         // lifecycle-undo emit cannot re-enter this branch.
         if (activeTool !is null && dropsActiveToolBeforeApply(cmd)) {
-            setActiveTool(null);
-            activeToolId = "";
+            dropActiveTool(ToolTransition.commandPreApplyDrop);
         }
         // Task 0616 Ph5 review (S3): a command that knows WHY it declined gets
         // to say so. `Command.refusalReason()` is "" for everything that has
@@ -3197,7 +3205,7 @@ void main(string[] args) {
             clearMorphTarget();
         }
         // 1. tool-drop for non-LayerSelect callers of this hook.
-        setActiveTool(null);
+        dropActiveTool(ToolTransition.activeLayerChangedDrop);
         // 2. explicit coalesce barrier on the history.
         history.breakCoalescing();
         // 3. GPU re-upload against the NEW mesh.
@@ -3852,7 +3860,7 @@ void main(string[] args) {
     app.topoPenRemoveEdgeEditFactory   = topoPenRemoveEdgeEditFactory;
     app.topoPenRemoveVertexEditFactory = topoPenRemoveVertexEditFactory;
 
-    app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
+    app.dropActiveTool       = cast(void delegate(ToolTransition))&dropActiveTool;
     app.promoteItemType      = cast(void delegate())&promoteItemType;
     app.switchItemType       = cast(void delegate())&switchItemType;
     app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
@@ -3880,8 +3888,19 @@ void main(string[] args) {
     ToolHost toolHost;
     toolHost.getActiveTool   = () => activeTool;
     toolHost.getActiveToolId = () => activeToolId;
-    void armPreparedTool(string id, ref JSONValue namedArgs,
+    // TASK 4053 — the ARM half of the single door. `why` is the transition,
+    // and `activationDoorFor` (source/tool_activation_ownership.d) is what
+    // says an arm belongs here rather than at `dropActiveTool`; the `final
+    // switch` refuses at compile time to leave a new transition unowned and
+    // at run time to route a drop transition into an arm.
+    void armPreparedTool(ToolTransition why, string id, ref JSONValue namedArgs,
                          bool lifecycleReplay = false) {
+        final switch (activationDoorFor(why)) {
+            case ActivationDoor.preparedArm: break;
+            case ActivationDoor.preparedDrop:
+            case ActivationDoor.legacyDeactivate:
+                assert(0, "a drop door cannot own an arm");
+        }
         auto factory = id in reg.toolFactories;
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
@@ -3906,28 +3925,28 @@ void main(string[] args) {
             &mesh(), cameraView, editMode, activeToolId,
             (string restoreId) {
                 JSONValue restoredArgs = JSONValue(cast(JSONValue[string]) null);
-                try armPreparedTool(restoreId, restoredArgs, true);
+                try armPreparedTool(ToolTransition.replayArm, restoreId,
+                                    restoredArgs, true);
                 catch (Throwable e) {
                     logWarn("tool", "lifecycle restore failed for '" ~
                         restoreId ~ "': " ~ e.msg);
                     throw e;
                 }
             },
-            () { setActiveTool(null); }, lifecycleReplay);
+            () { dropActiveTool(ToolTransition.replayDrop); }, lifecycleReplay);
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
     }
     toolHost.activatePrepared = (string id, ref JSONValue namedArgs) {
-        armPreparedTool(id, namedArgs);
+        armPreparedTool(ToolTransition.commandArm, id, namedArgs);
     };
     toolHost.activate = (string id) {
         JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
-        armPreparedTool(id, noNamed);
+        armPreparedTool(ToolTransition.interactiveArm, id, noNamed);
     };
     toolHost.deactivate = () {
-        setActiveTool(null);
-        activeToolId = "";
+        dropActiveTool(ToolTransition.explicitDrop);
     };
 
     // TASK 3130 — the DOCUMENT-REPLACE disarm seam (source/tool_disarm.d).
@@ -3967,8 +3986,7 @@ void main(string[] args) {
             // did not clear its commit guard: its `deactivate()` runs here,
             // against the mesh it was actually built against, rather than 24
             // lines later against a document that replaced it.
-            setActiveTool(null);
-            activeToolId = "";
+            dropActiveTool(ToolTransition.documentReplaceDisarm);
             return o;
         };
     }
@@ -3982,7 +4000,7 @@ void main(string[] args) {
     session = new EditSession(
         () => activeTool,
         history,
-        () { setActiveTool(null); activeToolId = ""; });
+        () { dropActiveTool(ToolTransition.editCancelDrop); });
     toolHost.session = () => session;
     // task 0415 Phase 1: wire the ctx's toolHostPtr now that `toolHost` is
     // fully assembled -- Span A (registerTools, above) never touches it;
@@ -4218,8 +4236,7 @@ void main(string[] args) {
 
     void activateToolById(string id) {
         if (activeToolId == id) {
-            setActiveTool(null);
-            activeToolId = "";
+            dropActiveTool(ToolTransition.sameIdToggleDrop);
         } else if (reg.actionRefusal("tool", id, document.hasEditTarget(),
                                      activeToolId).length > 0) {
             // TASK 0654 — the interactive half of `tool.set`'s refusal (see
@@ -4262,7 +4279,9 @@ void main(string[] args) {
         session.discardOpenEdit();
         g_prefs.toolDefaults.remove(id);   // clear sticky (B step 1)
         auto s = history.suspended();       // no spurious lifecycle/vertex-edit entry
-        toolHost.activate(id);              // rebuild -> constructor + YAML defaults,
+        JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
+        armPreparedTool(ToolTransition.resetRearm, id, noNamed);
+                                            // rebuild -> constructor + YAML defaults,
                                              // empty sticky = declared defaults (B step 2)
         return true;
     };
@@ -4995,24 +5014,6 @@ void main(string[] args) {
         import std.process : environment;
         ifs.useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
     }
-
-    // Task 1670 — wire the arm-time pose hook declared next to
-    // `setActiveTool`. HERE, and not at `buildToolVts`'s own declaration a
-    // little above it, because the body below runs `buildToolVts`, whose
-    // forwarder needs `ifs.app` — the very line above. This is the earliest
-    // point at which the hook could fire correctly, and everything before it
-    // still sees the null hook and behaves exactly as it did before.
-    //
-    // The body is a verbatim copy of the frame loop's tool-tick site (search
-    // `activeTool.update(vts)`): build this frame's subject packet, publish
-    // it, tick. Kept as a copy rather than a shared helper because the frame
-    // loop's site is inside the not-yet-extracted loop body and hoisting it
-    // would be a refactor of that, not of this.
-    armedToolPoseHook = () {
-        if (activeTool is null) return;
-        SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
-        activeTool.update(vts);
-    };
 
     // Task 0781 step 2a -- `pieArmIfOpened`, `handleKeyDown` and
     // `handleKeyUp` (237 lines together) moved to InputRouter

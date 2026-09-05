@@ -238,3 +238,74 @@ bool commitPreparedArm(ref Tool active, ref string activeId,
 
 static assert(is(typeof(&commitPreparedArm) == bool function(
     ref Tool, ref string, ref PreparedArm) nothrow));
+
+// -----------------------------------------------------------------------------
+// TASK 4053 — the DROP half of the same door.
+//
+// A tool SWITCH has always deactivated the outgoing tool through
+// `PreparedToolDoorClient.prepareDoorDeactivate` (see `prepareArm` above); a
+// tool DROP called `Tool.deactivate()` live. Same tool, same teardown, two
+// mechanisms, chosen by which transition the user happened to make. This pair
+// gives the drop the switch's door, so `source/tool_activation_ownership.d` can
+// name ONE owner for both.
+//
+// It is deliberately NOT `prepareArm` with a null factory: the arm transaction
+// also owns a candidate, a pipe activation, sticky/named parameters and an
+// initial pose, and every one of those is absent on a drop. Folding them in as
+// no-ops would put five `if (candidate is null)` branches inside the one
+// function whose whole contract is that nothing fallible runs after publish.
+
+/// One noncopyable value owns a drop's outgoing boundary.
+struct PreparedDrop {
+private:
+    PreparedRecordContext outgoing_;
+    Tool retained_;
+    bool consumed_;
+public:
+    @disable this(this);
+    bool consumed() const pure nothrow @safe @nogc { return consumed_; }
+}
+
+/// Prepare a complete drop with zero live writes. The outgoing tool is still
+/// the published active tool when this returns; nothing has been torn down.
+PreparedDrop prepareDrop(Tool outgoing, CommandHistory history,
+        RecordObserverHub observers, Layer layer,
+        ulong threadIdentity, ulong contextIdentity) {
+    if (outgoing is null || history is null || observers is null || layer is null)
+        throw new Exception("prepared tool drop requires complete owners");
+
+    PreparedDrop result;
+    scope(failure) abandon(result.outgoing_);
+
+    auto door = cast(PreparedToolDoorClient)outgoing;
+    if (door is null)
+        throw new Exception("active tool lacks prepared door");
+    result.outgoing_ = new PreparedRecordContext(history, observers);
+    result.outgoing_.setResourceIdentity(threadIdentity, contextIdentity);
+    if (!door.prepareDoorDeactivate(result.outgoing_, layer, threadIdentity,
+            contextIdentity))
+        throw new Exception("prepared tool deactivation refused");
+    if (!result.outgoing_.validate())
+        throw new Exception("prepared tool drop validation refused");
+
+    result.retained_ = outgoing;
+    return result;
+}
+
+/// The only live publication suffix of a drop. Mirrors `commitPreparedArm`:
+/// storage was prebuilt by `prepareDrop`, disposal is terminal, and no
+/// throwing work follows it.
+bool commitPreparedDrop(ref Tool active, ref string activeId,
+        ref PreparedDrop prepared) nothrow {
+    if (prepared.consumed_) return false;
+    prepared.outgoing_.install();
+    active = null;
+    activeId = "";
+    if (prepared.retained_ !is null) destroy(prepared.retained_);
+    prepared.retained_ = null;
+    prepared.consumed_ = true;
+    return true;
+}
+
+static assert(is(typeof(&commitPreparedDrop) == bool function(
+    ref Tool, ref string, ref PreparedDrop) nothrow));

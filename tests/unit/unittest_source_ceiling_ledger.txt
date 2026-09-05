@@ -13,7 +13,7 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 513
+source-files 514
 unittest-blocks 691
 version-ceiling 10
 

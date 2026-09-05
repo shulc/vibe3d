@@ -352,9 +352,12 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         lastAppliedFalloffs.length = 0;
     }
 
-    /// Dormant P1.0b.4c.2 producer. The unified installer later applies the
-    /// scalar reset represented by the result; the legacy hook above remains
-    /// the only production path until P1.0c.
+    /// The P1.0b.4c.2 producer, and NOT dormant since 7844bfee: a tool switch
+    /// deactivates the outgoing wrapper through this, and task 4053 added the
+    /// drop transitions the ownership table routes to the prepared door.
+    /// `deactivate()` above still owns the remaining drops. The scalar reset
+    /// the effect represents is never installed on this path and does not need
+    /// to be: the tool is destroyed immediately after, on both doors.
     final PreparedDeactivateEffect prepareDeactivate(
             PreparedRecordContext context, ClickPointResourceOwner clickOwner) {
         if (context is null) return PreparedDeactivateEffect(

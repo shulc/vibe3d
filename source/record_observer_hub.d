@@ -17,8 +17,10 @@ public:
     @disable this(this);
 }
 
-/// Future prepared-path owner. Legacy CommandHistory.onRecord remains wired
-/// until P1.0c; no production caller reaches this owner in P1.0b.3a.
+/// The prepared-path observer owner. Legacy `CommandHistory.onRecord` is still
+/// wired beside it, and a production caller DOES reach this now: app.d builds
+/// one hub and hands it to every `prepareArm` and, since task 4053, to
+/// `prepareDrop`.
 final class RecordObserverHub {
 private:
     immutable ulong owner_;

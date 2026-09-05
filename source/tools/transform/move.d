@@ -394,8 +394,9 @@ public:
         image.clear();
     }
 
-    /// Dormant Prepared twin of update(). The production override remains the
-    /// byte-for-byte Legacy route until the single P1.0c cutover.
+    /// Prepared twin of update(). Still dormant: task 4053's cutover moved the
+    /// ARM and two DROP transitions, not the per-frame update, so the
+    /// production override remains the byte-for-byte legacy route.
     final PreparedMoveUpdateEffect prepareUpdate(ref VectorStack vts,
             PreparedRecordContext context) {
         if (context is null) return PreparedMoveUpdateEffect(
