@@ -30,26 +30,54 @@
 // construction; this cell exists so whoever ports one starts from the read
 // law rather than from the plausible reading it refutes.
 //
-// MUTATIONS (each seen red, in isolation -- see the task card's Мутация):
-//   * replace `knotTangent` with the textbook symmetric difference
-//     `(next - prev) / 2` -> `the tangent law must be the unit-chord
-//     bisector` reddens on the asymmetric cell, while the SYMMETRIC cell
-//     above it stays green, which is the whole point of keeping it.
-//   * make `tolerance` absolute (drop the divisor term) -> `the comparator
-//     must be scale-relative` reddens, because the same 1e-6 offset must be
-//     refused at unit scale and accepted at scale 1000.
-//   * make `route` ignore the three-of-five gate -> `the cap route must
-//     depend on the ring SHAPE` reddens with the two routes it collapsed.
-//   * hand the raw polyline midpoint to `hermitePower` as a third
-//     constraint -> `a side of three or more points is APPROXIMATED`
+// MUTATIONS (each seen red, in isolation -- see the task card's Мутация).
+//
+// READ THE TWO STEPS, because most of these need BOTH. This cell compares a
+// helper against a FROZEN fixture, so a code-only edit is normally caught by
+// the frozen comparison standing ABOVE the law -- correct behaviour, but it
+// proves the freeze is live, not that the law below it is. Reaching the law
+// takes a second step: mutate the generator too, so the upper guard passes
+// on a consistently-wrong fixture and the law itself has to redden. Each
+// bullet therefore names the code red AND the code+generator red.
+//   * code: replace `chordBisectorTangent` with the textbook symmetric
+//     difference `(next - prev) / 2` -> `the discriminating cell's frozen
+//     tangent must match the read law` reddens.
+//     + generator freezes `(next - prev) / 2` -> `the tangent law must be
+//     the unit-chord bisector` reddens on the asymmetric cell, while the
+//     SYMMETRIC cell above it stays green, which is the whole point of
+//     keeping it.
+//   * code: make `tolerance` absolute (drop the divisor term) ->
+//     `unit_scale_offset_1e_minus_7_EQUAL: the frozen tolerance must match
+//     the read formula` reddens.
+//     + generator freezes the flat tolerance -> `the comparator must be
+//     scale-relative` reddens, because the same 1e-6 offset must be refused
+//     at unit scale and accepted at scale 1000.
+//   * code: make `route` ignore the three-of-five gate ->
+//     `three_used_slots_of_five_takes_its_own_exit: the read gate order
+//     sends this ring to corner_patch, the fixture froze three_of_five`
 //     reddens.
-//   * drop the clamp from `endKnotLong` -> `but SHORTENING it must move the
-//     knot off the mirror` reddens, while the three cells that AGREE with
-//     the rival stay green above it.
-//   * mark every vertex-bevel setter as flooring its negatives -> `exactly
-//     one of the four setters floors a negative` reddens, which is the
-//     control that keeps a per-attribute law from being read as a tool-wide
-//     one.
+//     + generator freezes three-of-five as `corner_patch` -> `the cap route
+//     must depend on the ring SHAPE` reddens with the two routes it
+//     collapsed.
+//   * code alone, and this one needs no second step: inside the
+//     three-or-more-points cell only, replace the cubic with a quadratic
+//     through the polyline midpoint -> `a side of three or more points is
+//     APPROXIMATED` reddens directly, because the frozen power-coefficient
+//     guard lives in a DIFFERENT cell and is not disturbed.
+//   * code: drop the clamp from `endKnotLong` ->
+//     `collinear_far_segment_shorter_THE_CLAMP: the frozen k must match
+//     max(|far|/|near| + 2, 3)` reddens.
+//     + generator freezes k without the clamp -> `but SHORTENING it must
+//     move the knot off the mirror` reddens, while the three cells that
+//     AGREE with the rival stay green above it.
+//   * fixture: mark every vertex-bevel setter as flooring its negatives ->
+//     `only the round level attribute floors its negatives` reddens, on the
+//     INNER assert of the tally loop. Naming the outer `exactly one of the
+//     four setters floors a negative` here would be wrong: it is a second,
+//     later guard and this mutation never reaches it, because the first
+//     non-round-level attribute trips the inner one. Both are kept -- the
+//     inner catches the wrong attribute flooring, the outer catches a count
+//     that drifts without any single attribute being wrong.
 module tests.unit.edge_bevel_corner_patch_law_test;
 
 import std.json;
@@ -154,8 +182,8 @@ private V3 evalPowerDerivative(V3[4] c, double t) {
 }
 
 // The per-knot tangent: each chord weighted by the OPPOSITE chord's length.
-private V3 knotTangent(V3 pprev, V3 pcur, V3 pnext,
-                       double divisor, double floorTol) {
+private V3 chordBisectorTangent(V3 pprev, V3 pcur, V3 pnext,
+                                 double divisor, double floorTol) {
     const V3 dp = sub(pcur, pprev);
     const V3 dn = sub(pnext, pcur);
     const double lp = norm(dp), ln = norm(dn);
@@ -343,7 +371,7 @@ unittest // the tangent law: the bisector, and the rival that leans
         const V3 pp = vec(inert["previous_point"]);
         const V3 pc = vec(inert["point"]);
         const V3 pn = vec(inert["next_point"]);
-        const V3 t  = knotTangent(pp, pc, pn, divisor, floorT);
+        const V3 t  = chordBisectorTangent(pp, pc, pn, divisor, floorT);
         const V3 r  = symmetricDifferenceTangent(pp, pc, pn);
         assert(dist(t, r) < eps,
             format("the SYMMETRIC corner cannot separate the two tangent "
@@ -355,7 +383,7 @@ unittest // the tangent law: the bisector, and the rival that leans
 
     // (2) Degenerate: the early exit, not a NaN.
     {
-        const V3 t = knotTangent(vec(degen["previous_point"]),
+        const V3 t = chordBisectorTangent(vec(degen["previous_point"]),
                                  vec(degen["point"]),
                                  vec(degen["next_point"]), divisor, floorT);
         assert(t[0] == 0.0 && t[1] == 0.0 && t[2] == 0.0,
@@ -369,7 +397,7 @@ unittest // the tangent law: the bisector, and the rival that leans
         const V3 pp = vec(asym["previous_point"]);
         const V3 pc = vec(asym["point"]);
         const V3 pn = vec(asym["next_point"]);
-        const V3 t  = knotTangent(pp, pc, pn, divisor, floorT);
+        const V3 t  = chordBisectorTangent(pp, pc, pn, divisor, floorT);
         const V3 r  = symmetricDifferenceTangent(pp, pc, pn);
 
         assert(dist(t, vec(asym["tangent"])) < eps,
@@ -396,7 +424,7 @@ unittest // the tangent law: the bisector, and the rival that leans
         const V3 pp = vec(colin["previous_point"]);
         const V3 pc = vec(colin["point"]);
         const V3 pn = vec(colin["next_point"]);
-        const V3 t  = knotTangent(pp, pc, pn, divisor, floorT);
+        const V3 t  = chordBisectorTangent(pp, pc, pn, divisor, floorT);
         const V3 r  = symmetricDifferenceTangent(pp, pc, pn);
         assert(degreesBetween(t, r) < 1e-9,
             "the collinear cell must NOT separate the two by direction");
@@ -405,6 +433,13 @@ unittest // the tangent law: the bisector, and the rival that leans
                    norm(t), norm(r)));
     }
 
+    // Population floor: "every refuted candidate names its refuting cell" is
+    // vacuously true over an empty list, and an empty list is also what a
+    // fixture regenerated without the refutation block would produce.
+    assert(blk["refuted_candidates"].array.length == 2,
+        format("both refuted tangent candidates must survive in the fixture, "
+             ~ "got %s -- the loop below says nothing over an empty list",
+               blk["refuted_candidates"].array.length));
     foreach (cand; blk["refuted_candidates"].array)
         assert(cand["refuted_by"].str.length > 0,
             "every refuted candidate must name the cell that refutes it");
@@ -436,8 +471,8 @@ unittest // a two-point side is handed across STRAIGHT, and why
     const V3 p1 = [2.75, 0.5, -0.5];
     const V3 before = sub(scale(p0, 2.0), p1);   // 2*P0 - P1
     const V3 after  = sub(scale(p1, 2.0), p0);   // 2*P1 - P0
-    const V3 t0 = knotTangent(before, p0, p1, divisor, floorT);
-    const V3 t1 = knotTangent(p0, p1, after, divisor, floorT);
+    const V3 t0 = chordBisectorTangent(before, p0, p1, divisor, floorT);
+    const V3 t1 = chordBisectorTangent(p0, p1, after, divisor, floorT);
     assert(dist(t0, sub(p1, p0)) < eps && dist(t1, sub(p1, p0)) < eps,
         format("both end tangents of a two-point side must come out as the "
              ~ "chord itself: got %s and %s against %s", t0, t1, sub(p1, p0)));
@@ -476,6 +511,11 @@ unittest // a side of three or more points is APPROXIMATED, not interpolated
         "the row asked which POLES and HANDLES are handed to the "
       ~ "interpolator; the read's answer is that there are none, and the "
       ~ "fixture has to keep saying so");
+    // This is the READ law, recorded: arc-length reparameterisation forces
+    // both end tangents to the same magnitude. It is asserted here as a
+    // fixture field and nowhere else, because nothing in this file recomputes
+    // it -- see the note at the `equal magnitude by construction` assert
+    // below, which is a different and much weaker statement.
     assert(blk["end_tangent_magnitudes_are_equal"].boolean,
         "arc-length reparameterisation forces both end tangents to the same "
       ~ "magnitude -- the one structural consequence that holds even where "
@@ -492,18 +532,29 @@ unittest // a side of three or more points is APPROXIMATED, not interpolated
     const V3 b = [3.0, 1.2, 0.0];
     const double polyLen = dist(a, m) + dist(m, b);
 
-    const V3 tm = knotTangent(a, m, b, divisor, floorT);
+    const V3 tm = chordBisectorTangent(a, m, b, divisor, floorT);
     assert(norm(tm) > 0.0, "the interior knot must have a tangent");
 
     // End directions taken from the same law with reflected outer knots --
     // the construction the read pins for a SHORT chain, used here only to
     // produce a concrete asymmetric pair.
-    const V3 t0raw = knotTangent(sub(scale(a, 2.0), m), a, m, divisor, floorT);
-    const V3 t1raw = knotTangent(m, b, sub(scale(b, 2.0), m), divisor, floorT);
+    const V3 t0raw = chordBisectorTangent(sub(scale(a, 2.0), m), a, m, divisor, floorT);
+    const V3 t1raw = chordBisectorTangent(m, b, sub(scale(b, 2.0), m), divisor, floorT);
     const V3 t0 = scale(t0raw, polyLen / norm(t0raw));
     const V3 t1 = scale(t1raw, polyLen / norm(t1raw));
+    // WHAT THIS ASSERT IS, AND WHAT IT IS NOT. Both tangents were just
+    // rescaled to `polyLen` on the two lines above, so this holds by
+    // arithmetic and CANNOT fail unless those two lines are gone. It is a
+    // guard on the rig, not evidence for the arc-length law: the mutation
+    // that reddens it (drop the rescaling) proves those two lines exist and
+    // nothing more. The arc-length law itself is asserted as a read fact at
+    // `end_tangent_magnitudes_are_equal` further up, and this file does not
+    // and cannot recompute it -- the reference's own reparameterisation is
+    // not reimplemented here.
     assert(abs(norm(t0) - norm(t1)) < 1e-12,
-        "the two end tangents must have equal magnitude by construction");
+        "the two end tangents must have equal magnitude by construction -- "
+      ~ "this guards the RIG (both were just scaled to the polyline length), "
+      ~ "it does not evidence the arc-length law");
 
     const V3[4] c = hermitePower(a, b, t0, t1);
     assert(dist(evalPower(c, 0.0), a) < 1e-12
@@ -523,6 +574,21 @@ unittest // a side of three or more points is APPROXIMATED, not interpolated
              ~ "cubic must miss the interior knot, closest approach was %s "
              ~ "-- if this is zero, the boundary curve interpolates the "
              ~ "polyline and the read is wrong", closest));
+
+    // ...and the miss is FROZEN, not merely non-zero. The threshold above
+    // carries the law ("approximated, not interpolating") and a 1e-3 floor
+    // would survive almost any silent drift in `chordBisectorTangent` or
+    // `hermitePower`; this pins the value those two actually produce on this
+    // rig. The number is a consequence of the read construction evaluated on
+    // a side chosen HERE, not a captured quantity, which is why it lives in
+    // the cell and not in the fixture.
+    enum double kFrozenClosestApproach = 0.27053137967239704;
+    assert(abs(closest - kFrozenClosestApproach) < 1e-12,
+        format("the closest approach must be the frozen %.17g, got %.17g -- the "
+             ~ "law assert above still passes at 1e-3, so a change that "
+             ~ "reaches here moved the construction without breaking the "
+             ~ "claim, and that has to be looked at deliberately",
+               kFrozenClosestApproach, closest));
 }
 
 unittest // the scalar comparator: scale-relative with a floor
@@ -536,6 +602,14 @@ unittest // the scalar comparator: scale-relative with a floor
         "both terms must be present: a comparator with only one of them is "
       ~ "one of the refuted rivals");
 
+    // Population floor. The five cells are what make the claim
+    // discriminating: the same 1e-6 offset REFUSED at unit scale and
+    // ACCEPTED at scale 1000, plus the two that exercise the absolute floor.
+    // Over a shortened list the loop passes and proves none of that.
+    assert(blk["cells"].array.length == 5,
+        format("all five comparator cells must survive -- got %s, and the "
+             ~ "loop below is vacuous without them",
+               blk["cells"].array.length));
     foreach (cell; blk["cells"].array) {
         const string nm = cell["name"].str;
         const double a = num(cell["a"]), b = num(cell["b"]);
