@@ -69,8 +69,11 @@ enum DisplayStyle : ubyte {
     /// material and 0592 corrected that — see `kSchemeSolidFill` for the
     /// measurement and for the per-item override we do not have.
     ///
-    /// Also installs no BACKDROP face pass: see `resolveDrawPlan`'s
-    /// `SameAsActive` case.
+    /// It ALSO withdraws the backdrop's face pass under `SameAsActive` — and
+    /// that rule's premise is REFUTED, so do not read it as parity: the
+    /// reference fills there. It survives as a registered divergence (gap
+    /// registry row 96) only until task 4340 decides the visible change. The
+    /// correction is argued at the site, in `resolveDrawPlan`.
     Solid,
     /// Lit surface from the material definition (diffuse / specular /
     /// glossiness). No image maps — we have none.
@@ -197,13 +200,20 @@ enum WireOverlay : ubyte {
 /// not selected — which coincides with the reference's own definition, so this
 /// axis needs no new notion of foreground/background.
 ///
-/// NOTE, open question: the reference carries BOTH a coarse background-draw
-/// control with roughly these values AND a full mirror of every active-mesh
-/// control (a second surface style, a second overlay, a second opacity, ...).
-/// Whether those are two live controls or one legacy alias is not decidable
-/// from the material mined so far. `ViewportDisplay` carries both shapes so
-/// neither answer costs a retrofit; the precedence taken meanwhile is
-/// documented on `resolveDrawPlan`.
+/// RESOLVED — this NOTE used to record it as an open question, and it is not
+/// one. The reference does carry BOTH a coarse background-draw control with
+/// roughly these values AND a full mirror of every active-mesh control (a
+/// second surface style, a second overlay, a second opacity, ...), but they
+/// are ONE system rather than two live controls or a legacy alias: the coarse
+/// control is a FACADE over that same second display state. Two of its four
+/// modes WRITE a display preset into the state; the other two set a standalone
+/// flag beside it. So `ViewportDisplay` carrying both shapes is right for the
+/// reason it was guessed, and no retrofit is owed. Read statically off the
+/// reference's shipped libraries and configuration, zero engine boots, and
+/// task 4340 carries the symbols and offsets. The answer is frozen — with our
+/// ordinals, which are NOT the reference's — in
+/// `tests/fixtures/backdrop_display_slots.json`, computed rather than asserted
+/// by block A of `tests/unit/backdrop_display_slot_law_test.d`.
 enum BackdropStyle : ubyte {
     /// Background layers draw exactly like the active mesh. Today's behaviour
     /// (plus our dim factor, below).
@@ -430,22 +440,33 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
         final switch (d.backdropStyle) {
             case BackdropStyle.SameAsActive:
                 st = d.active;
-                // MEASURED CORRECTION (task 0592). In the reference's style
+                // PREMISE REFUTED — it came from task 0592, and task 4340
+                // carries the read that supersedes it. What follows is a
+                // DIVERGENCE WE STILL SHIP, not parity, and block C2 of
+                // `tests/unit/backdrop_display_slot_law_test.d` pins it as
+                // one. Gap registry row 96 is its entry.
+                //
+                // The table 0592 read is real: in the reference's style
                 // registry every shaded style installs THREE model-draw
                 // sub-passes — a background one, the main one, and a
                 // transparency one — while the unshaded solid style installs
-                // exactly ONE, the main one. So "same as active" cannot mean
-                // "run the unshaded fill a second time for the background
-                // layers": running a background face pass is precisely the
-                // thing that style provably does not do.
+                // exactly ONE, the main one. The INFERENCE from it was
+                // backwards. Read at the caller that actually draws a
+                // non-foreground layer: the "background" sub-pass is the pass
+                // that meshes in the BACKGROUND SLOT draw in, and "same as
+                // active" folds that slot into the active one BEFORE the pass
+                // gate. So under exactly the configuration this branch is
+                // scoped to, no mesh is in that slot, the background sub-pass
+                // draws nothing whatever the style, and background layers draw
+                // in the MAIN pass with the ACTIVE state. The reference FILLS
+                // here; we withdraw the fill. Removing it is a visible
+                // appearance change, so it is the owner's call, which is what
+                // 4340 is for — not a reflex inside a capture lane.
                 //
-                // WHICH READING THIS IS — the narrow one, deliberately. The
-                // measurement establishes that the SOLID STYLE installs no
-                // background face step. It does NOT establish that background
-                // layers disappear, and this does not implement that: the
-                // overlay axis is untouched, so background layers keep their
-                // wireframe, stay visible, and stay snappable. Only the
-                // backdrop's FACE pass stops.
+                // DO NOT WIDEN IT to the weight style. That style has the same
+                // one-sub-pass shape, so the extension looks justified; it is
+                // the move gap registry row 45 forbids by name, and block B of
+                // the same reader reddens on it.
                 //
                 // Scoped to `SameAsActive` on purpose. `Flat` below also
                 // resolves the backdrop to `Solid`, but that is the user
