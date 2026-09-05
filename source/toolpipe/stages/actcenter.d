@@ -2865,7 +2865,8 @@ unittest {
            ~ "root (the directory holding dub.json), e.g. "
            ~ "`dub test --config=tests`");
 
-    // Task 0713: the YAML now carries only the curated tag order. The provider
+    // Task 0713 (and task 4320, which MEASURED what the curation should be):
+    // the YAML now carries only the tag order. The provider
     // emits label, action and checked-state from modeEntries; pin its OUTPUT,
     // not the representation that asks for it.
     PopupItem[] rows;            // top-level combined presets  (acenModes)
@@ -2947,8 +2948,12 @@ unittest {
             if (row.checked.equals_ == tag) found = true;
         if (!found) { firstCenterMissing = tag; break; }
     }
-    assert(centerRows.length == 7,
-           format("Center submenu provider emitted %d rows; expected 7; "
+    // NINE because the measured centre submenu is the COMPLETE set of nine
+    // centre modes, `parent` and `pivot` included; this list was seven only
+    // because it was copied five weeks before those two modes existed here.
+    // Frozen in tests/fixtures/action_center_menu_composition.json.
+    assert(centerRows.length == 9,
+           format("Center submenu provider emitted %d rows; expected 9; "
                   ~ "first missing mode '%s'", centerRows.length,
                   firstCenterMissing));
     assert(centerTags.length == centerRows.length,

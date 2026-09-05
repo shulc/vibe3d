@@ -37,7 +37,9 @@ groups:
       # vibe3d's per-stage `tool.pipe.attr` commands.
       #
       # `dynamicLabel: true` makes the button face show the active
-      # mode's label (matches the reference's PopupFace="optionOrLabel"), and
+      # mode's label, which is what the measured button does too — its face
+      # shows the armed mode's name and falls back to the menu's own title
+      # when nothing is armed (task 4320 saw it read "Pivot"). And
       # `checked: notEquals: "none"` keeps it visually pressed for
       # every mode except `(none)`.
       - label: "Action Center"
@@ -51,17 +53,31 @@ groups:
             - kind: submenu
               label: Center
               # Granular ACEN-only — leaves AXIS untouched. Mirrors
-              # the reference's centers submenu. Maps to vibe3d's
-              # ActionCenterStage.applySetAttr("mode", ...).
+              # the reference's centers submenu, which task 4320 MEASURED on
+              # 2026-09-05: it is the COMPLETE set of nine centre modes, not a
+              # curated subset, and this list now matches it entry for entry
+              # and in order. Before that read it was these seven — the same
+              # list with `parent` and `pivot` deleted, because it was copied
+              # five weeks before task 0082 added those two modes. Frozen in
+              # tests/fixtures/action_center_menu_composition.json; changing
+              # the composition without that fixture reddens
+              # tests/unit/action_center_menu_composition_test.d. Maps to
+              # vibe3d's ActionCenterStage.applySetAttr("mode", ...).
               items:
-                - { kind: dynamic, dynamicKind: acenStageModes, tags: [auto, select, border, element, screen, origin, local] }
+                - { kind: dynamic, dynamicKind: acenStageModes, tags: [auto, select, border, element, screen, origin, parent, local, pivot] }
             - kind: submenu
               label: Axis
               # Granular AXIS-only — leaves ACEN untouched. Mirrors
-              # the reference's axis submenu. Maps to vibe3d's
+              # the reference's axis submenu, MEASURED by task 4320: the
+              # complete set of eight axis modes, `parent` and `pivot`
+              # included. Two differences survive on purpose and are recorded
+              # in the fixture, not left to be rediscovered: `workplane` is
+              # ours alone (the reference reaches the work plane through its
+              # `auto` axis), and our `world` is the row the measured list
+              # labels Origin. Maps to vibe3d's
               # AxisStage.applySetAttr("mode", ...).
               items:
-                - { kind: dynamic, dynamicKind: axisModes, tags: [auto, world, workplane, select, element, screen, local] }
+                - { kind: dynamic, dynamicKind: axisModes, tags: [auto, world, workplane, select, element, screen, parent, local, pivot] }
       - label: "AI"
         action: { kind: command, id: ai.toggle }
         checked: { path: "ai/enabled", equals: "true" }

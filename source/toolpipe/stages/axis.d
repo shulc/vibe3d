@@ -1254,11 +1254,15 @@ unittest {
         "a refused parse must not have written a partial value");
 }
 
-// Task 0705 (audit 4, A5 second half): the statusline's Axis submenu is a
-// CURATED SUBSET of the modes — 7 of 13 — and until that task there was
-// nothing on the code side for it to be a subset OF. Task 0713 leaves only
-// those seven ordered tags in YAML; the provider derives label, action and
-// checked state from this table.
+// Task 0705 (audit 4, A5 second half), narrowed by task 0713 and CORRECTED by
+// task 4320: this submenu is a SUBSET of the 13-mode table, but "curated" was
+// the wrong word for why — 4320 measured the reference's own axis submenu and
+// found the COMPLETE set of its eight modes, `parent` and `pivot` included,
+// which ours was missing because the list predated them here. It is 9 of 13
+// now, and the three differences that remain are recorded and argued in
+// tests/fixtures/action_center_menu_composition.json rather than left to the
+// word "curated". The YAML carries only the ordered tags; the provider derives
+// label, action and checked state from this table.
 //
 // Pinned as a subset, not as equality: which modes the submenu offers is a
 // UI curation decision and is expected to be smaller than the table. What may
@@ -1304,8 +1308,13 @@ unittest {
             if (row.checked.equals_ == tag) found = true;
         if (!found) { firstMissing = tag; break; }
     }
-    assert(rows.length == 7,
-        format("Axis mode provider emitted %d rows; expected 7; first missing "
+    // NINE because the measured axis submenu carries `parent` and `pivot`,
+    // which this list was missing. Two of ours have no measured row
+    // (`workplane`, and `world` is the row the measurement labels Origin) and
+    // stay on purpose -- tests/fixtures/action_center_menu_composition.json
+    // records both, and dropping either is a product decision, not this pin's.
+    assert(rows.length == 9,
+        format("Axis mode provider emitted %d rows; expected 9; first missing "
                ~ "configured mode '%s'", rows.length, firstMissing));
     assert(configuredTags.length == rows.length,
         "Axis mode provider must emit one row for every configured tag");

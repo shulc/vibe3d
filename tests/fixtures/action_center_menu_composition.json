@@ -1,0 +1,213 @@
+{
+  "name": "action_center_menu_composition",
+  "description": "WHICH action-centre modes the reference editor offers in each of its three action-centre menus -- the combined menu, the Center submenu and the Axis submenu -- and how our own three lists in config/statusline.yaml compare. The question this settles is literal and was open for three months: our two submenus are 7-entry lists that describe themselves as mirrors of the reference's, and two implemented modes (`parent`, `pivot`) are absent from them with no recorded reason. They are NOT absent from the reference. Each of the reference's two submenus is the COMPLETE set of modes its half of the pipe has -- nine centre modes, eight axis modes -- with nothing curated away, and both carry `parent` and `pivot`.",
+  "source": "Static read of the reference editor's shipped menu configuration and of its shipped libraries' symbol tables, cross-checked live in its own graphical interface. Zero engine boots for the law; the live arm exists only to rule out runtime filtering.",
+  "source_note": "`provenance.source` is the fixture-classification enum (live-capture | simulated | analytic | unknown), read by tests/unit/fixture_provenance_census_test.d as PARITY-against-the-reference. It does not claim a process ran for the law. `provenance.method` is the field that says how, and it says static-read.",
+  "tolerance": 0,
+  "read_from": "Three channels, and they agree. (1) The reference's shipped menu configuration defines each of the three menus once, as an ordered list of rows, and defines them NOWHERE else -- so the authored composition is exact, including row order, labels and the command each row runs. (2) The shipped library that owns the tool pipe carries, in its symbol/string table, exactly nine centre-mode names and eight axis-mode names, and those are one-for-one the rows of the two submenus -- which is what proves each submenu is COMPLETE rather than a curated subset. (3) The shipped help page for action centres lists a twelve-row table of combined modes, matching the combined menu's twelve command rows. Menu identifiers, library names and symbol names are the reference's own and live in the private capture card, not here; what is reproducible from this file is the COMPOSITION.",
+  "reference_menus": {
+    "law": "The reference offers action centres at two granularities. The COMBINED menu picks a centre mode and an axis mode together (each of its rows is a stored preset naming one of each). Two submenus hanging off that same menu set the centre and the axis independently. Neither submenu is curated: each lists every mode of its own half.",
+    "combined_menu": {
+      "modes": [
+        "none",
+        "auto",
+        "select",
+        "border",
+        "selectauto",
+        "element",
+        "screen",
+        "origin",
+        "parent",
+        "local",
+        "pivot",
+        "pivot_center_parent_axis"
+      ],
+      "count": 12,
+      "note": "`none` clears both halves of the pipe rather than selecting a mode. Below these twelve, the same menu carries a separator, the two submenus, a second separator, three item-axis presets that all pin the centre to the item pivot and vary only the axis, a third separator, and one element-mode toggle -- 21 rows in all."
+    },
+    "center_submenu": {
+      "modes": [
+        "auto",
+        "select",
+        "border",
+        "element",
+        "screen",
+        "origin",
+        "parent",
+        "local",
+        "pivot"
+      ],
+      "count": 9,
+      "is_complete_set": true,
+      "complete_set_evidence": "the nine rows are exactly the nine centre-mode names the tool-pipe library registers. Nothing is left out."
+    },
+    "axis_submenu": {
+      "modes": [
+        "auto",
+        "select",
+        "element",
+        "screen",
+        "origin",
+        "parent",
+        "local",
+        "pivot"
+      ],
+      "count": 8,
+      "is_complete_set": true,
+      "complete_set_evidence": "the eight rows are exactly the eight axis-mode names the tool-pipe library registers.",
+      "note": "no `border` row: the border preset reuses the selection axis rather than having an axis mode of its own. No work-plane row either -- the reference reaches the work plane through its `auto` axis mode, which aligns to world OR work-plane axes."
+    },
+    "mode_universe": {
+      "center": 9,
+      "axis": 8,
+      "note": "The mode is a TOOL IDENTITY in the reference, not an enum value on one tool: each mode is its own pipe entry, and the combined presets arm one of each. That is why the reference has no fourth consumer to compare against -- see fourth_consumer."
+    }
+  },
+  "reference_is_not_uniform": {
+    "law": "The reference does NOT keep one canonical list of the COMBINED modes. Five shipped consumers of that same twelve-mode set carry five different compositions, so 'our list is a subset of the table' is by itself evidence of nothing -- only the specific menu's own composition is. The two granular submenus are a different vocabulary and are counted separately; each of those IS complete.",
+    "consumers_of_the_combined_set": [
+      {
+        "consumer": "combined menu",
+        "modes": 12,
+        "omits": []
+      },
+      {
+        "consumer": "popover palette",
+        "modes": 11,
+        "omits": [
+          "none"
+        ]
+      },
+      {
+        "consumer": "application menu bar",
+        "modes": 9,
+        "omits": [
+          "none",
+          "parent",
+          "pivot_center_parent_axis"
+        ]
+      },
+      {
+        "consumer": "radial menu",
+        "modes": 8,
+        "omits": [
+          "none",
+          "border",
+          "parent",
+          "pivot_center_parent_axis"
+        ]
+      },
+      {
+        "consumer": "preset browser group",
+        "modes": 7,
+        "omits": [
+          "none",
+          "selectauto",
+          "parent",
+          "local",
+          "pivot_center_parent_axis"
+        ]
+      }
+    ],
+    "distinct_compositions": 5,
+    "universe": 12,
+    "arithmetic": "every row's modes + omits must total the twelve-mode universe; the reader recomputes it, so a row edited on one side alone reddens."
+  },
+  "fourth_consumer": {
+    "question": "Our Tool Properties panel offers a dropdown listing every action-centre mode. Does the reference's equivalent show the full set the way ours does?",
+    "answer": "The reference has no such dropdown at all. Its properties panel is FILTERED BY WHICH MODE IS ARMED -- thirteen filter records, one per mode that has its own attribute form -- and what each form then shows is that mode's OWN attributes (the selection sub-mode for the selection centre; the explicit centre coordinates for the auto centre; the axis index, alignment and endpoint fields for the axis modes). There is no control anywhere in the shipped configuration that lists the modes as choices of one field.",
+    "consequence": "Our mode dropdown is a consequence of OUR model -- one stage holding an enum -- not a divergence from a reference list. There is nothing to bring it in line with, and the comparison the question asked for has no other side."
+  },
+  "ours": {
+    "file": "config/statusline.yaml",
+    "combined_menu": [
+      "none",
+      "auto",
+      "select",
+      "border",
+      "selectauto",
+      "element",
+      "screen",
+      "origin",
+      "local",
+      "pivot",
+      "parent"
+    ],
+    "center_submenu": [
+      "auto",
+      "select",
+      "border",
+      "element",
+      "screen",
+      "origin",
+      "parent",
+      "local",
+      "pivot"
+    ],
+    "axis_submenu": [
+      "auto",
+      "world",
+      "workplane",
+      "select",
+      "element",
+      "screen",
+      "parent",
+      "local",
+      "pivot"
+    ],
+    "counts": {
+      "combined_menu": 11,
+      "center_submenu": 9,
+      "axis_submenu": 9
+    },
+    "note": "The two submenus were brought to the measurement by task 4320: `parent` and `pivot` were inserted at the positions the measured lists put them. Before that edit both were 7 entries. The combined menu was NOT touched -- see divergences.combined_menu."
+  },
+  "tag_aliases": {
+    "note": "Two of our wire tags name the same thing the measured lists name differently. Divergences below are computed AFTER applying this map to our tags, so a pure naming difference is not reported as a missing mode.",
+    "axis_submenu": {
+      "world": "origin"
+    },
+    "why_world_is_origin": "our axis table carries BOTH `world` and `origin` and documents Origin at its own enum member as an alias of World; the measured axis list has one such row and labels it Origin. Which of our two tags should survive is a question about OUR table and this capture does not settle it."
+  },
+  "divergences": {
+    "law": "After the alias map, our centre submenu matches the measured one exactly, in order. Our axis submenu carries every measured mode plus one of our own, in a different order. Our combined menu is missing one measured mode plus three item-axis presets and an element-mode toggle, none of which are list staleness.",
+    "center_submenu": {
+      "missing_from_ours": [],
+      "extra_in_ours": [],
+      "order_matches": true,
+      "history": "Before task 4320 this list was missing `parent` and `pivot` and was otherwise the measured list in the measured order -- the signature of a list copied before those two modes existed in our own table. The dating agrees: the list was authored five weeks before the modes were added."
+    },
+    "axis_submenu": {
+      "missing_from_ours": [],
+      "extra_in_ours": [
+        "workplane"
+      ],
+      "order_matches": false,
+      "why_extra_kept": "`workplane` is a mode we have and the reference does not offer as a menu row -- it reaches the work plane through its `auto` axis instead. Dropping ours would remove a feature, which is a product decision this capture does not make.",
+      "why_order_not_matched": "our list puts the world-aligned row second and the measured list puts it fifth. Reordering is cosmetic and was left alone deliberately; the order is recorded here so a later change to it is visible rather than silent."
+    },
+    "combined_menu": {
+      "missing_from_ours": [
+        "pivot_center_parent_axis"
+      ],
+      "extra_in_ours": [],
+      "order_matches": false,
+      "not_a_stale_list": "`pivot_center_parent_axis` is a COMBINATION -- pivot centre with parent axis -- and our model has no single enum value that expresses it, so it is scope we have not built rather than a row someone forgot. The same is true of the three item-axis presets and the element-mode toggle that sit below the submenus in the measured menu. Our order also ends `origin, local, pivot, parent` where the measured menu ends `origin, parent, local, pivot, pivot_center_parent_axis`."
+    }
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "none",
+    "why": "provenance.method is 'static-read': every composition here was read out of the reference's shipped menu configuration and its shipped libraries' string tables. No tool was armed and no gesture was delivered, so there is no tool parameter this fixture could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody looked."
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "static-read",
+    "captured_utc": "2026-09-05",
+    "harness": "grep/sed over the reference's shipped resource configuration plus `strings`/`nm` over its shipped unstripped libraries; the live cross-check ran under the private capture harness (isolated private HOME, isolated virtual display, PID-only teardown). Driver, probe, frames and the reference's own identifiers are in the private capture card toolcards/acen_axis_menu_composition/.",
+    "task": "4320",
+    "notes": "INSTRUMENT, two channels. (1) STATIC and load-bearing: the three menus are each defined exactly once in the shipped configuration, as ordered row lists with no enable or visibility gate on any row, and the tool-pipe library's string table independently BOUNDS each submenu's universe at 9 and 8 -- which is what turns 'these nine rows are listed' into 'these are ALL of them'. Zero processes started. (2) LIVE cross-check, in a state built so `parent` and `pivot` are MEANINGFUL -- a mesh item parented under a locator placed away from the world origin, its own centre offset from both, its geometry offset again from its centre, and two of its polygons selected -- because a default document has no parent and no component selection and 'the row is not there' would then mean nothing there. In that state every one of the 17 modes was armed and read back successfully, while four negative controls (a name with a help entry but no tool behind it, two names only our own config has, and one that exists nowhere) were all REFUSED by name. WHAT THE LIVE ARM COULD NOT PRODUCE, and it is recorded because it is a controlled negative rather than a silence: the menu's own PIXELS. A click, a held press and the command the button itself runs all opened nothing under injected input, while an application menu opened by the SAME click through the SAME capture path rendered completely -- so the capture channel is not blind to menus and the negative is about that one widget. TWO INSTRUMENTS THAT MEASURED NOTHING, so nobody re-tries them: querying whether a mode is armed answers identically for a name that exists nowhere and for a real one, and the command service's enabled-check is not reachable from the script layer in this build (it raises on every entry, controls included). Both were caught by the negative controls, which is what those are for. Driver, probe, frames and the reference's own identifiers are in the private capture card."
+  }
+}
