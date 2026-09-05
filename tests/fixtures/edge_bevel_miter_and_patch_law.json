@@ -1,0 +1,271 @@
+{
+ "name": "edge_bevel_miter_and_patch_law",
+ "description": "Three remainders of the bevel cap campaign, all read statically at the reference's own compute sites: what two points the miter profile's interior interpolates between and on what schedule; how the three-sided surface interpolator builds its interior from the collapsed side curves; and what the cap router's marker exit actually builds. No engine was launched for any of it.",
+ "source": "Static disassembly of the reference editor's shipped unstripped libraries. Zero boots, zero traces, zero displays.",
+ "provenance": {
+  "method": "static-read",
+  "date": "2026-09-05",
+  "task": 4332,
+  "registry_rows": [
+   17,
+   20,
+   22
+  ],
+  "symbols_read": 7,
+  "note": "The seven routines' own names, libraries and addresses are recorded in the PRIVATE toolcard for this task; they are the reference's identifiers and deliberately do not cross into this tree. What is reproducible from here is the LAW."
+ },
+ "miter_interior": {
+  "register_row": 17,
+  "symbol_exists": true,
+  "law": "The miter profile's interior samples are NOT produced by the arc/rail routine. For each interior sample i the router computes a blend weight s, evaluates the rail routine TWICE, and writes the componentwise linear blend of the two results. The two rail evaluations are the same routine called with its two context pointers SWAPPED, at COMPLEMENTARY parameters, and with the second call's direction input set to the componentwise NEGATION of the first call's direction output.",
+  "interior_is_a_linear_blend_of_two_rail_evaluations": true,
+  "blend_weight_is_the_insertion_parameter": true,
+  "second_rail_parameter_is_one_minus_s": true,
+  "second_rail_contexts_are_swapped": true,
+  "second_rail_direction_input_is_negated": true,
+  "what_A_and_B_are": "A and B are the two rail evaluations themselves -- specifically the buffer each of the two consecutive rail calls receives as its LAST pointer argument. A is the first call's, taken at parameter s; B is the second call's, taken at parameter 1-s.",
+  "corrects_a_previously_recorded_reading": {
+   "claim_now_refuted": "that the two blended points are NOT the output buffers of the two rail calls immediately above them",
+   "why_it_was_wrong": "the earlier read compared raw stack displacements across a call window in which the stack pointer had been lowered by 0x20, so the two calls' argument buffers and the two blended slots appeared to be different memory. Normalised to one frame they are the same two buffers.",
+   "second_claim_now_refuted": "that all four rail calls in this routine are taken at parameter 0 or 1",
+   "why_that_was_wrong": "the constant 1.0 IS loaded before the fourth call, but a subtraction of the blend weight sits between the load and the call, so the fourth call is taken at 1-s. Only the first two calls are at the ends."
+  },
+  "schedule": {
+   "law": "s_i = i/(n_seg+1) for i = 1..n_seg -- uniform, with no arc-length and no angular weighting, and never reaching either end.",
+   "cells": [
+    {
+     "round_segments": 1,
+     "weights": [
+      0.5
+     ]
+    },
+    {
+     "round_segments": 2,
+     "weights": [
+      0.3333333333333333,
+      0.6666666666666666
+     ]
+    },
+    {
+     "round_segments": 3,
+     "weights": [
+      0.25,
+      0.5,
+      0.75
+     ]
+    },
+    {
+     "round_segments": 4,
+     "weights": [
+      0.2,
+      0.4,
+      0.6,
+      0.8
+     ]
+    }
+   ],
+   "rivals_that_must_disagree": {
+    "i_over_n": "s_i = i/n_seg places the last sample exactly ON the far end, duplicating a vertex the rail already produced",
+    "i_minus_one_over_n": "s_i = (i-1)/n_seg places the first sample exactly ON the near end"
+   }
+  },
+  "blend_cells": [
+   {
+    "name": "quarter",
+    "first_rail_point": [
+     1.0,
+     -2.0,
+     0.5
+    ],
+    "second_rail_point": [
+     -3.0,
+     4.0,
+     2.5
+    ],
+    "blend_weight": 0.25,
+    "interior_point": [
+     0.0,
+     -0.5,
+     1.0
+    ]
+   },
+   {
+    "name": "midpoint_INERT",
+    "first_rail_point": [
+     1.0,
+     -2.0,
+     0.5
+    ],
+    "second_rail_point": [
+     -3.0,
+     4.0,
+     2.5
+    ],
+    "blend_weight": 0.5,
+    "interior_point": [
+     -1.0,
+     1.0,
+     1.5
+    ],
+    "inert_because": "s = 1/2 makes the lerp and the midpoint rival agree exactly; this cell cannot separate them and is kept only so the corpus is not silently free of the degenerate case"
+   },
+   {
+    "name": "three_quarters",
+    "first_rail_point": [
+     1.0,
+     -2.0,
+     0.5
+    ],
+    "second_rail_point": [
+     -3.0,
+     4.0,
+     2.5
+    ],
+    "blend_weight": 0.75,
+    "interior_point": [
+     -2.0,
+     2.5,
+     2.0
+    ]
+   },
+   {
+    "name": "first_of_four",
+    "first_rail_point": [
+     1.0,
+     -2.0,
+     0.5
+    ],
+    "second_rail_point": [
+     -3.0,
+     4.0,
+     2.5
+    ],
+    "blend_weight": 0.2,
+    "interior_point": [
+     0.19999999999999996,
+     -0.7999999999999998,
+     0.9
+    ]
+   }
+  ],
+  "rivals_that_must_disagree": {
+   "rail_drives_the_interior": "interior = A (the rail routine evaluated at s). This was the implicit model before this read and it is wrong: it ignores the second rail evaluation entirely.",
+   "midpoint": "interior = (A+B)/2, i.e. a blend at a fixed 1/2 rather than at the insertion parameter",
+   "second_rail_at_one": "the second rail evaluation taken at parameter 1.0 rather than 1-s"
+  }
+ },
+ "three_sided_interior": {
+  "register_row": 20,
+  "symbol_exists": true,
+  "law": "The three-sided interpolator does NOT emit one triangular patch. It converts each of the three collapsed side cubics to its Bezier control quadruple, checks the ring closes end to end, derives TWO interior control points per side, and then emits THREE four-sided patches meeting at a single interior hub. The caller's behaviour confirms it independently: it creates exactly ONE new interior vertex and never evaluates the surface at a parameter to place it.",
+  "sides": 3,
+  "patches_emitted": 3,
+  "interior_control_points_total": 6,
+  "interior_control_points_per_side": 2,
+  "interior_hub_vertices": 1,
+  "emits_one_triangular_patch": false,
+  "interior_control_points_are_contiguous": true,
+  "contiguity_note": "the six interior points occupy six consecutive same-sized slots, which is what identifies them as one array of 2-per-side rather than three unrelated pairs",
+  "shared_internal_boundary": true,
+  "shared_internal_boundary_note": "inside the splitting routine one computed row is stored to TWO different offsets of the same patch record, which is what makes the three quads share their internal boundaries and stay watertight",
+  "divisors_present": [
+   2,
+   3,
+   4,
+   6
+  ],
+  "dominant_divisor": 3,
+  "dominant_divisor_note": "one register is loaded with 3.0 once and used as the divisor in eight of the ten divisions in the splitting routine -- the three-fold average the split is built on",
+  "closure_precondition": {
+   "endpoint_equality_tests": 3,
+   "law": "each side's first Bezier control point must equal the PREVIOUS side's last; any failure returns no patch at all, silently",
+   "failure_is_silent": true
+  },
+  "dispatch": {
+   "law": "fewer than three sides is refused outright; exactly three sides goes to a dedicated routine; four or more goes to different code. Three and four-or-more are not one routine with a parameter.",
+   "minimum_sides": 3,
+   "three_is_a_separate_routine": true
+  },
+  "rivals_that_must_disagree": {
+   "one_triangular_patch": "a single three-sided patch with no interior hub -- disagrees on the patch count AND on the hub count",
+   "hub_from_surface_evaluation": "the hub placed by evaluating the finished surface at a centre parameter -- the caller reads it out of the first emitted patch's own record instead"
+  }
+ },
+ "cap_router_marker_exit": {
+  "register_row": 22,
+  "symbol_exists": true,
+  "law": "The marker exit builds NOTHING. It is a branch straight to the routine's single common tail: the tail registers whatever polygons the earlier per-slot loop already appended into an element group, assigns their UVs, frees its scratch and returns zero. No cap is constructed on that path.",
+  "marker_exit_builds_a_cap": false,
+  "marker_exit_additional_faces": 0,
+  "marker_exit_is_a_decline_not_a_builder_family": true,
+  "common_tail_is_unique": true,
+  "common_tail_uniqueness_evidence": "the whole routine contains exactly ONE element-group call, ONE UV-assignment call and ONE checkpoint-end call, and all three sit in that tail, so every successful return passes through it",
+  "gates_reaching_the_common_tail_directly": 2,
+  "three_of_five_exit": {
+   "law": "the shape-selected exit fires only when BOTH the built polygon count is exactly 3 AND the vertex's slot count is exactly 5; it is a conjunction, and either field alone does not select it",
+   "required_built_polygon_count": 3,
+   "required_slot_count": 5,
+   "is_a_conjunction": true,
+   "goes_to_the_n_sided_patch_builder": false,
+   "route_note": "that exit is served by a different builder family altogether -- the same tri-cap and partial-fan machinery the narrow-gap notch uses -- so the N-sided patch construction is never reached on it"
+  },
+  "routing_cells": [
+   {
+    "name": "three_of_five",
+    "built_polygons": 3,
+    "slot_count": 5,
+    "marker": 0,
+    "route": "tri_cap_family"
+   },
+   {
+    "name": "three_of_six_ONE_FIELD_APART",
+    "built_polygons": 3,
+    "slot_count": 6,
+    "marker": 0,
+    "route": "corner_patch",
+    "note": "differs from the row above in the slot count ALONE"
+   },
+   {
+    "name": "three_of_six_with_marker",
+    "built_polygons": 3,
+    "slot_count": 6,
+    "marker": 1,
+    "route": "common_tail_no_cap"
+   },
+   {
+    "name": "three_of_five_with_marker",
+    "built_polygons": 3,
+    "slot_count": 5,
+    "marker": 1,
+    "route": "tri_cap_family",
+    "note": "the shape gate is tested BEFORE the marker gate, so a set marker does NOT divert this ring -- the order of the two gates is itself load-bearing and this cell is the one that pins it"
+   },
+   {
+    "name": "zero_built_polygons",
+    "built_polygons": 0,
+    "slot_count": 6,
+    "marker": 0,
+    "route": "common_tail_no_cap"
+   },
+   {
+    "name": "four_of_five_SEPARATES_THE_CONJUNCTION",
+    "built_polygons": 4,
+    "slot_count": 5,
+    "marker": 0,
+    "route": "corner_patch",
+    "note": "slot count 5 but built-polygon count 4: the shape gate is a CONJUNCTION, so this ring does NOT take the tri-cap exit. Without this cell every frozen ring agrees with a rival that selects on the slot count alone, and the corpus would pin nothing about the conjunction -- the separation assert in the reader caught exactly that before this cell existed. The gates BELOW the marker gate are not modelled here, so this row states the route as far as the two gates this row is about carry it."
+   }
+  ],
+  "rivals_that_must_disagree": {
+   "marker_exit_builds_its_own_cap": "a model in which the marker exit is a third builder family rather than a decline",
+   "gate_order_marker_first": "testing the marker before the ring shape -- which would divert the three-of-five-with-marker ring to the tail",
+   "slot_count_alone": "selecting the tri-cap family on the slot count alone, ignoring the built-polygon count"
+  }
+ },
+ "what_this_read_did_not_settle": [
+  "the exact rational coefficients the three-sided splitting routine uses for each interior control row -- the divisors and the three-fold average are read, the full per-row weights are not",
+  "what the router's flag bits MEAN; only their arithmetic and their branches are read, and neither routing law depends on their meaning",
+  "the rail routine's own radius behaviour between its two ends -- the angle fraction is read, whether the radius is carried unchanged is not, and the miter law above is stated in terms of the two rail RESULTS so that it does not depend on the answer",
+  "whether the interior blend is ever taken with a weight other than the insertion parameter on some other path through the router"
+ ]
+}
