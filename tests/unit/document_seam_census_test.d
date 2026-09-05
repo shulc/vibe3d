@@ -38,7 +38,11 @@
 //     assertion reddens, naming that file;
 //   * delete the last call to one reader from `tests/unit/document_test.d`
 //     ⇒ the population floor reddens, naming that reader;
-//   * add a seventh reader to the seam ⇒ the declaration-set assertion reddens.
+//   * add a seventh reader to the seam ⇒ the declaration-set assertion reddens,
+//     and it reddens whether the reader is spelled at indent 4 or at column 0;
+//   * put that seventh reader in a SECOND `version(unittest)` block, or outside
+//     every block ⇒ the header-uniqueness guard or the backstop reddens. Both
+//     of those were GREEN once, measured, not imagined — see the parse below.
 module tests.unit.document_seam_census_test;
 
 import std.algorithm : canFind, sort, startsWith;
@@ -46,7 +50,7 @@ import std.array : appender, join;
 import std.file : dirEntries, exists, isDir, readText, SpanMode;
 import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName, relativePath;
-import std.regex : ctRegex, matchAll, regex;
+import std.regex : ctRegex, matchAll, matchFirst, regex;
 import std.string : endsWith, replace, splitLines, strip;
 
 import tests.unit.census_symbols : blankNonCode;
@@ -100,68 +104,124 @@ private size_t count(R)(R range)
 /// inferred: both spellings were added to the live seam and this census stayed
 /// GREEN both times (task 4120 review, cells C1 and C2).
 ///
-/// Three guards replace it, and the middle one is the one that generalises:
+/// THE SECOND ROUND FOUND TWO MORE OF THE SAME KIND — a guard keyed on a
+/// STRING rather than on a SHAPE — and both were measured the same way, by
+/// putting the thing in the live seam and watching this census stay GREEN
+/// (task 4120 re-review, cells R1 and R2):
 ///
-///   * the header must be UNIQUE in the file. The predecessor took the LAST
-///     `version (unittest) {` line, so a second such block anywhere above the
-///     seam silently moved the parse window past it and the seam went unread;
-///   * every line that COULD be a declaration must yield a name. Matching a
-///     convention can only ever miss, so the miss is made loud: an indent-4
-///     line carrying a `(` and no `test<Upper>` name is a failure, not a
-///     silent zero. That is what stops the next unforeseen spelling;
+///   * the header was compared as the exact string `version (unittest) {`, so
+///     D's equally legal `version(unittest) {` was not a header at all. A
+///     second block spelled that way could hold a seventh accessor while the
+///     "exactly ONE header" guard below still counted one;
+///   * the yield-a-name guard was gated on `startsWith("    ")`, so a
+///     declaration at COLUMN 0 was filtered out as "not a declaration line"
+///     before the guard could fire on it.
+///
+/// Five guards now. The last two are the ones that generalise:
+///
+///   * the header is matched by a whitespace-tolerant regex and ALL matches
+///     are counted, so "exactly one" means one BLOCK and not one spelling of
+///     one block. The predecessor took the LAST match, so a second block above
+///     the seam silently moved the parse window past it;
+///   * the opening brace may sit on the header line or on the next one — D
+///     reads both as the same block, and so does this;
 ///   * the block is bounded by its own closing brace rather than running to
 ///     end of file, so a declaration added BELOW the seam is out of scope
-///     instead of being counted into it.
+///     instead of being counted into it;
+///   * every block line NOT DEEPER than the declaration column must yield a
+///     name. Matching a convention can only ever miss, so the miss is made
+///     loud: such a line carrying a `(` and no `test<Upper>` name is a
+///     failure, not a silent zero. Keyed on the indent DEPTH, because the
+///     `startsWith("    ")` it replaces was a filter the guard sat behind;
+///   * and OUTSIDE the block, nothing in the file may look like a seam
+///     accessor at all. That is the backstop under the other four: it does not
+///     care how a second block was spelled, only that a `test<Upper>(`
+///     declaration ended up somewhere this parse does not read.
 private string[] declaredSeamReaders(string rawText)
 {
-    enum head = "version (unittest) {";
     // Comments and string literals blanked first: `source/document.d` names
     // this very header inside the prose above the seam, and a parse that read
     // raw text would locate the block in a paragraph about the block.
     const text = blankNonCode(rawText);
     auto lines = text.splitLines;
 
+    // Whitespace-tolerant, and every match counted — see cell R2 above.
+    enum headRe = ctRegex!(`^[ \t]*version[ \t]*\([ \t]*unittest[ \t]*\)[ \t]*\{?[ \t]*$`);
     size_t[] headLines;
     foreach (n, line; lines)
-        if (line.strip == head) headLines ~= n + 1;
+        if (!matchFirst(line, headRe).empty) headLines ~= n + 1;
     assert(headLines.length == 1,
-        format("%s must hold exactly ONE `%s` header for this census to know "
-             ~ "which block it is reading; found %d (lines %s). A second block "
-             ~ "would leave one of them unenumerated.",
-               seamDecl, head, headLines.length, headLines));
-    const start = headLines[0] - 1;
+        format("%s must hold exactly ONE `version (unittest)` block header for "
+             ~ "this census to know which block it is reading; found %d (lines "
+             ~ "%s). A second block would leave one of them unenumerated.",
+               seamDecl, headLines.length, headLines));
+    const headIdx = headLines[0] - 1;
+
+    // Allman or not: the brace is on the header line, or alone on the next.
+    size_t start = headIdx;
+    if (!lines[headIdx].strip.endsWith("{"))
+    {
+        assert(headIdx + 1 < lines.length && lines[headIdx + 1].strip == "{",
+            format("the `version (unittest)` header at %s:%d is not followed by "
+                 ~ "an opening brace on its own or the next line; this census "
+                 ~ "cannot tell where the seam begins.", seamDecl, headIdx + 1));
+        start = headIdx + 1;
+    }
 
     size_t end = lines.length;
     foreach (n; start + 1 .. lines.length)
         if (lines[n] == "}") { end = n; break; }
     assert(end < lines.length,
-        format("the `%s` block in %s is not closed by a column-0 `}`; this "
-             ~ "census cannot bound the seam and would read the rest of the "
-             ~ "file as part of it.", head, seamDecl));
+        format("the `version (unittest)` block in %s is not closed by a "
+             ~ "column-0 `}`; this census cannot bound the seam and would read "
+             ~ "the rest of the file as part of it.", seamDecl));
 
     auto names = appender!(string[]);
     // The seam's naming convention, and the only thing the parse keys on:
     // `test` then an upper-case letter. Every return-type spelling therefore
     // parses — `const(Layer)`, `ref Mesh`, `inout(Mesh)*`, an attribute in
     // front of any of them.
-    enum nameRe = ctRegex!(`\btest[A-Z][A-Za-z0-9_]*\s*\(`);
+    enum nameRe = ctRegex!(`\btest[A-Z][A-Za-z0-9_]*[ \t]*\(`);
     foreach (n; start + 1 .. end)
     {
         const line = lines[n];
-        // Declarations sit at indent 4; bodies are deeper and closing braces
-        // carry no `(`.
-        if (!line.startsWith("    ") || line.startsWith("     ")) continue;
-        if (!line.canFind('(')) continue;
+        const body_ = line.strip;
+        if (body_.length == 0) continue;
+        // Declarations sit AT MOST at indent 4; bodies are deeper. The depth
+        // test is the guard, not a filter in front of it: `startsWith("    ")`
+        // excused a column-0 declaration from having to yield a name at all.
+        size_t indent;
+        while (indent < line.length && (line[indent] == ' ' || line[indent] == '\t'))
+            ++indent;
+        if (indent > 4) continue;
+        if (!body_.canFind('(')) continue;
         auto m = matchAll(line, nameRe);
         assert(!m.empty,
-            format("%s:%d is an indent-4 declaration line in the seam and "
-                 ~ "yields no `test<Upper>` name: `%s`. Seam accessors are "
-                 ~ "recognised BY THAT CONVENTION, so an accessor named "
-                 ~ "otherwise would be invisible here; rename it, or move it "
-                 ~ "out of the seam.", seamDecl, n + 1, line.strip));
+            format("%s:%d is a declaration-depth line in the seam and yields "
+                 ~ "no `test<Upper>` name: `%s`. Seam accessors are recognised "
+                 ~ "BY THAT CONVENTION, so an accessor named otherwise would "
+                 ~ "be invisible here; rename it, or move it out of the seam.",
+                   seamDecl, n + 1, body_));
         const hit = m.front[0];
         names.put(hit[0 .. $ - 1].strip.idup);
     }
+
+    // THE BACKSTOP. Four guards above decide what the ONE block contains; this
+    // one refuses a seam-shaped declaration that never entered a block this
+    // parse reads — whatever the spelling that put it there.
+    string[] outside;
+    foreach (n, line; lines)
+    {
+        if (n > start && n < end) continue;
+        if (matchFirst(line, nameRe).empty) continue;
+        outside ~= format("%d: %s", n + 1, line.strip);
+    }
+    assert(outside.length == 0,
+        format("%s names a `test<Upper>(` accessor outside the one parsed "
+             ~ "`version (unittest)` block, so this census would never see it: "
+             ~ "%s. Move it into the seam, or stop naming it like one.",
+               seamDecl, outside.join("; ")));
+
     auto result = names.data;
     result.sort();
     return result;
