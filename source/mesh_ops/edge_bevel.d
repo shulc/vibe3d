@@ -119,9 +119,10 @@ enum uint kEdgeBevelEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
 ///     point, full stop (doc/edge_bevel_freeend_cap_plan.md,
 ///     capture-verified at Round Level 0 for valence 3-6, K∈{1,2}).
 ///
-///   A vertex with `0 < K < nE` on a CLOSED fan (`nE == d`; see below)
-///   additionally gets ONE flat cap face: walk the fan in ring order,
-///   threading one slide vertex per unselected slot and one miter vertex
+///   A vertex with `0 < K < nE` — on a CLOSED fan (`nE == d`) or on an
+///   OPEN one (`nE == d + 1`; both below) — additionally gets ONE flat
+///   cap face: walk the fan in ring order, threading one slide vertex
+///   per unselected slot and one miter vertex
 ///   per face whose two bordering edges are BOTH selected (a K≥2 run of
 ///   adjacent selected edges), and emit the cap once that ring has ≥3
 ///   corners. This is the free-end / partial-fan cap that fills the hole
@@ -136,9 +137,20 @@ enum uint kEdgeBevelEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
 ///   strip side of the two-consumer fixed point rounds via the ONE
 ///   reference-captured fillet law every rail uses; the cap's own
 ///   interior tessellation at K >= 2 remains unclosed (see the Round
-///   Level inventory comment further below). The same cap on an OPEN
-///   (boundary) fan has no reference dump and is refused before any
-///   mutation (see the preflight below).
+///   Level inventory comment further below). An OPEN (boundary) fan
+///   BUILDS the same cap and is NOT refused (task 4335). Nothing in the
+///   walk had to change for it: the slot walk is already linear there
+///   (`k < d` gates the miter, so the last slot has no successor face)
+///   and the ring closes across the gap the missing base polygon
+///   leaves. Measured, not extrapolated — five reference dumps in
+///   `tests/fixtures/edge_bevel_open_fan_cap.json`, read as the LAW by
+///   `tests/unit/edge_bevel_open_fan_cap_test.d` and BUILT here and
+///   compared shape by shape by
+///   `tests/unit/edge_bevel_open_fan_cap_parity_test.d`.
+///   The identity with the closed fan was captured for INTERIOR
+///   selected spokes; a selection touching the rim has no closed twin,
+///   still diverges, and the parity reader pins what we build there
+///   rather than claiming a match.
 /// A selected edge's own chamfer strip always bridges the per-(vertex,
 /// face) corner already resolved above for its 2 bordering faces at
 /// each endpoint — so the strip is well-defined for EVERY case (bare
@@ -151,10 +163,13 @@ enum uint kEdgeBevelEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
 /// valence. A selected edge with exactly ONE incident face (a rim edge)
 /// is handled too (its lone border insets by `width`, no bridge quad —
 /// see Step 1 below); one with THREE OR MORE is refused (task 0438).
-/// STILL required: a free-end/partial-fan cap (above) on a BOUNDARY
-/// (open-fan) vertex has no reference dump and is refused before any
-/// mutation (task 0439, preflight below) — the same shape on an
-/// interior (closed-fan) vertex gets the cap.
+/// ALSO GONE, on the capture named above: the preflight that refused
+/// a free-end / partial-fan cap (above) on a BOUNDARY (open-fan) vertex
+/// before any mutation. It was registered as safe because no reference
+/// dump covered the shape; five do now and the reference builds the
+/// cap, so a boundary fan takes the very same path as an interior
+/// (closed-fan) one. The fixture and its two readers are named at that
+/// cap's description above.
 ///
 /// `roundLevel` subdivides every eligible cross-section into `2·L`
 /// segments (L≥1; L==0 is the separate flat-chamfer path, one segment).
@@ -515,8 +530,9 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
 
     // Free-end / partial-fan cap bookkeeping (task 0439): vertex → ring
     // of unselected-slot slide corners + both-selected-neighbours miter
-    // corners, in fan order (only populated for `0 < K < nE` on a CLOSED
-    // fan with a ring of ≥3 corners — Decision B). Since task 0449 this
+    // corners, in fan order (populated for `0 < K < nE` on a CLOSED fan
+    // AND, since task 4335, on an OPEN one, with a ring of ≥3 corners
+    // — Decision B). Since task 0449 this
     // ring IS fed into `addRailSupportConsumer` below, exactly like
     // `hubCapRing`: it is the ring's own "back face" that a bordering
     // rail was missing as its SECOND consumer (the reference's own cap
