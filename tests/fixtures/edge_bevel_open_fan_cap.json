@@ -1,0 +1,1064 @@
+{
+ "name": "edge_bevel_open_fan_cap",
+ "description": "Edge Bevel with a PARTIAL spoke selection at a hub that sits on an OPEN (boundary) fan, at Round Level 1 and 0. The reference builds the cap; it does not decline the shape. With the selected spokes interior it builds the SAME cap as the closed fan, vertex for vertex.",
+ "source": "Reference dumps captured through the headless command lane -- no display, no pointer, six cases in one engine session, with an already-committed capture re-run beside them as the control.",
+ "tolerance": 1e-09,
+ "law": "The cap construction does not consult the fan's openness. On an open fan whose selected spokes are all interior, every vertex of the result coincides with the closed fan's at distance 0.0, and the ONLY face that differs is the one base polygon removed to open the fan. A cap is built at Round Level 0 as well, so the level governs the cap's shape and not whether one exists.",
+ "open_equals_closed_worst_vertex_distance": 0.0,
+ "faces_only_in_closed": 1,
+ "faces_only_in_open": 0,
+ "the_one_differing_face": [
+  [
+   0.0309017,
+   -0.095105648,
+   0.0
+  ],
+  [
+   0.080901697,
+   -0.058778524,
+   0.0
+  ],
+  [
+   0.100000001,
+   0.0,
+   0.0
+  ],
+  [
+   0.309017003,
+   -0.95105654,
+   0.0
+  ],
+  [
+   1.0,
+   0.0,
+   0.0
+  ]
+ ],
+ "the_one_differing_face_note": "It is the base polygon that was deleted to open the fan, grown by the bevel. Nothing the cap owns is in it.",
+ "our_divergence": "vibe3d REFUSES this shape outright before any mutation (an open fan with a ring of three or more corners returns 0). That refusal was registered as the safe, asserted behaviour on the grounds that no reference dump existed. One does now, and the reference does not refuse -- so the refusal is a DIVERGENCE, not a simplification, and this fixture is target geometry rather than a regression lock.",
+ "what_this_does_not_settle": [
+  "Which internal flag marks a fan as open. The static read located the branch and could not decode the bit; this capture answers the BEHAVIOUR without answering that, which is why it was worth a boot.",
+  "Whether the identity holds when a selected spoke touches the boundary. It plainly does not produce the same cap there -- the boundary case's cap differs -- and no closed-fan twin exists for that selection to compare against."
+ ],
+ "cases": [
+  {
+   "name": "control_narrow_notch_closed_L1",
+   "note": "THE HARNESS CONTROL, and it is not decoration. An already-committed capture re-run in the same engine session as everything below. It reproduced at distance 0.0 with identical faces, so the session was driving the reference correctly and the unknown cases beside it can be believed. A run that cannot reproduce a known dump cannot be trusted about a new one.",
+   "vertex_count": 16,
+   "face_count": 13,
+   "cap_ring_vertex_count": 7,
+   "cap_face_count": 4,
+   "vertices": [
+    [
+     0.30901700258255005,
+     0.9510565400123596,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.5877852439880371,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     0.09510564804077148,
+     0.0
+    ],
+    [
+     -0.08090169727802277,
+     -0.05877852439880371,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.9412214756011963,
+     0.08090169727802277,
+     0.0
+    ],
+    [
+     0.9412214756011963,
+     -0.08090169727802277,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.4877852499485016,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     0.6186869740486145,
+     0.0
+    ],
+    [
+     0.015838444232940674,
+     0.0,
+     0.0
+    ],
+    [
+     0.9675080180168152,
+     0.0,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.01281356904655695,
+     0.009309601970016956,
+     0.0
+    ],
+    [
+     -0.030901696532964706,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.001146096852608025,
+     0.0035273197572678328,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     5,
+     2,
+     7
+    ],
+    [
+     4,
+     1,
+     2,
+     5,
+     14
+    ],
+    [
+     4,
+     8,
+     1
+    ],
+    [
+     3,
+     0,
+     9
+    ],
+    [
+     3,
+     6,
+     0
+    ],
+    [
+     6,
+     3,
+     10,
+     11
+    ],
+    [
+     11,
+     10,
+     5,
+     7
+    ],
+    [
+     3,
+     9,
+     12,
+     13
+    ],
+    [
+     13,
+     12,
+     8,
+     4
+    ],
+    [
+     14,
+     5,
+     10,
+     15
+    ],
+    [
+     4,
+     14,
+     15,
+     13
+    ],
+    [
+     15,
+     10,
+     3
+    ],
+    [
+     13,
+     15,
+     3
+    ]
+   ]
+  },
+  {
+   "name": "closed_fan_K2_interior_L1",
+   "note": "THE CELL THAT SEPARATES NOTHING BY ITSELF. A CLOSED valence-5 fan with the same two interior spokes selected. A closed fan cannot contain the boundary case this row exists for -- it is here only so the open-fan dumps have something to differ from. The finding is that they do not.",
+   "vertex_count": 16,
+   "face_count": 13,
+   "cap_ring_vertex_count": 7,
+   "cap_face_count": 4,
+   "vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.5877852439880371,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     -0.08090169727802277,
+     0.05877852439880371,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0,
+     0.0
+    ],
+    [
+     0.21391135454177856,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.36779552698135376,
+     0.870154857635498,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     -0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.4877852499485016,
+     0.0
+    ],
+    [
+     0.29897642135620117,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.004894350189715624,
+     0.015063255093991756,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     -0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.01281356904655695,
+     -0.009309601970016956,
+     0.0
+    ],
+    [
+     0.08090169727802277,
+     -0.05877852439880371,
+     0.0
+    ],
+    [
+     -0.0030005166772753,
+     0.0021800047252327204,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     4,
+     2,
+     0,
+     5,
+     14
+    ],
+    [
+     4,
+     8,
+     2
+    ],
+    [
+     3,
+     1,
+     9
+    ],
+    [
+     3,
+     6,
+     1
+    ],
+    [
+     5,
+     0,
+     7
+    ],
+    [
+     5,
+     7,
+     10,
+     11
+    ],
+    [
+     11,
+     10,
+     6,
+     3
+    ],
+    [
+     3,
+     9,
+     12,
+     13
+    ],
+    [
+     13,
+     12,
+     8,
+     4
+    ],
+    [
+     14,
+     5,
+     11,
+     15
+    ],
+    [
+     4,
+     14,
+     15,
+     13
+    ],
+    [
+     15,
+     11,
+     3
+    ],
+    [
+     13,
+     15,
+     3
+    ]
+   ]
+  },
+  {
+   "name": "open_fan_K2_interior_L1",
+   "note": "THE ROW'S OWN SHAPE: the same fan with one base face removed, so the hub is on a boundary, two INTERIOR spokes selected, Round Level 1.",
+   "vertex_count": 16,
+   "face_count": 12,
+   "cap_ring_vertex_count": 7,
+   "cap_face_count": 4,
+   "vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.5877852439880371,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0,
+     0.0
+    ],
+    [
+     -0.08090169727802277,
+     0.05877852439880371,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.21391135454177856,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.36779552698135376,
+     0.870154857635498,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     -0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.4877852499485016,
+     0.0
+    ],
+    [
+     0.29897642135620117,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.004894350189715624,
+     0.015063255093991756,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     -0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.01281356904655695,
+     -0.009309601970016956,
+     0.0
+    ],
+    [
+     0.08090169727802277,
+     -0.05877852439880371,
+     0.0
+    ],
+    [
+     -0.0030005166772753,
+     0.0021800047252327204,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     5,
+     8,
+     2
+    ],
+    [
+     4,
+     1,
+     9
+    ],
+    [
+     4,
+     6,
+     1
+    ],
+    [
+     3,
+     0,
+     7
+    ],
+    [
+     3,
+     7,
+     10,
+     11
+    ],
+    [
+     11,
+     10,
+     6,
+     4
+    ],
+    [
+     4,
+     9,
+     12,
+     13
+    ],
+    [
+     13,
+     12,
+     8,
+     5
+    ],
+    [
+     14,
+     3,
+     11,
+     15
+    ],
+    [
+     5,
+     14,
+     15,
+     13
+    ],
+    [
+     15,
+     11,
+     4
+    ],
+    [
+     13,
+     15,
+     4
+    ]
+   ]
+  },
+  {
+   "name": "open_fan_K2_boundary_L1",
+   "note": "The same open fan with one selected spoke ON the boundary. This is what separates 'the open fan is handled' from 'the open fan is handled only away from its boundary' -- and it also keeps the corpus from being one shape repeated, since its cap differs from the interior case's.",
+   "vertex_count": 15,
+   "face_count": 10,
+   "cap_ring_vertex_count": 7,
+   "cap_face_count": 4,
+   "vertices": [
+    [
+     0.30901700258255005,
+     0.9510565400123596,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.5877852439880371,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     0.09510564804077148,
+     0.0
+    ],
+    [
+     -0.08090169727802277,
+     -0.05877852439880371,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.9412214756011963,
+     0.08090169727802277,
+     0.0
+    ],
+    [
+     0.9190983176231384,
+     -0.05877852439880371,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.4877852499485016,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.01281356904655695,
+     0.009309601970016956,
+     0.0
+    ],
+    [
+     -0.030901696532964706,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.09999999403953552,
+     0.0,
+     0.0
+    ],
+    [
+     -0.0020980981644243,
+     -0.052576545625925064,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     4,
+     1,
+     2,
+     5,
+     12
+    ],
+    [
+     4,
+     8,
+     1
+    ],
+    [
+     3,
+     0,
+     9
+    ],
+    [
+     7,
+     6,
+     0,
+     3
+    ],
+    [
+     3,
+     9,
+     10,
+     11
+    ],
+    [
+     11,
+     10,
+     8,
+     4
+    ],
+    [
+     13,
+     3,
+     11,
+     14
+    ],
+    [
+     5,
+     13,
+     14,
+     12
+    ],
+    [
+     14,
+     11,
+     4
+    ],
+    [
+     12,
+     14,
+     4
+    ]
+   ]
+  },
+  {
+   "name": "open_fan_K3_L1",
+   "note": "Three adjacent interior spokes on the open fan -- the K>=3 partial fan register row 22 also names.",
+   "vertex_count": 20,
+   "face_count": 14,
+   "cap_ring_vertex_count": 9,
+   "cap_face_count": 4,
+   "vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     -0.05257311090826988,
+     0.16180339455604553,
+     0.0
+    ],
+    [
+     -0.1701301634311676,
+     3.469446951953614e-18,
+     0.0
+    ],
+    [
+     0.21391135454177856,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.36779552698135376,
+     0.870154857635498,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.4877852499485016,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     -0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.4877852499485016,
+     0.0
+    ],
+    [
+     0.29897642135620117,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.015374885872006416,
+     0.05317867174744606,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.09916520863771439,
+     0.07204774022102356,
+     0.0
+    ],
+    [
+     -0.7827304601669312,
+     -0.5686869621276855,
+     0.0
+    ],
+    [
+     -0.045824822038412094,
+     -0.031055495142936707,
+     0.0
+    ],
+    [
+     0.06545084714889526,
+     -0.04755282402038574,
+     0.0
+    ],
+    [
+     -0.012276658788323402,
+     0.00891951471567154,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     3,
+     10,
+     1
+    ],
+    [
+     5,
+     8,
+     11
+    ],
+    [
+     4,
+     6,
+     9
+    ],
+    [
+     2,
+     0,
+     7
+    ],
+    [
+     2,
+     7,
+     12,
+     13
+    ],
+    [
+     13,
+     12,
+     6,
+     4
+    ],
+    [
+     4,
+     9,
+     14,
+     15
+    ],
+    [
+     15,
+     14,
+     8,
+     5
+    ],
+    [
+     5,
+     11,
+     16,
+     17
+    ],
+    [
+     17,
+     16,
+     10,
+     3
+    ],
+    [
+     2,
+     13,
+     19,
+     18
+    ],
+    [
+     4,
+     15,
+     19,
+     13
+    ],
+    [
+     5,
+     17,
+     19,
+     15
+    ],
+    [
+     3,
+     18,
+     19,
+     17
+    ]
+   ]
+  },
+  {
+   "name": "open_fan_K2_interior_L0",
+   "note": "THE LEVEL CONTROL. The same open fan and selection at Round Level ZERO. A cap is built here too, so the round level decides the cap's SHAPE, not whether one exists.",
+   "vertex_count": 10,
+   "face_count": 7,
+   "cap_ring_vertex_count": 3,
+   "cap_face_count": 1,
+   "vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     0.5877852439880371,
+     0.0
+    ],
+    [
+     0.30901700258255005,
+     -0.9510565400123596,
+     0.0
+    ],
+    [
+     0.10000000149011612,
+     0.0,
+     0.0
+    ],
+    [
+     -0.08090169727802277,
+     0.05877852439880371,
+     0.0
+    ],
+    [
+     0.030901700258255005,
+     -0.09510564804077148,
+     0.0
+    ],
+    [
+     0.21391135454177856,
+     0.9201548099517822,
+     0.0
+    ],
+    [
+     0.36779552698135376,
+     0.870154857635498,
+     0.0
+    ],
+    [
+     -0.7139113545417786,
+     -0.6186869740486145,
+     0.0
+    ],
+    [
+     -0.80901700258255,
+     -0.4877852499485016,
+     0.0
+    ]
+   ],
+   "faces": [
+    [
+     5,
+     8,
+     2
+    ],
+    [
+     4,
+     1,
+     9
+    ],
+    [
+     4,
+     6,
+     1
+    ],
+    [
+     3,
+     0,
+     7
+    ],
+    [
+     3,
+     7,
+     6,
+     4
+    ],
+    [
+     4,
+     9,
+     8,
+     5
+    ],
+    [
+     3,
+     4,
+     5
+    ]
+   ]
+  }
+ ],
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "control_narrow_notch_closed_L1",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "closed_fan_K2_interior_L1",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open_fan_K2_interior_L1",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open_fan_K2_boundary_L1",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open_fan_K3_L1",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open_fan_K2_interior_L0",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "mode": "inset",
+       "width": 0.1,
+       "level": 0
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "Every case drove the bevel with an explicit mode, width and round level, so a later domain audit can say exactly where this corpus sits rather than reporting it unanswerable."
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-09-05",
+  "harness": "tools/local/fixture_gen/open_fan_cap/gen.py over dumps produced by the private headless case dumper; the five case descriptions and the dumps themselves live in the private toolcard for this task. One engine session, no display, no pointer injection",
+  "task": "4331",
+  "notes": "INSTRUMENT: the headless command lane. The session re-ran an already-committed capture as its control and reproduced it at distance 0.0 with identical faces, so a zero difference reported below is a measurement and not a silent no-op. The static read that motivated the boot -- and the reason a boot was justified at all, the one flag bit that does not decode at its own site -- is recorded in the private toolcard."
+ }
+}
