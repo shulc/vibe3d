@@ -170,15 +170,13 @@ unittest {
         format("task 4053: expected to skip exactly the table, scanned %s of %s",
                scanned, files.length));
 
-    // Population floor beside the per-row compare: "every row matched" also
-    // covers "every row is zero and the scan read nothing".
-    size_t total;
-    foreach (r; kSites) total += r.count;
+    // Population floor FIRST: "every recorded count matched" is also true of a
+    // scan that read nothing at all and matched sixteen zeroes.
     size_t found;
     foreach (_, c; named) found += c;
-    assert(total == 28 && found > 0,
-        format("task 4053: recorded site total is %s (expected 28), found %s",
-               total, found));
+    assert(found > 0,
+        "task 4053: the tree scan found no transition at all — every compare "
+        ~ "below would then be true over nothing");
 
     // Every deviation in ONE message: a relabel moves TWO rows, and reporting
     // only the first would name the destination or the source depending on
@@ -195,6 +193,17 @@ unittest {
                ~ "existence check on purpose: relabelling a site from one drop "
                ~ "transition to another keeps both names in the tree and both "
                ~ "doors unchanged, and only the counts see it", drift.data));
+
+    // LAST, and only meaningful once the rows agree with the tree: the ledger's
+    // own sum against a literal. Bumping a row AND the tree together — the
+    // reflex edit a regenerated table invites — leaves the compare above green
+    // and moves this. Placed below so a genuine tree change reports itself
+    // through the per-row message rather than through a bare total.
+    size_t total;
+    foreach (r; kSites) total += r.count;
+    assert(total == 28,
+        format("task 4053: the site ledger now sums to %s, recorded 28 — say in "
+               ~ "the commit which sites arrived or left", total));
 }
 
 /// The balanced body a `{` opens, or `""` when the anchor is absent. FAIL
