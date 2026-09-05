@@ -95,7 +95,6 @@ class MeshTransform : Command, Operator {
     void setKind(string k)    { kind   = k; }
     void setDelta(Vec3 d)     { delta  = d; }
     void setAxis(Vec3 a)      { axis   = a; }
-    void setAngle(float a)    { angle  = a; }
     void setFactor(Vec3 f)    { factor = f; }
     void setPivot(Vec3 p)     { pivot  = p; }
 

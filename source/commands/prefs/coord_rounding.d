@@ -45,8 +45,6 @@ class CoordRoundingCommand : Command {
         );
     }
 
-    void setModeName(string n) { modeName_ = n; }
-
     protected override bool applyImpl() {
         if (modeName_.length == 0)
             throw new Exception("pref.coordRounding: mode name required "

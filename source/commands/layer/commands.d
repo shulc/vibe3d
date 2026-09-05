@@ -1223,9 +1223,9 @@ final class LayerAttr : LayerCommandBase {
     // TASK 4062 — the target slot is ONE declared string: "" (the active
     // layer), a single index ("3"), or a list ("0,3,4"). It was two fields
     // filled by a `cast(LayerAttr)` arm in the HTTP dispatcher that chose
-    // between `setIndex` and `setIndexList` on the presence of a comma, and
-    // that choice is the command's own — `resolveTargets` below makes it, on
-    // the same discriminator, in the one place that can also say what the
+    // between single-index and index-list setters on the presence of a comma,
+    // and that choice is the command's own — `resolveTargets` below makes it,
+    // on the same discriminator, in the one place that can also say what the
     // choice MEANS.
     private string    targetArg_;           // "" => the active layer
     // The wire form of the value slot: RAW JSON TEXT. The value is forwarded
@@ -1264,10 +1264,6 @@ final class LayerAttr : LayerCommandBase {
     }
 
     void setIndex(int i)           { import std.conv : to; targetArg_ = i.to!string; }
-    /// The gang-edit target slot: a comma-separated index list ("0,3,4").
-    /// A single index with no comma is accepted too and behaves exactly like
-    /// `setIndex`, so there is one path rather than two.
-    void setIndexList(string csv)  { targetArg_ = csv; }
     void setAttrName(string n)     { attrName_ = n; }
     void setAttrValue(JSONValue v) { attrValue_ = v; attrValueJson_ = v.toString(); }
     /// This command answers a `?` read-back (task 4062 base protocol).

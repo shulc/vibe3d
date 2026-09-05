@@ -101,13 +101,6 @@ class WorkplaneEditCommand : Command, Operator {
         );
     }
 
-    void setCenX(float v) { cenX_ = v; }
-    void setCenY(float v) { cenY_ = v; }
-    void setCenZ(float v) { cenZ_ = v; }
-    void setRotX(float v) { rotX_ = v; }
-    void setRotY(float v) { rotY_ = v; }
-    void setRotZ(float v) { rotZ_ = v; }
-
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
@@ -144,7 +137,6 @@ class WorkplaneRotateCommand : Command, Operator {
     }
 
     void setAxis(string s)  { axisStr_  = s; }
-    void setAngle(float v)  { angleDeg_ = v; }
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
@@ -186,7 +178,6 @@ class WorkplaneOffsetCommand : Command, Operator {
     }
 
     void setAxis(string s) { axisStr_ = s; }
-    void setDist(float v)  { dist_    = v; }
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;

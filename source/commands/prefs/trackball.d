@@ -63,9 +63,6 @@ class TrackballPrefCommand : Command {
         );
     }
 
-    void setSubject(string s) { subject_ = s; }
-    void setValue(string v)   { value_   = v; }
-
     protected override bool applyImpl() {
         if (subject_.length == 0)
             throw new Exception("pref.trackball: subject required "

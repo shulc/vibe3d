@@ -242,8 +242,6 @@ class FalloffAddCommand : Command {
         );
     }
 
-    void setTypeName(string t) { typeName_ = t; }
-
     protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("falloff.add: pipeline not initialised");
@@ -306,8 +304,6 @@ class FalloffRemoveCommand : Command {
             Param.string_("id", "Falloff", &targetId_, "")
         );
     }
-
-    void setTargetId(string id) { targetId_ = id; }
 
     protected override bool applyImpl() {
         if (g_pipeCtx is null)

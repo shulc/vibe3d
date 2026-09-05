@@ -42,8 +42,6 @@ class SnapToggleTypeCommand : Command {
         );
     }
 
-    void setTypeName(string n) { typeName_ = n; }
-
     protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("snap.toggleType: pipeline not initialised");
