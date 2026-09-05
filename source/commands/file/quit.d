@@ -40,6 +40,12 @@ class FileQuit : Command {
     // `verdict:"prompt" outcome:"deferred"`. Every OTHER route keeps the
     // question, including a `file.quit` a test dispatches itself — that one is
     // suppressed in `applyImpl` below and takes nothing down.
+    // THE `g_testMode` TERM IS PINNED ONLY FROM THE UNITTEST BINARY. It has one
+    // setter (app.d, inside `--test`), so it is true in every suite test and
+    // dropping it — which makes a SHIPPED build discard the document on the
+    // window [X] with no prompt — is green across the whole suite. All four
+    // combinations are asserted in `tests/unit/quit_window_close_guard_test.d`,
+    // the one binary in which the flag is false.
     override bool discardsUnsavedWork() const {
         if (fromWindowClose_ && command.g_testMode) return false;
         return true;

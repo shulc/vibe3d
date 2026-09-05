@@ -100,8 +100,10 @@ ushort pickFreePort() {
 
 struct Run {
     bool   ready;          // /api/registry answered 200 with a populated table
-    string readyDiag;      // what the last readiness probe saw, when it did not
-    string requestReply;   // the body the one request came back with
+    string readyDiag;      // the last NOT-ready probe; cleared once ready, so
+                           // a diagnostic never reads `ready=true(503 …)`
+    string requestCode;    // the STATUS CODE of the one request, on its own
+    string requestBody;    // and its body, so a floor can assert either
     bool   exited;         // the process was gone before the deadline
     long   exitMs = -1;    // how long SIGTERM took, when it worked
     string policy;         // GET /api/ui/policy on a survivor — the witness
@@ -138,7 +140,8 @@ Run driveOne(string tag, string method, string path, string reqBody) {
         while (sw.peek.total!"msecs" < 60_000) {
             auto probe = once(port, "GET", "/api/registry", "");
             if (probe.code == "200" && probe.body_.canFind(`"mesh.select"`)) {
-                r.ready = true;
+                r.ready     = true;
+                r.readyDiag = "";   // the failing probes are history now
                 break;
             }
             r.readyDiag = probe.code ~ " " ~ (probe.body_.length > 120
@@ -149,7 +152,8 @@ Run driveOne(string tag, string method, string path, string reqBody) {
 
     if (r.ready) {
         auto reply = once(port, method, path, reqBody);
-        r.requestReply = reply.code ~ " " ~ reply.body_;
+        r.requestCode = reply.code;
+        r.requestBody = reply.body_;
         // Let the frame that runs the command reach the end of its flush, so
         // the document revision the guard reads is the one this request made.
         Thread.sleep(300.msecs);
@@ -198,9 +202,11 @@ shared static this() {
 }
 
 string render(ref Run r) {
-    return format("ready=%s(%s) reply=%s exited=%s afterMs=%d policy=%s"
+    return format("ready=%s(%s) reply=%s %s exited=%s afterMs=%d policy=%s"
                 ~ "\n--- log tail ---\n%s",
-                  r.ready, r.readyDiag, r.requestReply, r.exited, r.exitMs,
+                  r.ready, r.readyDiag.length ? r.readyDiag : "no diagnostic",
+                  r.requestCode.length ? r.requestCode : "(no request)",
+                  r.requestBody, r.exited, r.exitMs,
                   r.policy.length ? r.policy : "(none — it exited)", r.logTail);
 }
 
@@ -215,13 +221,17 @@ unittest {
         ~ "would be measuring a boot failure.\n" ~ render(g_control));
     assert(g_edited.ready,
         "4380 floor: the edited instance never became ready.\n" ~ render(g_edited));
-    assert(g_control.requestReply.canFind("200"),
-        "4380 floor: the control's GET /api/model did not answer 200: "
-        ~ g_control.requestReply);
-    assert(g_edited.requestReply.canFind(`"status":"ok"`),
+    // The CODE field, not a substring of the reply: `/api/model` answers with
+    // a mesh, and "200" occurs in a vertex coordinate about as often as it
+    // occurs in a status line.
+    assert(g_control.requestCode == "200",
+        "4380 floor: the control's GET /api/model did not answer 200; code was "
+        ~ g_control.requestCode ~ ", body " ~ g_control.requestBody);
+    assert(g_edited.requestCode == "200"
+        && g_edited.requestBody.canFind(`"status":"ok"`),
         "4380 floor: mesh.select was not applied, so this instance recorded no "
-        ~ "edit and the cell below would pass for the wrong reason: "
-        ~ g_edited.requestReply);
+        ~ "edit and the cell below would pass for the wrong reason: code "
+        ~ g_edited.requestCode ~ ", body " ~ g_edited.requestBody);
 }
 
 // ---------------------------------------------------------------------------
