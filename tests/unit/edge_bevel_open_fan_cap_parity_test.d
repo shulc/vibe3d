@@ -30,7 +30,25 @@
 //     keeps the flat cap by the deliberate rule at the notch-plan site.
 // Those two asserts are closure assertions: if a later change makes either
 // match, this cell reddens and says to re-measure and close the row rather
-// than let a divergence close silently.
+// than let a divergence close silently. Note which of the two is about
+// openness: only the first. The K>=3 cell is flat because the notch-plan site
+// records a cap interior at `K == 2` and nothing wider, a gate with no
+// `openFan` term in it at all -- so a CLOSED K>=3 fan gets the same flat cap.
+// It is a divergence in its own right, not a shape this capture's boundary
+// excludes.
+//
+// WHAT THE FIXTURE WITNESSES, AND WHAT IS TRANSCRIBED BY HAND. Every driven
+// parameter comes OUT of the fixture: `parameters.cells[].drove` carries the
+// op, mode, width and round level per cell, and this cell reads them rather
+// than restating them. The cell NAME carries the rest of the setup -- open vs
+// closed, K, the round level again, and (where it says so) whether the
+// selected spokes are interior or on the rim -- and every one of those is
+// checked against what is built here. What is NOT in the fixture is WHICH rim
+// ids the spokes are, so that one list stays hand-written; it is checked
+// structurally instead, by counting each selected spoke's incident polygons
+// on the built fan (two = interior, one = rim). That check is what makes
+// `open_fan_K3_L1`'s spokes demonstrably interior rather than merely asserted
+// to be.
 //
 // THE THRESHOLD IS NOT READ OFF THE MEASUREMENT IT JUDGES. `kTol` is 1e-5,
 // and both of its margins were measured before the number was written down:
@@ -40,14 +58,25 @@
 // this corpus is 0.0218 (the K=3 cell; the boundary cell is 0.0618), so it
 // sits three decades below the nearest real difference.
 //
-// MUTATIONS (each seen red — the task card carries the verbatim lines):
+// MUTATIONS (each seen red under `dub test --config=tests` — the task card
+// carries the verbatim lines, the reddened line numbers and the module
+// counts, all re-quoted from that gate and not from a hand-built harness):
 //   * restore `!openFan &&` on the free-end cap guard in
-//     `source/mesh_ops/edge_bevel.d` (i.e. half the fix) -> the two
-//     `open_fan_K2_interior_*` cells redden on their face-set compare, while
-//     `closed_fan_K2_interior_L1` ABOVE them stays green. One run buys both
-//     halves, which is why the closed control is first in the table.
+//     `source/mesh_ops/edge_bevel.d` (i.e. half the fix) -> the first open
+//     cell reddens on the VERTEX-SET compare, not the face one: with the
+//     refusal back the mesh is untouched, so the arity check inside
+//     `compareToDump` short-circuits and the bijection assert is the one that
+//     speaks. `closed_fan_K2_interior_L1` ABOVE it stays green, which is why
+//     the closed control is first in the table.
 //   * delete one cell from the fixture -> the population floor reddens: five
 //     driven cells is five, not "whatever the file happened to carry".
+//   * permute two corners BETWEEN two faces of `open_fan_K2_interior_L1` in
+//     the fixture, leaving its `vertices` alone -> the FACE-SET assert is the
+//     one that reddens, with the vertex-set assert directly above it green.
+//     Without this edit that assert has never been seen to fail, and a face
+//     compare that silently agreed with everything would look identical.
+//   * replace a diverging cell's dump with our own output -> the closure
+//     assert reddens, so "these two still differ" is not vacuously true.
 module tests.unit.edge_bevel_open_fan_cap_parity_test;
 
 import std.file   : readText;
@@ -78,6 +107,51 @@ private JSONValue caseNamed(JSONValue fx, string want) {
     foreach (c; fx["cases"].array)
         if (c["name"].str == want) return c;
     assert(false, "the fixture must keep the case " ~ want);
+}
+
+/// The op that PRODUCED a cell, read out of the fixture's own parameter block
+/// instead of restated here — see the header on what is witnessed and what is
+/// transcribed.
+private JSONValue droveOf(JSONValue fx, string cell) {
+    foreach (e; fx["parameters"]["cells"].array)
+        if (e["cell"].str == cell) {
+            assert(e["drove"].array.length == 1,
+                format("%s: the parameter block must record exactly one driven "
+                     ~ "op, found %s", cell, e["drove"].array.length));
+            return e["drove"].array[0];
+        }
+    assert(false, "the fixture's parameter block must carry the cell " ~ cell);
+}
+
+/// What the cell NAME itself says about its setup. The name is fixture data,
+/// so anything decoded here is a public witness for the transcription below.
+private struct NameFacts {
+    bool   closedFan;
+    size_t k;
+    int    level;
+    bool   namesInterior;
+    bool   namesBoundary;
+}
+
+private NameFacts factsFromName(string name) {
+    import std.algorithm : canFind, startsWith;
+    import std.conv      : to;
+    import std.string    : indexOf;
+    NameFacts f;
+    f.closedFan = name.startsWith("closed_fan_");
+    assert(f.closedFan || name.startsWith("open_fan_"),
+        "a cell name must say which fan it is: " ~ name);
+    immutable ptrdiff_t ki = name.indexOf("_K");
+    assert(ki >= 0 && ki + 3 <= name.length,
+        "a cell name must carry its K: " ~ name);
+    f.k = name[ki + 2 .. ki + 3].to!size_t;
+    immutable ptrdiff_t li = name.indexOf("_L");
+    assert(li >= 0 && li + 3 <= name.length,
+        "a cell name must carry its round level: " ~ name);
+    f.level = name[li + 2 .. li + 3].to!int;
+    f.namesInterior = name.canFind("_interior");
+    f.namesBoundary = name.canFind("_boundary");
+    return f;
 }
 
 private alias V3 = double[3];
@@ -204,42 +278,87 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
 
     struct Cell {
         string name;
-        bool   closedFan;
         uint[] spokes;   // rim vertex ids whose hub spoke is selected
-        int    level;
         bool   mustMatch;
     }
     // ORDER IS LOAD-BEARING. The closed control is first, so a mutation that
     // breaks only the open-fan path leaves a green assert above the red one
     // and a single run shows both halves.
+    //
+    // Only the spoke ids are transcribed; the fan's openness and the round
+    // level come from the cell NAME and the width and mode from the fixture's
+    // parameter block, all checked below.
     static immutable Cell[] cells = [
-        Cell("closed_fan_K2_interior_L1", true,  [2u, 4u],     1, true),
-        Cell("open_fan_K2_interior_L1",   false, [2u, 4u],     1, true),
-        Cell("open_fan_K2_interior_L0",   false, [2u, 4u],     0, true),
-        Cell("open_fan_K2_boundary_L1",   false, [1u, 3u],     1, false),
-        Cell("open_fan_K3_L1",            false, [2u, 3u, 4u], 1, false),
+        Cell("closed_fan_K2_interior_L1", [2u, 4u],     true),
+        Cell("open_fan_K2_interior_L1",   [2u, 4u],     true),
+        Cell("open_fan_K2_interior_L0",   [2u, 4u],     true),
+        Cell("open_fan_K2_boundary_L1",   [1u, 3u],     false),
+        Cell("open_fan_K3_L1",            [2u, 3u, 4u], false),
     ];
 
-    size_t matched = 0, diverged = 0;
+    size_t matched = 0, diverged = 0, interiorOnlyCells = 0, rimCells = 0;
     foreach (c; cells) {
         auto dump = caseNamed(fx, c.name);
-        auto m = valence5Fan(c.closedFan);
+
+        // Setup and op, out of the fixture rather than restated.
+        immutable NameFacts nf = factsFromName(c.name);
+        assert(nf.k == c.spokes.length,
+            format("%s: the cell name says K=%s but %s spokes are listed",
+                   c.name, nf.k, c.spokes.length));
+        auto drove = droveOf(fx, c.name);
+        assert(drove["op"].str == "edge_bevel",
+            format("%s: the parameter block must record an edge_bevel, got %s",
+                   c.name, drove["op"].str));
+        assert(drove["values"]["mode"].str == "inset",
+            format("%s: this corpus is inset-mode throughout, got %s",
+                   c.name, drove["values"]["mode"].str));
+        immutable int   level = cast(int) num(drove["values"]["level"]);
+        immutable float width = cast(float) num(drove["values"]["width"]);
+        assert(level == nf.level,
+            format("%s: the parameter block drove L%s but the name says L%s",
+                   c.name, level, nf.level));
+
+        auto m = valence5Fan(nf.closedFan);
         auto mask = new bool[](m.edges.length);
         size_t selected = 0;
+        // Interior vs rim, DERIVED: an interior hub spoke borders two of this
+        // fan's polygons, a rim spoke exactly one. `edgePolygonCounts` counts
+        // straight off `faces[]`, so it cannot undercount the way a ring walk
+        // can. This is what makes `open_fan_K3_L1`'s spokes demonstrably
+        // interior instead of merely described as such.
+        auto epc = m.edgePolygonCounts();
+        size_t rimSpokes = 0;
         foreach (s; c.spokes) {
             bool found = false;
             foreach (i; 0 .. m.edges.length)
                 if ((m.edges[i][0] == 0u && m.edges[i][1] == s) ||
                     (m.edges[i][1] == 0u && m.edges[i][0] == s)) {
-                    mask[i] = true; found = true; ++selected; break;
+                    mask[i] = true; found = true; ++selected;
+                    assert(epc[i] == 1 || epc[i] == 2,
+                        format("%s: hub spoke 0-%s borders %s polygons on this "
+                             ~ "fan, which is neither a rim nor an interior "
+                             ~ "spoke", c.name, s, epc[i]));
+                    if (epc[i] == 1) ++rimSpokes;
+                    break;
                 }
             assert(found, format("%s: the fan must carry the hub spoke 0-%s",
                                  c.name, s));
         }
         assert(selected == c.spokes.length,
             format("%s: every named spoke must be in the mask", c.name));
+        if (nf.namesInterior)
+            assert(rimSpokes == 0,
+                format("%s: the name says the selection is INTERIOR, but %s of "
+                     ~ "its %s spokes border only one polygon",
+                       c.name, rimSpokes, c.spokes.length));
+        if (nf.namesBoundary)
+            assert(rimSpokes >= 1,
+                format("%s: the name says the selection touches the BOUNDARY, "
+                     ~ "but every one of its %s spokes is interior",
+                       c.name, c.spokes.length));
+        if (rimSpokes == 0) ++interiorOnlyCells; else ++rimCells;
 
-        immutable size_t processed = bevelOnce(m, mask, 0.1f, c.level);
+        immutable size_t processed = bevelOnce(m, mask, width, level);
         auto a = compareToDump(m, dump);
 
         if (c.mustMatch) {
@@ -267,14 +386,16 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
         } else {
             // Closure assertion. These two shapes are OPEN rows, not silent
             // failures: if either starts matching, re-measure and close the
-            // row instead of deleting this branch.
+            // row instead of deleting this branch. The two are open for
+            // DIFFERENT reasons: the rim cell is outside what this capture
+            // settles (no closed twin), while the K>=3 cell is a divergence of
+            // its own that has nothing to do with openness -- see its pin
+            // below.
             assert(!a.facesAgree,
-                format("%s: this shape now MATCHES the capture -- the capture "
-                     ~ "does not settle it (a spoke on the rim has no closed "
-                     ~ "twin; a K>=3 cap interior is register row 22's "
-                     ~ "undecoded builder), so re-measure and close the row "
-                     ~ "rather than let a divergence close unrecorded",
-                       c.name));
+                format("%s: this shape now MATCHES the capture -- so either "
+                     ~ "re-measure and close its register row, or the cell is "
+                     ~ "no longer driving what it names; a divergence must not "
+                     ~ "close unrecorded", c.name));
             ++diverged;
         }
 
@@ -287,6 +408,12 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
                      ~ "got %sv/%sf -- the boundary-touching cap moved, so "
                      ~ "re-measure register row 21's open half",
                        c.name, m.vertices.length, m.faces.length));
+        // NOT a consequence of the fan being open, and the tally below says
+        // so: every spoke here is interior. The ground is the notch-plan gate
+        // in `source/mesh_ops/edge_bevel.d`, which records a cap interior at
+        // `K == 2` and at no wider K, and which carries no `openFan` term --
+        // so a CLOSED K>=3 fan gets the same flat cap. Its own register row,
+        // not row 21's remainder.
         if (c.name == "open_fan_K3_L1")
             assert(m.vertices.length == 18 && m.faces.length == 11,
                 format("%s: we build 18v/11f (one flat cap) against the "
@@ -295,9 +422,23 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
                        c.name, m.vertices.length, m.faces.length));
     }
 
-    // The tally, so "every cell agreed" cannot be read off a loop that ran
-    // over fewer cells than the corpus has.
+    // TWO tallies, and this one is FIRST on purpose: a row dropped from the
+    // table above reddens the partition, which says what the corpus is made
+    // of, before it reddens the match count, which only says how it came out.
+    //
+    // Exactly one of the five driven cells selects a spoke on the rim; the
+    // other four have every selected spoke interior -- `open_fan_K3_L1` among
+    // them, counted from `edgePolygonCounts` on the built fan and not from its
+    // name. That is the number behind the header's claim that the K>=3
+    // divergence is not a boundary effect: there is no boundary spoke in it.
+    assert(rimCells == 1 && interiorOnlyCells == 4,
+        format("exactly one driven cell may select a rim spoke -- counted %s "
+             ~ "rim-touching and %s all-interior", rimCells, interiorOnlyCells));
+
+    // The match tally, so "every cell agreed" cannot be read off a loop that
+    // ran over fewer cells than the corpus has.
     assert(matched == 3 && diverged == 2 && matched + diverged == cells.length,
-        format("five driven cells: three the capture settles and two it does "
-             ~ "not -- counted %s matching and %s diverging", matched, diverged));
+        format("five driven cells: three that match the capture and two that "
+             ~ "do not -- counted %s matching and %s diverging",
+               matched, diverged));
 }
