@@ -1097,6 +1097,8 @@ string report(const ref Verdict v)
     s.put("TEST CENSUS DROPPED (task 0835)\n");
     s.put(format("  high-water rev : %s   (of %d lane revision(s), %d with a ledger)\n",
                  v.baseRev, v.revsWalked, v.revsWithLedger));
+    s.put(format("  ledger rows    : %d there -> %d now\n",
+                 v.baseLedgerRows, v.workLedgerRows));
     s.put(format("  blocks         : %d there -> %d now  (declared drops %d -> %d)  slack %d\n",
                  v.base.blocks, v.work.blocks, v.baseDrops.blocks, v.workDrops.blocks, v.blocksSlack));
     s.put(format("  asserts        : %d there -> %d now  (declared drops %d -> %d)  slack %d\n",
@@ -1223,7 +1225,11 @@ unittest
         "read as zero and the bar has silently fallen by that much. If the " ~
         "ledger was renamed, put the PREVIOUS path into `ledgerPathsHistoric`; " ~
         "if a lane's branch point genuinely predates the ledger (task 0835), " ~
-        "pin a later one with VIBE3D_CENSUS_BASE=<rev>.",
+        "pin a later one with VIBE3D_CENSUS_BASE=<rev>. THIS CHECK CANNOT TELL " ~
+        "THOSE TWO APART, and the escape is not free: VIBE3D_CENSUS_BASE " ~
+        "collapses the walk to one revision, which is the phantom-slack state " ~
+        "this assert exists to catch. Prefer rebasing the lane, which moves its " ~
+        "branch point forward and needs no escape at all.",
         v.revsWalked - v.revsWithLedger, v.revsWalked,
         ledgerPathsHistoric.join(", ")));
 
