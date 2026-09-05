@@ -204,6 +204,36 @@ unittest {
     assert(total == 28,
         format("task 4053: the site ledger now sums to %s, recorded 28 — say in "
                ~ "the commit which sites arrived or left", total));
+
+    // And the total DECOMPOSES, which is what keeps 28 from being a number
+    // with no structure:
+    //     22  dropActiveTool(ToolTransition.…) calls
+    //   +  4  armPreparedTool(ToolTransition.…) calls
+    //   +  2  shutdownDrop mentions — a comment and the door assert, the one
+    //         drop with no call at all, because its scope(exit) is declared
+    //         above the verb
+    //   = 28
+    // This is not a restatement of the scan above: that one counts MENTIONS,
+    // so a transition named only in a comment would satisfy it. These two
+    // count CALLS, and the arithmetic closing is what says the 26 wired rows
+    // are wired rather than merely written down.
+    size_t dropCalls, armCalls;
+    foreach (f; files) {
+        if (f.canFind("tool_activation_ownership.d")) continue;
+        auto text = readText(f);
+        dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
+        armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
+    }
+    assert(dropCalls == 22 && armCalls == 4,
+        format("task 4053: wired call sites moved — %s drops and %s arms, "
+               ~ "recorded 22 and 4. With the 2 shutdownDrop mentions (no call) "
+               ~ "these must sum to the ledger's %s.",
+               dropCalls, armCalls, total));
+    assert(dropCalls + armCalls + 2 == total,
+        format("task 4053: %s calls + 2 shutdownDrop mentions != ledger total "
+               ~ "%s — a row was recorded that nothing calls, or a call exists "
+               ~ "under a transition the ledger does not count",
+               dropCalls + armCalls, total));
 }
 
 /// The balanced body a `{` opens, or `""` when the anchor is absent. FAIL
