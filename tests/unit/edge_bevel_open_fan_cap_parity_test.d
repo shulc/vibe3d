@@ -105,8 +105,8 @@ import math;
 private enum string kFixture = "tests/fixtures/edge_bevel_open_fan_cap.json";
 
 /// See the header: two decades above this corpus's float32 noise (6.0e-8) and
-/// three below its smallest real divergence (0.0218), not read off the
-/// numbers it grades.
+/// three below the only real divergence it still has to grade (0.0631), not
+/// read off the numbers it grades.
 private enum double kTol = 1e-5;
 
 private double num(JSONValue v) {
@@ -399,13 +399,12 @@ unittest // our open-fan cap is the captured one, on every shape the capture set
                        m.faces.length, dump["faces"].array.length));
             ++matched;
         } else {
-            // Closure assertion. These two shapes are OPEN rows, not silent
-            // failures: if either starts matching, re-measure and close the
-            // row instead of deleting this branch. The two are open for
-            // DIFFERENT reasons: the rim cell is outside what this capture
-            // settles (no closed twin), while the K>=3 cell is a divergence of
-            // its own that has nothing to do with openness -- see its pin
-            // below.
+            // Closure assertion. This shape is an OPEN row, not a silent
+            // failure: if it starts matching, re-measure and close the row
+            // instead of deleting this branch. It is the LAST of the two this
+            // branch once held -- the rim cell sat here until task 4360 closed
+            // it, and it is an equality above now. This one has nothing to do
+            // with openness -- see its pin below.
             assert(!a.facesAgree,
                 format("%s: this shape now MATCHES the capture -- so either "
                      ~ "re-measure and close its register row, or the cell is "
