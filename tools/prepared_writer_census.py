@@ -94,11 +94,10 @@ def module_path(root, *module_names):
     if root not in _MODULE_INDEX_CACHE:
         index = {}
         for path in sorted((root / "source").rglob("*.d")):
-            # Module declarations precede imports in this tree. Reading only
-            # the header keeps exact duplicate detection cheap in mutation roots.
-            with path.open(errors="replace") as source_file:
-                header = source_file.read(8192)
-            head = re.search(r"^\s*module\s+([\w.]+)\s*;", header, re.M)
+            # Module identity is a closed census, so its declaration cannot be
+            # hidden by an arbitrary byte window (4051).
+            source = path.read_text(errors="replace")
+            head = re.search(r"^\s*module\s+([\w.]+)\s*;", source, re.M)
             if head:
                 index.setdefault(head.group(1), []).append(path)
         _MODULE_INDEX_CACHE[root] = index
