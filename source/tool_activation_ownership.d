@@ -115,9 +115,14 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
         // PipeGizmoHost's own, so the GL owner the prepared resource effects
         // are validated against is already torn down when it fires.
         case ToolTransition.shutdownDrop:
-        // The remaining three run under a suspended / replacing history or a
-        // half-replaced document, and none of them has a driven cell yet.
-        // Converting one without its own cell would be a change nothing sees.
+        // The remaining SIX hold that same invariant by reading, and stay
+        // legacy for one reason only: none of them has a driven cell that can
+        // tell the two doors apart, and a door change nobody can see is green
+        // before it, green after it and green again when it is reverted. That
+        // is not caution in the abstract — converting the seventh
+        // (`explicitDrop`) reddened `tests/test_rs_insession_cancel.d:517` and
+        // exposed a real divergence. Cells and conversions: task 4240; the two
+        // rows above, which need the DOOR changed rather than a cell: 4241.
         case ToolTransition.replayDrop:
         case ToolTransition.selTypeFlipDrop:
         case ToolTransition.documentReplaceDisarm:
