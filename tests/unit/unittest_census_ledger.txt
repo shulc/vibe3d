@@ -163,3 +163,15 @@ drop 0 1 4100 commit_seam widening block derives its declaring file from publicD
 # tests/test_rs_insession_cancel.d:517, tests/test_item_drag_undo.d:288 and
 # tests/test_tool_gesture_g2.d:388.
 drop 0 3 4053 PreparedDrop's non-copyable assert, commitPreparedDrop's nothrow function-type assert, and the ownership ledger's third door count — all three pinned the prepared drop transaction that this same task measured as not yet a faithful twin of Tool.deactivate() and removed again
+
+# Task 4335 (review fix round) — one assert removed from
+# tests/unit/mesh_ops/edge_bevel_test.d because it could not come out
+# differently. It read `faces.length >= facesBefore + 2` and sat two lines
+# under an EXACT `wantF` pin of 6 at L0 and 7 at L1, on a fixture whose
+# `facesBefore` is 4 — so it was green whatever the code did, and would have
+# stayed green through the very refusal the block exists to catch. Nothing it
+# was reaching for went with it: the +2/+3 reading is still pinned, by the
+# exact `wantF` assert above it plus the premise block's `d == 4`, and every
+# face of that half-disk touches the hub. No replacement `facesBefore == 4`
+# was added, because that would be the same defect one step along.
+drop 0 1 4335 the open-fan cap block's `faces.length >= facesBefore + 2`, which an exact wantF pin two lines above already fixed — a check that could not come out differently
