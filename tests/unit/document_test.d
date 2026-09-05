@@ -1211,6 +1211,15 @@ unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654
         assert(!testHistoryBucketHolds(doc, other),
             "…and only A: a bucket that swallowed the untouched layers would "
             ~ "satisfy the line above for the wrong reason");
+    // POPULATION FLOOR for that loop, and it is the same defect one level
+    // down (4120 re-review): the loop is non-empty only because
+    // `threeLayerDoc()` happens to build three layers, so a fixture that
+    // built one would leave the "and only A" clause passing over nothing —
+    // green before the swallow and green after it. Kept BELOW the loop so
+    // the mutation line numbers already recorded for this cell still point
+    // at the asserts they were taken from.
+    assert(doc.layers.length == 3,
+        "the `only A` loop above had two other layers to reject");
     assert(doc.primary is a && doc.hasEditTarget(),
         "task 0671: the edit target is the head of [current ++ history], so it "
         ~ "is still A. A model that read `selected` would answer null here.");
