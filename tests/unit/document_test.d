@@ -574,49 +574,337 @@ unittest {
 }
 
 
+// ---------------------------------------------------------------------------
+// In-module unit tests (Stage 0 contract: SET-of-one invariants, primary ==
+// active, accessor identity, lockstep on every active move). Types only — no
+// app.d wiring exercised.
+// ---------------------------------------------------------------------------
+
+unittest {
+    // bootstrap invariants
+    Mesh m;
+    auto doc = Document.bootstrap(m);
+    assert(doc.layers.length == 1, "bootstrap must yield exactly one layer");
+    assert(doc.layers.length >= 1, "layers.length >= 1 contract");
+    assert(doc.activeIndex == 0, "bootstrap active layer is index 0");
+    assert(doc.active() !is null, "active layer object is non-null");
+    assert(doc.active().name == "Layer 1", "bootstrap names the layer 'Layer 1'");
+    assert(doc.active().visible, "bootstrap layer is visible");
+    assert(!doc.background(doc.active()), "bootstrap layer is foreground (not background)");
+    assert(doc.foreground(doc.active()), "bootstrap layer is foreground (derived)");
+    // SET-of-one + primary invariants.
+    assert(doc.primary !is null, "primary is non-null");
+    assert(doc.primary is doc.active(), "primary == active");
+    assert(doc.primary is doc.layers[doc.activeIndex], "primary == layers[activeIndex]");
+    assert(doc.primary.selected, "primary is selected");
+    size_t selCount = 0;
+    foreach (l; doc.layers) if (l.selected) ++selCount;
+    assert(selCount == 1, "exactly one layer selected (SET-of-one)");
+    assert(doc.isPrimary(doc.active()), "isPrimary(active) is true");
+    assert(doc.isFocused(doc.focusedItem), "isFocused(focusedItem) is true");
+    assert(doc.isFocused(doc.active()), "on an all-mesh document, focus == primary");
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Stage 2a/2b contract: the multi-select mutators + the FULLY DERIVED
+// background/foreground rule. A shared helper asserts the load-bearing
+// invariants AND that the derived helpers track `selected`/`visible` exactly
+// (there is no longer any stored bool — Stage 2b deleted it).
+// ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 6 (Ph3): the consumer → item link.
+//
+// The fixture below is built to defeat the two ways a link test goes inert:
+//
+//   * THREE image items, TWO consumers. With one of each, "the link resolved
+//     to the right item" is indistinguishable from "everything resolves to
+//     the only item there is", and a sweep that clears the first match and
+//     stops is indistinguishable from a correct one.
+//   * TWO of the images share one `storedPath`. A path-keyed implementation
+//     then resolves to the WRONG one of the two, with a different name to
+//     read — so "a path is not identity" has an observable value, not just an
+//     argument.
+//   * Deletes happen in the MIDDLE of the list. Deleting the tail cannot tell
+//     "the link reports dangling" apart from "an index was clamped into an
+//     empty range", and cannot expose the index scheme's real failure — the
+//     slot past the hole changing owner.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    private struct LinkFixture {
+        Document doc;
+        Layer meshLayer, clipA, clipB, clipC, consumerX, consumerY;
+    }
+
+    /// layers = [mesh, clipA, clipB, clipC, consumerX, consumerY]
+    ///   clipA and clipB deliberately share one storedPath;
+    ///   consumerX links backdropImage→clipB and maskImage→clipC,
+    ///   consumerY links backdropImage→clipB  (many→one on clipB).
+    private LinkFixture makeLinkFixture() {
+        LinkFixture f;
+        Mesh m;
+        f.doc = Document.bootstrap(m);
+        f.meshLayer = f.doc.layers[0];
+
+        Layer mkClip(string name, string path) {
+            auto l = new Layer;
+            l.kind = ItemKind.Image;
+            l.name = name;
+            l.imageRef() = new ImageData();
+            l.imageRef().storedPath = path;
+            return l;
+        }
+        Layer mkConsumer(string name) {
+            auto l = new Layer;
+            l.kind = ItemKind.Empty;   // a scene item that is not itself an image
+            l.name = name;
+            return l;
+        }
+
+        f.clipA = mkClip("clipA", "shared.png");
+        f.clipB = mkClip("clipB", "shared.png");   // SAME file, different item
+        f.clipC = mkClip("clipC", "other.png");
+        f.consumerX = mkConsumer("consumerX");
+        f.consumerY = mkConsumer("consumerY");
+        f.doc.layers ~= [f.clipA, f.clipB, f.clipC, f.consumerX, f.consumerY];
+
+        // Slots set in REVERSE alphabetical order, so the canonical ordering
+        // `linkSlots()` promises is produced by the insert, not by luck.
+        f.consumerX.setLink("maskImage",     f.clipC);
+        f.consumerX.setLink("backdropImage", f.clipB);
+        f.consumerY.setLink("backdropImage", f.clipB);
+        return f;
+    }
+}
+
+unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order,
+            // and the reverse sweep. Every assertion here needs at least two
+            // clips or two slots to be able to fail.
+    auto f = makeLinkFixture();
+
+    auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
+    auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
+    auto xMask = f.consumerX.link("maskImage").resolve(f.doc);
+
+    assert(xBack is f.clipB, "consumerX's backdrop link resolves to clipB");
+    assert(yBack is f.clipB, "consumerY's backdrop link resolves to clipB");
+    assert(xBack is yBack,
+        "two consumers of one image must resolve to the SAME object, not to "
+        ~ "two equal-looking ones");
+    assert(xMask is f.clipC,
+        "a second named slot on the SAME consumer is independent — this is "
+        ~ "clipC, not the other slot's clipB");
+
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live);
+    assert(f.consumerX.link("noSuchSlot").state(f.doc) == LinkState.Unset,
+        "an absent slot is Unset, not Dangling and not a crash");
+    assert(f.consumerX.link("noSuchSlot").resolve(f.doc) is null);
+    assert(f.meshLayer.linkSlots().length == 0, "an item with no links has no slots");
+
+    // A READ-ONLY handle can ask for one slot by name, not merely enumerate
+    // them (review NIT 1). This is a compile-time claim as much as a runtime
+    // one: `link()` was mutable-only, so this line did not compile at all and
+    // a `const(Layer)` consumer had to hand-scan `linkSlots()`.
+    {
+        const(Layer) ro = f.consumerX;
+        assert(ro.link("backdropImage").targetUnchecked() is f.clipB,
+            "a const(Layer) resolves one named slot");
+        assert(ro.link("noSuchSlot").isSet() == false,
+            "and gets the Unset link for an absent one, same as a mutable one");
+    }
+
+    // Canonical order, and the exact slot set — inserted mask-then-backdrop.
+    auto slots = f.consumerX.linkSlots();
+    assert(slots.length == 2, "consumerX has exactly two slots");
+    assert(slots[0].name == "backdropImage" && slots[1].name == "maskImage",
+        "linkSlots() is name-sorted regardless of insertion order");
+
+    // The reverse direction. clipB has two referrers, in layers order.
+    Layer[] refs;
+    f.doc.referrersOf(f.clipB, refs);
+    assert(refs.length == 2, "clipB has two referrers");
+    assert(refs[0] is f.consumerX && refs[1] is f.consumerY,
+        "referrersOf reports in layers order");
+
+    // A PATH IS NOT IDENTITY. clipA carries byte-identical `storedPath` to
+    // clipB and is reached by nothing — a path-keyed link or a path-keyed
+    // sweep would hand back clipA (it is the earlier of the two) and would
+    // report clipA as having two referrers.
+    assert(f.clipA.imageOrNull.storedPath == f.clipB.imageOrNull.storedPath,
+        "fixture vacuity guard: the two clips really do share one path");
+    assert(f.clipA !is f.clipB, "…and are still two distinct items");
+    f.doc.referrersOf(f.clipA, refs);
+    assert(refs.length == 0,
+        "nothing links to clipA — sharing a file with clipB is not sharing "
+        ~ "clipB's identity");
+    f.doc.referrersOf(f.clipC, refs);
+    assert(refs.length == 1 && refs[0] is f.consumerX, "clipC has one referrer");
+}
+
+unittest {  // A NAME IS NOT IDENTITY — renaming either end changes nothing.
+    auto f = makeLinkFixture();
+
+    f.clipB.name     = "renamed";      // the target
+    f.consumerX.name = "consumerX2";   // and the consumer, for good measure
+
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "rename must not break the link");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "…for either consumer");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "…and must not disturb the sibling slot");
+    assert(f.consumerX.linkSlots()[0].name == "backdropImage",
+        "the SLOT name belongs to the consumer, not to the target — a target "
+        ~ "rename does not rename the slot");
+
+    // Names are not even unique: give a second item the renamed one's name and
+    // the link still names exactly one item.
+    f.clipC.name = "renamed";
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "two items may share a name; the link still resolves to one of them");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "…and the other slot still resolves to the OTHER one");
+}
+
+unittest {  // AN INDEX IS NOT IDENTITY — a pure reorder of layers[] moves
+            // every slot number and no link.
+    auto f = makeLinkFixture();
+    assert(f.doc.indexOf(f.clipB) == 2 && f.doc.indexOf(f.clipC) == 3,
+        "fixture vacuity guard: clipB at 2, clipC at 3 before the permute");
+
+    // Move clipB (2) to the tail — the shape `layer.reorder` produces.
+    f.doc.layers = f.doc.layers[0 .. 2] ~ f.doc.layers[3 .. $] ~ f.clipB;
+    assert(f.doc.indexOf(f.clipB) == 5 && f.doc.indexOf(f.clipC) == 2,
+        "vacuity guard: both slot numbers really did change");
+
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "reorder must not move a link");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB);
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC);
+}
+
+unittest {  // Deleting the MIDDLE clip: both links report themselves dangling,
+            // the sibling slot is untouched, and nothing swaps to a neighbour.
+    auto f = makeLinkFixture();
+    immutable size_t bIdx = f.doc.indexOf(f.clipB);
+    assert(bIdx == 2, "vacuity guard: clipB is a MIDDLE layer, not the tail");
+
+    // Splice clipB out — the exact operation LayerDelete performs.
+    f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.doc.layers[bIdx + 1 .. $];
+    assert(f.doc.layers.length == 5,
+        "vacuity guard: the list is still non-empty, so 'dangling' cannot be "
+        ~ "an index clamped into an empty range");
+
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Dangling,
+        "a link to a deleted item reports Dangling");
+    assert(f.consumerY.link("backdropImage").state(f.doc) == LinkState.Dangling,
+        "…for BOTH consumers — not just the first one a sweep would reach");
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is null,
+        "a dangling link resolves to null");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is null);
+    assert(f.consumerX.link("backdropImage").state(f.doc) != LinkState.Unset,
+        "Dangling is distinguishable from Unset — 'the image you chose was "
+        ~ "deleted' is not the same statement as 'you chose no image'");
+
+    // NOT A SILENT SWAP. clipC sat at slot 3; the delete slid consumerX into
+    // that slot. A link that stored the NUMBER 3 would now hand back
+    // consumerX — a live, plausible-looking, completely wrong item. The first
+    // assertion is the vacuity guard that proves the slot really changed
+    // owner, so the second one is testing something.
+    assert(f.doc.layers[3] is f.consumerX,
+        "vacuity guard: the middle delete moved a DIFFERENT item into clipC's "
+        ~ "old slot 3");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "the surviving link followed the OBJECT, not the slot number");
+    assert(f.consumerX.link("maskImage").state(f.doc) == LinkState.Live);
+
+    // The identity survives even though the resolution does not — which is
+    // what makes the reverse sweep able to answer "who was pointing at the
+    // thing that just went", the question a re-point UI or a later
+    // clear-on-delete policy has to ask.
+    assert(f.consumerX.link("backdropImage").targetUnchecked() is f.clipB,
+        "a dangling link still names WHICH item it lost");
+    Layer[] refs;
+    f.doc.referrersOf(f.clipB, refs);
+    assert(refs.length == 2 && refs[0] is f.consumerX && refs[1] is f.consumerY,
+        "referrersOf still finds both consumers of the deleted clip");
+
+    // Undo shape: reinsert the SAME object at its old slot. Both links are
+    // Live again, on one and the same object, with nothing to restore.
+    f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.clipB ~ f.doc.layers[bIdx .. $];
+    auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
+    auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
+    assert(xBack is f.clipB && yBack is f.clipB,
+        "reinserting the object relinks both consumers");
+    assert(xBack is yBack,
+        "…to ONE object — an implementation that restored two links onto two "
+        ~ "objects would pass a 'both are non-null' check");
+}
+
+unittest {  // A link answers for the document it is ASKED about. This is the
+            // whole-document-replacement case (scene reset, .v3d load,
+            // interchange import) — the one no delete-time sweep can cover.
+    auto f     = makeLinkFixture();
+    auto other = makeLinkFixture();   // same shape, all-new objects
+
+    assert(other.doc.layers[2].name == "clipB",
+        "vacuity guard: the other document has a same-named item at the SAME "
+        ~ "slot, so an index- or name-keyed link would happily resolve here");
+    assert(other.doc.layers[2] !is f.clipB, "…but it is a different object");
+
+    assert(f.consumerX.link("backdropImage").state(other.doc) == LinkState.Dangling,
+        "a link into a replaced-away document is Dangling, not Live");
+    assert(f.consumerX.link("backdropImage").resolve(other.doc) is null,
+        "…and must not resolve into the new document's item at that slot");
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live,
+        "the same link is still Live against its own document — the state is "
+        ~ "a property of the PAIR, not of the link");
+}
+
+unittest {  // Slot mutation: replace, clear, the null-target spelling, and the
+            // independence a cloned slot set must have.
+    auto f = makeLinkFixture();
+
+    // Replace, not append.
+    f.consumerX.setLink("backdropImage", f.clipA);
+    assert(f.consumerX.linkSlots().length == 2, "re-pointing a slot does not add one");
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipA,
+        "the slot now points at clipA");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "…and the OTHER consumer's slot is untouched");
+
+    // Clear, and the null-target spelling of the same thing — one
+    // representation of "points at nothing", never a leftover empty slot.
+    assert(f.consumerX.clearLink("backdropImage"), "clearLink reports the removal");
+    assert(!f.consumerX.clearLink("backdropImage"), "…and reports nothing the second time");
+    assert(f.consumerX.linkSlots().length == 1, "the slot is gone, not emptied");
+    assert(f.consumerX.linkSlots()[0].name == "maskImage");
+    f.consumerX.setLink("maskImage", null);
+    assert(f.consumerX.linkSlots().length == 0,
+        "setLink(name, null) removes the slot rather than leaving an unset one");
+
+    // Cloning a slot set shares TARGETS but not the slot array.
+    auto clone = new Layer;
+    clone.kind = ItemKind.Empty;
+    clone.name = "clone";
+    clone.copyLinksFrom(f.consumerY);
+    f.doc.layers ~= clone;
+    assert(clone.link("backdropImage").resolve(f.doc) is f.clipB,
+        "the clone points at the SAME item, not a copy of it");
+    clone.setLink("backdropImage", f.clipC);
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "re-pointing the clone must not write through into the source's slots");
+    assert(clone.link("backdropImage").resolve(f.doc) is f.clipC);
+}
+
+
 /// The former in-module document test tail. Instantiation in `document` keeps
 /// module-private access without widening production visibility.
 mixin template DocumentTests() {
-    // ---------------------------------------------------------------------------
-    // In-module unit tests (Stage 0 contract: SET-of-one invariants, primary ==
-    // active, accessor identity, lockstep on every active move). Types only — no
-    // app.d wiring exercised.
-    // ---------------------------------------------------------------------------
-
-    unittest {
-        // bootstrap invariants
-        Mesh m;
-        auto doc = Document.bootstrap(m);
-        assert(doc.layers.length == 1, "bootstrap must yield exactly one layer");
-        assert(doc.layers.length >= 1, "layers.length >= 1 contract");
-        assert(doc.activeIndex == 0, "bootstrap active layer is index 0");
-        assert(doc.active() !is null, "active layer object is non-null");
-        assert(doc.active().name == "Layer 1", "bootstrap names the layer 'Layer 1'");
-        assert(doc.active().visible, "bootstrap layer is visible");
-        assert(!doc.background(doc.active()), "bootstrap layer is foreground (not background)");
-        assert(doc.foreground(doc.active()), "bootstrap layer is foreground (derived)");
-        // SET-of-one + primary invariants.
-        assert(doc.primary !is null, "primary is non-null");
-        assert(doc.primary is doc.active(), "primary == active");
-        assert(doc.primary is doc.layers[doc.activeIndex], "primary == layers[activeIndex]");
-        assert(doc.primary.selected, "primary is selected");
-        size_t selCount = 0;
-        foreach (l; doc.layers) if (l.selected) ++selCount;
-        assert(selCount == 1, "exactly one layer selected (SET-of-one)");
-        assert(doc.isPrimary(doc.active()), "isPrimary(active) is true");
-        assert(doc.isFocused(doc.focusedItem), "isFocused(focusedItem) is true");
-        assert(doc.isFocused(doc.active()), "on an all-mesh document, focus == primary");
-    }
-
-
-
-    // ---------------------------------------------------------------------------
-    // Stage 2a/2b contract: the multi-select mutators + the FULLY DERIVED
-    // background/foreground rule. A shared helper asserts the load-bearing
-    // invariants AND that the derived helpers track `selected`/`visible` exactly
-    // (there is no longer any stored bool — Stage 2b deleted it).
-    // ---------------------------------------------------------------------------
-
     /// TEST-ONLY oracle for the in-module unit tests below. Every check here is
     /// a plain `assert()`, which `-release` strips entirely (dlang.org: `-release`
     /// disables assertions other than `assert(0)`) — this function enforces
@@ -1130,292 +1418,6 @@ mixin template DocumentTests() {
         assert(img.imageOrNull !is null, "imageOrNull is non-null once imageRef() is assigned");
         assert(img.imageOrNull.storedPath == "logo.png", "imageOrNull aliases the same object imageRef() wrote");
         assert(&img.imageRef() is &img.image_, "imageRef() aliases the same image_ field");
-    }
-
-    // ---------------------------------------------------------------------------
-    // Task 0616 Stage 6 (Ph3): the consumer → item link.
-    //
-    // The fixture below is built to defeat the two ways a link test goes inert:
-    //
-    //   * THREE image items, TWO consumers. With one of each, "the link resolved
-    //     to the right item" is indistinguishable from "everything resolves to
-    //     the only item there is", and a sweep that clears the first match and
-    //     stops is indistinguishable from a correct one.
-    //   * TWO of the images share one `storedPath`. A path-keyed implementation
-    //     then resolves to the WRONG one of the two, with a different name to
-    //     read — so "a path is not identity" has an observable value, not just an
-    //     argument.
-    //   * Deletes happen in the MIDDLE of the list. Deleting the tail cannot tell
-    //     "the link reports dangling" apart from "an index was clamped into an
-    //     empty range", and cannot expose the index scheme's real failure — the
-    //     slot past the hole changing owner.
-    // ---------------------------------------------------------------------------
-
-    version (unittest) {
-        private struct LinkFixture {
-            Document doc;
-            Layer meshLayer, clipA, clipB, clipC, consumerX, consumerY;
-        }
-
-        /// layers = [mesh, clipA, clipB, clipC, consumerX, consumerY]
-        ///   clipA and clipB deliberately share one storedPath;
-        ///   consumerX links backdropImage→clipB and maskImage→clipC,
-        ///   consumerY links backdropImage→clipB  (many→one on clipB).
-        private LinkFixture makeLinkFixture() {
-            LinkFixture f;
-            Mesh m;
-            f.doc = Document.bootstrap(m);
-            f.meshLayer = f.doc.layers[0];
-
-            Layer mkClip(string name, string path) {
-                auto l = new Layer;
-                l.kind = ItemKind.Image;
-                l.name = name;
-                l.imageRef() = new ImageData();
-                l.imageRef().storedPath = path;
-                return l;
-            }
-            Layer mkConsumer(string name) {
-                auto l = new Layer;
-                l.kind = ItemKind.Empty;   // a scene item that is not itself an image
-                l.name = name;
-                return l;
-            }
-
-            f.clipA = mkClip("clipA", "shared.png");
-            f.clipB = mkClip("clipB", "shared.png");   // SAME file, different item
-            f.clipC = mkClip("clipC", "other.png");
-            f.consumerX = mkConsumer("consumerX");
-            f.consumerY = mkConsumer("consumerY");
-            f.doc.layers ~= [f.clipA, f.clipB, f.clipC, f.consumerX, f.consumerY];
-
-            // Slots set in REVERSE alphabetical order, so the canonical ordering
-            // `linkSlots()` promises is produced by the insert, not by luck.
-            f.consumerX.setLink("maskImage",     f.clipC);
-            f.consumerX.setLink("backdropImage", f.clipB);
-            f.consumerY.setLink("backdropImage", f.clipB);
-            return f;
-        }
-    }
-
-    unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order,
-                // and the reverse sweep. Every assertion here needs at least two
-                // clips or two slots to be able to fail.
-        auto f = makeLinkFixture();
-
-        auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
-        auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
-        auto xMask = f.consumerX.link("maskImage").resolve(f.doc);
-
-        assert(xBack is f.clipB, "consumerX's backdrop link resolves to clipB");
-        assert(yBack is f.clipB, "consumerY's backdrop link resolves to clipB");
-        assert(xBack is yBack,
-            "two consumers of one image must resolve to the SAME object, not to "
-            ~ "two equal-looking ones");
-        assert(xMask is f.clipC,
-            "a second named slot on the SAME consumer is independent — this is "
-            ~ "clipC, not the other slot's clipB");
-
-        assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live);
-        assert(f.consumerX.link("noSuchSlot").state(f.doc) == LinkState.Unset,
-            "an absent slot is Unset, not Dangling and not a crash");
-        assert(f.consumerX.link("noSuchSlot").resolve(f.doc) is null);
-        assert(f.meshLayer.linkSlots().length == 0, "an item with no links has no slots");
-
-        // A READ-ONLY handle can ask for one slot by name, not merely enumerate
-        // them (review NIT 1). This is a compile-time claim as much as a runtime
-        // one: `link()` was mutable-only, so this line did not compile at all and
-        // a `const(Layer)` consumer had to hand-scan `linkSlots()`.
-        {
-            const(Layer) ro = f.consumerX;
-            assert(ro.link("backdropImage").targetUnchecked() is f.clipB,
-                "a const(Layer) resolves one named slot");
-            assert(ro.link("noSuchSlot").isSet() == false,
-                "and gets the Unset link for an absent one, same as a mutable one");
-        }
-
-        // Canonical order, and the exact slot set — inserted mask-then-backdrop.
-        auto slots = f.consumerX.linkSlots();
-        assert(slots.length == 2, "consumerX has exactly two slots");
-        assert(slots[0].name == "backdropImage" && slots[1].name == "maskImage",
-            "linkSlots() is name-sorted regardless of insertion order");
-
-        // The reverse direction. clipB has two referrers, in layers order.
-        Layer[] refs;
-        f.doc.referrersOf(f.clipB, refs);
-        assert(refs.length == 2, "clipB has two referrers");
-        assert(refs[0] is f.consumerX && refs[1] is f.consumerY,
-            "referrersOf reports in layers order");
-
-        // A PATH IS NOT IDENTITY. clipA carries byte-identical `storedPath` to
-        // clipB and is reached by nothing — a path-keyed link or a path-keyed
-        // sweep would hand back clipA (it is the earlier of the two) and would
-        // report clipA as having two referrers.
-        assert(f.clipA.imageOrNull.storedPath == f.clipB.imageOrNull.storedPath,
-            "fixture vacuity guard: the two clips really do share one path");
-        assert(f.clipA !is f.clipB, "…and are still two distinct items");
-        f.doc.referrersOf(f.clipA, refs);
-        assert(refs.length == 0,
-            "nothing links to clipA — sharing a file with clipB is not sharing "
-            ~ "clipB's identity");
-        f.doc.referrersOf(f.clipC, refs);
-        assert(refs.length == 1 && refs[0] is f.consumerX, "clipC has one referrer");
-    }
-
-    unittest {  // A NAME IS NOT IDENTITY — renaming either end changes nothing.
-        auto f = makeLinkFixture();
-
-        f.clipB.name     = "renamed";      // the target
-        f.consumerX.name = "consumerX2";   // and the consumer, for good measure
-
-        assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
-            "rename must not break the link");
-        assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
-            "…for either consumer");
-        assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
-            "…and must not disturb the sibling slot");
-        assert(f.consumerX.linkSlots()[0].name == "backdropImage",
-            "the SLOT name belongs to the consumer, not to the target — a target "
-            ~ "rename does not rename the slot");
-
-        // Names are not even unique: give a second item the renamed one's name and
-        // the link still names exactly one item.
-        f.clipC.name = "renamed";
-        assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
-            "two items may share a name; the link still resolves to one of them");
-        assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
-            "…and the other slot still resolves to the OTHER one");
-    }
-
-    unittest {  // AN INDEX IS NOT IDENTITY — a pure reorder of layers[] moves
-                // every slot number and no link.
-        auto f = makeLinkFixture();
-        assert(f.doc.indexOf(f.clipB) == 2 && f.doc.indexOf(f.clipC) == 3,
-            "fixture vacuity guard: clipB at 2, clipC at 3 before the permute");
-
-        // Move clipB (2) to the tail — the shape `layer.reorder` produces.
-        f.doc.layers = f.doc.layers[0 .. 2] ~ f.doc.layers[3 .. $] ~ f.clipB;
-        assert(f.doc.indexOf(f.clipB) == 5 && f.doc.indexOf(f.clipC) == 2,
-            "vacuity guard: both slot numbers really did change");
-
-        assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
-            "reorder must not move a link");
-        assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB);
-        assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC);
-    }
-
-    unittest {  // Deleting the MIDDLE clip: both links report themselves dangling,
-                // the sibling slot is untouched, and nothing swaps to a neighbour.
-        auto f = makeLinkFixture();
-        immutable size_t bIdx = f.doc.indexOf(f.clipB);
-        assert(bIdx == 2, "vacuity guard: clipB is a MIDDLE layer, not the tail");
-
-        // Splice clipB out — the exact operation LayerDelete performs.
-        f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.doc.layers[bIdx + 1 .. $];
-        assert(f.doc.layers.length == 5,
-            "vacuity guard: the list is still non-empty, so 'dangling' cannot be "
-            ~ "an index clamped into an empty range");
-
-        assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Dangling,
-            "a link to a deleted item reports Dangling");
-        assert(f.consumerY.link("backdropImage").state(f.doc) == LinkState.Dangling,
-            "…for BOTH consumers — not just the first one a sweep would reach");
-        assert(f.consumerX.link("backdropImage").resolve(f.doc) is null,
-            "a dangling link resolves to null");
-        assert(f.consumerY.link("backdropImage").resolve(f.doc) is null);
-        assert(f.consumerX.link("backdropImage").state(f.doc) != LinkState.Unset,
-            "Dangling is distinguishable from Unset — 'the image you chose was "
-            ~ "deleted' is not the same statement as 'you chose no image'");
-
-        // NOT A SILENT SWAP. clipC sat at slot 3; the delete slid consumerX into
-        // that slot. A link that stored the NUMBER 3 would now hand back
-        // consumerX — a live, plausible-looking, completely wrong item. The first
-        // assertion is the vacuity guard that proves the slot really changed
-        // owner, so the second one is testing something.
-        assert(f.doc.layers[3] is f.consumerX,
-            "vacuity guard: the middle delete moved a DIFFERENT item into clipC's "
-            ~ "old slot 3");
-        assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
-            "the surviving link followed the OBJECT, not the slot number");
-        assert(f.consumerX.link("maskImage").state(f.doc) == LinkState.Live);
-
-        // The identity survives even though the resolution does not — which is
-        // what makes the reverse sweep able to answer "who was pointing at the
-        // thing that just went", the question a re-point UI or a later
-        // clear-on-delete policy has to ask.
-        assert(f.consumerX.link("backdropImage").targetUnchecked() is f.clipB,
-            "a dangling link still names WHICH item it lost");
-        Layer[] refs;
-        f.doc.referrersOf(f.clipB, refs);
-        assert(refs.length == 2 && refs[0] is f.consumerX && refs[1] is f.consumerY,
-            "referrersOf still finds both consumers of the deleted clip");
-
-        // Undo shape: reinsert the SAME object at its old slot. Both links are
-        // Live again, on one and the same object, with nothing to restore.
-        f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.clipB ~ f.doc.layers[bIdx .. $];
-        auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
-        auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
-        assert(xBack is f.clipB && yBack is f.clipB,
-            "reinserting the object relinks both consumers");
-        assert(xBack is yBack,
-            "…to ONE object — an implementation that restored two links onto two "
-            ~ "objects would pass a 'both are non-null' check");
-    }
-
-    unittest {  // A link answers for the document it is ASKED about. This is the
-                // whole-document-replacement case (scene reset, .v3d load,
-                // interchange import) — the one no delete-time sweep can cover.
-        auto f     = makeLinkFixture();
-        auto other = makeLinkFixture();   // same shape, all-new objects
-
-        assert(other.doc.layers[2].name == "clipB",
-            "vacuity guard: the other document has a same-named item at the SAME "
-            ~ "slot, so an index- or name-keyed link would happily resolve here");
-        assert(other.doc.layers[2] !is f.clipB, "…but it is a different object");
-
-        assert(f.consumerX.link("backdropImage").state(other.doc) == LinkState.Dangling,
-            "a link into a replaced-away document is Dangling, not Live");
-        assert(f.consumerX.link("backdropImage").resolve(other.doc) is null,
-            "…and must not resolve into the new document's item at that slot");
-        assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live,
-            "the same link is still Live against its own document — the state is "
-            ~ "a property of the PAIR, not of the link");
-    }
-
-    unittest {  // Slot mutation: replace, clear, the null-target spelling, and the
-                // independence a cloned slot set must have.
-        auto f = makeLinkFixture();
-
-        // Replace, not append.
-        f.consumerX.setLink("backdropImage", f.clipA);
-        assert(f.consumerX.linkSlots().length == 2, "re-pointing a slot does not add one");
-        assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipA,
-            "the slot now points at clipA");
-        assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
-            "…and the OTHER consumer's slot is untouched");
-
-        // Clear, and the null-target spelling of the same thing — one
-        // representation of "points at nothing", never a leftover empty slot.
-        assert(f.consumerX.clearLink("backdropImage"), "clearLink reports the removal");
-        assert(!f.consumerX.clearLink("backdropImage"), "…and reports nothing the second time");
-        assert(f.consumerX.linkSlots().length == 1, "the slot is gone, not emptied");
-        assert(f.consumerX.linkSlots()[0].name == "maskImage");
-        f.consumerX.setLink("maskImage", null);
-        assert(f.consumerX.linkSlots().length == 0,
-            "setLink(name, null) removes the slot rather than leaving an unset one");
-
-        // Cloning a slot set shares TARGETS but not the slot array.
-        auto clone = new Layer;
-        clone.kind = ItemKind.Empty;
-        clone.name = "clone";
-        clone.copyLinksFrom(f.consumerY);
-        f.doc.layers ~= clone;
-        assert(clone.link("backdropImage").resolve(f.doc) is f.clipB,
-            "the clone points at the SAME item, not a copy of it");
-        clone.setLink("backdropImage", f.clipC);
-        assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
-            "re-pointing the clone must not write through into the source's slots");
-        assert(clone.link("backdropImage").resolve(f.doc) is f.clipC);
     }
 
     // ---------------------------------------------------------------------------
