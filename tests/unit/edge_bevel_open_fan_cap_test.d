@@ -8,13 +8,26 @@
 // outright refusal of the shape as the safe, asserted behaviour. Five dumps
 // exist now and the reference does NOT refuse: it builds the cap.
 //
-// AND IT BUILDS THE SAME ONE. With the selected spokes interior, every vertex
-// of the open-fan result coincides with the closed fan's at distance 0.0, and
-// the only face that differs is the one base polygon that was deleted to open
-// the fan in the first place. So the cap construction does not consult the
-// fan's openness at all -- which makes our refusal a DIVERGENCE, not a
-// simplification, and makes this fixture target geometry rather than a
-// regression lock. Nothing in vibe3d is pinned by it.
+// AND IT BUILDS THE SAME ONE. With the selected spokes interior, the two
+// vertex SETS are equal: the nearest-neighbour map from the open result to
+// the closed one is a permutation of all sixteen indices and every one of
+// those sixteen distances is 0.0. The only face that differs is the one base
+// polygon that was deleted to open the fan in the first place. So the cap
+// construction does not consult the fan's openness at all -- which makes our
+// refusal a DIVERGENCE, not a simplification, and makes this fixture target
+// geometry rather than a regression lock. Nothing in vibe3d is pinned by it.
+//
+// SET EQUALITY, NOT A SWEEP -- the claim above is stated at the strength the
+// cell actually asserts. An earlier version took only the one-sided
+// nearest-neighbour maximum, which a duplicated vertex satisfies; that is
+// measured, not feared, and the block itself carries the measurement. The
+// permutation survives, so the finding is unchanged in substance and stronger
+// in evidence.
+//
+// ONE THING THE SET EQUALITY DOES NOT SAY: the ORDER matches. It does not.
+// The same sixteen points come back permuted (indices 3,4,5 arrive as 5,3,4),
+// index-wise 0.19 apart, and the cell pins that too so that whoever ports the
+// cap is not misled by an index-wise diff against a closed-fan dump.
 //
 // WHY A BOOT WAS SPENT HERE, when the rest of this batch spent none. The
 // static read located the branch -- two vertex flags decline outright and a
@@ -29,15 +42,25 @@
 // dump cannot be trusted about a new one, and "0.0" from a harness that
 // silently did nothing looks exactly like "0.0" from one that measured.
 //
-// MUTATIONS (each seen red, in isolation -- see the task card):
-//   * perturb one open-fan vertex in the fixture by 1e-6 -> `the open fan's
-//     cap must coincide with the closed fan's` reddens.
-//   * delete the boundary-selection case -> `the corpus must contain a cap
-//     that DIFFERS` reddens, which is the guard against a corpus that is one
-//     shape repeated.
-//   * set every case's cap_face_count to 0 -> `every case must actually
-//     build a cap` reddens, which is the population floor under the identity
-//     claim.
+// MUTATIONS (each seen red, in isolation -- see the task card). Every one of
+// these edits the FIXTURE, because this cell reads a fixture and vibe3d ships
+// no cap construction for the mutation to break in code:
+//   * fixture: perturb one open-fan vertex by 1e-6 -> `the open fan's cap
+//     must coincide with the closed fan's` reddens.
+//   * fixture: replace open vertex 7 with a copy of open vertex 0 -> `the
+//     open->closed nearest-neighbour map must be a PERMUTATION` reddens,
+//     while `the open fan's cap must coincide with the closed fan's` two
+//     asserts ABOVE it passes. That pair in one run is the whole reason the
+//     permutation assert exists: the sweep cannot see this edit.
+//   * fixture: reorder the open case's vertex list to match the closed one
+//     -> `the emission ORDER must differ even though the SET does not`
+//     reddens, and the permutation assert above it stays green.
+//   * fixture: delete the boundary-selection case -> `the corpus must
+//     contain a cap that DIFFERS` reddens, which is the guard against a
+//     corpus that is one shape repeated.
+//   * fixture: set every case's cap_face_count to 0 -> `every case must
+//     actually build a cap` reddens, which is the population floor under the
+//     identity claim.
 module tests.unit.edge_bevel_open_fan_cap_test;
 
 import std.json;
@@ -105,7 +128,22 @@ unittest // the reference builds a cap on an open fan, and it is the closed one
       ~ "counts; if it does not, this session was not driving the reference "
       ~ "and nothing else in the file can be believed");
 
-    // THE FINDING. Every open-fan vertex coincides with a closed-fan vertex.
+    // THE FINDING, and it is a SET equality, not a sweep.
+    //
+    // WHY THE SWEEP ALONE WAS NOT ENOUGH, measured rather than argued. The
+    // first version of this cell took the maximum over open vertices of the
+    // distance to the NEAREST closed vertex. That is one half of a Hausdorff
+    // distance and it is satisfied by a mutilated list: replace open vertex 7
+    // with a copy of open vertex 0 and every open point still has a closed
+    // point at distance 0, so the sweep reports 0.0 over a set that is short
+    // one vertex and carries a duplicate. Review ran exactly that mutation
+    // and the cell stayed `1 modules passed unittests`, exit 0.
+    //
+    // WHAT IS ASSERTED INSTEAD. The nearest-neighbour map open -> closed is a
+    // PERMUTATION: every closed vertex is claimed exactly once. Together with
+    // all sixteen distances at or under tolerance that is a bijection between
+    // the two point sets, so the reverse sweep is implied and adds nothing --
+    // every closed vertex is within tolerance of its unique preimage.
     auto openC   = caseNamed(fx, "open_fan_K2_interior_L1");
     auto closedC = caseNamed(fx, "closed_fan_K2_interior_L1");
     const V3[] vo = verticesOf(openC);
@@ -114,15 +152,27 @@ unittest // the reference builds a cap on an open fan, and it is the closed one
         format("both must carry sixteen vertices, got %s and %s",
                vo.length, vc.length));
 
+    // Nearest closed vertex for each open one, and a tally of how often each
+    // closed vertex is claimed. The tally is the half a sweep cannot see.
+    auto image  = new size_t[vo.length];
+    auto claims = new int[vc.length];
     double worst = 0.0;
-    foreach (p; vo) {
-        double best = double.max;
-        foreach (q; vc) {
+    foreach (i, p; vo) {
+        size_t bestJ = 0;
+        double best  = double.max;
+        foreach (j, q; vc) {
             const double d = dist(p, q);
-            if (d < best) best = d;
+            if (d < best) { best = d; bestJ = j; }
         }
+        image[i] = bestJ;
+        ++claims[bestJ];
         if (best > worst) worst = best;
     }
+
+    // ORDER IS THE EVIDENCE HERE. The sweep below stays GREEN under the
+    // duplicate-vertex mutation and the permutation assert under it reddens,
+    // so one run shows both that the weaker check passes and that the
+    // stronger one is doing work the weaker one was not.
     assert(worst <= tol,
         format("the open fan's cap must coincide with the closed fan's -- "
              ~ "worst nearest-neighbour distance was %s, so the cap "
@@ -130,6 +180,30 @@ unittest // the reference builds a cap on an open fan, and it is the closed one
              ~ "wrong", worst));
     assert(worst == num(fx["open_equals_closed_worst_vertex_distance"]),
         "the frozen distance must be the one recomputed here");
+
+    // The population floor under this loop is the length assert above: it
+    // runs sixteen times or the run never reached here.
+    foreach (j, n; claims)
+        assert(n == 1,
+            format("the open->closed nearest-neighbour map must be a "
+                 ~ "PERMUTATION, or 'all sixteen coincide' is being read off "
+                 ~ "a one-sided sweep that a duplicated vertex satisfies too "
+                 ~ "-- closed vertex %s was claimed %s times", j, n));
+
+    // ...and the permutation is NOT the identity. The two results carry the
+    // same point SET in a different ORDER, so an implementation of the
+    // open-fan cap checked index-wise against a closed-fan dump will look
+    // wrong while being right. Recorded because the port is now scheduled.
+    double inOrder = 0.0;
+    foreach (i, p; vo) {
+        const double d = dist(p, vc[i]);
+        if (d > inOrder) inOrder = d;
+    }
+    assert(inOrder > tol,
+        format("the emission ORDER must differ even though the SET does not "
+             ~ "-- index-wise the two dumps are %s apart, and if that ever "
+             ~ "reads zero the ordering note above has stopped being true",
+               inOrder));
 
     // ...and exactly one face differs, the base polygon that was removed.
     assert(cast(int) num(fx["faces_only_in_closed"]) == 1
