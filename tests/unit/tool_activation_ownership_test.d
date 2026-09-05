@@ -8,8 +8,11 @@
 //
 // It is deliberately NOT the discriminating check for the cutover. A text
 // census cannot tell a prepared drop from a legacy one — that needs a driven
-// gesture, and it lives in tests/test_tool_drop_single_door.d. What this
-// module buys is that neither the table nor its call sites can drift silently.
+// gesture. The one on record is tests/test_rs_insession_cancel.d:517, which
+// went red the moment `explicitDrop` moved to the prepared door and named the
+// exact divergence ("drop consolidates the two-gesture run into ONE surviving
+// entry; floor=1 now=3"). What this module buys is that neither the table nor
+// its call sites can drift silently.
 //
 // Every count below is a LEDGER: it may change, but only in the commit that
 // argues for it. Converting a drop to the prepared door lowers
@@ -68,8 +71,9 @@ unittest {
         format("task 4053: arm rows moved: %s, recorded %s", arms, kArms));
     assert(preparedDrops == kPreparedDrops,
         format("task 4053: a drop changed door: %s prepared, recorded %s — "
-               ~ "converting one is a deliberate edit here and a driven cell "
-               ~ "in tests/test_tool_drop_single_door.d",
+               ~ "converting one is a deliberate edit here AND a driven cell — "
+               ~ "tests/test_rs_insession_cancel.d is the one that caught the "
+               ~ "last conversion",
                preparedDrops, kPreparedDrops));
     assert(legacyDrops == kLegacyDrops,
         format("task 4053: a drop changed door: %s legacy, recorded %s",
