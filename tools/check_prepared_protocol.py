@@ -73,7 +73,7 @@ def has_final_class(source, name):
     span = d_declaration_span(source, "class", name)
     if span is None:
         return False
-    prefix = mask_d_noncode(source[span[0]:source.find("{", span[0])])
+    prefix = mask_d_noncode(source[span[0]:span[1]])
     return re.search(r"\bfinal\s+class\s+" + re.escape(name) + r"\b", prefix) is not None
 
 def before_declaration(source, kind, name):
@@ -83,6 +83,38 @@ def before_declaration(source, kind, name):
 def from_declaration(source, kind, name):
     span = d_declaration_span(source, kind, name)
     return None if span is None else source[span[0]:]
+
+# Every exact text boundary used by a legacy scanner slice goes through these
+# helpers: formatting remains frozen here, and a missing boundary fails before
+# Python's -1 slice semantics can widen a prefix, suffix, or range (4051).
+def text_anchor(source, anchor, start=0):
+    position = source.find(anchor, start)
+    if position < 0:
+        fail(f"P1.0b prepared slice anchor missing: {anchor!r}")
+    return position
+
+def before_text_anchor(source, anchor):
+    return source[:text_anchor(source, anchor)]
+
+def from_text_anchor(source, anchor):
+    return source[text_anchor(source, anchor):]
+
+def between_text_anchors(source, first, second):
+    begin = text_anchor(source, first)
+    end = text_anchor(source, second, begin + len(first))
+    return source[begin:end]
+
+def text_anchor_to_offset(source, anchor, end):
+    begin = text_anchor(source, anchor)
+    if end <= begin:
+        fail(f"P1.0b prepared slice anchors out of order: {anchor!r}")
+    return source[begin:end]
+
+def offset_to_text_anchor(source, begin, anchor):
+    if begin < 0:
+        fail(f"P1.0b prepared slice start missing before: {anchor!r}")
+    end = text_anchor(source, anchor, begin)
+    return source[begin:end]
 
 def has_prepared_token_pair(source, stem):
     """Recognize either today's named pair or the package refactor's pair mixin."""
@@ -1945,11 +1977,11 @@ for contract in resource_contracts:
                 else 1)
     if record_context.count(contract) != expected:
         fail(f"P1.0b.4c.1 resource-journal contract drift: {contract}")
-click_resource_block = handler_shapes[handler_shapes.find(
-    "final class ClickPointResourceOwner"):]
-box_handler_resource_block = handler_shapes[handler_shapes.find(
-    "final class BoxHandlerBatchResourceOwner"):handler_shapes.find(
-    "final class ClickPointResourceOwner")]
+click_resource_block = from_text_anchor(
+    handler_shapes, "final class ClickPointResourceOwner")
+box_handler_resource_block = between_text_anchors(
+    handler_shapes, "final class BoxHandlerBatchResourceOwner",
+    "final class ClickPointResourceOwner")
 for contract in (
     "final class ClickPointResourceOwner",
     "target.vao != vao || target.vbo != vbo || target.built != built",
@@ -1993,8 +2025,9 @@ for old, new, label in (
      "batch payload consumption"),
 ):
     mutant = handler_shapes.replace(old, new, 1)
-    block = mutant[mutant.find("final class BoxHandlerBatchResourceOwner"):
-        mutant.find("final class ClickPointResourceOwner")]
+    block = between_text_anchors(
+        mutant, "final class BoxHandlerBatchResourceOwner",
+        "final class ClickPointResourceOwner")
     if old not in handler_shapes or all(contract in block for contract in (
             "target.vao != vaos[i] || target.vbo != vbos[i]",
             "targets = null; vaos = null; vbos = null;")):
@@ -2271,11 +2304,11 @@ def box_activation_gate(box, private, context):
     start = box.find("final PreparedSessionActivateEffect prepareActivate(")
     end = box.find("final GpuMesh* preparedPreviewGpu", start)
     producer = box[start:end] if start >= 0 and end > start else ""
-    private_activation = private[:private.find(
-        "static PreparedPrivateStateOwner boxDeactivate")]
-    box_activation_install = box[box.find(
-        "final void installPreparedPrivateActivation"):box.find(
-        "final PreparedBoxDeactivateImage buildPreparedDeactivateState")]
+    private_activation = before_text_anchor(
+        private, "static PreparedPrivateStateOwner boxDeactivate")
+    box_activation_install = between_text_anchors(
+        box, "final void installPreparedPrivateActivation",
+        "final PreparedBoxDeactivateImage buildPreparedDeactivateState")
     return (
         "final PreparedSessionActivateEffect prepareActivate(" in producer and
         "PreparedPrivateStateOwner.box(this)" in producer and
@@ -2367,8 +2400,8 @@ def pen_activation_gate(pen, private, context):
         "if (!ok) context.discard();" in producer and
         "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
         "            PreparedActivateKind.Pen, ok);" in producer and
-        "target.classinfo !is PenTool.classinfo" in private[:private.find(
-            "static PreparedPrivateStateOwner penDeactivate")] and
+        "target.classinfo !is PenTool.classinfo" in before_text_anchor(
+            private, "static PreparedPrivateStateOwner penDeactivate") and
         "case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation();" in private and
         "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;" in installer and
         "params_.posX = params_.posY = params_.posZ = 0.0f;" in installer and
@@ -2609,8 +2642,10 @@ for target, old, new, label in (
     mutant = dict(magnet_param_sources)
     if target == "tool":
         text = mutant[target]
-        start = text.find("final PreparedMagnetParamEffect prepareParamChanged(") \
-            if old in text[text.find("final PreparedMagnetParamEffect prepareParamChanged("):] \
+        start = text_anchor(
+            text, "final PreparedMagnetParamEffect prepareParamChanged(") \
+            if old in from_text_anchor(
+                text, "final PreparedMagnetParamEffect prepareParamChanged(") \
             else 0
         pos = text.find(old, start)
         mutant[target] = text[:pos] + new + text[pos + len(old):]
@@ -4185,8 +4220,9 @@ def poly_extrude_activation_gate(owner, context, tool):
         if install_start >= 0 and install_end > install_start else ""
     legacy = re.search(r"override void activate\(\)\s*\{", pt)
     legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
-    formula = pt[pt.find("private static void computePreparedGizmoFrame"):
-        pt.find("public:\n    version(unittest)")]
+    formula = between_text_anchors(
+        pt, "private static void computePreparedGizmoFrame",
+        "public:\n    version(unittest)")
     return (
         has_final_class(owner, "PreparedPolyExtrudeActivationOwner") and
         has_prepared_token_pair(owner, "PolyExtrudeActivation") and
@@ -5573,13 +5609,13 @@ for target, old, new, label in (
 bridge_activation_owner = prepared_module_source("prepared_bridge_activation")
 bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
 def bridge_activation_gate(owner, context, tool, gpu):
-    gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
+    gpu_block = from_text_anchor(gpu, "final class GpuCreateUploadOwner")
     activation_block = before_declaration(
         owner, "struct", "PreparedBridgeDeactivateToken")
     if activation_block is None:
         return False
-    tool_activation_block = tool[:tool.find(
-        "final PreparedBridgeDeactivateImage buildPreparedDeactivateState")]
+    tool_activation_block = before_text_anchor(
+        tool, "final PreparedBridgeDeactivateImage buildPreparedDeactivateState")
     return (has_prepared_token_pair(owner, "BridgeActivation") and
         has_final_class(owner, "PreparedBridgeActivationOwner") and
         "target.classinfo !is BridgeTool.classinfo" in activation_block and
@@ -5651,13 +5687,13 @@ for target, old, new, label in (
 mirror_activation_owner = prepared_module_source("prepared_mirror_activation")
 mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
 def mirror_activation_gate(owner, context, tool, gpu):
-    gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
+    gpu_block = from_text_anchor(gpu, "final class GpuCreateUploadOwner")
     activation_block = before_declaration(
         owner, "struct", "PreparedMirrorDeactivateToken")
     if activation_block is None:
         return False
-    tool_activation_block = tool[:tool.find(
-        "final PreparedMirrorDeactivateImage buildPreparedDeactivateState")]
+    tool_activation_block = before_text_anchor(
+        tool, "final PreparedMirrorDeactivateImage buildPreparedDeactivateState")
     return (has_prepared_token_pair(owner, "MirrorActivation") and
         has_final_class(owner, "PreparedMirrorActivationOwner") and
         "target.classinfo !is MirrorTool.classinfo" in activation_block and
@@ -5821,8 +5857,8 @@ def bridge_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("version(unittest) final void seedPreparedDeactivateStateForTest", start)
     body = tool[start:end]
-    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
-        effect.find("enum PreparedActivateKind")]
+    effect_block = between_text_anchors(
+        effect, "enum PreparedDeactivateKind", "enum PreparedActivateKind")
     return (start >= 0 and end > start and "Bridge," in effect_block and
         "scope(failure) context.discard();" in body and
         "PreparedBridgeDeactivateOwner.prepare(this)" in body and
@@ -5885,11 +5921,14 @@ def box_deactivate_gate(tool, owner, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
     body = tool[start:end]
-    candidate = tool[tool.find("private bool buildPreparedDeactivateCandidate("):start]
-    state = tool[tool.find("final PreparedBoxDeactivateImage buildPreparedDeactivateState"):start]
-    owner_block = owner[owner.find("static PreparedPrivateStateOwner boxDeactivate"):]
-    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
-        effect.find("enum PreparedActivateKind")]
+    candidate = text_anchor_to_offset(
+        tool, "private bool buildPreparedDeactivateCandidate(", start)
+    state = text_anchor_to_offset(
+        tool, "final PreparedBoxDeactivateImage buildPreparedDeactivateState", start)
+    owner_block = from_text_anchor(
+        owner, "static PreparedPrivateStateOwner boxDeactivate")
+    effect_block = between_text_anchors(
+        effect, "enum PreparedDeactivateKind", "enum PreparedActivateKind")
     return (start >= 0 and end > start and "Box," in effect_block and
         "target.classinfo !is BoxTool.classinfo" in owner_block and
         "target.buildPreparedDeactivateState(clearTracking)" in owner_block and
@@ -5969,14 +6008,16 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
     body = tool[start:end]
-    candidate = tool[tool.find("private bool buildPreparedDeactivateCandidate("):start]
-    state = tool[tool.find("final PreparedPenDeactivateImage buildPreparedDeactivateState"):start]
+    candidate = text_anchor_to_offset(
+        tool, "private bool buildPreparedDeactivateCandidate(", start)
+    state = text_anchor_to_offset(
+        tool, "final PreparedPenDeactivateImage buildPreparedDeactivateState", start)
     owner_start = owner.find("static PreparedPrivateStateOwner penDeactivate")
     owner_end = owner.find("static PreparedPrivateStateOwner penParam", owner_start)
     owner_factory = owner[owner_start:owner_end]
     owner_block = owner[owner_start:]
-    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
-        effect.find("enum PreparedActivateKind")]
+    effect_block = between_text_anchors(
+        effect, "enum PreparedDeactivateKind", "enum PreparedActivateKind")
     return (start >= 0 and end > start and
         re.search(r"\bPen\s*,", effect_block) is not None and
         "final class BoxHandlerBatchResourceOwner" in handlers and
@@ -6067,11 +6108,13 @@ primitive_deactivate_owner = prepared_module_source("prepared_private_state")
 primitive_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def primitive_deactivate_gate(tool, owner, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
-    body = tool[start:tool.find("override void evaluate()", start)]
-    state = tool[tool.find("struct PreparedPrimitiveDeactivateImage"):start]
-    owner_block = owner[owner.find("static PreparedPrivateStateOwner primitiveDeactivate"):]
-    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
-        effect.find("enum PreparedActivateKind")]
+    body = offset_to_text_anchor(tool, start, "override void evaluate()")
+    state = text_anchor_to_offset(
+        tool, "struct PreparedPrimitiveDeactivateImage", start)
+    owner_block = from_text_anchor(
+        owner, "static PreparedPrivateStateOwner primitiveDeactivate")
+    effect_block = between_text_anchors(
+        effect, "enum PreparedDeactivateKind", "enum PreparedActivateKind")
     return (start >= 0 and "Primitive," in effect_block and
         "expectedWillCommit" in state and "expectedCommitValid" in state and
         "image.expectedProductWitness = preparedDeactivateProductWitness();" in state and
@@ -6147,7 +6190,7 @@ def topology_update_gate(tool, owner, context, effect):
     start = tool.find("final PreparedTopologyPenUpdateImage buildPreparedUpdate(")
     end = tool.find("// ---------------------------------------------------------------------", start)
     body = tool[start:end]
-    effect_block = effect[effect.find("enum PreparedTopologyPenUpdateKind"):]
+    effect_block = from_text_anchor(effect, "enum PreparedTopologyPenUpdateKind")
     return (start >= 0 and "PacketAbsent, Packet" in effect_block and
         "if (auto packet = vts.get!ConstrainHitPacket())" in body and
         "image.nextHit = *packet;" in body and
@@ -6196,8 +6239,8 @@ def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
     body = tool[start:end]
-    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
-        effect.find("enum PreparedActivateKind")]
+    effect_block = between_text_anchors(
+        effect, "enum PreparedDeactivateKind", "enum PreparedActivateKind")
     return (start >= 0 and end > start and
         "Mirror," in effect_block and
         "scope(failure) context.discard();" in body and
@@ -6973,8 +7016,6 @@ radial_array_tool = (ROOT / "source/tools/alignment/radial_array_tool.d").read_t
 def radial_array_owner_gate(owner, context, tool):
     production = without_unittests(owner)
     return (has_final_class(owner, "PreparedRadialArrayTransitionOwner") and
-            "struct PreparedRadialArrayTransitionToken" in owner and
-            "struct ValidatedRadialArrayTransitionToken" in owner and
             has_prepared_token_pair(owner, "RadialArrayTransition") and
             not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
             "target.classinfo is RadialArrayTool.classinfo" in owner and
@@ -7897,11 +7938,12 @@ xfrm_tail_owner = prepared_module_source("prepared_xfrm_update_tail")
 xfrm_tail_handles = (ROOT / "source/tools/transform/xfrm_handles.d").read_text()
 def xfrm_update_tail_gate(owner, context, xfrm, handles):
     production = without_unittests(owner)
-    prepared_handles_start = handles.find(
-        "private void installPreparedSharedGizmoPose")
+    prepared_handles_start = text_anchor(
+        handles, "private void installPreparedSharedGizmoPose")
+    prepared_handles_open = text_anchor(handles, "{", prepared_handles_start)
     prepared_handles_body = handles[
         prepared_handles_start:balanced_source(
-            handles, handles.find("{", prepared_handles_start) + 1)]
+            handles, prepared_handles_open + 1)]
     return has_final_class(owner, "PreparedXfrmUpdateTailOwner") and \
         all(x in owner for x in (
         "target.classinfo !is XfrmTransformTool.classinfo",
