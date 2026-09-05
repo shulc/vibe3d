@@ -21,7 +21,7 @@
  "miter_interior": {
   "register_row": 17,
   "symbol_exists": true,
-  "law": "The miter profile's interior samples are NOT produced by the arc/rail routine. For each interior sample i the router computes a blend weight s, evaluates the rail routine TWICE, and writes the componentwise linear blend of the two results. The two rail evaluations are the same routine called with its two context pointers SWAPPED, at COMPLEMENTARY parameters, and with the second call's direction input set to the componentwise NEGATION of the first call's direction output.",
+  "law": "The miter profile's interior is not drawn by ONE arc evaluation -- but the arc routine is still what produces it, twice. For each interior sample i the router computes a blend weight s, evaluates the rail routine TWICE, and writes the componentwise linear blend of the two results. The two rail evaluations are the same routine called with its two context pointers SWAPPED, at COMPLEMENTARY parameters, and with the second call's direction input set to the componentwise NEGATION of the first call's direction output.",
   "interior_is_a_linear_blend_of_two_rail_evaluations": true,
   "blend_weight_is_the_insertion_parameter": true,
   "second_rail_parameter_is_one_minus_s": true,
