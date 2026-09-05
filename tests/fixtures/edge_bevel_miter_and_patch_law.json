@@ -3,16 +3,20 @@
  "description": "Three remainders of the bevel cap campaign, all read statically at the reference's own compute sites: what two points the miter profile's interior interpolates between and on what schedule; how the three-sided surface interpolator builds its interior from the collapsed side curves; and what the cap router's marker exit actually builds. No engine was launched for any of it.",
  "source": "Static disassembly of the reference editor's shipped unstripped libraries. Zero boots, zero traces, zero displays.",
  "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
   "method": "static-read",
-  "date": "2026-09-05",
-  "task": 4332,
+  "captured_utc": "2026-09-05",
+  "harness": "tools/local/fixture_gen/miter_and_patch/gen.py (objdump/nm over the shipped unstripped libraries; no process was started)",
+  "task": "4332",
   "registry_rows": [
    17,
    20,
    22
   ],
   "symbols_read": 7,
-  "note": "The seven routines' own names, libraries and addresses are recorded in the PRIVATE toolcard for this task; they are the reference's identifiers and deliberately do not cross into this tree. What is reproducible from here is the LAW."
+  "notes": "INSTRUMENT: static disassembly. Seven routines across two shipped libraries were read at their own compute sites. No engine was launched, no display opened, no pointer injected, no trace recorded, so nothing here can be an artefact of which stands happened to get built. Every constant was decoded from read bytes rather than inferred from a name. Two statements a previous pass recorded were REFUTED by this read, both traced to comparing raw stack displacements across a call window that had lowered the stack pointer. The seven routines' names, libraries and addresses are recorded in the PRIVATE toolcard; they are the reference's identifiers and deliberately do not cross into this tree."
  },
  "miter_interior": {
   "register_row": 17,
