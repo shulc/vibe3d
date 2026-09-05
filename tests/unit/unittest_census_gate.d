@@ -575,7 +575,9 @@ enum ledgerPath = "tests/unit/unittest_census_ledger.txt";
 /// loudly, if it is dropped too early.
 immutable string[] ledgerPathsHistoric = [
     ledgerPath,
-    "tests/unit/census_ledger.txt",   // up to and including task 4102
+    // Keep until the last old-name revision, fe6caaea^ (79362fb8...), is
+    // outside every live lane's revision walk.
+    "tests/unit/census_ledger.txt",
 ];
 
 /// Is `p` the ledger under any name this gate knows?
