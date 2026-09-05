@@ -191,7 +191,7 @@ allow source/copilot_panel.d 2
 allow source/deform_magnet.d 1
 allow source/display_state.d 10
 allow source/display_sync.d 8
-allow source/document.d 36
+allow source/document.d 37
 allow source/document_selection.d 62
 allow source/drag.d 11
 allow source/drag_identity.d 1

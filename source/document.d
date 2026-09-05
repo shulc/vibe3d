@@ -475,7 +475,7 @@ final class Layer {
     // `image_` is a class reference that is genuinely null until something
     // constructs an `ImageData` for this layer — today, only
     // `LayerDuplicate`'s payload-sharing clone (`commands/layer/commands.d`)
-    // and this module's own unit tests do that; the command that constructs
+    // and `tests/unit/document_test.d` do that; the command that constructs
     // one for a freshly loaded image is a later stage.
     private ImageData image_;   ///< the layer's image payload, null unless
                                  ///< `hasImage` (stable heap address: a class
@@ -991,23 +991,72 @@ ModelSpace primaryModelSpace() {
         ? primaryModelSpaceResolver() : ModelSpace.world();
 }
 
-// THE ONE PLACE A PRODUCTION MODULE IMPORTS A TEST MODULE, and it is a live
-// CIRCULAR import: `tests.unit.document_test` imports `document`, and this
-// instantiation imports it straight back. It compiles and it runs, because
-// neither module has a `static this()` — a circular import with module
-// constructors aborts at startup with "cyclic dependency" — and because a
-// `mixin template` needs only the template's declaration, not an initialised
-// module. Two guards keep that from being an accident: `DocumentUnitTests` is
-// defined by the `tests` configuration ALONE, so no shipped build compiles the
-// edge at all, and neither side may grow a module constructor without the
-// other losing its import first.
+// THE TEST-ACCESS SEAM. Six readers, one block, `version (unittest)` — and it
+// is the only thing in this file that exists for a test. Until task 4120 this
+// tail instead read `version (DocumentUnitTests) { import
+// tests.unit.document_test : DocumentTests; mixin DocumentTests; }`: a
+// production module importing a test module, and a live CYCLE, since that
+// module imports `document` straight back. Both of the guards that made it
+// safe were unenforced conventions — no `static this()` on either side, and a
+// version identifier only the `tests` configuration defined.
 //
-// WHY IT EXISTS: 45 of the moved blocks read module-private `Document` state
-// (`nthEditTargetCandidate`, `deselected_`, the seat counters). Instantiating
-// their bodies here keeps that access without widening the production API to
-// the whole tree, which is the trade the alternative — making the privates
-// package-visible — would have made permanently, for a test-only reason.
-version (DocumentUnitTests) {
-    import tests.unit.document_test : DocumentTests;
-    mixin DocumentTests;
+// WHY IT COULD GO. The arc was believed to be carrying 45 unittest blocks that
+// needed module-private state. Measured rather than assumed, by flattening the
+// mixin and reading dmd's error list: FOUR blocks need private, plus the one
+// shared oracle `assertDocInvariants`, which 27 of them call and which needs
+// exactly two reads. Six needs, and this block is all six.
+//
+// THE ALTERNATIVES LOST TO THE COMPILER, NOT TO AN ARGUMENT. `package` on the
+// fields does not even reach the tests — a `package` member of a root-level
+// module is invisible to `tests.unit.*` — so it would have widened the
+// production API to every module in `source/` and still left the cells
+// outside; `package(document)` is not expressible at all, a module may not
+// name itself as a package. `__traits(getMember)` pierces private FIELDS but
+// not private METHODS, and two of the six needs are methods. Keeping the
+// private-needing cells in-module here, which IS this repo's rule, founders on
+// the oracle: 27 further blocks would have had to come back with it.
+//
+// THE COST, PLAINLY. These six are public inside a `-unittest` build, so any
+// test module could call them; they exist in no shipped build, which is the
+// whole difference from `package`. The caller set is closed by
+// `tests/unit/document_seam_census_test.d` — one file may name them, and a
+// second one reddens that gate.
+version (unittest) {
+    /// True iff the history bucket for `l`'s KIND holds `l`. The storage read
+    /// the document oracle needs and that no public accessor can answer:
+    /// `selectionState` resolves current-first by design, so it can never say
+    /// that an item is in both lists.
+    ///
+    /// Not a `deselected_` getter on purpose. Handing the bucket out would
+    /// have let a caller assert over an EMPTY one and call it a pass; this
+    /// spelling has no vacuous reading.
+    bool testHistoryBucketHolds(ref const Document d, const(Layer) l) {
+        foreach (h; d.deselected_[l.kind]) if (h is l) return true;
+        return false;
+    }
+
+    /// The n-th candidate of the edit-target WALK, recomputed on the spot —
+    /// never the memo. `primary` is the memo, so a cell that wants to know
+    /// whether the two still agree has to be able to ask for both.
+    Layer testEditTargetCandidate(ref Document d, size_t n) {
+        return d.nthEditTargetCandidate(n);
+    }
+
+    /// `exclusiveSelect` reached DIRECTLY rather than through `selectItem(Set)`
+    /// or `setPrimary`, which is the point of the cell that calls it.
+    void testExclusiveSelect(ref Document d, Layer l) { d.exclusiveSelect(l); }
+
+    /// The address of a layer's mesh FIELD, so a cell can assert that
+    /// `meshOrNull()` and `meshRef()` alias the field itself rather than
+    /// agreeing with each other about a copy.
+    Mesh* testMeshField(Layer l) { return &l.mesh_; }
+
+    /// The same, for the image payload field.
+    ImageData* testImageField(Layer l) { return &l.image_; }
+
+    /// The pending prepared-mesh image, or `null` when nothing is pending.
+    Mesh* testPreparedPendingImage(Layer l) {
+        return l.preparedMeshPending_ is null
+            ? null : &l.preparedMeshPending_.image;
+    }
 }

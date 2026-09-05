@@ -248,8 +248,7 @@
 		{
 			"name": "tests",
 			"versions": [
-				"WithAI",
-				"DocumentUnitTests"
+				"WithAI"
 			],
 			"dependencies": {
 				"d-onnxruntime": {
