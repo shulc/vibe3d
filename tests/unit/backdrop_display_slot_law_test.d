@@ -135,8 +135,17 @@ unittest
     foreach (k, v; refOrd.object)
         assert(k in ourOrd.object,
                format("fixture: mode '%s' has no counterpart on our side", k));
-    assert(!cc["ordinals_agree"].boolean,
-           "fixture: the two orders differ -- if they ever agree, say so here");
+    // DERIVED, not restated: compute whether the two orders agree and check
+    // the frozen claim against it. A hand-written boolean nobody computes is
+    // the same defect as a check that cannot come out differently.
+    bool ordersAgree = true;
+    foreach (k, v; refOrd.object)
+        if (v.integer != ourOrd[k].integer) { ordersAgree = false; break; }
+    assert(ordersAgree == cc["ordinals_agree"].boolean,
+           format("fixture says the two mode orders agree=%s; computed %s. "
+                  ~ "If our enum was reordered to match, say so here and drop "
+                  ~ "the note beside it.",
+                  cc["ordinals_agree"].boolean, ordersAgree));
     assert(cc["wireframe_and_flat_write_the_inactive_slot"].boolean,
            "fixture: the coarse control is a facade over the per-slot state, "
            ~ "which is what settles the 'two controls or one alias' question "
