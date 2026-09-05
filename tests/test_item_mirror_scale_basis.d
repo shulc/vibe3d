@@ -28,7 +28,8 @@
 // here, and the reason is a chain, not a staleness:
 //
 //   `layer.attr` is a Model-class command, so app.d's dispatcher used to drop
-//   the armed tool for it → `setActiveTool(null)` calls
+//   the armed tool for it → the drop verb (`setActiveTool(null)` then, and
+//   `dropActiveTool` since task 4053) calls
 //   `resetTransientPipeStages()` → `AxisStage.resetTransient()` early-returns
 //   ONLY when `userLocked` (toolpipe/stages/axis.d) → so the granular mode was
 //   wiped back to the world default while the `actr.pivot` one survived.

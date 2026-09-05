@@ -147,7 +147,7 @@ bool evalSoftPlaced() {
 struct XformDisplay { Vec3 translate; Vec3 rotate; Vec3 scale; }
 // Panel readback. When no transform tool is active (e.g. right after an
 // idle-open in-flight cancel, which drops the tool per app.d's navHistory
-// chokepoint: cancelUncommittedEdit() followed by setActiveTool(null) once
+// chokepoint: cancelUncommittedEdit() followed by the tool drop once
 // the edit is no longer uncommitted — see app.d:5143-5155), there is no
 // panel to read; report the well-defined default (identity) rather than
 // asserting, so record() stays safe to call regardless of tool state.
@@ -587,7 +587,7 @@ unittest {
 
     // app.d's navHistory chokepoint (:5143-5155) cancels the uncommitted edit
     // AND, once the tool no longer reports one, drops it entirely
-    // (setActiveTool(null)) — matching the reference "cancel back to no-tool"
+    // (dropActiveTool) — matching the reference "cancel back to no-tool"
     // gesture semantics. So the transform panel disappears along with the
     // tool; evalTransform() reports the well-defined no-tool default instead
     // of asserting (see its doc comment).

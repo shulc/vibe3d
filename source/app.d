@@ -2408,7 +2408,7 @@ void main(string[] args) {
     // SYMM / WORK are USER-driven globals (controlled via status-
     // bar toolbars) and stay across tool changes.
     //
-    // Called from setActiveTool(null) (Space, tool.set X off) and
+    // Called from dropActiveTool (Space, tool.set X off) and
     // from activateToolById BEFORE preActivate fires for the new
     // preset — so the new preset's pipe attrs land on freshly
     // reset stages.
@@ -2562,7 +2562,7 @@ void main(string[] args) {
             s.reset();
     }
 
-    // Sticky tool-option defaults: on a CLEAN tool drop (setActiveTool(null)
+    // Sticky tool-option defaults: on a CLEAN tool drop (dropActiveTool
     // with a known preset id), snapshot the dropped tool's TOOL-LEVEL params
     // into g_prefs.toolDefaults[presetId], so the next activation of that
     // preset starts from the user's last-used settings (re-applied in the
@@ -2588,7 +2588,7 @@ void main(string[] args) {
     // Falloff stage-gizmo refactor (steps 3-4): the single persistent
     // app-level owner of the toolpipe falloff gizmo + overlay (see
     // doc/falloff_stage_gizmo_refactor_plan.md). Constructed HERE, BEFORE
-    // setActiveTool (so its one-shot cancelDrag below can reach it) and BEFORE
+    // dropActiveTool (so its one-shot cancelDrag below can reach it) and BEFORE
     // the XfrmTransformTool factory registrations further down (so each factory
     // closure can capture it and inject it via setPipeGizmoHost()). It also
     // stays in scope for the no-tool app.d event/draw closures and the
@@ -2601,7 +2601,7 @@ void main(string[] args) {
     scope(exit) pipeGizmoHost.destroyGL();
 
     // EditSession — the single driver of the Tool session protocol (task
-    // 0428). DECLARED here so the nested setActiveTool below can reference it
+    // 0428). DECLARED here so the nested dropActiveTool below can reference it
     // lexically; CONSTRUCTED at the ToolHost block further down (`history`
     // exists only from there). Null until wired — same pattern as
     // lifecycleRecordHook above; users that can run pre-wiring guard on
@@ -2732,7 +2732,7 @@ void main(string[] args) {
     //     always mirrors the current geometry type.
     //   * A switch that FLIPS the front type DROPS the active tool (B2 — mirrors
     //     the documented tool-drop on a selection-mode change), routed through
-    //     the same `setActiveTool(null)` path the active-layer switch hook uses.
+    //     the same `dropActiveTool` door the active-layer switch hook uses.
     //   * A switch to the type that is ALREADY current does NOT flip the front,
     //     so it does NOT drop the tool and does NOT note a current-type change.
     //   * On a flip, note the current-type change on the bus
@@ -2985,7 +2985,7 @@ void main(string[] args) {
         // POST /api/trace/reset arms; see StepTrace's own comment.
         if (!stepTrace.armed) return;
         if (flags & (HistoryFlags.InSession | HistoryFlags.Refire)) return;
-        // ToolLifecycle entries are recorded from INSIDE setActiveTool's drop,
+        // ToolLifecycle entries are recorded from INSIDE dropActiveTool,
         // i.e. after the outgoing tool's deactivate() has already released its
         // session state — so the invariant the `entry["tool"]` capture below
         // documents and relies on ("the tool that produced this step is still
@@ -3941,7 +3941,7 @@ void main(string[] args) {
 
     // TASK 3130 — the DOCUMENT-REPLACE disarm seam (source/tool_disarm.d).
     //
-    // Installed here because it needs `activeTool` + `setActiveTool`, exactly
+    // Installed here because it needs `activeTool` + `dropActiveTool`, exactly
     // like `toolHost.deactivate` above; a document-replacing command calls it
     // through the module-level hook so no command has to reach into app.d.
     // The two layers and the measurement that forced them are documented at
@@ -3981,8 +3981,8 @@ void main(string[] args) {
         };
     }
     // EditSession wiring (task 0428): construct the session-protocol driver
-    // now that history + setActiveTool + toolHost are all in scope (the
-    // variable itself is declared next to setActiveTool above so the nested
+    // now that history + dropActiveTool + toolHost are all in scope (the
+    // variable itself is declared just above dropActiveTool so the nested
     // function can see it). Commands reach the session through the ToolHost
     // bridge — the same delegate pattern as getActiveTool — assigned BEFORE
     // toolHostPtr / registerCommands below so every ToolHost copy taken later
@@ -6386,7 +6386,7 @@ void main(string[] args) {
         //   • Geometry (Points|Polygons) → vertex/edge/face COUNTS changed:
         //     re-sync the selection arrays. This subsumes the two former
         //     synchronous resize sites — the post-tool-deactivate blob in
-        //     setActiveTool and the BoxTool.meshChanged hand-off in
+        //     dropActiveTool and the BoxTool.meshChanged hand-off in
         //     handleMouseButtonUp — both of which mutate via mesh primitives
         //     that publish Geometry, so the flush delivers the flag on the
         //     SAME frame (event dispatch runs before this block).

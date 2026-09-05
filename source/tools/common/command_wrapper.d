@@ -77,7 +77,7 @@ import ImGui = d_imgui;
 ///    cast back at each of the two build sites.
 ///  - `deactivate()` builds a `MeshVertexEdit(before=baseline,
 ///    after=current)` and records it on history. Spacebar →
-///    `setActiveTool(null)` → here. Tool switches and tab close hit
+///    `dropActiveTool` → here. Tool switches and tab close hit
 ///    the same path.
 ///  - The "Apply" button in `drawProperties()` runs the same commit
 ///    path then refreshes the baseline so further drags compose on
@@ -335,7 +335,7 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
     override void deactivate() {
         // Commit the open edit on tool exit (same as the
         // `TransformTool.deactivate` pattern). Spacebar →
-        // app.d global handler → `setActiveTool(null)` → here.
+        // app.d global handler → `dropActiveTool` → here.
         // Switching tools or closing the panel hits the same path.
         commitNow("");
         if (clickHandle !is null) {

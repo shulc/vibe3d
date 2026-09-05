@@ -256,9 +256,9 @@ unittest { // Bridge: a reset TO A PRIMITIVE under an armed haul
     auto st = armBridgeHaul();
 
     // The reset is itself the tool-drop: `SceneReset.applyImpl` overwrites
-    // `*mesh` IN PLACE and only then fires `onResetTool()` → `setActiveTool
-    // (null)` → `deactivate()`. So no engaged tool is left standing behind an
-    // assert raised after this line.
+    // `*mesh` IN PLACE and only then fires `onResetTool()` →
+    // `dropActiveTool(sceneResetDrop)` → `deactivate()`. So no engaged tool
+    // is left standing behind an assert raised after this line.
     auto r = postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     assert(r["status"].str == "ok", "reset(cube) failed: " ~ r.toString);
     Thread.sleep(dur!"msecs"(250));

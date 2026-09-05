@@ -8,7 +8,7 @@ module tool_disarm;
 //
 //   `SceneReset.applyImpl` writes the new primitive INTO the surviving layer
 //   (`*mesh = makeCube()`), and only 24 lines later fires `onResetTool()` →
-//   `setActiveTool(null)` → the active tool's `deactivate()`. For a session
+//   `dropActiveTool(sceneResetDrop)` → the tool's `deactivate()`. For a session
 //   tool `deactivate()` IS the commit point (slice_tool.d: "this is the ONLY
 //   commit point (never mouse-up)"), so the dying gesture runs its kernel
 //   against a mesh that is no longer the one it was armed on. Witnessed:

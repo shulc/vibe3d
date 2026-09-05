@@ -8,10 +8,10 @@ import std.json : JSONValue;
 // ToolHost — delegate-based bridge between tool.* commands and the App's
 // activeTool state.
 //
-// Constructed in app.d setup with closures over activeTool/activeToolId/
-// setActiveTool. The four delegates mirror the four operations the tool.*
-// command family needs without creating a circular import between app.d and
-// the command modules.
+// Constructed in app.d setup with closures over activeTool/activeToolId and
+// the two activation doors (armPreparedTool / dropActiveTool). The delegates
+// mirror the operations the tool.* command family needs without creating a
+// circular import between app.d and the command modules.
 // ---------------------------------------------------------------------------
 struct ToolHost {
     /// Returns the currently active tool (may be null).
@@ -20,15 +20,15 @@ struct ToolHost {
     /// Returns the string id of the currently active tool (e.g. "bevel").
     string delegate()       getActiveToolId;
 
-    /// Look up toolId in the registry, create via factory, and call
-    /// setActiveTool(). Throws Exception if toolId is unknown.
+    /// Look up toolId in the registry, create via factory, and arm through
+    /// armPreparedTool(interactiveArm). Throws Exception if toolId is unknown.
     void   delegate(string) activate;
 
     /// Same arm transaction with command-owned named arguments. The legacy
     /// split (activate first, inject later) cannot provide failure atomicity.
     void   delegate(string, ref JSONValue) activatePrepared;
 
-    /// Deactivate the current tool (setActiveTool(null)).
+    /// Deactivate the current tool (dropActiveTool(explicitDrop)).
     void   delegate()       deactivate;
 
     /// Reset the named tool (empty string = the active tool) to its

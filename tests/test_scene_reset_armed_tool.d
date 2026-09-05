@@ -9,7 +9,8 @@
 // `file.new`'s command factory (registerCommands, moved from former app.d
 // Span B) reads `activeTool` bare -- `if (auto lst = cast(LoopSliceTool)
 // activeTool) lst.dropArmedPreview();` (and the same for EdgeSliceTool) --
-// BEFORE calling `setActiveTool(null)`. The factory's own comment explains
+// BEFORE the drop, `dropActiveTool(ToolTransition.sceneResetDrop)`. The
+// factory's own comment explains
 // why the order matters: `dropArmedPreview()` must run first because
 // `Tool.deactivate()`'s normal commit/cancel path would otherwise try to
 // commit or restore an armed Loop Slice cut against the mesh the reset
@@ -167,7 +168,7 @@ unittest { // file.new with an ARMED Loop Slice preview: clean scene, one undo e
         "undo entry; undo stack went from " ~ undoCountBefore.to!string ~
         " to " ~ undoArr.length.to!string ~
         " entries (an extra entry means dropArmedPreview() didn't run " ~
-        "before setActiveTool(null) and a bogus Loop Slice commit slipped " ~
+        "before the tool drop and a bogus Loop Slice commit slipped " ~
         "through)");
     auto lastCommand = undoArr[$ - 1]["command"].str;
     assert(lastCommand == "scene.reset",

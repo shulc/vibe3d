@@ -224,7 +224,8 @@ final class EditSession {
     // blocks it absorbed re-read `activeTool`.
     private Tool delegate() tool_;
     private CommandHistory  history_;
-    // { setActiveTool(null); activeToolId = ""; } — the app's tool-drop verb.
+    // Bound to app.d's { dropActiveTool(ToolTransition.editCancelDrop); } —
+    // the app's tool-drop verb.
     private void delegate() dropTool_;
     // The ONLY state EditSession owns: the refire driver-bracket bit
     // (tryRefireDispatch's non-reentrancy tripwire). Everything else is

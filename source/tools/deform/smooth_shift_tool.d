@@ -262,7 +262,7 @@ public:
     // default < live user edit — established BEFORE activate() ever runs
     // (reg.toolFactories[id]() builds a fresh instance and applies the
     // preset's attrs; activateToolById() then applies sticky defaults; only
-    // THEN does setActiveTool() call activate()). A prior version reset all
+    // THEN does the arm run this tool's activate()). A prior version reset all
     // 5 fields to hardcoded defaults here, which unconditionally clobbered
     // that layering on every activation — silently discarding a preset's
     // forced attr. Concretely: `mesh.thickenTool` (config/tool_presets.yaml)

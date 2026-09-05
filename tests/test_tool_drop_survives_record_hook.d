@@ -11,12 +11,12 @@
 // produced this step is still `activeTool`, with its params untouched".
 //
 // That invariant is TRUE for the ordinary `record()` path and FALSE for the
-// lifecycle one: `recordToolLifecycle` is called from INSIDE setActiveTool's
-// drop, after the outgoing tool's `deactivate()` has already released its
-// session state — so the hook read `toolStateJson()` off a half-torn-down
-// tool and SEGFAULTED the whole app. Every subsequent HTTP test on that
-// worker then failed with "Couldn't connect to server" (537 of 597 in CI),
-// with nothing in the CI output explaining why.
+// lifecycle one: `recordToolLifecycle` is called from INSIDE the drop door
+// `dropActiveTool`, after the outgoing tool's `deactivate()` has already
+// released its session state — so the hook read `toolStateJson()` off a
+// half-torn-down tool and SEGFAULTED the whole app. Every subsequent HTTP
+// test on that worker then failed with "Couldn't connect to server"
+// (537 of 597 in CI), with nothing in the CI output explaining why.
 //
 // The fix skips ToolLifecycle entries in the trace capture only (a tool drop
 // is not a model step); the macro recorder still receives the line, which is

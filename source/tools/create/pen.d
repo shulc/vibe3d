@@ -319,7 +319,7 @@ version(unittest) unittest {
 // after a single commit — the user can keep drawing more polygons until
 // they switch tools or hit a different shortcut. Cache refresh is called
 // from inside commitPolygonWithUndo (the commit fires on key / mouse
-// events, not just deactivate, so the setActiveTool path can't cover it).
+// events, not just deactivate, so the tool-drop path can't cover it).
 // ---------------------------------------------------------------------------
 
 private enum PenState { Idle, Drawing }

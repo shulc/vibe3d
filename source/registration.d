@@ -1726,8 +1726,9 @@ private void registerFileCommands(EditorApp app) {
                                      // dropArmedPreview() calls only as a
                                      // defensive fallback if this callback is
                                      // ever reused without that seam; in that
-                                     // case they must still precede the generic
-                                     // setActiveTool(null) below.
+                                     // case they must still precede the
+                                     // generic drop below, which here is
+                                     // dropActiveTool(sceneResetDrop).
                                      if (auto lst = cast(LoopSliceTool) activeTool)
                                          lst.dropArmedPreview();
                                      if (auto est = cast(EdgeSliceTool) activeTool)

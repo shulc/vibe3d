@@ -21,8 +21,9 @@ import mesh_edit_delta : MeshEditScope;
 /// WHY THE OBVIOUS TERMS DO NOT WORK, MEASURED RATHER THAN REASONED.
 /// `SceneReset.applyImpl` writes `*mesh = Mesh.init` IN PLACE on the SURVIVING
 /// primary layer (commands/scene/reset.d:208), THEN fires `onResetTool()` →
-/// `setActiveTool(null)` → the tool's `deactivate()` (:279), and only THEN
-/// publishes `MeshChangeAll` (:303). So on the very path in the reproduction:
+/// `dropActiveTool(sceneResetDrop)` → the tool's `deactivate()` (:279), and
+/// only THEN publishes `MeshChangeAll` (:303). So on the very path in the
+/// reproduction below:
 ///
 ///   * the mesh ADDRESS is unchanged — the `Layer` object survives the reset,
 ///     so no `noteMeshBirth` is minted and no address term moves (measured:

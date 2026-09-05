@@ -1381,7 +1381,7 @@ public:
         // whole ImGui section the tool's two resident records of "what am I
         // targeting" disagreed: the gizmo sat on the item's world pivot while
         // `cachedSubjType_` still held the constructor default `Vertex`
-        // (every `tool.set` builds a FRESH tool — setActiveTool destroys the
+        // (every `tool.set` builds a FRESH tool — the arm door replaces the
         // old one — so the default is what a newly-armed tool starts from).
         //
         // That is observable, and it was measured: GET /api/tool/state is a
