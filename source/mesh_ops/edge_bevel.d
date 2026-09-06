@@ -928,8 +928,9 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // Circular sweep about a centre `C`, the short way from `PA` to `PB` at
     // parameter `f`: the DIRECTION is the slerp of the two UNIT spokes and
     // the RADIUS is interpolated LINEARLY between |PA-C| and |PB-C|. Used
-    // for the narrow-notch cap's base-gap arc (centre = the source vertex)
-    // and its recursive interior fillet (centre = the apex corner).
+    // for the narrow-notch cap's base-gap arc (centre = the source vertex),
+    // its recursive interior fillet (centre = the apex corner), and the OPEN
+    // fan's plain hub arc (centre = the source vertex again).
     //
     // TASK 4360, and this is the shape of defect the project pays for most:
     // the earlier form weighted the two RAW spokes by the sin weights, which
@@ -942,6 +943,21 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // 0.06180); its captured interior vertex is 0.0147 away from the raw-
     // spoke blend and 1.8e-10 from this one. So the radius interpolation the
     // old comment already claimed is now actually performed.
+    //
+    // THE THREE CALL SITES REACH UNEQUAL RADII SEPARATELY, and only one of
+    // them had a witness. A hub-centred arc's radii are the two slide widths,
+    // so they part whenever `getSlide`'s per-neighbour overshoot clamp pins
+    // one of them at a spoke SHORTER than the width; the apex-centred fillet
+    // parts on spoke ANGLES alone, with nothing clamped and no boundary in
+    // sight. Measured 2026-09-06 on closed regular / closed skew-angle /
+    // closed short-spoke / open short-spoke fans: reverting this routine at
+    // the base-gap call alone moves the mesh by 1.45e-2, and that revert left
+    // the WHOLE `dub test --config=tests` lane green at 498 modules — a
+    // shipped-geometry change no check in the tree could see. The plain-arc
+    // call alone moves it by the same 1.45e-2; its blindness is not measured
+    // that way but by its cell, which reddens alone while the captured cell
+    // stays green. `tests/unit/edge_bevel_notch_cap_law_test.d` is the witness
+    // for all three, one cell each.
     Vec3 slerpAbout(Vec3 C, Vec3 PA, Vec3 PB, float f) {
         import std.math : sin, acos;
         immutable Vec3 rA = PA - C, rB = PB - C;
@@ -1428,6 +1444,21 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                         // the apex at slot 1, the capture puts them the other
                         // way round (its cap grid's two triangles meet at the
                         // slot-3 slide).
+                        //
+                        // WHAT THIS ARM COVERS, enumerated rather than
+                        // sampled: the guard fixes the shape completely, since
+                        // K == 2 with gaps {1,2} forces nE == 5, so a
+                        // valence-5 open fan is the only thing that reaches
+                        // here and its five hub spokes make ten pairs, of
+                        // which five qualify. Measured against a build with
+                        // this arm disabled: the roles differ from the wrap
+                        // rule on FOUR of the five and are byte-identical on
+                        // {2,4} (worst 0 over the whole mesh). The frozen
+                        // corpus drives two of the five and only ONE of those
+                        // is a layout the arm changed, so three changed
+                        // layouts had no witness until
+                        // `tests/unit/edge_bevel_notch_cap_law_test.d` drove
+                        // all five against the captured structural half.
                         int[] unsel;
                         foreach (kk; 0 .. nE) if (!selE[kk]) unsel ~= kk;
                         if (unsel.length == 3) {
