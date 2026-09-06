@@ -918,10 +918,11 @@ if replace_run_tail_calls != [("source/tools/create/box.d",
 # open mutation vocabulary from every prepared surface.
 coalescing_doors = {
     "source/input_router.d": ("app.history.recordCoalescing(cmd);",),
-    "source/app.d": ("case RecordMode.Coalescing: history.recordCoalescing(cmd); break;",),
+    "source/command_executor.d": (
+        "case RecordMode.Coalescing: history.recordCoalescing(cmd); break;",),
     "source/http_providers.d": (
         "runUiCommand(cmd, RecordMode.Coalescing, id);",
-        "applyOrRefire(cmd, RecordMode.Coalescing)",),
+        "executor.applyOrRefire(cmd, RecordMode.Coalescing)",),
 }
 for relative, fingerprints in coalescing_doors.items():
     source = (ROOT / relative).read_text()
@@ -1421,8 +1422,8 @@ if found != MANIFEST:
 # task 4053 measured why the drop cannot move yet). Any third row is an
 # unreviewed publisher of the active tool, which is what this census refuses.
 expected_callers = [
-    {"path": "source/app.d", "line": 3912, "symbol": "prepareArm"},
-    {"path": "source/app.d", "line": 3928, "symbol": "commitPreparedArm"},
+    {"path": "source/app.d", "line": 3810, "symbol": "prepareArm"},
+    {"path": "source/app.d", "line": 3826, "symbol": "commitPreparedArm"},
 ]
 if CURRENT_WRITERS.get("bypasses") != expected_callers:
     fail("P1.0c both public doors no longer share the exact prepared funnel")

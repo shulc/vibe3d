@@ -101,6 +101,29 @@ unittest {
         ~ before.to!string ~ " -> " ~ after.to!string);
 }
 
+// The test-only layer injector must use the same executor as /api/command.
+// The layer-count delta proves the injected LayerAdd applied before the tool
+// state is judged, so an empty state cannot pass over a refused request.
+unittest {
+    resetCube("test layer route");
+    armMove("test layer route");
+    const before = getJson("/api/layers")["layers"].array.length;
+    auto response = postJson("/api/test/layer",
+        `{"kind":"empty","name":"Executor route witness"}`);
+    const toolAfter = armedTool();
+    const after = getJson("/api/layers")["layers"].array.length;
+    cleanTeardown("test layer route teardown");
+    assert(response["status"].str == "ok",
+        "test layer route: layer injection did not execute: "
+        ~ response.toString);
+    assert(after == before + 1,
+        "test layer route: LayerAdd did not add exactly one layer; count "
+        ~ before.to!string ~ " -> " ~ after.to!string);
+    assert(toolAfter.length == 0,
+        "test layer route: LayerAdd bypassed the command executor and left "
+        ~ "the armed xfrm session active");
+}
+
 // A refused command reports the refusal, records no Model history entry, and
 // drops the armed tool. Keep depth before status: the A1 adapter mutation is
 // observed green there before status reddens, proving the two halves apart.

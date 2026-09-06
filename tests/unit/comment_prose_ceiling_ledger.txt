@@ -8,11 +8,11 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 515
-task-citation-lines 5142
-citing-files 389
+source-files 516
+task-citation-lines 5138
+citing-files 390
 long-comment-runs 281
-files-with-long-runs 149
+files-with-long-runs 150
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 300
+allow source/app.d 295
 allow source/app_version.d 1
 allow source/args_dialog.d 1
 allow source/argstring.d 4
@@ -36,6 +36,7 @@ allow source/camera_stamp.d 3
 allow source/change_bus.d 30
 allow source/command.d 26
 allow source/command_args.d 3
+allow source/command_executor.d 5
 allow source/command_history.d 24
 allow source/commands/ai3d/generate.d 1
 allow source/commands/ai3d/generate_open.d 3
@@ -161,7 +162,7 @@ allow source/commands/select/sets.d 10
 allow source/commands/select/type_from.d 2
 allow source/commands/snap/toggle_type.d 1
 allow source/commands/test_undo_flags.d 1
-allow source/commands/tool/attr.d 3
+allow source/commands/tool/attr.d 4
 allow source/commands/tool/do_apply.d 3
 allow source/commands/tool/headless.d 3
 allow source/commands/tool/host.d 1
@@ -195,8 +196,8 @@ allow source/document.d 37
 allow source/document_selection.d 62
 allow source/drag.d 11
 allow source/drag_identity.d 1
-allow source/edit_session.d 17
-allow source/editor_app.d 49
+allow source/edit_session.d 16
+allow source/editor_app.d 48
 allow source/eventlog.d 1
 allow source/falloff.d 7
 allow source/falloff_handles.d 3
@@ -282,7 +283,7 @@ allow source/plane_bytes.d 1
 allow source/prefs.d 31
 allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 1
-allow source/property_panel.d 3
+allow source/property_panel.d 2
 allow source/record_observer_hub.d 1
 allow source/registration.d 63
 allow source/registry.d 7
@@ -330,7 +331,7 @@ allow source/tools/alignment/mirror.d 21
 allow source/tools/alignment/radial_align_tool.d 4
 allow source/tools/alignment/radial_array_tool.d 12
 allow source/tools/alignment/radial_sweep_tool.d 12
-allow source/tools/common/command_wrapper.d 19
+allow source/tools/common/command_wrapper.d 18
 allow source/tools/common/session_mesh_key.d 2
 allow source/tools/create/arc.d 2
 allow source/tools/create/box.d 16
@@ -393,7 +394,7 @@ allow source/ui/discard_guard.d 4
 allow source/ui/image_rows.d 16
 allow source/ui/item_glyphs.d 3
 allow source/ui/item_rows.d 11
-allow source/ui/panels.d 71
+allow source/ui/panels.d 70
 allow source/ui/pie_render.d 1
 allow source/ui/stat_record.d 1
 allow source/ui/stat_rows.d 1
@@ -407,11 +408,12 @@ allow source/weightmap_view.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs source/ai/support_loop_candidates.d 1
-allow-runs source/app.d 8
+allow-runs source/app.d 7
 allow-runs source/camera_stamp.d 1
 allow-runs source/change_bus.d 3
 allow-runs source/command.d 2
 allow-runs source/command_args.d 1
+allow-runs source/command_executor.d 1
 allow-runs source/command_history.d 1
 allow-runs source/commands/image/commands.d 1
 allow-runs source/commands/mesh/axis_slice.d 1

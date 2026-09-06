@@ -429,10 +429,9 @@ else              enum bool kAiToggleAvailable = false;
 /// address that says so.
 struct BgGpu { GpuMesh gpu; MeshDirtyKey uploaded; }
 
-/// Relocated verbatim from app.d's main() (app.d decomp phase B): was a
-/// main()-local enum (declared right above applyOrRefire), moved to module
-/// scope so EditorApp's applyOrRefire hook-delegate field can name the type
-/// -- exact analog of the BgGpu relocation above.
+/// Relocated verbatim from app.d's main() (app.d decomp phase B) so command
+/// dispatch owners and adapters can share the record policy without nesting
+/// the type in the composition root.
 enum RecordMode { Record, Coalescing }
 
 /// Build the item-snap frame for one visible layer: world-space pivot, plus —
@@ -1099,22 +1098,6 @@ struct EditorApp {
     //      the wiring site (same precedent as runCommand above). ----
     void delegate()     ensureDisplayCurrent;
     EditMode delegate() derivedEditMode;
-    // applyOrRefire: main()'s command-apply funnel (nested func, declared
-    // right after the RecordMode enum that now lives at this module's top
-    // level); called with explicit args/parens in the moved block.
-    // Task 1520 (Phase 1b): the BOUND reference the moved HTTP block uses is
-    // the NON-throwing shape. The throwing one is a separate field, and no
-    // file under `source/ui/**` may name it — gated by
-    // `tests/test_ui_no_throwing_dispatch.d`.
-    //
-    // The narrowing is a REAL reduction of bound references, not a compiler
-    // guarantee: `applyOrRefire` is public and `RecordMode` is module-level
-    // here, so a panel COULD still name `applyOrRefireThrowing`. That is why
-    // the claim is "no bound reference carries the script policy" and why the
-    // gate exists in addition.
-    bool delegate(Command, RecordMode) applyOrRefire;
-    bool delegate(Command, RecordMode, string) applyOrRefireThrowing;
-
     // =========================================================================
     // app.d decomp phase B (source/ui/panels.d main-loop panels): members
     // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal /

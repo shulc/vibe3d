@@ -37,7 +37,7 @@ private immutable string[] kCommentWords = [
 private enum string kLayerAttrLiteral = `"layer.attr"`;
 
 private immutable LedgerRow[] kCodeSites = [
-    LedgerRow("main.applyOrRefire|dropsActiveToolBeforeApply", 1,
+    LedgerRow("CommandExecutor.applyOrRefire|dropsActiveToolBeforeApply", 1,
         "the single command-funnel policy call"),
     LedgerRow("main|g_disarmActiveTool", 2,
         "the app-side hook assignment and its delegate target"),

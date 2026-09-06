@@ -184,7 +184,7 @@ class Command {
     //     applyImpl() here builds a minimal vts from the command's mesh +
     //     editMode + selection state and dispatches via the Operator
     //     interface, preserving the bool-return contract for callers
-    //     (history.fire, app.d /api/command).
+    //     (history.fire, CommandExecutor.applyOrRefire).
     //
     //   * Non-Operator commands (file load/save, history meta-commands,
     //     selection ops) override applyImpl() with their kernel as before.
@@ -440,7 +440,7 @@ class Command {
 
     // WHY the last apply() returned false, in one clause — or "" when the
     // command has nothing to add beyond "it declined". The dispatch funnel
-    // (app.d's applyOrRefire) appends it to the generic
+    // (CommandExecutor.applyOrRefire) appends it to the generic
     // "command 'x' did not apply" it throws, so a script / HTTP / panel caller
     // is told WHICH argument it got wrong instead of only that something was.
     //

@@ -25,6 +25,7 @@ module http_providers;
 // from app.d's top-level import block for task 0415), plus step_trace for
 // the StepTrace-typed ctx field.
 import editor_app : EditorApp, RecordMode;
+import command_executor : CommandExecutor;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
 // enum's name is needed here, not the resolver.
@@ -314,7 +315,8 @@ import document       : primaryModelSpace;
 // survive as `Param.aliases` on the slots that had them, so the wire contract
 // is unchanged.
 
-void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
+void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
+                       CommandExecutor executor) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
     // bottom — a list at the bottom is how such a list rots away from the
@@ -329,9 +331,9 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     wireViewportProviders(httpServer, app, optionalSlots);
     wireSelectionProviders(httpServer, app, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
-    wireCommandProviders(httpServer, app, optionalSlots);
+    wireCommandProviders(httpServer, app, executor, optionalSlots);
     wireHistoryProviders(httpServer, app, optionalSlots);
-    wireMutationHandlers(httpServer, app, optionalSlots);
+    wireMutationHandlers(httpServer, app, executor, optionalSlots);
 
     // Every slot filled? Task 0720. This function installs 42 delegates and
     // is the only thing that installs any of them, so a domain that stops
@@ -2234,6 +2236,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
 // `viewport.*` ids are still intercepted inside the delegate, ahead of
 // the registry (task 0761).
 private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
+                             CommandExecutor executor,
                              ref string[] optionalSlots) {
     with (app) {
         // TASK 4062 — `injectToolCommandPositional` and
@@ -2452,7 +2455,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                         // unsaved-work prompt" are different answers and only
                         // the first one is a notice.
                         runUiCommand(cmd, RecordMode.Coalescing, id);
-                    } else if (!applyOrRefire(cmd, RecordMode.Coalescing)) {
+                    } else if (!executor.applyOrRefire(cmd, RecordMode.Coalescing)) {
                         refused(cmd, id, origin);
                     } else {
                         applied = true;
@@ -2517,11 +2520,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         };
         // The THROWING adapter is deliberately a LOCAL, not a field on
         // `EditorApp`: nothing in `source/ui/**` can reach it even by
-        // accident, because there is no bound reference to reach. (It is
-        // reachable by NAME — `applyOrRefire` is still a public field and
-        // `RecordMode` is module-level, so "it cannot be compiled from a
-        // panel" would be false; Phase 1b narrows that surface separately and
-        // `tests/test_ui_no_throwing_dispatch.d` gates it.)
+        // accident, because there is no bound reference to reach. The shared
+        // executor is passed directly to this provider and never exposed to a
+        // panel; `tests/test_ui_no_throwing_dispatch.d` gates that boundary.
         void delegate(string, string) httpCommandDelegate =
             (string id, string paramsJson) {
                 dispatchCommandLine(id, paramsJson, CommandOrigin.script);
@@ -2769,6 +2770,7 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
 
 // wireMutationHandlers — POST routes that retain dedicated test scaffolding.
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
+                             CommandExecutor executor,
                              ref string[] optionalSlots) {
     with (app) {
         // Test-only layer injection (POST /api/test/layer) — task 0615.
@@ -2823,11 +2825,8 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             if (cmd is null)
                 throw new Exception("command 'layer.add' has the wrong type");
             cmd.configureInjection(k, insertAt, name);
-            if (!cmd.apply())
-                throw new Exception("command 'layer.add' did not apply"
-                    ~ (cmd.refusalReason().length
-                        ? ": " ~ cmd.refusalReason() : ""));
-            history.record(cmd);
+            executor.applyOrRefire(cmd, RecordMode.Record,
+                "command 'layer.add' did not apply");
         });
         }
     }
