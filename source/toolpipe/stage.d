@@ -248,13 +248,15 @@ abstract class Stage : ParamProvider {
     // difference in the value — which is why this is a counter and not a
     // comparison.
     //
-    // `slotEpoch` is bumped ONLY from COMMAND sites (`tool.pipe.attr`, the
-    // falloff / action-centre preset commands), never from a stage's internal
-    // bookkeeping. That distinction is load-bearing: the same fields are also
-    // written by the tool's own paths (a click-pick relocate, the softdrag
-    // brush, an auto-relocate chain), and a counter that moved with those would
-    // fire on the gesture it is meant to protect — the trap task 0724 fell into
-    // with the falloff packet's picked centre.
+    // `slotEpoch` is bumped only from user-intent boundaries: Stage.setAttr
+    // and explicit command mutators, plus a legacy PropertyPanel activation
+    // edge. It is never bumped from a stage's internal bookkeeping. That
+    // distinction is load-bearing: the same fields are also written by the
+    // tool's own paths (a click-pick relocate, the softdrag brush, an auto-
+    // relocate chain), and a counter that moved with those would fire on the
+    // gesture it is meant to protect — the trap task 0724 fell into with the
+    // falloff packet's picked centre. A continuous legacy drag is one edge,
+    // not one epoch per value sample (task 4590).
     //
     // Nothing may depend on the absolute value: it is a change detector.
     // ------------------------------------------------------------------
@@ -267,7 +269,7 @@ abstract class Stage : ParamProvider {
     /// bracket), which is the one slot that does not follow the rule.
     bool attrArmsSlot(string name) const { return false; }
 
-    /// Record that the USER armed this slot. Called at command sites only.
+    /// Record that the USER armed this slot at an external activation edge.
     final void noteSlotArmed() { ++slotEpoch; }
 }
 

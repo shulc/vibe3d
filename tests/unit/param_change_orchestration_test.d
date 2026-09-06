@@ -171,6 +171,7 @@ unittest {
 // PropertyPanel body inside a real ImGui frame and drive its widgets through
 // the same input queue a platform backend fills.
 import params : Param;
+import std.conv : to;
 
 private final class PanelProbeTool : Tool, LiveEvalClient,
                                      SlotActivationClient {
@@ -292,4 +293,26 @@ unittest { // real stage rows reach completion for both re-grade and slot ask
       ~ "attribute got " ~ attrTrace.value ~ ", slot got " ~ slotTrace.value);
     assert(slotStage.slotEpoch == epochBefore + 1,
         "one discrete legacy slot edit must publish one slot epoch");
+}
+
+unittest { // one continuous slot drag is one activation, not one per motion frame
+    import property_panel : PropertyPanel;
+    import tests.unit.ui.headless_panel : openPanel;
+
+    auto trace = new Trace();
+    auto tool = new PanelProbeTool(trace);
+    tool.liveStage = true;
+    tool.consumeSlot = true;
+    auto stage = new PanelProbeStage(trace);
+    auto session = sessionFor(tool);
+    auto panel = new PropertyPanel();
+    auto ui = openPanel(() { panel.drawProvider(stage, session); });
+    scope (exit) ui.close();
+
+    auto epochBefore = stage.slotEpoch;
+    ui.frame();
+    ui.dragRow(1, 90.0f, 3);
+    assert(stage.slotEpoch == epochBefore + 1,
+        "one three-motion legacy slot drag must publish one slot epoch; got "
+      ~ to!string(stage.slotEpoch - epochBefore));
 }

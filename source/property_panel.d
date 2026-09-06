@@ -1,7 +1,7 @@
 module property_panel;
 
 import tool   : Tool;
-import params : ParamProvider;
+import params : Param, ParamProvider;
 import params_widgets : drawParamWidget;
 import edit_session : EditSession, ParameterChangePhase, ParameterChangeSource;
 import toolpipe.stage : Stage;
@@ -60,6 +60,49 @@ import d_imgui.imgui_h;
 // ---------------------------------------------------------------------------
 
 class PropertyPanel {
+private:
+    // A continuous slot-valued widget (drag/input) is one user activation
+    // even though ImGui reports a changed value on every motion frame. Keep
+    // only that active identity; ordinary value notification and stage
+    // publication still happen for every changed sample.
+    Stage activeSlotStage_;
+    string activeSlotParam_;
+
+    bool beginsSlotActivation(Stage stage, ref Param par) {
+        if (!stage.attrArmsSlot(par.name)) return false;
+
+        // Buttons and choices are discrete writes. Numeric/text/vector rows
+        // can remain active across frames and need an activation edge.
+        final switch (par.kind) {
+            case Param.Kind.Bool:
+            case Param.Kind.Enum:
+            case Param.Kind.IntEnum:
+            case Param.Kind.IntArray:
+            case Param.Kind.Vec3Array:
+                return true;
+            case Param.Kind.Int:
+            case Param.Kind.Float:
+            case Param.Kind.String:
+            case Param.Kind.Vec3_:
+                break;
+        }
+
+        if (!ImGui.IsAnyItemActive()) return true;
+        if (activeSlotStage_ is stage && activeSlotParam_ == par.name)
+            return false;
+        activeSlotStage_ = stage;
+        activeSlotParam_ = par.name;
+        return true;
+    }
+
+    void finishSlotActivationIfIdle() {
+        if (activeSlotStage_ !is null && !ImGui.IsAnyItemActive()) {
+            activeSlotStage_ = null;
+            activeSlotParam_ = null;
+        }
+    }
+
+public:
     /// Render the schema-driven params for `tool` inline.
     /// Safe to call when tool is null (draws nothing). Tools whose
     /// `renderParamsAsPanel()` returns false are skipped — those expose
@@ -153,7 +196,7 @@ class PropertyPanel {
                 // ordinary row (for example falloff `axis`) as another slot
                 // activation merely because both changed in one draw.
                 auto source = defaultSource;
-                if (stage !is null && stage.attrArmsSlot(par.name)) {
+                if (stage !is null && beginsSlotActivation(stage, par)) {
                     source = ParameterChangeSource.SlotActivation;
                     // Slot activation dominates a mixed stage batch: it ends
                     // the held operation, so no sibling value may re-grade it.
@@ -164,6 +207,7 @@ class PropertyPanel {
                 changedInBatch = true;
             }
         }
+        finishSlotActivationIfIdle();
         if (changedInBatch)
             session.orchestrateParameterChange(
                 p, "", slotActivationInBatch
