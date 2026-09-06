@@ -6,6 +6,7 @@ module tests.unit.mesh_ops.loop_slice_test;
 import mesh;
 import math;
 import mesh_ops.loop_slice;
+import tests.unit.fixtures : findEdge;
 
 // Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,
 // `bevelFacesByMask`, `spikeFacesByMask`) are free functions over
@@ -1350,13 +1351,6 @@ unittest {
 // fixture as the bevelEdgesByMask cube-edge unittest elsewhere in this file:
 // edge (6,7) is shared by faces[1]=[4,5,6,7] (+Z) and faces[4]=[3,7,6,2] (+Y).
 unittest {
-    static int findEdge(ref Mesh m, uint va, uint vb) {
-        foreach (i; 0 .. m.edges.length) {
-            uint a = m.edges[i][0], b = m.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     static uint firstSelectedFace(ref Mesh m) {
         foreach (fi; 0 .. m.faces.length) if (m.isFaceSelected(fi)) return cast(uint)fi;
         return uint.max;

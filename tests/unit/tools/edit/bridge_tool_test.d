@@ -18,6 +18,7 @@ import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue;
 import std.conv : to;
 import tools.edit.bridge_tool;
+import tests.unit.fixtures : findEdge;
 
 unittest { // Edge mode: remove=true is a safe no-op when the loop bounds
            // no existing face (the common "open hole" case — matches
@@ -63,14 +64,6 @@ unittest { // Edge mode OPEN rows (task 0395 owner repro): cube minus 2
            // bounds an existing face), and applyBridgeOp(spans=1) must
            // reconstruct the 2 deleted faces bit-for-bit: 8v/4f -> 8v/6f,
            // reusing the existing boundary vertices (no new verts).
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (ei; 0 .. m.edges.length) {
-            auto e = m.edges[ei];
-            if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return cast(int)ei;
-        }
-        return -1;
-    }
-
     Mesh m;
     m.addVertex(Vec3(-0.5,-0.5,-0.5)); m.addVertex(Vec3(0.5,-0.5,-0.5));
     m.addVertex(Vec3(0.5,0.5,-0.5));   m.addVertex(Vec3(-0.5,0.5,-0.5));
