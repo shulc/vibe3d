@@ -493,3 +493,50 @@ static foreach (t; kRetiredCopyFixtureTokens)
     static assert(censusCovers(t),
         "retired copy fixture for " ~ t ~ " has no replacement in the census");
 
+
+// ---------------------------------------------------------------------------
+// EVERY refusal out of `PreparedRecordContext.validate()` names a reason
+// (task 4482, its fifth path found by task 4483's review)
+// ---------------------------------------------------------------------------
+// `validate()` has five ways to refuse: four literal `return false` and a tail
+// that returns a false `validated_Once` when the history declines the token.
+// Only the four were writing `validateFailure_`, so `prepareArm` threw
+// "prepared tool arm incoming validation refused for '<id>': " with an EMPTY
+// tail — the exact unreadable refusal the messages were added to remove, on
+// the one kind of context that carries history and is never marked
+// no-history.
+//
+// ORDER IS THE POINT, and it buys both halves in one run. The positive control
+// sits FIRST: a `validateFailureReason` that answered the same string for
+// everything would satisfy the negative below and say nothing. druntime stops
+// a module at its first failed assert, so a run that reaches the negative has
+// already cleared the control.
+unittest {
+    import command_history : CommandHistory;
+    import prepared_record_context : PreparedRecordContext;
+    import record_observer_hub : RecordObserverHub;
+
+    auto history = new CommandHistory();
+    auto hub = new RecordObserverHub();
+
+    // A history holds ONE prepared slot, claimed in the context constructor.
+    // The second context therefore carries a token the history does not own,
+    // which is what drives the tail path and nothing else.
+    auto holder  = new PreparedRecordContext(history, hub);
+    auto starved = new PreparedRecordContext(history, hub);
+
+    // Control: the accepting tail must leave NO reason behind.
+    assert(holder.validate(),
+           "the context holding the history's prepared slot must validate");
+    assert(holder.validateFailureReason() == "",
+           "a successful validate must name no refusal reason, got: "
+           ~ holder.validateFailureReason());
+
+    // The fifth path.
+    assert(!starved.validate(),
+           "a context whose token the history does not own must refuse");
+    assert(starved.validateFailureReason() == "history refused the prepared token",
+           "the tail refusal must name itself; got \"" ~
+           starved.validateFailureReason() ~ "\" (an empty string is the "
+           ~ "defect: it reaches the user as a message ending in ': ')");
+}

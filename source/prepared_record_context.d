@@ -339,9 +339,11 @@ private:
     PreparedXfrmActivationSessionOwner xfrmLayoutOwner_;
     ubyte xfrmLayoutStage_; // 0=absent, 1=pre, 2=marker, 3=post
 
-    // WHICH check refused (task 4482). `validate()` has four `return false`
-    // paths and its callers had one message between them, so a refusal named
-    // the transaction and not the reason: reading it cost a debugger session
+    // WHICH check refused (task 4482). `validate()` has five refusal paths —
+    // four literal `return false` and a tail that returns a false
+    // `validated_Once` when the history declines the token — and its callers
+    // had one message between them, so a refusal named the transaction and
+    // not the reason: reading it cost a debugger session
     // with conditional breakpoints, because the per-resource line executes on
     // every iteration and a plain breakpoint stops on the SUCCESSFUL calls
     // first. These two fields are written at each refusal and read only by
@@ -1636,7 +1638,18 @@ public:
             validated_ = history_.validatesPreparedToken(token_, observers_);
             validated_Once = validated_.valid;
         }
-        if (!validated_Once) invalidateTransaction();
+        // The FIFTH refusal path, and the only one that is not a literal
+        // `return false`: `validatesPreparedToken` said no, so `validate()`
+        // returns a false `validated_Once` from its tail. It named no reason
+        // until this fix, so `prepareArm` threw "...refused for '<id>': "
+        // with an EMPTY tail on the one kind of context that carries history
+        // and is never marked no-history — exactly the refusal the four named
+        // messages above were added to make readable. (Pointer to the
+        // evidence: the field comment on `validateFailure_`.)
+        if (!validated_Once) {
+            validateFailure_ = "history refused the prepared token";
+            invalidateTransaction();
+        }
         return validated_Once;
     }
 
