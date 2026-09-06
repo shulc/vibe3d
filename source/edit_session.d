@@ -358,15 +358,15 @@ final class EditSession {
                         return;
                     }
                     case ParameterChangeSource.StageAttribute:
+                        // Ask FIRST and unconditionally: the stage's event
+                        // counter, not this source label, says whether a slot
+                        // activated. Re-evaluation is the re-weigh and cannot
+                        // precede that boundary decision.
+                        if (requestSlotActivationEnd()) return;
+                        applyStageToLiveSession();
+                        return;
                     case ParameterChangeSource.SlotActivation:
-                        // Task 0791 — ask FIRST whether this edit activated a
-                        // slot. The request is unconditional because the
-                        // stage's event counter, not this caller's source
-                        // label, is authoritative. Ordering is the entire
-                        // point: re-evaluation is the re-weigh and cannot run
-                        // before a held operation learns that it must end.
-                        auto sa = cast(SlotActivationClient) tool_();
-                        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
+                        if (requestSlotActivationEnd()) return;
                         applyStageToLiveSession();
                         return;
                 }
@@ -409,6 +409,11 @@ final class EditSession {
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate();
     }
 
+    private bool requestSlotActivationEnd() {
+        auto sa = cast(SlotActivationClient) tool_();
+        return sa !is null && sa.endHeldRunIfSlotActivated();
+    }
+
     // Compatibility entry for stage commands outside task 4590's ownership.
     // Their Stage.setAttr call has already published notification/slot epoch.
     void onStageConfigChanged() {
@@ -418,8 +423,7 @@ final class EditSession {
         // not run. Ordering is the entire point: this path is synchronous with
         // the command, while the idle poll is a frame later and cannot undo an
         // already-recomputed geometry result.
-        auto sa = cast(SlotActivationClient) tool_();
-        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
+        if (requestSlotActivationEnd()) return;
         applyStageToLiveSession();
     }
 

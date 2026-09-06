@@ -256,7 +256,7 @@ abstract class Stage : ParamProvider {
     // relocate chain), and a counter that moved with those would fire on the
     // gesture it is meant to protect — the trap task 0724 fell into with the
     // falloff packet's picked centre. A continuous legacy drag is one edge,
-    // not one epoch per value sample (task 4590).
+    // not one epoch per value sample.
     //
     // Nothing may depend on the absolute value: it is a change detector.
     // ------------------------------------------------------------------
