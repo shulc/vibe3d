@@ -39,9 +39,14 @@ private enum string kFixture = "tests/fixtures/tool_arm_undo_trajectory.json";
 /// rather than only in the suite reader's `rival()` switch — is what lets this
 /// lane prove the rival is LIVE without an app.
 private struct LawSpec { string id; size_t rivalRow; string rivalValue; size_t doorRows; }
+/// ONE law, deliberately. A second law ("the edit is revertable while the tool
+/// is still armed") was measured and WITHDRAWN before it shipped: its reference
+/// row came only from the headless channel, and that channel's DROP-door
+/// reading was then shown to be a channel artefact by a live run. The press
+/// index is exactly the quantity that moved, so freezing it would have frozen
+/// the artefact. Task 4520 owns it.
 private enum LawSpec[] kLaws = [
-    LawSpec("panel_edit_owns_its_undo_step",        3, "r0",  1),
-    LawSpec("panel_edit_revertable_while_tool_live", 2, "r40", 0),
+    LawSpec("panel_edit_owns_its_undo_step", 3, "r0", 1),
 ];
 
 private JSONValue law(JSONValue fx, string id) {
@@ -64,7 +69,7 @@ unittest {
     // POPULATION FLOOR for the file as a whole: a census that is true over
     // nothing is not a census. If a rename drops both laws, every loop below
     // iterates zero times and passes.
-    assert(kLaws.length == 2, "the spec table itself lost a law");
+    assert(kLaws.length == 1, "the spec table itself lost a law");
     size_t seen;
 
     foreach (spec; kLaws) {

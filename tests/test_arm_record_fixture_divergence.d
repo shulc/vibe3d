@@ -60,11 +60,6 @@ RivalResult rival(string id,JSONValue reference){
   // own step, so press 1 clears the rotation.  The reference reads r40 there.
   a[3]["item_rot"]="r0";paths~="3.item_rot";
  }
- else if(id=="panel_edit_revertable_while_tool_live"){
-  // The rival is candidate (c) -- our own behaviour: the edit's step is
-  // deferred to the tool drop, so it is NOT revertable while the tool is live.
-  a[2]["item_rot"]="r40";paths~="2.item_rot";
- }
  else if(id=="scripted_selection_undo_redo"){a[3]["selection"]=a[2]["selection"];paths~="3.selection";a[4]["geometry"]="g1";paths~="4.geometry";}
  else if(id=="viewport_selection_undo_redo"){
   // redo_b restores B under both laws, so row 6 is not a rival discriminator.
@@ -135,9 +130,15 @@ unittest {
 // cannot separate "the edit kept its own step" from "the edit moved into the
 // incoming tool".
 //
-// Both laws are `open`: `retirement` therefore compares against
-// `vibe3d_current` and REFUSES a run that matches the reference, so the day
-// card 4300 lands this file says so instead of going quietly green.
+// The law is `open`: `retirement` therefore compares against `vibe3d_current`
+// and REFUSES a run that matches the reference, so the day card 4300 lands
+// this file says so instead of going quietly green.
+//
+// The DOOR here is a SWITCH and only a switch. A drop-door cell was measured
+// and NOT frozen: headless it reads the same trajectory, live it clears one
+// press earlier, and the live reading is the one to believe because the
+// coalescing machinery is a UI-side session the headless lane never opens.
+// Freezing the headless drop row would have frozen a channel artefact.
 int g_panelEdits, g_panelDoors;
 /// The panel drive. A bare `tool.attr` never reaches the document; the
 /// interactive query is what raises the same latch the forms panel raises
@@ -172,14 +173,4 @@ unittest {
  assert(a[0]["item_rot"]!=a[1]["item_rot"],"panel-edit cell is DEGENERATE: the edit changed nothing, and a zero-valued edit satisfies every candidate");
  retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
 
- // --- law 2: the edit is revertable while the tool is still armed --------
- panelBaseline();
- JSONValue[] b;
- cmd("tool.set rotate on");      b~=rotPoint("armed");
- panelEdit();                    b~=rotPoint("edit");
- panelUndo();                    b~=rotPoint("u1");
- assert(g_panelEdits==1,format("live-revert cell drove %d edits, not 1",g_panelEdits));
- assert(g_panelDoors==0,format("live-revert cell drove %d doors, not 0",g_panelDoors));
- assert(b[0]["item_rot"]!=b[1]["item_rot"],"live-revert cell is DEGENERATE: the edit changed nothing");
- retirement(law(fx,"panel_edit_revertable_while_tool_live"),JSONValue(b));
 }

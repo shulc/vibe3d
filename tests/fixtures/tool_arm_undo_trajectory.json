@@ -4,10 +4,10 @@
     "schema": 1,
     "source": "live-capture",
     "reference_token": "ref-editor@11.2v3",
-    "method": "capture-command-lane",
+    "method": "capture-command-lane+live-corroboration",
     "captured_utc": "2026-09-06",
     "task": "4290",
-    "notes": "Headless command lane, 13 boots, no display and no debugger. The rotation AXIS differs by rig (the reference cell rotates about its tool's default axis, ours about Y) and is NOT part of the law: the symbols block holds each side's own literal and the law is the TRAJECTORY. The observable is the item's rotation CHANNEL, never vertex positions -- an item transform does not move mesh points, so a vertex read is byte-identical under every candidate."
+    "notes": "Headless command lane, 13 boots, no display and no debugger, CORROBORATED on the live-session channel by three further runs (two workers, two different incoming tools, the item-mode preset rather than the raw rotate tool, and the Y axis rather than X): all four agree that press 1 leaves the edit standing and press 2 removes it. The rotation AXIS differs by rig and is NOT part of the law -- the symbols block holds each side's own literal and the law is the TRAJECTORY. The observable is the item's rotation CHANNEL, never vertex positions: an item transform does not move mesh points, so a vertex read is byte-identical under every candidate. WHAT THIS FIXTURE DELIBERATELY DOES NOT PIN: the DROP door. Headless it reads the same trajectory as the switch; live it clears at press 1 instead of press 2, and the live reading is the one to believe because the coalescing machinery is a UI-side session the headless lane never opens. A drop-door row would have frozen a channel artefact as a law. Task 4520 owns it."
   },
   "version": 1,
   "provenance": {
@@ -484,101 +484,6 @@
         },
         {
           "at": "u2",
-          "item_rot": "r40",
-          "item_rot_literal": [
-            0.0,
-            40.0,
-            0.0
-          ],
-          "tool": "none"
-        }
-      ]
-    },
-    {
-      "id": "panel_edit_revertable_while_tool_live",
-      "status": "open",
-      "rival_mutation": "defer the panel edit's step to the tool drop, so it is not revertable while the tool is still armed",
-      "symbols": {
-        "reference": {
-          "r0": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "r40": [
-            40.000001318,
-            0.0,
-            0.0
-          ]
-        },
-        "vibe3d": {
-          "r0": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "r40": [
-            0.0,
-            40.0,
-            0.0
-          ]
-        }
-      },
-      "reference": [
-        {
-          "at": "armed",
-          "item_rot": "r0",
-          "item_rot_literal": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "tool": "transform"
-        },
-        {
-          "at": "edit",
-          "item_rot": "r40",
-          "item_rot_literal": [
-            40.000001318,
-            0.0,
-            0.0
-          ],
-          "tool": "transform"
-        },
-        {
-          "at": "u1",
-          "item_rot": "r0",
-          "item_rot_literal": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "tool": "transform"
-        }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "armed",
-          "item_rot": "r0",
-          "item_rot_literal": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "tool": "transform"
-        },
-        {
-          "at": "edit",
-          "item_rot": "r40",
-          "item_rot_literal": [
-            0.0,
-            40.0,
-            0.0
-          ],
-          "tool": "transform"
-        },
-        {
-          "at": "u1",
           "item_rot": "r40",
           "item_rot_literal": [
             0.0,
