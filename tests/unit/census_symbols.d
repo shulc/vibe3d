@@ -98,6 +98,120 @@ package bool isIdentChar(char c) {
         || (c >= '0' && c <= '9') || c == '_';
 }
 
+/// 1-based line number of byte offset `pos` in `src`.
+package size_t lineOf(string src, size_t pos) {
+    size_t n = 1;
+    foreach (i; 0 .. pos) if (src[i] == '\n') ++n;
+    return n;
+}
+
+/// Non-overlapping occurrences of `needle` in `hay`.
+///
+/// The empty-needle guard is not defensive dressing: without it the loop
+/// condition `i + 0 <= hay.length` is permanently true and `i += 0` never
+/// advances, so an empty needle HANGS the lane rather than returning a
+/// number. Seven of the eight inline copies this replaces lacked it; only
+/// `tool_commit_seam_census_g8_test.d`'s carried it, and merging onto the
+/// unguarded majority would have been a silent regression.
+package size_t countOccurrences(string hay, string needle) {
+    size_t n = 0, i = 0;
+    if (needle.length == 0) return 0;
+    while (i + needle.length <= hay.length) {
+        if (hay[i .. i + needle.length] == needle) { ++n; i += needle.length; }
+        else ++i;
+    }
+    return n;
+}
+
+/// One `history.<NAME>(` call site: the symbol it sits in, the primitive
+/// called, and the 1-based line.
+package struct SurfaceHit { string symbol; string name; size_t line; }
+
+/// Every `history.<NAME>(` / `history_.<NAME>(` CALL in `src`.
+///
+/// Hand-scanned rather than regex'd, deliberately: the tool-seam censuses
+/// (task 1905 phase B/C) are defined over the whole call surface of the
+/// receiver, not over a list of primitive names, so that a sixth history
+/// primitive called from a tool tomorrow reddens them for free. Three rules
+/// carry that, and each is a case a regex on one name got wrong:
+///
+///  * `history` must be a WHOLE identifier — nothing identifier-ish may
+///    precede it, so `myHistory.record(` is not a hit;
+///  * a single trailing `_` is accepted (`history_`), because the seam's own
+///    field is spelled that way in some tools;
+///  * the member must be CALLED — a `(` after the name, whitespace allowed —
+///    so a read such as `history.entries.length` is not a recorder.
+///
+/// Caller contract: pass source that has been through `blankNonCode`, or a
+/// doc comment naming `history.record(` moves the count.
+package SurfaceHit[] historySurface(string src) {
+    import std.string : indexOf;
+
+    SurfaceHit[] hits;
+    const symbols = enclosingSymbols(src);
+    size_t i = 0;
+    while (true) {
+        auto rel = src[i .. $].indexOf("history");
+        if (rel < 0) break;
+        size_t p = i + cast(size_t) rel;
+        i = p + 7;
+        // Must be a whole identifier: nothing identifier-ish before it.
+        if (p > 0 && isIdentChar(src[p - 1])) continue;
+        size_t q = p + 7;
+        if (q < src.length && src[q] == '_') ++q;            // `history_`
+        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
+        if (q >= src.length || src[q] != '.') continue;
+        ++q;
+        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
+        size_t nameStart = q;
+        while (q < src.length && isIdentChar(src[q])) ++q;
+        if (q == nameStart) continue;
+        string nm = src[nameStart .. q];
+        size_t r = q;
+        while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
+        if (r >= src.length || src[r] != '(') continue;      // a read, not a call
+        const line = lineOf(src, p);
+        hits ~= SurfaceHit(symbolAt(symbols, line - 1), nm, line);
+    }
+    return hits;
+}
+
+unittest // the scanner cluster's own contracts (task 0678 M10)
+{
+    // ORDER MATTERS HERE. Everything above the first failed assert has run
+    // and passed, so the cheap total sits first and the three discriminating
+    // rules follow it; a single run then reports which rule broke.
+    assert(lineOf("a\nb\nc", 4) == 3, "lineOf is 1-based and counts newlines");
+    assert(countOccurrences("aaaa", "aa") == 2, "occurrences are non-overlapping");
+    assert(countOccurrences("aaaa", "") == 0,
+           "an empty needle must return 0 — without the guard this call HANGS");
+
+    enum string probe = q{
+        void owner() {
+            history.record(c);
+            history_ . setDelta (d);
+            myHistory.record(c);
+            auto n = history.entries.length;
+        }
+    };
+    const hits = historySurface(probe);
+    // POPULATION FLOOR: `hits.length == 2` below is vacuously satisfiable by a
+    // scanner that lost its place and returned nothing, so pin the count as a
+    // number before reading any element of it.
+    assert(hits.length == 2,
+           "two of the four `history`-ish lines are calls on the receiver");
+    assert(hits[0].name == "record" && hits[1].name == "setDelta",
+           "the member name is what the roster is reconciled against");
+    assert(hits[0].symbol == "owner" && hits[1].symbol == "owner",
+           "each hit carries the symbol it sits in, not the file");
+    // The two rejects, named so a widened scanner cannot pass this quietly.
+    foreach (h; hits) assert(h.symbol.length > 0, "no hit may be symbol-less");
+    assert(historySurface("myHistory.record(c);").length == 0,
+           "`history` must be a WHOLE identifier");
+    assert(historySurface("history.entries.length;").length == 0,
+           "a read is not a call");
+}
+
 // ---------------------------------------------------------------------------
 // Blank comments and/or literals IN PLACE — same length, same line breaks, so a
 // finding still reports the real line number. `keepComments` selects the MARKER

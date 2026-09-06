@@ -112,8 +112,8 @@ import std.path      : buildPath, dirName, relativePath;
 import std.regex     : regex, matchAll;
 import std.string    : indexOf, strip;
 
-import tests.unit.census_symbols : blankNonCode, LedgerRow, LedgerHit,
-    reconcile, symbolTokenHits;
+import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
+   countOccurrences, isIdentChar, lineOf, reconcile, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -173,27 +173,6 @@ private string stripCommentsOnly(string src) {
         ++i;
     }
     return sink.data;
-}
-
-private size_t countOccurrences(string hay, string needle) {
-    size_t n = 0, i = 0;
-    if (needle.length == 0) return 0;
-    while (i + needle.length <= hay.length) {
-        if (hay[i .. i + needle.length] == needle) { ++n; i += needle.length; }
-        else ++i;
-    }
-    return n;
-}
-
-private size_t lineOf(string src, size_t pos) {
-    size_t n = 1;
-    foreach (i; 0 .. pos) if (src[i] == '\n') ++n;
-    return n;
-}
-
-private bool isIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
 }
 
 /// Line numbers of every occurrence of `needle` in `src`.

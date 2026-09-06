@@ -113,8 +113,9 @@ import std.path      : baseName, buildPath, dirName;
 import std.regex     : regex, matchAll, replaceAll;
 import std.string    : indexOf, strip;
 
-import tests.unit.census_symbols : blankNonCode, enclosingSymbols, symbolAt,
-    LedgerRow, LedgerHit, reconcile, symbolTokenHits;
+import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
+   blankNonCode, countOccurrences, enclosingSymbols, historySurface,
+   isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -149,67 +150,10 @@ private string stripCommentsOnly(string src) {
               .replaceAll(regex(`//[^\n]*`), "");
 }
 
-private size_t countOccurrences(string hay, string needle) {
-    size_t n = 0, i = 0;
-    while (i + needle.length <= hay.length) {
-        if (hay[i .. i + needle.length] == needle) { ++n; i += needle.length; }
-        else ++i;
-    }
-    return n;
-}
-
-private size_t lineOf(string src, size_t pos) {
-    size_t n = 1;
-    foreach (i; 0 .. pos) if (src[i] == '\n') ++n;
-    return n;
-}
-
-private bool isIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
-}
-
 private string joinLines(const(string)[] xs) {
     string r;
     foreach (x; xs) r ~= x ~ "\n";
     return r;
-}
-
-/// Every `history.<NAME>(` / `history_.<NAME>(` in `src`, as (name, line).
-/// Hand-scanned rather than regex'd so the receiver term stays exactly the one
-/// the plan's population is defined over. Note what it deliberately does NOT
-/// match: `history = h;` (an assignment) and `history_(CommandHistory h)` (the
-/// bridge setter's own declaration) — neither is a call on the surface, and the
-/// pen holds both.
-private struct SurfaceHit { string symbol; string name; size_t line; }
-
-private SurfaceHit[] historySurface(string src) {
-    SurfaceHit[] hits;
-    const symbols = enclosingSymbols(src);
-    size_t i = 0;
-    while (true) {
-        auto rel = src[i .. $].indexOf("history");
-        if (rel < 0) break;
-        size_t p = i + cast(size_t) rel;
-        i = p + 7;
-        if (p > 0 && isIdentChar(src[p - 1])) continue;
-        size_t q = p + 7;
-        if (q < src.length && src[q] == '_') ++q;            // `history_`
-        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
-        if (q >= src.length || src[q] != '.') continue;
-        ++q;
-        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
-        size_t nameStart = q;
-        while (q < src.length && isIdentChar(src[q])) ++q;
-        if (q == nameStart) continue;
-        string nm = src[nameStart .. q];
-        size_t r = q;
-        while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
-        if (r >= src.length || src[r] != '(') continue;      // a read, not a call
-        const line = lineOf(src, p);
-        hits ~= SurfaceHit(symbolAt(symbols, line - 1), nm, line);
-    }
-    return hits;
 }
 
 // ---------------------------------------------------------------------------

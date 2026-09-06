@@ -61,49 +61,13 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
 
-import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
-    enclosingSymbols, isIdentChar, reconcile, symbolAt;
+import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
+   blankNonCode, enclosingSymbols, historySurface, isIdentChar, lineOf,
+   reconcile, symbolAt;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private alias stripCommentsAndStrings = blankNonCode;
-
-private size_t lineOf(string src, size_t pos) {
-    size_t n = 1;
-    foreach (i; 0 .. pos) if (src[i] == '\n') ++n;
-    return n;
-}
-
-private struct SurfaceHit { string name; size_t line; }
-
-private SurfaceHit[] historySurface(string src) {
-    SurfaceHit[] hits;
-    size_t i = 0;
-    while (true) {
-        auto rel = src[i .. $].indexOf("history");
-        if (rel < 0) break;
-        size_t p = i + cast(size_t) rel;
-        i = p + 7;
-        // Must be a whole identifier: nothing identifier-ish before it.
-        if (p > 0 && isIdentChar(src[p - 1])) continue;
-        size_t q = p + 7;
-        if (q < src.length && src[q] == '_') ++q;            // `history_`
-        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
-        if (q >= src.length || src[q] != '.') continue;
-        ++q;
-        while (q < src.length && (src[q] == ' ' || src[q] == '\t' || src[q] == '\n')) ++q;
-        size_t nameStart = q;
-        while (q < src.length && isIdentChar(src[q])) ++q;
-        if (q == nameStart) continue;
-        string nm = src[nameStart .. q];
-        size_t r = q;
-        while (r < src.length && (src[r] == ' ' || src[r] == '\t' || src[r] == '\n')) ++r;
-        if (r >= src.length || src[r] != '(') continue;      // a read, not a call
-        hits ~= SurfaceHit(nm, lineOf(src, p));
-    }
-    return hits;
-}
-
 
 // ---------------------------------------------------------------------------
 // THE POPULATION: every `.d` under `source/tools/`, plus `source/tool.d`.
