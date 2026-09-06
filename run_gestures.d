@@ -165,16 +165,24 @@ immutable Cell[] kCells = [
          "the SAME log under --test arms cleanly — so the reds below are the "
          ~ "chrome, not a broken fixture", false),
 
-    // ---- the reds: task 4482, and its sibling found by this lane
+    // ---- WAS the reds of 4482/4491; both arm now, so neither is `redToday`.
+    // Task 4491 moved the bevel tools' preview-image capture above the
+    // `before.filled` early return, which a COLD arm never reaches — the
+    // fifth conjunct of `preparedParamUpdateMatches` was therefore false by
+    // construction and the arm refused. The flag came off in that same lane:
+    // while it stood, a re-broken arm counted as a KNOWN red and this lane
+    // would have banked the regression as expected.
     Cell("arm-poly-bevel-hotkey", "arm_poly_bevel_hotkey.log", false,
          "/api/tool/state", `"tool":"polyBevel"`,
-         "Shift+B must arm poly.bevel without killing the process (task 4482)",
-         true),
+         "Shift+B must arm poly.bevel without killing the process (task 4482) "
+         ~ "AND actually arm it (task 4491)",
+         false),
 
     Cell("arm-edge-bevel-hotkey", "arm_edge_bevel_hotkey.log", false,
          "/api/tool/state", `"tool":"edgeBevel"`,
          "B must arm edge.bevel without killing the process — the same defect "
-         ~ "as 4482 on a second tool, found by this lane", true),
+         ~ "as 4482 on a second tool, found by this lane; and the same "
+         ~ "cold-arm refusal as poly.bevel (task 4491)", false),
 ];
 
 enum Outcome { Crashed, Finished, DidNotFinish }
