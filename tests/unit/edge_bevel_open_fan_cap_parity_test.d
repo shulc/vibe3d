@@ -82,7 +82,12 @@
 //     cells above it green in the same run. Restoring the raw-spoke arc blend
 //     in `slerpAbout` reddens the SAME cell at worst 0.014728, again with the
 //     three above green; the two halves of the fix therefore have separate
-//     witnesses, at separate distances.
+//     witnesses, at separate distances. Both of those witnesses are IN THIS
+//     CELL, though, and that was all the coverage either law had: the arc law
+//     has two further call sites whose radii this corpus's shapes cannot pull
+//     apart, and the open-fan plan arm reaches five slot layouts of which this
+//     corpus drives two. `tests/unit/edge_bevel_notch_cap_law_test.d` carries
+//     the rest, and its cells redden where this one stays green.
 //   * delete one cell from the fixture -> the population floor reddens: five
 //     driven cells is five, not "whatever the file happened to carry".
 //   * permute two corners BETWEEN two faces of `open_fan_K2_interior_L1` in
