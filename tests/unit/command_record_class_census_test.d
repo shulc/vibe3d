@@ -2,12 +2,19 @@
 // `command_record_class_census_test` is project-owned: an exact `grep -rl -w`
 // over the SDK tree returned zero files before this test was added.
 //
-// This census is a closed allowlist of the concrete sites that may append to or
-// rewrite command history. Each row names its enclosing symbol and primitive;
-// adding a writer therefore requires an explicit classification here instead
-// of inheriting permission from a familiar method spelling. In particular, the
-// LayerAdd built by `/api/test/layer` must cross CommandExecutor instead of
-// becoming a second apply+record implementation beside it.
+// This census is a closed allowlist of every public CommandHistory method that
+// can put a HistoryEntry for a caller-supplied Command onto undoStack. That is
+// the seven direct Command record/tail methods plus fire, and the two no-Command
+// tail writers consolidate/refireEnd. Each row names its enclosing symbol and
+// primitive, so adding a writer requires an explicit classification instead of
+// inheriting permission from a familiar spelling. The prepared-history arm —
+// prepareCurrentImage, installPreparedImage, installPreparedToken,
+// discardPreparedToken and discardValidatedPreparedToken — is deliberately
+// outside this census: tools/check_prepared_protocol.py closes that protocol.
+// Undo/redo, clear, jump*, invalidateRedo and blockBegin/blockEnd cannot create
+// a new entry by this criterion. In particular, the LayerAdd built by
+// `/api/test/layer` must cross CommandExecutor instead of becoming a second
+// apply+record implementation beside it.
 module tests.unit.command_record_class_census_test;
 
 import std.algorithm : canFind, sort;
@@ -20,7 +27,13 @@ import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
+// Existing project symbols, not borrowed SDK vocabulary: exact `grep -rl -w`
+// over the SDK tree returned zero files for refireEnd/tryRefireDispatch/
+// refireEnded. The generic word fire had seven unrelated hits, so its meaning
+// here is classified by the CommandHistory receiver and enclosing symbol.
 private enum LedgerRow[] kResidue = [
+    LedgerRow("CommandExecutor.applyOrRefire|fire", 1,
+        "ordinary Command — refire and fire's fallback stay in the executor"),
     LedgerRow("CommandExecutor.applyOrRefire|record", 1,
         "ordinary Command — the sole generic apply/fire/history executor"),
     LedgerRow("CommandExecutor.applyOrRefire|recordCoalescing", 1,
@@ -45,6 +58,10 @@ private enum LedgerRow[] kResidue = [
         "transform gesture edit — tool drop collapses the final run"),
     LedgerRow("XfrmTransformTool.consolidateRunAndAdvance|consolidate", 1,
         "transform re-grade — an explicit run boundary collapses its tail"),
+    LedgerRow("EditSession.tryRefireDispatch|fire", 1,
+        "refire-built Command — the session dispatches it inside the bracket"),
+    LedgerRow("EditSession.refireEnded|refireEnd", 1,
+        "refire-built Command — the session lands the bracket's final entry"),
     LedgerRow("InputRouter.commitInteractiveSelEdit|recordCoalescing", 1,
         "MeshSelectionEdit — the UI-selection undo class"),
 ];
@@ -62,6 +79,8 @@ private bool isWritingPrimitive(string name) {
         case "replaceInSessionTailWith":
         case "pushEntryForTest":
         case "consolidate":
+        case "fire":
+        case "refireEnd":
             return true;
         default:
             return false;
@@ -100,8 +119,8 @@ unittest {
                 "executor.applyOrRefire(cmd, RecordMode.Record",
                 "LayerAdd-executor");
     }
-    assert(records.length == 12,
-        "command-record class census: expected twelve allowlisted history "
+    assert(records.length == 15,
+        "command-record class census: expected fifteen allowlisted history "
         ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=
