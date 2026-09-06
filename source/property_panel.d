@@ -18,8 +18,9 @@ import d_imgui.imgui_h;
 // explicit batch to EditSession, which owns notification, evaluation and the
 // live-session gate (task 4590).
 //
-// No state is needed between frames: there is no pending/active bookkeeping.
-// One instance lives on App alongside argsDialog.
+// The only state retained between frames is the active continuous slot widget,
+// used to collapse its motion samples into one activation edge. One instance
+// lives on App alongside argsDialog.
 //
 // Usage (inside Begin/End block):
 //   propertyPanel.draw(activeTool, session);
