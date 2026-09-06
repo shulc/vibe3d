@@ -8299,7 +8299,14 @@ struct Mesh {
                             oldLoopOfNewLoop ~= rw.oldFaceLoop()[fi] + cast(uint)c;
                     keptFaces    ~= f;
                     oldOfNew     ~= cast(uint) fi;
-                    keptSelected ~= (fi < selectedFaces.length ? selectedFaces[fi] : false);
+                    // TASK 2020 — `isFaceSelected(fi)`, never `selectedFaces`:
+                    // the property allocates a whole `bool[faces.length]` per
+                    // call, and both reads it replaced sat INSIDE this
+                    // per-face loop, so the weld-dedup pass carried the same
+                    // O(F²) byte defect `duplicateSelectedFaces` did (see its
+                    // header). The guard is identical — `selectedFaces.length`
+                    // IS `faceMarks.length` — so this is a cost change only.
+                    keptSelected ~= isFaceSelected(fi);
                 }
                 // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED
                 // (2026-08-27, numbers re-measured after the Stage K review's
@@ -8656,9 +8663,28 @@ struct Mesh {
     ///
     /// Returns the number of faces duplicated (0 = nothing selected).
     size_t duplicateSelectedFaces() {
-        if (selectedFaces.length != faces.length) return 0;
-        size_t selCount = 0;
-        foreach (b; selectedFaces) if (b) ++selCount;
+        // TASK 2020, evidence and the broken/fixed ladder in `doc/tasks/done/`
+        // — NOT `selectedFaces` ANYWHERE IN THIS KERNEL, and that is an
+        // asymptotic contract, not a style note. `selectedFaces` is the
+        // `@property` that materialises a fresh `bool[faces.length]` per CALL,
+        // so the three reads this replaced — the length guard, the count, and
+        // the two `selectedFaces[fi]` INSIDE the per-face loops below — made
+        // the kernel O(F²) in both time and bytes: 2·F² bytes of throwaway
+        // `bool[]`, which is 19.94 GB at F=99 856 — i.e. 93–100 % of the
+        // "20 524 MB" the card's own 100K measurement had already charged to
+        // `mesh.duplicate` without explaining, the range being whether that
+        // figure's MB is decimal or binary (the harness prints KB as /1024,
+        // so read the wide end). Measured on the ladder: 5.1 / 28.5 / 121.6 /
+        // 852 s at 99 856 / 202 500 / 399 424 / 1 000 000 faces, against
+        // 0.14 / 0.26 /
+        // 0.57 / 1.78 s once the property left the loops. It is quadratic on
+        // the FACE COUNT, not on the selection — both loops evaluate the
+        // property BEFORE testing the bit, so one selected face on a 1M grid
+        // cost the same churn as half of them, which is how the defect was
+        // separated from "duplicating a lot of geometry is expensive". The
+        // mark accessors used instead are the non-allocating ones by contract.
+        if (faceMarks.length != faces.length) return 0;
+        const size_t selCount = cast(size_t) countSelectedFaces();
         if (selCount == 0) return 0;
 
         // Task 1903 Stage L6-a: the base of this kernel's ONE append round,
@@ -8671,7 +8697,7 @@ struct Mesh {
         // faces get cloned once.
         uint[uint] vertMap;
         foreach (fi, ref f; faces) {
-            if (!selectedFaces[fi]) continue;
+            if (!isFaceSelected(fi)) continue;
             foreach (vid; f) {
                 if (vid !in vertMap) {
                     vertMap[vid] = cast(uint)vertices.length;
@@ -8685,7 +8711,7 @@ struct Mesh {
         size_t[] toClone;
         toClone.reserve(selCount);
         foreach (fi, ref f; faces)
-            if (selectedFaces[fi]) toClone ~= fi;
+            if (isFaceSelected(fi)) toClone ~= fi;
 
         size_t origFaceCount = faces.length;
         foreach (fi; toClone) {

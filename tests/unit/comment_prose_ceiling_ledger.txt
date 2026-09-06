@@ -11,6 +11,10 @@
 source-files 514
 task-citation-lines 5137
 citing-files 389
+task-citation-lines 5134
+citing-files 388
+task-citation-lines 5136
+citing-files 388
 long-comment-runs 281
 files-with-long-runs 149
 
@@ -242,7 +246,7 @@ allow source/json_num.d 1
 allow source/layer_params.d 18
 allow source/log.d 1
 allow source/math.d 24
-allow source/mesh.d 510
+allow source/mesh.d 512
 allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
