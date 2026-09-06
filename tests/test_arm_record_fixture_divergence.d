@@ -7,7 +7,7 @@ import core.thread : Thread;
 import core.time : msecs;
 import std.conv : to;
 import std.string : format, split;
-import std.math : abs;
+import std.math : abs, round;
 import std.process : environment;
 
 void main() {}
@@ -32,9 +32,19 @@ JSONValue law(JSONValue fx,string id){foreach(v;fx["laws"].array)if(v["id"].str=
 struct RivalResult { JSONValue trajectory; string[] paths; }
 JSONValue pathValue(JSONValue trajectory,string path){auto p=path.split(".");assert(p.length==2,"invalid rival path: "~path);return trajectory.array[p[0].to!size_t][p[1]];}
 void assertRivalLive(JSONValue reference,JSONValue mutated,string[] paths){foreach(path;paths)assert(pathValue(mutated,path)!=pathValue(reference,path),"inert rival path: "~path);}
+/// Task 4290. Resolve ANY literal against its side's symbol table. The
+/// selection resolver below is the vertex-index special case; the panel-edit
+/// law's observable is the item's rotation triple, whose literal differs
+/// between the two engines (the reference cell rotates about its tool's
+/// default axis, ours about Y) while the LAW -- the trajectory of symbols --
+/// is the same. A literal that resolves to nothing is a REFUSAL, so a fixture
+/// row can never quietly compare against a symbol nobody recorded.
+string symbolToken(JSONValue symbols,JSONValue literal,string id,string at,string side){foreach(token,value;symbols.object)if(literal==value)return token;assert(0,format("%s %s %s: literal %s resolves to no symbol",id,at,side,literal.toString));}
 string selectionToken(JSONValue symbols,JSONValue literal,string id,string at,string side){assert(literal["mode"].str=="vertices",format("%s %s %s: expected vertex selection literal",id,at,side));foreach(token,indices;symbols.object)if(literal["indices"]==indices)return token;assert(0,format("%s %s %s: selection literal resolves to no symbol",id,at,side));}
-JSONValue fixtureTrajectory(JSONValue l,string side){auto a=parseJSON(l[side].toString).array;auto symbolSide=side=="vibe3d_current"?"vibe3d":side;foreach(ref row;a){auto token=row["selection"].str;auto resolved=selectionToken(l["symbols"][symbolSide],row["selection_literal"],l["id"].str,row["at"].str,symbolSide);assert(resolved==token,format("%s %s %s: selection literal resolves to %s, expected %s",l["id"].str,row["at"].str,symbolSide,resolved,token));row.object.remove("selection_literal");}return JSONValue(a);}
-JSONValue observedTrajectory(JSONValue l,JSONValue observed){if(!("symbols" in l.object))return observed;auto a=parseJSON(observed.toString).array;foreach(ref row;a)row["selection"]=selectionToken(l["symbols"]["vibe3d"],row["selection"],l["id"].str,row["at"].str,"vibe3d");return JSONValue(a);}
+JSONValue fixtureTrajectory(JSONValue l,string side){auto a=parseJSON(l[side].toString).array;auto symbolSide=side=="vibe3d_current"?"vibe3d":side;foreach(ref row;a){
+ if("item_rot_literal" in row.object){auto token=row["item_rot"].str;auto resolved=symbolToken(l["symbols"][symbolSide],row["item_rot_literal"],l["id"].str,row["at"].str,symbolSide);assert(resolved==token,format("%s %s %s: rotation literal resolves to %s, expected %s",l["id"].str,row["at"].str,symbolSide,resolved,token));row.object.remove("item_rot_literal");continue;}
+ auto token=row["selection"].str;auto resolved=selectionToken(l["symbols"][symbolSide],row["selection_literal"],l["id"].str,row["at"].str,symbolSide);assert(resolved==token,format("%s %s %s: selection literal resolves to %s, expected %s",l["id"].str,row["at"].str,symbolSide,resolved,token));row.object.remove("selection_literal");}return JSONValue(a);}
+JSONValue observedTrajectory(JSONValue l,JSONValue observed){if(!("symbols" in l.object))return observed;auto a=parseJSON(observed.toString).array;foreach(ref row;a){if("item_rot" in row.object)row["item_rot"]=symbolToken(l["symbols"]["vibe3d"],row["item_rot"],l["id"].str,row["at"].str,"vibe3d");else row["selection"]=selectionToken(l["symbols"]["vibe3d"],row["selection"],l["id"].str,row["at"].str,"vibe3d");}return JSONValue(a);}
 RivalResult rival(string id,JSONValue reference){
  auto a=parseJSON(reference.toString).array;string[] paths;
  if(id=="arm_owns_record"){a[0]["record"]="none";paths~="0.record";a[1]["record"]="new";paths~="1.record";}
@@ -45,6 +55,16 @@ RivalResult rival(string id,JSONValue reference){
  else if(id=="same_family_on_records_again"){a[1]["record"]="none";paths~="1.record";}
  else if(id=="explicit_off_on_records_on"){a[0]["record"]="new";paths~="0.record";a[1]["record"]="none";paths~="1.record";}
  else if(id=="cutting_arm_owns_record"){a[0]["record"]="none";paths~="0.record";a[1]["record"]="new";paths~="1.record";}
+ else if(id=="panel_edit_owns_its_undo_step"){
+  // The rival is candidate (b): the panel edit is consolidated into the door's
+  // own step, so press 1 clears the rotation.  The reference reads r40 there.
+  a[3]["item_rot"]="r0";paths~="3.item_rot";
+ }
+ else if(id=="panel_edit_revertable_while_tool_live"){
+  // The rival is candidate (c) -- our own behaviour: the edit's step is
+  // deferred to the tool drop, so it is NOT revertable while the tool is live.
+  a[2]["item_rot"]="r40";paths~="2.item_rot";
+ }
  else if(id=="scripted_selection_undo_redo"){a[3]["selection"]=a[2]["selection"];paths~="3.selection";a[4]["geometry"]="g1";paths~="4.geometry";}
  else if(id=="viewport_selection_undo_redo"){
   // redo_b restores B under both laws, so row 6 is not a rival discriminator.
@@ -98,4 +118,68 @@ unittest {
  postJson("/api/command", commandBody("history.redo"));settle();obs~=walkPoint("redo_b",geomEq(vertices(),g1)?"g1":"unexpected");
  retirementFull(law(fx,"scripted_selection_undo_redo"),JSONValue(obs));
  assert(fx["parity_positive_control"]["reference"]==fx["parity_positive_control"]["vibe3d_current"],"undo parity positive control diverged");
+}
+
+
+// ===================== task 4290: the panel-edit cell ======================
+// The reference law, captured 2026-09-06 on the headless command lane:
+// a PANEL edit of the item transform owns its OWN undo step, and closing the
+// tool -- by drop or by SWITCH -- neither consolidates it nor loses it.
+//
+// WHY THESE ROWS AND NOT OTHERS. The observable is the item's ROTATION
+// CHANNEL. An item transform does not move mesh POINTS, so a vertex read is
+// byte-identical under every candidate and a cell built on one would measure
+// its own blindness. The edit is 40 degrees on an item starting at 0 and the
+// `edit` row PINS that it landed: a zero-valued edit satisfies every candidate
+// at once. The door tool is another family, because a tool switched to itself
+// cannot separate "the edit kept its own step" from "the edit moved into the
+// incoming tool".
+//
+// Both laws are `open`: `retirement` therefore compares against
+// `vibe3d_current` and REFUSES a run that matches the reference, so the day
+// card 4300 lands this file says so instead of going quietly green.
+int g_panelEdits, g_panelDoors;
+/// The panel drive. A bare `tool.attr` never reaches the document; the
+/// interactive query is what raises the same latch the forms panel raises
+/// (`source/http_providers.d`, `source/commands/tool/attr.d`), which is why
+/// this and not `postJson("/api/script", ...)`.
+void panelEdit(){postJson("/api/script?interactive=true","tool.attr rotate RY 40");++g_panelEdits;settle();}
+void panelDoor(string line){cmd(line);++g_panelDoors;}
+void panelBaseline(){postJson("/api/script","tool.set rotate off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("history.clear");cmd("layer.select 0");g_panelEdits=0;g_panelDoors=0;}
+JSONValue itemRot(){auto r=getJson("/api/layers")["layers"].array[0]["xform"]["rot"];JSONValue[] v;foreach(c;r.array){auto x=c.type==JSONType.integer?cast(double)c.integer:c.floating;v~=JSONValue(round(x*1e9)/1e9+0.0);}return JSONValue(v);}
+string liveToolFamily(){auto s=getJson("/api/tool/state");if(!("tool" in s.object))return "none";auto t=s["tool"].str;return t=="xfrm"?"transform":t=="slice"?"cutting":t;}
+JSONValue rotPoint(string at){settle();JSONValue[string] o;o["at"]=at;o["item_rot"]=itemRot();o["tool"]=liveToolFamily();return JSONValue(o);}
+void panelUndo(){postJson("/api/command", commandBody("history.undo"));settle();}
+
+unittest {
+ auto fx=parseJSON(import("fixtures/tool_arm_undo_trajectory.json"));
+
+ // --- law 1: the edit survives the SWITCH and owns its own step ----------
+ panelBaseline();
+ JSONValue[] a;
+ cmd("tool.set rotate on");      a~=rotPoint("armed");
+ panelEdit();                    a~=rotPoint("edit");
+ panelDoor("tool.set mesh.sliceTool on"); a~=rotPoint("door");
+ panelUndo();                    a~=rotPoint("u1");
+ panelUndo();                    a~=rotPoint("u2");
+ // POPULATION FLOOR, and it must sit ABOVE the trajectory compare: "the edit
+ // is lost" is also true over ZERO edits, and "the door consolidated it" is
+ // also true over zero doors. Ordering them first means one run buys both --
+ // everything above a red line demonstrably ran and passed.
+ assert(g_panelEdits==1,format("panel-edit cell drove %d edits, not 1",g_panelEdits));
+ assert(g_panelDoors==1,format("panel-edit cell drove %d doors, not 1",g_panelDoors));
+ assert(a.length==5,format("panel-edit cell recorded %d rows, not 5",a.length));
+ assert(a[0]["item_rot"]!=a[1]["item_rot"],"panel-edit cell is DEGENERATE: the edit changed nothing, and a zero-valued edit satisfies every candidate");
+ retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
+
+ // --- law 2: the edit is revertable while the tool is still armed --------
+ panelBaseline();
+ JSONValue[] b;
+ cmd("tool.set rotate on");      b~=rotPoint("armed");
+ panelEdit();                    b~=rotPoint("edit");
+ panelUndo();                    b~=rotPoint("u1");
+ assert(g_panelEdits==1,format("live-revert cell drove %d edits, not 1",g_panelEdits));
+ assert(g_panelDoors==0,format("live-revert cell drove %d doors, not 0",g_panelDoors));
+ assert(b[0]["item_rot"]!=b[1]["item_rot"],"live-revert cell is DEGENERATE: the edit changed nothing");
+ retirement(law(fx,"panel_edit_revertable_while_tool_live"),JSONValue(b));
 }
