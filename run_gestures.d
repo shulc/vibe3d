@@ -362,6 +362,20 @@ int main(string[] args) {
     writefln("Total: %d cells, %d ok, %d red (%d unexpected)",
         ran, passed, failed, unexpected);
 
+    // RUNTIME POPULATION FLOOR (O4, second half). The census asserted above is
+    // COMPILE-TIME: it proves the table still declares six cells, and says
+    // nothing about how many of them a given invocation drove. A filter that
+    // matches nothing leaves `ran` at 0, and every counter below it at 0 too,
+    // so the verdict reads "no reds" — green over an empty set, which is the
+    // exact defect this lane was written against. Refuse instead, with its own
+    // exit code, so a mistyped filter in a script cannot be banked as a pass.
+    if (ran == 0) {
+        writefln("run_gestures: filter matched no cell%s — 0 cells ran, "
+            ~ "which is a refusal, not a pass.",
+            filters.length ? " (" ~ filters.join(", ") ~ ")" : "");
+        return 2;
+    }
+
     // The pinned reds are a RESULT, not an error: this lane exists to hold a
     // live crash red until it is fixed. Exit 1 while any red remains, so the
     // lane cannot be mistaken for green, and 2 when a red is one nobody
