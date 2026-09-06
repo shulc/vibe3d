@@ -22,16 +22,28 @@
  * WHAT IT MEASURES (task 4483)
  * ----------------------------
  * The routine lane drives `vibe3d --test`, and `--test` gates the entire UI
- * chrome — `app.d:1892` skips the viewport layout, `app.d:6622` creates no
- * "ViewportHost"/"Viewport##k" windows, and eight more branches between
- * `app.d:1163` and `5877` follow. So the routine lane measures an application
- * that is structurally not the one we ship. This lane replays the same kind of
- * gesture log WITHOUT `--test` and treats the process's own fate as part of
- * the result.
+ * chrome. CITED BY SYMBOL, NEVER BY LINE — this header's first cut named
+ * `app.d:6622` for the window creation and `app.d:4251` for the arm door, and
+ * by the time anyone read them back those lines were `showFaceHover` and a
+ * shortcut-id validator. What `--test` actually gates:
+ *
+ *   - the saved viewport layout is never restored — `applyLayout(
+ *     g_prefs.viewportLayout)` in app.d sits under an `if (!testMode)`;
+ *   - no "ViewportHost" window is created — `DockBuilderDockWindow(
+ *     "ViewportHost", vpRegion)` is in the dockspace seed's `!testMode` arm,
+ *     while the `--test` arm seeds "Layers" + "Viewport##0" and nothing else;
+ *   - and it is not two branches. Re-measure rather than trusting this count:
+ *
+ *       grep -cE 'if \(!?(command\.g_)?testMode' source/app.d
+ *       25                                            # measured 2026-09-06
+ *
+ * So the routine lane measures an application that is structurally not the one
+ * we ship. This lane replays the same kind of gesture log WITHOUT `--test` and
+ * treats the process's own fate as part of the result.
  *
  * THE CONFIGURATION IT NEEDS (task 4483, constraint O2)
  * ----------------------------------------------------
- * `app.d:838-841` picks the HTTP default by version:
+ * app.d's `startHttpServer` default is picked by version:
  *
  *     version (ReleaseBuild) bool startHttpServer = false;
  *     else                   bool startHttpServer = true;
@@ -66,8 +78,9 @@
  * A log the application did not CONSUME looks exactly like a healthy run:
  * played, alive, nothing thrown. Measured on this very lane's first cell —
  * without `--test` a replayed CLICK selects nothing at all, because
- * `input_router.d:2043` drops mouse events when the viewport window is not
- * hovered and ImGui's hover flag never sees the replayed pointer (task 4490).
+ * `InputRouter.processEvent`'s `!app.testMode && !ifs.viewportInputAllowed()`
+ * gate drops mouse events when the viewport window is not hovered, and ImGui's
+ * hover flag never sees the replayed pointer (task 4490).
  * A mouse cell would have been green over a gesture that did nothing.
  *
  * So each cell names an endpoint and a substring that is FALSE before the
@@ -77,8 +90,9 @@
  *
  * TIME IN A GESTURE LOG IS MILLISECONDS (task 4483, constraint O5)
  * ---------------------------------------------------------------
- * `eventlog.d:403/412/437` store the log's `t` straight into `Entry.timeMs`
- * and `eventlog.d:503` compares it against elapsed milliseconds. A log
+ * `EventPlayer.load` stores the log's `t` straight into
+ * `EventPlayer.Entry.timeMs`, and `EventPlayer.tick` compares that field
+ * against elapsed milliseconds (`entries[idx].timeMs <= nowMs`). A log
  * written as if `t` were seconds fires entirely inside the first frame,
  * before the chrome exists — which is how the 8-line repro in task 4482
  * behaves. Cells here place their gesture at t >= 5000 ms so the application
@@ -141,7 +155,9 @@ immutable Cell[] kCells = [
     Cell("arm-move-hotkey", "arm_move_hotkey.log", false,
          "/api/tool/state", `"tool":"xfrm"`,
          "the INTERACTIVE arm door works without --test: `W` armed a tool "
-         ~ "through app.d:4251; a cold instance answers `{}`", false),
+         ~ "through app.d's `activateToolById` -> `toolHost.activate` -> "
+         ~ "`armPreparedTool(ToolTransition.interactiveArm, ...)`; a cold "
+         ~ "instance answers `{}`", false),
 
     // ---- the control, and it must sit ABOVE the reds: same gesture, --test on
     Cell("arm-poly-bevel-under-test", "arm_poly_bevel_hotkey.log", true,
