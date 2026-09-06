@@ -319,8 +319,31 @@ static assert(kCensusTokens.length == 134,
 /// and for them the copy CANNOT be disabled -- each is consumed by value from
 /// an lvalue, so `@disable this(this)` stops the build (measured 2026-09-04:
 /// handles/shapes.d(2048) and change_bus.d(121/123)). Their defence against a
-/// second consumer is the owner's generation counter, not the postblit. Card
-/// 4090 therefore has ONE decision left, on the GPU pair.
+/// second consumer is the owner's generation counter, not the postblit.
+///
+/// The GPU pair's decision is now MADE and the compiler REFUSED it. Card 4090
+/// ruled the ban in on 2026-09-06 -- a copy before validation is no safer than
+/// one after it -- and the measurement ran first, as that ruling required.
+/// `@disable this(this)` on `PreparedGpuResourceToken` stops the `modeling`
+/// build (dmd 2.112.1, 2026-09-06) at the two forwarding sites that pass an
+/// lvalue into a by-value parameter -- mesh_gpu.d 2175 `validateEnlisted` ->
+/// `validatePrepared(token, ...)` and 2184 `validateEnlisted()` ->
+/// `validateEnlisted(enlistedPrepared, ...)`, reported at 2176/2185 with the
+/// ban inserted. That is the SAME shape that stops the other two, so the third
+/// row is a requirement as well, not a pending choice.
+///
+/// A copy is not merely permitted here, it is USED: the stale-generation
+/// refusal cell in mesh_gpu.d's own unittest is BUILT out of one
+/// (`auto stale = fresh; ++stale.generation;`, mesh_gpu.d:2742), so the ban
+/// costs that cell a rewrite as well as the two signatures.
+///
+/// The asymmetry with `ValidatedGpuResourceToken` therefore survives for a
+/// reason nobody chose: the `Validated` half is only ever written through an
+/// `out` (`validatePrepared`) or taken by `ref` (`installPrepared`), while the
+/// `Prepared` half is forwarded BY VALUE through `validatePrepared` /
+/// `discardPrepared` / `validateEnlisted`. Homogenising the pair is a change
+/// to those three signatures, not to the declaration -- an open owner
+/// decision. Do not put the ban back without it.
 private enum string[] kCopyableByDesign = [
     "handles.shapes.PreparedClickPointResourceToken",
     "mesh_gpu.PreparedGpuResourceToken",
