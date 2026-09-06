@@ -2067,7 +2067,7 @@ b4c2_contracts = {
     ),
 }
 b4c2_digests = {
-    "source/tools/common/command_wrapper.d": ("prepareDeactivate", "d4dcfc00ed6d5fb72cf188e38ead7c76c5cb58394bb2c590551dc709d34e9606"),
+    "source/tools/common/command_wrapper.d": ("prepareDeactivate", "2706bdbb171025fe34dc9862e9fa01cb6b3a2c9a594e73a519c3137592012557"),
     "source/tools/edit/tack.d": ("prepareDeactivate", "0ea8fcdfa7a225b41d81f255ae8d44f55e7a4c6770c1e718f6066b6511cd0be3"),
     "source/tools/transform/transform.d": ("prepareDeactivateGpu", "50cd6d5c97ea2325bafd53a8b76ec530cee4a9144dc0a1ce79bbcbb6171ec0c5"),
 }

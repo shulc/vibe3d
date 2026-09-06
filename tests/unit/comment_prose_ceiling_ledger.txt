@@ -8,8 +8,8 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 514
-task-citation-lines 5141
+source-files 515
+task-citation-lines 5139
 citing-files 389
 long-comment-runs 281
 files-with-long-runs 149
@@ -92,7 +92,7 @@ allow source/commands/mesh/poly_inset.d 9
 allow source/commands/mesh/polygon_align.d 2
 allow source/commands/mesh/position_undo.d 5
 allow source/commands/mesh/quadruple.d 4
-allow source/commands/mesh/quantize.d 10
+allow source/commands/mesh/quantize.d 8
 allow source/commands/mesh/radial_align.d 7
 allow source/commands/mesh/radial_array.d 4
 allow source/commands/mesh/reduce.d 2
