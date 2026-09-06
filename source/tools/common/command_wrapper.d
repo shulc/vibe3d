@@ -31,7 +31,7 @@ import editmode : EditMode;
 import seltype  : SelType;
 import display_sync : refreshDisplay;
 import tool   : Tool, GestureRecordMode;
-import edit_session : RefireClient;
+import edit_session : FrameParameterEvalClient, RefireClient;
 import params : Param;
 import math   : Vec3, Viewport;
 import tools.create.create_common : screenToConstructionPlane;
@@ -88,7 +88,8 @@ import ImGui = d_imgui;
 // the wantsRefire / buildRefireCommand / setRefireDriving / onRefireCommitted
 // overrides below are the interface's implementations (EditSession discovers
 // them by cast).
-abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
+abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient,
+                                    PreparedToolDoorClient,
                                     PreparedToolParamDoorClient {
     protected Command inner;
     protected Mesh*   meshPtr;
@@ -101,12 +102,11 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
     // Drag bookkeeping.
     private bool   dragging;
     private int    dragStartX, dragStartY;
-    // Set by `onParamChanged` when the Tool Properties panel edits a
-    // slider; consumed by `evaluate()` to re-run the preview against
-    // the current baseline. Same flow other tools use (BoxTool /
-    // SphereTool's evaluate path) — without this hook, slider edits
-    // update the inner Command's stored attrs but the mesh stays at
-    // the old preview state until the next drag or Apply.
+    // Set by `onParamChanged` when an attribute write edits a slider value;
+    // consumed by the lifecycle's batch evaluation to re-run the preview
+    // against the current baseline. Without this hook, slider edits update
+    // the inner Command's stored attrs but the mesh stays at the old preview
+    // state until the next drag or Apply.
     private bool   paramsDirty;
 
     // Baseline = mesh.vertices.dup at the moment the current edit
@@ -673,16 +673,22 @@ private:
     void installLegacyPreparedParam(ref WrapperPreparedParamHandle handle) nothrow @nogc {
         if (!handle.consumable) return;
         handle.consumable = false;
-        // A schema widget changed — `evaluate()` will re-run the
-        // preview next frame. Don't apply directly here: PropertyPanel
-        // calls onParamChanged per-widget per-frame, evaluate() once
-        // at the end, so a single frame with multiple slider tweaks
-        // produces a single re-apply.
+        // A schema widget changed.  The session-owned batch finish calls
+        // evaluate() once after all notifications, so a single widget batch
+        // with multiple writes still produces one re-apply.
         if (handle.applyDirty) paramsDirty = true;
     }
 public:
 
-    override void evaluate() {
+    override void evaluate() { evaluateChangedParameters(); }
+
+    /// Falloff packets can change without a tool widget event.  This family's
+    /// explicit frame capability keeps observing that external input after
+    /// blanket PropertyPanel evaluation is removed.
+    override void evaluateParameterFrame() { evaluateChangedParameters(); }
+
+private:
+    void evaluateChangedParameters() {
         if (meshPtr is null) return;
         // A refire session owns the mutation via fired commands; skip the
         // internal preview re-run so the two paths never both touch the mesh.
@@ -722,6 +728,8 @@ public:
         // walked once. applyWithLivePipeline handles baseline restore.
         if (applyWithLivePipeline()) dirty = true;
     }
+
+public:
 
     // Falloff packet equality lives in source/falloff.d — pulled in via
     // the local import alias below. The earlier in-class duplicate was

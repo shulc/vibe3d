@@ -6629,6 +6629,11 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
             activeTool.update(vts);
         }
+        // Parameter consumers that explicitly depend on state outside their
+        // own widgets (currently CommandWrapperTool observing falloff) tick
+        // here, whether or not Tool Properties is visible.  Event-driven
+        // value batches are evaluated synchronously by EditSession instead.
+        session.tickParameterEvaluation();
 
         // ── Task 0223: ratio-driven cell layout host ("ViewportHost") ────────
         //

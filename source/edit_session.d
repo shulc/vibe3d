@@ -91,6 +91,22 @@ interface LiveEvalClient {
 }
 
 // ---------------------------------------------------------------------------
+// FrameParameterEvalClient — optional capability for a tool whose parameter
+// result can become stale without a new value-widget event.
+//
+// CommandWrapperTool is the first and only family on this seam.  Its own
+// params are event-driven, but it also observes the active falloff packet set;
+// that set can change independently of a tool widget.  Keeping this as a
+// narrow capability makes the per-frame work explicit instead of retaining
+// PropertyPanel's blanket evaluate() call for every legacy tool.
+// ---------------------------------------------------------------------------
+interface FrameParameterEvalClient {
+    /// Called once from the main tool tick.  Implementations must keep their
+    /// own cheap no-change gate and apply only when observed state moved.
+    void evaluateParameterFrame();
+}
+
+// ---------------------------------------------------------------------------
 // SlotActivationClient — optional capability (task 0791): a tool that treats
 // ACTIVATING a pipe slot differently from writing one of its ATTRIBUTES.
 //
@@ -251,6 +267,14 @@ final class EditSession {
         if (t is null) return SessionPhase.NoTool;
         return t.hasUncommittedEdit() ? SessionPhase.EditOpen
                                       : SessionPhase.Idle;
+    }
+
+    /// Give the active tool family that explicitly opted into frame-driven
+    /// parameter observation one tick.  This is independent of whether the
+    /// Tool Properties panel is visible.
+    void tickParameterEvaluation() {
+        auto fc = cast(FrameParameterEvalClient) tool_();
+        if (fc !is null) fc.evaluateParameterFrame();
     }
 
     // ----- live-eval (re-eval plan D4) --------------------------------------
