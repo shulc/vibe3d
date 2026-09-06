@@ -39,6 +39,8 @@ import shader : Shader;
 import handler : ClickPointHandler;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import commands.mesh.vertex_position_result : VertexPositionResult,
+    VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import operator        : Operator, Task, VectorStack, PacketKind;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -59,8 +61,8 @@ import ImGui = d_imgui;
 ///  - First LMB-down records the click point and resets the per-vert
 ///    BASELINE to the pre-drag mesh state.
 ///  - Motion restores baseline → `onDragDelta(dx, dy)` updates the
-///    inner Command's attrs → `inner.apply()` re-mutates the mesh
-///    for a live preview.
+///    inner Command's attrs → the wrapper installs a live preview. Quantize
+///    builds a sparse result first; legacy wrappers dispatch `inner.apply()`.
 ///  - LMB-up ends the drag session; mesh stays at preview.
 ///  - Subsequent LMB-down on the same active tool resets the baseline
 ///    again so the new drag composes on top of the previous preview
@@ -74,9 +76,9 @@ import ImGui = d_imgui;
 ///    undo plumbing at construction time. The factory builds a fresh
 ///    `MeshVertexEdit` pre-wired to the same gpu/caches the inner
 ///    Command mutates; it arrives typed as `Command delegate()` and is
-///    cast back at each of the two build sites.
-///  - `deactivate()` builds a `MeshVertexEdit(before=baseline,
-///    after=current)` and records it on history. Spacebar →
+///    cast back when wrapping a result for history.
+///  - `deactivate()` wraps Quantize's cached result (or the legacy live diff)
+///    in `MeshVertexEdit` and records it on history. Spacebar →
 ///    `dropActiveTool` → here. Tool switches and tab close hit
 ///    the same path.
 ///  - The "Apply" button in `drawProperties()` runs the same commit
@@ -113,6 +115,14 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
     // when the user activates / deactivates without any drag.
     private Vec3[] baseline;
     private bool   dirty;
+
+    // R6 pilot: Quantize computes one sparse result. Preview installs it;
+    // commit/refire only wrap the same value in MeshVertexEdit.
+    private VertexPositionResult latestResult_;
+    private bool                 latestResultValid_;
+    private FalloffPacket        resultFalloff_;
+    private bool                 resultPipeValid_;
+    private bool                 resultFalloffPresent_;
 
     // Refire bookkeeping (undo/redo migration P4). While a panel-param-edit
     // refire session is driving this tool, the driver fires buildRefireCommand()
@@ -258,6 +268,7 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         refireDriving_ = false; refireCommitted_ = false;
         lastAppliedFalloffs = image.falloffs; image.falloffs = null;
         clickHandle = image.clickHandle; image.clickHandle = null;
+        clearResultState();
         image.valid = false;
     }
     final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
@@ -312,6 +323,7 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
                                 // whole-mesh deform against an empty selection.
         refireDriving_   = false;
         refireCommitted_ = false;
+        clearResultState();
         // Seed the falloff-change baseline to the CURRENT global pipe state.
         // `lastAppliedFalloffs` starts empty (`[]`) on every freshly
         // constructed instance (first activation OR reactivation — it is
@@ -367,20 +379,10 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         bool accepted;
         if (!refireCommitted_ && dirty && meshPtr !is null && history !is null &&
             gestureFactory !is null && baseline.length == meshPtr.vertices.length) {
-            uint[] indices;
-            Vec3[] before, after_;
-            foreach (i; 0 .. meshPtr.vertices.length) {
-                auto a = baseline[i], b = meshPtr.vertices[i];
-                if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
-                indices ~= cast(uint)i; before ~= a; after_ ~= b;
-            }
-            if (indices.length) {
-                auto cmd = cast(MeshVertexEdit) gestureFactory();
-                if (cmd !is null) {
-                    cmd.setEdit(indices, before, after_, name());
+            VertexPositionResult result;
+            if (commitResult(result))
+                if (auto cmd = carrierFromResult(result, name(), false))
                     accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
-                }
-            }
         }
         // Legacy order is commitNow() followed by click-handle destruction.
         if (!context.markHistoryInstall()) {
@@ -444,6 +446,7 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         refreshCaches();
         dirty    = false;
         dragging = false;
+        clearResultState();
     }
 
     // Resync after a committed undo/redo moved geometry beneath the active
@@ -464,14 +467,10 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         return history !is null && gestureFactory !is null;
     }
 
-    // Build the MeshVertexEdit representing the CURRENT param state. Re-runs the
-    // deform against the session baseline, captures the per-vertex before/after
-    // diff, and returns a fresh (unrecorded) command. The history's fire() then
-    // owns its apply()/revert() lifecycle: each fire reverts the previous live
-    // command back to `baseline`, then applies this one — so the mesh always
-    // walks baseline -> latest-params with no accumulation, and refireEnd lands
-    // the LAST one as a single entry. Returns null when the params produce a
-    // no-op (empty diff) so the driver skips the fire() for that tick.
+    // Build the MeshVertexEdit representing the CURRENT param state. Quantize
+    // uses its pure sparse-result builder: this method neither edits/restores
+    // the live mesh nor refreshes display caches. The other wrappers keep the
+    // legacy apply/diff/restore path until their own R6 migrations.
     public override Command buildRefireCommand() {
         if (meshPtr is null || history is null || gestureFactory is null)
             return null;
@@ -480,6 +479,11 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         // Mark the session driving so the per-frame evaluate()/onParamChanged()
         // preview stays inert while the fired command owns mutation.
         refireDriving_ = true;
+
+        if (resultBuilder() !is null) {
+            if (!buildPilotResult(false)) return null;
+            return cast(Command)carrierFromResult(latestResult_, name());
+        }
 
         // Run the deform from the clean baseline using the inner Command's
         // current attrs (same dispatch the drag/preview path uses). This leaves
@@ -535,6 +539,7 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         if (meshPtr !is null && baseline.length == meshPtr.vertices.length)
             baseline = meshPtr.vertices.dup;
         dirty = false;
+        clearResultState();
     }
 
     // ---- drag interaction --------------------------------------------
@@ -574,6 +579,8 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
         meshPtr.vertices[] = baseline[];
         refreshCaches();
         dirty = false;
+        latestResult_.clear();
+        latestResultValid_ = false;
 
         dragStartX = e.x;
         dragStartY = e.y;
@@ -802,15 +809,7 @@ public:
         if (meshPtr is null)     return false;
         if (history is null)     return false;
         if (gestureFactory is null) return false;
-        // Build the diff: only verts whose position actually changed.
-        // For Smooth/Jitter/Quantize the inner Command can touch every
-        // vert (with empty selection = whole mesh), so scanning is
-        // O(n) — cheap for any reasonable mesh.
-        uint[] indices;
-        Vec3[] before;
-        Vec3[] after_;
-        size_t n = meshPtr.vertices.length;
-        if (baseline.length != n) {
+        if (baseline.length != meshPtr.vertices.length) {
             // Topology changed mid-session (shouldn't happen for
             // smooth/jitter/quantize); refuse to commit a malformed
             // diff. Fall back to restoring baseline so the mesh
@@ -819,21 +818,14 @@ public:
             dirty = false;
             return false;
         }
-        foreach (i; 0 .. n) {
-            auto a = baseline[i], b = meshPtr.vertices[i];
-            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
-            indices ~= cast(uint)i;
-            before  ~= a;
-            after_  ~= b;
-        }
-        if (indices.length == 0) {
+        VertexPositionResult result;
+        if (!commitResult(result)) {
             dirty = false;
             return false;
         }
-        auto cmd = cast(MeshVertexEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return false; }
-        cmd.setEdit(indices, before, after_,
-                    label.length > 0 ? label : name());
+        auto cmd = carrierFromResult(result,
+            label.length > 0 ? label : name());
+        if (cmd is null) return false;
         // THE EIGHTH EARLY EXIT, and it keeps the invariant this method is the
         // model for. `recordGestureEdit` is false only when the seam's belt
         // refused (a carrier with nothing in it) — unreachable from here,
@@ -851,6 +843,7 @@ public:
         // fixed into the geometry and future drags start fresh.
         baseline = meshPtr.vertices.dup;
         dirty    = false;
+        clearResultState();
         return true;
     }
 
@@ -892,11 +885,121 @@ public:
         return true;
     }
 
+    private VertexPositionResultBuilder resultBuilder() {
+        return cast(VertexPositionResultBuilder)inner;
+    }
+
+    private void clearResultState() nothrow @nogc {
+        latestResult_.clear();
+        latestResultValid_ = false;
+        resultFalloff_ = FalloffPacket.init;
+        resultPipeValid_ = false;
+        resultFalloffPresent_ = false;
+    }
+
+    /// Build Quantize's result from the explicit session baseline. A fresh
+    /// pipeline walk is done only while the live mesh is known to hold that
+    /// baseline (preview restores it immediately above). Refire after a live
+    /// preview reuses the owned cooked falloff packet, so command construction
+    /// never needs a temporary live-mesh rollback.
+    private bool buildPilotResult(bool freshPipeline) {
+        auto builder = resultBuilder();
+        if (builder is null || meshPtr is null ||
+            baseline.length != meshPtr.vertices.length) return false;
+
+        SubjectPacket subj;
+        VectorStack vts;
+        if (freshPipeline || !resultPipeValid_) {
+            import toolpipe.subject : evaluateSubject, SubjectSource;
+            evaluateSubject(subj, vts,
+                SubjectSource(meshPtr, EditMode.Vertices, SelType.Vertex, cachedVp));
+            if (auto fp = vts.get!FalloffPacket()) {
+                resultFalloff_ = fp.ownedDup();
+                resultFalloffPresent_ = true;
+            } else {
+                resultFalloff_ = FalloffPacket.init;
+                resultFalloffPresent_ = false;
+            }
+            resultPipeValid_ = true;
+            lastAppliedFalloffs = currentFalloffConfigs();
+        } else {
+            import toolpipe.subject : fillSubject, SubjectSource;
+            fillSubject(subj,
+                SubjectSource(meshPtr, EditMode.Vertices, SelType.Vertex, cachedVp));
+            vts.put(&subj);
+            if (resultFalloffPresent_) vts.put(&resultFalloff_);
+        }
+
+        VertexPositionResult built;
+        if (!builder.buildVertexPositionResult(baseline, vts, built)) {
+            latestResult_.clear();
+            latestResultValid_ = false;
+            return false;
+        }
+        latestResult_ = built;
+        latestResultValid_ = true;
+        return true;
+    }
+
+    private bool collectLegacyLiveResult(out VertexPositionResult result) {
+        result.clear();
+        if (meshPtr is null || baseline.length != meshPtr.vertices.length)
+            return false;
+        foreach (i; 0 .. meshPtr.vertices.length) {
+            auto a = baseline[i], b = meshPtr.vertices[i];
+            if (a == b) continue;
+            result.indices ~= cast(uint)i;
+            result.before ~= a;
+            result.after ~= b;
+        }
+        return !result.empty;
+    }
+
+    private bool commitResult(out VertexPositionResult result) {
+        if (resultBuilder() !is null) {
+            if (!latestResultValid_ || latestResult_.empty) return false;
+            result = latestResult_;
+            return true;
+        }
+        return collectLegacyLiveResult(result);
+    }
+
+    private MeshVertexEdit carrierFromResult(ref VertexPositionResult result,
+                                             string label,
+                                             bool reportMismatch = true) {
+        if (result.empty) return null;
+        auto cmd = cast(MeshVertexEdit)gestureFactory();
+        if (cmd is null) {
+            if (reportMismatch) noteGestureCarrierMismatch();
+            return null;
+        }
+        cmd.setEdit(result.indices, result.before, result.after, label);
+        return cmd;
+    }
+
+    private void installPilotPreview() {
+        import change_bus : MeshEditScope;
+        import mesh : MeshEditBatch;
+        auto ed = MeshEditBatch.unrecorded(*meshPtr, MeshEditScope.Position);
+        ed.setVertexPositions(latestResult_.indices, latestResult_.after);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
+    }
+
     private bool applyWithLivePipeline() {
         if (meshPtr is null) return false;
 
         // Restore baseline so apply runs against pre-drag state.
         meshPtr.vertices[] = baseline[];
+
+        // Quantize pilot: compute once from baseline, then install the sparse
+        // result for preview. The builder itself performs no scene mutation.
+        if (resultBuilder() !is null) {
+            if (!buildPilotResult(true)) return false;
+            installPilotPreview();
+            refreshCaches();
+            return true;
+        }
 
         // Task 1904 Stage 5: `editMode` stays the hardcoded literal
         // `EditMode.Vertices` (plan §12 Q3 default: freeze, pending owner).
@@ -1208,9 +1311,18 @@ unittest {
         assert(recorded == 0,
             TWrap.stringof ~ ": idle commit must not record");
 
-        // A live wrapper drag's leftovers, by hand (same module ⇒ private).
+        // A live wrapper drag's leftovers. Quantize must enter through its
+        // single result builder; Jitter remains on the legacy live-diff path.
         t.baseline = m.vertices.dup;
-        m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+        static if (is(TWrap == XfrmQuantizeTool)) {
+            foreach (ref p; t.params())
+                if (p.name == "X" || p.name == "Y" || p.name == "Z")
+                    *p.fptr = 0.3f;
+            assert(t.buildPilotResult(true));
+            t.installPilotPreview();
+        } else {
+            m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+        }
         t.dirty = true;
 
         assert(t.commitUncommittedEdit(),

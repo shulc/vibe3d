@@ -1,0 +1,29 @@
+module commands.mesh.vertex_position_result;
+
+import math : Vec3;
+import operator : VectorStack;
+
+/// Sparse, already-computed vertex positions. Building this value must not
+/// mutate the scene mesh; callers choose whether to preview, record, or replay
+/// it.
+struct VertexPositionResult {
+    uint[] indices;
+    Vec3[] before;
+    Vec3[] after;
+
+    bool empty() const nothrow @nogc { return indices.length == 0; }
+
+    void clear() nothrow @nogc {
+        indices = null;
+        before = null;
+        after = null;
+    }
+}
+
+/// Capability used by CommandWrapperTool's R6 pilot. Smooth and Jitter keep
+/// their legacy path until their own deterministic-result migrations.
+interface VertexPositionResultBuilder {
+    bool buildVertexPositionResult(const(Vec3)[] source,
+                                   ref VectorStack vts,
+                                   out VertexPositionResult result);
+}

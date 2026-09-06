@@ -1,6 +1,5 @@
 module commands.mesh.quantize;
 
-import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -10,6 +9,8 @@ import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
+import commands.mesh.vertex_position_result : VertexPositionResult,
+    VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -23,7 +24,8 @@ import std.math : floor;
 /// vertex mode → selected verts; edge/polygon mode → verts of the selected
 /// edges/faces. Empty selection falls through to the whole mesh —
 /// "no selection ⇒ act on everything".
-class MeshQuantize : Command, Operator, IFalloffAware {
+class MeshQuantize : Command, Operator, IFalloffAware,
+                     VertexPositionResultBuilder {
     // Per-axis grid spacing (`X/Y/Z` attrs). vibe3d used a single
     // isotropic `step` earlier — hard rename, no back-compat alias.
     private float            stepX_ = 0.1f;
@@ -33,10 +35,6 @@ class MeshQuantize : Command, Operator, IFalloffAware {
     // its original and quantised position by the per-vert weight.
     private FalloffPacket    falloff_;
 
-    // Snapshot for revert. Captures pre-apply positions of every vert we
-    // mutated; revert restores them. Same shape as MeshTransform.
-    private uint[] touchedIdx;
-    private Vec3[] touchedPrev;
     // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
     private PositionUndo undo_;
     version (unittest) {
@@ -85,32 +83,37 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         if (subj is null) return false;
         if (auto fp = vts.get!FalloffPacket())
             this.falloff_ = *fp;
-        // Task 0619: the real viewport is right here on the subject
-        // packet. This command can be handed the LIVE falloff packet
-        // below, which may be a Screen/Lasso type, so it needs a real
-        // aim space — it used to declare an empty `Viewport` instead.
-        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-
         // §2.4 — the step guard is resolved BEFORE the batch is opened. A
         // `return` out of an open batch leaves `~MeshEditBatch` to pop the
         // frame and tick `changeBus.batchLeaks`, asserted 0 by the suite.
-        if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
+        VertexPositionResult result;
+        if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
 
         // REDO: re-run the kernel UNRECORDED and keep the first delta.
         if (undo_.armed()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, aim);
+            applyResult(ed, result);
             ed.close();
-            return ok;
+            return true;
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-        const ok = applyKernel(ed, aim);
+        applyResult(ed, result);
         undo_.arm(this, ed.close());
-        if (!ok) { undo_.disarm(this); return false; }
         return true;
     }
 
-    private bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
+    override bool buildVertexPositionResult(const(Vec3)[] source,
+                                            ref VectorStack vts,
+                                            out VertexPositionResult result) {
+        result.clear();
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null || subj.mesh is null || source.length != subj.mesh.vertices.length)
+            return false;
+        if (auto fp = vts.get!FalloffPacket()) this.falloff_ = *fp;
+        if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
+
+        // Task 0619: Screen/Lasso falloff needs the subject's real viewport.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
 
         // Build affected-vertex mask the same way MeshTransform does.
         //
@@ -120,27 +123,13 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         // non-allocating `isXSelected(i)` scalar accessor instead.
         // L1 funnel (task 0613, S5): the modal fan-in this used to open-code,
         // with the whole-mesh fallback narrowed to the VISIBLE vertices.
-        bool[] vmask = mesh.operandVertexMask(editMode);
-
-        touchedIdx.length  = 0;
-        touchedPrev.length = 0;
-        // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
-        // Byte-identical: every read of vertex `i` below already happened
-        // before the write to `i`, and no vertex is visited twice.
-        // PRE-SIZED, NOT APPEND-GROWN (task 2160). `~=` is a runtime call per
-        // element that looks the block's used-length up in the GC; over a
-        // hundred thousand vertices that is ~0.85 ms of pure bookkeeping, and
-        // this array exists only to be handed to `setVertexPositions` and
-        // dropped. The ceiling is exact — the loop writes at most one entry per
-        // visited vertex — and `Vec3` holds no pointer, so the unwritten tail
-        // is nothing the collector can misread; it is sliced off at the call.
-        auto newPos = uninitializedArray!(Vec3[])(mesh.vertices.length);
-        size_t nNew = 0;
+        bool[] vmask = subj.mesh.operandVertexMask(editMode);
+        result.indices.reserve(source.length);
+        result.before.reserve(source.length);
+        result.after.reserve(source.length);
         // Task 0619: cursorless — see jitter.d. No viewport, by design.
-        foreach (i; 0 .. mesh.vertices.length) {
+        foreach (i; 0 .. source.length) {
             if (!vmask[i]) continue;
-            touchedIdx  ~= cast(uint)i;
-            touchedPrev ~= mesh.vertices[i];
             // Snap with floor(pos/step + 0.5) — round-half-toward-+∞ — but
             // evaluate the ratio in DOUBLE precision. In float, a coord like
             // 0.45f (stored as 0.44999998807907104, genuinely below 0.45)
@@ -149,7 +138,7 @@ class MeshQuantize : Command, Operator, IFalloffAware {
             // grid cell too far (0.5 instead of 0.4). In double the true ratio
             // is 4.4999998, which floors to the correct cell. Only the
             // precision changes — the tie-break stays floor(x+0.5).
-            Vec3 v = mesh.vertices[i];
+            Vec3 v = source[i];
             float qx = cast(float)(floor(cast(double)v.x / cast(double)stepX_ + 0.5) * cast(double)stepX_);
             float qy = cast(float)(floor(cast(double)v.y / cast(double)stepY_ + 0.5) * cast(double)stepY_);
             float qz = cast(float)(floor(cast(double)v.z / cast(double)stepZ_ + 0.5) * cast(double)stepZ_);
@@ -158,19 +147,25 @@ class MeshQuantize : Command, Operator, IFalloffAware {
             // so the per-vert weight is deterministic regardless of
             // step granularity.
             float fw = falloff_.enabled
-                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, aim)
+                ? evaluateFalloff(falloff_, source[i], cast(int)i, aim)
                 : 1.0f;
-            Vec3 orig = mesh.vertices[i];
+            Vec3 orig = source[i];
             Vec3 nv;
             nv.x = orig.x + (qx - orig.x) * fw;
             nv.y = orig.y + (qy - orig.y) * fw;
             nv.z = orig.z + (qz - orig.z) * fw;
-            newPos[nNew++] = nv;
+            if (nv == orig) continue;
+            result.indices ~= cast(uint)i;
+            result.before ~= orig;
+            result.after ~= nv;
         }
-
-        ed.setVertexPositions(touchedIdx, newPos[0 .. nNew]);
-        ed.commitChange(MeshEditScope.Position);
         return true;
+    }
+
+    private static void applyResult(ref MeshEditBatch ed,
+                                    ref const VertexPositionResult result) {
+        ed.setVertexPositions(result.indices, result.after);
+        ed.commitChange(MeshEditScope.Position);
     }
 
     protected override void revertImpl() {
