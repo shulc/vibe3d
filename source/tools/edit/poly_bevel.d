@@ -283,11 +283,32 @@ public:
         PreparedPolyBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        // Task 4491 — this capture is ABOVE the `before.filled` return on
+        // purpose, and there is exactly one of it. `preparedParamUpdateMatches`
+        // checks the preview cache as its fifth conjunct and
+        // `PreviewRebuild.matchesImage` gates on the IMAGE's own `valid`, so an
+        // image left unprepared is a guaranteed mismatch rather than a skipped
+        // check. It used to be captured only below, where a COLD arm never
+        // reaches it: `prepareArm` has not published the activation yet, so
+        // `before` is empty, while the sticky-parameter replay already enlisted
+        // this resource — the arm then validated a conjunct that could not hold
+        // and refused. Keep it a SINGLE call site: `check_prepared_protocol.py`
+        // proves this conjunct's potency by deleting this statement's text, and
+        // a second copy would silently absorb that mutation. The cage clone is
+        // private scratch that must not publish, hence the shadow and drain.
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
+        }
         if (!before.filled) return image;
         Mesh baseline;
         auto baselineShadow = beginPreparedShadow(baseline);
         before.restore(baseline); image.expectedBefore = MeshSnapshot.capture(baseline);
-        image.expectedLive.restore(image.candidate); preview_.prepareImage(image.preview);
+        image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         baselineShadow.close(); image.deliveryFlags = image.deliveryDomains = 0;

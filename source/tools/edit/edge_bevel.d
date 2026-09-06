@@ -269,13 +269,26 @@ public:
         PreparedEdgeBevelParamImage image;
         image.valid = true; image.expected = paramProjection();
         image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        // Task 4491 — the same cold-arm hole as PolyBevelTool, and for the
+        // same reason: this tool's `preparedParamUpdateMatches` also carries
+        // the `preview_.matchesImage` conjunct unconditionally, so an image
+        // that skipped `prepareImage` refuses the arm outright. Single call
+        // site, above the early return, for the reason spelled out at the
+        // sibling site in tools/edit/poly_bevel.d.
+        {
+            auto cageShadow = beginPreparedShadow(image.preview.nextCage);
+            preview_.prepareImage(image.preview);
+            uint cageFlags, cageDomains;
+            drainPreparedShadowDelivery(image.preview.nextCage, cageFlags,
+                cageDomains);
+            cageShadow.close();
+        }
         if (!before.filled) return image;
         Mesh baseline;
         auto baselineShadow = beginPreparedShadow(baseline);
         before.restore(baseline);
         image.expectedBefore = MeshSnapshot.capture(baseline);
         image.expectedLive.restore(image.candidate);
-        preview_.prepareImage(image.preview);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         baselineShadow.close(); image.deliveryFlags = image.deliveryDomains = 0;
