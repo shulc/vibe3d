@@ -6629,6 +6629,7 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
             activeTool.update(vts);
         }
+
         // ── Task 0223: ratio-driven cell layout host ("ViewportHost") ────────
         //
         // "ViewportHost" is the plain window docked into the outer
