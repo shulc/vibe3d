@@ -41,7 +41,7 @@
 	"libs-osx": [
 		"pthread"
 	],
-	"description": "simple 3d modeller inspired MODO and LigthWave",
+	"description": "simple 3d modeller inspired by MODO and LightWave",
 	"targetType": "executable",
 	"_comment-stb-image": "d-stb-image (task 0662) replaces the vendored third_party/stb_image: the same header, the same #defines, the same CMake build, now a shim like the other D-* packages. Two properties of the move are worth keeping in mind if it is ever reverted. (1) It is a GIT dep, so its C static library is built inside the dub package cache rather than into the workspace -- which means it needs no cache-drop step in .github/workflows the way the nfde PATH dep does, because the D target and the C lib it links are cached together and evicted together, and `git clean` on the workspace cannot desynchronise them. (2) The old package was a `sourceLibrary`, which has no artifact for dub to judge up to date, so its preBuildCommands ran on EVERY build that built anything; the shim is a `staticLibrary`, so dub skips them once its target is current. Neither of those is cosmetic -- see the shim's own dub.json comment for the measurements.",
 	"dependencies": {
