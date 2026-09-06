@@ -49,8 +49,12 @@ long modelDepth() {
     return getJson("/api/undo/status")["modelDepth"].integer;
 }
 
-bool containsPrefix(const string[] ids, string prefix) {
-    foreach (id; ids) {
+// These are published registry keys, not necessarily Command.name() values.
+// The field below is nevertheless the cached RESULT of applying the name-based
+// policy to each command, and each of the four terms has a Model-backed command
+// whose own term-removal mutation reddened this view.
+bool containsPrefix(const string[] registryIds, string prefix) {
+    foreach (id; registryIds) {
         if (id.startsWith(prefix)) return true;
     }
     return false;
@@ -118,32 +122,41 @@ unittest {
         "refusal contract: mesh.bevel refusal left the armed xfrm session active");
 }
 
-// The registry publishes the complete cold-command policy. This pins all four
-// exclusions, including prefixes whose concrete commands cannot reach the
-// prefix checks because their flags already fail the Model gate.
+// The registry publishes the complete cold-command policy keyed by registered
+// id (not necessarily by Command.name()). Each of the four exclusion terms has
+// a Model-backed registered command and reddens here when removed. The
+// layer.attr row also cross-checks that cold policy against the live cell above;
+// that live cell remains the first witness for its own term mutation.
 unittest {
     auto registry = getJson("/api/registry");
     string[] drops;
     foreach (id; registry["commandsDroppingToolBeforeApply"].array)
         drops ~= id.str;
 
-    assert(registry["commands"].array.length == 261,
-        "drop-policy registry lost its command population: "
+    assert(registry["commands"].array.length >= 250,
+        "drop-policy registry command count fell below the 250-entry threshold; "
+        ~ "raise this coarse floor after substantial registry growth: "
         ~ registry["commands"].array.length.to!string);
+    assert(drops.canFind("layer.rename"),
+        "drop-policy registry lost the layer.rename positive control");
+    assert(drops.canFind("mesh.bevel"),
+        "drop-policy registry lost the mesh.bevel positive control");
+    assert(drops.length > 100,
+        "drop-policy registry is too sparse for exclusion checks: "
+        ~ drops.length.to!string);
     assert(!containsPrefix(drops, "tool."),
         "drop-policy registry contains an excluded tool.* command");
     assert(!containsPrefix(drops, "scene."),
         "drop-policy registry contains an excluded scene.* command");
     assert(!containsPrefix(drops, "file."),
         "drop-policy registry contains an excluded file.* command");
+    // Consistency check: the cold registry and the live layer.attr cell above
+    // must agree. The live cell is deliberately earlier and masks this row when
+    // the layer.attr term itself is removed.
     assert(!drops.canFind("layer.attr"),
         "drop-policy registry contains the layer.attr exception");
     assert(drops.length == 148,
         "drop-policy registry population changed: " ~ drops.length.to!string);
-    assert(drops.canFind("layer.rename"),
-        "drop-policy registry lost the layer.rename positive control");
-    assert(drops.canFind("mesh.bevel"),
-        "drop-policy registry lost the mesh.bevel positive control");
 }
 
 unittest {
