@@ -8561,7 +8561,8 @@ typed_context_door_clients = {
 }
 resource_lifecycle_door_clients = {
     "source/tools/common/command_wrapper.d": (
-        "abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient",
+        "abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient,\n"
+        "                                    PreparedToolDoorClient",
         "new ClickPointResourceOwner(clickHandle, threadIdentity,",
         "prepareDeactivate(context, owner).resourceAccepted",
         "prepareActivate(context).accepted"),
