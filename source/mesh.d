@@ -8306,6 +8306,12 @@ struct Mesh {
                     // O(F²) byte defect `duplicateSelectedFaces` did (see its
                     // header). The guard is identical — `selectedFaces.length`
                     // IS `faceMarks.length` — so this is a cost change only.
+                    // ITS OWN GATE is the second cell of
+                    // tests/unit/duplicate_face_scan_alloc_test.d, which drives
+                    // this kernel through `arrayFacesGrid` with Merge Vertices
+                    // on. Until that cell existed, reverting this line alone
+                    // left the module lane green at 503 modules, exit 0 — the
+                    // first cell cannot see this site.
                     keptSelected ~= isFaceSelected(fi);
                 }
                 // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED
@@ -8670,11 +8676,16 @@ struct Mesh {
         // so the three reads this replaced — the length guard, the count, and
         // the two `selectedFaces[fi]` INSIDE the per-face loops below — made
         // the kernel O(F²) in both time and bytes: 2·F² bytes of throwaway
-        // `bool[]`, which is 19.94 GB at F=99 856 — i.e. 93–100 % of the
+        // `bool[]` by payload — but the counter the card's figure comes from,
+        // `GC.allocatedInCurrentThread`, charges each such block PAGE-ROUNDED,
+        // so the figure to compare against is 2·F·⌈F/4096⌉·4096 = 20.45 GB at
+        // F=99 856, not the payload's 19.94 GB. That is 95–100 % of the
         // "20 524 MB" the card's own 100K measurement had already charged to
-        // `mesh.duplicate` without explaining, the range being whether that
-        // figure's MB is decimal or binary (the harness prints KB as /1024,
-        // so read the wide end). Measured on the ladder: 5.1 / 28.5 / 121.6 /
+        // `mesh.duplicate` without explaining it: 99.6 % if that figure's MB is
+        // decimal, 95.0 % if binary, which the card does not record. The page
+        // rounding is measured rather than assumed — the residual of the array
+        // cell in tests/unit/duplicate_face_scan_alloc_test.d matches it to
+        // within 0.2 % at three sizes. Measured on the ladder: 5.1 / 28.5 / 121.6 /
         // 852 s at 99 856 / 202 500 / 399 424 / 1 000 000 faces, against
         // 0.14 / 0.26 /
         // 0.57 / 1.78 s once the property left the loops. It is quadratic on
