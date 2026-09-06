@@ -81,8 +81,15 @@ class MeshQuantize : Command, Operator, IFalloffAware,
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket())
+        if (auto fp = vts.get!FalloffPacket()) {
             this.falloff_ = *fp;
+        } else {
+            // Command.apply() carries HTTP-injected falloff in the command
+            // field; make that input explicit before entering the result
+            // builder. Direct builder callers intentionally get no implicit
+            // fallback to state retained from an earlier evaluation.
+            vts.put(&falloff_);
+        }
         // §2.4 — the step guard is resolved BEFORE the batch is opened. A
         // `return` out of an open batch leaves `~MeshEditBatch` to pop the
         // frame and tick `changeBus.batchLeaks`, asserted 0 by the suite.
@@ -109,7 +116,8 @@ class MeshQuantize : Command, Operator, IFalloffAware,
         auto subj = vts.get!SubjectPacket();
         if (subj is null || subj.mesh is null || source.length != subj.mesh.vertices.length)
             return false;
-        if (auto fp = vts.get!FalloffPacket()) this.falloff_ = *fp;
+        FalloffPacket resultFalloff;
+        if (auto fp = vts.get!FalloffPacket()) resultFalloff = *fp;
         if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
 
         // Task 0619: Screen/Lasso falloff needs the subject's real viewport.
@@ -146,8 +154,8 @@ class MeshQuantize : Command, Operator, IFalloffAware,
             // Weight is evaluated at the original (pre-quantise) pos
             // so the per-vert weight is deterministic regardless of
             // step granularity.
-            float fw = falloff_.enabled
-                ? evaluateFalloff(falloff_, source[i], cast(int)i, aim)
+            float fw = resultFalloff.enabled
+                ? evaluateFalloff(resultFalloff, source[i], cast(int)i, aim)
                 : 1.0f;
             Vec3 orig = source[i];
             Vec3 nv;

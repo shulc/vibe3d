@@ -22,6 +22,10 @@ struct VertexPositionResult {
 
 /// Capability used by CommandWrapperTool's R6 pilot. Smooth and Jitter keep
 /// their legacy path until their own deterministic-result migrations.
+///
+/// The wrapper's packet-reuse arm reconstructs only Subject and an optional
+/// owned Falloff packet. An implementation may consume no other pipeline slot
+/// unless that slot is explicitly added to the wrapper's cached-packet contract.
 interface VertexPositionResultBuilder {
     bool buildVertexPositionResult(const(Vec3)[] source,
                                    ref VectorStack vts,

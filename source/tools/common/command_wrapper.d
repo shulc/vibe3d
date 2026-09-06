@@ -495,32 +495,15 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
             return null;
         }
 
-        uint[] indices;
-        Vec3[] before;
-        Vec3[] after_;
-        size_t n = meshPtr.vertices.length;
-        foreach (i; 0 .. n) {
-            auto a = baseline[i], b = meshPtr.vertices[i];
-            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
-            indices ~= cast(uint)i;
-            before  ~= a;
-            after_  ~= b;
-        }
+        VertexPositionResult result;
+        immutable hasResult = collectLegacyLiveResult(result);
 
         // Restore baseline — fire() applies the returned command itself.
         meshPtr.vertices[] = baseline[];
         refreshCaches();
 
-        if (indices.length == 0) return null;
-
-        // The carrier's CLASS is not checked by the base binder (it takes a
-        // `Command delegate()` so every registration closure converts without a
-        // wrapper lambda), so the cast is ours and a null from it is a COUNTED
-        // refusal, never a silent drop. Same shape as `tools/deform/magnet.d`.
-        auto cmd = cast(MeshVertexEdit) gestureFactory();
-        if (cmd is null) { noteGestureCarrierMismatch(); return null; }
-        cmd.setEdit(indices, before, after_, name());
-        return cast(Command)cmd;
+        if (!hasResult) return null;
+        return cast(Command)carrierFromResult(result, name());
     }
 
     // Driver sets this around a param injection so the per-frame preview stays
@@ -823,6 +806,8 @@ public:
             dirty = false;
             return false;
         }
+        debug assert(resultBuilder() is null || liveHoldsResult(result),
+            "CommandWrapperTool.commitNow: cached result does not match live preview");
         auto cmd = carrierFromResult(result,
             label.length > 0 ? label : name());
         if (cmd is null) return false;
@@ -953,6 +938,24 @@ public:
             result.after ~= b;
         }
         return !result.empty;
+    }
+
+    private bool liveHoldsResult(ref const VertexPositionResult result) const {
+        if (meshPtr is null || baseline.length != meshPtr.vertices.length ||
+            result.indices.length != result.before.length ||
+            result.indices.length != result.after.length) return false;
+
+        size_t liveDiffs;
+        foreach (i; 0 .. meshPtr.vertices.length)
+            if (meshPtr.vertices[i] != baseline[i]) ++liveDiffs;
+        if (liveDiffs != result.indices.length) return false;
+
+        foreach (i, vi; result.indices) {
+            if (vi >= meshPtr.vertices.length || result.before[i] != baseline[vi] ||
+                result.after[i] == result.before[i] ||
+                meshPtr.vertices[vi] != result.after[i]) return false;
+        }
+        return true;
     }
 
     private bool commitResult(out VertexPositionResult result) {
@@ -1347,5 +1350,27 @@ unittest {
             TWrap.stringof ~ ": a commit that recorded nothing must not report success");
         assert(recorded == 0,
             TWrap.stringof ~ ": the latched path must not record an entry");
+
+        // The result-builder arm must never record an `after` image that the
+        // live preview did not actually install. This exercises the debug
+        // contract at commitNow rather than manufacturing a valid preview.
+        static if (is(TWrap == XfrmQuantizeTool)) {
+            import core.exception : AssertError;
+            import std.exception : assertThrown;
+            Mesh divergent = makeCube();
+            divergent.buildLoops();
+            auto divergentHistory = new CommandHistory();
+            auto divergentTool = new XfrmQuantizeTool(
+                &divergent, view, EditMode.Vertices, null);
+            divergentTool.setGestureBindings(divergentHistory,
+                () => new MeshVertexEdit(&divergent, view, EditMode.Vertices));
+            divergentTool.baseline = divergent.vertices.dup;
+            foreach (ref p; divergentTool.params())
+                if (p.name == "X" || p.name == "Y" || p.name == "Z")
+                    *p.fptr = 0.3f;
+            assert(divergentTool.buildPilotResult(true));
+            divergentTool.dirty = true;
+            assertThrown!AssertError(divergentTool.commitUncommittedEdit());
+        }
     }}
 }

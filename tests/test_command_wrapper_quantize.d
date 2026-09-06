@@ -7,6 +7,7 @@ import drag_helpers : buildDragLog, fetchCamera, playAndWait;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import std.conv : to;
+import std.format : format;
 import std.json;
 import std.math : fabs;
 
@@ -35,6 +36,30 @@ private double coord(int vertex, int axis) {
 }
 
 private bool close(double a, double b) { return fabs(a - b) < 1e-5; }
+
+private double[3][] positions() {
+    double[3][] result;
+    foreach (v; model()["vertices"].array) {
+        double[3] p = [v.array[0].floating, v.array[1].floating,
+                       v.array[2].floating];
+        result ~= p;
+    }
+    return result;
+}
+
+private bool positionsClose(const double[3][] a, const double[3][] b) {
+    if (a.length != b.length) return false;
+    foreach (i; 0 .. a.length)
+        foreach (axis; 0 .. 3)
+            if (!close(a[i][axis], b[i][axis])) return false;
+    return true;
+}
+
+private double queryStepX() {
+    auto j = postJson("/api/command", "tool.attr xfrm.quantize X ?");
+    assert(j["status"].str == "ok", "Quantize X query failed: " ~ j.toString);
+    return j["value"].floating;
+}
 
 unittest { // live gesture -> one sparse preview -> drop/undo
     resetCube();
@@ -97,4 +122,38 @@ unittest { // panel refire keeps only the last result; empty result records none
     cmd("tool.set xfrm.quantize off");
     assert(historyCount() == noOpBefore,
         "an empty Quantize result must not create a history entry");
+}
+
+unittest { // falloff drag -> refire reuses the preview's cooked packet
+    resetCube();
+    cmd("tool.set xfrm.quantize on");
+    scope(exit) {
+        cmd("tool.set xfrm.quantize off");
+        cmd("tool.pipe.attr falloff type none");
+    }
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "-0.5,-0.5,-0.5"`);
+    cmd(`tool.pipe.attr falloff size "2,2,2"`);
+
+    const before = positions();
+    auto cam = fetchCamera();
+    const x0 = cam.vpX + cam.width / 2;
+    const y0 = cam.vpY + cam.height / 2;
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x0, y0, x0 + 80, y0, 6));
+    const preview = positions();
+    const nearDelta = fabs(preview[0][0] - before[0][0]);
+    const farDelta = fabs(preview[6][0] - before[6][0]);
+    assert(nearDelta > 1e-3 && farDelta > 1e-6 && farDelta < nearDelta * 0.5,
+        format("control: radial falloff must produce distinct nonzero weights; " ~
+               "near=%.9g far=%.9g", nearDelta, farDelta));
+
+    const stepX = queryStepX();
+    assert(postJson("/api/refire", `{"action":"begin"}`)["status"].str == "ok");
+    cmd(format("tool.attr xfrm.quantize X %.9g", stepX));
+    assert(postJson("/api/refire", `{"action":"end"}`)["status"].str == "ok");
+    const refired = positions();
+    assert(positionsClose(refired, preview),
+        "falloff refire result differs from the live Quantize preview");
 }
