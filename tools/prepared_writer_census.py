@@ -59,6 +59,23 @@ def _aggregate(text, pos):
         except ValueError: pass
     return found
 
+# Project-owned scanner identifier: exact `grep -rl -w _function_at` over the
+# SDK tree returned zero files; `caller` is generic call-graph vocabulary there.
+def _function_at(text, pos):
+    """Name the innermost function declaration containing byte offset pos."""
+    found = "<module>"
+    declarations = _mask_comments(text)
+    pattern = re.compile(
+        r"(?m)^[ \t]*(?:[A-Za-z_]\w*[ \t]+)+([A-Za-z_]\w*)\s*"
+        r"\([^;{}]*\)\s*[^;{]*\{")
+    for match in pattern.finditer(declarations, 0, pos):
+        try:
+            if _balanced(text, match.end()) > pos:
+                found = match.group(1)
+        except ValueError:
+            pass
+    return found
+
 def _derives(classes, name, base, seen=None):
     """Whether a concrete product inherits a named capability."""
     if seen is None: seen = set()
@@ -309,6 +326,7 @@ def scan(root):
                     text[body_open + 1:body_end - 1])
                 internal_publishers.append(row)
             else:
+                row["caller"] = _function_at(text, match.start())
                 bypasses.append(row)
     products = [{"module": classes[name]["module"], "aggregate": name,
                  "symbol": "factoryProduct", "signature": name}

@@ -1,11 +1,13 @@
 {
   "bypasses": [
     {
+      "caller": "armPreparedTool",
       "line": 3810,
       "path": "source/app.d",
       "symbol": "prepareArm"
     },
     {
+      "caller": "armPreparedTool",
       "line": 3826,
       "path": "source/app.d",
       "symbol": "commitPreparedArm"

@@ -3159,8 +3159,8 @@ unittest {
 // `readV3d` handing out a sentence is half a chain. This asserts the other
 // half against the REAL `FileLoad` — the same object File → Open, the recent
 // files list and `/api/command file.load` all build — through
-// `Command.refusalReason()`, which `CommandExecutor.applyOrRefire` appends to
-// the error it throws and `runCommand` feeds to `commandNoticeText`.
+// `Command.refusalReason()`, which `http_providers.refused` appends to the
+// scripted error and `runCommand` feeds to `commandNoticeText`.
 //
 // Discriminating three ways:
 //   * a `FileLoad` that does not override `refusalReason` reads "" (the base

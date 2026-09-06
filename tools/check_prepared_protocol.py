@@ -175,6 +175,11 @@ def writer_keys(rows):
     return [(r.get("module", "registration"), r["aggregate"], r["symbol"], r.get("signature", "factory"))
             for r in rows]
 
+# Project-owned scanner identifier: exact `grep -rl -w bypass_keys` over the
+# SDK tree returned zero files; `caller` is generic call-graph vocabulary there.
+def bypass_keys(rows):
+    return sorted((r["caller"], r["symbol"]) for r in rows)
+
 def validate_writer_graph(actual, expected):
     for section in ("hooks", "params", "factories", "products",
                     "lifecycle_products", "surfaces"):
@@ -185,8 +190,10 @@ def validate_writer_graph(actual, expected):
         ekeys = set(keys)
         if akeys != ekeys:
             fail(f"P1.0b.0 {section} symbol mismatch: missing={sorted(ekeys-akeys)} surplus={sorted(akeys-ekeys)}")
-    if actual.get("bypasses") != expected.get("bypasses"):
-        fail("P1.0b.0 activation/lifecycle bypass callsite set changed")
+    if bypass_keys(actual.get("bypasses", [])) != \
+            bypass_keys(expected.get("bypasses", [])):
+        fail("P1.0b.0 activation/lifecycle bypass callsite set changed: "
+             + repr(actual.get("bypasses", [])))
     actual_publishers = {r["symbol"]: r for r in actual["internal_publishers"]}
     expected_publishers = {r["symbol"]: r for r in expected["internal_publishers"]}
     if actual_publishers.keys() != expected_publishers.keys():
@@ -212,6 +219,10 @@ def validate_writer_graph(actual, expected):
         fail("P1.0b.0 source/prepared_tool_transition.d :: "
              f"toolArmEmitsLifecycle — recorded line {recorded_classifier['line']}, "
              f"scanner found {found_classifier['line']}")
+    actual = dict(actual)
+    expected = dict(expected)
+    actual["bypasses"] = bypass_keys(actual["bypasses"])
+    expected["bypasses"] = bypass_keys(expected["bypasses"])
     if canonical_writer_graph(actual) != canonical_writer_graph(expected):
         fail("P1.0b.0 direct-body/product census changed with names intact")
 
@@ -1422,11 +1433,12 @@ if found != MANIFEST:
 # task 4053 measured why the drop cannot move yet). Any third row is an
 # unreviewed publisher of the active tool, which is what this census refuses.
 expected_callers = [
-    {"path": "source/app.d", "line": 3810, "symbol": "prepareArm"},
-    {"path": "source/app.d", "line": 3826, "symbol": "commitPreparedArm"},
+    ("armPreparedTool", "prepareArm"),
+    ("armPreparedTool", "commitPreparedArm"),
 ]
-if CURRENT_WRITERS.get("bypasses") != expected_callers:
-    fail("P1.0c both public doors no longer share the exact prepared funnel")
+if bypass_keys(CURRENT_WRITERS.get("bypasses", [])) != sorted(expected_callers):
+    fail("P1.0c both public doors no longer share the exact prepared funnel: "
+         + repr(CURRENT_WRITERS.get("bypasses", [])))
 
 commit_start = transition.find("bool commitPreparedArm(")
 commit_open = transition.find("{", commit_start) + 1

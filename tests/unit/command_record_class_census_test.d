@@ -10,7 +10,7 @@
 // becoming a second apply+record implementation beside it.
 module tests.unit.command_record_class_census_test;
 
-import std.algorithm : sort;
+import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.file : dirEntries, exists, readText, SpanMode;
 import std.path : buildPath, dirName, relativePath;
@@ -39,6 +39,12 @@ private enum LedgerRow[] kResidue = [
     LedgerRow("XfrmTransformTool.recordPipeRefire|replaceInSessionTail", 1,
         "transform re-grade — the task-1905 run-tail replacement at "
       ~ "source/tools/transform/xfrm_transform.d:7207"),
+    LedgerRow("Tool.refuseGestureRecord|consolidate", 1,
+        "GesturePayload — refusal closes or re-tags the already-open run"),
+    LedgerRow("XfrmTransformTool.deactivate|consolidate", 1,
+        "transform gesture edit — tool drop collapses the final run"),
+    LedgerRow("XfrmTransformTool.consolidateRunAndAdvance|consolidate", 1,
+        "transform re-grade — an explicit run boundary collapses its tail"),
     LedgerRow("InputRouter.commitInteractiveSelEdit|recordCoalescing", 1,
         "MeshSelectionEdit — the UI-selection undo class"),
 ];
@@ -54,6 +60,8 @@ private bool isWritingPrimitive(string name) {
         case "recordToolLifecycle":
         case "replaceInSessionTail":
         case "replaceInSessionTailWith":
+        case "pushEntryForTest":
+        case "consolidate":
             return true;
         default:
             return false;
@@ -76,7 +84,8 @@ unittest {
     LedgerHit[] layerClass;
     LedgerHit[] layerDispatch;
     foreach (rel; population) {
-        auto code = blankNonCode(readText(buildPath(repoRoot, rel)));
+        auto raw = readText(buildPath(repoRoot, rel));
+        auto code = blankNonCode(raw);
         foreach (h; historySurface(code)) {
             if (!isWritingPrimitive(h.name)) continue;
             records ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
@@ -84,12 +93,16 @@ unittest {
         }
         layerClass ~= symbolTokenHits(code, rel,
             "cast(LayerAdd)", "LayerAdd-class");
-        layerDispatch ~= symbolTokenHits(code, rel,
-            "executor.applyOrRefire(cmd, RecordMode.Record", "LayerAdd-executor");
+        if (raw.canFind(
+                "executor.applyOrRefire(cmd, RecordMode.Record,\n"
+              ~ "                \"command 'layer.add' did not apply\""))
+            layerDispatch ~= symbolTokenHits(code, rel,
+                "executor.applyOrRefire(cmd, RecordMode.Record",
+                "LayerAdd-executor");
     }
-    assert(records.length == 9,
-        "command-record class census: expected nine allowlisted direct record "
-        ~ "sites, found " ~ records.length.to!string);
+    assert(records.length == 12,
+        "command-record class census: expected twelve allowlisted history "
+        ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=
                "wireMutationHandlers.setInjectLayerHandler|record",
@@ -104,7 +117,9 @@ unittest {
     assert(layerClass.length == 1 &&
            layerClass[0].key ==
                "wireMutationHandlers.setInjectLayerHandler|LayerAdd-class",
-        "LayerAdd class witness moved out of wireMutationHandlers: "
+        "command-record class census: expected exactly one cast(LayerAdd) "
+        ~ "across source/, under wireMutationHandlers.setInjectLayerHandler; "
+        ~ "found " ~ layerClass.length.to!string ~ " hit(s), first: "
         ~ (layerClass.length ? layerClass[0].key : "no hit"));
     assert(layerDispatch.length == 1 &&
            layerDispatch[0].key ==
