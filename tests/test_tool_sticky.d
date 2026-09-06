@@ -19,17 +19,11 @@
 //      a CommandWrapper deformer (edge.slide) must NOT re-run its deform
 //      purely from the mechanical sticky restore. `edge.slide` is used
 //      (rather than xfrm.smooth/jitter/quantize) because those three have a
-//      config/forms/*.yaml entry and are therefore rendered by FormsPanel,
-//      which only calls Tool.evaluate() as a side effect of an actual
-//      `tool.attr` write (commands/tool/attr.d) -- never merely because the
-//      Tool Properties panel is open. `edge.slide` has no form, so it is
-//      still rendered by the legacy schema panel (property_panel.d), whose
-//      `drawProvider` calls `t.evaluate()` UNCONDITIONALLY every frame the
-//      panel is open (property_panel.d:72) -- the exact site the Stage CW
-//      root-cause cites. That is the only path that can turn a stale
-//      `paramsDirty` left over from a restore-fired `onParamChanged` into an
-//      observable extra deform without any further user action, so it is the
-//      mechanistically correct exemplar for a settle-only repro.
+//      config/forms/*.yaml entry, while `edge.slide` has no form and exercises
+//      the legacy schema route. Task 4590 moved the family's external-falloff
+//      observation out of panel drawing and into an explicit EditSession
+//      frame tick. The sticky restore must still leave paramsDirty clean when
+//      that tick arrives.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -256,15 +250,13 @@ unittest {
 
     // Reactivate -- restore fires onParamChanged("t") with the SAME sticky
     // value BEFORE activate()/reinitSession() runs. Without the Stage CW fix
-    // this leaves paramsDirty=true, which the property panel's UNCONDITIONAL
-    // per-frame evaluate() (property_panel.d:72) would consume on the next
-    // drawn frame -- re-running the slide a second time purely from having
+    // this leaves paramsDirty=true, which the family's explicit frame tick
+    // consumes -- re-running the slide a second time purely from having
     // reactivated the tool, with no further user action.
     cmd("tool.set edge.slide");
 
-    // Open the Tool Properties panel (hidden by default under --test) and let
-    // a few real frames render so evaluate() gets a chance to run.
-    cmd("ui.toolProperties show");
+    // Let a few real frames render. The check is deliberately independent of
+    // Tool Properties visibility: frame observation now belongs to lifecycle.
     Thread.sleep(300.msecs);
 
     cmd("tool.set edge.slide off");
@@ -279,4 +271,32 @@ unittest {
         "Stage CW: reactivate->drop must record NO undo entry (undo depth "
         ~ "was " ~ undoAfterFirstDrop.to!string ~ ", now " ~ undoFinal.to!string
         ~ ")");
+}
+
+// ---------------------------------------------------------------------------
+// 3. A CommandWrapper observes a falloff change on the explicit frame tick,
+//    with no new tool widget or tool.attr event and with Tool Properties shut.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    selectEdges([0]);
+
+    cmd("ui.toolProperties hide");
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.set edge.slide");
+    cmd("tool.attr edge.slide t 0.6");
+    auto unweighted = dumpVerts();
+
+    // This is a STAGE event, not a tool-value event. CommandWrapperTool is not
+    // a LiveEvalClient, so only its explicit frame consumer can notice the
+    // changed falloff packet set and rebuild the preview.
+    cmd("tool.pipe.attr falloff type radial");
+    Thread.sleep(300.msecs);
+    auto weighted = dumpVerts();
+    assert(!vertsEqual(unweighted, weighted),
+        "frame parameter witness: edge.slide must re-evaluate a falloff change "
+      ~ "without a new widget event or a visible Tool Properties panel");
+
+    cmd("tool.set edge.slide off");
+    cmd("tool.pipe.attr falloff type none");
 }

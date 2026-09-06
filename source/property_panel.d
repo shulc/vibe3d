@@ -3,6 +3,8 @@ module property_panel;
 import tool   : Tool;
 import params : ParamProvider;
 import params_widgets : drawParamWidget;
+import edit_session : EditSession, ParameterChangePhase, ParameterChangeSource;
+import toolpipe.stage : Stage;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -12,16 +14,15 @@ import d_imgui.imgui_h;
 //
 // Unlike ArgsDialog (which wraps a modal popup with OK/Cancel), this renders
 // the tool's params() list directly inside whatever ImGui window the caller
-// has already opened. On any value change it immediately calls
-// tool.onParamChanged(name) followed by tool.evaluate() so live-preview
-// tools (e.g. BevelTool in polygon mode) update the 3D viewport in the same
-// frame.
+// has already opened. On value changes it reports the written values as one
+// explicit batch to EditSession, which owns notification, evaluation and the
+// live-session gate (task 4590).
 //
 // No state is needed between frames: there is no pending/active bookkeeping.
 // One instance lives on App alongside argsDialog.
 //
 // Usage (inside Begin/End block):
-//   propertyPanel.draw(activeTool);
+//   propertyPanel.draw(activeTool, session);
 //   activeTool.drawProperties();   // tool-specific custom UI appended after
 // ---------------------------------------------------------------------------
 
@@ -64,16 +65,10 @@ class PropertyPanel {
     /// `renderParamsAsPanel()` returns false are skipped — those expose
     /// params() purely for the headless tool.attr path and own UI
     /// rendering via their drawProperties() override.
-    void draw(Tool tool) {
+    void draw(Tool tool, EditSession session) {
         if (tool is null) return;
         if (!tool.renderParamsAsPanel()) return;
-        drawProvider(tool);
-        // Tool gets the legacy preview re-evaluation; ParamProvider
-        // generic path doesn't (stages don't have an `evaluate()` —
-        // their setAttr / onParamChanged already publishes state).
-        // Drive it by re-iterating params and re-firing only when
-        // dirty, but cheaper to just call evaluate after the foreach.
-        // (drawProvider has already fired onParamChanged for changes.)
+        drawProvider(tool, session);
     }
 
     /// One collapsible SECTION of the Tool Properties column: its own id
@@ -124,14 +119,18 @@ class PropertyPanel {
     }
 
     /// Generic ParamProvider renderer — used by `draw(Tool)` and by
-    /// the per-stage Tool Properties iteration in app.d. Calls the
-    /// provider's `onParamChanged(name)` after each mutation.
-    void drawProvider(ParamProvider p) {
+    /// the per-stage Tool Properties iteration in ui/panels.d. The session
+    /// receives one ValueWritten phase per mutation and one BatchComplete.
+    void drawProvider(ParamProvider p, EditSession session) {
         if (p is null) return;
-        // Tools receive their changes through the scoped interactive notifier,
-        // so preview builders stay inert on raw headless `tool.attr` writes.
-        // Stages have no Tool-only interactive state.
+        assert(session !is null,
+            "PropertyPanel parameter writes require an EditSession");
         auto t = cast(Tool)p;
+        auto stage = cast(Stage)p;
+        bool changedInBatch;
+        auto batchSource = t !is null
+            ? ParameterChangeSource.InteractiveValue
+            : ParameterChangeSource.StageAttribute;
         foreach (ref par; p.params()) {
             if (par.hidden_) continue;
             // One id scope per row, keyed on the wire name (see module note):
@@ -148,15 +147,21 @@ class PropertyPanel {
             bool changed = drawParamWidget(par);
             if (disabled) ImGui.EndDisabled();
             if (changed) {
-                if (t !is null) t.notifyInteractiveParamChanged(par.name);
-                else p.onParamChanged(par.name);
+                auto source = batchSource;
+                if (stage !is null && stage.attrArmsSlot(par.name)) {
+                    source = ParameterChangeSource.SlotActivation;
+                    // Slot activation dominates a mixed stage batch: it ends
+                    // the held operation, so no sibling value may re-grade it.
+                    batchSource = source;
+                }
+                session.orchestrateParameterChange(
+                    p, par.name, source, ParameterChangePhase.ValueWritten);
+                changedInBatch = true;
             }
         }
-        // Tool subclasses also need an `evaluate()` re-run for live
-        // preview; that's the single Tool-only call site retained here.
-        // No-op when nothing changed in this frame — `evaluate` is cheap
-        // for tools that aren't previewing.
-        if (t !is null) t.evaluate();
+        if (changedInBatch)
+            session.orchestrateParameterChange(
+                p, "", batchSource, ParameterChangePhase.BatchComplete);
     }
 }
 

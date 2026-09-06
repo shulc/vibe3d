@@ -4051,10 +4051,10 @@ void drawToolPropertiesPanel(EditorApp app) {
                                 /*stageId=*/stage.id());
             } catch (Exception e) {
                 warnStageFormOnce(stage.id(), e.msg);
-                propertyPanel.drawProvider(stage);
+                propertyPanel.drawProvider(stage, session);
             }
         } else
-            propertyPanel.drawProvider(stage);
+            propertyPanel.drawProvider(stage, session);
         stage.drawProperties();
     }
     pushPanelChromeStyle();
@@ -4182,7 +4182,7 @@ void drawToolPropertiesPanel(EditorApp app) {
                     xf.drawProperties();
                 }
             } else {
-                propertyPanel.draw(activeTool);   // schema-driven params first
+                propertyPanel.draw(activeTool, session); // schema-driven params first
                 activeTool.drawProperties();      // tool-specific custom UI after
             }
             } // if (activeTool !is null)

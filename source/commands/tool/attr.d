@@ -6,6 +6,7 @@ import view;
 import editmode;
 import params : Param, injectParamsInto, paramToJson, wireArgs;
 import commands.tool.host : ToolHost;
+import edit_session : ParameterChangePhase, ParameterChangeSource;
 
 import std.json : JSONValue, JSONType;
 
@@ -130,27 +131,16 @@ class ToolAttrCommand : Command {
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;
         injectParamsInto(t.params(), pj);
-        // Mirror the property-panel contract (property_panel.d): fire
-        // onParamChanged + evaluate after a runtime attribute write so the
-        // tool can react (e.g. PenTool clamping currentPoint, mirroring the
-        // posX/Y/Z field into the in-progress vertex buffer; SphereTool
-        // re-permuting per-axis radii on axis change).
-        if (interactive_)
-            t.notifyInteractiveParamChanged(attrName_);
-        else
-            t.onParamChanged(attrName_);
-        t.evaluate();
-
-        // Faithful gated re-eval (re-eval plan D4): the value is injected
-        // BEFORE the trigger; the gate itself (hasLiveAttrEval / interactive
-        // opener / fresh-tool inertness, plus the value-attr vs pipe-config
-        // asymmetry) lives in EditSession.onValueAttrApplied (task 0428).
-        // tool.attr stays CmdFlags.SideEffect; the geometry change is
-        // recorded by the session's commitEdit at tool drop, not by this
-        // command. The session accessor is null only in bare-struct ToolHost
-        // test contexts — same defensive shape as the getActiveTool guards.
-        if (toolHost.session !is null)
-            toolHost.session().onValueAttrApplied(interactive_);
+        if (toolHost.session is null || toolHost.session() is null)
+            throw new Exception("tool.attr: EditSession not wired");
+        auto source = interactive_
+            ? ParameterChangeSource.InteractiveValue
+            : ParameterChangeSource.ScriptedValue;
+        auto session = toolHost.session();
+        session.orchestrateParameterChange(
+            t, attrName_, source, ParameterChangePhase.ValueWritten);
+        session.orchestrateParameterChange(
+            t, "", source, ParameterChangePhase.BatchComplete);
         return true;
     }
 }

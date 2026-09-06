@@ -34,6 +34,8 @@ module edit_session;
 import tool            : Tool;
 import command         : Command;
 import command_history : CommandHistory;
+import params          : ParamProvider;
+import toolpipe.stage  : Stage;
 
 // Computed classification of the session protocol's current phase. There is
 // deliberately NO stored state machine mirroring this: the truth about an
@@ -45,6 +47,23 @@ enum SessionPhase {
     NoTool,     // no active tool
     Idle,       // active tool, no uncommitted edit
     EditOpen,   // active tool holding an open live edit
+}
+
+/// Why a parameter value changed.  Source is explicit because an interactive
+/// value may open a live session, a scripted value may not, and a slot
+/// activation must end a held operation before any stage re-evaluation.
+enum ParameterChangeSource {
+    InteractiveValue,
+    ScriptedValue,
+    StageAttribute,
+    SlotActivation,
+}
+
+/// Where a caller is in one logical widget/command batch.  ValueWritten may
+/// occur more than once; BatchComplete occurs once and owns evaluation.
+enum ParameterChangePhase {
+    ValueWritten,
+    BatchComplete,
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +298,80 @@ final class EditSession {
 
     // ----- live-eval (re-eval plan D4) --------------------------------------
 
+    /// Orchestrate one parameter-change batch after the widget or command has
+    /// already written the value.  Call ValueWritten for every actual write,
+    /// then BatchComplete exactly once.  This keeps notifications per value
+    /// while grouping evaluate/live-session work per user gesture.
+    ///
+    /// A Stage command whose `setAttr` already delivered its notification and
+    /// slot epoch starts at BatchComplete.  The legacy pointer-bound stage
+    /// panel uses both phases; ValueWritten supplies the notification and,
+    /// for a slot-selector row, the epoch that `setAttr` would have supplied.
+    void orchestrateParameterChange(ParamProvider provider, string name,
+            ParameterChangeSource source, ParameterChangePhase phase) {
+        final switch (phase) {
+            case ParameterChangePhase.ValueWritten:
+                assert(provider !is null,
+                    "parameter ValueWritten requires its provider");
+                final switch (source) {
+                    case ParameterChangeSource.InteractiveValue: {
+                        auto t = cast(Tool)provider;
+                        assert(t !is null,
+                            "interactive parameter source requires a Tool");
+                        t.notifyInteractiveParamChanged(name);
+                        return;
+                    }
+                    case ParameterChangeSource.ScriptedValue: {
+                        auto t = cast(Tool)provider;
+                        assert(t !is null,
+                            "scripted parameter source requires a Tool");
+                        t.onParamChanged(name);
+                        return;
+                    }
+                    case ParameterChangeSource.StageAttribute:
+                        assert(cast(Stage)provider !is null,
+                            "stage attribute source requires a Stage");
+                        provider.onParamChanged(name);
+                        return;
+                    case ParameterChangeSource.SlotActivation: {
+                        auto stage = cast(Stage)provider;
+                        assert(stage !is null,
+                            "slot activation source requires a Stage");
+                        stage.onParamChanged(name);
+                        stage.noteSlotArmed();
+                        return;
+                    }
+                }
+
+            case ParameterChangePhase.BatchComplete:
+                final switch (source) {
+                    case ParameterChangeSource.InteractiveValue:
+                    case ParameterChangeSource.ScriptedValue: {
+                        auto t = cast(Tool)provider;
+                        assert(t !is null,
+                            "value parameter batch requires a Tool");
+                        // Notification already ran for every write.  Evaluate
+                        // the grouped value set before a live replay reads it.
+                        t.evaluate();
+                        applyValueToLiveSession(
+                            source == ParameterChangeSource.InteractiveValue);
+                        return;
+                    }
+                    case ParameterChangeSource.StageAttribute:
+                        applyStageToLiveSession();
+                        return;
+                    case ParameterChangeSource.SlotActivation:
+                        // Ending the held operation must precede and suppress
+                        // re-evaluation.  If there was no new epoch to consume,
+                        // preserve the ordinary stage-change live gate.
+                        auto sa = cast(SlotActivationClient) tool_();
+                        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
+                        applyStageToLiveSession();
+                        return;
+                }
+        }
+    }
+
     // A `tool.attr` VALUE write has been injected onto the active tool
     // (injectParamsInto + onParamChanged + evaluate already ran). Decide
     // whether it re-runs a live session. The value is injected BEFORE this
@@ -294,11 +387,18 @@ final class EditSession {
     //     every existing HTTP tool.attr golden depends on this).
     // A tool that is not a LiveEvalClient keeps the former base-Tool default:
     // hasLiveAttrEval()==false and reEvaluate() a no-op — i.e. nothing.
-    void onValueAttrApplied(bool interactive) {
+    private void applyValueToLiveSession(bool interactive) {
         auto lc = cast(LiveEvalClient) tool_();
         if (lc is null) return;
         if (lc.hasLiveAttrEval())  lc.reEvaluate();
         else if (interactive)      lc.reEvaluate();
+    }
+
+    // Compatibility entry for command families outside task 4590's ownership.
+    // New value writers use orchestrateParameterChange so notification,
+    // evaluation and this gate cannot be reordered at separate call sites.
+    void onValueAttrApplied(bool interactive) {
+        applyValueToLiveSession(interactive);
     }
 
     // A pipe-stage config edit (tool.pipe.attr / falloff.preset / falloff
@@ -310,17 +410,17 @@ final class EditSession {
     // session stays inert. DELIBERATELY gated on the narrower hasLiveEval()
     // (not hasLiveAttrEval()) — see LiveEvalClient.hasLiveAttrEval for the
     // falloff-refire entry-count contract this asymmetry preserves.
-    void onStageConfigChanged() {
-        // Task 0791 — ask FIRST whether this edit ACTIVATED a slot. If it did,
-        // the tool has ended its held run and the result is frozen at the pipe
-        // state that produced it, so the re-evaluate below (which is the
-        // re-weigh) must not run. Ordering is the whole point: this path is
-        // synchronous with the command, while the tool's own idle poll is a
-        // frame later — too late to un-recompute geometry.
-        auto sa = cast(SlotActivationClient) tool_();
-        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
+    private void applyStageToLiveSession() {
         auto lc = cast(LiveEvalClient) tool_();
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate();
+    }
+
+    // Compatibility entry for stage commands outside task 4590's ownership.
+    // Their Stage.setAttr call has already published notification/slot epoch.
+    void onStageConfigChanged() {
+        auto sa = cast(SlotActivationClient) tool_();
+        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
+        applyStageToLiveSession();
     }
 
     // ----- refire (undo/redo migration P4) ----------------------------------
