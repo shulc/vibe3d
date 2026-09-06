@@ -358,12 +358,13 @@ final class EditSession {
                         return;
                     }
                     case ParameterChangeSource.StageAttribute:
-                        applyStageToLiveSession();
-                        return;
                     case ParameterChangeSource.SlotActivation:
-                        // Ending the held operation must precede and suppress
-                        // re-evaluation.  If there was no new epoch to consume,
-                        // preserve the ordinary stage-change live gate.
+                        // Task 0791 — ask FIRST whether this edit activated a
+                        // slot. The request is unconditional because the
+                        // stage's event counter, not this caller's source
+                        // label, is authoritative. Ordering is the entire
+                        // point: re-evaluation is the re-weigh and cannot run
+                        // before a held operation learns that it must end.
                         auto sa = cast(SlotActivationClient) tool_();
                         if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
                         applyStageToLiveSession();
@@ -394,13 +395,6 @@ final class EditSession {
         else if (interactive)      lc.reEvaluate();
     }
 
-    // Compatibility entry for command families outside task 4590's ownership.
-    // New value writers use orchestrateParameterChange so notification,
-    // evaluation and this gate cannot be reordered at separate call sites.
-    void onValueAttrApplied(bool interactive) {
-        applyValueToLiveSession(interactive);
-    }
-
     // A pipe-stage config edit (tool.pipe.attr / falloff.preset / falloff
     // add/remove) has been published to the stage. Mid-session immediacy:
     // when the tool ALREADY has a live evaluation session, re-run its apply
@@ -418,6 +412,12 @@ final class EditSession {
     // Compatibility entry for stage commands outside task 4590's ownership.
     // Their Stage.setAttr call has already published notification/slot epoch.
     void onStageConfigChanged() {
+        // Task 0791 — ask FIRST whether this edit activated a slot. If it did,
+        // the tool has ended its held run and the result is frozen at the pipe
+        // state that produced it, so the re-evaluate below (the re-weigh) must
+        // not run. Ordering is the entire point: this path is synchronous with
+        // the command, while the idle poll is a frame later and cannot undo an
+        // already-recomputed geometry result.
         auto sa = cast(SlotActivationClient) tool_();
         if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
         applyStageToLiveSession();

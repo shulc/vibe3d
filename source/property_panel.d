@@ -128,9 +128,10 @@ class PropertyPanel {
         auto t = cast(Tool)p;
         auto stage = cast(Stage)p;
         bool changedInBatch;
-        auto batchSource = t !is null
+        auto defaultSource = t !is null
             ? ParameterChangeSource.InteractiveValue
             : ParameterChangeSource.StageAttribute;
+        bool slotActivationInBatch;
         foreach (ref par; p.params()) {
             if (par.hidden_) continue;
             // One id scope per row, keyed on the wire name (see module note):
@@ -147,12 +148,16 @@ class PropertyPanel {
             bool changed = drawParamWidget(par);
             if (disabled) ImGui.EndDisabled();
             if (changed) {
-                auto source = batchSource;
+                // Classify this row from the provider every time. A slot row
+                // dominates only BatchComplete; it must not relabel a later
+                // ordinary row (for example falloff `axis`) as another slot
+                // activation merely because both changed in one draw.
+                auto source = defaultSource;
                 if (stage !is null && stage.attrArmsSlot(par.name)) {
                     source = ParameterChangeSource.SlotActivation;
                     // Slot activation dominates a mixed stage batch: it ends
                     // the held operation, so no sibling value may re-grade it.
-                    batchSource = source;
+                    slotActivationInBatch = true;
                 }
                 session.orchestrateParameterChange(
                     p, par.name, source, ParameterChangePhase.ValueWritten);
@@ -161,7 +166,9 @@ class PropertyPanel {
         }
         if (changedInBatch)
             session.orchestrateParameterChange(
-                p, "", batchSource, ParameterChangePhase.BatchComplete);
+                p, "", slotActivationInBatch
+                    ? ParameterChangeSource.SlotActivation : defaultSource,
+                ParameterChangePhase.BatchComplete);
     }
 }
 
