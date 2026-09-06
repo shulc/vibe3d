@@ -38,7 +38,7 @@ public:
     // an open refire bracket). Task 1520 needs the answer: the UI adapter must
     // tell "refused" from "applied" WITHOUT a throw, because the throw is what
     // killed the editor from inside an ImGui draw.
-    bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg = null) {
+    bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
         // Post-mode finalize (task 0463, SDK-derived — the reference's
         // MODEL command class + its command-system post-mode listener; see
         // toolcards/_framework/shift_apply_rearm.md "Command-fired post-mode

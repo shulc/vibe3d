@@ -2455,7 +2455,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                         // unsaved-work prompt" are different answers and only
                         // the first one is a notice.
                         runUiCommand(cmd, RecordMode.Coalescing, id);
-                    } else if (!executor.applyOrRefire(cmd, RecordMode.Coalescing)) {
+                    } else if (!executor.applyOrRefire(cmd, RecordMode.Coalescing, null)) {
                         refused(cmd, id, origin);
                     } else {
                         applied = true;

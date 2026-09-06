@@ -922,7 +922,7 @@ coalescing_doors = {
         "case RecordMode.Coalescing: history.recordCoalescing(cmd); break;",),
     "source/http_providers.d": (
         "runUiCommand(cmd, RecordMode.Coalescing, id);",
-        "executor.applyOrRefire(cmd, RecordMode.Coalescing)",),
+        "executor.applyOrRefire(cmd, RecordMode.Coalescing, null)",),
 }
 for relative, fingerprints in coalescing_doors.items():
     source = (ROOT / relative).read_text()

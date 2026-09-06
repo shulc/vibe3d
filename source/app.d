@@ -4324,7 +4324,7 @@ void main(string[] args) {
     // throw at, and a throw from inside an ImGui draw kills the process.
     bool runUiCommandForced(Command cmd, RecordMode mode) {
         if (cmd is null) return false;
-        return executor.applyOrRefire(cmd, mode);
+        return executor.applyOrRefire(cmd, mode, null);
     }
 
     // ---- THE single user-command entry point (tasks 1520 + 1521) ---------
@@ -6587,7 +6587,7 @@ void main(string[] args) {
                 // frame, strictly more correct than the old hardcoded
                 // layout.vp* the SDL resize handler stamps (that handler's
                 // write remains a pre-first-frame / --test fallback only; see
-                // its comment at handleWindowEvent, ~app.d:5537-5548, and the
+                // its comment at input_router.d:385-418, and the
                 // per-cell-loop comment below, updated to match).
                 vpm.lx = cast(int)hostPos.x;   vpm.ly = cast(int)hostPos.y;
                 vpm.lw = cast(int)hostAvail.x; vpm.lh = cast(int)hostAvail.y;

@@ -26,8 +26,8 @@ import mesh_selsets;
 // precedent), not a thrown Exception: every one of these five commands has
 // a button (config/buttons.yaml), reached through the UI's plain runCommand
 // dispatch (throwMsg = null) — a throw there unwinds past the args dialog's
-// own popup-close call. `CommandExecutor.applyOrRefire` still synthesizes an
-// Exception off `refusalReason()` for HTTP/scripted callers, so the
+// own popup-close call. `http_providers.refused` still synthesizes an Exception
+// off `refusalReason()` for HTTP/scripted callers, so the
 // measured "nothing changes, caller finds out" law holds there unchanged;
 // only a button's first click no longer crashes on an empty name field or
 // on opening the dialog in item mode (review blocker, task 1060).
@@ -108,8 +108,8 @@ import mesh_selsets;
 /// own popup-close call, same hazard `commands/mesh/edge_crease.d` already
 /// documents and fixes for `mesh.edgeCrease.*`). Every caller below feeds
 /// the result into `baseRefusal_` + `return false`; the HTTP path still
-/// errors on it, because `CommandExecutor.applyOrRefire` raises its OWN
-/// Exception off `refusalReason()` when a command refuses — this changes
+/// errors on it, because `http_providers.refused` raises its OWN Exception off
+/// `refusalReason()` when a command refuses — this changes
 /// the MECHANISM, not the measured "throw, change nothing" law for
 /// `SelType.Item` (`g6_mode_gate`).
 private string domainOf(SelType t, out SetDomain dom) {
