@@ -2658,6 +2658,10 @@ string hiddenReadoutCompact(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
 
 void drawSidePanel(EditorApp app) {
     with (app) {
+    // This entry is unconditional once per UI frame, unlike Tool Properties.
+    // Tick opt-in parameter observers here so external inputs such as falloff
+    // remain visible even while that optional panel is closed (task 4590).
+    session.tickParameterEvaluation();
     pushPanelChromeStyle();
     scope(exit) popPanelChromeStyle();
     // In --test: fixed rect + immovable flags reproduce today's exact
