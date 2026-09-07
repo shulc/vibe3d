@@ -8,6 +8,15 @@
 // count at the boundary is therefore exactly +2; routing the close as RunClose
 // would merge the two banks into one row.
 //
+// DISPATCH FACT: with T enabled, the wrapper offers an off-gizmo press to Move
+// before Rotate or Scale, and Move consumes the relocate. Consequently the
+// Rotate/Scale relocate branches — including their
+// commitSessionAtRotateBoundaryIfOpen / commitSessionAtScaleBoundaryIfOpen
+// callbacks — are unreachable in this composed preset. They are defensive for
+// a future dispatch order or a T-off preset, where no Move edit can be open.
+// The reachable cross-slot direction pinned here is therefore a Move relocate
+// closing the wrapper edit whose final provenance is Rotate.
+//
 // NO selection ⇒ whole-mesh moving set, pivot at the origin: a +X arrow drag
 // moves the whole cube and RZ=30 actually rotates it (a non-empty wrapper
 // edit). All gestures drive the MAIN loop via drag_helpers.buildDragLog +

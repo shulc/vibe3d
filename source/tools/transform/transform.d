@@ -865,10 +865,11 @@ protected:
         // is no gesture and no exclusion, so the displacement has to become
         // visible to those caches: one UNCONFINED publish, here.
         //
-        // WHY HERE. This is the single chokepoint every transform
-        // `commitEdit` override routes through (base, Rotate, Scale and the
-        // wrapper's item branch all end in `recordCommit`), and it is reached
-        // only when a real edit was built — a no-op gesture returns before it.
+        // WHY HERE. The base, Rotate and Scale `commitEdit` overrides end in
+        // `recordCommit`. Wrapper-owned geometry and item commits instead end
+        // in `recordTransformCommand`, whose recording arms call this helper.
+        // Thus it is reached only when a real edit was built — a no-op gesture
+        // returns before it.
         // FOR THIS PUBLISH that is right: nothing moved, so there is nothing
         // for the settled-geometry caches to re-derive. It is NOT a
         // justification for the early return itself, and this comment used to
