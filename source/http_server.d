@@ -606,7 +606,8 @@ class HttpServer {
     // still covered by /api/viewport/display state assertions, which need no
     // render.
     private alias ViewportProbeProvider =
-        string delegate(int cell, string points, bool wantHash);
+        string delegate(int cell, string points, bool wantHash,
+                        bool composedFrame);
     private ViewportProbeProvider viewportProbeProvider;
 
     // ----- /api/images provider (task 0612 Stage 1) ------------------------
@@ -770,7 +771,12 @@ class HttpServer {
     struct VpDisplayResp { string result; string error; }
     private MainThreadBridge!(VpDisplayReq, VpDisplayResp) vpDisplayBridge;
 
-    struct VpProbeReq  { int cell = -1; string points; bool wantHash; }
+    struct VpProbeReq  {
+        int cell = -1;
+        string points;
+        bool wantHash;
+        bool composedFrame;
+    }
     struct VpProbeResp { string result; string error; }
     private MainThreadBridge!(VpProbeReq, VpProbeResp) vpProbeBridge;
 
@@ -1148,7 +1154,9 @@ class HttpServer {
                     resp.error = "viewport-probe provider not set";
                 } else {
                     try {
-                        resp.result = viewportProbeProvider(req.cell, req.points, req.wantHash);
+                        resp.result = viewportProbeProvider(
+                            req.cell, req.points, req.wantHash,
+                            req.composedFrame);
                         resp.error  = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1390,6 +1398,8 @@ class HttpServer {
 
     /// GET /api/viewport/probe?cell=N[&x=&y=][&points=x,y;x,y][&hash=1] —
     /// glReadPixels against a cell's FBO colour attachment (task 0559).
+    /// `target=frame` instead reads the already-submitted default backbuffer
+    /// so tests can witness ImGui panel drawing from pixels.
     /// Runs on the main thread (GL context). Coordinates are FBO pixels with
     /// the origin at the TOP-LEFT, matching screen/event coordinates; the
     /// provider flips to GL's bottom-up convention. See the provider alias
@@ -3020,6 +3030,8 @@ class HttpServer {
             }
             vpProbeBridge.req.points   = _pts;
             vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
+            vpProbeBridge.req.composedFrame =
+                parseQueryString(request.path, "target", "") == "frame";
             vpProbeBridge.resp.result  = "";
             vpProbeBridge.resp.error   = "";
             if (!vpProbeBridge.submitAndWait())

@@ -1178,37 +1178,70 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // Serviced during tickAll(), which runs BEFORE this frame's scene
         // render — so a probe reads the last COMPLETED frame, which is what
         // you want. Callers that just changed something must let a frame pass.
-        httpServer.setViewportProbeProvider((int cell, string points, bool wantHash) {
+        httpServer.setViewportProbeProvider((int cell, string points,
+                                             bool wantHash,
+                                             bool composedFrame) {
             import bindbc.opengl;
             import std.array  : appender, split;
             import std.conv   : to;
             import std.format : format;
             import std.string : strip;
 
-            if (cell < 0) cell = vpm.activeId;
-            if (cell < 0 || cell >= cast(int)vpm.views.length)
-                return format(`{"error":"cell %d out of range"}`, cell);
+            int W, H;
+            bool renders;
+            GLuint readFbo;
+            GLenum readBuffer;
+            string head;
+            if (composedFrame) {
+                // `tickAll()` services this provider before the current
+                // frame's draw. Plain --test never swaps, so GL_BACK still
+                // contains the last COMPLETED ImGui submission. This is the
+                // pixel channel for frame-phase witnesses; it deliberately
+                // says nothing about presentation to the compositor.
+                GLint[4] frameViewport;
+                glGetIntegerv(GL_VIEWPORT, frameViewport.ptr);
+                W = frameViewport[2];
+                H = frameViewport[3];
+                renders = true;
+                readFbo = 0;
+                readBuffer = GL_BACK;
+                head = format(
+                    `{"target":"frame","renders":true,"w":%d,"h":%d`,
+                    W, H);
+            } else {
+                if (cell < 0) cell = vpm.activeId;
+                if (cell < 0 || cell >= cast(int)vpm.views.length)
+                    return format(`{"error":"cell %d out of range"}`, cell);
 
-            Viewport3D cv = vpm.views[cell];
-            // Same predicate the render loop and /api/viewport/display use —
-            // one implementation, so the flag cannot claim a cell rendered
-            // when the loop skipped it (see viewport.testRendersCell).
-            immutable bool renders =
-                testMode ? testRendersCell(cell, vpm.activeId, vpm.cellCount) : true;
-            immutable int W = cv.fbo.w;
-            immutable int H = cv.fbo.h;
-            immutable string head = format(
-                `{"cell":%d,"renders":%s,"w":%d,"h":%d`,
-                cell, renders ? "true" : "false", W, H);
+                Viewport3D cv = vpm.views[cell];
+                // Same predicate the render loop and /api/viewport/display use —
+                // one implementation, so the flag cannot claim a cell rendered
+                // when the loop skipped it (see viewport.testRendersCell).
+                renders = testMode
+                    ? testRendersCell(cell, vpm.activeId, vpm.cellCount)
+                    : true;
+                W = cv.fbo.w;
+                H = cv.fbo.h;
+                readFbo = cv.fbo.fbo;
+                readBuffer = GL_COLOR_ATTACHMENT0;
+                head = format(
+                    `{"cell":%d,"renders":%s,"w":%d,"h":%d`,
+                    cell, renders ? "true" : "false", W, H);
+            }
 
-            if (cv.fbo.fbo == 0 || W <= 0 || H <= 0)
-                return head ~ `,"points":[],"error":"cell has no framebuffer yet"}`;
+            if ((!composedFrame && readFbo == 0) || W <= 0 || H <= 0)
+                return head ~ `,"points":[],"error":"target has no framebuffer yet"}`;
 
             GLint prevRead = 0;
+            GLint prevReadBuffer = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, cv.fbo.fbo);
-            glReadBuffer(GL_COLOR_ATTACHMENT0);
-            scope(exit) glBindFramebuffer(GL_READ_FRAMEBUFFER, cast(GLuint)prevRead);
+            glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+            glReadBuffer(readBuffer);
+            scope(exit) {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, cast(GLuint)prevRead);
+                glReadBuffer(cast(GLenum)prevReadBuffer);
+            }
 
             auto buf = appender!string();
             buf.put(head);
