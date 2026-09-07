@@ -40,7 +40,7 @@ import std.string  : strip;
 import core.time   : MonoTime, Duration;
 
 import mesh : Mesh, MeshKey, MeshTermMutation, edgeKey;
-import mesh_dirty : MeshTermGeomEpoch;
+import mesh_dirty : MeshTermGeomEpoch, noteMeshChange;
 import math : Vec3;
 import remesh.region_stitch : stitchRegion, StitchResult;
 
@@ -884,7 +884,10 @@ unittest {
         assert(!job.sourceMatches(replacement),
                "equal counters on another mesh address must not alias the source");
         m.vertices[0].x += 0.25f;
-        m.publishChange(MeshEditScope.Position);
+        // A bare module test has no app-owned document filter, so publishChange
+        // deliberately delivers nothing. Drive the listener body directly,
+        // as mesh_dirty's headless-test contract requires.
+        noteMeshChange(cast(size_t) &m, MeshEditScope.Position);
         assert(!job.sourceMatches(m),
                "a version-silent position publication must stale the source snapshot");
         waitUntilDone(job, 5.seconds);
