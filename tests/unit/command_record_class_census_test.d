@@ -3,17 +3,23 @@
 // over the SDK tree returned zero files before this test was added.
 //
 // The receiver side is derived, not a spelling list: discover every aggregate
-// that declares undoStack/redoStack, treat ANY field mention (plus indirect
-// delegate/mixin syntax) as a proposal, then close transitively over direct or
-// address-taken member edges. `blankNonCode` removes comments AND literals
-// before brace matching. The receiver ledger disposes every public proposal as
-// either a caller-tracked history primitive or an explicit read/navigation
-// excuse; an unclassified proposal fails. `blockEnd` and `refireBegin` really
-// reach record and are entry primitives. `blockBegin` is audited beside its
-// peer but only opens grouping state. The caller side remains the exact
-// symbol|primitive ledger. In particular, the LayerAdd built by
-// `/api/test/layer` must cross CommandExecutor instead of becoming a second
-// apply+record implementation beside it.
+// that declares undoStack/redoStack, treat ANY field mention (plus delegate or
+// mixin syntax inside that member's own body) as a proposal, then close
+// transitively over direct or address-taken member edges. Named residual: a
+// member calling another member injected into the same class by a mixin
+// template is not followed through the real mixin graph. This is safe today:
+// source/command_history.d has no live mixin, and the gate's actor is an
+// external caller, which cannot inject a member into the class. A future mixin
+// in that file is the trigger to extend and mutation-test this arm.
+// `blankNonCode` removes comments AND literals before brace matching. The
+// receiver ledger disposes every public proposal as either a caller-tracked
+// history primitive or an explicit read/navigation excuse; an unclassified
+// proposal fails. `blockEnd` and `refireBegin` really reach record and are
+// entry primitives. `blockBegin` is audited beside its peer but only opens
+// grouping state. The caller side remains the exact symbol|primitive ledger.
+// In particular, the LayerAdd built by `/api/test/layer` must cross
+// CommandExecutor instead of becoming a second apply+record implementation
+// beside it.
 module tests.unit.command_record_class_census_test;
 
 import std.algorithm : canFind, sort;
