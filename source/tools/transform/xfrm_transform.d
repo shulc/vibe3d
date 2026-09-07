@@ -714,6 +714,10 @@ public:
     private Vec3 attrBaseTranslate = Vec3(0, 0, 0);
     private Vec3 attrBaseRotate    = Vec3(0, 0, 0);
     private Vec3 attrBaseScale     = Vec3(1, 1, 1);
+    // Payload provenance for the single wrapper-owned open edit. This labels
+    // and hooks a panel/boundary close; EditSession remains the only lifecycle
+    // state machine.
+    private DragBank editBank = DragBank.None;
 
     // F3a — per-bank gesture records (see the `GestureRecord` doc comment
     // above for the two-known-bit / runStart-vs-gestureStart rationale). One
@@ -891,15 +895,13 @@ public:
 
     override string name() const { return "Transform"; }
 
-    // Forward the undo bindings into each sub-tool so their drags
-    // record on the same global history.
+    // The wrapper is the sole history/payload owner.  Embedded banks receive
+    // input state only; in particular they never receive CommandHistory or
+    // undo factories, so they cannot accidentally emit a second record.
     override public void setUndoBindings(CommandHistory h,
                                   VertexEditFactory factory,
                                          MorphEditFactory morphFactory = null) {
         super.setUndoBindings(h, factory, morphFactory);
-        moveSub.setUndoBindings(h, factory, morphFactory);
-        rotateSub.setUndoBindings(h, factory, morphFactory);
-        scaleSub.setUndoBindings(h, factory, morphFactory);
     }
 
     // Enabled sub-tools in bank order T → R → S, backed by a fixed member
@@ -938,8 +940,6 @@ public:
         //     setRecordViaInSession() mirror.
         if (history !is null) history.nextRun();
         recordViaInSession = true;
-        if (flagR) rotateSub.setRecordViaInSession(true);
-        if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank     = DragBank.None;
         resetRun();                   // apply-path Phase 2: fresh geometry run (+ P-F frozen frame)
         lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
@@ -1040,8 +1040,6 @@ public:
             ref PreparedXfrmActivationResetImage image) nothrow @nogc {
         if (!image.valid) return;
         recordViaInSession = true;
-        if (flagR) rotateSub.setRecordViaInSession(true);
-        if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank = DragBank.None;
         runBaselineValid = false;
         runFrameValid = false;
@@ -1079,9 +1077,6 @@ public:
         runBaselineValid = hadRun; runFrameValid = morphRunValid_ = true;
         itemBaselineValid = runGpuBufferDirty = true;
         recordViaInSession = false;
-        moveSub.setRecordViaInSession(moveRoute);
-        rotateSub.setRecordViaInSession(rotateRoute);
-        scaleSub.setRecordViaInSession(scaleRoute);
         currentRunBank = DragBank.Scale;
         lastAcenMode = 4; lastSlotSigValid = true;
         frame.right = Vec3(2, 0, 0); frame.up = Vec3(0, 3, 0);
@@ -1158,11 +1153,9 @@ public:
             bool moveRoute, bool rotateRoute, bool scaleRoute)
             const nothrow @nogc {
         return recordViaInSession &&
-            moveSub.recordViaInSessionForTest() == moveRoute &&
-            rotateSub.recordViaInSessionForTest() ==
-                (flagR ? true : rotateRoute) &&
-            scaleSub.recordViaInSessionForTest() ==
-                (flagS ? true : scaleRoute) &&
+            !moveSub.recordViaInSessionForTest() &&
+            !rotateSub.recordViaInSessionForTest() &&
+            !scaleSub.recordViaInSessionForTest() &&
             currentRunBank == DragBank.None && !runBaselineValid &&
             !runFrameValid && !morphRunValid_ && !itemBaselineValid &&
             !runGpuBufferDirty && lastAcenMode == -1 && !lastSlotSigValid &&
@@ -1194,6 +1187,7 @@ public:
             headlessRotate = Vec3(0, 0, 0);
         }
         activeDrag                = null;
+        editBank                 = DragBank.None;
         dragBaseline.length       = 0;
         resetRun();                          // apply-path Phase 2: fresh run (+ P-F frozen frame)
         moveDragFastPath          = false;
@@ -1317,8 +1311,6 @@ public:
         if (image.flagR) rotateSub.installPreparedScalarDeactivate(image.rotate);
         if (image.flagS) scaleSub.installPreparedEmbeddedDeactivate(image.scale);
         recordViaInSession = false;
-        if (image.flagR) rotateSub.setRecordViaInSession(false);
-        if (image.flagS) scaleSub.setRecordViaInSession(false);
         currentRunBank = DragBank.None;
         lastAppliedGestureMutationVersion = ulong.max;
         armedUndoEpoch = ulong.max;
@@ -1345,8 +1337,6 @@ public:
         // (wrapper + R/S sub-tools, the symmetric clear of the activate() set).
         if (history !is null) history.consolidate(history.currentRunId);
         recordViaInSession   = false;
-        if (flagR) rotateSub.setRecordViaInSession(false);
-        if (flagS) scaleSub.setRecordViaInSession(false);
         currentRunBank       = DragBank.None;
         // Tool drop: no live gesture, no re-grade anchor carries to the next
         // activation (resetTransientState also clears these on (re)activate).
@@ -2984,8 +2974,6 @@ public:
             // Cross-slot (symmetric): an element-pick relocate, like any
             // relocate, commits EVERY open session — close any open R/S sub-tool
             // session too (composed preset). No-op in single-mode.
-            rotateSub.commitSessionIfOpen();
-            scaleSub.commitSessionIfOpen();
             // Hard run boundary (addendum A2): the element-pick relocate ends the
             // open run — consolidate its in-session tail into one surviving
             // entry, then open a fresh run id. Gated on history.runOpen() (the
@@ -3090,8 +3078,6 @@ public:
                 (editIsOpen() || rotateSub.publicEditIsOpen()
                               || scaleSub.publicEditIsOpen())) {
                 if (editIsOpen()) commitEdit("Move");   // session-close (no-op once self-committed)
-                rotateSub.commitSessionIfOpen();
-                scaleSub.commitSessionIfOpen();
             }
             // Run-close: verbatim re-stage of the current pin (NOT a relocate —
             // pin unchanged) so the next gesture freezes the picked anchor, plus
@@ -3242,8 +3228,6 @@ public:
         // a gap of the same shape as the one this task closes.)
         if (editIsOpen())
             commitEdit("Move");
-        rotateSub.commitSessionIfOpen();
-        scaleSub.commitSessionIfOpen();
         if (history !is null && history.runOpen()) {
             closeRunBoundary();
             // Same reset as the selection boundary: a later config change
@@ -3768,7 +3752,7 @@ public:
     //     `commitEdit("Move")` at deactivate / selection change.
     void beginMoveDragSession(ref VectorStack vts) {
         beginDragSessionPrologue(vts);
-        beginEdit();   // idempotent — opens tool-session edit on first call
+        beginEditForBank(DragBank.Move);
 
         // `cachedVp` is already up to date from the most recent
         // `draw()` call (every frame, before any event dispatch);
@@ -3850,7 +3834,7 @@ public:
         // holding `itemTargets` and the item undo factory, so item recording
         // routes through the WRAPPER's own beginEdit()/commitEdit() instead,
         // mirroring how the Move bank already does it.
-        if (itemSubjectActive()) beginEdit();
+        beginEditForBank(DragBank.Rotate);
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2/3b): a
         // cross-bank rotate (e.g. after a held move) reuses the run baseline +
@@ -3971,7 +3955,7 @@ public:
         // WRAPPER's own beginEdit()/commitEdit() (see beginRotateDragSession's
         // matching comment for the full reasoning); `scaleSub`'s own vertex
         // session stays a harmless no-op in item mode.
-        if (itemSubjectActive()) beginEdit();
+        beginEditForBank(DragBank.Scale);
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
         // cross-bank scale reuses the run baseline + resets ONLY run.s,
@@ -4680,9 +4664,7 @@ public:
         bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
         bool rotSettle = rotGestureMoved && acenSettleAllowed()
                       && (pressPlacesCenter() || currentFalloff(vts).enabled);
-        Pin softEnd = rotSettle
-            ? settleGestureCenter(rotateSub.handler.center)
-            : Pin.init;
+        if (rotSettle) settleGestureCenter(rotateSub.handler.center);
         // COMMIT B — persist the rotate bank's gesture-end rendered basis
         // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
         // gizmo HOLDS it instead of snapping back to the world-snapped live
@@ -4701,26 +4683,13 @@ public:
         // fires and the idle renderBasis keeps the settled (rotated) basis —
         // without this restore the gizmo would render the rotated frame over
         // the reverted-to-pristine geometry.
-        GestureFrame frameEnd = frame;
         // F3b — single chokepoint composing the {apply, revert} pair from
         // rotateRec + this gesture's live END state (Rotate never restores
         // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
         // harmless placeholder). Consumes (clears) rotateRec.runKnown.
-        auto gh = buildGestureHooks(DragBank.Rotate, xfEnd, frameEnd,
-                                     softEnd, Pin.init);
-        rotateSub.wrapperFieldApplyHook  = gh.apply;
-        rotateSub.wrapperFieldRevertHook = gh.revert;
-        rotateSub.commitGesture();
-        // Clear the wrapper-field hooks so a later sub-tool commit with no
-        // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
-        // does not re-fire this gesture's stale snapshot.
-        rotateSub.wrapperFieldApplyHook  = null;
-        rotateSub.wrapperFieldRevertHook = null;
-        // Task 0614 Phase 4 — item mode: `rotateSub.commitGesture()` above is
-        // a harmless vertex no-op here (see beginRotateDragSession); this is
-        // the call that actually records the item gesture, mirroring the
-        // Move bank's own commitEdit("Move") at its gesture-end.
-        if (itemSubjectActive()) commitEdit("Rotate");
+        // The wrapper owns both payload construction and the history decision;
+        // the bank has already finished its input/value work at this point.
+        commitOwnedEdit(DragBank.Rotate, "Rotate");
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
@@ -4794,9 +4763,7 @@ public:
         bool scaleGestureMoved = scaleAbsKnown && !xformScaleEqual(xfStart, xfEnd);
         bool scaleSettle = scaleGestureMoved && acenSettleAllowed()
                         && currentFalloff(vts).enabled;
-        Pin softEnd = scaleSettle
-            ? settleGestureCenter(scaleSub.handler.center)
-            : Pin.init;
+        if (scaleSettle) settleGestureCenter(scaleSub.handler.center);
         // COMMIT B — persist the scale bank's gesture-end rendered basis
         // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release. Gated
         // identically so center+basis persistence stay in sync.
@@ -4807,31 +4774,13 @@ public:
         // BASIS undo splice (mirror of the rotate hook). Scale's R_gesture is I,
         // so frameStart == frameEnd and the restore is an identity no-op — it
         // exists purely so the splice composes uniformly across the three banks.
-        GestureFrame frameEnd = frame;
         // F3b — single chokepoint composing the {apply, revert} pair from
         // scaleRec + this gesture's live END state (Scale never restores
         // the userPin — pinEnd is unused, Pin.init is a harmless
         // placeholder). Consumes (clears) scaleRec.runKnown.
-        auto gh = buildGestureHooks(DragBank.Scale, xfEnd, frameEnd,
-                                     softEnd, Pin.init);
-        scaleSub.wrapperFieldApplyHook  = gh.apply;
-        scaleSub.wrapperFieldRevertHook = gh.revert;
-
-        // Per-gesture commit (record+consolidate, Phase 2): mirrors the
-        // rotate path above — each scale drag bakes a tagged in-session entry
-        // on mouse-up (scaleSub's commitEdit attaches the scaleAccum/propScale
-        // hooks + routes in-session), the next handle grab reopens a fresh
-        // scaleSub session, and the run consolidates at the boundary / drop.
-        scaleSub.commitGesture();
-        // Clear the wrapper-field hooks so a later sub-tool commit with no
-        // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
-        // does not re-fire this gesture's stale snapshot.
-        scaleSub.wrapperFieldApplyHook  = null;
-        scaleSub.wrapperFieldRevertHook = null;
-        // Task 0614 Phase 4 — item mode: `scaleSub.commitGesture()` above is
-        // a harmless vertex no-op here (see beginScaleDragSession); this is
-        // the call that actually records the item gesture.
-        if (itemSubjectActive()) commitEdit("Scale");
+        // The wrapper owns both payload construction and the history decision;
+        // the bank has already finished its input/value work at this point.
+        commitOwnedEdit(DragBank.Scale, "Scale");
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
@@ -5132,7 +5081,7 @@ public:
     // prologue (gated on the returned bool). If it lived here, reEvaluate()
     // acting as a session-opener would wipe the just-injected absolute
     // translate before applyTRS, applying 0.0 on the first edit.
-    private bool captureDragBaselineIfStale() {
+    private bool captureDragBaselineIfStale(DragBank bank = DragBank.Move) {
         // Phase 1 (R/S run-baseline) factor-out: the dragBaseline staleness
         // snapshot + live falloff/symmetry/snap capture is now a session-FREE
         // helper, so the Rotate/Scale panel-apply path can reuse the SAME run
@@ -5142,7 +5091,7 @@ public:
         // capture-no-session, then open the wrapper session + seed the tracking.
         bool fresh = captureBaselinePacketsNoSession();
         buildVertexCacheIfNeeded();
-        beginEdit();   // idempotent
+        beginEditForBank(bank);
 
         // Pin the wrapper-owned selection/mutation tracking to the CURRENT mesh
         // state at the moment the session opens. activate() seeds these to
@@ -5229,13 +5178,6 @@ public:
     // exposing this read-only wrapper avoids leaking the rest of
     // the edit-session API.
     override public bool publicEditIsOpen() const { return editIsOpen(); }
-
-    // True iff any R/S sub-tool owns an open edit session. Rotate/Scale keep
-    // their geometry sessions on the sub-tools (MS-5), so the wrapper's own
-    // editIsOpen() does NOT see them — this folds them in.
-    private bool subToolEditOpen() const {
-        return rotateSub.publicEditIsOpen() || scaleSub.publicEditIsOpen();
-    }
 
     // True while ANY gizmo bank's drag is in flight (mouse held). The R/S
     // sub-tools read this through their wrapperRef to gate their idle-time
@@ -5720,6 +5662,12 @@ public:
         commitEdit("Move");
     }
 
+    private void beginEditForBank(DragBank bank) {
+        const wasOpen = editIsOpen();
+        beginEdit();
+        if (!wasOpen && editIsOpen()) editBank = bank;
+    }
+
     // Session-open chokepoint override: every path that opens the wrapper edit
     // session funnels through beginEdit() (gizmo drag via beginMoveDragSession,
     // panel slider / numeric attr via captureDragBaselineIfStale, test opener).
@@ -5831,6 +5779,20 @@ public:
     // e.g. a relocate-boundary commit on an already-closed session: a no-op cmd)
     // fall back to the current pin for BOTH endpoints, making the hooks inert.
     protected override void commitEdit(string label) {
+        const bank = editBank == DragBank.None ? DragBank.Move : editBank;
+        final switch (bank) {
+            case DragBank.None:   assert(0, "resolved above");
+            case DragBank.Move:   commitOwnedEdit(bank, "Move"); break;
+            case DragBank.Rotate: commitOwnedEdit(bank, "Rotate"); break;
+            case DragBank.Scale:  commitOwnedEdit(bank, "Scale"); break;
+        }
+    }
+
+    // One payload finalizer for every embedded bank. `bank` is semantic
+    // metadata for the wrapper-owned run snapshots; it is not another session
+    // state machine.
+    private void commitOwnedEdit(DragBank bank, string label) {
+        scope(exit) editBank = DragBank.None;
         // Task 0614 Phase 4 — item branch. Builds a LayerXformEdit from the
         // gesture-open snapshot (itemEditBefore_) versus the CURRENT
         // (post-drag) xform, mirroring buildEditCmd's `if (!changed) return
@@ -5909,7 +5871,7 @@ public:
         // read here since a Move gesture only touches run.t; the R/S fields are
         // inert start==end automatically). Consumes (clears) moveRec.pinKnown
         // and moveRec.runKnown.
-        auto gh = buildGestureHooks(DragBank.Move, run, frame,
+        auto gh = buildGestureHooks(bank, run, frame,
             softEnd, pinEnd);
 
         // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
@@ -5968,6 +5930,39 @@ public:
         recordCommit(cmd);
     }
 
+    // Typed history intents preserve the three distinct boundaries. A landed
+    // gesture appends inside the open run, a boundary commit is an ordinary
+    // record, and a pipe refire may replace only a compatible Refire tail in
+    // the current tweak generation.
+    private enum TransformHistoryIntent {
+        RunGesture,
+        BoundaryCommit,
+        GenerationRefire,
+    }
+
+    private void recordTransformCommand(Command cmd,
+                                        TransformHistoryIntent intent) {
+        final switch (intent) {
+            case TransformHistoryIntent.RunGesture:
+                history.recordInSession(cmd, history.currentRunId);
+                publishCommittedTransform();
+                break;
+            case TransformHistoryIntent.BoundaryCommit:
+                history.record(cmd);
+                publishCommittedTransform();
+                break;
+            case TransformHistoryIntent.GenerationRefire:
+                history.replaceInSessionTail(cmd, history.currentRunId);
+                break;
+        }
+    }
+
+    protected override void recordCommit(Command cmd) {
+        recordTransformCommand(cmd, recordViaInSession
+            ? TransformHistoryIntent.RunGesture
+            : TransformHistoryIntent.BoundaryCommit);
+    }
+
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
@@ -5998,7 +5993,7 @@ public:
     // whole-open-run-cancel contract: the open run reverts first, committed runs
     // pop after).
     override bool hasUncommittedEdit() const {
-        return editIsOpen() || (subToolEditOpen() && activeDrag is null);
+        return editIsOpen();
     }
 
     // ----- Live re-evaluation hooks (attr edit re-runs a live tool) ---------
@@ -6010,7 +6005,7 @@ public:
     // stores the value and moves nothing (faithful). Widened in forms Phase 5b
     // to include the sub-tool sessions so an R/S value edit re-evaluates.
     override bool hasLiveEval() const {
-        return editIsOpen() || subToolEditOpen();
+        return editIsOpen();
     }
 
     // Phase 1 (R/S run-baseline) — VALUE-attr live-eval widening. A panel
@@ -6101,11 +6096,11 @@ public:
         // arm (replayTranslateFromBaseline -> captureDragBaselineIfStale)
         // already funnels through the wrapper's own beginEdit().
         if (hasR) {
-            if (itemSubjectActive()) beginEdit();
+            beginEditForBank(DragBank.Rotate);
             rotateSub.applyRotatePanelValue(headlessRotate);
         }
         if (hasS) {
-            if (itemSubjectActive()) beginEdit();
+            beginEditForBank(DragBank.Scale);
             scaleSub.applyScalePanelValue(run.s);
         }
     }
@@ -6142,9 +6137,9 @@ public:
         // eagerly opening all three would pollute the idle sub-tool sessions:
         // editing only T would move verts the open (but undriven) rotate/scale
         // sessions are watching, recording spurious "Rotate"/"Scale" entries.
-        if      (flagT) captureDragBaselineIfStale();   // WRAPPER session (translate)
-        else if (flagR) rotateSub.openEditForValue();   // SUB-TOOL session (rotate)
-        else if (flagS) scaleSub.openEditForValue();    // SUB-TOOL session (scale)
+        if      (flagT) captureDragBaselineIfStale(DragBank.Move);
+        else if (flagR) captureDragBaselineIfStale(DragBank.Rotate);
+        else if (flagS) captureDragBaselineIfStale(DragBank.Scale);
         // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
     }
 
@@ -6196,7 +6191,7 @@ public:
         // nothing, the second one (now undoing that phantom commit) did.
         bool itemOpen   = itemEditCapturing_;
         bool vertexOpen = super.editIsOpen();
-        if (!itemOpen && !vertexOpen && !subToolEditOpen()) return;
+        if (!itemOpen && !vertexOpen) return;
 
         // Cancel the open R/S sub-tool sessions FIRST, in a deterministic order
         // (R then S), so one in-session Ctrl+Z reverts the WHOLE open run — the
@@ -6210,10 +6205,6 @@ public:
         // discipline below; no-op (returns false) when the slot has no open
         // session. Their suppressCommit latches are self-contained (set/cleared
         // inside each cancelSessionIfOpen → cancelOpenSessionGeometry).
-        Vec3 subDeg, subFactors;
-        if (rotateSub.cancelSessionIfOpen(subDeg))     headlessRotate = subDeg;
-        if (scaleSub.cancelSessionIfOpen(subFactors))  run.s  = subFactors;
-
         suppressCommit = true;
         scope(exit) suppressCommit = false;
 
@@ -6302,6 +6293,7 @@ public:
         // drag. cancelEdit() is idempotent when the wrapper session was never
         // open (pure R/S cancel path).
         cancelEdit();
+        editBank           = DragBank.None;
         activeDrag          = null;
         dragBaseline.length = 0;
         resetRun();                    // apply-path Phase 2: cancelled run (+ P-F frozen frame)
@@ -7204,7 +7196,7 @@ private:
         // preserving the gesture's geometry contribution. This is the fix for
         // the multi-gesture-run hazard: keying on "is the tail a refire" instead
         // of "did any refire happen this run" stops a tweak2 from erasing g2.
-        history.replaceInSessionTail(cmd, history.currentRunId);
+        recordTransformCommand(cmd, TransformHistoryIntent.GenerationRefire);
 
         // Step 5 — defensive re-stamps (no-ops today: the re-grade does NOT bump
         // mutationVersion — applyTRS is version-silent and recordInSession never

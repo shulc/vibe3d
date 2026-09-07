@@ -245,8 +245,6 @@ mixin template XfrmHandlesImpl() {
                 // R/S sub-tool sessions too. commitSessionIfOpen() is a public
                 // mirror on the sub-tool (the wrapper cannot call their protected
                 // commitEdit cross-instance). No-op in single-mode presets.
-                rotateSub.commitSessionIfOpen();
-                scaleSub.commitSessionIfOpen();
                 // Hard run boundary: collapse the open run's tagged in-session
                 // entries into ONE surviving entry, then open a fresh run id so
                 // the next gesture is tagged distinctly.
@@ -270,8 +268,6 @@ mixin template XfrmHandlesImpl() {
             // stale one.
             if (wasPinnedOffGizmo) {
                 if (editIsOpen()) commitEdit("Move");
-                rotateSub.commitSessionIfOpen();
-                scaleSub.commitSessionIfOpen();
                 moveSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
                     consolidateRunAndAdvance();
@@ -318,8 +314,6 @@ tryRotateBank:
                 // commit; the pinned branch commits nothing, so both are done
                 // here and both are no-ops when already closed.
                 if (editIsOpen()) commitEdit("Move");
-                rotateSub.commitSessionIfOpen();
-                scaleSub.commitSessionIfOpen();
                 // Run-close: re-stage the pin the fresh gesture's beginEdit will
                 // freeze as its in-session-cancel baseline. A relocate moved the
                 // pin, so it is staged from the (already-pushed) userPlaced

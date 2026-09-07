@@ -15,7 +15,7 @@ import std.path : buildPath, dirName;
 import std.regex : matchAll, regex;
 import std.string : indexOf;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, historySurface;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -83,4 +83,16 @@ unittest // executes in the module-unittest gate, before any HTTP driver starts
     assert(bound.length == 0,
         "transform history ownership census: embedded banks still receive "
         ~ "history/undo factories: " ~ bound.join(", "));
+
+    // Executes after capability removal. Every direct history write in the
+    // wrapper module must now sit in the one typed decision method; the count
+    // pins its three real intents without enumerating bank names.
+    auto writes = historySurface(code);
+    size_t ownedWrites;
+    foreach (w; writes)
+        if (w.symbol == "XfrmTransformTool.recordTransformCommand")
+            ++ownedWrites;
+    assert(ownedWrites == 3,
+        "transform history ownership census: expected three typed wrapper "
+        ~ "history arms, found " ~ ownedWrites.to!string);
 }

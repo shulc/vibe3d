@@ -820,16 +820,6 @@ protected:
     // and consolidate() collapses the R/S run at the boundary / drop.
     protected bool recordViaInSession = false;
 
-    // PUBLIC mirror so the composing wrapper can route a SUB-TOOL's commits
-    // in-session too. `recordViaInSession` is protected, and D `protected` does
-    // not grant sibling (wrapper→sub-tool) cross-instance access, so the wrapper
-    // cannot write `rotateSub.recordViaInSession` directly. This setter (calling
-    // its OWN protected field — legal) lets the wrapper flip the R/S sub-tools'
-    // routing at activate/deactivate, mirroring the public commitSessionIfOpen
-    // pattern. Same shape as the wrapper setting its own flag in activate().
-    public final void setRecordViaInSession(bool on) nothrow @nogc {
-        recordViaInSession = on;
-    }
     final CommandHistory preparedHistoryOwner() nothrow @nogc {
         return history;
     }
@@ -854,6 +844,13 @@ protected:
             history.recordInSession(cmd, history.currentRunId);
         else
             history.record(cmd);
+        publishCommittedTransform();
+    }
+
+    // Delivery half of a completed transform record.  Split from the history
+    // choice so a composed owner can keep the exact same settled-geometry
+    // invalidation while selecting its own history intent.
+    protected final void publishCommittedTransform() {
         // TASK 2000 — THE GESTURE IS OVER: RE-ARM THE SETTLED-GEOMETRY
         // WATCHER.
         //
@@ -1529,25 +1526,6 @@ protected:
         if (g_pipeCtx is null) return null;
         return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
     }
-
-    /// P-F Phase 3a (MAJOR-5) — WRAPPER field-snapshot hook pair, composed into
-    /// this sub-tool's gesture-commit hook closures alongside the accumulator +
-    /// pipe-config restores (uniform hook family). The R/S sub-tool accumulator
-    /// hooks restore the SUB-TOOL panel state (scaleAccum/propScale, angleAccum/
-    /// propDeg) — NOT the WRAPPER `run.s`/`headlessRotate` that
-    /// `composeFor` folds. NB since the wrapped-role re-point: that accumulator
-    /// arm is itself gated on `wrapperRef is null`, so whenever these two
-    /// delegates are non-null it is INERT and the disjointness below is trivial
-    /// rather than merely arranged. So the wrapper sets these two delegates right before it
-    /// calls `commitGesture()`: `wrapperFieldApplyHook` restores the gesture-END
-    /// run-absolute field (redo follows the geometry), `wrapperFieldRevertHook`
-    /// restores the gesture-START field (in-session Ctrl+Z steps the panel back
-    /// one gesture). DISJOINT from the accumulator + pipe-config state — composes
-    /// into the same closure without clobber. Null when no wrapper is composing
-    /// (standalone tool) ⇒ the closures skip them (inert). Cleared by the wrapper
-    /// after each commit so a stale snapshot never bleeds into the next gesture.
-    void delegate() wrapperFieldApplyHook  = null;
-    void delegate() wrapperFieldRevertHook = null;
 
     /// Live falloff packet for rendering the viewport overlay. Walks
     /// the toolpipe each call — fine because draw() runs at most once

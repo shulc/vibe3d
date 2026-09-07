@@ -348,6 +348,12 @@ public:
     // standalone (unit-test) instance, which keeps the legacy kernel path.
     TransformTool wrapperRef;
 
+    // Embedded role: the composing wrapper owns the edit snapshot and history
+    // payload.  Standalone construction keeps the original local session.
+    private void beginStandaloneEdit() {
+        if (wrapperRef is null) beginEdit();
+    }
+
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
          SelType delegate() selTypeSrc = null) {
         super(meshSrc, gpu, editMode, selTypeSrc);
@@ -952,8 +958,6 @@ public:
         // compose them alongside the accumulator + pipe-config restores. Null when
         // standalone (no wrapper) ⇒ inert. DISJOINT wrapper field — composes into
         // the same closure without clobbering scaleAccum/propScale.
-        auto wrapApply  = wrapperFieldApplyHook;
-        auto wrapRevert = wrapperFieldRevertHook;
         setCmdHooks(
             () {
                 // Accumulator restore is standalone-only: the wrapped role's
@@ -965,14 +969,12 @@ public:
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-                if (wrapApply !is null) wrapApply();
             },
             () {
                 if (wrapperRef is null) { scaleAccum = accBefore; propScale = propBefore; }
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-                if (wrapRevert !is null) wrapRevert();
             }
         );
         recordCommit(cmd);
@@ -1169,7 +1171,7 @@ public:
             wholeMeshDrag = !falloffActive && !symmActive
                 && (vertexProcessCount == cast(int)mesh.vertices.length);
             snapshotEditState();   // capture pre-drag Tool-Properties state.
-            beginEdit();           // Phase C.3: snapshot pre-drag positions for undo.
+            beginStandaloneEdit(); // standalone snapshot; wrapper owns embedded undo
             return true;
         }
 
@@ -1353,7 +1355,7 @@ public:
         wholeMeshDrag = !falloffActive && !symmActive
             && (vertexProcessCount == cast(int)mesh.vertices.length);
         snapshotEditState();
-        beginEdit();
+        beginStandaloneEdit();
         return true;
     }
 
@@ -1647,9 +1649,9 @@ public:
         // are no-ops on both calls.
         if (anyActive && !editIsOpen()) {
             snapshotEditState();
-            beginEdit();
+            beginStandaloneEdit();
         } else if (anyActive) {
-            beginEdit();   // idempotent
+            beginStandaloneEdit();   // idempotent
         }
 
         // Update CPU vertices (fast, no GPU) from THE VALUE THIS SLIDER JUST
@@ -1706,7 +1708,7 @@ public:
         buildVertexCacheIfNeeded();
         if (!editIsOpen()) {
             snapshotEditState();
-            beginEdit();
+            beginStandaloneEdit();
         }
     }
 
@@ -1766,9 +1768,9 @@ public:
         // session (before beginEdit opens it); beginEdit is idempotent after.
         if (!editIsOpen()) {
             snapshotEditState();
-            beginEdit();
+            beginStandaloneEdit();
         } else {
-            beginEdit();   // idempotent
+            beginStandaloneEdit();   // idempotent
         }
 
         // Rebuild CPU vertices via the shared apply path, carrying THIS call's

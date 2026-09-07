@@ -82,9 +82,12 @@ private enum LedgerRow[] kResidue = [
     LedgerRow("TransformTool.recordCommit|recordInSession", 1,
         "transform gesture edit — the in-session writer at "
       ~ "source/tools/transform/transform.d:854"),
-    LedgerRow("XfrmTransformTool.recordPipeRefire|replaceInSessionTail", 1,
-        "transform re-grade — the task-1905 run-tail replacement at "
-      ~ "source/tools/transform/xfrm_transform.d:7207"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|recordInSession", 1,
+        "wrapper-owned transform gesture intent"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|record", 1,
+        "wrapper-owned transform boundary intent"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|replaceInSessionTail", 1,
+        "wrapper-owned generation-scoped transform refire intent"),
     LedgerRow("Tool.refuseGestureRecord|consolidate", 1,
         "GesturePayload — refusal closes or re-tags the already-open run"),
     LedgerRow("XfrmTransformTool.deactivate|consolidate", 1,
@@ -621,8 +624,8 @@ package:
                 "executor.applyOrRefire(cmd, RecordMode.Record",
                 "LayerAdd-executor");
     }
-    assert(records.length == 25,
-        "command-record class census: expected twenty-five allowlisted history "
+    assert(records.length == 27,
+        "command-record class census: expected twenty-seven allowlisted history "
         ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=
