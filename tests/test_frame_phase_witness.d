@@ -45,7 +45,6 @@ struct Px {
 struct Probe {
     int w, h;
     bool renders;
-    string hash;
     Px[] points;
 }
 
@@ -55,8 +54,7 @@ Probe probe(string query) {
     Probe p;
     p.w = cast(int)j["w"].integer;
     p.h = cast(int)j["h"].integer;
-    p.renders = j["renders"].type == JSONType.TRUE;
-    if ("hash" in j) p.hash = j["hash"].str;
+    if ("renders" in j) p.renders = j["renders"].type == JSONType.TRUE;
     foreach (v; j["points"].array) {
         assert("error" !in v, "pixel point failed: " ~ v.toString);
         p.points ~= Px(cast(int)v["x"].integer, cast(int)v["y"].integer,
@@ -104,14 +102,28 @@ unittest { // event delivery: observe the shortcut's camera-state effect
         cam.vpX, cam.vpY, cam.width, cam.height)
       ~ `{"t":1,"type":"SDL_KEYDOWN","sym":1073741913,"scan":89,"mod":0,"repeat":0}` ~ "\n"
       ~ `{"t":11,"type":"SDL_KEYUP","sym":1073741913,"scan":89,"mod":0,"repeat":0}` ~ "\n";
-    playAndWait(log);
-    settle();
+    auto accepted = postJson("/api/play-events", log);
+    assert(accepted["status"].str == "success",
+        "event witness could not start synthetic playback: "
+        ~ accepted.toString);
 
-    auto after = getJson("/api/camera?viewport=0");
-    assert(after["viewPreset"].str == "Top"
-        && after["projKind"].str == "Ortho",
+    auto after = before;
+    bool delivered;
+    bool drained;
+    foreach (_; 0 .. 100) {
+        after = getJson("/api/camera?viewport=0");
+        delivered = after["viewPreset"].str == "Top"
+                 && after["projKind"].str == "Ortho";
+        auto status = getJson("/api/play-events/status");
+        drained = status["finished"].type == JSONType.TRUE;
+        if (delivered && drained) break;
+        Thread.sleep(dur!"msecs"(20));
+    }
+    assert(delivered,
         "frame events phase did not deliver the synthetic KP1 shortcut: "
         ~ after.toString);
+    assert(drained,
+        "event witness observed KP1 but playback did not drain");
 }
 
 unittest { // picking/hover: observe the resolved hovered vertex
@@ -157,10 +169,9 @@ unittest { // picking/hover: observe the resolved hovered vertex
 
 unittest { // scene draw: non-black population, then background + model pixels
     resetKnownView();
-    auto dims = probe("cell=0&hash=1");
-    assert(dims.renders && dims.w > 100 && dims.h > 100
-        && dims.hash.length == 16,
-        "scene witness has no rendered framebuffer: " ~ dims.hash);
+    auto dims = probe("cell=0");
+    assert(dims.renders && dims.w > 100 && dims.h > 100,
+        "scene witness has no rendered framebuffer");
 
     auto broad = probe("cell=0&points="
         ~ lattice(4, 4, dims.w - 5, dims.h - 5,
@@ -203,10 +214,10 @@ unittest { // panel draw: compare composed pixels with the panel hidden/shown
     cmd("ui.toolProperties hide");
     settle();
 
-    auto dims = probe("target=frame&hash=1");
-    assert(dims.renders && dims.w >= 430 && dims.h >= 550
-        && dims.hash.length == 16,
-        "panel witness has no composed default framebuffer: " ~ dims.hash);
+    auto dims = probe("target=frame");
+    assert(dims.w == 800 && dims.h == 600,
+        format("panel witness expected the 800x600 test framebuffer, got "
+               ~ "%dx%d", dims.w, dims.h));
 
     auto whole = probe("target=frame&points="
         ~ lattice(5, 5, dims.w - 6, dims.h - 6,

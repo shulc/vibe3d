@@ -4807,7 +4807,7 @@ void main(string[] args) {
     // runs unconditionally exactly like the block it replaces. Placed HERE,
     // after the 0419 LATE wiring, because the moved block reads fields from
     // BOTH wiring blocks (0415's at ~2873 and 0419's above).
-    wireHttpProviders(httpServer, app, executor);
+    wireHttpProviders(httpServer, app, ifs, executor);
     // Sync-back: the moved block assigns these three delegates through the
     // `ref EditorApp app` parameter; main()'s later read sites (copilot
     // draw, script-action status line, History panel replay button) keep

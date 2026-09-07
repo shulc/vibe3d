@@ -1398,8 +1398,8 @@ class HttpServer {
 
     /// GET /api/viewport/probe?cell=N[&x=&y=][&points=x,y;x,y][&hash=1] —
     /// glReadPixels against a cell's FBO colour attachment (task 0559).
-    /// `target=frame` instead reads the already-submitted default backbuffer
-    /// so tests can witness ImGui panel drawing from pixels.
+    /// `target=frame` (task 4620) instead reads the already-submitted default
+    /// backbuffer so tests can witness ImGui panel drawing from pixels.
     /// Runs on the main thread (GL context). Coordinates are FBO pixels with
     /// the origin at the TOP-LEFT, matching screen/event coordinates; the
     /// provider flips to GL's bottom-up convention. See the provider alias
@@ -3014,6 +3014,21 @@ class HttpServer {
         // point. `hash=1` additionally digests the WHOLE colour buffer,
         // which is what makes "these two builds draw identical pixels" a
         // checkable claim rather than an assertion.
+        immutable string target =
+            parseQueryString(request.path, "target", "");
+        if (target.length != 0 && target != "frame") {
+            response.statusCode = 400;
+            response.body = `{"error":"unknown viewport probe target: `
+                          ~ jsonEsc(target) ~ `"}`;
+            response.headers["Content-Type"] = "application/json";
+            return;
+        }
+        if (target == "frame" && !testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"target=frame is only available in --test mode"}`;
+            response.headers["Content-Type"] = "application/json";
+            return;
+        }
         if (viewportProbeProvider is null) {
             response.statusCode = 500;
             response.body = `{"error":"viewport-probe provider not set"}`;
@@ -3030,8 +3045,7 @@ class HttpServer {
             }
             vpProbeBridge.req.points   = _pts;
             vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
-            vpProbeBridge.req.composedFrame =
-                parseQueryString(request.path, "target", "") == "frame";
+            vpProbeBridge.req.composedFrame = target == "frame";
             vpProbeBridge.resp.result  = "";
             vpProbeBridge.resp.error   = "";
             if (!vpProbeBridge.submitAndWait())
@@ -4166,6 +4180,15 @@ unittest {
         ~ "like /api/changes and /api/play-events (got "
         ~ to!string(resp.statusCode) ~ ")");
 
+    auto frameProbe = new HttpRequest(
+        "GET", "/api/viewport/probe?target=frame", "HTTP/1.1");
+    auto frameOutsideTest = srv.handleRequest(frameProbe);
+    assert(frameOutsideTest.statusCode == 403,
+        "target=frame must refuse outside --test, where GL_BACK after swap "
+        ~ "has no defined completed-frame meaning (got "
+        ~ to!string(frameOutsideTest.statusCode) ~ ": "
+        ~ frameOutsideTest.body ~ ")");
+
     // With testMode on, the gate must NOT block it — the request should
     // fall through to the (unset-handler) branch instead of another
     // refusal, proving this is a testMode gate and not an unconditional one.
@@ -4177,6 +4200,23 @@ unittest {
     assert(resp2.body.canFind("handler not set"),
         "with no handler installed this must reach the null-handler "
         ~ "branch, not another refusal: " ~ resp2.body);
+
+    auto badProbe = new HttpRequest(
+        "GET", "/api/viewport/probe?target=not-a-target", "HTTP/1.1");
+    auto badProbeResp = srv.handleRequest(badProbe);
+    assert(badProbeResp.statusCode == 400
+        && badProbeResp.body.canFind("unknown viewport probe target"),
+        "an unknown viewport probe target must fail explicitly instead of "
+        ~ "falling through to the cell path (got "
+        ~ to!string(badProbeResp.statusCode) ~ ": "
+        ~ badProbeResp.body ~ ")");
+
+    auto frameInsideTest = srv.handleRequest(frameProbe);
+    assert(frameInsideTest.statusCode == 500
+        && frameInsideTest.body.canFind("provider not set"),
+        "inside --test, target=frame must pass its mode gate and reach the "
+        ~ "provider path (got " ~ to!string(frameInsideTest.statusCode)
+        ~ ": " ~ frameInsideTest.body ~ ")");
 }
 
 // ---------------------------------------------------------------------------

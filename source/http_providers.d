@@ -26,6 +26,7 @@ module http_providers;
 // the StepTrace-typed ctx field.
 import editor_app : EditorApp, RecordMode;
 import command_executor : CommandExecutor;
+import input_frame_state : InputFrameState;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
 // enum's name is needed here, not the resolver.
@@ -316,7 +317,7 @@ import document       : primaryModelSpace;
 // is unchanged.
 
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
-                       CommandExecutor executor) {
+                       InputFrameState ifs, CommandExecutor executor) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
     // bottom — a list at the bottom is how such a list rots away from the
@@ -328,7 +329,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     // because two of the seven declare an exemption for the wiring check —
     // see the end of this function.
     wireModelProviders(httpServer, app, optionalSlots);
-    wireViewportProviders(httpServer, app, optionalSlots);
+    wireViewportProviders(httpServer, app, ifs, optionalSlots);
     wireSelectionProviders(httpServer, app, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
     wireCommandProviders(httpServer, app, executor, optionalSlots);
@@ -796,7 +797,8 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
 // `/api/viewport/display`, `/api/viewport/probe`, `/api/pick`,
 // `/api/surface-raycast` — everything that answers about a CELL.
 private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
-                              ref string[] optionalSlots) {
+                                   InputFrameState ifs,
+                                   ref string[] optionalSlots) {
     with (app) {
         httpServer.setCameraDataProvider((int vpIdx) {
             int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
@@ -1198,16 +1200,12 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // contains the last COMPLETED ImGui submission. This is the
                 // pixel channel for frame-phase witnesses; it deliberately
                 // says nothing about presentation to the compositor.
-                GLint[4] frameViewport;
-                glGetIntegerv(GL_VIEWPORT, frameViewport.ptr);
-                W = frameViewport[2];
-                H = frameViewport[3];
-                renders = true;
+                W = ifs.fbW;
+                H = ifs.fbH;
                 readFbo = 0;
                 readBuffer = GL_BACK;
                 head = format(
-                    `{"target":"frame","renders":true,"w":%d,"h":%d`,
-                    W, H);
+                    `{"target":"frame","w":%d,"h":%d`, W, H);
             } else {
                 if (cell < 0) cell = vpm.activeId;
                 if (cell < 0 || cell >= cast(int)vpm.views.length)
