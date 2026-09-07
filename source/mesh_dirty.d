@@ -382,12 +382,11 @@ __gshared MeshDirtyEpochs g_geomEpochs =
 /// `/api/cache/rebuilds`.
 ///
 /// THE RE-ARM. Confined changes must not accumulate forever, or a table built
-/// before a gesture outlives the geometry it describes. `TransformTool
-/// .recordCommit` — the one chokepoint every transform `commitEdit` override
-/// routes through — publishes an UNCONFINED `Position` when a gesture's edit
-/// is recorded, so this watcher advances exactly once per committed gesture.
-/// A cancelled gesture already does it (`cancelOpenSessionGeometry` ends in
-/// `commitChange(Position)`).
+/// before a gesture outlives the geometry it describes.
+/// `XfrmTransformTool.recordTransformCommand` publishes an UNCONFINED
+/// `Position` when the wrapper-owned gesture edit is recorded, so this watcher
+/// advances exactly once per committed gesture. A cancelled wrapper edit does
+/// the same through `XfrmTransformTool.cancelUncommittedEdit`.
 __gshared MeshDirtyEpochs g_settledGeomEpochs =
     MeshDirtyEpochs.forClasses(GeomEpochMask);
 
