@@ -97,6 +97,17 @@ final class StepTrace {
         armed_ = true;
     }
 
+    /// End a capture window and discard its entries. Unlike reset(), this is
+    /// a test-session boundary: the next test must not inherit the previous
+    /// test's capture cost or serialization failures.
+    void disarm() {
+        mutex_.lock();
+        scope(exit) mutex_.unlock();
+        entries_.length = 0;
+        seq_ = 0;
+        armed_ = false;
+    }
+
     /// Whether captures are being recorded. The capture closure checks this
     /// BEFORE building an entry, so an unarmed trace costs one bool read.
     bool armed() const {

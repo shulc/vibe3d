@@ -2737,6 +2737,9 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
         httpServer.setTraceResetHandler(() {
             if (stepTrace !is null) stepTrace.arm();
         });
+        httpServer.setTraceDisarmHandler(() {
+            if (stepTrace !is null) stepTrace.disarm();
+        });
 
         // Read-only undo-service status for automation: {state, lockout,
         // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.

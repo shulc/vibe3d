@@ -541,7 +541,7 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
-    // ----- GET /api/trace / POST /api/trace/reset ---------------------------
+    // ----- GET /api/trace / POST /api/trace/reset|disarm --------------------
     // Non-destructive per-step capture (task: step-trace). traceProvider
     // returns the whole ring as a JSON array string — a snapshot-at-
     // request-time read (mirrors historyProvider), guarded on the app.d side
@@ -552,6 +552,7 @@ class HttpServer {
     private TraceProvider traceProvider;
     private alias TraceResetHandler = void delegate();
     private TraceResetHandler traceResetHandler;
+    private TraceResetHandler traceDisarmHandler;
 
     // ----- GET /api/pick — A/B face-pick equivalence oracle (test-only) -----
     // Marshaled onto the main thread: GPU pick needs a GL context; BVH pick
@@ -1524,6 +1525,11 @@ class HttpServer {
      */
     public void setTraceResetHandler(TraceResetHandler handler) {
         this.traceResetHandler = handler;
+    }
+
+    /** Set the POST /api/trace/disarm handler used at test-session boundaries. */
+    public void setTraceDisarmHandler(TraceResetHandler handler) {
+        this.traceDisarmHandler = handler;
     }
 
     /**
@@ -3611,6 +3617,13 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
+    private void route_apiTraceDisarm(HttpRequest request, HttpResponse response) {
+        if (traceDisarmHandler !is null) traceDisarmHandler();
+        response.statusCode = 200;
+        response.body = `{"status":"ok"}`;
+        response.headers["Content-Type"] = "application/json";
+    }
+
     private void route_apiHistoryJump(HttpRequest request, HttpResponse response) {
         // Multi-step jump (Phase 2). Body: {"target":N}. N is the
         // DESIRED length of undoStack after the walk — 0 to
@@ -4020,6 +4033,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/history",              "GET",  Match.exact,  Answered.httpThread, "route_apiHistory"),
     RouteSpec("/api/trace",                "GET",  Match.exact,  Answered.httpThread, "route_apiTrace"),
     RouteSpec("/api/trace/reset",          "POST", Match.exact,  Answered.httpThread, "route_apiTraceReset"),
+    RouteSpec("/api/trace/disarm",         "POST", Match.exact,  Answered.httpThread, "route_apiTraceDisarm"),
     RouteSpec("/api/history/jump",         "POST", Match.exact,  Answered.mainThread, "route_apiHistoryJump"),
     RouteSpec("/api/history/replay",       "POST", Match.exact,  Answered.mainThread, "route_apiHistoryReplay"),
     RouteSpec("/api/play-events",          "POST", Match.exact,  Answered.httpThread, "route_apiPlayEvents"),

@@ -21,6 +21,18 @@ unittest {
 }
 
 unittest {
+    auto t = new StepTrace();
+    assert(!t.armed);
+    t.arm();
+    assert(t.armed);
+    t.append(`{"seq":0}`);
+    t.disarm();
+    assert(!t.armed);
+    assert(t.snapshotJson() == "[]");
+    assert(t.nextSeq() == 0);
+}
+
+unittest {
     // Ring eviction: appending past maxEntries drops the oldest entries so
     // the array only ever holds the newest maxEntries.
     import std.format : format;

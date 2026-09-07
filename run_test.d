@@ -1902,6 +1902,10 @@ bool prepareWorker(ref Worker w) {
 //      itself (its promote hook) and by the `/api/select` in step 3b; the
 //      verify below checks it so that a regression in either one is a named
 //      failure rather than one silently dead test.
+//   7. STEP TRACE CAPTURE. POST /api/trace/reset arms a process-wide capture
+//      ring. Scene reset intentionally clears without disarming it because a
+//      capture window can include a reset. Only the runner knows where one
+//      test session ends, so it must disarm the ring before the next binary.
 // A SEVENTH was found by task 0674 and is deliberately NOT handled here, so
 // that this list stays a list of things this function does: THE MODIFIER KEYS.
 // Every replayed mouse event drove `SDL_SetModState` to the value the log
@@ -1970,6 +1974,15 @@ bool resetBetweenTests(ushort port, ref string failure) {
             : `{"id":"` ~ id ~ `"}`;
         lastBody = curl("POST", "/api/command", env);
         return lastBody.canFind(`"status":"ok"`);
+    }
+    // A scene reset cannot mark the test-session boundary: trace consumers
+    // deliberately reset the scene inside an armed capture window. Disarm
+    // explicitly before any reset commands can be recorded on stale state.
+    lastBody = curl("POST", "/api/trace/disarm");
+    if (!lastBody.canFind(`"status":"ok"`)) {
+        failure = "trace disarm did not answer: " ~ (lastBody.length
+            ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+        return false;
     }
     // Deactivate + drain-replay + reset + clear history, then VERIFY the cube
     // and selection/edit-mode baseline are actually pristine, retrying
