@@ -1,6 +1,8 @@
 // census_symbols — ONE census scanner, and a ledger keyed by the SYMBOL a
 // site sits in rather than by the PATH of the file that happens to hold it
 // (task 4056).
+// General pattern: doc/derived_census_pattern.md (project-owned path; an exact
+// SDK-tree search for derived_census_pattern returned no files).
 //
 // ===========================================================================
 // THE DEFECT THIS REPLACES

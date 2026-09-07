@@ -1,6 +1,8 @@
 // The command-record class census for task 4570. The module name
 // `command_record_class_census_test` is project-owned: an exact `grep -rl -w`
 // over the SDK tree returned zero files before this test was added.
+// General pattern: doc/derived_census_pattern.md (project-owned path; an exact
+// SDK-tree search for derived_census_pattern returned no files).
 //
 // The receiver side is derived, not a spelling list: discover every aggregate
 // that declares undoStack/redoStack, treat ANY field mention (plus delegate or
