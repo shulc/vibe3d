@@ -39,7 +39,8 @@ import std.stdio   : File, stdin;
 import std.string  : strip;
 import core.time   : MonoTime, Duration;
 
-import mesh : Mesh, edgeKey;
+import mesh : Mesh, MeshKey, MeshTermMutation, edgeKey;
+import mesh_dirty : MeshTermGeomEpoch;
 import math : Vec3;
 import remesh.region_stitch : stitchRegion, StitchResult;
 
@@ -70,7 +71,14 @@ enum int MIN_REMESH_TARGET_QUADS = 4;
 final class RemeshJob {
     enum State { idle, running, succeeded, failed }
 
+    // The helper receives a position-dependent snapshot. The address keeps a
+    // replacement mesh from aliasing the source; the geometry epoch covers
+    // version-silent interactive movement; the mutation counter covers
+    // committed changes, including scratch meshes outside the change bus.
+    alias SourceKey = MeshKey!(MeshTermGeomEpoch, MeshTermMutation);
+
     private State  state_ = State.idle;
+    private SourceKey sourceKey_;
     private string message_;
     private Pid    pid_;
     private bool   hasPid_;
@@ -129,6 +137,13 @@ final class RemeshJob {
     const(Vec3)[]   resultVertices() const { return resultVertices_; }
     const(uint[])[] resultFaces() const { return resultFaces_; }
 
+    /// Whether the live mesh is still the exact source snapshot this job was
+    /// started from. A completed result must be checked before entering any
+    /// command path with pre-apply side effects.
+    bool sourceMatches(ref const Mesh mesh) const {
+        return sourceKey_.matches(mesh);
+    }
+
     /// Reset to idle and drop the last result. Called by the consumer once
     /// it has read (and cached, if it needs the data to survive past this
     /// call) resultVertices()/resultFaces().
@@ -137,6 +152,7 @@ final class RemeshJob {
         message_ = null;
         resultVertices_ = null;
         resultFaces_    = null;
+        sourceKey_.invalidate();
     }
 
     /// Spawn the helper against `mesh`. No-op if a job is already running
@@ -154,6 +170,8 @@ final class RemeshJob {
     /// path unchanged.
     void start(const ref Mesh mesh, RemeshParams rawParams, const(bool)[] selectedFaceMask = null) {
         if (state_ == State.running) return;
+
+        sourceKey_.stamp(mesh);
 
         const p = sanitizeParams(rawParams);
         paramsTargetQuads_ = p.targetQuads;
@@ -569,6 +587,7 @@ final class RemeshJob {
         cleanupFiles();
         state_   = State.idle;
         message_ = null;
+        sourceKey_.invalidate();
     }
 
     private void cleanupFiles() {
@@ -818,6 +837,7 @@ unittest {
     import std.conv : octal;
     import core.thread : Thread;
     import core.time : Duration, msecs, seconds;
+    import change_bus : MeshEditScope;
 
     Mesh cube() {
         Mesh m = Mesh.init;
@@ -858,6 +878,15 @@ unittest {
         auto m = cube();
         job.start(m, RemeshParams());
         assert(job.busy());
+        assert(job.sourceMatches(m),
+               "a running job must recognize the exact mesh snapshot it captured");
+        auto replacement = cube();
+        assert(!job.sourceMatches(replacement),
+               "equal counters on another mesh address must not alias the source");
+        m.vertices[0].x += 0.25f;
+        m.publishChange(MeshEditScope.Position);
+        assert(!job.sourceMatches(m),
+               "a version-silent position publication must stale the source snapshot");
         waitUntilDone(job, 5.seconds);
         assert(job.state() == RemeshJob.State.succeeded);
         assert(job.resultVertices().length == 4);
@@ -866,6 +895,7 @@ unittest {
         job.clear();
         assert(job.state() == RemeshJob.State.idle);
         assert(job.resultVertices().length == 0);
+        assert(!job.sourceMatches(m), "clear must invalidate the captured source");
     }
 
     // --- failure path: fake helper exits non-zero, no output written ---

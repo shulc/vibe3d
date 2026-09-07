@@ -4566,6 +4566,18 @@ void main(string[] args) {
             case RemeshJob.State.running:
                 break;
             case RemeshJob.State.succeeded:
+                // The helper works from a snapshot written at start(). Its
+                // result may therefore arrive after another command replaced
+                // or edited the live mesh. Reject that stale result BEFORE
+                // runCommand(): the ordinary Model-command funnel drops an
+                // active tool at pre-apply, even when the command later
+                // evaluates to a no-op.
+                if (!remeshJob.sourceMatches(mesh())) {
+                    remeshLastSummary = null;
+                    remeshLastError = "mesh changed while remeshing; result discarded";
+                    remeshJob.clear();
+                    break;
+                }
                 const nFaces = remeshJob.resultFaces().length;
                 // Task 0386: on a region remesh, message() carries a non-fatal
                 // "remeshed N of M region components (...)" note when some
