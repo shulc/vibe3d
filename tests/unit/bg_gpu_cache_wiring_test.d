@@ -17,7 +17,7 @@ unittest {
     // The phase is unique and sits before the per-cell loop. It therefore runs
     // even when every cell takes the no-scene-draw path.
     enum reconcileCall = "frameRunner.reconcileBackgroundGpu(document);";
-    enum cellLoop = "foreach (k; overlayDrawOrder)";
+    enum cellLoop = "foreach (k; overlayDrawOrder(";
     assert(app.count(reconcileCall) == 1,
         "background GPU reconciliation must occur exactly once per frame");
     assert(app.count(cellLoop) == 1,
