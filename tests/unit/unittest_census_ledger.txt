@@ -195,3 +195,8 @@ drop 1 17 4170 subject construction assertion (c) uses the shared declaration-ke
 # transcribed pair. The sibling K>=3 pin (18v/11f) is untouched and still
 # guards the one cell that still diverges.
 drop 0 1 4360 the boundary cell's 12v/7f divergence pin, superseded by the same cell's equality against the capture (which gates on vertex count first)
+
+# Task 4590 combines the idle PropertyPanel draw and subsequent real widget
+# write into one sequential witness. No assertion was removed: the merged cell
+# still requires the idle trace to be empty before the write produces IER.
+drop 1 0 4590 the idle and writing PropertyPanel cells became one sequential witness so a stubbed draw fails inside that same cell
