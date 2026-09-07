@@ -3,7 +3,7 @@
 // result must not enter the Model-command funnel and drop the tool that is
 // active at completion time.
 
-import http_client : postJson;
+import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import std.conv : octal, to;
 import std.file : exists, mkdirRecurse, rmdirRecurse, setAttributes, tempDir,
@@ -17,7 +17,7 @@ import std.stdio : File, stdin;
 
 import core.sys.posix.signal : kill, SIGKILL, SIGTERM;
 import core.thread : Thread;
-import core.time : MonoTime, msecs, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
 
 void main() {}
 
@@ -35,7 +35,10 @@ struct Instance {
     ushort port;
     string scratch;
     string logPath;
+    string markerPath;
     string releasePath;
+    string secondMarkerPath;
+    string secondReleasePath;
     Pid pid;
     bool up;
 }
@@ -52,7 +55,8 @@ bool httpProbe(string baseUrl, int tries = 100) {
 }
 
 void writeFakeHelper(string path, string markerPath, string releasePath,
-                     string secondReleasePath) {
+                     string secondMarkerPath, string secondReleasePath,
+                     string thirdReleasePath) {
     write(path,
         "#!/bin/sh\n"
       ~ "out=\"\"\n"
@@ -63,8 +67,11 @@ void writeFakeHelper(string path, string markerPath, string releasePath,
       ~ "if [ ! -e \"" ~ markerPath ~ "\" ]; then\n"
       ~ "  : > \"" ~ markerPath ~ "\"\n"
       ~ "  while [ ! -e \"" ~ releasePath ~ "\" ]; do sleep 0.01; done\n"
+      ~ "elif [ ! -e \"" ~ secondMarkerPath ~ "\" ]; then\n"
+      ~ "  : > \"" ~ secondMarkerPath ~ "\"\n"
+      ~ "  while [ ! -e \"" ~ secondReleasePath ~ "\" ]; do sleep 0.01; done\n"
       ~ "else\n"
-      ~ "  while [ ! -e \"" ~ secondReleasePath ~ "\" ]; do sleep 0.05; done\n"
+      ~ "  while [ ! -e \"" ~ thirdReleasePath ~ "\" ]; do sleep 0.05; done\n"
       ~ "fi\n"
       ~ "printf 'v 0 0 0\\nv 1 0 0\\nv 1 1 0\\nv 0 1 0\\nf 1 2 3 4\\n' > \"$out\"\n"
       ~ "exit 0\n");
@@ -79,13 +86,16 @@ Instance launchInstance() {
         ~ instance.port.to!string);
     mkdirRecurse(instance.scratch);
     instance.logPath = buildPath(instance.scratch, "vibe3d.log");
+    instance.markerPath = buildPath(instance.scratch, "first-started");
     instance.releasePath = buildPath(instance.scratch, "release-first");
+    instance.secondMarkerPath = buildPath(instance.scratch, "second-started");
+    instance.secondReleasePath = buildPath(instance.scratch, "release-second");
 
     const helperPath = buildPath(instance.scratch, "fake-remesher.sh");
-    const markerPath = buildPath(instance.scratch, "first-started");
-    const secondReleasePath = buildPath(instance.scratch, "release-second");
-    writeFakeHelper(helperPath, markerPath, instance.releasePath,
-        secondReleasePath);
+    const thirdReleasePath = buildPath(instance.scratch, "release-third");
+    writeFakeHelper(helperPath, instance.markerPath, instance.releasePath,
+        instance.secondMarkerPath, instance.secondReleasePath,
+        thirdReleasePath);
 
     string[string] childEnv;
     childEnv["VIBE3D_AUTOREMESHER_BIN"] = helperPath;
@@ -121,7 +131,7 @@ void teardownInstance(ref Instance instance) {
 
 __gshared Instance g_instance;
 
-static this() {
+shared static this() {
     g_instance = launchInstance();
     assert(g_instance.up,
         "failed to launch the isolated remesh test instance; see "
@@ -129,8 +139,14 @@ static this() {
     environment["VIBE3D_TEST_PORT"] = g_instance.port.to!string;
 }
 
-static ~this() {
+shared static ~this() {
     teardownInstance(g_instance);
+}
+
+void waitForMarker(string markerPath, Duration timeout) {
+    const deadline = MonoTime.currTime + timeout;
+    while (!exists(markerPath) && MonoTime.currTime < deadline)
+        Thread.sleep(10.msecs);
 }
 
 unittest {
@@ -139,6 +155,45 @@ unittest {
 
     response = postJson("/api/command", "mesh.remesh.start");
     assert(response["status"].str == "ok", response.toString);
+    waitForMarker(g_instance.markerPath, 2.seconds);
+    assert(exists(g_instance.markerPath),
+        "the fresh remesh helper did not start within the 2-second budget");
+
+    response = postJson("/api/command",
+        `{"id":"tool.reset","params":{"_positional":["` ~ TOOL ~ `"]}}`);
+    assert(response["status"].str == "ok", response.toString);
+    response = postJson("/api/command",
+        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+    assert(response["status"].str == "ok",
+        "the fresh-result control must arm the mirror tool: " ~ response.toString);
+    write(g_instance.releasePath, "");
+
+    // Positive control: an unchanged source must accept the helper's quad.
+    // Keep this before the stale-result arm so a `sourceMatches => false`
+    // mutation proves acceptance without hiding the rejection assertions.
+    bool applied;
+    auto deadline = MonoTime.currTime + 10.seconds;
+    while (!applied && MonoTime.currTime < deadline) {
+        auto model = getJson("/api/model");
+        applied = model["vertices"].array.length == 4;
+        if (!applied) Thread.sleep(10.msecs);
+    }
+    assert(applied,
+        "a fresh remesh result was not applied within the 10-second budget");
+    auto model = getJson("/api/model");
+    assert(model["vertices"].array.length == 4,
+        "a fresh remesh result must produce the helper's four-vertex quad");
+    assert(model["faces"].array.length == 1,
+        "a fresh remesh result must produce the helper's one-face quad");
+
+    response = postJson("/api/command", commandBody("scene.reset"));
+    assert(response["status"].str == "ok", response.toString);
+    response = postJson("/api/command", "mesh.remesh.start");
+    assert(response["status"].str == "ok", response.toString);
+    const markerPath = g_instance.secondMarkerPath;
+    waitForMarker(markerPath, 2.seconds);
+    assert(exists(markerPath),
+        "the stale remesh helper did not start within the 2-second budget");
 
     // Replace the captured mesh, then arm the tool before allowing the helper
     // to finish. This fixes the ordering instead of racing the helper.
@@ -147,13 +202,17 @@ unittest {
     response = postJson("/api/command",
         `{"id":"tool.reset","params":{"_positional":["` ~ TOOL ~ `"]}}`);
     assert(response["status"].str == "ok", response.toString);
-    write(g_instance.releasePath, "");
+    response = postJson("/api/command",
+        "tool.attr " ~ TOOL ~ " mergeVerts ?");
+    assert(response["status"].str == "ok",
+        "the stale-result arm must have a live mirror tool: " ~ response.toString);
+    write(g_instance.secondReleasePath, "");
 
     // RemeshStart refuses while the first job is live. Its first success is
     // the observable proof that the stale completion was consumed. The fake
     // helper deliberately holds this second job so it cannot race the check.
     bool completed;
-    const deadline = MonoTime.currTime + 10.seconds;
+    deadline = MonoTime.currTime + 10.seconds;
     while (!completed && MonoTime.currTime < deadline) {
         response = postJson("/api/command", "mesh.remesh.start");
         completed = response["status"].str == "ok";
@@ -161,6 +220,12 @@ unittest {
     }
     assert(completed,
         "the stale remesh result was not consumed within the 10-second budget");
+
+    model = getJson("/api/model");
+    assert(model["vertices"].array.length == 8,
+        "discarding a stale remesh result must leave the cube's eight vertices");
+    assert(model["faces"].array.length == 6,
+        "discarding a stale remesh result must leave the cube's six faces");
 
     response = postJson("/api/command",
         `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
