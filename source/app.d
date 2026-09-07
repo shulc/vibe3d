@@ -7793,10 +7793,10 @@ void main(string[] args) {
             // time earlier in the frame is unattributed "other"). No-op in
             // the default build.
             auto zFramesUi = g_frames.phase(Phase.ui);
-            ImGui.Render();
+            frameRunner.renderImGui();
             // Restore full viewport for ImGui rendering.
             glViewport(0, 0, ifs.fbW, ifs.fbH);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
+            frameRunner.submitImGui();
         }
 
         // Perf (doc/frame_probe_scenarios_plan.md, task 0195): endFrame MUST

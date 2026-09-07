@@ -6,6 +6,8 @@ import editor_app : EditorApp, OverlayMode;
 import eventlog : queryMouse;
 import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import input_frame_state : InputFrameState;
+import ImGui = d_imgui;
+import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
 import math : Viewport;
 import tool : Tool;
 import ui.viewport_render : renderViewportSceneToFbo;
@@ -82,5 +84,13 @@ final class FrameRunner {
         renderViewportSceneToFbo(app, cell, vp, overlayMode,
                                  showVertexHover, showEdgeHover,
                                  showFaceHover);
+    }
+
+    void renderImGui() {
+        ImGui.Render();
+    }
+
+    void submitImGui() {
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
     }
 }
