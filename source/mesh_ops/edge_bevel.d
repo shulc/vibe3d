@@ -5,6 +5,8 @@ import std.math : sqrt;
 import math;
 import mesh_edit_delta : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
+import mesh_ops.bevel_fin : bevelIsolatedFinBundleSpine,
+                             bevelFinBundleSpineMultiEdge;
 // Was a SCOPED import inside the template body: a `mixin template`'s body is
 // looked up in the INSTANTIATION scope (struct Mesh, in mesh.d), so an import
 // written at the top of this module did not reach the kernel — measured, task
@@ -57,6 +59,8 @@ import mesh_ops.bevel_curves;
 // of the two early returns to open a TRANSITIONAL `unrecorded` batch (§4.4a's
 // debt shape, with Stage G named as its removing stage). Stage G is this
 // commit and both are gone: the caller's batch is the only one on the stack.
+// Task 4600 makes that dependency explicit in this module's import block;
+// `mesh.d` no longer re-exports the fin-bundle family back into this scope.
 // ---------------------------------------------------------------------------
 
 /// The edit class this kernel declares, in ONE place — the same shape D2's

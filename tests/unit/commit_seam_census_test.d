@@ -2880,89 +2880,9 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     }
 }
 
-// ---------------------------------------------------------------------------
-// STAGE I — the gate. Folded into Stage H's own commit (extrude.d is the
-// last family, so there is no separate "convert one more family" step left
-// for a standalone Stage I to do): the 13 selective `import mesh_ops.X : …`
-// lines that named each family's mixin template are gone from `source/mesh.d`
-// — each one already left in its OWN track-1 stage, per §4.3 step 6 — and the
-// mixin count reaching 0 in the block above IS Stage I's gate (plan §4.5).
-// What this block adds is the two things that gate does not itself say: the
-// `public import` block is the WHOLE replacement surface (13 lines, one per
-// family, and NO MORE), and NO selective `import mesh_ops.` line survives
-// anywhere in `source/mesh.d` to contradict it.
-// ---------------------------------------------------------------------------
-unittest // Stage I — 13 public imports in, 13 selective imports out, for good
-{
-    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
-    immutable raw = readText(meshPath);   // NOT comment-stripped: `import` lines are code, but
-                                           // this also lets a `//`-commented-out import be counted
-                                           // by a careless future edit — checked against the
-                                           // stripped text below too, for both directions.
-    immutable stripped = stripCommentsAndStrings(raw);
-
-    // …and they are these 13, not any 13: a swap or a typo (`mesh_op.` for
-    // `mesh_ops.`) would keep a count-only assertion green.
-    static immutable string[] kPublicImports = [
-        "public import mesh_ops.cut;",
-        "public import mesh_ops.bridge;",
-        "public import mesh_ops.loop_slice;",
-        "public import mesh_ops.revolve;",
-        "public import mesh_ops.cleanup;",
-        "public import mesh_ops.edge_bevel;",
-        "public import mesh_ops.bevel_fin;",
-        "public import mesh_ops.bevel_vertex;",
-        "public import mesh_ops.extrude;",
-        "public import mesh_ops.decimate;",
-        "public import mesh_ops.connected_mask;",
-        "public import mesh_ops.select_loop;",
-        "public import mesh_ops.poly_bevel;",
-    ];
-    foreach (imp; kPublicImports)
-        assert(countOccurrences(stripped, "\n" ~ imp) == 1,
-            format("source/mesh.d no longer declares `%s` at module scope "
-                 ~ "(column 0), exactly once. Task 1903's 13 track-1 stages "
-                 ~ "each landed their own `public import mesh_ops.<family>;` "
-                 ~ "line in the stage that converted it; this row pins the "
-                 ~ "COMPLETE set the mixin-count gate's `== 0` leaves behind "
-                 ~ "(task 1903 Stage I, plan §4.2).", imp));
-
-    // The count IS the roster: a 14th public import (a family this project
-    // does not have, or a duplicate) is exactly as wrong as a missing one,
-    // and a count-only check cannot tell "13 right ones" from "13 including
-    // a wrong one and missing a right one" — the per-line loop above already
-    // refuses both; this is the floor that refuses a stray 14th.
-    import std.regex : ctRegex, matchAll;
-    size_t publicImportLines = 0;
-    foreach (mo; matchAll(stripped, ctRegex!(`\npublic import mesh_ops\.[A-Za-z_]+;`)))
-        ++publicImportLines;
-    assert(publicImportLines == 13,
-        format("source/mesh.d declares %d `public import mesh_ops.<family>;` "
-             ~ "lines at module scope; task 1903 §4.5 tracks exactly 13 "
-             ~ "families end to end and expects exactly 13 here — a 14th is "
-             ~ "as wrong as a 12th (task 1903 Stage I).", publicImportLines));
-
-    // …and NO selective `import mesh_ops.X : …;` survives anywhere in this
-    // file. Every one of the 13 was that shape once (`import mesh_ops.extrude
-    // : MeshExtrudeOps;` was the LAST, until this stage); a reinstated one —
-    // even naming a real symbol — is a narrower door than the `public
-    // import` block above claims to be the whole surface, and this is the
-    // only place that would notice.
-    {
-        import std.regex : ctRegex, matchAll;
-        string[] offenders;
-        foreach (mo; matchAll(stripped, ctRegex!(`\nimport\s+mesh_ops\.[A-Za-z_]+\s*:`)))
-            offenders ~= mo[0].idup;
-        assert(offenders.length == 0,
-            format("source/mesh.d carries %d selective `import mesh_ops.X : "
-                 ~ "…;` line(s): %s. Every track-1 family's import is a "
-                 ~ "`public import mesh_ops.<family>;` now (plan §4.2) — a "
-                 ~ "selective spelling reintroduced here is either a stale "
-                 ~ "revert of a converted family's own migration, or a new "
-                 ~ "line that should have been `public import` from the "
-                 ~ "start (task 1903 Stage I).", offenders.length, offenders));
-    }
-}
+// Stage I's hand-written 13-public-import roster evolved with R5 task 4600.
+// `mesh_ops_import_boundary_test.d` now derives the same family set from the
+// operation modules and separates remaining re-exports from explicit imports.
 
 // ---------------------------------------------------------------------------
 // THE §2.6 WIDENINGS, AND THE HALF THAT KEEPS THEM HONEST (task 1903 Stage D3).

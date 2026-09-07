@@ -1,5 +1,10 @@
 module mesh_ops.bevel_fin;
 
+// mesh-ops-import: explicit
+// Task 4600: this marker is consumed by the import-boundary census. The module
+// imports the base Mesh type below, so callers must import this family directly;
+// `mesh` must never regain a reverse import edge to it.
+
 import mesh;
 import math;
 import std.array : uninitializedArray;
@@ -602,9 +607,9 @@ size_t bevelFinBundleSpineMultiEdge(ref MeshEditBatch ed, uint spineEdge,
 // It is ALSO the check that the mutating receiver did not quietly widen back:
 // a `Mesh.bevelIsolatedFinBundleSpine` member could only exist by taking the
 // mesh directly, i.e. by dropping the batch this stage exists to require —
-// and on THIS family that batch is the transitional one edge_bevel.d holds,
-// so losing it would put the fin path back to one stamp per added rail vertex
-// with nothing that could say so.
+// and losing it would put the fin path back to one stamp per added rail vertex
+// with nothing that could say so. `edge_bevel.d` imports these free functions
+// directly; the base `mesh` module intentionally does not re-export them.
 // ---------------------------------------------------------------------------
 static foreach (n; ["bevelIsolatedFinBundleSpine", "bevelFinBundleSpineMultiEdge"])
     static assert(!__traits(hasMember, Mesh, n),
