@@ -867,7 +867,9 @@ protected:
         //
         // WHY HERE. The base, Rotate and Scale `commitEdit` overrides end in
         // `recordCommit`. Wrapper-owned geometry and item commits instead end
-        // in `recordTransformCommand`, whose recording arms call this helper.
+        // in `recordTransformCommand`: its `RunGesture`, `RunClose` and
+        // `BoundaryCommit` arms call this helper; `GenerationRefire` replaces
+        // the compatible session tail without publishing.
         // Thus it is reached only when a real edit was built — a no-op gesture
         // returns before it.
         // FOR THIS PUBLISH that is right: nothing moved, so there is nothing
