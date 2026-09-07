@@ -884,9 +884,9 @@ unittest {
         assert(!job.sourceMatches(replacement),
                "equal counters on another mesh address must not alias the source");
         m.vertices[0].x += 0.25f;
-        // A bare module test has no app-owned document filter, so publishChange
-        // deliberately delivers nothing. Drive the listener body directly,
-        // as mesh_dirty's headless-test contract requires.
+        // A bare module test has no app-owned ChangeBus subscriber forwarding
+        // deliveries into mesh_dirty. Drive that listener body directly, as
+        // mesh_dirty's headless-test contract requires.
         noteMeshChange(cast(size_t) &m, MeshEditScope.Position);
         assert(!job.sourceMatches(m),
                "a version-silent position publication must stale the source snapshot");

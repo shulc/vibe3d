@@ -453,9 +453,10 @@ __gshared MeshDirtyEpochs g_topoEpochs =
 /// viewport stops updating loudly rather than quietly.
 ///
 /// Callable directly, and that is deliberate — it is the listener BODY, the
-/// same arrangement `snap.invalidateSnapGrids()` has: a headless unit test
-/// with no `app.d` and no `Document` (and therefore no delivery at all, see
-/// `Mesh.deliverPending`'s subject filter) drives it by hand.
+/// same arrangement `snap.invalidateSnapGrids()` has. A headless unit test has
+/// no `app.d` registration forwarding ChangeBus deliveries into this body, so
+/// it drives the body by hand; `Mesh.deliverPending` itself fails open when its
+/// document-subject filter is uninstalled and is not the missing link here.
 /// COST, stated because stage 2d added a watcher. `note()` is a linear scan of
 /// `kSlots` per watcher — a hit scans to the slot, a miss scans all 32 twice
 /// (once for the address, once for a free slot) before evicting. With three
