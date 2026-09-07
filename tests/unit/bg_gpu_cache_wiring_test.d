@@ -18,12 +18,18 @@ unittest {
     // even when every cell takes the no-scene-draw path.
     enum reconcileCall = "frameRunner.reconcileBackgroundGpu(document);";
     enum cellLoop = "foreach (k; overlayDrawOrder(";
+    enum contextShutdown = "scope(exit) SDL_GL_DeleteContext(ctx);";
+    enum cacheShutdown = "scope(exit) frameRunner.shutdown();";
     assert(app.count(reconcileCall) == 1,
         "background GPU reconciliation must occur exactly once per frame");
     assert(app.count(cellLoop) == 1,
         "frame-phase witness requires exactly one per-cell loop");
     assert(app.indexOf(reconcileCall) < app.indexOf(cellLoop),
         "background GPU reconciliation must precede the per-cell loop");
+    assert(app.count(contextShutdown) == 1 && app.count(cacheShutdown) == 1,
+        "background cache and GL context each need one shutdown registration");
+    assert(app.indexOf(contextShutdown) < app.indexOf(cacheShutdown),
+        "LIFO cache shutdown must run before the GL context is deleted");
 
     // FrameRunner alone owns lifecycle. EditorApp and the renderer receive no
     // map pointer and the draw view exposes neither reconcile nor shutdown.
