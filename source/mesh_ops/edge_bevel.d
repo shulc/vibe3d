@@ -59,8 +59,6 @@ import mesh_ops.bevel_curves;
 // of the two early returns to open a TRANSITIONAL `unrecorded` batch (§4.4a's
 // debt shape, with Stage G named as its removing stage). Stage G is this
 // commit and both are gone: the caller's batch is the only one on the stack.
-// Task 4600 makes that dependency explicit in this module's import block;
-// `mesh.d` no longer re-exports the fin-bundle family back into this scope.
 // ---------------------------------------------------------------------------
 
 /// The edit class this kernel declares, in ONE place — the same shape D2's

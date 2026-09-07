@@ -1,9 +1,6 @@
 module mesh_ops.bevel_fin;
 
 // mesh-ops-import: explicit
-// Task 4600: this marker is consumed by the import-boundary census. The module
-// imports the base Mesh type below, so callers must import this family directly;
-// `mesh` must never regain a reverse import edge to it.
 
 import mesh;
 import math;
