@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 516
-task-citation-lines 5142
-citing-files 390
+source-files 517
+task-citation-lines 5141
+citing-files 391
 long-comment-runs 281
 files-with-long-runs 150
 
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 295
+allow source/app.d 293
 allow source/app_version.d 1
 allow source/args_dialog.d 1
 allow source/argstring.d 4
@@ -204,6 +204,7 @@ allow source/falloff_handles.d 3
 allow source/falloff_render.d 3
 allow source/forms.d 4
 allow source/forms_render.d 3
+allow source/frame_runner.d 1
 allow source/frame_stall.d 1
 allow source/geometry_clipboard.d 4
 allow source/gizmo.d 3
