@@ -1872,7 +1872,7 @@ bool prepareWorker(ref Worker w) {
 // Re-establish a known-clean baseline on a worker's shared vibe3d BEFORE each
 // test binary runs. The runner reuses ONE `vibe3d --test` per worker across
 // that worker's whole slice of tests, so a preceding test can leave global
-// state dirty for the next one in five ways:
+// state dirty for the next one in seven ways:
 //   1. an event-log replay (/api/play-events) is still DRAINING on the
 //      background event player when the test process exits — its queued
 //      mouse-move events keep firing into the next test's freshly-reset mesh;
@@ -1906,7 +1906,7 @@ bool prepareWorker(ref Worker w) {
 //      ring. Scene reset intentionally clears without disarming it because a
 //      capture window can include a reset. Only the runner knows where one
 //      test session ends, so it must disarm the ring before the next binary.
-// A SEVENTH was found by task 0674 and is deliberately NOT handled here, so
+// AN EIGHTH was found by task 0674 and is deliberately NOT handled here, so
 // that this list stays a list of things this function does: THE MODIFIER KEYS.
 // Every replayed mouse event drove `SDL_SetModState` to the value the log
 // recorded and nothing put it back, so a log that ended on a Ctrl left the app
@@ -1939,7 +1939,7 @@ bool prepareWorker(ref Worker w) {
 // their removal had to be checked here first: `curl` exits 0 on a 404, the
 // helper returned the body unexamined, and so a runner posting to a route that
 // no longer exists resets NOTHING while reporting nothing. Every one of the
-// six state-bleed channels above comes straight back, the eight-attempt retry
+// seven state-bleed channels above comes straight back, the eight-attempt retry
 // budget is burned in full at every test transition, and the gate stays green
 // throughout. The envelopes are inlined rather than taken from
 // `tests/http_command_helpers.d` because this runner is a standalone `rdmd`
