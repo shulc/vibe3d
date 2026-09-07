@@ -7,10 +7,10 @@
 // the seven direct Command record/tail methods plus fire, and the two no-Command
 // tail writers consolidate/refireEnd. Each row names its enclosing symbol and
 // primitive, so adding a writer requires an explicit classification instead of
-// inheriting permission from a familiar spelling. The prepared-history arm —
-// prepareCurrentImage, installPreparedImage, installPreparedToken,
-// discardPreparedToken and discardValidatedPreparedToken — is deliberately
-// outside this census: tools/check_prepared_protocol.py closes that protocol.
+// inheriting permission from a familiar spelling. PreparedRecordContext's arm
+// is included end-to-end: token opening, every public history-image evolution
+// call, and both installation sites. Its validation and discard calls can only
+// accept or abandon that already-enumerated image; they cannot create an entry.
 // Undo/redo, clear, jump*, invalidateRedo and blockBegin/blockEnd cannot create
 // a new entry by this criterion. In particular, the LayerAdd built by
 // `/api/test/layer` must cross CommandExecutor instead of becoming a second
@@ -38,6 +38,27 @@ private enum LedgerRow[] kResidue = [
         "ordinary Command — the sole generic apply/fire/history executor"),
     LedgerRow("CommandExecutor.applyOrRefire|recordCoalescing", 1,
         "ordinary Command — the coalescing mode of the same executor"),
+    LedgerRow("PreparedRecordContext.this|beginPrepared", 1,
+        "prepared Command arm — opens the detached history transaction at "
+      ~ "source/prepared_record_context.d:366"),
+    LedgerRow("PreparedRecordContext.prepare|prepareRecord", 1,
+        "prepared Command arm — evolves the detached entry at "
+      ~ "source/prepared_record_context.d:1313"),
+    LedgerRow("PreparedRecordContext.prepareLifecycle|prepareLifecycle", 1,
+        "prepared lifecycle arm — evolves the detached entry at "
+      ~ "source/prepared_record_context.d:1320"),
+    LedgerRow("PreparedRecordContext.consolidate|prepareConsolidate", 1,
+        "prepared Command arm — consolidates the detached run at "
+      ~ "source/prepared_record_context.d:1336"),
+    LedgerRow("PreparedRecordContext.prepareInvalidateRedo|prepareInvalidateRedo", 1,
+        "prepared Command arm — evolves redo state in the same transaction at "
+      ~ "source/prepared_record_context.d:1342"),
+    LedgerRow("PreparedRecordContext.nextRun|prepareNextRun", 1,
+        "prepared Command arm — advances the detached run at "
+      ~ "source/prepared_record_context.d:1374"),
+    LedgerRow("PreparedRecordContext.install|installPreparedToken", 2,
+        "prepared Command arm — installs from both journal paths at "
+      ~ "source/prepared_record_context.d:1661 and :1971"),
     LedgerRow("Tool.recordGestureEdit|record", 1,
         "GesturePayload — Tool validates the carrier before recording"),
     LedgerRow("Tool.recordGestureEdit|recordInSession", 1,
@@ -81,6 +102,13 @@ private bool isWritingPrimitive(string name) {
         case "consolidate":
         case "fire":
         case "refireEnd":
+        case "beginPrepared":
+        case "prepareRecord":
+        case "prepareLifecycle":
+        case "prepareConsolidate":
+        case "prepareInvalidateRedo":
+        case "prepareNextRun":
+        case "installPreparedToken":
             return true;
         default:
             return false;
@@ -119,8 +147,8 @@ unittest {
                 "executor.applyOrRefire(cmd, RecordMode.Record",
                 "LayerAdd-executor");
     }
-    assert(records.length == 15,
-        "command-record class census: expected fifteen allowlisted history "
+    assert(records.length == 23,
+        "command-record class census: expected twenty-three allowlisted history "
         ~ "writer sites, found " ~ records.length.to!string);
     foreach (record; records)
         assert(record.key !=
