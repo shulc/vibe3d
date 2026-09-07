@@ -190,6 +190,7 @@ import input_router : InputRouter;
 // rmbPath/anySpinning/buildToolVts/viewportInputAllowed). See
 // source/input_frame_state.d's module doc comment.
 import input_frame_state : InputFrameState, DragMode;
+import frame_runner : FrameRunner;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -198,8 +199,6 @@ import buttonset;
 // the event pump and the drawer all read one place.
 import pie_state : g_pie, openPie, closePie, aimPie, armPie;
 import ai.debug_trace : latestHandleDebugTraceJson;
-import ai.element_candidates : publishElementCandidates,
-    collectElementCandidates, resolveElementCandidateDecision;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : makeAiInteractionLogRecord;
@@ -4912,6 +4911,7 @@ void main(string[] args) {
     // body's three writes now go through the `g_viewportWindowHovered`
     // forwarder straight into `ifs.viewportWindowHovered`.
     ifs.app = app;
+    auto frameRunner = new FrameRunner(ifs);
     // Task 0781 step 1c -- the pick family's ENGINE SWITCH, still read here
     // and not in the cluster, because the environment read is a main()
     // responsibility: read once at startup, runtime changes need a relaunch.
@@ -6462,60 +6462,12 @@ void main(string[] args) {
         // selection-channel consumer, and it is a MONOTONIC counter, not a
         // per-frame flag, so there is nothing here to zero.
 
-        ifs.pickVertices(vp, doingCameraDrag);
-        ifs.pickEdges(vp, doingCameraDrag);
-        ifs.pickFaces(vp, doingCameraDrag);
-
-        // Item hover (task 0647). Last of the four, and outside every
-        // editMode branch above: the item ray is asked on EVERY frame under
-        // the Item selection type, whatever the remembered geometry type is.
-        ifs.pickItems(vp, doingCameraDrag);
+        frameRunner.tick(vp, doingCameraDrag);
         }
-        int pickedVertex = ifs.hoveredVertex;
-        int pickedEdge = ifs.hoveredEdge;
-        int pickedFace = ifs.hoveredFace;
-
-        // Tool-driven multi-type hover priority resolution: when an
-        // active tool (e.g. XfrmTransformTool with falloff.element
-        // in Auto mode) picks across vert/edge/face
-        // simultaneously, only ONE of
-        // them should highlight per cursor position — vert first,
-        // then edge, then face. Without this the cursor over a
-        // corner would light up both the vertex dot AND the face
-        // checker, which mis-represents what click-to-pick will hit.
-        if (activeTool !is null) {
-            if (ifs.hoveredVertex >= 0) {
-                ifs.hoveredEdge = -1;
-                ifs.hoveredFace = -1;
-            } else if (ifs.hoveredEdge >= 0) {
-                ifs.hoveredFace = -1;
-            }
-        }
-        int elementTraceMouseX, elementTraceMouseY;
-        queryMouse(elementTraceMouseX, elementTraceMouseY);
-        publishElementCandidates(elementTraceMouseX, elementTraceMouseY,
-                                 pickedVertex, pickedEdge, pickedFace);
-        // Publish the resolved hover state for cross-module consumers
-        // (XfrmTransformTool.tryPickElement reads these when
-        // falloff.element is active so click-pick lands on the same
-        // element the user sees highlighted — the GPU ID-buffer path
-        // here is the source of truth; a parallel CPU-centroid pick
-        // would pick back-facing / hidden polygons that happened to
-        // project to the cursor).
-        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
-        g_hoveredVertex = ifs.hoveredVertex;
-        g_hoveredEdge   = ifs.hoveredEdge;
-        g_hoveredFace   = ifs.hoveredFace;
-        // Per-type highlight gates (for the FBO draw pass).
-        bool showVertHover = (editMode == EditMode.Vertices)
-                          || (activeTool !is null
-                              && activeTool.wantsHoverForType(EditMode.Vertices));
-        bool showEdgeHover = (editMode == EditMode.Edges)
-                          || (activeTool !is null
-                              && activeTool.wantsHoverForType(EditMode.Edges));
-        bool showFaceHover = (editMode == EditMode.Polygons)
-                          || (activeTool !is null
-                              && activeTool.wantsHoverForType(EditMode.Polygons));
+        auto hoverDraw = frameRunner.resolveHover(activeTool, editMode);
+        bool showVertHover = hoverDraw.vertex;
+        bool showEdgeHover = hoverDraw.edge;
+        bool showFaceHover = hoverDraw.face;
 
         // Tool logic update (handle-hover state) — runs in main loop so it
         // is current before renderViewportSceneToFbo() draws the handles.
