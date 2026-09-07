@@ -2,11 +2,14 @@ module frame_runner;
 
 import ai.element_candidates : publishElementCandidates;
 import editmode : EditMode;
+import editor_app : EditorApp, OverlayMode;
 import eventlog : queryMouse;
 import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import input_frame_state : InputFrameState;
 import math : Viewport;
 import tool : Tool;
+import ui.viewport_render : renderViewportSceneToFbo;
+import viewport : Viewport3D;
 
 /// Hover gates consumed by the later scene phase of the same frame.
 struct HoverDrawState {
@@ -71,5 +74,13 @@ final class FrameRunner {
             || (activeTool !is null
                 && activeTool.wantsHoverForType(EditMode.Polygons));
         return result;
+    }
+
+    void drawScene(EditorApp app, Viewport3D cell, ref Viewport vp,
+                   OverlayMode overlayMode, bool showVertexHover,
+                   bool showEdgeHover, bool showFaceHover) {
+        renderViewportSceneToFbo(app, cell, vp, overlayMode,
+                                 showVertexHover, showEdgeHover,
+                                 showFaceHover);
     }
 }

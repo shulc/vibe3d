@@ -5063,9 +5063,6 @@ void main(string[] args) {
         popPanelChromeStyle,
         drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
         drawCommandHistoryPanel;
-    // Task 0722 (audit §2C A3): the FBO scene pass is not a panel and no
-    // longer lives with them -- 871 lines of GL with zero ImGui in it.
-    import ui.viewport_render : renderViewportSceneToFbo;
     // Task 0669 — the per-frame button-availability record (see ui/availability.d).
     import ui.availability : beginButtonAvailabilityFrame,
                              endButtonAvailabilityFrame;
@@ -7739,7 +7736,7 @@ void main(string[] args) {
                     // this frame. No-op in the default build.
                     auto zFramesDraw = g_frames.phase(Phase.draw);
                     g_fc.bumpCellRendered();
-                    renderViewportSceneToFbo(app, _cv, vpk, _ovMode,
+                    frameRunner.drawScene(app, _cv, vpk, _ovMode,
                         showVertHover && _hovK,
                         showEdgeHover && _hovK,
                         showFaceHover && _hovK);
