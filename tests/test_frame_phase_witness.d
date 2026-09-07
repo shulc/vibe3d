@@ -9,7 +9,7 @@
 module test_frame_phase_witness;
 
 import core.thread : Thread;
-import core.time : dur;
+import core.time : dur, MonoTime;
 import drag_helpers : Vec3, fetchCamera, playAndWait, projectToWindow,
                       viewportFromCamera;
 import http_client : getJson, postJson;
@@ -107,10 +107,13 @@ unittest { // event delivery: observe the shortcut's camera-state effect
         "event witness could not start synthetic playback: "
         ~ accepted.toString);
 
+    enum eventWaitBudgetSeconds = 10;
+    immutable eventDeadline = MonoTime.currTime
+                            + dur!"seconds"(eventWaitBudgetSeconds);
     auto after = before;
     bool delivered;
     bool drained;
-    foreach (_; 0 .. 100) {
+    while (MonoTime.currTime < eventDeadline) {
         after = getJson("/api/camera?viewport=0");
         delivered = after["viewPreset"].str == "Top"
                  && after["projKind"].str == "Ortho";
@@ -120,7 +123,8 @@ unittest { // event delivery: observe the shortcut's camera-state effect
         Thread.sleep(dur!"msecs"(20));
     }
     assert(delivered,
-        "frame events phase did not deliver the synthetic KP1 shortcut: "
+        "frame events phase did not deliver the synthetic KP1 shortcut "
+        ~ "within the 10-second wait budget: "
         ~ after.toString);
     assert(drained,
         "event witness observed KP1 but playback did not drain");

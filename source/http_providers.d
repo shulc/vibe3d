@@ -1200,6 +1200,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // contains the last COMPLETED ImGui submission. This is the
                 // pixel channel for frame-phase witnesses; it deliberately
                 // says nothing about presentation to the compositor.
+                // Keep dimensions frame-order independent: GL_VIEWPORT agrees only because main()'s frame tail unconditionally restores ifs.fbW/fbH.
                 W = ifs.fbW;
                 H = ifs.fbH;
                 readFbo = 0;
