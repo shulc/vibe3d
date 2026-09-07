@@ -1455,10 +1455,16 @@ bool protocolCensus() {
 Pid startVibe(ushort port, string logPath) {
     auto logFile = File(logPath, "wb");
     string[] argv = ["./vibe3d", "--test", "--http-port", port.to!string];
+    // A runner-owned worker must not inherit one caller-owned X socket (task
+    // 4660). Unsetting DISPLAY preserves the established headless software-GL
+    // path; --attach never reaches startVibe, so external visual endpoints
+    // retain the display environment chosen by their owner.
+    auto childEnv = environment.toAA();
+    childEnv.remove("DISPLAY");
     Pid pid;
     try {
         pid = spawnProcess(argv, stdin, logFile, logFile,
-            null, Config.suppressConsole);
+            childEnv, Config.suppressConsole | Config.newEnv);
     } catch (ProcessException e) {
         stderr.writeln(red("failed to spawn vibe3d: "), e.msg);
         return null;
