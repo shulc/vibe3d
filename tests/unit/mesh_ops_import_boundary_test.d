@@ -1,14 +1,15 @@
-// The R5 import-direction witness. Operation families are discovered from the
-// compile-time `Mesh`-member tripwire each converted family already owns; the
-// base module and every family are identified by D module declaration, not by
-// path. A family marked `mesh-ops-import: explicit` imports Mesh but must have
-// no reverse import edge from the base module (task 4600).
+// The R5 import-direction witness. General pattern:
+// doc/derived_census_pattern.md. The roster comes from every D module declared
+// directly under source/mesh_ops, while module identity and public-import
+// reachability come from declarations rather than paths. A module marked
+// `mesh-ops-import: explicit` imports Mesh but must have no reverse import edge
+// from the base module, including through a publicly imported sibling (task 4600).
 module tests.unit.mesh_ops_import_boundary_test;
 
 import std.file   : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path   : buildPath, dirName;
-import std.string : endsWith, splitLines, startsWith, strip;
+import std.string : endsWith, indexOf, splitLines, startsWith, strip;
 
 import tests.unit.census_symbols : blankNonCode;
 
@@ -20,25 +21,11 @@ private struct ImportHit {
     bool isPublic;
 }
 
-private struct Family {
+private struct OperationModule {
     string moduleName;
     string path;
     string code;
     bool explicitImport;
-}
-
-private size_t countOccurrences(string haystack, string needle) {
-    size_t n, i;
-    if (needle.length == 0) return 0;
-    while (i + needle.length <= haystack.length) {
-        if (haystack[i .. i + needle.length] == needle) {
-            ++n;
-            i += needle.length;
-        } else {
-            ++i;
-        }
-    }
-    return n;
 }
 
 private string moduleNameOf(string code) {
@@ -56,30 +43,105 @@ private bool hasExplicitMarker(string raw) {
     return false;
 }
 
-/// Import declarations in this tree put the module name on their first line.
-/// The scanner accepts indentation (including function-local imports), plus
-/// `public` and `static`, and stops before a selective symbol list.
+private bool isIdentChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9') || c == '_';
+}
+
+private void skipSpace(string code, ref size_t pos, size_t end) {
+    while (pos < end && (code[pos] == ' ' || code[pos] == '\t'
+                      || code[pos] == '\r' || code[pos] == '\n')) ++pos;
+}
+
+private string qualifiedNameAt(string code, ref size_t pos, size_t end) {
+    skipSpace(code, pos, end);
+    const start = pos;
+    while (pos < end && (isIdentChar(code[pos]) || code[pos] == '.')) ++pos;
+    return code[start .. pos];
+}
+
+private bool containsWord(string code, string word) {
+    size_t pos;
+    while (pos < code.length) {
+        const rel = code[pos .. $].indexOf(word);
+        if (rel < 0) return false;
+        const at = pos + cast(size_t) rel;
+        const before = at == 0 || !isIdentChar(code[at - 1]);
+        const after = at + word.length == code.length
+            || !isIdentChar(code[at + word.length]);
+        if (before && after) return true;
+        pos = at + word.length;
+    }
+    return false;
+}
+
+/// Scan whole import declarations through their semicolon. This deliberately
+/// sees module aliases, comma-separated targets, line wraps, function-local
+/// imports, and `static import`; a selective symbol list after `:` is not a
+/// second module list.
 private ImportHit[] importsOf(string code) {
     ImportHit[] hits;
-    foreach (line; code.splitLines) {
-        string s = line.strip;
-        bool isPublic;
-        if (s.startsWith("public ")) {
-            isPublic = true;
-            s = s["public ".length .. $].strip;
+    size_t searchAt;
+    while (searchAt < code.length) {
+        const rel = code[searchAt .. $].indexOf("import");
+        if (rel < 0) break;
+        const importAt = searchAt + cast(size_t) rel;
+        searchAt = importAt + "import".length;
+        if ((importAt > 0 && isIdentChar(code[importAt - 1]))
+            || (searchAt < code.length && isIdentChar(code[searchAt]))) continue;
+
+        size_t headAt = importAt;
+        while (headAt > 0 && code[headAt - 1] != ';'
+               && code[headAt - 1] != '{' && code[headAt - 1] != '}'
+               && code[headAt - 1] != ':') --headAt;
+        const isPublic = containsWord(code[headAt .. importAt], "public");
+
+        const semicolonRel = code[searchAt .. $].indexOf(';');
+        if (semicolonRel < 0) break;
+        const end = searchAt + cast(size_t) semicolonRel;
+        size_t pos = searchAt;
+        while (pos < end) {
+            skipSpace(code, pos, end);
+            if (pos < end && code[pos] == ',') {
+                ++pos;
+                continue;
+            }
+            if (pos >= end || code[pos] == ':') break;
+
+            string target = qualifiedNameAt(code, pos, end);
+            if (target.length == 0) break;
+            skipSpace(code, pos, end);
+            if (pos < end && code[pos] == '=') {
+                ++pos; // `ident =` aliases the module named after it.
+                target = qualifiedNameAt(code, pos, end);
+            }
+            if (target.length > 0) hits ~= ImportHit(target, isPublic);
+            skipSpace(code, pos, end);
+            if (pos < end && code[pos] == ':') break;
+            if (pos < end && code[pos] != ',') break;
         }
-        if (s.startsWith("static "))
-            s = s["static ".length .. $].strip;
-        if (!s.startsWith("import ")) continue;
-        s = s["import ".length .. $].strip;
-        size_t n;
-        while (n < s.length && ((s[n] >= 'a' && s[n] <= 'z')
-                              || (s[n] >= 'A' && s[n] <= 'Z')
-                              || (s[n] >= '0' && s[n] <= '9')
-                              || s[n] == '_' || s[n] == '.')) ++n;
-        if (n > 0) hits ~= ImportHit(s[0 .. n], isPublic);
+        searchAt = end + 1;
     }
     return hits;
+}
+
+private string[string] publicImportPaths(string root,
+                                         const string[string] codeByModule) {
+    string[string] paths;
+    string[] queue = [root];
+    paths[root] = root;
+    size_t next;
+    while (next < queue.length) {
+        const current = queue[next++];
+        auto src = current in codeByModule;
+        if (src is null) continue;
+        foreach (hit; importsOf(*src)) {
+            if (!hit.isPublic || hit.target in paths) continue;
+            paths[hit.target] = paths[current] ~ " -> " ~ hit.target;
+            queue ~= hit.target;
+        }
+    }
+    return paths;
 }
 
 unittest // mesh operation families have explicit import boundaries
@@ -89,36 +151,59 @@ unittest // mesh operation families have explicit import boundaries
     // parsed independently of selective names.
     immutable probe = blankNonCode(q"D
 module mesh_ops.renamed_family;
-public import mesh;
-static import mesh_ops.helper : ignored;
+public import math, mesh_ops.comma_target;
+public import
+    mesh_ops.wrapped_target;
+public import bf = mesh_ops.renamed_target;
+void localImports() {
+    import mesh_ops.local_target;
+    static import mesh_ops.static_target : ignored;
+}
 D");
     assert(moduleNameOf(probe) == "mesh_ops.renamed_family",
         "module identity must come from the declaration, not the filename");
     const probeImports = importsOf(probe);
-    assert(probeImports.length == 2,
-        "the import scanner must see public and static/selective declarations");
-    assert(probeImports[0] == ImportHit("mesh", true)
-        && probeImports[1] == ImportHit("mesh_ops.helper", false),
-        "the import scanner must preserve target identity and public visibility");
+    assert(probeImports == [ImportHit("math", true),
+                            ImportHit("mesh_ops.comma_target", true),
+                            ImportHit("mesh_ops.wrapped_target", true),
+                            ImportHit("mesh_ops.renamed_target", true),
+                            ImportHit("mesh_ops.local_target", false),
+                            ImportHit("mesh_ops.static_target", false)],
+        "the import scanner must cover comma lists, line wraps, aliases, "
+      ~ "function-local imports, static imports, and public visibility");
 
-    Family[] families;
+    const closureProbe = publicImportPaths("mesh", [
+        "mesh": "public import mesh_ops.sibling;",
+        "mesh_ops.sibling": "public import mesh_ops.explicit_family;",
+        "mesh_ops.explicit_family": "import mesh;",
+    ]);
+    assert(closureProbe.get("mesh_ops.explicit_family", "")
+            == "mesh -> mesh_ops.sibling -> mesh_ops.explicit_family",
+        "public-import reachability must close transitively through a sibling");
+
+    OperationModule[] operationModules;
+    bool[string] operationNames;
     string[][string] pathsByModule;
-    string[] meshPaths;
-    string meshCode;
+    string[string] codeByModule;
     size_t filesScanned;
     foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         ++filesScanned;
         immutable raw = readText(de.name);
         immutable code = blankNonCode(raw);
         immutable mod = moduleNameOf(code);
-        if (mod.length > 0) pathsByModule[mod] ~= de.name;
-        if (mod == "mesh") {
-            meshPaths ~= de.name;
-            meshCode = code;
+        if (mod.length > 0) {
+            pathsByModule[mod] ~= de.name;
+            if (mod !in codeByModule) codeByModule[mod] = code;
         }
-        if (mod.startsWith("mesh_ops.")
-            && countOccurrences(code, "__traits(hasMember, Mesh") > 0)
-            families ~= Family(mod, de.name, code, hasExplicitMarker(raw));
+    }
+    foreach (de; dirEntries(buildPath(repoRoot, "source", "mesh_ops"),
+                            "*.d", SpanMode.shallow)) {
+        immutable raw = readText(de.name);
+        immutable code = blankNonCode(raw);
+        immutable mod = moduleNameOf(code);
+        operationModules ~= OperationModule(mod, de.name, code,
+                                             hasExplicitMarker(raw));
+        operationNames[mod] = true;
     }
 
     // POPULATION FLOORS precede every absence assertion they protect. The
@@ -127,46 +212,61 @@ D");
     // from satisfying every `no edge` assertion below for free.
     assert(filesScanned >= 500,
         format("mesh import-boundary scan visited only %d source modules", filesScanned));
-    assert(meshPaths.length == 1,
+    assert(pathsByModule.get("mesh", []).length == 1,
         format("expected exactly one D module named `mesh`; found %d at %s",
-               meshPaths.length, meshPaths));
-    assert(families.length == 13,
-        format("expected 13 converted mesh operation families from their "
-             ~ "`hasMember` tripwires; discovered %d", families.length));
+               pathsByModule.get("mesh", []).length,
+               pathsByModule.get("mesh", [])));
+    assert(operationModules.length == 15,
+        format("expected 15 D modules declared under source/mesh_ops/*.d; "
+             ~ "discovered %d", operationModules.length));
     size_t explicitCount;
-    foreach (ref f; families) if (f.explicitImport) ++explicitCount;
+    foreach (ref op; operationModules) {
+        assert(op.moduleName.startsWith("mesh_ops."),
+            format("operation source `%s` declares unexpected module `%s`",
+                   op.path, op.moduleName));
+        assert(pathsByModule.get(op.moduleName, []).length == 1,
+            format("operation module `%s` must have exactly one declaration; found %s",
+                   op.moduleName, pathsByModule.get(op.moduleName, [])));
+        if (op.explicitImport) ++explicitCount;
+    }
     assert(explicitCount == 1,
         format("R5 has migrated exactly one operation family in task 4600; "
              ~ "the tree-derived marker set contains %d", explicitCount));
 
-    const meshImports = importsOf(meshCode);
-    foreach (ref f; families) {
-        assert(pathsByModule.get(f.moduleName, []).length == 1,
-            format("operation module `%s` must have exactly one declaration; found %s",
-                   f.moduleName, pathsByModule.get(f.moduleName, [])));
+    const meshImports = importsOf(codeByModule["mesh"]);
+    const publicPaths = publicImportPaths("mesh", codeByModule);
+    size_t publicOperationEdges;
+    foreach (hit; meshImports) if (hit.isPublic && hit.target.startsWith("mesh_ops.")) {
+        assert(hit.target in operationNames,
+            format("mesh publicly imports `%s`, which is not declared by a direct "
+                 ~ "source/mesh_ops/*.d module", hit.target));
+        ++publicOperationEdges;
+    }
 
-        size_t meshEdges, meshPublicEdges;
-        foreach (hit; meshImports) if (hit.target == f.moduleName) {
+    foreach (ref op; operationModules) {
+        size_t meshEdges;
+        foreach (hit; meshImports) if (hit.target == op.moduleName) {
             ++meshEdges;
-            if (hit.isPublic) ++meshPublicEdges;
         }
-
-        if (f.explicitImport) {
+        if (op.explicitImport) {
             size_t importsMesh;
-            foreach (hit; importsOf(f.code)) if (hit.target == "mesh") ++importsMesh;
+            foreach (hit; importsOf(op.code)) if (hit.target == "mesh") ++importsMesh;
             assert(importsMesh == 1,
                 format("explicit family `%s` must still import the base `mesh` "
-                     ~ "module exactly once; found %d", f.moduleName, importsMesh));
+                     ~ "module exactly once; found %d", op.moduleName, importsMesh));
             assert(meshEdges == 0,
                 format("mesh imports explicit family `%s` through %d edge(s); "
                      ~ "task 4600 requires no base-module edge to that family",
-                       f.moduleName, meshEdges));
-        } else {
-            assert(meshEdges == 1 && meshPublicEdges == 1,
-                format("unmigrated family `%s` must retain exactly one public "
-                     ~ "mesh import during the one-family-at-a-time R5 migration; "
-                     ~ "found %d edge(s), %d public", f.moduleName,
-                       meshEdges, meshPublicEdges));
+                       op.moduleName, meshEdges));
+            assert(op.moduleName !in publicPaths,
+                format("mesh publicly exposes explicit family `%s` through `%s`; "
+                     ~ "task 4600 requires no public-import path to that family",
+                       op.moduleName, publicPaths.get(op.moduleName, "")));
         }
     }
+
+    assert(publicOperationEdges == 12,
+        format("mesh declares %d direct public import edge(s) to modules under "
+             ~ "source/mesh_ops/*.d; task 4600 requires exactly 12 after the "
+             ~ "first family migration", publicOperationEdges));
 }

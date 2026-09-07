@@ -2881,8 +2881,9 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 }
 
 // Stage I's hand-written 13-public-import roster evolved with R5 task 4600.
-// `mesh_ops_import_boundary_test.d` now derives the same family set from the
-// operation modules and separates remaining re-exports from explicit imports.
+// `mesh_ops_import_boundary_test.d` now derives the complete module roster
+// from source/mesh_ops/*.d declarations, separates the explicit boundary, and
+// pins the total number of remaining public edges.
 
 // ---------------------------------------------------------------------------
 // THE §2.6 WIDENINGS, AND THE HALF THAT KEEPS THEM HONEST (task 1903 Stage D3).

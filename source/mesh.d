@@ -14773,8 +14773,8 @@ struct Mesh {
     // fields that template used to INJECT are declared below in this struct
     // instead (search `bevelPinnedOrphans_`); a `static assert` tripwire at
     // the foot of edge_bevel.d refuses a member — or an in-struct alias — of
-    // `bevelEdgesByMask` coming back. Its callers import that operation module
-    // explicitly; `mesh.d` no longer publishes the fin-bundle family's API.
+    // `bevelEdgesByMask` coming back, and the `public import` at the top of
+    // this file is what keeps `import mesh;` clients resolving it.
 
     // --- edge.bevel valence-4 planar free-end cap parity ----------------------
     // TASK 1903 Stage G MOVED THESE THREE DECLARATIONS HERE, AND MOVED NOTHING
