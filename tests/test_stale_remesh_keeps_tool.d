@@ -163,6 +163,12 @@ unittest {
         `{"id":"tool.reset","params":{"_positional":["` ~ TOOL ~ `"]}}`);
     assert(response["status"].str == "ok", response.toString);
     response = postJson("/api/command",
+        `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
+        ~ `","mergeVerts","false"]}}`);
+    assert(response["status"].str == "ok",
+        "the fresh-result control could not engage the mirror tool: "
+        ~ response.toString);
+    response = postJson("/api/command",
         "tool.attr " ~ TOOL ~ " mergeVerts ?");
     assert(response["status"].str == "ok",
         "the fresh-result control must arm the mirror tool: " ~ response.toString);
@@ -202,6 +208,12 @@ unittest {
     response = postJson("/api/command",
         `{"id":"tool.reset","params":{"_positional":["` ~ TOOL ~ `"]}}`);
     assert(response["status"].str == "ok", response.toString);
+    response = postJson("/api/command",
+        `{"id":"tool.attr","params":{"_positional":["` ~ TOOL
+        ~ `","mergeVerts","false"]}}`);
+    assert(response["status"].str == "ok",
+        "the stale-result arm could not engage the mirror tool: "
+        ~ response.toString);
     response = postJson("/api/command",
         "tool.attr " ~ TOOL ~ " mergeVerts ?");
     assert(response["status"].str == "ok",
