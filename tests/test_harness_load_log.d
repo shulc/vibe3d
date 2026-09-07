@@ -13,7 +13,7 @@
 // stdout is redirected to a file in most invocations — it was legible in about
 // 200 of 2 970 runs.
 //
-// TWO CELLS, separate on purpose:
+// THREE CELLS, separate on purpose:
 //
 //   A. an exit reached BEFORE the lock ever is (`no_such_test`). Proves a
 //      record is written at all, and that `lock_wait_s` carries its "never got
@@ -25,6 +25,10 @@
 //   B. the lock GIVE-UP (`lock_timeout`) — the path the reconstruction most
 //      needed, and the likeliest to be forgotten, because it is the only exit
 //      that produces no test output whatsoever.
+//
+//   C. a worker preparation that starts after the lock but cannot write its
+//      object file. It must be `run_incomplete`, never `ran`: selected tests
+//      are not measured tests, and there is no verdict without `Total:`.
 //
 // Cell B is deterministic for a structural reason: this test runs UNDER a
 // run_test.d that holds the host-wide lock, so a child runner cannot get it.
@@ -43,10 +47,10 @@
 //   make `lock_wait_s` default to 0 instead of -1       -> A: sentinel
 
 import std.process : execute, thisProcessID;
-import std.file    : exists, readText, remove, tempDir;
+import std.file    : exists, getcwd, mkdirRecurse, readText, remove, rmdir, tempDir;
 import std.json    : JSONValue, parseJSON;
 import std.path    : buildPath;
-import std.string  : strip, startsWith, splitLines;
+import std.string  : indexOf, strip, startsWith, splitLines;
 import std.conv    : to;
 import std.format  : format;
 import std.stdio   : writeln;
@@ -144,6 +148,66 @@ void main() {
         holder, rB["lock_holder_pid"].integer));
     assert(rB["total"].integer == 0, "B: a run that never started has no tests");
 
-    writeln("harness load log: both cells pass — a refused run and a lock "
-          ~ "give-up each leave exactly one labelled record");
+    // ---------------------------------------------------------------- cell C
+    scenario("C: a run that loses worker output before Total is incomplete");
+    auto mountPoint = buildPath(tempDir(),
+        format("vibe3d-harness-incomplete-%d", thisProcessID));
+    mkdirRecurse(mountPoint);
+    scope(exit) if (exists(mountPoint)) rmdir(mountPoint);
+
+    auto namespaceProbe = execute(["unshare", "--mount", "--map-root-user", "true"]);
+    if (namespaceProbe.status != 0) {
+        writeln("C: SKIPPED constrained-filesystem witness — "
+              ~ "unshare --mount --map-root-user is unavailable");
+    } else {
+        // The mount begins above the mandatory 256 MiB floor. The filler waits
+        // for the scratch tree, which is created only after the preflight, then
+        // consumes enough space to make the source-backed test's object write
+        // fail. A deadline makes a runner that never creates scratch fail this
+        // fixture rather than leaving a polling process behind.
+        const childPort = 20_000 + cast(int)(thisProcessID % 20_000);
+        const script =
+            "mount -t tmpfs -o size=512m tmpfs \"$1\" || exit 99\n"
+          ~ "scratch=$(TMPDIR=\"$1\" VIBE3D_HARNESS_LOG=off rdmd \"$3/run_test.d\" --print-scratch) || exit 98\n"
+          ~ "( deadline=$((SECONDS + 30)); while [ ! -d \"$scratch\" ]; do "
+          ~ "    [ $SECONDS -lt $deadline ] || exit 97; done; "
+          ~ "  fallocate -l 480M \"$1/fill-after-preflight\" ) &\n"
+          ~ "filler=$!\n"
+          ~ "TMPDIR=\"$1\" VIBE3D_HARNESS_LOG=\"$2\" env -u DISPLAY "
+          ~ "  rdmd \"$3/run_test.d\" --no-build --stale-ok -p \"$4\" -j 1 test_ai3d_controller\n"
+          ~ "runner_rc=$?\n"
+          ~ "wait $filler || exit 96\n"
+          ~ "echo CHILD_RUNNER_EXIT=$runner_rc\n"
+          ~ "exit 0\n";
+        auto c = execute(["unshare", "--mount", "--map-root-user", "bash", "-c",
+                          script, "_", mountPoint, g_logPath, getcwd(),
+                          childPort.to!string]);
+        assert(c.status == 0, format(
+            "C: constrained child failed outside the expected runner refusal (%d):\n%s",
+            c.status, c.output));
+        assert(c.output.indexOf("Error: error writing file") >= 0, format(
+            "C: the synchronized filler did not force the intended object-write failure:\n%s",
+            c.output));
+        assert(c.output.indexOf("CHILD_RUNNER_EXIT=1") >= 0,
+            "C: failed preparation should exit 1:\n" ~ c.output);
+        assert(c.output.indexOf("Total:") < 0,
+            "C: the failed preparation unexpectedly produced a verdict:\n" ~ c.output);
+
+        auto recsC = records();
+        assert(recsC.length == 3, format(
+            "C: expected exactly one new record, got %d total", recsC.length));
+        auto rC = recsC[2];
+        assert(rC["stage"].str == "run_incomplete", format(
+            "C: selected work whose worker died before Total must be run_incomplete, is %s",
+            rC["stage"].str));
+        assert(rC["tests_selected"].integer == 1,
+            "C: the witness must select exactly one test");
+        assert(rC["total"].integer == 0,
+            "C: no TestResult reached the summary, so total must stay zero");
+        assert(rC["rc"].integer == 1,
+            "C: an incomplete run must retain the pessimistic rc=1");
+    }
+
+    writeln("harness load log: refusal, lock give-up, and incomplete worker "
+          ~ "preparation each leave one precisely labelled record");
 }

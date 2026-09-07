@@ -519,11 +519,12 @@ void releaseRunLock() {
 enum kHarnessLogVersion = 1;
 
 // Where this invocation STOPPED. The load report's first question is not "did
-// it pass" but "did it run", and those are unrelated: a run refused by the
-// stale-binary guard, or one that gave up waiting for the lock, measured
-// nothing while still spending a lane's attention. Every value except `ran` is
-// an invocation that produced NO verdict -- the "the run never happened" class
-// this project keeps paying for, finally counted instead of inferred.
+// it pass" but "did it produce a verdict", and those are unrelated: a run
+// refused by the stale-binary guard, one that gave up waiting for the lock, or
+// one whose worker preparation died after the lock measured nothing while
+// still spending a lane's attention. Every value except `ran` is an invocation
+// that produced NO verdict -- the "the run never happened" class this project
+// keeps paying for, finally counted instead of inferred.
 enum HarnessStage : string {
     started      = "started",        // logged only if we died between arming and every known exit
     spaceRefused = "space_refused",
@@ -535,6 +536,7 @@ enum HarnessStage : string {
     lockTimeout  = "lock_timeout",
     noSuchTest   = "no_such_test",
     noBinary     = "no_binary",
+    runIncomplete = "run_incomplete", // acquired the slot, but no Total/verdict was produced
     ran          = "ran",
 }
 
@@ -2594,7 +2596,12 @@ int main(string[] args) {
         g_harness.rc = 1;
         return 1;
     }
-    g_harness.stage = HarnessStage.ran;
+    // Pessimistic until printSummary has both populated the counters and
+    // emitted the Total line. Worker preparation/link failures return before
+    // that point; calling them `ran` made total=0 indistinguishable from a
+    // verdict (task 4640).
+    g_harness.stage = HarnessStage.runIncomplete;
+    g_harness.rc = 1;
 
     // Per-CHECKOUT scratch tree; see scratchDirFor / prepareScratchDir above for
     // why it is keyed that way and what happens to a leftover one.
@@ -2709,6 +2716,7 @@ int main(string[] args) {
     if (samples.length) saveTimings(timings, samples);
 
     printSummary(results);
+    g_harness.stage = HarnessStage.ran;
     int failed = 0;
     foreach (ref r; results) if (!r.passed) failed++;
 
