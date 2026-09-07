@@ -80,8 +80,7 @@ private enum LedgerRow[] kResidue = [
     LedgerRow("TransformTool.recordCommit|record", 1,
         "transform gesture edit — the deliberately unmigrated task-1905 zone"),
     LedgerRow("TransformTool.recordCommit|recordInSession", 1,
-        "transform gesture edit — the in-session writer at "
-      ~ "source/tools/transform/transform.d:854"),
+        "transform gesture edit — the base transform in-session writer"),
     LedgerRow("XfrmTransformTool.recordTransformCommand|recordInSession", 1,
         "wrapper-owned transform gesture intent"),
     LedgerRow("XfrmTransformTool.recordTransformCommand|record", 1,
