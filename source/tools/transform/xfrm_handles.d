@@ -234,7 +234,8 @@ mixin template XfrmHandlesImpl() {
             // idempotent stage that does not require a session — and runOpen() is
             // false so the consolidate/nextRun is skipped.
             if (wasRelocate) {
-                if (editIsOpen()) commitBoundaryEdit();
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Move);
                 moveSub.restageRelocatePin();           // run-close: UNCONDITIONAL on relocate
                 // Hard run boundary: collapse the open run's tagged in-session
                 // entries into ONE surviving entry, then open a fresh run id so
@@ -258,7 +259,8 @@ mixin template XfrmHandlesImpl() {
             // so the drag opening below must freeze the CURRENT pin, not a
             // stale one.
             if (wasPinnedOffGizmo) {
-                if (editIsOpen()) commitBoundaryEdit();
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Move);
                 moveSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
                     consolidateRunAndAdvance();
@@ -304,7 +306,8 @@ tryRotateBank:
                 // branch already committed ITS session and mirrored the Move
                 // commit; the pinned branch commits nothing, so both are done
                 // here and both are no-ops when already closed.
-                if (editIsOpen()) commitBoundaryEdit();
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Rotate);
                 // Run-close: re-stage the pin the fresh gesture's beginEdit will
                 // freeze as its in-session-cancel baseline. A relocate moved the
                 // pin, so it is staged from the (already-pushed) userPlaced

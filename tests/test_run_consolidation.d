@@ -450,6 +450,60 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// (J) SAME-BANK RELOCATE CLOSE STAYS INSIDE THE RUN.
+//
+// A landed Move gesture contributes the run's first row. A non-empty TX panel
+// session then opens another Move edit, and the off-gizmo relocate closes it.
+// This is the pre-1905 commitEdit("Move") case: the close belongs to the same
+// run and must consolidate to one row. BoundaryCommit would silently split it
+// into two.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set Transform");
+    long floor = undoCount();
+
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    double ux, uy;
+    arrowDirPx(evalPivot(), vp, ux, uy);
+    int xa, ya;
+    arrowGrabPx(evalPivot(), vp, xa, ya);
+    int xb = xa + cast(int)(60.0 * ux);
+    int yb = ya + cast(int)(60.0 * uy);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xa, ya, xb, yb, 10));
+    settle();
+    assert(undoCount() == floor + 1,
+        "same-bank relocate setup: landed Move must append one run row");
+
+    cmd("tool.beginSession Transform");
+    auto beforeTx = vert(6);
+    cmd("tool.attr Transform TX 1");
+    settle();
+    assert(!vertNear(vert(6), beforeTx),
+        "same-bank relocate setup: TX must make the open Move edit non-empty");
+    assert(undoCount() == floor + 1,
+        "same-bank relocate setup: open TX edit must not record early");
+
+    int xoff = cast(int)(xb + 220.0 * uy);
+    int yoff = cast(int)(yb - 220.0 * ux);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xoff, yoff, xoff, yoff, 1));
+    settle();
+    assert(undoCount() == floor + 1,
+        "same-bank Move relocate must consolidate gesture+TX to ONE row; got "
+        ~ (undoCount() - floor).to!string);
+
+    cmd("tool.set Transform off");
+    postJson("/api/command", commandBody("history.undo"));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one undo must revert the same-bank gesture+TX run");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
 // (B) BOUNDARY FLUSH.
 //
 // Gesture -> off-gizmo relocate click (None mode, allowed) -> the just-ended run

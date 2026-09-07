@@ -66,6 +66,12 @@ long undoCount() {
     return getJson("/api/history")["undo"].array.length;
 }
 
+void cmd(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok", "/api/command '" ~ line ~ "' failed: "
+        ~ r.toString);
+}
+
 // Post-playback / post-command settle (see test_relocate_boundary.d): events
 // are POSTED to the SDL queue before they are processed, and /api/undo runs
 // on the background HTTP thread — wait so the main loop has applied the
@@ -223,7 +229,6 @@ unittest {
                               xa, ya, xb, yb, 10));
     settle();
 
-    auto v6AfterRun1 = vert(6);
     long stackAfterRun1 = undoCount();
     // record+consolidate (Phase 1): gesture 1 commits a TAGGED in-session entry
     // on mouse-up (+1 mid-run); the element-pick boundary below consolidates the
@@ -231,6 +236,21 @@ unittest {
     assert(stackAfterRun1 == stackBefore + 1,
         "gesture 1 records ONE in-session entry on mouse-up; got " ~
         (stackAfterRun1 - stackBefore).to!string ~ " new entries");
+
+    // A non-empty same-bank panel edit is still open when the element-pick
+    // relocate reaches the boundary site. It must close in the Move run and
+    // consolidate with gesture 1, not append a separate boundary row.
+    cmd("tool.beginSession xfrm.elementMove");
+    auto beforePanel = vert(6);
+    cmd("tool.attr xfrm.elementMove TX 1");
+    settle();
+    assert((fabs(vert(6)[0] - beforePanel[0]) +
+            fabs(vert(6)[1] - beforePanel[1]) +
+            fabs(vert(6)[2] - beforePanel[2])) > 0.05,
+        "element boundary setup: TX must make the open Move edit non-empty");
+    assert(undoCount() == stackBefore + 1,
+        "element boundary setup: the open panel edit must not record early");
+    auto v6AfterRun1 = vert(6);
 
     // Gesture 2: element-pick the +Z face (well clear of the gizmo) and
     // haul. The pick is the in-session relocate boundary -> commits run 1.

@@ -467,6 +467,13 @@ unittest {
     assert(entries == 1,
         "combined T+R+S must record one wrapper-owned entry; got "
         ~ entries.to!string);
+    auto recorded = getJson("/api/history")["undo"].array[$ - 1];
+    assert(recorded["command"].str == "mesh.vertex_edit",
+        "combined T+R+S must record the wrapper's vertex-edit command; got "
+        ~ recorded.toString);
+    assert(recorded["label"].str == "Scale 8 verts",
+        "combined T+R+S recorded entry must retain the final Scale bank; got "
+        ~ recorded["label"].str);
 
     // Undoing every recorded entry restores the original mesh.
     foreach (_; 0 .. entries) postJson("/api/command", commandBody("history.undo"));

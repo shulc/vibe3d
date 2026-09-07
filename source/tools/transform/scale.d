@@ -1130,7 +1130,7 @@ public:
             if (wrapperRef !is null) {
                 import tools.transform.xfrm_transform : XfrmTransformTool;
                 if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                    wrap.commitMoveSessionIfOpen();
+                    wrap.commitSessionAtScaleBoundaryIfOpen();
             }
             handler.setPosition(center);
             centerManual = true;

@@ -1056,12 +1056,12 @@ public:
             // (its own editIsOpen() is independent of this rotate session —
             // committing both yields two distinct runs, which is correct).
             // Reached via the base-typed wrapperRef cast to the wrapper, which
-            // owns the public commitMoveSessionIfOpen(). Null / non-wrapper
+            // owns the public bank-boundary close. Null / non-wrapper
             // (standalone unit-test) instance → skipped.
             if (wrapperRef !is null) {
                 import tools.transform.xfrm_transform : XfrmTransformTool;
                 if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                    wrap.commitMoveSessionIfOpen();
+                    wrap.commitSessionAtRotateBoundaryIfOpen();
             }
             handler.setPosition(hit);
             centerManual = true;

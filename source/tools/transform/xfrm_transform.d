@@ -1450,7 +1450,7 @@ public:
                 // selection/mutation boundary even when the prior gesture
                 // already closed its session per-gesture.
                 if (editIsOpen())
-                    commitEdit("Move");
+                    commitOpenEdit(TransformHistoryIntent.RunClose);
                 // Selection / mutation change is a run boundary
                 // (record+consolidate, Phase 1 addendum A4): consolidate the
                 // open run + bump the run id so the next gesture is tagged
@@ -2965,7 +2965,7 @@ public:
             //     out of the editIsOpen() guard is the load-bearing fix (after a
             //     per-gesture commit editIsOpen() is false, so the old gate
             //     never re-staged the picked anchor).
-            if (editIsOpen()) commitBoundaryEdit();
+            if (editIsOpen()) commitEditAtBankBoundary(DragBank.Move);
             moveSub.restageActionCenterPin();       // run-close: UNCONDITIONAL on pick
             // Cross-slot (symmetric): an element-pick relocate, like any
             // relocate, commits EVERY open session — close any open R/S sub-tool
@@ -3065,7 +3065,8 @@ public:
             //     on history.runOpen() so the run SPLITS even when the prior
             //     gesture already self-committed.
             bool p5Boundary = plain2 && history !is null && history.runOpen();
-            if (plain2 && editIsOpen()) commitBoundaryEdit();
+            if (plain2 && editIsOpen())
+                commitEditAtBankBoundary(DragBank.Move);
             // Run-close: verbatim re-stage of the current pin (NOT a relocate —
             // pin unchanged) so the next gesture freezes the picked anchor, plus
             // the consolidate/nextRun/bank-reset that SPLITS the run. p5Boundary
@@ -3214,7 +3215,7 @@ public:
         // commit the same set; the pre-0791 ACEN-mode poll committed only Move,
         // a gap of the same shape as the one this task closes.)
         if (editIsOpen())
-            commitEdit("Move");
+            commitOpenEdit(TransformHistoryIntent.RunClose);
         if (history !is null && history.runOpen()) {
             closeRunBoundary();
             // Same reset as the selection boundary: a later config change
@@ -5555,16 +5556,20 @@ public:
     // but the one live edit and its bank provenance belong to this wrapper. This
     // public seam lets those sibling handlers request the wrapper's hard-boundary
     // close without receiving history capability themselves.
-    public void commitMoveSessionIfOpen() {
+    private void commitSessionAtBankBoundaryIfOpen(DragBank incomingBank) {
         if (!editIsOpen()) return;
-        // BoundaryCommit deliberately records outside the run: the foreign
-        // append guard consolidates any prior in-session gesture before the
-        // open cross-slot edit lands as its own row.
-        commitBoundaryEdit();
+        commitEditAtBankBoundary(incomingBank);
+    }
+
+    public void commitSessionAtRotateBoundaryIfOpen() {
+        commitSessionAtBankBoundaryIfOpen(DragBank.Rotate);
+    }
+
+    public void commitSessionAtScaleBoundaryIfOpen() {
+        commitSessionAtBankBoundaryIfOpen(DragBank.Scale);
     }
 
     private void beginEditForBank(DragBank bank) {
-        if (editIsOpen()) return;
         beginEdit();
         if (editIsOpen()) editBank = bank;
     }
@@ -5679,11 +5684,14 @@ public:
         commitOpenEdit(TransformHistoryIntent.RunClose);
     }
 
-    // Relocate and cross-slot closes are hard boundaries: unlike a normal run
-    // close, they must land outside the open run so the adjacent bank remains a
-    // distinct undo unit.
-    private void commitBoundaryEdit() {
-        commitOpenEdit(TransformHistoryIntent.BoundaryCommit);
+    // A relocate/off-gizmo boundary keeps a same-bank open edit in the current
+    // run, matching the pre-1905 commitEdit path. Only a bank transition is a
+    // BoundaryCommit and therefore a distinct undo unit.
+    private void commitEditAtBankBoundary(DragBank incomingBank) {
+        if (editBank == incomingBank)
+            commitOpenEdit(TransformHistoryIntent.RunClose);
+        else
+            commitOpenEdit(TransformHistoryIntent.BoundaryCommit);
     }
 
     private void commitOpenEdit(TransformHistoryIntent intent) {
@@ -7360,6 +7368,46 @@ unittest {
     tool.uniform = false;
     auto disabled = tool.prepareParamState("uniformScale");
     assert(disabled.kind == PreparedToolStateKind.None);
+
+    // Selection/mutation update boundary: capture the record flags at the
+    // exact update() site, before closeRunBoundary() erases that distinction.
+    // A foreign command cannot witness this because CommandHistory's append
+    // guard consolidates first. The open Move edit must land in-session.
+    import command_history : HistoryFlags;
+    import view : View;
+    Mesh selectionBoundaryMesh = makeCube();
+    selectionBoundaryMesh.resetSelection();
+    GpuMesh selectionBoundaryGpu;
+    EditMode selectionBoundaryMode = EditMode.Vertices;
+    auto selectionBoundaryView = new View(0, 0, 800, 600);
+    auto selectionBoundaryHistory = new CommandHistory();
+    auto selectionBoundaryTool = new XfrmTransformTool(
+        () => &selectionBoundaryMesh, &selectionBoundaryGpu,
+        &selectionBoundaryMode);
+    selectionBoundaryTool.flagT = true;
+    selectionBoundaryTool.flagR = false;
+    selectionBoundaryTool.flagS = false;
+    selectionBoundaryTool.setUndoBindings(selectionBoundaryHistory,
+        () => new MeshVertexEdit(&selectionBoundaryMesh,
+                                 selectionBoundaryView,
+                                 selectionBoundaryMode));
+    selectionBoundaryTool.activate();
+    VectorStack selectionBoundaryVts;
+    selectionBoundaryTool.update(selectionBoundaryVts);
+    selectionBoundaryTool.openLiveSessionForTest();
+    selectionBoundaryMesh.vertices[0].x += 1;
+    uint boundaryRecordFlags;
+    size_t boundaryRecords;
+    selectionBoundaryHistory.onRecord = (string, uint flags) {
+        boundaryRecordFlags = flags;
+        ++boundaryRecords;
+    };
+    selectionBoundaryMesh.selectVertex(0);
+    selectionBoundaryTool.update(selectionBoundaryVts);
+    assert(boundaryRecords == 1,
+        "selection boundary must record the non-empty open Move edit once");
+    assert((boundaryRecordFlags & HistoryFlags.InSession) != 0,
+        "selection boundary must close its open edit with RunClose intent");
 
     foreach (mask; 0 .. 8) foreach (routeMask; 0 .. 8)
         foreach (preserveDisplay; [false, true])

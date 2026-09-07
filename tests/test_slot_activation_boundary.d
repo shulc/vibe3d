@@ -386,6 +386,12 @@ unittest {
     cmd(`tool.pipe.attr falloff center "0,0,0"`);
     cmd(`tool.pipe.attr falloff size "40000,40000,40000"`);
     settle();
+    long floor = undoCount();
+
+    moveGestureOnArrow();
+    settle();
+    assert(undoCount() == floor + 1 && runIsHeld(),
+        "ROTATE-PANEL-SESSION setup: landed Move must open a non-empty run");
 
     cmd("tool.beginSession Transform");
     cmd("tool.attr Transform RZ 90");
@@ -394,16 +400,17 @@ unittest {
     assert(!approxEq(held[0][0], -0.5, 1e-3),
         "setup: the panel rotate must have moved v0 off its pristine x; got "
         ~ held[0][0].to!string);
-    long undosHeld = undoCount();
+    assert(undoCount() == floor + 1,
+        "ROTATE-PANEL-SESSION setup: open Rotate edit must not record early");
 
     // Activate the falloff slot while that session is open.
     cmd("tool.pipe.attr falloff type linear");
     settle();
 
-    assert(undoCount() >= undosHeld,
-        "the open panel session must be COMMITTED at the boundary, not "
-        ~ "discarded: undo count went from " ~ undosHeld.to!string ~ " to "
-        ~ undoCount().to!string);
+    assert(undoCount() == floor + 1,
+        "slot activation must close the Rotate edit in-session and consolidate "
+        ~ "the Move+Rotate run to ONE row; got "
+        ~ (undoCount() - floor).to!string);
     auto after = dumpVerts();
     foreach (i; 0 .. held.length)
         foreach (k; 0 .. 3)
