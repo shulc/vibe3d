@@ -279,13 +279,16 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
-    selectEdges([0]);
+    auto baseline = dumpVerts();
 
     cmd("ui.toolProperties hide");
     cmd("tool.pipe.attr falloff type none");
-    cmd("tool.set edge.slide");
-    cmd("tool.attr edge.slide t 0.6");
+    cmd("tool.set xfrm.smooth");
+    cmd("tool.attr xfrm.smooth strn 0.8");
     auto unweighted = dumpVerts();
+    assert(!vertsEqual(baseline, unweighted),
+        "frame parameter witness fixture: unweighted xfrm.smooth must move "
+      ~ "the cube before the falloff-only frame change");
 
     // This is a STAGE event, not a tool-value event. CommandWrapperTool is not
     // a LiveEvalClient, so only its explicit frame consumer can notice the
@@ -294,9 +297,9 @@ unittest {
     Thread.sleep(300.msecs);
     auto weighted = dumpVerts();
     assert(!vertsEqual(unweighted, weighted),
-        "frame parameter witness: edge.slide must re-evaluate a falloff change "
+        "frame parameter witness: xfrm.smooth must re-evaluate a falloff change "
       ~ "without a new widget event or a visible Tool Properties panel");
 
-    cmd("tool.set edge.slide off");
+    cmd("tool.set xfrm.smooth off");
     cmd("tool.pipe.attr falloff type none");
 }
