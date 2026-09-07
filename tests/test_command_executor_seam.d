@@ -1,7 +1,7 @@
 // Command-funnel witness (task 4570, step 2). This file pins the published
-// exception set, the reachable layer.attr continuation, and pre-apply drop on
-// refusal. It does not identify which mesh a successful command edits while a
-// tool owns an uncommitted preview; that remaining cell needs a geometry diff.
+// exception set, the reachable layer.attr continuation, pre-apply drop on
+// refusal, and the target/undo geometry of a successful Model command fired
+// while a tool owns an uncommitted preview.
 //
 // The blocks are ordered for the mutation drill. Exception rows come before
 // the Model row, so a policy mutated to always-false reaches the Model failure
@@ -99,6 +99,73 @@ unittest {
     assert(after == before + 1,
         "Model command: layer.rename must add exactly one Model history entry; depth "
         ~ before.to!string ~ " -> " ~ after.to!string);
+}
+
+// A successful Model command must commit the genuinely changed live preview,
+// keep its bound mesh as the command target, and leave every other mesh alone.
+// One undo reverts only that command, back to the committed preview geometry.
+unittest {
+    resetCube("Model command target");
+    auto addResponse = command("layer.add name:Control");
+    auto cubeResponse = command("prim.cube");
+    auto selectLayerResponse = command("layer.select index:0");
+    auto selectVertexResponse = command(commandBody("mesh.select",
+        `{"mode":"vertices","indices":[0]}`));
+    auto clearResponse = command("history.clear");
+    assert(addResponse["status"].str == "ok"
+        && cubeResponse["status"].str == "ok"
+        && selectLayerResponse["status"].str == "ok"
+        && selectVertexResponse["status"].str == "ok"
+        && clearResponse["status"].str == "ok",
+        "Model command target: could not build the two-mesh fixture");
+
+    auto layers = getJson("/api/layers")["layers"].array;
+    assert(layers.length == 2,
+        "Model command target: population floor requires exactly two layers, got "
+        ~ layers.length.to!string);
+    assert(layers[1]["type"].str == "mesh",
+        "Model command target: population floor requires layer 1 to be a mesh");
+    const targetBefore = getJson("/api/model?layer=0")["vertices"];
+    const otherBefore = getJson("/api/model?layer=1")["vertices"];
+    assert(otherBefore.array.length > 0,
+        "Model command target: population floor requires a populated second mesh");
+
+    armMove("Model command target");
+    auto previewResponse = postJson("/api/script?interactive=true",
+        "tool.attr move TX 0.25\n");
+    const previewTarget = getJson("/api/model?layer=0")["vertices"];
+    assert(previewResponse["status"].str == "ok",
+        "Model command target: interactive move preview failed: "
+        ~ previewResponse.toString);
+    assert(previewTarget.toString != targetBefore.toString,
+        "Model command target: live preview did not actually change the target mesh");
+
+    auto response = command(
+        "mesh.move_vertex from:{-0.25,-0.5,-0.5} to:{-0.125,-0.5,-0.5}");
+    const toolAfter = armedTool();
+    const targetAfter = getJson("/api/model?layer=0")["vertices"];
+    const otherAfter = getJson("/api/model?layer=1")["vertices"];
+    assert(response["status"].str == "ok",
+        "Model command target: mesh.move_vertex did not execute: "
+        ~ response.toString);
+    assert(toolAfter.length == 0,
+        "Model command target: mesh.move_vertex left the live move preview armed");
+    assert(targetAfter.toString != previewTarget.toString,
+        "Model command target: mesh.move_vertex did not change its bound target mesh");
+    assert(otherAfter.toString == otherBefore.toString,
+        "Model command target: mesh.move_vertex changed the second mesh");
+
+    auto undoResponse = command("history.undo");
+    const targetAfterUndo = getJson("/api/model?layer=0")["vertices"];
+    const otherAfterUndo = getJson("/api/model?layer=1")["vertices"];
+    assert(undoResponse["status"].str == "ok",
+        "Model command target: history.undo failed: " ~ undoResponse.toString);
+    assert(otherAfterUndo.toString == otherBefore.toString,
+        "Model command target: history.undo changed the second mesh");
+    assert(targetAfterUndo.toString == previewTarget.toString,
+        "Model command target: history.undo did not restore the target mesh "
+        ~ "to the committed live preview");
+    cleanTeardown("Model command target teardown");
 }
 
 // The test-only layer injector must use the same executor as /api/command.
