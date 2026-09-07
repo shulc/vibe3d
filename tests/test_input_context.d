@@ -23,6 +23,7 @@ import http_command_helpers : commandBody;
 import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
 import std.json;
+import std.algorithm : canFind;
 import std.conv   : to;
 import std.format : format;
 
@@ -146,11 +147,28 @@ void waitForZone(string name, bool present) {
 void showLayerPanel() { runCmd("ui.layerList show"); waitForZone("layerList", true);  }
 void hideLayerPanel() { runCmd("ui.layerList hide"); waitForZone("layerList", false); }
 
+// Project-owned test-harness vocabulary: exact SDK-tree searches returned no
+// files for kPanelNeutralZones/assertPanelNeutral. These four zones are the
+// permanent frame chrome; every other published zone is an input-taking panel
+// whose presence would invalidate this test's "no panel up" premise (task 4572).
+immutable string[] kPanelNeutralZones = [
+    "tabPanel", "viewport3d", "sidePanel", "statusBar"
+];
+
+void assertPanelNeutral() {
+    foreach (z; getJson("/api/input/context")["zones"].array) {
+        const name = z["name"].str;
+        assert(kPanelNeutralZones.canFind(name),
+            "input-context precondition: unexpected open panel '" ~ name ~ "'");
+    }
+}
+
 void resetScene() {
     waitPlayerIdle();
     postJson("/api/command", commandBody("scene.reset", "{}"));
     runCmd("prim.cube");
     hideLayerPanel();
+    assertPanelNeutral();
 }
 
 // ===========================================================================

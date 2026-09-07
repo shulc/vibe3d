@@ -7,7 +7,7 @@ import http_client : testBaseUrl, getJson, postJson, postRaw;
 import http_command_helpers : commandBody;
 import core.thread : Thread;
 import core.time : msecs;
-import std.algorithm : canFind, sort, startsWith;
+import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.array : array;
 import std.conv : to;
 import std.digest.sha : sha1Of, toHexString;
@@ -106,7 +106,17 @@ immutable string[] kSkipExact = [
     "mesh.remesh", "mesh.remesh.open", "file.quit"
 ];
 
+// Project-owned test-harness vocabulary: exact SDK-tree searches returned no
+// files for registryStateToggle/stateToggleIds. A blind registry sweep must
+// not execute state-toggle command classes: their process-wide UI/pipeline
+// latches outlive scene.reset and can poison the next test (task 4572).
+bool registryStateToggle(string id) {
+    return id.endsWith(".show") || id.endsWith(".toggle")
+        || id.endsWith("_toggle");
+}
+
 bool skipped(string id) {
+    if (registryStateToggle(id)) return true;
     foreach (p; kSkipPrefixes) if (id.startsWith(p)) return true;
     foreach (e; kSkipExact) if (id == e) return true;
     return false;
@@ -228,6 +238,18 @@ unittest {
     auto seeds = buildSeeds();
     auto registry = getJson("/api/registry");
     auto ids = registry["commands"].array;
+    string[] stateToggleIds;
+    foreach (id; ids)
+        if (registryStateToggle(id.str)) stateToggleIds ~= id.str;
+    stateToggleIds = stateToggleIds.sort.array;
+    writefln("DISARM CENSUS STATE-TOGGLE EXCLUSIONS: %s", stateToggleIds);
+    assert(stateToggleIds.length >= 4,
+        "the registry state-toggle class is too small: " ~ stateToggleIds.to!string);
+    assert(stateToggleIds.canFind("history.show"),
+        "the registry state-toggle class lost history.show: " ~ stateToggleIds.to!string);
+    assert(stateToggleIds.canFind("snap.toggle"),
+        "the generalized registry state-toggle class lost snap.toggle: "
+        ~ stateToggleIds.to!string);
     string[] preApplyDrops;
     foreach (id; registry["commandsDroppingToolBeforeApply"].array)
         preApplyDrops ~= id.str;
