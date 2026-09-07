@@ -528,6 +528,10 @@ protected:
                morphEditFactory !is null;
     }
 
+    public final bool hasPipeGizmoHost() const nothrow @nogc {
+        return pipeGizmoHost !is null;
+    }
+
     // True iff a beginEdit() / commitEdit() pair is currently open.
     // Used by subclasses (RotateTool, ScaleTool) to decide whether to
     // snapshot tool-specific Tool-Properties state — only on the FIRST

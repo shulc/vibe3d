@@ -80,6 +80,9 @@ mixin template XfrmItemImpl() {
     public void setItemUndoFactory(LayerXformEditFactory factory) {
         layerXformEditFactory_ = factory;
     }
+    public bool hasItemUndoFactory() const nothrow @nogc {
+        return layerXformEditFactory_ !is null;
+    }
 
     // Item-mode gesture-undo snapshot — the analogue of TransformTool's
     // `editIdx`/`editBefore`/`editCapturing`, but keyed on `ItemXform`

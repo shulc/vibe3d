@@ -901,24 +901,38 @@ public:
         super.setUndoBindings(h, factory, morphFactory);
     }
 
-    public final size_t[2] embeddedHistoryBindingState()
+    public struct EmbeddedHistoryBindingState {
+        bool canonicalIdentity;
+        size_t historyBound;
+        size_t pipeHostBound;
+    }
+
+    public final EmbeddedHistoryBindingState embeddedHistoryBindingState()
             const nothrow @nogc {
-        size_t population;
-        size_t bound;
+        EmbeddedHistoryBindingState state;
+        state.canonicalIdentity = moveSub !is null && rotateSub !is null &&
+            scaleSub !is null && moveSub !is rotateSub &&
+            moveSub !is scaleSub && rotateSub !is scaleSub;
         alias Names = FieldNameTuple!XfrmTransformTool;
         alias Types = FieldTypeTuple!XfrmTransformTool;
         static foreach (i, T; Types) {
             static if (is(T : TransformTool)) {
                 {
                     const candidate = __traits(getMember, this, Names[i]);
-                    if (candidate !is null) {
-                        ++population;
-                        if (candidate.hasUndoBindings()) ++bound;
-                    }
+                    if (candidate !is null && candidate !is moveSub &&
+                        candidate !is rotateSub && candidate !is scaleSub)
+                        state.canonicalIdentity = false;
                 }
             }
         }
-        return [population, bound];
+        foreach (candidate; [cast(const TransformTool) moveSub,
+                             cast(const TransformTool) rotateSub,
+                             cast(const TransformTool) scaleSub]) {
+            if (candidate is null) continue;
+            if (candidate.hasUndoBindings()) ++state.historyBound;
+            if (candidate.hasPipeGizmoHost()) ++state.pipeHostBound;
+        }
+        return state;
     }
 
     // Enabled sub-tools in bank order T → R → S, backed by a fixed member
