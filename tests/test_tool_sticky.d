@@ -283,11 +283,13 @@ unittest {
 
     cmd("ui.toolProperties hide");
     cmd("tool.pipe.attr falloff type none");
-    cmd("tool.set xfrm.smooth");
-    cmd("tool.attr xfrm.smooth strn 0.8");
+    cmd("tool.set xfrm.quantize");
+    cmd("tool.attr xfrm.quantize X 0.3");
+    cmd("tool.attr xfrm.quantize Y 0.3");
+    cmd("tool.attr xfrm.quantize Z 0.3");
     auto unweighted = dumpVerts();
     assert(!vertsEqual(baseline, unweighted),
-        "frame parameter witness fixture: unweighted xfrm.smooth must move "
+        "frame parameter witness fixture: unweighted xfrm.quantize must move "
       ~ "the cube before the falloff-only frame change");
 
     // This is a STAGE event, not a tool-value event. CommandWrapperTool is not
@@ -297,9 +299,9 @@ unittest {
     Thread.sleep(300.msecs);
     auto weighted = dumpVerts();
     assert(!vertsEqual(unweighted, weighted),
-        "frame parameter witness: xfrm.smooth must re-evaluate a falloff change "
+        "frame parameter witness: xfrm.quantize must re-evaluate a falloff change "
       ~ "without a new widget event or a visible Tool Properties panel");
 
-    cmd("tool.set xfrm.smooth off");
+    cmd("tool.set xfrm.quantize off");
     cmd("tool.pipe.attr falloff type none");
 }
