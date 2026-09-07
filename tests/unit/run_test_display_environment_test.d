@@ -18,8 +18,11 @@ private alias blankNonCode = sharedBlankNonCode;
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
 
-private string functionBody(string code, string signature)
+private string functionBody(string code, string signature, string raw = null)
 {
+    const source = raw is null ? code : raw;
+    enforce(source.length == code.length,
+        "function-body source and code projection have different lengths");
     const fn = code.indexOf(signature);
     enforce(fn >= 0, "run_test.d no longer defines `" ~ signature ~ "`");
     size_t i = cast(size_t) fn;
@@ -31,7 +34,7 @@ private string functionBody(string code, string signature)
     {
         if (code[i] == '{') depth++;
         else if (code[i] == '}' && --depth == 0)
-            return code[begin .. i + 1];
+            return source[begin .. i + 1];
     }
     enforce(false, "unterminated body for `" ~ signature ~ "`");
     return null;
@@ -39,8 +42,9 @@ private string functionBody(string code, string signature)
 
 private bool startVibeDropsDisplay(string src)
 {
-    const rawBody = functionBody(src, "Pid startVibe(");
-    const body_ = blankNonCode(rawBody);
+    const code = blankNonCode(src);
+    const body_ = functionBody(code, "Pid startVibe(");
+    const rawBody = functionBody(code, "Pid startVibe(", src);
     const copy = body_.indexOf("environment.toAA()") >= 0;
     const drop = body_.indexOf("childEnv.remove(") >= 0
               && rawBody.indexOf(`childEnv.remove("DISPLAY")`) >= 0;

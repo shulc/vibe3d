@@ -1483,9 +1483,11 @@ Pid startVibe(ushort port, string logPath) {
     auto logFile = File(logPath, "wb");
     string[] argv = ["./vibe3d", "--test", "--http-port", port.to!string];
     // A runner-owned worker must not inherit one caller-owned X socket (task
-    // 4660). Unsetting DISPLAY preserves the established headless software-GL
-    // path; --attach never reaches startVibe, so external visual endpoints
-    // retain the display environment chosen by their owner.
+    // 4660). Only DISPLAY is removed here; WAYLAND_DISPLAY intentionally
+    // remains because removing a second display variable would be a separate
+    // behavior change, not part of moving the caller's established practice
+    // into the runner. --attach never reaches startVibe, so external visual
+    // endpoints retain the display environment chosen by their owner.
     auto childEnv = environment.toAA();
     childEnv.remove("DISPLAY");
     Pid pid;
@@ -2490,8 +2492,6 @@ int main(string[] args) {
             g_harness.rc = 1;
             return 1;
         }
-        if (auto msg = spaceEstimateWarning(free, j, root))
-            stderr.writeln(yellow(msg));
     }
 
     keepVibe = keep;
@@ -2522,6 +2522,18 @@ int main(string[] args) {
         g_harness.stage = HarnessStage.noTests;
         g_harness.rc = 0;
         return 0;
+    }
+
+    // Cap workers at # of tests so we don't spin up empty vibe3d instances.
+    // The advisory follows this clamp and still precedes every census, build,
+    // lock and worker scratch write, so it names the workers this run will
+    // actually create while there is still time for the caller to intervene.
+    if (j > cast(int)tests.length) j = cast(int)tests.length;
+    {
+        const root = tempDir();
+        const free = freeBytes(root);
+        if (auto msg = spaceEstimateWarning(free, j, root))
+            stderr.writeln(yellow(msg));
     }
 
     // A caller that ran `dub build` itself (CI's own Build step) records the
@@ -2645,9 +2657,6 @@ int main(string[] args) {
     // why it is keyed that way and what happens to a leftover one.
     scratchDir = prepareScratchDir(scratchDirFor(getcwd()));
     writeln(dim("scratch: " ~ scratchDir));
-
-    // Cap workers at # of tests so we don't spin up empty vibe3d instances.
-    if (j > cast(int)tests.length) j = cast(int)tests.length;
 
     // Build N workers and distribute tests by LONGEST-PROCESSING-TIME-FIRST:
     // sort tests by expected duration DESCENDING, then greedily assign each to
