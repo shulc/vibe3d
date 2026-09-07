@@ -2,30 +2,30 @@
 // `command_record_class_census_test` is project-owned: an exact `grep -rl -w`
 // over the SDK tree returned zero files before this test was added.
 //
-// The receiver side is derived, not a spelling list: parse CommandHistory,
-// find bodies that assign/compound-assign a stack (or one of its elements),
-// then close transitively over direct calls to other members. The resulting
-// public set must equal kExpectedStackWriters, so a new primitive names itself
-// before anyone can classify its callers. The caller side remains the exact
-// symbol|primitive ledger: every entry-producing call is owned by one symbol.
-// Navigation/clear/discard methods mutate stacks but cannot add a caller's
-// entry and are explicitly classified as such. prepareNextRun remains in the
-// prepared caller ledger because it evolves transaction metadata, although it
-// does not itself mutate either stack. In particular, the LayerAdd built by
+// The receiver side is derived, not a spelling list: discover every aggregate
+// that declares undoStack/redoStack, treat ANY field mention (plus indirect
+// delegate/mixin syntax) as a proposal, then close transitively over direct or
+// address-taken member edges. `blankNonCode` removes comments AND literals
+// before brace matching. The receiver ledger disposes every public proposal as
+// either a caller-tracked history primitive or an explicit read/navigation
+// excuse; an unclassified proposal fails. `blockEnd` and `refireBegin` really
+// reach record and are entry primitives. `blockBegin` is audited beside its
+// peer but only opens grouping state. The caller side remains the exact
+// symbol|primitive ledger. In particular, the LayerAdd built by
 // `/api/test/layer` must cross CommandExecutor instead of becoming a second
 // apply+record implementation beside it.
 module tests.unit.command_record_class_census_test;
 
 import std.algorithm : canFind, sort;
-import std.array : join;
 import std.conv : to;
 import std.file : dirEntries, exists, readText, SpanMode;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
-import std.string : indexOf, strip;
+import std.string : startsWith, strip;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
-    declaratorName, historySurface, isIdentChar, reconcile, symbolTokenHits;
+    declaratorName, historySurface, isIdentChar, lineOf, reconcile,
+    symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -95,15 +95,27 @@ private enum LedgerRow[] kResidue = [
 ];
 
 // Test-only scanner vocabulary: exact SDK-tree searches returned no files for
-// HistoryMember, wordAt, hasWord, matchingBrace, parseHistoryMembers,
-// assignmentAt, mutatesHistoryStack, callsMember, derivePublicStackWriters,
-// kExpectedStackWriters, kNonEntryStackMutators, renderSetDiff and
-// tracksCallerPrimitive. The words describe local syntax, not an external API
-// classification.
+// HistoryMember, HistoryOwnerScan, collectHistoryOwnerScans,
+// parseHistoryOwnerScans,
+// declaresHistoryStackField, mentionsHistoryStackField,
+// historyLastIdentifier, historyDelegateFields, hasHistoryIndirectEdge,
+// deriveHistoryReceiverHits, kReceiverDisposition, receiverTracksCallers or
+// auditedHistoryProtocolPeer. The words describe local syntax, not an external
+// API classification.
 private struct HistoryMember {
+    string owner;
     string name;
     string body;
+    size_t line;
     bool hidden;
+}
+
+private struct HistoryOwnerScan {
+    string name;
+    size_t open;
+    size_t close;
+    size_t line;
+    HistoryMember[] members;
 }
 
 private bool wordAt(string s, size_t p, string word) {
@@ -127,19 +139,49 @@ private size_t matchingBrace(string code, size_t open) {
     return code.length;
 }
 
-private HistoryMember[] parseHistoryMembers(string code) {
-    HistoryMember[] members;
-    auto headRel = code.indexOf("final class CommandHistory");
-    if (headRel < 0) return members;
-    const head = cast(size_t)headRel;
-    auto openRel = code[head .. $].indexOf("{");
-    if (openRel < 0) return members;
-    const open = head + cast(size_t)openRel;
-    const close = matchingBrace(code, open);
-    if (close >= code.length) return members;
-    string protection = "public";
+private string aggregateName(string signature) {
+    foreach (kind; ["class", "struct", "union"]) {
+        foreach (p; 0 .. signature.length) {
+            if (!wordAt(signature, p, kind)) continue;
+            size_t q = p + kind.length;
+            while (q < signature.length && (signature[q] == ' '
+                    || signature[q] == '\t' || signature[q] == '\n'
+                    || signature[q] == '\r')) ++q;
+            const start = q;
+            while (q < signature.length && isIdentChar(signature[q])) ++q;
+            if (q > start) return signature[start .. q];
+        }
+    }
+    return "";
+}
+
+private bool declaresHistoryStackField(string code, size_t open, size_t close) {
     size_t declFrom = open + 1;
     for (size_t i = declFrom; i < close; ++i) {
+        if (code[i] == ':') {
+            declFrom = i + 1;
+        } else if (code[i] == ';') {
+            auto declaration = code[declFrom .. i];
+            if (!declaration.canFind("(")
+                    && (hasWord(declaration, "undoStack")
+                        || hasWord(declaration, "redoStack"))) return true;
+            declFrom = i + 1;
+        } else if (code[i] == '{') {
+            const end = matchingBrace(code, i);
+            if (end >= code.length) return false;
+            i = end;
+            declFrom = end + 1;
+        }
+    }
+    return false;
+}
+
+private HistoryMember[] parseHistoryMembers(string code,
+                                             ref HistoryOwnerScan owner) {
+    HistoryMember[] members;
+    string protection = "public";
+    size_t declFrom = owner.open + 1;
+    for (size_t i = declFrom; i < owner.close; ++i) {
         if (code[i] == ':' || code[i] == ';') {
             auto part = code[declFrom .. i].strip;
             if (code[i] == ':' && (part == "public" || part == "private"
@@ -159,7 +201,8 @@ private HistoryMember[] parseHistoryMembers(string code) {
                 const explicitHidden = hasWord(signature, "private")
                     || hasWord(signature, "protected")
                     || hasWord(signature, "package");
-                members ~= HistoryMember(name, code[i .. end + 1],
+                members ~= HistoryMember(owner.name, name, code[i .. end + 1],
+                    lineOf(code, i),
                     explicitHidden || (!explicitPublic && protection != "public"));
             }
             i = end;
@@ -167,6 +210,36 @@ private HistoryMember[] parseHistoryMembers(string code) {
         }
     }
     return members;
+}
+
+private void collectHistoryOwnerScans(string code, size_t from, size_t until,
+                                      ref HistoryOwnerScan[] owners) {
+    size_t declFrom = from;
+    for (size_t i = from; i < until; ++i) {
+        if (code[i] == ';') {
+            declFrom = i + 1;
+        } else if (code[i] == '{') {
+            const end = matchingBrace(code, i);
+            if (end >= code.length || end > until) return;
+            const name = aggregateName(code[declFrom .. i]);
+            if (name.length && declaresHistoryStackField(code, i, end)) {
+                HistoryOwnerScan owner = HistoryOwnerScan(
+                    name, i, end, lineOf(code, i));
+                owner.members = parseHistoryMembers(code, owner);
+                owners ~= owner;
+            }
+            collectHistoryOwnerScans(code, i + 1, end, owners);
+            i = end;
+            declFrom = end + 1;
+        }
+    }
+}
+
+private HistoryOwnerScan[] parseHistoryOwnerScans(string code) {
+    HistoryOwnerScan[] owners;
+    collectHistoryOwnerScans(code, 0, code.length, owners);
+    owners.sort!((a, b) => a.name < b.name);
+    return owners;
 }
 
 private bool assignmentAt(string code, size_t p) {
@@ -211,6 +284,10 @@ private bool mutatesHistoryStack(string body) {
     return false;
 }
 
+private bool mentionsHistoryStackField(string body) {
+    return hasWord(body, "undoStack") || hasWord(body, "redoStack");
+}
+
 private bool callsMember(string body, string name) {
     for (size_t p = 0; p < body.length; ++p) {
         if (!wordAt(body, p, name)) continue;
@@ -218,78 +295,231 @@ private bool callsMember(string body, string name) {
         while (q < body.length && (body[q] == ' ' || body[q] == '\t'
                 || body[q] == '\n' || body[q] == '\r')) ++q;
         if (q < body.length && body[q] == '(') return true;
+        size_t before = p;
+        while (before && (body[before - 1] == ' ' || body[before - 1] == '\t'
+                || body[before - 1] == '\n' || body[before - 1] == '\r'))
+            --before;
+        if (before && body[before - 1] == '&') return true;
     }
     return false;
 }
 
-private string[] derivePublicStackWriters(string code) {
-    auto members = parseHistoryMembers(code);
-    assert(members.length >= 60, format(
-        "CommandHistory writer derivation parsed only %d member(s)", members.length));
-    string[] names;
-    foreach (ref m; members) names ~= m.name;
-    foreach (anchor; ["record", "undo", "redo", "fire", "prepareRecord"])
-        assert(names.canFind(anchor),
-            "CommandHistory writer derivation lost anchor " ~ anchor);
+private bool hasHistoryIndirectEdge(string body, const(string)[] delegates) {
+    if (hasWord(body, "mixin") || hasWord(body, "delegate")) return true;
+    foreach (name; delegates) if (callsMember(body, name)) return true;
+    return false;
+}
 
-    bool[string] reaches;
-    size_t direct;
-    foreach (ref m; members) if (mutatesHistoryStack(m.body)) {
-        reaches[m.name] = true;
-        ++direct;
-    }
-    assert(direct > 0, "CommandHistory writer derivation found no stack mutation");
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        foreach (ref m; members) {
-            if (m.name in reaches) continue;
-            foreach (callee; names) if ((callee in reaches)
-                    && callsMember(m.body, callee)) {
-                reaches[m.name] = true;
-                changed = true;
-                break;
+private string historyLastIdentifier(string declaration) {
+    size_t end = declaration.length;
+    while (end && !isIdentChar(declaration[end - 1])) --end;
+    size_t start = end;
+    while (start && isIdentChar(declaration[start - 1])) --start;
+    return declaration[start .. end];
+}
+
+private string[] historyDelegateFields(string code,
+                                       ref HistoryOwnerScan owner) {
+    string[] delegates;
+    size_t i = owner.open + 1;
+    size_t declFrom = i;
+    while (i < owner.close) {
+        if (code[i] == ';') {
+            auto declaration = code[declFrom .. i];
+            if (hasWord(declaration, "delegate")) {
+                auto name = historyLastIdentifier(declaration);
+                if (name.length) delegates ~= name;
             }
+            declFrom = ++i;
+        } else if (code[i] == '{') {
+            const end = matchingBrace(code, i);
+            if (end >= code.length) break;
+            i = end + 1;
+            declFrom = i;
+        } else {
+            ++i;
         }
     }
-
-    string[] publicWriters, hiddenWriters;
-    foreach (ref m; members) if (m.name in reaches)
-        (m.hidden ? hiddenWriters : publicWriters) ~= m.name;
-    publicWriters.sort();
-    hiddenWriters.sort();
-    assert(hiddenWriters.canFind("pushEntry"),
-        "CommandHistory writer derivation failed to keep private pushEntry hidden");
-    return publicWriters;
+    return delegates;
 }
 
-private immutable string[] kExpectedStackWriters = [
-    "beginPrepared", "blockEnd", "clear", "consolidate",
-    "discardPreparedToken", "discardValidatedPreparedToken", "fire",
-    "installPreparedImage", "installPreparedToken", "invalidateRedo",
-    "jumpTo", "jumpToVisible", "prepareConsolidate", "prepareCurrentImage",
-    "prepareInvalidateRedo", "prepareLifecycle", "prepareLifecycleAppend",
-    "prepareRecord", "pushEntryForTest", "record", "recordCoalescing",
-    "recordInSession", "recordToolLifecycle", "redo", "refireBegin",
-    "refireEnd", "replaceInSessionTail", "replaceInSessionTailWith", "undo",
+private enum LedgerRow[] kHistoryOwners = [
+    LedgerRow("CommandHistory", 1,
+        "the live owner of the undo and redo stacks"),
+    LedgerRow("PreparedHistoryImage", 1,
+        "the detached owner whose fields are hidden by a private: section"),
 ];
 
-private immutable string[] kNonEntryStackMutators = [
-    "clear", "discardPreparedToken", "discardValidatedPreparedToken",
-    "invalidateRedo", "jumpTo", "jumpToVisible", "redo", "undo",
+private enum LedgerRow[] kReceiverDisposition = [
+    LedgerRow("CommandHistory.beginPrepared", 1,
+        "prepared protocol — opens the owner-held detached transaction"),
+    LedgerRow("CommandHistory.blockBegin", 1,
+        "EXCUSE: opens grouping state only; it neither names a stack nor reaches record"),
+    LedgerRow("CommandHistory.blockEnd", 1,
+        "command-block primitive — really reaches record for the collected children"),
+    LedgerRow("CommandHistory.canRedo", 1,
+        "EXCUSE: read-only availability query"),
+    LedgerRow("CommandHistory.canUndo", 1,
+        "EXCUSE: read-only availability query"),
+    LedgerRow("CommandHistory.canUndoLifecycle", 1,
+        "EXCUSE: read-only lifecycle-tail query"),
+    LedgerRow("CommandHistory.canUndoModel", 1,
+        "EXCUSE: read-only model-tail query"),
+    LedgerRow("CommandHistory.canUndoUi", 1,
+        "EXCUSE: read-only UI-tail query"),
+    LedgerRow("CommandHistory.clear", 1,
+        "EXCUSE: clears both timelines but cannot create a caller entry"),
+    LedgerRow("CommandHistory.consolidate", 1,
+        "gesture primitive — rewrites an already-open run tail"),
+    LedgerRow("CommandHistory.discardPreparedToken", 1,
+        "EXCUSE: discards a detached image without installing an entry"),
+    LedgerRow("CommandHistory.discardValidatedPreparedToken", 1,
+        "EXCUSE: discards a validated image without installing an entry"),
+    LedgerRow("CommandHistory.fire", 1,
+        "command primitive — its no-refire fallback applies and records"),
+    LedgerRow("CommandHistory.installPreparedImage", 1,
+        "raw prepared-image primitive — transfers a detached history image"),
+    LedgerRow("CommandHistory.installPreparedToken", 1,
+        "prepared protocol — installs the validated detached transaction"),
+    LedgerRow("CommandHistory.invalidateRedo", 1,
+        "EXCUSE: clears redo after an external mutation but creates no entry"),
+    LedgerRow("CommandHistory.jumpTo", 1,
+        "EXCUSE: navigates by undo/redo and creates no caller entry"),
+    LedgerRow("CommandHistory.jumpToVisible", 1,
+        "EXCUSE: visible-index wrapper over jumpTo"),
+    LedgerRow("CommandHistory.prepareConsolidate", 1,
+        "prepared protocol — rewrites an already-open detached run tail"),
+    LedgerRow("CommandHistory.prepareCurrentImage", 1,
+        "raw prepared-image primitive — exposes only an owner-built copy"),
+    LedgerRow("CommandHistory.prepareInvalidateRedo", 1,
+        "prepared protocol — clears redo in the detached transaction"),
+    LedgerRow("CommandHistory.prepareLifecycle", 1,
+        "prepared lifecycle primitive — appends to the detached transaction"),
+    LedgerRow("CommandHistory.prepareLifecycleAppend", 1,
+        "raw prepared-image primitive — appends a lifecycle entry to a copy"),
+    LedgerRow("CommandHistory.prepareRecord", 1,
+        "prepared command primitive — records into the detached transaction"),
+    LedgerRow("CommandHistory.pushEntryForTest", 1,
+        "test primitive — directly appends the supplied command"),
+    LedgerRow("CommandHistory.record", 1,
+        "command primitive — delegates transitively to private pushEntry"),
+    LedgerRow("CommandHistory.recordCoalescing", 1,
+        "command primitive — merges or reaches record"),
+    LedgerRow("CommandHistory.recordInSession", 1,
+        "gesture primitive — appends within an open run"),
+    LedgerRow("CommandHistory.recordToolLifecycle", 1,
+        "lifecycle primitive — appends through private pushEntry"),
+    LedgerRow("CommandHistory.redo", 1,
+        "EXCUSE: transfers an existing entry from redo to undo"),
+    LedgerRow("CommandHistory.redoEntries", 1,
+        "EXCUSE: read-only structured stack view"),
+    LedgerRow("CommandHistory.redoEntriesVisible", 1,
+        "EXCUSE: read-only surfaced stack view"),
+    LedgerRow("CommandHistory.redoLabels", 1,
+        "EXCUSE: read-only label projection"),
+    LedgerRow("CommandHistory.refireBegin", 1,
+        "refire primitive — a dangling live command really reaches record"),
+    LedgerRow("CommandHistory.refireEnd", 1,
+        "refire primitive — records the bracket's final live command"),
+    LedgerRow("CommandHistory.replaceInSessionTail", 1,
+        "gesture primitive — replaces or appends a re-grade entry"),
+    LedgerRow("CommandHistory.replaceInSessionTailWith", 1,
+        "gesture primitive — replaces a run tail with the supplied command"),
+    LedgerRow("CommandHistory.toolLifecycleCount", 1,
+        "EXCUSE: read-only lifecycle-entry count"),
+    LedgerRow("CommandHistory.undo", 1,
+        "EXCUSE: transfers an existing entry from undo to redo"),
+    LedgerRow("CommandHistory.undoDepthCounts", 1,
+        "EXCUSE: read-only class-count projection"),
+    LedgerRow("CommandHistory.undoEntries", 1,
+        "EXCUSE: read-only structured stack view"),
+    LedgerRow("CommandHistory.undoEntriesVisible", 1,
+        "EXCUSE: read-only surfaced stack view"),
+    LedgerRow("CommandHistory.undoEntryCommandLine", 1,
+        "EXCUSE: read-only command-line projection"),
+    LedgerRow("CommandHistory.undoLabels", 1,
+        "EXCUSE: read-only label projection"),
 ];
 
-private string renderSetDiff(const(string)[] expected, const(string)[] actual) {
-    string[] unexpected, missing;
-    foreach (name; actual) if (!expected.canFind(name)) unexpected ~= name;
-    foreach (name; expected) if (!actual.canFind(name)) missing ~= name;
-    return "unexpected public stack writer(s): [" ~ unexpected.join(", ")
-        ~ "]; missing expected writer(s): [" ~ missing.join(", ") ~ "]";
+private bool auditedHistoryProtocolPeer(string owner, string name) {
+    return owner == "CommandHistory" && name == "blockBegin";
 }
 
-private bool tracksCallerPrimitive(string name, const(string)[] stackWriters) {
-    if (stackWriters.canFind(name) && !kNonEntryStackMutators.canFind(name))
-        return true;
+private LedgerHit[] deriveHistoryReceiverHits(string code) {
+    auto owners = parseHistoryOwnerScans(code);
+    LedgerHit[] ownerHits;
+    foreach (ref owner; owners)
+        ownerHits ~= LedgerHit(owner.name, "source/command_history.d",
+            owner.line, owner.name);
+    auto ownerProblems = reconcile(kHistoryOwners, ownerHits);
+    assert(ownerProblems.length == 0,
+        "history receiver derivation: stack-owning aggregate set changed.\n"
+        ~ ownerProblems);
+
+    HistoryOwnerScan* commandHistory;
+    foreach (ref owner; owners)
+        if (owner.name == "CommandHistory") commandHistory = &owner;
+    assert(commandHistory !is null,
+        "history receiver derivation: CommandHistory owner was not parsed");
+
+    // POPULATION FLOOR: all four checks run before any receiver/caller result
+    // is reconciled. Keep them independent so each failure names the dead arm.
+    assert(commandHistory.members.length >= 60, format(
+        "CommandHistory writer derivation parsed only %d member(s)",
+        commandHistory.members.length));
+    string[] commandNames;
+    foreach (ref m; commandHistory.members) commandNames ~= m.name;
+    foreach (anchor; ["record", "undo", "redo", "fire", "prepareRecord"])
+        assert(commandNames.canFind(anchor),
+            "CommandHistory writer derivation lost anchor " ~ anchor);
+    size_t hiddenCount;
+    foreach (ref m; commandHistory.members) if (m.hidden) ++hiddenCount;
+    assert(hiddenCount > 0,
+        "CommandHistory writer derivation found no private member");
+    size_t directMutators;
+    foreach (ref m; commandHistory.members)
+        if (mutatesHistoryStack(m.body)) ++directMutators;
+    assert(directMutators > 0,
+        "CommandHistory writer derivation found no direct stack mutator");
+
+    LedgerHit[] proposals;
+    foreach (ref owner; owners) {
+        string[] names;
+        foreach (ref m; owner.members) names ~= m.name;
+        auto delegates = historyDelegateFields(code, owner);
+
+        bool[string] reaches;
+        foreach (ref m; owner.members)
+            if (mentionsHistoryStackField(m.body)
+                    || hasHistoryIndirectEdge(m.body, delegates))
+                reaches[m.name] = true;
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            foreach (ref m; owner.members) {
+                if (m.name in reaches) continue;
+                foreach (callee; names) if ((callee in reaches)
+                        && callsMember(m.body, callee)) {
+                    reaches[m.name] = true;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        foreach (ref m; owner.members)
+            if (!m.hidden && ((m.name in reaches)
+                    || auditedHistoryProtocolPeer(owner.name, m.name)))
+                proposals ~= LedgerHit(owner.name ~ "." ~ m.name,
+                    "source/command_history.d", m.line, m.name);
+    }
+    proposals.sort!((a, b) => a.key < b.key);
+    return proposals;
+}
+
+private bool receiverTracksCallers(string name) {
+    const key = "CommandHistory." ~ name;
+    foreach (ref row; kReceiverDisposition)
+        if (row.key == key) return !row.why.startsWith("EXCUSE:");
     const suffix = "|" ~ name;
     foreach (ref row; kResidue)
         if (row.key.length >= suffix.length
@@ -298,13 +528,59 @@ private bool tracksCallerPrimitive(string name, const(string)[] stackWriters) {
 }
 
 unittest {
+    // Literal braces must be blanked before the same matcher used on the real
+    // file. The unpaired `}` here used to end the class at the first method.
+    enum braceProbe = `final class CommandHistory {
+private:
+    int[] undoStack, redoStack;
+    void delegate() writer;
+    void hiddenBySection() { undoStack = null; }
+public:
+    void first() { auto decoy = "}"; undoStack = null; }
+    private void hiddenExplicit() { redoStack = null; }
+    void second() { redoStack = null; }
+    void viaDelegate() { writer(); }
+private:
+    public ref int explicitPublic() { return undoStack[0]; }
+package:
+    void hiddenByPackage() { redoStack = null; }
+}`;
+    auto probeOwners = parseHistoryOwnerScans(blankNonCode(braceProbe));
+    assert(probeOwners.length == 1 && probeOwners[0].members.length == 7,
+        format("history receiver scanner: literal brace or member parsing "
+            ~ "desynchronised (owners=%d, members=%d)", probeOwners.length,
+            probeOwners.length ? probeOwners[0].members.length : 0));
+    string[] probePublic;
+    foreach (ref m; probeOwners[0].members)
+        if (!m.hidden) probePublic ~= m.name;
+    probePublic.sort();
+    assert(probePublic == ["explicitPublic", "first", "second", "viaDelegate"],
+        "history receiver scanner: explicit and section protection disagreed");
+    bool sawRefAccessor;
+    foreach (ref m; probeOwners[0].members)
+        if (m.name == "explicitPublic")
+            sawRefAccessor = mentionsHistoryStackField(m.body);
+    assert(sawRefAccessor,
+        "history receiver scanner: a ref-returning stack accessor was missed");
+    auto probeDelegates = historyDelegateFields(
+        blankNonCode(braceProbe), probeOwners[0]);
+    assert(probeDelegates == ["writer"],
+        "history receiver scanner: delegate field discovery failed");
+    assert(hasHistoryIndirectEdge("{ writer(); }", probeDelegates)
+            && hasHistoryIndirectEdge("{ mixin(buildWriter()); }", null)
+            && callsMember("{ auto writer = &pushEntry; }", "pushEntry")
+            && mentionsHistoryStackField("{ undoStack.remove(0); }"),
+        "history receiver scanner: an indirect/ref/UFCS mitigation arm is dead");
+
     immutable historyPath = buildPath(repoRoot, "source", "command_history.d");
     assert(exists(historyPath),
         "command-record class census: command_history.d is missing");
-    auto stackWriters = derivePublicStackWriters(blankNonCode(readText(historyPath)));
-    assert(stackWriters == kExpectedStackWriters,
-        "command-record class census: derived CommandHistory writer set changed; "
-        ~ renderSetDiff(kExpectedStackWriters, stackWriters));
+    auto receiverProposals = deriveHistoryReceiverHits(
+        blankNonCode(readText(historyPath)));
+    auto receiverProblems = reconcile(kReceiverDisposition, receiverProposals);
+    assert(receiverProblems.length == 0,
+        "command-record class census: a receiver proposal is unclassified.\n"
+        ~ receiverProblems);
 
     string[] population;
     immutable sourceRoot = buildPath(repoRoot, "source");
@@ -324,7 +600,7 @@ unittest {
         auto raw = readText(buildPath(repoRoot, rel));
         auto code = blankNonCode(raw);
         foreach (h; historySurface(code)) {
-            if (!tracksCallerPrimitive(h.name, stackWriters)) continue;
+            if (!receiverTracksCallers(h.name)) continue;
             records ~= LedgerHit(h.symbol ~ "|" ~ h.name, rel, h.line,
                 "history." ~ h.name ~ "(");
         }
