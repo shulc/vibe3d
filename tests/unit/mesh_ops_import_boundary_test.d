@@ -4,6 +4,9 @@
 // reachability come from declarations rather than paths. A module marked
 // `mesh-ops-import: explicit` imports Mesh but must have no reverse import edge
 // from the base module, including through a publicly imported sibling (task 4600).
+// Known blind spot: string mixins can re-export modules but remain invisible
+// because `blankNonCode` intentionally blanks strings; the tree has 0 such
+// `public import` uses as of 2026-09-07.
 module tests.unit.mesh_ops_import_boundary_test;
 
 import std.file   : dirEntries, readText, SpanMode;
