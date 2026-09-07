@@ -592,7 +592,7 @@ static assert(kRecorded.length == 7,
 private struct ExcludedRow { string symbol; string why; }
 
 private static immutable ExcludedRow[] kNotCommandRevert = [
-    ExcludedRow("XfrmTransformTool.commitEdit",
+    ExcludedRow("XfrmTransformTool.commitOwnedEdit",
         "`gh.revert()` on a `GestureHook`, not on a `Command` — a hook body "
       ~ "composed for `setCmdHooks`, not a call this census's batches govern"),
 ];

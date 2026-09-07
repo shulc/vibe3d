@@ -253,7 +253,7 @@ mixin template XfrmItemImpl() {
     // snapshot against the CURRENT xform; records nothing when nothing
     // changed (mirrors `buildEditCmd`'s no-op guard) or when undo plumbing
     // isn't wired (tests that never call `setItemUndoFactory`).
-    private void commitItemEdit() {
+    private void commitItemEdit(TransformHistoryIntent intent) {
         if (!itemEditCapturing_) return;
         scope(exit) {
             itemEditCapturing_      = false;
@@ -277,7 +277,7 @@ mixin template XfrmItemImpl() {
 
         auto cmd = layerXformEditFactory_();
         cmd.setEdit(payload);
-        recordCommit(cmd);
+        recordTransformCommand(cmd, intent);
     }
 
     private LayerXformEdit buildPreparedItemEditCmd() {

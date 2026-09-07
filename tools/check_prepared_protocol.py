@@ -7340,7 +7340,7 @@ def xfrm_activation_reset_gate(source, transform):
         [semantic_digest(body) for body in bodies] == [
             "0c0189f9125980fdd81edff3b546ad39eab91ec5c956b966fb9e3efe8cba5a75",
             "fb7447f80e0dcd58e218fc69a263945f45389ef8ce9d1a8c413bc1fabb31bb93",
-            "4302564b892a4b3318c044a5cf215ece4c714b7168085b4c941f3811c20096a5"] and
+            "6be9aea0828d812b3ee09cfdd0f17488a1ce1575cf86674353040a4205860f45"] and
         "image.run = resyncPreserveDisplayFields ? run : XformState.init;" in prepared_bodies and
         "const bool hadRun = runBaselineValid;" in prepared_bodies and
         "image.moveRunKnown = hadRun ? false : moveRec.runKnown;" in prepared_bodies and
@@ -7360,8 +7360,7 @@ def xfrm_activation_reset_gate(source, transform):
         "itemEditBefore_.length = 0;" in prepared_bodies and
         "final void installPreparedActivationResetPost(" in source and
         "recordViaInSession = true;" in prepared_bodies and
-        "if (flagR) rotateSub.setRecordViaInSession(true);" in prepared_bodies and
-        "if (flagS) scaleSub.setRecordViaInSession(true);" in prepared_bodies and
+        "setRecordViaInSession" not in prepared_bodies and
         "currentRunBank = DragBank.None;" in prepared_bodies and
         prepared_bodies.count("runBaselineValid = false;") == 2 and
         prepared_bodies.count("runFrameValid = false;") == 2 and
@@ -7373,7 +7372,7 @@ def xfrm_activation_reset_gate(source, transform):
         "frame.settled = false;" in prepared_bodies and
         "frame.valid = false;" in prepared_bodies and
         "image.clear();" in prepared_bodies and
-        "public final void setRecordViaInSession(bool on) nothrow @nogc" in transform and
+        "public final void setRecordViaInSession(bool on) nothrow @nogc" not in transform and
         not any(x in prepared_bodies
                 for x in ("activate();", "nextRun()", "context.", "history.")))
 if not xfrm_activation_reset_gate(xfrm_activation_reset, transform_tool):
@@ -7392,8 +7391,13 @@ for target, old, new, label in (
     ("xfrm", "refireAnchor.length = 0;", "", "retain refire anchor"),
     ("xfrm", "itemEditBefore_.length = 0;", "", "retain item baseline"),
     ("xfrm", "frame.valid = false;", "frame.valid = true;", "retain valid frame"),
-    ("transform", "public final void setRecordViaInSession(bool on) nothrow @nogc",
-     "public void setRecordViaInSession(bool on)", "drop nothrow routing seam"),
+    ("xfrm", "if (!image.valid) return;\n        recordViaInSession = true;",
+     "if (!image.valid) return;\n        recordViaInSession = false;",
+     "drop wrapper history route"),
+    ("xfrm", "if (!image.valid) return;\n        recordViaInSession = true;",
+     "if (!image.valid) return;\n        recordViaInSession = true; "
+     "if (flagR) rotateSub.setRecordViaInSession(true);",
+     "reintroduce embedded history route"),
 ):
     xfrm, transform = xfrm_activation_reset, transform_tool
     if target == "xfrm": xfrm = xfrm.replace(old, new, 1)

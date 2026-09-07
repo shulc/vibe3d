@@ -4555,7 +4555,8 @@ public:
         }
 
         if (editIsOpen())
-            commitEdit("Move");
+            commitOwnedEdit(DragBank.Move, "Move",
+                TransformHistoryIntent.RunGesture);
         // A no-op commit (no cmd built) never consumes the request; drop it so
         // it cannot leak into an unrelated later commit.
         pendingMoveSoftPin = false;
@@ -4689,7 +4690,8 @@ public:
         // harmless placeholder). Consumes (clears) rotateRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
-        commitOwnedEdit(DragBank.Rotate, "Rotate");
+        commitOwnedEdit(DragBank.Rotate, "Rotate",
+            TransformHistoryIntent.RunGesture);
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
@@ -4780,7 +4782,8 @@ public:
         // placeholder). Consumes (clears) scaleRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
-        commitOwnedEdit(DragBank.Scale, "Scale");
+        commitOwnedEdit(DragBank.Scale, "Scale",
+            TransformHistoryIntent.RunGesture);
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
@@ -5656,9 +5659,6 @@ public:
         // run first, landing this Move entry as its OWN surviving entry rather
         // than merged into the R/S bank's in-session tail (which would violate
         // single-bank-per-run and collapse two surviving entries into one).
-        bool wasInSession = recordViaInSession;
-        recordViaInSession = false;
-        scope(exit) recordViaInSession = wasInSession;
         commitEdit("Move");
     }
 
@@ -5782,16 +5782,20 @@ public:
         const bank = editBank == DragBank.None ? DragBank.Move : editBank;
         final switch (bank) {
             case DragBank.None:   assert(0, "resolved above");
-            case DragBank.Move:   commitOwnedEdit(bank, "Move"); break;
-            case DragBank.Rotate: commitOwnedEdit(bank, "Rotate"); break;
-            case DragBank.Scale:  commitOwnedEdit(bank, "Scale"); break;
+            case DragBank.Move:   commitOwnedEdit(bank, "Move",
+                TransformHistoryIntent.BoundaryCommit); break;
+            case DragBank.Rotate: commitOwnedEdit(bank, "Rotate",
+                TransformHistoryIntent.BoundaryCommit); break;
+            case DragBank.Scale:  commitOwnedEdit(bank, "Scale",
+                TransformHistoryIntent.BoundaryCommit); break;
         }
     }
 
     // One payload finalizer for every embedded bank. `bank` is semantic
     // metadata for the wrapper-owned run snapshots; it is not another session
     // state machine.
-    private void commitOwnedEdit(DragBank bank, string label) {
+    private void commitOwnedEdit(DragBank bank, string label,
+                                 TransformHistoryIntent intent) {
         scope(exit) editBank = DragBank.None;
         // Task 0614 Phase 4 — item branch. Builds a LayerXformEdit from the
         // gesture-open snapshot (itemEditBefore_) versus the CURRENT
@@ -5807,7 +5811,7 @@ public:
                 itemEditBefore_.length  = 0;
                 return;
             }
-            commitItemEdit();
+            commitItemEdit(intent);
             return;
         }
 
@@ -5927,7 +5931,7 @@ public:
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
             },
         );
-        recordCommit(cmd);
+        recordTransformCommand(cmd, intent);
     }
 
     // Typed history intents preserve the three distinct boundaries. A landed
@@ -5956,13 +5960,6 @@ public:
                 break;
         }
     }
-
-    protected override void recordCommit(Command cmd) {
-        recordTransformCommand(cmd, recordViaInSession
-            ? TransformHistoryIntent.RunGesture
-            : TransformHistoryIntent.BoundaryCommit);
-    }
-
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //

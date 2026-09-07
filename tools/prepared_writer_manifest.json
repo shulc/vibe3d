@@ -1205,14 +1205,14 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "5311bbdab1c8a0bf29bb289605c5a6f1c60bc0f46ceefc0ec71e40f2aeccaa26",
+      "semantic_sha256": "50eff10eeaed5626afc7bbdde4c0c41806bd58ac47c5bf5f8c388e989ee0965f",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "4c68c584082fc14dd8d1a01b5a62c2d9000ce91f0490f9641f4a42446f06893f",
+      "semantic_sha256": "490adc59d3899cdaf4de1b9d4de1ec49d8ab6c7a2a2cc2ab03cf0744f868893a",
       "signature": "void()",
       "symbol": "deactivate"
     },

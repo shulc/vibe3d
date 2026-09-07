@@ -16,8 +16,9 @@
 //
 //     ONE SITE  — `Tool.recordGestureEdit` in `source/tool.d`, which dispatches
 //                 to three primitives, one per `GestureRecordMode` member;
-//   + THREE     — the transform zone's, each REJECTED WITH A REASON (D1) and
-//                 named below with its file, so a FOURTH cannot be born green;
+//   + FIVE      — two standalone TransformTool arms plus the composed wrapper's
+//                 three typed history intents, named below so another cannot be
+//                 born green;
 //   + ZERO      — everywhere else under `source/tools/**`.
 //
 // WHY A NEW FILE AND NOT A MEMBER OF A FAMILY CENSUS. The seven
@@ -40,7 +41,7 @@
 // entry (the slice family's four `invalidateRedo` and the seam belt's
 // `consolidate` are rostered as legal non-recorders by their own family files).
 // This is the same partition §8 of the plan does its counting under, and it is
-// what makes "1 + 3" a number rather than a slogan.
+// what makes "1 + 5" a number rather than a slogan.
 //
 // MUTATIONS, one per member:
 //   1. add `history.record(cmd);` to any file under `source/tools/**` that is
@@ -122,24 +123,23 @@ private enum LedgerRow[] kResidue = [
       ~ "(box's commit while a live run is open), and the licence for the "
       ~ "plan's M2 mutation predicting exactly one reddened fixture cell"),
 
-    // ---- THE THREE REJECTED, EACH WITH ITS REASON --------------------------
-    // Decision D1: the transform zone is out of task 1905's scope. It is not
-    // "not yet done" in the sense of an unfinished family — it is deferred to
-    // the transform-state redesign (T2 of audit 0678), because two redesigns
-    // over one place cost more than one. These rows are what stop that
-    // deferral from becoming a hole: the zone may keep the three it has and
-    // may not grow a fourth without saying so here.
+    // ---- THE TRANSFORM ZONE ------------------------------------------------
+    // R4 finished the deferred composed-tool ownership transition. The base
+    // arms remain for standalone TransformTool subclasses; the wrapper owns
+    // three deliberately distinct intents rather than flattening their history
+    // boundaries into one generic mode.
     LedgerRow("TransformTool.recordCommit|recordInSession", 1,
         "TransformTool.commitEdit's in-session arm — REJECTED by D1, "
       ~ "transform zone, moves with T2"),
     LedgerRow("TransformTool.recordCommit|record", 1,
         "TransformTool.commitEdit's plain arm — REJECTED by D1, transform "
       ~ "zone, moves with T2"),
-    LedgerRow("XfrmTransformTool.recordPipeRefire|replaceInSessionTail", 1,
-        "the run-tail splice — REJECTED by D1. It is also the site the plan's "
-      ~ "round-3 predicate `history_?\\.record` could not see at all, which is "
-      ~ "why this file keys on the whole call surface and filters by name "
-      ~ "afterwards rather than grepping for one spelling"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|recordInSession", 1,
+        "RunGesture — append one landed gesture inside the open run"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|record", 1,
+        "BoundaryCommit — ordinary record with whole-tail boundary semantics"),
+    LedgerRow("XfrmTransformTool.recordTransformCommand|replaceInSessionTail", 1,
+        "GenerationRefire — replace only a compatible refire tail"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -168,8 +168,8 @@ unittest {
     }
 
     string problems = reconcile(kResidue, ledgerHits);
-    if (ledgerHits.length != 6)
-        problems ~= "\n    writing-primitive population — recorded 6, scanner found "
+    if (ledgerHits.length != 8)
+        problems ~= "\n    writing-primitive population — recorded 8, scanner found "
                   ~ ledgerHits.length.to!string;
     if (populationProblems.length)
         problems ~= "\n" ~ joinLines(populationProblems);
@@ -180,9 +180,8 @@ unittest {
       ~ "\n  The criterion is NOT \"zero under source/tools/**\" — that form is "
       ~ "unreachable inside the plan's own scope, because decision D1 puts the "
       ~ "transform zone out of it and the zone holds every remaining writer. "
-      ~ "The reachable form is ONE seam site plus THREE named rejections, and "
-      ~ "the rejections are enumerated above so the deferral cannot quietly "
-      ~ "become a hole.");
+      ~ "The reachable form is ONE seam site plus the typed transform owners, "
+      ~ "enumerated above so the completed transition cannot quietly regress.");
 }
 
 // ---------------------------------------------------------------------------
@@ -217,13 +216,13 @@ unittest {
       ~ "`invalidateRedo` alone; a number this low means the stripper lost its "
       ~ "place and ate the rest of every file.");
 
-    assert(writing == 6,
+    assert(writing == 8,
         "task 1905 criterion 1: " ~ writing.to!string ~ " writing primitive(s) "
       ~ "reached from `source/tools/** ∪ source/tool.d`, and the roster carries "
-      ~ "SIX — three arms of the one seam site, three rejected transform-zone "
-      ~ "calls. A number BELOW six with member 1 green means a roster row is "
+      ~ "EIGHT — three arms of the one seam site, five transform-zone "
+      ~ "calls. A number BELOW eight with member 1 green means a roster row is "
       ~ "matching nothing (good news that still has to be written down); a "
-      ~ "number above six is caught by member 1 with its address.");
+      ~ "number above eight is caught by member 1 with its address.");
 }
 
 private string joinLines(const(string)[] xs) {
