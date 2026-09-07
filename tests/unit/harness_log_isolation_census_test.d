@@ -27,7 +27,7 @@
 // MUTATION: drop `env["VIBE3D_HARNESS_LOG"] = "off";` from any of the three
 // helpers, or the `VIBE3D_HARNESS_LOG=off` from the preflight test's witness
 // script, and this test names that file.
-module harness_log_isolation_census_test;
+module tests.unit.harness_log_isolation_census_test;
 
 import std.algorithm : canFind, sort;
 import std.array     : array;
@@ -36,6 +36,8 @@ import std.file      : dirEntries, SpanMode, exists, readText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf;
+
+import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -62,8 +64,36 @@ private bool mentionsAny(string txt, const string[] needles)
     return false;
 }
 
+// Runner references may legitimately be argv literals, but a spawn verb must
+// be executable D code. Scanning the code projection keeps source-inspection
+// tests from becoming launch sites merely because their fixtures quote a call.
+private bool hasSpawnCall(string txt)
+{
+    return mentionsAny(blankNonCode(txt), kSpawnVerbs);
+}
+
+private bool runsRunner(string txt)
+{
+    return mentionsAny(txt, kRunnerRefs) && hasSpawnCall(txt);
+}
+
 unittest
 {
+    enum unsafeRunnerSpawn = q{
+        enum runnerPath = "run_test.d";
+        auto child = spawnProcess(["rdmd", runnerPath]);
+    };
+    assert(runsRunner(unsafeRunnerSpawn),
+        "the census no longer recognises an actual runner process-spawn call");
+
+    const displayTest = readText(buildPath(repoRoot, "tests", "unit",
+        "run_test_display_environment_test.d"));
+    assert(mentionsAny(displayTest, kSpawnVerbs),
+        "the display source-scan no longer contains the quoted spawn fixture");
+    assert(!hasSpawnCall(displayTest),
+        "run_test_display_environment_test.d only inspects quoted spawn "
+      ~ "fixtures; it must not be classified as launching the runner");
+
     const testDirs = [buildPath(repoRoot, "tests"),
                       buildPath(repoRoot, "tests", "unit")];
 
@@ -81,8 +111,7 @@ unittest
             string txt;
             try { txt = readText(e.name); } catch (Exception) { continue; }
 
-            if (!mentionsAny(txt, kRunnerRefs)) continue;
-            if (!mentionsAny(txt, kSpawnVerbs)) continue;   // names it, never runs it
+            if (!runsRunner(txt)) continue;
 
             if (txt.indexOf("VIBE3D_HARNESS_LOG") >= 0) covered ~= name;
             else                                        offenders ~= name;
