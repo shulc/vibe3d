@@ -1385,12 +1385,17 @@ unittest {
             // following explicit frame tick must then be a strict no-op: a
             // stale cache would silently publish Position again every frame.
             import change_bus : changeBus;
+            import display_sync : activeMeshResolver;
             import edit_session : EditSession;
             import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
             import toolpipe.stages.falloff : FalloffStage;
 
             auto savedPipe = g_pipeCtx;
             scope(exit) g_pipeCtx = savedPipe;
+            auto savedResolver = activeMeshResolver;
+            Mesh offscreenMesh = makeCube();
+            activeMeshResolver = () => &offscreenMesh;
+            scope(exit) activeMeshResolver = savedResolver;
             Mesh cacheMesh = makeCube();
             cacheMesh.buildLoops();
             Mesh* cacheMeshPtr = &cacheMesh;
