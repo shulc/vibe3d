@@ -480,9 +480,9 @@ private void registerTransformTools(EditorApp app) {
 }
 
 version (unittest)
-Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app) {
+Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
     registerTransformTools(app);
-    return app.reg.toolFactories["xfrm.transform"]();
+    return app.reg.toolFactories[key]();
 }
 
 /// Generator-preview and topology tools — one family of the registration table (task 0722, audit
