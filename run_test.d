@@ -299,6 +299,21 @@ string prepareScratchDir(string path) {
 // (deliberately) was not decided here.
 enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
 
+// Advisory only (task 4660): task 4640's 151-row `-j 8` sample observed a
+// 1,144,953,653-byte largest worker and a 114,904,668-byte shared test library.
+// The estimate deliberately uses the largest worker as its coefficient:
+// shared + jobs * max-worker. It must never replace or raise the flat refusal
+// floor above; its job is to make a likely mid-run exhaustion visible while
+// preserving the caller's decision to continue.
+enum ulong kObservedWorkerScratchBytes = 1_144_953_653UL;
+enum ulong kObservedSharedTestLibraryBytes = 114_904_668UL;
+
+ulong estimatedScratchBytes(int jobs) {
+    if (jobs <= 0) return kObservedSharedTestLibraryBytes;
+    return kObservedSharedTestLibraryBytes
+         + cast(ulong) jobs * kObservedWorkerScratchBytes;
+}
+
 /// Free bytes on the filesystem containing `path`. `path` need not exist —
 /// this climbs to the nearest existing ancestor first, so it works against a
 /// cold checkout's not-yet-created scratch dir. Returns `ulong.max` (never
@@ -343,6 +358,18 @@ string spacePreflightMessage(ulong free, ulong floor, string path) {
         "no space left: %s has %s free, below the %s floor -- refusing to "
         ~ "start rather than fail mid-run and disguise it as red tests "
         ~ "(task 2080)", path, humanBytes(free), humanBytes(floor));
+}
+
+string spaceEstimateWarning(ulong free, int jobs, string path) {
+    const estimated = estimatedScratchBytes(jobs);
+    if (free == ulong.max || free >= estimated) return null;
+    return format(
+        "space warning: %s has %s free; estimated need for -j %d is %s "
+        ~ "(%s/worker coefficient = largest worker scratch observed in task "
+        ~ "4640's -j 8 measurement, plus %s shared test library); continuing",
+        path, humanBytes(free), jobs, humanBytes(estimated),
+        humanBytes(kObservedWorkerScratchBytes),
+        humanBytes(kObservedSharedTestLibraryBytes));
 }
 
 // ---------------------------------------------------------------------------
@@ -2375,6 +2402,8 @@ int main(string[] args) {
             stderr.writeln(red(msg));
             return 1;
         }
+        if (auto msg = spaceEstimateWarning(free, j, checkSpacePath))
+            stderr.writeln(yellow(msg));
         writefln("--check-space: %s has %s free (floor %s) -- ok",
                  checkSpacePath, humanBytes(free), humanBytes(floor));
         return 0;
@@ -2454,12 +2483,15 @@ int main(string[] args) {
     // worker's `dmd` compile below write into.
     {
         const root = tempDir();
-        if (auto msg = spacePreflightMessage(freeBytes(root), kMinPreflightFreeBytes, root)) {
+        const free = freeBytes(root);
+        if (auto msg = spacePreflightMessage(free, kMinPreflightFreeBytes, root)) {
             stderr.writeln(red(msg));
             g_harness.stage = HarnessStage.spaceRefused;
             g_harness.rc = 1;
             return 1;
         }
+        if (auto msg = spaceEstimateWarning(free, j, root))
+            stderr.writeln(yellow(msg));
     }
 
     keepVibe = keep;

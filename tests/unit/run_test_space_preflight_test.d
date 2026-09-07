@@ -37,6 +37,10 @@
 //      has no CI runner known to lack it, but a check that could turn into a
 //      silent false-green on a host that changes that must not pretend to
 //      have run.
+//   4. THE NON-FATAL WARNING (task 4660), on the same real mount remounted at
+//      512 MiB: above the unchanged 256 MiB refusal floor, below the measured
+//      `-j 8` estimate. It must name the three requested quantities and still
+//      return zero.
 //
 // WHAT THIS DOES NOT COVER: a run that starts on a filesystem clear of the
 // floor and is exhausted by other activity DURING the run. That failure mode
@@ -230,8 +234,12 @@ unittest
       // synthetic refusal is appended to the HOST's load log on every gate run
       // and read back as a real one (task 3260).
       ~ "TMPDIR=%s VIBE3D_HARNESS_LOG=off rdmd %s selection 2>&1; echo RUNNER_EXIT=$?\n"
-      ~ "TMPDIR=%s DISPLAY= rdmd %s preflight 2>&1; echo LANE_EXIT=$?\n",
-        mp, mp, runnerPath, mp, lanePath);
+      ~ "TMPDIR=%s DISPLAY= rdmd %s preflight 2>&1; echo LANE_EXIT=$?\n"
+      ~ "umount %s || exit 98\n"
+      ~ "mount -t tmpfs -o size=512m tmpfs %s || exit 97\n"
+      ~ "rdmd %s --check-space %s --space-floor-mib 256 -j 8 2>&1; "
+      ~ "echo WARNING_EXIT=$?\n",
+        mp, mp, runnerPath, mp, lanePath, mp, mp, runnerPath, mp);
     auto r = execute(["unshare", "--mount", "--map-root-user", "bash", "-c", script]);
 
     enforce(r.status != 99, "could not mount a 16 MiB tmpfs inside the unprivileged "
@@ -267,4 +275,28 @@ unittest
     assert(runnerSection.indexOf("Failed tests:") < 0, format(
         "run_test.d reached its test-failure summary instead of refusing up front — "
       ~ "this is exactly the incident's disguise:\n%s", runnerSection));
+
+    // Remounting avoids deriving the warning from an injected free-byte
+    // number. The diagnostic uses the same statvfs query and calculation as
+    // mandatory startup; only its side effects are cheap enough for this lane.
+    enforce(r.status != 98 && r.status != 97,
+        "could not remount the witness tmpfs at 512 MiB:\n" ~ r.output);
+    const warningExitAt = r.output.indexOf("WARNING_EXIT=");
+    enforce(warningExitAt >= 0, "warning witness did not complete:\n" ~ r.output);
+    assert(r.output.indexOf("WARNING_EXIT=0") >= 0,
+        "the advisory warning changed the diagnostic's return code:\n" ~ r.output);
+    const warningSection = r.output[laneExitAt .. warningExitAt];
+    assert(warningSection.indexOf("space warning") >= 0,
+        "run_test.d did not warn above the fatal floor but below the measured "
+      ~ "-j 8 estimate:\n" ~ warningSection);
+    assert(warningSection.indexOf("512.0 MiB free") >= 0,
+        "space warning does not name the real free-space reading:\n" ~ warningSection);
+    assert(warningSection.indexOf("estimated need for -j 8 is 8.6 GiB") >= 0,
+        "space warning does not name the current-j estimate:\n" ~ warningSection);
+    assert(warningSection.indexOf("1.1 GiB/worker") >= 0
+        && warningSection.indexOf("task 4640") >= 0,
+        "space warning does not name the per-worker coefficient and its source:\n"
+      ~ warningSection);
+    assert(warningSection.indexOf("continuing") >= 0,
+        "space warning does not state that the run continues:\n" ~ warningSection);
 }
