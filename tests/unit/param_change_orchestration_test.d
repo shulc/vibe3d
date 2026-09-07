@@ -223,7 +223,7 @@ private final class PanelProbeStage : Stage {
     override bool attrArmsSlot(string name) const { return name == "slot"; }
 }
 
-unittest { // an idle legacy tool panel must not evaluate on every draw
+unittest { // an idle legacy panel is inert, then one real write evaluates and replays
     import property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
 
@@ -238,20 +238,7 @@ unittest { // an idle legacy tool panel must not evaluate on every draw
     assert(trace.value == "",
         "legacy tool panel idle draw must not complete a parameter batch; got "
       ~ trace.value);
-}
 
-unittest { // a real tool widget write is interactive, evaluated once, then replayed
-    import property_panel : PropertyPanel;
-    import tests.unit.ui.headless_panel : openPanel;
-
-    auto trace = new Trace();
-    auto tool = new PanelProbeTool(trace);
-    auto session = sessionFor(tool);
-    auto panel = new PropertyPanel();
-    auto ui = openPanel(() { panel.draw(tool, session); });
-    scope (exit) ui.close();
-
-    ui.frame();
     ui.editRow(0, "2.0");
     assert(tool.amount == 2.0f,
         "legacy tool panel fixture did not write the real Tool field");
