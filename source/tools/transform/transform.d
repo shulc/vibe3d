@@ -414,14 +414,13 @@ protected:
     // ── Task 1069: the ROUTED session's own baseline ───────────────────────
     //
     // `editBefore` above stays POSITIONS, deliberately and non-negotiably.
-    // BOTH cancel paths (`cancelOpenSessionGeometry` here and the wrapper's
-    // `cancelUncommittedEdit`) replay that array straight back into
+    // The wrapper's `cancelUncommittedEdit` replays that array straight back into
     // `mesh.vertices`; putting map DELTAS in it would teleport every moving
     // vertex to near the origin on a cancel and then publish the result. That
     // is a data-destroying bug, not a cosmetic one.
     //
     // The map's pre-gesture state therefore lives in its OWN parallel arrays,
-    // and the two cancel sites restore BOTH. Whole-mesh rather than
+    // and cancellation restores both. Whole-mesh rather than
     // moving-set-sized because a routed gesture can write entries outside the
     // moving set: the symmetry mirror writes partners (`pairOf`, derived from
     // positions, never from a mask) and the CONS post-pass re-projects. A
@@ -521,16 +520,22 @@ protected:
         this.vertexEditFactory = factory;
     }
 
+    // Runtime capability surface for ownership checks.  Asking the live tool
+    // catches bindings regardless of which receiver spelling, loop, helper, or
+    // mixin installed them; a source scan cannot make that guarantee.
+    public final bool hasUndoBindings() const nothrow @nogc {
+        return history !is null || vertexEditFactory !is null ||
+               morphEditFactory !is null;
+    }
+
     // True iff a beginEdit() / commitEdit() pair is currently open.
     // Used by subclasses (RotateTool, ScaleTool) to decide whether to
     // snapshot tool-specific Tool-Properties state — only on the FIRST
     // active frame of a slider drag, not on subsequent frames.
     protected bool editIsOpen() const nothrow @nogc { return editCapturing; }
 
-    // Public read-only mirror of editIsOpen(), so the composing wrapper
-    // (XfrmTransformTool) can ask a sub-tool whether ITS edit session is open
-    // (rotate/scale own their own sessions — MS-5). Forms Phase 5b reads this to
-    // fold the sub-tool sessions into the wrapper's hasLiveEval()/commit gates.
+    // Public read-only mirror of editIsOpen(). MoveTool uses the composing
+    // wrapper's override to decide whether its ACEN pull belongs to a live edit.
     public bool publicEditIsOpen() const { return editCapturing; }
 
     // Phase 7.5h: read-only accessors for the in-flight edit snapshot.
@@ -744,7 +749,7 @@ protected:
         editBefore.length = 0;
         // Task 1069: the routed session's baseline is dropped with the
         // positional one. NOTE this only DISCARDS the capture — restoring the
-        // map is `restoreMorphEditBaseline()`, which the two cancel sites call
+        // map is `restoreMorphEditBaseline()`, which the wrapper cancel calls
         // BEFORE they reach here.
         morphEditOpen_ = false;
         morphEditMap_  = null;
@@ -808,16 +813,9 @@ protected:
     // latch is set there is also nothing left to record.)
     protected bool suppressCommit = false;
 
-    // In-session routing flag (record+consolidate). When the composing wrapper
-    // has a live gizmo run open it sets this true, so a per-gesture commitEdit
-    // lands as a TAGGED in-session entry (one step of the run) via
-    // recordInSession; consolidate() collapses the run into one surviving entry
-    // at the boundary / tool drop. Plain (false) routing is the ordinary
-    // record() append — used for panel/forms commits and any path with no open
-    // run. The base + R/S sub-tools all inherit this; the wrapper drives it —
-    // it sets its OWN flag (Move commits) AND, via setRecordViaInSession() below,
-    // the R/S sub-tools' flags, so an R/S per-gesture commit also lands in-session
-    // and consolidate() collapses the R/S run at the boundary / drop.
+    // Legacy standalone-tool routing flag. The composing transform wrapper has
+    // its own typed history-intent switch and never propagates history or this
+    // flag into embedded banks.
     protected bool recordViaInSession = false;
 
     final CommandHistory preparedHistoryOwner() nothrow @nogc {
@@ -973,49 +971,6 @@ protected:
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
         ac.discardUserPlacedSnapshot();
-    }
-
-    // In-session-cancel geometry/GPU teardown, shared by RotateTool /
-    // ScaleTool's `cancelSessionIfOpen()`. Restores the moving set to the
-    // per-vertex snapshot beginEdit() captured (editBaseline()), re-uploads it
-    // to the GPU and clears the whole-mesh-bypass matrix state, then closes the
-    // capture WITHOUT recording (suppressCommit gates the single commitEdit()
-    // chokepoint so deactivate()/update() can't re-fire a commit during the
-    // teardown). This is exactly the geometry half of the wrapper's
-    // cancelUncommittedEdit() — factored here because rotate + scale do it
-    // identically; the only per-subclass part stays in each sub-tool's
-    // cancelSessionIfOpen() before it calls this. That per-subclass part is
-    // ROLE-SPLIT: STANDALONE (`wrapperRef is null`) restores the sub-tool's own
-    // angleAccum/propDeg vs scaleAccum/propScale to their session-start values;
-    // WRAPPED returns the wrapper's own session-start truth instead
-    // (`gestureStartRotateEuler()` / `gestureStartScaleFactor()`, i.e.
-    // `gestureStart.r` / `gestureStart.s`) and leaves the accumulators alone.
-    // Caller must have verified editIsOpen() == true.
-    protected void cancelOpenSessionGeometry() {
-        suppressCommit = true;
-        scope(exit) suppressCommit = false;
-
-        uint[] idx  = editIndices();
-        Vec3[] base = editBaseline();
-        foreach (i, vid; idx) {
-            if (vid < mesh.vertices.length)
-                mesh.vertices[vid] = base[i];
-        }
-        // Task 1069: a routed session moved the MAP, not the positions, so the
-        // loop above restores nothing that changed. Without this the cancelled
-        // drag keeps its edit — and an assertion that only reads
-        // `mesh.vertices` cannot see it.
-        restoreMorphEditBaseline();
-        // Session cancel restores positions to the pre-edit baseline — a real
-        // version bump (not mid-drag), so commitChange (Position) reproduces the
-        // raw mutationVersion bump AND publishes the class.
-        mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        gpuMatrix      = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-        propsDragging  = false;
-        needsGpuUpdate = false;
-
-        cancelEdit();
     }
 
     override void activate() {

@@ -1,43 +1,23 @@
-// In-session Ctrl+Z cancels an OPEN rotate/scale sub-tool session.
+// In-session Ctrl+Z against wrapper-owned Rotate/Scale edits.
 //
-// Phase-3 audit (2026-06-07): case (d)'s flip (post-gizmo-R-drag stepping) and
-// case (e) (two-gesture rotate run -> step / drop-consolidate) already landed in
-// Phase 2, atomic with R/S recording (green-interval table). Cases (a)/(b)/(c)
-// are PANEL-path sessions (tool.beginSession + tool.attr, no mouse-up) whose
-// session stays OPEN at idle, so cancelUncommittedEdit still aborts them
-// unchanged. No assert changed in Phase 3; re-run to confirm green. The SCALE
-// analogue of case (e)'s per-gesture stepping is added in
-// tests/test_run_consolidation.d case (E).
+// Component and item geometry sessions for every bank now live on
+// XfrmTransformTool. Panel edits remain open at idle until drop or cancellation;
+// completed gizmo gestures self-commit into the open history run. This file pins
+// both halves of that lifecycle through the keyboard/navHistory chokepoint.
 //
-// THE BUG (found by code review): the rotate/scale geometry sessions live on
-// the R/S SUB-TOOLS (MS-5), not the XfrmTransformTool wrapper. A PANEL value
-// edit (tool.attr RZ … on a live session) opens that sub-tool session at IDLE
-// (mouse NOT held). Before this fix the P0 Ctrl+Z chokepoint
-// (app.d navHistory → hasUncommittedEdit → cancelUncommittedEdit) was wired to
-// the WRAPPER-ONLY editIsOpen() predicate, so it never saw the open sub-tool
-// run: an in-session Ctrl+Z popped a prior committed step (or no-op'd on an
-// empty stack) while the geometry STAYED transformed.
-//
-// THE FIX widens hasUncommittedEdit() to `editIsOpen() || (subToolEditOpen() &&
-// activeDrag is null)` and makes cancelUncommittedEdit() abort the open R/S
-// sub-tool sessions alongside its own. The `activeDrag is null` clause keeps
-// MID-GIZMO-DRAG Ctrl+Z (mouse HELD) behaving exactly as before — it falls
-// through to history.undo() rather than cancelling the live drag.
-//
-// CONTRACT pinned here (consistent with test_insession_undo_contract.d's D6
-// whole-open-run-cancel):
+// Contract (consistent with test_insession_undo_contract.d's D6):
 //   (a) Rotate: beginSession → RZ value edit (geometry moves, NO history entry)
 //       → in-session Ctrl+Z ⇒ geometry RESTORED, NO history pop, session
 //       reopenable (a following edit works).
 //   (b) Scale: same via SX.
-//   (c) Combined T (wrapper) + R (sub-tool) open in ONE live session ⇒ a single
-//       in-session Ctrl+Z reverts BOTH (whole-open-run).
+//   (c) Combined T+R values in one wrapper edit ⇒ a single in-session Ctrl+Z
+//       reverts both.
 //   (d) Post-gizmo-R-drag (mouse RELEASED): Phase 2 per-gesture recording — the
 //       ring gesture SELF-COMMITS a tagged in-session entry on mouse-up, so an
 //       in-session Ctrl+Z is plain history stepping: #1 pops that gesture
 //       (geometry reverts, count -1), #2 consumes the run-B arm lifecycle
 //       record without moving geometry, and #3 pops the prior committed entry.
-//       (This flips the pre-Phase-2 cancel-the-open-run behavior; (a)-(c) stay.)
+//       (Panel cases (a)-(c) remain open and cancellable.)
 //
 // IMPORTANT — the Ctrl+Z MUST go through the keyboard/navHistory chokepoint, so
 // it is injected as an SDL keystroke via /api/play-events. The /api/undo HTTP
@@ -187,7 +167,7 @@ void ringGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
 }
 
 // ---------------------------------------------------------------------------
-// (a) Rotate: in-session Ctrl+Z cancels the open rotate sub-tool session.
+// (a) Rotate: in-session Ctrl+Z cancels the open wrapper edit.
 //
 // NO selection ⇒ whole-mesh moving set, rotate pivot at the origin (selecting
 // only v6 would put the pivot AT v6, leaving it fixed). v6 = (0.5, 0.5, 0.5);
@@ -201,7 +181,7 @@ unittest {
 
     long modelBefore = modelUndoCount();
 
-    // Open a live rotate session (sub-tool session, no geometry change), then
+    // Open a live wrapper edit with Rotate provenance, then
     // drive an absolute RZ value through the reEvaluate seam.
     cmd("tool.beginSession");
     assertVertex(6, 0.5, 0.5, 0.5, "rotate beginSession opens session, moves nothing");
@@ -211,9 +191,9 @@ unittest {
     assert(fabs(vMoved[0] - 0.5) + fabs(vMoved[1] - 0.5) > 1e-2,
         "RZ=30 must move v6 away from (0.5,0.5,…); got (" ~ vMoved[0].to!string
         ~ "," ~ vMoved[1].to!string ~ ")");
-    // The open sub-tool run is NOT yet on history.
+    // The open wrapper edit is NOT yet on history.
     assert(modelUndoCount() == modelBefore,
-        "an OPEN rotate sub-tool session must add no model edit; before="
+        "an OPEN Rotate wrapper edit must add no model edit; before="
         ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     // THE FIX: in-session Ctrl+Z (tool still LIVE, mouse not held) must cancel
@@ -250,7 +230,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (b) Scale: in-session Ctrl+Z cancels the open scale sub-tool session.
+// (b) Scale: in-session Ctrl+Z cancels the open wrapper edit.
 //     SX=2 about the origin ⇒ v6.x = 1.0; one in-session Ctrl+Z restores 0.5.
 // ---------------------------------------------------------------------------
 unittest {
@@ -263,9 +243,9 @@ unittest {
     assertVertex(6, 0.5, 0.5, 0.5, "scale beginSession opens session, moves nothing");
 
     cmd("tool.attr TransformScale SX 2");
-    assertVertex(6, 1.0, 0.5, 0.5, "SX=2 ⇒ v6.x=1.0 (open scale sub-tool session)");
+    assertVertex(6, 1.0, 0.5, 0.5, "SX=2 ⇒ v6.x=1.0 (open Scale wrapper edit)");
     assert(modelUndoCount() == modelBefore,
-        "an OPEN scale sub-tool session must add no model edit; before="
+        "an OPEN Scale wrapper edit must add no model edit; before="
         ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
@@ -294,11 +274,8 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (c) Combined T (wrapper) + R (sub-tool) open in ONE live session: a single
-//     in-session Ctrl+Z reverts BOTH (whole-open-run contract). On the bare
-//     Transform preset (T=R=S=1) a TX edit opens the WRAPPER session and an RZ
-//     edit opens the ROTATE sub-tool session — two open sessions at once. ONE
-//     Ctrl+Z must cancel both and pop nothing.
+// (c) Combined T+R values in one wrapper edit: a single in-session Ctrl+Z
+//     reverts both and pops nothing.
 //
 // NO selection ⇒ whole-mesh moving set, pivot at origin so both slots move v6.
 // ---------------------------------------------------------------------------
@@ -309,18 +286,18 @@ unittest {
     long modelBefore = modelUndoCount();
 
     cmd("tool.beginSession");
-    cmd("tool.attr Transform TX 1");      // wrapper (Move) session open
-    cmd("tool.attr Transform RZ 30");     // rotate sub-tool session open
+    cmd("tool.attr Transform TX 1");      // wrapper edit open
+    cmd("tool.attr Transform RZ 30");     // same wrapper edit, combined state
     auto vBoth = vert(6);
     assert(!(fabs(vBoth[0] - 0.5) < 1e-3 && fabs(vBoth[1] - 0.5) < 1e-3
                                          && fabs(vBoth[2] - 0.5) < 1e-3),
         "combined T+R moved v6 away from the cube corner; got ("
         ~ vBoth[0].to!string ~ "," ~ vBoth[1].to!string ~ ")");
     assert(modelUndoCount() == modelBefore,
-        "both open sessions are uncommitted — no model entry yet; before="
+        "the combined wrapper edit is uncommitted — no model entry yet; before="
         ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
-    // ONE in-session Ctrl+Z reverts the WHOLE open run (wrapper T + sub-tool R).
+    // ONE in-session Ctrl+Z reverts the whole open wrapper edit.
     playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
@@ -347,7 +324,7 @@ unittest {
 //
 //     This is the case-(d) flip the plan pins to Phase 2 (the same
 //     flip-in-one-phase lesson as Phase 1's Move contract): the behavior change
-//     (recording closes the R/S session at mouse-up, so navHistory's whole-run
+//     (recording closes the wrapper edit at mouse-up, so navHistory's whole-run
 //     cancel clause no longer fires for an R/S gizmo run) and its test rewrite
 //     land together. Cases (a)/(b)/(c) are PANEL paths (tool.beginSession +
 //     tool.attr, no mouse-up) — their session stays OPEN at idle, so

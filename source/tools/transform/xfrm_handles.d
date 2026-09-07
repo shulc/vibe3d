@@ -213,11 +213,8 @@ mixin template XfrmHandlesImpl() {
             // Move-arm relocate boundary. The three landed `if (wasRelocate ...)`
             // blocks merge into one, with each action gated on what it actually
             // depends on:
-            //   - commitEdit("Move") + the R/S commitSessionIfOpen mirrors stay
-            //     SESSION-close work (gated on editIsOpen()/an open R/S session).
-            //     Under per-gesture commit the Move session is normally already
-            //     closed at this boundary, so commitEdit is a harmless no-op
-            //     (buildEditCmd returns null when !editCapturing).
+            //   - the wrapper edit close stays editIsOpen()-gated. Under
+            //     per-gesture commit it is normally already closed here.
             //   - restageRelocatePin() is RUN-close work that must fire on the
             //     RELOCATE itself, UNCONDITIONAL on wasRelocate (NOT session-
             //     open): the pin was just moved by this relocate and the next
@@ -237,14 +234,8 @@ mixin template XfrmHandlesImpl() {
             // idempotent stage that does not require a session — and runOpen() is
             // false so the consolidate/nextRun is skipped.
             if (wasRelocate) {
-                if (editIsOpen()) commitEdit("Move");   // session-close (no-op once self-committed)
+                if (editIsOpen()) commitBoundaryEdit();
                 moveSub.restageRelocatePin();           // run-close: UNCONDITIONAL on relocate
-                // Cross-slot (symmetric): in a composed T+R+S preset an R/S
-                // session may ALSO be open (a prior rotate/scale ring drag). A
-                // Move relocate is a new run for EVERY open session, so close the
-                // R/S sub-tool sessions too. commitSessionIfOpen() is a public
-                // mirror on the sub-tool (the wrapper cannot call their protected
-                // commitEdit cross-instance). No-op in single-mode presets.
                 // Hard run boundary: collapse the open run's tagged in-session
                 // entries into ONE surviving entry, then open a fresh run id so
                 // the next gesture is tagged distinctly.
@@ -267,7 +258,7 @@ mixin template XfrmHandlesImpl() {
             // so the drag opening below must freeze the CURRENT pin, not a
             // stale one.
             if (wasPinnedOffGizmo) {
-                if (editIsOpen()) commitEdit("Move");
+                if (editIsOpen()) commitBoundaryEdit();
                 moveSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
                     consolidateRunAndAdvance();
@@ -313,7 +304,7 @@ tryRotateBank:
                 // branch already committed ITS session and mirrored the Move
                 // commit; the pinned branch commits nothing, so both are done
                 // here and both are no-ops when already closed.
-                if (editIsOpen()) commitEdit("Move");
+                if (editIsOpen()) commitBoundaryEdit();
                 // Run-close: re-stage the pin the fresh gesture's beginEdit will
                 // freeze as its in-session-cancel baseline. A relocate moved the
                 // pin, so it is staged from the (already-pushed) userPlaced

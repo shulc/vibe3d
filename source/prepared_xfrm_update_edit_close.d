@@ -30,16 +30,13 @@ public:
     @disable this();
     static PreparedXfrmUpdateEditCloseOwner prepare(
             XfrmTransformTool target, PreparedRecordContext context,
-            string label, bool closeWrapper = true,
-            bool closeRotateScale = false,
             bool useItemSubjectOverride = false,
             bool itemSubjectOverride = false) {
         if (target is null || target.classinfo !is XfrmTransformTool.classinfo)
             return null;
         auto owner = new PreparedXfrmUpdateEditCloseOwner(target);
         owner.image_ = target.buildPreparedUpdateEditClose(
-            context, label, closeWrapper, closeRotateScale,
-            useItemSubjectOverride, itemSubjectOverride);
+            context, useItemSubjectOverride, itemSubjectOverride);
         return owner.image_.valid ? owner : null;
     }
     bool historyPrepared() const nothrow @nogc {

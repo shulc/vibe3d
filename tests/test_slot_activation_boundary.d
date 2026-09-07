@@ -370,12 +370,9 @@ unittest {
 // ===========================================================================
 // (ROTATE-PANEL-SESSION) The boundary closes ALL THREE banks, not just Move.
 //
-// A panel-driven rotate (tool.beginSession + tool.attr RZ) leaves a Rotate
-// sub-tool session open with a held, uncommitted angle. Before 0791 the idle
-// slot poll committed only the wrapper's Move session, so an activation could
-// leave that session open — the run ended around it. The boundary now commits
-// the rotate and the scale sessions too, which is what "the held OPERATION
-// ends" means when the preset composes more than one bank.
+// A panel-driven rotate (tool.beginSession + tool.attr RZ) leaves the wrapper
+// edit open with Rotate provenance and an uncommitted angle. The idle slot poll
+// must close that edit when the held operation ends.
 //
 // Witness: the open session's edit lands as a committed undo entry at the
 // activation (it is not left dangling), and the rotated geometry stays put.

@@ -980,92 +980,6 @@ public:
         recordCommit(cmd);
     }
 
-    // Phase 2 cross-slot relocate boundary — PUBLIC mirror of the protected
-    // commitEdit, so the composing wrapper can close THIS sub-tool's open
-    // session when a relocate fires on a DIFFERENT slot (a Move relocate in a
-    // composed T+R+S preset). Sibling cross-instance access to the protected
-    // commitEdit()/editIsOpen() is not granted by D `protected`; this method
-    // calls its OWN protected members (legal), mirroring `publicEditIsOpen()`.
-    // No-op when no session is open (single-mode preset, or no prior S drag).
-    public void commitSessionIfOpen() {
-        if (!editIsOpen()) return;
-        // Cross-slot boundary commit (Phase 2) — route PLAIN, same rationale as
-        // RotateTool.commitSessionIfOpen: this closes a separate-bank session at
-        // another bank's boundary and must land as its OWN surviving entry, not
-        // join that bank's in-session run (which consolidate would then merge
-        // across banks). A plain record() trips the layer-A foreign-record guard
-        // to consolidate the boundary-bank's open run first.
-        bool wasInSession = recordViaInSession;
-        recordViaInSession = false;
-        scope(exit) recordViaInSession = wasInSession;
-        commitEdit("Scale");
-    }
-
-    // Per-gesture commit (record+consolidate, Phase 2): the wrapper calls this
-    // from its onMouseButtonUp when a wrapper-owned scale drag ends, so each
-    // scale gesture bakes a TAGGED in-session entry (recordViaInSession is set
-    // on this sub-tool while the tool is live). The next handle grab reopens a
-    // fresh session (beginEdit in onMouseButtonDown), so two consecutive scale
-    // drags land as TWO in-session entries — one Ctrl+Z steps each — that
-    // consolidate into ONE surviving entry at the run boundary / drop. commitEdit
-    // attaches the scaleAccum/propScale accumulator hooks BEFORE the terminal
-    // recordCommit, so stepping a per-gesture entry restores the accumulator for
-    // free. Public for the same sibling-cross-instance reason as
-    // commitSessionIfOpen. No-op when no session is open (no scale drag happened).
-    public void commitGesture() {
-        if (editIsOpen())
-            commitEdit("Scale");
-    }
-
-    // In-session-cancel PUBLIC mirror (same sibling-access reasoning as
-    // commitSessionIfOpen): the composing wrapper's cancelUncommittedEdit()
-    // calls this to abort THIS sub-tool's open scale session WITHOUT recording,
-    // restoring the mesh to the session's pre-edit baseline. Scale keeps its
-    // geometry session on the sub-tool (MS-5), so the wrapper's own
-    // cancelUncommittedEdit() cannot reach it — this widens the whole-open-run
-    // cancel (D6) to the S slot. Restores the Tool-Properties state (scaleAccum /
-    // propScale) to the values snapshotEditState() froze at session open, then
-    // hands the geometry/GPU teardown to the shared base helper.
-    // activationVertices is left untouched: the (activationVertices, scaleAccum)
-    // invariant holds again once scaleAccum is back at its session-start value
-    // and the verts are restored. No-op (returns false) when no scale session is
-    // open; on cancel returns true and writes the restored session-start PANEL
-    // value (factors) to `outFactors` so the wrapper can snap its own
-    // `run.s` truth — the attr the panel reads back — to the pre-edit
-    // value in lockstep with the geometry.
-    public bool cancelSessionIfOpen(out Vec3 outFactors) {
-        if (!editIsOpen()) return false;
-        // STANDALONE accumulator restore (wrapperRef is null): the
-        // (activationVertices, scaleAccum) invariant must hold again once the
-        // verts are restored, so peel the sub-tool accumulator back to its
-        // session start. In the WRAPPED role the geometry is reverted from the
-        // wrapper's editBaseline (cancelOpenSessionGeometry) and the refire gate
-        // reads wrapper truth, so the accumulator restore is skipped.
-        if (wrapperRef is null) {
-            scaleAccum = preEditScaleAccum;
-            propScale  = preEditPropScale;
-        }
-        // Phase 5b — the pre-edit PANEL value returned to the wrapper (which
-        // snaps its `run.s` truth to it) comes from the
-        // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propScale`
-        // second accumulator. `gestureStartScaleFactor()` is the run-total scale
-        // factor at this session's mouse-down (`gestureStart.s`) — the value the
-        // panel was showing when the session opened, and exactly the factor the
-        // wrapper assigns to its `run.s` truth on cancel. STANDALONE (no wrapper)
-        // keeps returning `preEditPropScale` — the only accumulator it has.
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
-                outFactors = wrap.gestureStartScaleFactor();
-                cancelOpenSessionGeometry();
-                return true;
-            }
-        }
-        outFactors = preEditPropScale;
-        cancelOpenSessionGeometry();
-        return true;
-    }
-
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
     {
         if (!active) return;
@@ -1700,18 +1614,6 @@ public:
         }
     }
 
-    // Open a bare edit session with NO geometry change (forms-engine Phase 5b /
-    // re-eval plan D5 test opener). Mirrors the FIRST-active-frame gating of
-    // drawProperties: snapshot the Tool-Properties state then beginEdit() so a
-    // subsequent applyScalePanelValue() lands inside the same coalesced session.
-    void openEditForValue() {
-        buildVertexCacheIfNeeded();
-        if (!editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        }
-    }
-
     // Value-driven panel entry point (forms-engine Phase 5b). The forms panel
     // dispatches an absolute `SX`/`SY`/`SZ` factor through the `reEvaluate()`
     // seam, which calls this once per edit. It mirrors the ABSOLUTE arm of
@@ -1825,10 +1727,8 @@ private:
     // the wrapper's `applyScaleAbsoluteFromRun` → `applyTRS(dragBaseline)` so
     // the "ui" (panel) path shares the SAME single geometry-apply entry point
     // AND the SAME run baseline as the "handle" (drag) and "headless" (numeric)
-    // paths. Phase 1 (R/S run-baseline): applying from the run baseline (not
-    // activationVertices) preserves any baked cross-axis gizmo history. The edit
-    // session + undo display hooks stay on this sub-tool (no session migration →
-    // no cross-instance commit), mirroring RotateTool.applyAbsoluteFromOrigCpuOnly.
+    // paths. Applying from the run baseline (not activationVertices) preserves
+    // baked cross-axis history. The wrapper owns the edit session and undo hooks.
     //
     // Standalone fallback (a bare ScaleTool with no wrapper — only unit-test
     // construction): the original `applyScaleFromActivation` kernel call,
@@ -1860,9 +1760,8 @@ private:
                 // the full factor from activationVertices would discard it.
                 // The run-baseline entry sets `run.s = factors` (clamped there by
                 // the negScale rule) and applies it absolutely against
-                // dragBaseline-with-baked-history. The edit SESSION stays on this
-                // sub-tool — the run-baseline entry does NOT open the wrapper
-                // session (MS-5).
+                // dragBaseline-with-baked-history. The caller has already opened
+                // the wrapper edit with Scale provenance.
                 wrap.applyScaleAbsoluteFromRun(factors);
                 return;
             }

@@ -16,8 +16,8 @@
 // It never calls beginEdit()/commitEdit() at all. This file's whole job is
 // proving the tool's OWN per-gesture undo path (beginEdit/commitEdit ->
 // LayerXformEdit -> RunMergeable -> CommandHistory.consolidate), which is
-// reachable only through the interactive drag lifecycle (begin*DragSession
-// / commitGesture / commitEdit) — so every case here drives a real
+// reachable only through the interactive drag lifecycle (begin*DragSession /
+// wrapper commit) — so every case here drives a real
 // mouse-down/motion/up sequence via drag_helpers.
 
 import http_client : testBaseUrl;

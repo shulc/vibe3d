@@ -1,57 +1,16 @@
-// Cross-slot relocate boundary in a composed T+R+S preset (Phase 2, Part B of
-// doc/transform_per_gesture_commit_plan.md §4 / §6 test 4b).
+// Cross-slot relocate boundary in a composed T+R+S preset.
 //
-// Phase-3 audit (2026-06-07): the Move-leg open-mid-run count (+1, gizmo
-// mouse-up record) landed in Phase 1; the rotate-leg mid-run count stayed
-// UNCHANGED (panel TX, no gizmo mouse-up -> no per-gesture record); the +2/+3
-// boundary/drop counts are unchanged (cross-slot PLAIN mirror trips the layer-A
-// foreign-record guard, keeping single-bank-per-run). No assert changed in
-// Phase 3, re-run to confirm green.
-//
-// THE LEAK (plan §4): in a composed preset (`Transform`, T+R+S all on) TWO
-// edit sessions can be open at once — the Move session on the WRAPPER
-// (XfrmTransformTool), and a Rotate/Scale session on the SUB-TOOL instance. A
-// relocate (off-gizmo click) is a new logical run that must commit EVERY open
-// session, not just the slot whose handler was clicked. Before Phase 2 a Move
-// relocate committed only the wrapper's Move run and the open R/S sub-tool
-// session LEAKED across the boundary into the next gesture. Phase 2 wires the
-// symmetric commit: the wrapper Move-relocate branch calls the sub-tools'
-// public `commitSessionIfOpen()` mirrors, so an off-gizmo Move relocate also
-// closes any open Rotate/Scale session.
-//
-// DISPATCH FACT (why the leaked session here is R/S, committed by the Move
-// relocate — NOT the other direction): in a composed preset the wrapper tries
-// `moveSub.onMouseButtonDown` FIRST (it is `flagT`-gated and listed before
-// R/S). In a relocate-permitted ACEN mode (None — the default) moveSub
-// CONSUMES the off-gizmo click as a Move relocate and returns true, so the
-// click never reaches the R/S relocate branch. The R/S-relocate→commit-Move
-// direction is therefore only reachable when `flagT` is OFF — but then no
-// wrapper Move session exists to leak. So the headless-reachable cross-slot
-// case is exactly this one: a Move relocate committing an open R/S session.
-// (The R/S→Move wrapper commit added in Phase 2 is correct defensive symmetry
-// for any future dispatch ordering; it is not reachable through the current
-// composed-preset dispatch, documented in the source comment at the rotate.d /
-// scale.d relocate branches.)
-//
-// SUBSTITUTION (plan §6 4b allows it): the plan's nominal trigger is "off-axis
-// click on a Rotate RING". Per the dispatch fact that ring click would route
-// to the Move relocate anyway. This test instead opens a NON-EMPTY rotate
-// sub-tool session via `tool.attr Transform RZ 30` on the already-live wrapper
-// (the proven reEvaluate seam — test_reevaluate.d Test 5/7), then fires the
-// off-gizmo Move relocate. Both sessions are then open, and the relocate must
-// commit BOTH — the discriminating, deterministic observable.
-//
-// THE DISCRIMINATING ASSERTION: after the off-gizmo relocate click the undo
-// stack jumps by EXACTLY 2 (the Move run + the rotate run, both committed AT
-// the boundary). Without the Phase 2 cross-slot wiring it would jump by only
-// 1 (the Move run); the rotate session would leak and commit late at drop. The
-// FIRST-Move-run provenance is then made explicit via geometry across the
-// Ctrl+Z chain: the first Move run's +X displacement is undone only on the
-// LAST pop (it did NOT leak across the boundary).
+// A Move gesture first lands as a tagged row in the wrapper's open history run.
+// An interactive RZ edit then opens the same wrapper's next edit with Rotate
+// provenance but does not record yet. The off-gizmo Move relocate is a hard
+// boundary: BoundaryCommit's ordinary record first consolidates the prior Move
+// run, then appends the open Rotate edit as its own row. The discriminating
+// count at the boundary is therefore exactly +2; routing the close as RunClose
+// would merge the two banks into one row.
 //
 // NO selection ⇒ whole-mesh moving set, pivot at the origin: a +X arrow drag
-// moves the whole cube and RZ=30 actually rotates it (a non-empty rotate
-// session). All gestures drive the MAIN loop via drag_helpers.buildDragLog +
+// moves the whole cube and RZ=30 actually rotates it (a non-empty wrapper
+// edit). All gestures drive the MAIN loop via drag_helpers.buildDragLog +
 // /api/play-events.
 
 import http_client : testBaseUrl, getJson, postJson;
@@ -165,7 +124,7 @@ void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
 }
 
 // ---------------------------------------------------------------------------
-// Cross-slot leak: a Move relocate commits the open Rotate sub-tool session.
+// Cross-slot boundary: a Move relocate closes the wrapper's Rotate edit.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -201,7 +160,7 @@ unittest {
         "move drag 1 records ONE in-session entry on mouse-up; got "
         ~ (undoCount() - stackBefore).to!string ~ " new entries");
 
-    // Open a NON-EMPTY rotate sub-tool session, then rotate via the live
+    // Open a NON-EMPTY wrapper edit with Rotate provenance via the live
     // reEvaluate seam (Phase 1 addendum C).
     //
     // FAITHFUL RATIONALE (why the bare `tool.attr Transform RZ 30` no longer
@@ -210,16 +169,15 @@ unittest {
     // open wrapper session and `hasLiveEval()` is FALSE. A non-interactive wire
     // attr on a tool with no open session is FAITHFULLY inert — it stores the
     // value and applies nothing (the fresh-tool rule). The OLD non-inert
-    // behavior, where this attr "rotated for free", was an ARTIFACT of the gizmo
-    // session staying open at idle — exactly the artifact per-gesture commit
+    // behavior, where this attr "rotated for free", was an artifact of the edit
+    // staying open at idle — exactly the artifact per-gesture commit
     // removes; `hasLiveEval()` is deliberately left session-based (addendum
-    // decision C). So we explicitly open the rotate sub-session via the
+    // decision C). So we explicitly open a Rotate-labelled wrapper edit via the
     // supported testMode opener (`tool.beginSession` → openLiveSessionForTest),
     // which is the headless stand-in for production's gizmo grab. With a session
     // genuinely open, `hasLiveEval()` is true and the subsequent `tool.attr RZ
-    // 30` re-runs the rotate apply through reEvaluate, rotating the mesh AND
-    // leaving the rotate sub-tool session open. Two sessions are then live:
-    // wrapper Move (run, self-committed) + sub-tool Rotate (panel session).
+    // 30` re-runs the rotate apply through reEvaluate, rotating the mesh and
+    // leaving that wrapper edit open while the earlier Move row remains in-run.
     cmd("tool.beginSession Transform");
     settle();
     auto v6BeforeRot = vert(6);
@@ -233,7 +191,7 @@ unittest {
         ~ ") after=(" ~ v6AfterRot[0].to!string ~ ","
         ~ v6AfterRot[1].to!string ~ ")");
     // The rotate attr write is a PANEL TX (no gizmo mouse-up), so it records
-    // NO per-gesture in-session entry — it stays an open sub-tool session until
+    // NO per-gesture in-session entry — it stays an open wrapper edit until
     // the boundary commits it. The absolute count is still stackBefore + 1: the
     // Move drag-1 in-session entry recorded above is the only thing on the
     // stack; the rotate leg adds nothing here.
@@ -244,7 +202,7 @@ unittest {
 
     // Off-gizmo Move relocate click (perpendicular to the +X arrow ⇒ clearly
     // off every gizmo bank). This is the cross-slot boundary: it must commit
-    // BOTH open sessions — the wrapper Move run AND the rotate sub-tool run.
+    // close the open wrapper edit outside the prior Move run.
     int xoff = cast(int)(xb + 220.0 * uy);
     int yoff = cast(int)(yb - 220.0 * ux);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
@@ -254,8 +212,8 @@ unittest {
     // THE DISCRIMINATING ASSERTION: +2 at the boundary. Timeline:
     //   (1) Move drag 1's in-session entry CONSOLIDATES into ONE surviving entry
     //       at this relocate boundary (the run closes here).
-    //   (2) the open rotate PANEL session commits via the cross-slot
-    //       commitSessionIfOpen mirror (+1) — it did NOT leak past the boundary.
+    //   (2) the open Rotate edit commits through BoundaryCommit (+1), outside
+    //       that run.
     //   (3) the off-gizmo relocate CLICK opens a fresh Move session but with
     //       T=0 / R=identity / S=1 the whole fold is identity — no vertex changes
     //       — so buildEditCmd returns null and no entry is recorded (0). The
@@ -263,18 +221,18 @@ unittest {
     //       round-trip that used to produce a spurious vertex change here; the
     //       skipIdentityFold guard was extended to cover composed presets in the
     //       same condition so the no-op is explicit and drift-free.
-    // So TWO entries are on the stack here. (A +1 here means the rotate session
-    // LEAKED past the boundary.) The geometry provenance chain (Ctrl+Z × 3)
+    // So TWO entries are on the stack here. A +1 means the Rotate close was
+    // incorrectly merged into the Move run. The geometry provenance chain (Ctrl+Z × 3)
     // still verifies correct undo ordering — Ctrl+Z #3 must restore the pristine
     // cube — providing discrimination between correct and leaked behaviour.
     // The DROP count below is +3 total: Move run 1 (1 entry) + Rotate run (1)
     // + Move run 2 / drag 2 (1 entry consolidated at drop).
     long stackAfterRelocate = undoCount();
     assert(stackAfterRelocate == stackBefore + 2,
-        "the Move relocate must commit BOTH open sessions (consolidated Move "
-        ~ "run 1 + Rotate run) => +2 at the boundary; got "
+        "the Move relocate must keep consolidated Move + BoundaryCommit Rotate "
+        ~ "as two rows; got "
         ~ (stackAfterRelocate - stackBefore).to!string
-        ~ " (a +1 here means the rotate session LEAKED past the boundary)");
+        ~ " (a +1 here means the Rotate close merged into the Move run)");
 
     // Move drag 2: fresh wrapper Move run at the relocated pivot.
     cam = fetchCamera();

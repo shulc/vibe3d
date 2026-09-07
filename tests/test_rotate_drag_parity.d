@@ -18,7 +18,7 @@
 // recovery unambiguous. ACEN.Local per-cluster correctness is already pinned by
 // the numeric invariants in test_acen_local_rotate_parity.d (centroid-fixed +
 // radius-preserved). The display-readout / undo arm (B-survivor-1) lands with
-// the B2 commit-hook work in MS-5 once a tool-attr read endpoint exists.
+// the wrapper commit-hook work once a tool-attr read endpoint exists.
 //
 // Drag construction: replicate SemicircleHandler's arc geometry for the Y arc
 //   right, up = localFrame(axisY)            (handles/gl_util.d, `localFrame`)

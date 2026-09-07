@@ -185,9 +185,7 @@ public:
     final Tool preparedWrapperForUpdate() nothrow @nogc { return wrapperRef; }
     final EditMode preparedEditModeForUpdate() const nothrow @nogc { return *editMode; }
 
-    // ── rotate single-source plumbing (MS-2; doc/rotate_single_source_plan.md) ──
-    // Inert until MS-3/MS-4/MS-5 switch the call sites; declared here so the
-    // wrapper-side scaffolding compiles against stable members.
+    // ── rotate single-source plumbing (doc/rotate_single_source_plan.md) ──
     //
     // Gesture-scalar producer output. MS-3 makes the principal-axis drag
     // branch (axis 0/1/2) publish the ABSOLUTE accumulated ring angle here
@@ -698,15 +696,15 @@ public:
         // in-flight gizmo drag on ANY bank. This sub-tool's own dragAxis is
         // already < 0 here (the update() early-return at the top bails while THIS
         // ring is dragging), but in a composed preset a DIFFERENT bank (Move)
-        // could be mid-drag with this rotate session open; the per-frame drag
+        // could be mid-drag; the per-frame drag
         // path re-captures falloff itself there (captureFalloffForDrag), so this
         // update()-driven re-apply is redundant — and recording one underneath
         // an in-flight gesture would create an entry below the live drag.
         //
         // Reachability note (Phase 2 as-implemented): the OBJ-4 plan asked to
         // WRAP this re-apply in its own beginEdit/commitEdit so it records as a
-        // tagged in-session entry. Under per-gesture R/S commit the gizmo session
-        // CLOSES at every ring mouse-up, so for a GIZMO run editIsOpen() is false
+        // tagged in-session entry. Under wrapper-owned per-gesture commit the edit
+        // closes at every ring mouse-up, so for a GIZMO run editIsOpen() is false
         // at idle and this site is DEAD — exactly as the Move falloff site is
         // dead post-Phase-1. It is reachable ONLY for an OPEN PANEL rotate session
         // (tool.attr RZ … keeps the session open at idle with angleAccum != 0).
@@ -918,102 +916,6 @@ public:
             }
         );
         recordCommit(cmd);
-    }
-
-    // Phase 2 cross-slot relocate boundary — PUBLIC mirror of the protected
-    // commitEdit, so the composing wrapper can close THIS sub-tool's open
-    // session when a relocate fires on a DIFFERENT slot (a Move relocate in a
-    // composed T+R+S preset). The wrapper is a sibling class and D `protected`
-    // does not grant sibling cross-instance access to commitEdit()/editIsOpen()
-    // — this method calls its OWN protected members, which is legal. Mirrors
-    // the public `publicEditIsOpen()` read accessor for the same reason. No-op
-    // when no session is open (single-mode preset, or no prior R drag).
-    public void commitSessionIfOpen() {
-        if (!editIsOpen()) return;
-        // Cross-slot boundary commit (Phase 2): this closes a SEPARATE-bank
-        // session (e.g. an open rotate PANEL session when a MOVE relocate fires)
-        // at the boundary-triggering bank's run boundary. It is NOT part of that
-        // bank's gizmo run, so it must NOT join that run's in-session tail —
-        // otherwise consolidate() at the boundary would merge it across banks
-        // (violating single-bank-per-run, Q-c) and collapse two distinct
-        // surviving entries into one. Route it PLAIN: a plain record() trips the
-        // command_history layer-A foreign-record guard, which consolidates the
-        // boundary-bank's open run FIRST, so this rotate entry lands as its OWN
-        // surviving entry on top of the consolidated run. Restore the routing
-        // flag afterwards (the gizmo per-gesture commitGesture path keeps using
-        // in-session routing). buildEditCmd attaches the accum hooks regardless.
-        bool wasInSession = recordViaInSession;
-        recordViaInSession = false;
-        scope(exit) recordViaInSession = wasInSession;
-        commitEdit("Rotate");
-    }
-
-    // Per-gesture commit (record+consolidate, Phase 2): the wrapper calls this
-    // from its onMouseButtonUp when a wrapper-owned ring drag ends, so each
-    // ring gesture bakes a TAGGED in-session entry (recordViaInSession is set on
-    // this sub-tool while the tool is live). The next ring grab reopens a fresh
-    // session (beginEdit in onMouseButtonDown), so two consecutive ring drags
-    // land as TWO in-session entries — one Ctrl+Z steps each — that consolidate
-    // into ONE surviving entry at the run boundary / drop. commitEdit attaches
-    // the angleAccum/propDeg accumulator hooks BEFORE the terminal recordCommit,
-    // so stepping a per-gesture entry restores the accumulator for free. Public
-    // for the same sibling-cross-instance reason as commitSessionIfOpen. No-op
-    // when no session is open (no ring drag happened).
-    public void commitGesture() {
-        if (editIsOpen())
-            commitEdit("Rotate");
-    }
-
-    // In-session-cancel PUBLIC mirror (same sibling-access reasoning as
-    // commitSessionIfOpen): the composing wrapper's cancelUncommittedEdit()
-    // calls this to abort THIS sub-tool's open rotate session WITHOUT recording,
-    // restoring the mesh to the session's pre-edit baseline. Rotate keeps its
-    // geometry session on the sub-tool (MS-5), so the wrapper's own
-    // cancelUncommittedEdit() cannot reach it — this widens the whole-open-run
-    // cancel (D6) to the R slot. Restores the Tool-Properties state (angleAccum /
-    // propDeg) to the values snapshotEditState() froze at session open, then
-    // hands the geometry/GPU teardown to the shared base helper. origVertices is
-    // left untouched: the (origVertices, angleAccum) invariant holds again once
-    // angleAccum is back at its session-start value and the verts are restored.
-    // No-op (returns false) when no rotate session is open; on cancel returns
-    // true and writes the restored session-start PANEL value (degrees) to
-    // `outDeg` so the wrapper can snap its own `headlessRotate` mirror — the attr
-    // the panel reads back — to the pre-edit value in lockstep with the geometry.
-    public bool cancelSessionIfOpen(out Vec3 outDeg) {
-        if (!editIsOpen()) return false;
-        // STANDALONE accumulator restore (wrapperRef is null): the
-        // (origVertices, angleAccum) invariant must hold again once the verts
-        // are restored, so peel the sub-tool accumulator back to its session
-        // start. In the WRAPPED role the geometry is reverted from the wrapper's
-        // editBaseline (cancelOpenSessionGeometry) and the refire gate reads
-        // wrapper truth, so the accumulator restore is skipped to avoid leaving
-        // stale values that would be inert anyway.
-        if (wrapperRef is null) {
-            angleAccum = preEditAngleAccum;
-            propDeg    = preEditPropDeg;
-        }
-        // Phase 5a — the pre-edit PANEL value returned to the wrapper (which
-        // snaps its `headlessRotate` display mirror to it) comes from the
-        // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propDeg`
-        // second accumulator. `gestureStartRotateEuler()` is the matrix-truth
-        // run orientation at this session's mouse-down (eulerZYXFromMatrix of
-        // gestureStart.r, degrees) — exactly the value the panel was showing
-        // when the session opened. The sub-tool's gizmo-basis `preEditPropDeg`
-        // would drift from that across a cross-axis multi-gesture run; the
-        // wrapper truth is what the forms panel reads back, so this keeps the
-        // restored display locked to geometry. STANDALONE (no wrapper) keeps
-        // returning `preEditPropDeg` — the only accumulator it has.
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
-                outDeg = wrap.gestureStartRotateEuler();
-                cancelOpenSessionGeometry();
-                return true;
-            }
-        }
-        outDeg = preEditPropDeg;
-        cancelOpenSessionGeometry();
-        return true;
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
@@ -1687,18 +1589,6 @@ public:
         }
     }
 
-    // Open a bare edit session with NO geometry change (forms-engine Phase 5b /
-    // re-eval plan D5 test opener). Mirrors the FIRST-active-frame gating of
-    // drawProperties: snapshot the Tool-Properties state then beginEdit() so a
-    // subsequent applyRotatePanelValue() lands inside the same coalesced session.
-    void openEditForValue() {
-        buildVertexCacheIfNeeded();
-        if (!editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        }
-    }
-
     // Value-driven panel entry point (forms-engine Phase 5b). The forms panel
     // dispatches an absolute `RX`/`RY`/`RZ` value (degrees) through the
     // `reEvaluate()` seam, which calls this once per edit. It mirrors the
@@ -1817,15 +1707,14 @@ private:
     // axis1/normal/axis2 when non-auto, world XYZ when auto). With per-cluster
     // basis active, each cluster uses its own (right, up, fwd).
     //
-    // MS-5 (rotate single-source): the panel slider path and the kept-open-edit
+    // The panel slider path and the kept-open-edit
     // falloff-reapply both reach geometry through here. It now DELEGATES to the
     // wrapper's `applyRotateAbsoluteFromRun` → `applyTRS(dragBaseline)` so the
     // "ui" (panel) path shares the SAME single geometry-apply entry point AND the
     // SAME run baseline as the "handle" (drag) and "headless" (numeric) paths.
     // Phase 1 (R/S run-baseline): applying from the run baseline (not
-    // origVertices) preserves any baked cross-axis gizmo history. The edit
-    // session + undo display hooks stay on this sub-tool (no session migration →
-    // no cross-instance commit).
+    // origVertices) preserves baked cross-axis gizmo history. The wrapper owns
+    // the edit session and undo hooks.
     //
     // Standalone fallback (a bare RotateTool with no wrapper — only unit-test
     // construction): the original `applyRotateFromOrig` kernel call. For a
@@ -1861,9 +1750,8 @@ private:
                 // origVertices would discard the baked axis. The run-baseline
                 // entry writes `headlessRotate` from `anglesRad`, recomposes
                 // `run.r` from it and applies that absolutely against
-                // dragBaseline-with-baked-history. The edit SESSION stays on this
-                // sub-tool (its own beginEdit/commitEdit) — the run-baseline entry
-                // does NOT open the wrapper session (MS-5).
+                // dragBaseline-with-baked-history. The caller has already opened
+                // the wrapper edit with Rotate provenance.
                 wrap.applyRotateAbsoluteFromRun(anglesRad);
                 return;
             }

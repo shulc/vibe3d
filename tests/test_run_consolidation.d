@@ -393,6 +393,63 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// (I) RUN-CLOSE STAYS INSIDE THE RUN.
+//
+// A landed Move gesture already occupies one in-session row. An interactive
+// panel RZ write then opens a wrapper-owned Rotate edit without recording it.
+// Dropping the tool must append that close IN SESSION and consolidate both
+// contributions to one row. Routing the close as an ordinary boundary record
+// first consolidates Move and then appends Rotate, producing two rows; that is
+// the discriminating mutation for the RunClose intent.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set Transform");
+    long floor = undoCount();
+
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    double ux, uy;
+    arrowDirPx(evalPivot(), vp, ux, uy);
+    int xa, ya;
+    arrowGrabPx(evalPivot(), vp, xa, ya);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xa, ya, xa + cast(int)(60.0 * ux),
+                              ya + cast(int)(60.0 * uy), 10));
+    settle();
+    assert(undoCount() == floor + 1,
+        "RunClose setup: the Move drag must append one in-session row; floor="
+        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+    auto afterMove = vert(6);
+
+    auto edited = postJson("/api/script?interactive=true",
+                           "tool.attr Transform RZ 30");
+    assert(edited["status"].str == "ok",
+        "interactive RZ edit failed: " ~ edited.toString);
+    settle();
+    auto afterRotate = vert(6);
+    assert(!vertNear(afterRotate, afterMove),
+        "RunClose setup: interactive RZ must move geometry after the Move drag");
+    assert(undoCount() == floor + 1,
+        "RunClose setup: the open panel edit must not record before tool drop");
+
+    cmd("tool.set Transform off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "RunClose must append the open RZ edit in-session and consolidate "
+        ~ "gesture+panel to ONE row; got "
+        ~ (undoCount() - floor).to!string);
+    assert(inSessionCount() == 0,
+        "tool drop must consolidate the RunClose row");
+
+    postJson("/api/command", commandBody("history.undo"));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one undo after RunClose must revert both Move and panel Rotate");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
 // (B) BOUNDARY FLUSH.
 //
 // Gesture -> off-gizmo relocate click (None mode, allowed) -> the just-ended run

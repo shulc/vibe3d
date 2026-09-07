@@ -13,8 +13,7 @@
 //   - a stage-attr edit (falloff) re-evaluates the live pipe immediately;
 //   - Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) value edits drive the widened
 //     reEvaluate() seam (forms Phase 5b): each moves geometry, replays
-//     absolutely, and coalesces to ONE undo entry on its per-mode preset;
-//     a combined T+R+S session records one entry per slot (as-built MS-5).
+//     absolutely, and coalesces through the wrapper-owned edit session.
 //
 // All driven over HTTP via the testMode-gated hooks tool.beginSession /
 // tool.panelEdit (Phase 3). Cube layout (centered at origin, size 1):
@@ -436,18 +435,9 @@ unittest {
 // Test 7 — Combined T+R+S value editing in one session (Phase 5b).
 //
 // All three value slots drive geometry through the widened seam on the bare
-// Transform preset (T=R=S=1). By design (MS-5 — recorded at
-// config/tool_presets.yaml for the bare Transform preset) the wrapper (T) and
-// each sub-tool (R/S) own SEPARATE edit sessions; there is NO single merged
-// session, so a combined edit records ONE entry PER session that actually saw a
-// geometry change. The exact count (1..3) depends on apply ordering — each
-// slot's applyTRS rebuilds the WHOLE chain from its own baseline, so a later
-// slot can find the change already attributed to an earlier slot's session.
-// What is invariant and worth pinning: the combined edit DOES move geometry,
-// records at LEAST one entry, never more than three, and undoing all of them
-// restores the original mesh. (A single deterministically-merged entry would
-// require a cross-instance session merge — out of scope here and contradicting
-// the documented per-sub-tool limitation.)
+// Transform preset (T=R=S=1). One wrapper-owned edit captures the combined
+// result, so tool drop records exactly one undo row and one undo restores the
+// original mesh.
 // ---------------------------------------------------------------------------
 unittest {
     drainAndReset();
@@ -474,8 +464,8 @@ unittest {
 
     cmd("tool.set Transform off");
     long entries = undoCount() - undoBefore;
-    assert(entries >= 1 && entries <= 3,
-        "combined T+R+S records 1..3 entries (per-session, as-built MS-5); got "
+    assert(entries == 1,
+        "combined T+R+S must record one wrapper-owned entry; got "
         ~ entries.to!string);
 
     // Undoing every recorded entry restores the original mesh.

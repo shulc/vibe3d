@@ -5,16 +5,9 @@
 // consolidation counts already landed in Phase 2 (the "Phase 2 flip" comments
 // in-body). No assert changed in Phase 3, re-run to confirm green.
 //
-// The undo unit is the tool SESSION: consecutive ON-handle gizmo drags
-// coalesce into ONE history entry. A click-away / action-center relocate
-// during a live session commits the current run and opens a fresh one. For
-// Rotate and Scale this boundary already exists on the SUB-TOOL itself
-// (rotate.d / scale.d each do `if (editIsOpen()) commitEdit(...)` on the
-// off-axis relocate branch, BEFORE re-anchoring + zeroing their accumulator).
-// Their commit→notifyAcenUserPlaced ordering re-stages the relocated pin for
-// free (the commit clears snapFrozen, so the subsequent setUserPlaced stages),
-// so — unlike Move — no `restageRelocatePin` is needed. This test PINS that
-// single-mode (TransformRotate / TransformScale) behaviour under the wrapper:
+// Consecutive on-handle drags form one history run. A click-away/action-center
+// relocate closes the wrapper edit through BoundaryCommit and opens a fresh
+// run. This test pins that single-mode TransformRotate/TransformScale behavior:
 //   on-handle gizmo drag -> off-axis relocate -> on-handle gizmo drag -> drop
 //      =>  TWO undo entries.
 //
@@ -28,9 +21,8 @@
 //
 // ACCUMULATOR READ-BACK NOTE (why the panel attr is read LIVE, not post-undo):
 // the panel `SX`/`RX` slots bind to the WRAPPER's headlessScale/headlessRotate
-// (transient drag state), while the undo accumulator-restore hooks roll back
-// the SUB-TOOL's scaleAccum/angleAccum. resyncSession() (run after every
-// history pop) zeroes the wrapper's headless* slots, so a post-undo `SX ?`
+// (transient drag state). resyncSession() (run after every history pop) zeroes
+// those wrapper slots, so a post-undo `SX ?`
 // query reads the reset value, NOT the restored accumulator. The accumulator
 // that survives undo is observable through GEOMETRY (the restored accumulator
 // drives the mesh) — so this test reads the live attr to confirm the gizmo
