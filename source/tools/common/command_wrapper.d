@@ -914,7 +914,6 @@ public:
                 resultFalloffPresent_ = false;
             }
             resultPipeValid_ = true;
-            lastAppliedFalloffs = currentFalloffConfigs();
         } else {
             import toolpipe.subject : fillSubject, SubjectSource;
             fillSubject(subj,
@@ -922,6 +921,7 @@ public:
             vts.put(&subj);
             if (resultFalloffPresent_) vts.put(&resultFalloff_);
         }
+        lastAppliedFalloffs = currentFalloffConfigs();
 
         VertexPositionResult built;
         if (!builder.buildVertexPositionResult(baseline, vts, built)) {
@@ -1379,6 +1379,68 @@ unittest {
             assert(divergentTool.buildPilotResult(true));
             divergentTool.dirty = true;
             assertThrown!AssertError(divergentTool.commitUncommittedEdit());
+
+            // Task 4590: a panel-closed refire through the cached R6 result
+            // path must acknowledge the falloff config it consumed.  The
+            // following explicit frame tick must then be a strict no-op: a
+            // stale cache would silently publish Position again every frame.
+            import change_bus : changeBus;
+            import edit_session : EditSession;
+            import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+            import toolpipe.stages.falloff : FalloffStage;
+
+            auto savedPipe = g_pipeCtx;
+            scope(exit) g_pipeCtx = savedPipe;
+            Mesh cacheMesh = makeCube();
+            cacheMesh.buildLoops();
+            Mesh* cacheMeshPtr = &cacheMesh;
+            EditMode cacheMode = EditMode.Vertices;
+            auto pipe = new ToolPipeContext();
+            pipe.pipeline.add(new FalloffStage(() => cacheMeshPtr, &cacheMode));
+            g_pipeCtx = pipe;
+
+            auto cacheHistory = new CommandHistory();
+            auto cacheTool = new XfrmQuantizeTool(
+                cacheMeshPtr, view, cacheMode, null);
+            cacheTool.setGestureBindings(cacheHistory,
+                () => new MeshVertexEdit(cacheMeshPtr, view, cacheMode));
+            cacheTool.activate();
+            foreach (ref p; cacheTool.params())
+                if (p.name == "X" || p.name == "Y" || p.name == "Z")
+                    *p.fptr = 0.3f;
+            assert(cacheTool.buildPilotResult(true));
+            assert(cacheTool.resultPipeValid_,
+                "control: Quantize must hold a reusable cooked pipeline result");
+            assert(cacheTool.currentFalloffConfigs().length == 1,
+                "control: the cache witness needs one live falloff config");
+            cacheTool.lastAppliedFalloffs = null;
+            assert(!cacheTool.falloffSetsEqual(cacheTool.lastAppliedFalloffs,
+                                               cacheTool.currentFalloffConfigs()),
+                "control: the refire must begin with a deliberately stale cache");
+
+            cacheHistory.refireBegin();
+            auto cachedRefire = cacheTool.buildRefireCommand();
+            assert(cachedRefire !is null,
+                "control: cached Quantize refire must build a populated carrier");
+            assert(cacheHistory.fire(cachedRefire),
+                "control: cached Quantize refire carrier must apply");
+            cacheHistory.refireEnd();
+            cacheTool.onRefireCommitted();
+            assert(cacheTool.falloffSetsEqual(cacheTool.lastAppliedFalloffs,
+                                              cacheTool.currentFalloffConfigs()),
+                "cached Quantize refire must record the applied falloff config");
+
+            auto session = new EditSession(
+                () => cast(Tool)cacheTool, cacheHistory, () {});
+            const liveAfterRefire = cacheMesh.vertices.dup;
+            const deliveriesAfterRefire = changeBus.deliveryCount;
+            const positionsAfterRefire = changeBus.totalPosition;
+            session.tickParameterEvaluation();
+            assert(cacheMesh.vertices == liveAfterRefire,
+                "unchanged frame tick moved the panel-closed Quantize result");
+            assert(changeBus.deliveryCount == deliveriesAfterRefire &&
+                   changeBus.totalPosition == positionsAfterRefire,
+                "unchanged frame tick re-published the panel-closed Quantize result");
         }
     }}
 }
