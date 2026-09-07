@@ -20,17 +20,17 @@ module ui.viewport_render;
 // module -- which is why the list is short.
 
 import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
+import bg_gpu_cache          : BgGpuDrawCache;
 import mesh;                 // Mesh
-import mesh_dirty            : g_displayEpochs, g_bgGpuUploads;  // task 1906 stage 2a (row 17); task 1932 stage 4
 import weightmap_view       : currentWeightMapName;  // task 1090
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
-import mesh_gpu              : BaseWire, OccludedPass;
+import mesh_gpu              : BaseWire, GpuMesh, OccludedPass;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Layer, kindInfo;
 import viewport              : Viewport3D;
-import editor_app            : EditorApp, OverlayMode, BgGpu;
+import editor_app            : EditorApp, OverlayMode;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import toolpipe.pipeline     : g_pipeCtx;
 import toolpipe.stage        : TaskCode;
@@ -53,11 +53,10 @@ version (WithAI) {
 // Phase 6 -- renderViewportSceneToFbo, the last panel entry point. Reads
 // shader/checkerShader/gridShader/gridVao/gridOnlyVertCount/hover x3/
 // faceSelEdgesCache+PrevSel/rebuildLoopHoverMask/litShader/gpu/mesh plus
-// bgGpuByLayer (buildItemFrame's call site left with the snap install, task
-// 1780) plus `edgeKey` (from mesh_topo.d since task 4066) -- all
+// `edgeKey` (from mesh_topo.d since task 4066) -- all
 // relocated to editor_app.d in Phase 1 and imported at this module's header;
-// this phase is a verbatim body move. Keeps its original 6 parameters,
-// EditorApp app prepended as the first (per the plan's Phase 6 note).
+// this phase is a verbatim body move. EditorApp remains the broad scene
+// context; the background cache arrives separately through its draw-only view.
 // =============================================================================
 
 // -------------------------------------------------------------------------
@@ -71,9 +70,10 @@ version (WithAI) {
 //
 // Captured from the outer scope: gpu, shader, litShader, checkerShader,
 // gridShader, cameraView, mesh, document, activeTool, pipeGizmoHost,
-// hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode, bgGpuByLayer,
+// hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode,
 // gridVao, gridOnlyVertCount, g_pipeCtx, etc.
-void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
+void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
+                               Viewport3D v, ref Viewport vp,
                                OverlayMode overlayMode,
                                bool showVertHover, bool showEdgeHover,
                                bool showFaceHover) {
@@ -362,7 +362,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // "everything went dark". (Formula updated, task 0678 D4: background is
     // derived by `Document.roleOf` over the selection HISTORY since 0671 —
     // the old `visible && !selected` reading here was the one 0671 struck
-    // out.) This DRAW pass and its eviction twin deliberately test
+    // out.) This DRAW pass and BgGpuCache's eviction predicate deliberately test
     // `visible && !isPrimary`, NOT `document.background()`: a Foreground-role
     // non-primary layer would otherwise be drawn by neither pass (the
     // foreground pass renders only the primary) — and the rule of this very
@@ -377,72 +377,23 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // vanishes. It must dim, not disappear.
     if (document.layers.length > 1 || !document.hasEditTarget()) {
         import std.math : isNaN;
-        Layer[] toDrop;
-        foreach (lyr, bg; bgGpuByLayer) {
-            bool stillBg = false;
-            foreach (ll; document.layers)
-                // Task 0615 (tier-2, §Tier-2 :2083-2090): a non-mesh layer must
-                // never be "still bg" — it never gets a BgGpu entry to begin
-                // with, so any prior entry for it (impossible today, but the
-                // guard is the eviction side of the drawsGeometry gate below)
-                // must be dropped.
-                if (ll is lyr && ll.visible && !document.isPrimary(ll)
-                    && kindInfo(ll.kind).drawsGeometry) {
-                    stillBg = true;
-                    break;
-                }
-            if (!stillBg) toDrop ~= lyr;
-        }
-        foreach (lyr; toDrop) {
-            bgGpuByLayer[lyr].gpu.destroy();
-            bgGpuByLayer.remove(lyr);
-        }
-
         // The dim factor moved into the display model (it is now an output of
         // plan resolution, `backdropPlan.dim`) — it is the ONE thing that
         // distinguishes a background layer today, and the backdrop axis is
         // what will eventually replace it with a genuinely different
         // representation. Cache upkeep below stays UNCONDITIONAL on purpose:
-        // a display change must never invalidate or skip a `bgGpuByLayer`
+        // a display change must never invalidate or skip a background GPU
         // upload, only the DRAWS are gated.
         foreach (i, lyr; document.layers) {
             if (document.isPrimary(lyr) || !lyr.visible) continue;
             // Task 0615 Stage 4 (§Tier-2 :2102): a non-mesh layer participates
             // in neither the bg draw nor the GPU upload — skip BEFORE the
-            // `BgGpu` allocation below, not after (mirrors the eviction guard
-            // just above).
+            // cache allocation below, not after (mirrors the owner's eviction
+            // predicate).
             if (!kindInfo(lyr.kind).drawsGeometry) continue;
             float[16] bgModel = lyr.xform.composedMatrix();
 
-            auto pp = lyr in bgGpuByLayer;
-            BgGpu* bg;
-            if (pp is null) {
-                bg = new BgGpu;
-                bg.gpu.init();
-                bgGpuByLayer[lyr] = bg;
-            } else {
-                bg = *pp;
-            }
-            // Task 1906 stage 2a (row 17): keyed on the bus, not on
-            // `mutationVersion`. Background layers are read-only, so this key
-            // was never exposed to the version-silent drag — but it was the
-            // same duplicate contract, and a background mesh that changes
-            // (a primary switch, a wholesale replace, a load into a background
-            // layer) now reaches it through the one channel every other
-            // consumer uses.
-            {
-                // One `meshRef()` for the address, the key AND the upload —
-                // the accessor carries a debug assert and this runs per
-                // background layer per rendered cell per frame.
-                auto bm = &lyr.meshRef();
-                const size_t ba = cast(size_t)bm;
-                const ulong  be = g_displayEpochs.epochFor(ba);
-                if (!bg.uploaded.matches(ba, be)) {
-                    bg.gpu.upload(*bm);
-                    ++g_bgGpuUploads;  // task 1932 stage 4 — /api/changes instrument
-                    bg.uploaded.stamp(ba, be);
-                }
-            }
+            GpuMesh* bg = bgGpuCache.gpuFor(lyr);
 
             // Perf: attribute this layer's submissions to the BACKDROP slots.
             // The two draws below are the same GpuMesh entry points the
@@ -458,13 +409,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 // that does not takes the disable path and reads the neutral,
                 // dimmed, which is the same rule the active pass follows.
                 if (backdropPlan.shading == SurfaceShading.Weight)
-                    bg.gpu.uploadWeightColors(lyr.meshRef(), currentWeightMapName());
+                    (*bg).uploadWeightColors(lyr.meshRef(), currentWeightMapName());
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.meshRef().surfaces);
                 litShader.setDim(backdropPlan.dim);
                 litShader.setShading(backdropPlan.shading);
                 litShader.setFillColor(backdropPlan.fillColor);
-                bg.gpu.drawFaces(litShader);
+                (*bg).drawFaces(litShader);
                 litShader.setShading(SurfaceShading.Material);
                 litShader.setFillColor(kDefaultFill);
                 litShader.setDim(1.0f);
@@ -476,7 +427,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 // Background layers carry no selection or hover state, so the
                 // base pass is all there is here — and it reads the BACKDROP
                 // side of the activity axis, never the active side.
-                bg.gpu.drawEdges(shader.locColor, -1, MarkView.init, [],
+                (*bg).drawEdges(shader.locColor, -1, MarkView.init, [],
                     BaseWire(true, shader.locAlpha, backdropPlan.wireAlpha));
                 shader.setDim(1.0f);
             }
@@ -916,12 +867,12 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 if (document.isPrimary(lyr)) {
                     shader.useProgram(meshModel, vp);
                     gpu.drawItemHighlight(shader.locColor, c.x, c.y, c.z);
-                } else if (auto bg = lyr in bgGpuByLayer) {
+                } else if (auto bg = bgGpuCache.find(lyr)) {
                     // Named, not inlined: `useProgram` takes the matrix by
                     // `ref const`, so the composed rvalue needs a home.
                     float[16] itemModel = lyr.xform.composedMatrix();
                     shader.useProgram(itemModel, vp);
-                    (*bg).gpu.drawItemHighlight(shader.locColor, c.x, c.y, c.z);
+                    (*bg).drawItemHighlight(shader.locColor, c.x, c.y, c.z);
                 }
             }
             // Leave the program bound to the primary's matrix: everything

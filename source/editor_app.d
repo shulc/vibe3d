@@ -32,7 +32,6 @@ import imgui_impl_opengl3;
 import nfde;
 import math;
 import mesh;
-import mesh_dirty : MeshDirtyKey;   // task 1906 stage 2a — BgGpu's upload key
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -415,19 +414,6 @@ version (OSX) {
 }
 version (WithAI) enum bool kAiToggleAvailable = true;
 else              enum bool kAiToggleAvailable = false;
-
-/// Per-background-layer GPU mesh cache (layers Stage 5 -- background faces/
-/// edges draw). Was a struct declared LOCALLY inside main() (`struct BgGpu
-/// { ... }` right above the `bgGpuByLayer` local) -- exact analog of
-/// Ai3dModalState: relocated verbatim so `BgGpu*[Layer]` is nameable as a
-/// ctx field's type from ui.panels.
-/// TASK 1906 STAGE 2a (row 17) — `ulong uploadedVersion` compared against
-/// `mesh.mutationVersion` became a `MeshDirtyKey`: the mesh ADDRESS plus the
-/// display-class bus epoch. The address term is not redundant with the AA's
-/// `Layer` key — a layer whose mesh is replaced wholesale (`*mesh = ...`,
-/// ~15 sites) keeps its `Layer` identity while its `Mesh` moves, and it is the
-/// address that says so.
-struct BgGpu { GpuMesh gpu; MeshDirtyKey uploaded; }
 
 /// Relocated verbatim from app.d's main() (app.d decomp phase B) so command
 /// dispatch owners and adapters can share the record policy without nesting
@@ -1000,13 +986,6 @@ struct EditorApp {
     @property ref GLuint gridVao() { return *gridVaoPtr; }
     int* gridOnlyVertCountPtr;
     @property ref int gridOnlyVertCount() { return *gridOnlyVertCountPtr; }
-    // [Б2] Reassigned-ref (`bgGpuByLayer[lyr] = bg` writes into the AA) --
-    // a by-value copy would leak the GL object every frame (the copy sees
-    // its own insert; main()'s real AA never gets it; scope(exit) in main()
-    // forever cleans up an empty map). BgGpu type relocated above (Б2).
-    BgGpu*[Layer]* bgGpuByLayerPtr;
-    @property ref BgGpu*[Layer] bgGpuByLayer() { return *bgGpuByLayerPtr; }
-
     // ---- testMode: computed, NOT a pointer field or a global wrapper.
     //      main()'s local `testMode` and `command.g_testMode` are ALWAYS
     //      assigned together (app.d ~1075/1077, never diverge) -- reading

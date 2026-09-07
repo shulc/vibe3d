@@ -2037,7 +2037,7 @@ void main(string[] args) {
         // display classes and for the geometry classes, and the consumers that
         // used to poll a per-frame word or a version counter
         // (`ensureDisplayCurrent`, the flush-site upload, the cage/preview
-        // upload, `BgGpu`, the surface BVH) compare against those epochs at
+        // upload, `BgGpuCache`, the surface BVH) compare against those epochs at
         // their own lazy recompute instead. ONE registration for all of them,
         // deliberately: if this subscription were ever lost, `meshChangedFlags`
         // would go with it and the viewport would stop updating loudly, rather
@@ -2174,25 +2174,6 @@ void main(string[] args) {
         // permanently one behind its own side effect, and every frame would
         // "refresh" again for ever.
         displayServiced_.stamp(a, g_displayEpochs.epochFor(a));
-    }
-
-    // Layers Stage 5 — background-layer GPU buffers. A side map (NOT a field on
-    // Layer: document.d stays GL-free and the render boundary stays clean)
-    // keyed by the Layer object. Each entry caches the layer's last uploaded
-    // `mesh.mutationVersion` so a visible-immutable background layer uploads at
-    // most once until it actually changes. Entries for layers that are no
-    // longer visible-background (hidden, made active/foreground, or deleted) are
-    // destroyed + dropped each frame so GL handles never leak. In a single-layer
-    // document this map is always empty ⇒ zero per-frame cost.
-    import document : Layer;
-    // BgGpu relocated to editor_app.d (task 0419 Б2 -- the UI-panel block's
-    // renderViewportSceneToFbo, now in source/ui/panels.d, needs the type
-    // nameable for a ctx field; see editor_app.d for the exact-analog-of-
-    // Ai3dModalState rationale).
-    import editor_app : BgGpu;
-    BgGpu*[Layer] bgGpuByLayer;
-    scope(exit) {
-        foreach (k, bg; bgGpuByLayer) bg.gpu.destroy();
     }
 
     // Offscreen ID-buffer picker shared by pickVertices / pickEdges /
@@ -4742,8 +4723,6 @@ void main(string[] args) {
     app.shortcutsPtr           = &shortcuts;
     app.gridVaoPtr             = &gridVao;
     app.gridOnlyVertCountPtr   = &gridOnlyVertCount;
-    app.bgGpuByLayerPtr        = &bgGpuByLayer;
-
     app.shader                  = shader;
     app.checkerShader           = checkerShader;
     app.gridShader               = gridShader;
@@ -4924,6 +4903,7 @@ void main(string[] args) {
     // forwarder straight into `ifs.viewportWindowHovered`.
     ifs.app = app;
     auto frameRunner = new FrameRunner(ifs);
+    scope(exit) frameRunner.shutdown();
     // Task 0781 step 1c -- the pick family's ENGINE SWITCH, still read here
     // and not in the cluster, because the environment read is a main()
     // responsibility: read once at startup, runtime changes need a relaunch.
@@ -7533,6 +7513,11 @@ void main(string[] args) {
                     }
                 }
             }
+
+            // Task 4680: background GPU eviction belongs to the frame owner,
+            // once here before the dirty-gated cell loop. The in-module cache
+            // witness removes both background layers and calls only this phase.
+            frameRunner.reconcileBackgroundGpu(document);
 
             // Task 0612 — pixel-cache residency, ONCE per frame, BEFORE the
             // cell loop.

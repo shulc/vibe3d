@@ -1,6 +1,8 @@
 module frame_runner;
 
 import ai.element_candidates : publishElementCandidates;
+import bg_gpu_cache : BgGpuCache;
+import document : Document;
 import editmode : EditMode;
 import editor_app : EditorApp, OverlayMode;
 import eventlog : queryMouse;
@@ -25,10 +27,22 @@ struct HoverDrawState {
 /// witnesses; tick therefore starts at the first covered seam, picking/hover.
 final class FrameRunner {
     private InputFrameState ifs_;
+    private BgGpuCache bgGpuCache_;
 
     this(InputFrameState ifs) {
         assert(ifs !is null);
         ifs_ = ifs;
+        bgGpuCache_ = new BgGpuCache;
+    }
+
+    /// Reconcile frame-owned GL residency before any dirty-gated cell draw.
+    void reconcileBackgroundGpu(ref Document document) {
+        bgGpuCache_.reconcile(document);
+    }
+
+    /// Tear down frame-owned GL resources while the context is still live.
+    void shutdown() {
+        bgGpuCache_.shutdown();
     }
 
     void tick(ref Viewport vp, bool doingCameraDrag) {
@@ -81,7 +95,8 @@ final class FrameRunner {
     void drawScene(EditorApp app, Viewport3D cell, ref Viewport vp,
                    OverlayMode overlayMode, bool showVertexHover,
                    bool showEdgeHover, bool showFaceHover) {
-        renderViewportSceneToFbo(app, cell, vp, overlayMode,
+        renderViewportSceneToFbo(app, bgGpuCache_.drawCache(),
+                                 cell, vp, overlayMode,
                                  showVertexHover, showEdgeHover,
                                  showFaceHover);
     }

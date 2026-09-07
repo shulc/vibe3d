@@ -24,7 +24,7 @@ module mesh_dirty;
 //
 // MEASURED, not asserted (task 4060 review): the eight surviving
 // `MeshDirtyKey` fields — `bvh_pick._surfKey`, `app.gpuUploadedKey_`,
-// `app.displayServiced_`, `editor_app.BgGpu.uploaded`, `snap.meshKey`,
+// `app.displayServiced_`, `bg_gpu_cache.BgGpuCache`, `snap.meshKey`,
 // `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey` — are
 // every one of them address + one epoch and carry NO counter, and every live
 // `MeshKey` instantiation carries at least one counter. Four of the eight
@@ -136,7 +136,7 @@ module mesh_dirty;
 // at the same address and publishes nothing before the consumer next asks.
 // `matches(A, e)` is then true and the consumer keeps a cache built over a
 // mesh that no longer exists. Exposed today: `ConstrainStage._bgBvh[size_t]`
-// and `item_pick._bvh[size_t]`, both keyed by RAW ADDRESS; `BgGpu` is safe
+// and `item_pick._bvh[size_t]`, both keyed by RAW ADDRESS; `BgGpuCache` is safe
 // because its map is keyed by `Layer` IDENTITY, which the GC keeps alive.
 // CLOSED AT STAGE 3, by `noteMeshBirth` below, and the closing datum lives on
 // `Layer` rather than on `Mesh` — see that function for why the choice matters.

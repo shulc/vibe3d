@@ -104,7 +104,7 @@ private:
     // `snap.backgroundSourcesSnapshot()`, mirroring how the CONS post-pass
     // projection in xfrm_transform.d already consumes that same snapshot).
     // Pruned each evaluate() so a removed/hidden background layer's BVH is
-    // freed (mirrors app.d's `bgGpuByLayer` prune pattern).
+    // freed (mirrors `BgGpuCache.reconcile`'s prune pattern).
     BvhPick[size_t]    _bgBvh;
     ConstrainHitPacket _hitPkt;
 
