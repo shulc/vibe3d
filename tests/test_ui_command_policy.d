@@ -4,11 +4,10 @@
 // The real failure mode is an exception escaping an ImGui draw and unwinding
 // through `_Dmain`. Every assertion below travels through the HTTP command
 // bridge, whose lambda CATCHES (source/http_server.d), so what is observed is
-// the PROXY "the UI adapter did not throw". That proxy is sound under exactly
-// one condition — the `?origin=ui` route must dispatch through the app's
-// `uiCommandDelegate` FIELD, the same binding the 28 panel call sites use, and
-// not through a second closure over the same body. `uiRefusalDoesNotThrow`'s
-// mutation (null the field after wiring) is what holds that condition.
+// the PROXY "the UI adapter did not throw". Task 4711 makes that proxy
+// structural: the test route and panel delegates invoke the same application
+// binding with different explicit contexts; only the HTTP adapter turns a
+// script-origin refusal into an exception.
 //
 // UNWITNESSED, AND ACCEPTED AS DEBT: the shipped panel call site
 // (`ui/panels.d`'s "Load…" button). `tests/events/` holds 22 logs and not one
@@ -35,20 +34,9 @@ JSONValue postCmd(string query, string argstring) {
 
 void resetScene() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
-unittest { // httpRefusalIsReported — the script contract is UNCHANGED
-    resetScene();
-    // `image.load` with no path: the dialog is suppressed under --test, so the
-    // command legitimately declines. A script MUST be told.
-    auto r = postCmd("", "image.load");
-    assert(r["status"].str == "error",
-        "a script-origin refusal must be reported as an error, got: " ~ r.toString);
-    assert(r["message"].str.canFind("image.load"),
-        "the error must name the command: " ~ r.toString);
-    assert(r["message"].str.canFind("no path given"),
-        "the error must carry the command's own reason: " ~ r.toString);
-}
-
-unittest { // uiRefusalDoesNotThrow — the panel path REFUSES WITHOUT DYING
+unittest { // UI notice and HTTP exception remain two adapter policies
+    // Keep the UI half first: mutating http_providers.refused into a quiet
+    // return reaches the script red below only after this policy stayed green.
     resetScene();
     auto r = postCmd("?origin=ui", "image.load");
     assert(r["status"].str == "ok",
@@ -68,6 +56,16 @@ unittest { // uiRefusalDoesNotThrow — the panel path REFUSES WITHOUT DYING
     assert(pol["last"]["notice"].str.length > 0,
         "a refusal WITH a reason must produce a notice: " ~ pol.toString);
     assert(pol["last"]["notice"].str.canFind("no path given"), pol.toString);
+
+    resetScene();
+    // The same refusal under script origin is the HTTP adapter's exception.
+    r = postCmd("", "image.load");
+    assert(r["status"].str == "error",
+        "a script-origin refusal must be reported as an error, got: " ~ r.toString);
+    assert(r["message"].str.canFind("image.load"),
+        "the error must name the command: " ~ r.toString);
+    assert(r["message"].str.canFind("no path given"),
+        "the error must carry the command's own reason: " ~ r.toString);
 }
 
 unittest { // origin=ui is TEST-ONLY plumbing and must not silently no-op

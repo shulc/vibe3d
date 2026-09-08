@@ -266,7 +266,7 @@ import viewport : LayoutPreset;
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
 // module-scope struct so these three need to be top-level here (0415).
 import document       : Document;
-import command_history : CommandHistory;
+import command_history : CommandHistory, RecordMode;
 import viewport        : ViewportManager;
 
 // app.d decomp phase B (source/http_providers.d): types of the new ctx
@@ -414,11 +414,6 @@ version (OSX) {
 }
 version (WithAI) enum bool kAiToggleAvailable = true;
 else              enum bool kAiToggleAvailable = false;
-
-/// Relocated verbatim from app.d's main() (app.d decomp phase B) so command
-/// dispatch owners and adapters can share the record policy without nesting
-/// the type in the composition root.
-enum RecordMode { Record, Coalescing }
 
 /// Build the item-snap frame for one visible layer: world-space pivot, plus —
 /// only when `wantBBox` — the world-space AABB derived from ALL mesh vertices
@@ -1016,11 +1011,9 @@ struct EditorApp {
     //      block (unlike `mesh`/`cameraView` above, none of these six are
     //      ever read bare) ----
     void delegate(Command)      runCommand;
-    /// Task 1520/1521 — the single guarded UI entry, and the notice raiser the
-    /// UI dispatch adapter shares with `runCommand`.
+    /// Task 1520/1521 — the guarded UI policy reached through the application
+    /// command binding, including window-close dispatch from InputRouter.
     UiRunOutcome delegate(Command, RecordMode, string) runUiCommand;
-    void delegate(Command)      raiseCommandNotice;
-    void delegate(string)       raiseNotice;
     bool delegate(string)       tryOpenArgsDialog;
     void delegate(string)       activateToolById;
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
@@ -1046,22 +1039,15 @@ struct EditorApp {
     // =========================================================================
 
     // ---- (a) pointer-backed: struct mutated via .touch()/.order writes in
-    //      both main() and the moved block. formsInteractiveLatch: bool
-    //      latch assigned by the moved block's formsInteractiveDispatch and
-    //      read by its command handler -- closure-frame shared state, so it
-    //      must alias main()'s local, not copy it. ----
+    //      both main() and the moved block. ----
     SelTypeOrder* selTypeOrderPtr;
     @property ref SelTypeOrder selTypeOrder() { return *selTypeOrderPtr; }
-    bool* formsInteractiveLatchPtr;
-    @property ref bool formsInteractiveLatch() { return *formsInteractiveLatchPtr; }
 
     // ---- (б) by-value class refs, each assigned exactly once in main()
     //      before the wireHttpProviders call (grep-verified: bvhPick app.d
     //      ~1618, stepTrace ~2647, session ~3350). The moved block only
     //      READS stepTrace (null-guarded) and calls methods on session.
-    //      replayUndoEntry is the reverse direction: ASSIGNED by the moved
-    //      block (like uiCommandDelegate/formsInteractiveDispatch
-    //      above) and synced back into main()'s local after the call. ----
+    //      replayUndoEntry is application-bound before HTTP wiring. ----
     BvhPick     bvhPick;
     StepTrace   stepTrace;
     EditSession session;

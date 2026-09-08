@@ -1,31 +1,23 @@
 module http_providers;
 
 // app.d decomp, phase B (HTTP-provider span): wireHttpProviders hosts the
-// entire `/api` endpoint-wiring block previously inline in app.d's main()
-// (the `if (httpServer !is null) { ... }` span, ~2410 lines: every
-// setXxxProvider/setXxxHandler registration, meshToDetailedJson, and the
-// uiCommandDelegate/formsInteractiveDispatch/replayUndoEntry delegate
-// assignments). Same seam as 0415's registration.d and 0419's ui/panels.d:
+// entire `/api` endpoint-wiring block previously inline in app.d's main().
+// Command/UI/forms/history binding is application-owned since task 4711;
+// this module retains only endpoint adapters and automation behavior.
 // the body is a VERBATIM cut wrapped in `with (app) { }`, so every bare
 // identifier resolves to the matching EditorApp member.
 //
-// DIFFERENCE from the 0415/0419 precedents: `app` is a `ref` parameter, not
-// by-value. The moved block ASSIGNS delegates that main() reads afterwards
-// (uiCommandDelegate / formsInteractiveDispatch / replayUndoEntry) and
-// mutates a shared latch (formsInteractiveLatch) -- with a by-value copy
-// those writes would die inside this function's frame. All closures created
-// here capture the single `ref`, so they share main()'s `app` storage.
-//
-// Call site: app.d, right after the task-0419 LATE ctx-wiring (the moved
-// block reads fields from both the 0415 and 0419 wiring blocks, so it must
-// run after both), followed by a 3-line sync-back of the assigned delegates
-// into main()'s same-named locals.
+// `app` remains `ref` because endpoint closures read its pointer-backed live
+// state. They do not assign application dispatch delegates.
 //
 // Import surface: mirrored verbatim from editor_app.d (itself harvested
 // from app.d's top-level import block for task 0415), plus step_trace for
 // the StepTrace-typed ctx field.
-import editor_app : EditorApp, RecordMode;
+import editor_app : EditorApp;
+import application_command_binding : ApplicationCommandBinding,
+    CommandInvocationContext, CommandInvocationOutcome, CommandInvocationResult;
 import command_executor : CommandExecutor;
+import command_history : RecordMode;
 import input_frame_state : InputFrameState;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
@@ -317,7 +309,8 @@ import document       : primaryModelSpace;
 // is unchanged.
 
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
-                       InputFrameState ifs, CommandExecutor executor) {
+                       InputFrameState ifs, CommandExecutor executor,
+                       ApplicationCommandBinding binding) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
     // bottom — a list at the bottom is how such a list rots away from the
@@ -332,7 +325,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     wireViewportProviders(httpServer, app, ifs, optionalSlots);
     wireSelectionProviders(httpServer, app, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
-    wireCommandProviders(httpServer, app, executor, optionalSlots);
+    wireCommandAdapters(httpServer, app, binding, optionalSlots);
     wireHistoryProviders(httpServer, app, optionalSlots);
     wireMutationHandlers(httpServer, app, executor, optionalSlots);
 
@@ -2261,386 +2254,76 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
     }
 }
 
-// wireCommandProviders — `/api/command` and `/api/script`, plus the two delegates main()
-// reads back afterwards (`uiCommandDelegate`,
-// `formsInteractiveDispatch`) and the forms tweak-end hook. This is the
-// largest domain by a wide margin and the one D6 is about — ten
-// `viewport.*` ids are still intercepted inside the delegate, ahead of
-// the registry (task 0761).
-private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
-                             CommandExecutor executor,
+// HTTP adapters for `/api/command` and `/api/script`. Application command
+// construction and UI/forms/history callbacks are already bound (task 4711).
+private void wireCommandAdapters(HttpServer httpServer, ref EditorApp app,
+                             ApplicationCommandBinding binding,
                              ref string[] optionalSlots) {
     with (app) {
-        // TASK 4062 — `injectToolCommandPositional` and
-        // `injectSelectCommandPositional` stood here: ~370 lines of
-        // `cast(ConcreteCommand)` arms, each reading `_positional` by hand and
-        // each free to invent its own rule about types, defaults and what an
-        // absent argument means. Thirty of those commands now declare their
-        // arguments in `params()` and `command_args.bindArgs` fills them.
-        //
-        // Two of the arms did not survive as casts and did not need to: the
-        // `tool.set` named-args bag reaches its command through
-        // `Command.setUnboundArgs`, and the `?` read-back through
-        // `Command.acceptsQuery`/`markQuery` — both base hooks, so a command
-        // added next year gets them by declaring, not by editing this file.
-
-        // The FIFTH injector — `injectRetiredWrapperArgs`, the one the
-        // wrapper-route retirement (tasks 4063 / 4131) added here — is gone the
-        // same way the other four are: `mesh.select`, `mesh.transform`,
-        // `scene.loadMesh` and `scene.reset` DECLARE their arguments, and
-        // `bindArgs` above fills them. Nothing about its behaviour was dropped
-        // with it; each rule moved to the command that owns it, named in that
-        // command's `params()`:
-        //
-        //   * `scene.reset` — `empty` (bool), `type` (string), `n` with the
-        //     `levels` alias. The id-vs-class hazard that block was written to
-        //     fix is now UNREPRESENTABLE rather than guarded: `file.new` and
-        //     `scene.reset` are the same class, so a class gate fired on both,
-        //     but a DECLARED parameter belongs to the instance the factory
-        //     built and `file.new`'s `setEmpty(true)` survives an argument-less
-        //     body because no arm re-writes it.
-        //   * `mesh.select` — `mode` (string), `indices` (int array, absorbing
-        //     the positional tail).
-        //   * `mesh.transform` — `kind`, `delta`, `axis`, `angle`, `factor`,
-        //     `pivot`, each independently optional exactly as task 4131 made
-        //     them.
-        //   * `scene.loadMesh` — `vertices` / `faces`, both raw-JSON slots
-        //     (`Param.jsonArg_`): parallel arrays-of-arrays are a shape
-        //     `Param.Kind` has no spelling for, so the command decodes them
-        //     itself, keeping every message and the pair gate byte-identical.
-
-        // ------------------------------------------------------------------
-        // ONE dispatcher BODY, TWO refusal policies (task 1520).
-        //
-        // Before this the body below was an anonymous lambda assigned to a
-        // single `commandHandlerDelegate` field that BOTH `/api/command` and
-        // the 28 `ui/panels.d` call sites shared. Its refusal policy was the
-        // script one — `applyOrRefire(..., throwMsg)` — so a legitimately
-        // refusing command dispatched from a panel button threw out of the
-        // ImGui draw, through `_Dmain`, and killed the editor. Measured, twice,
-        // on a build with no code change (task card §Лог): cancelling the
-        // Images panel's "Load…" and refusing `layer.setVisible` from the
-        // Layers panel eye BOTH died with the same four-frame trace.
-        //
-        // The fix does not average the two policies (a `try/catch` round the
-        // draw would have swallowed the HTTP errors the throw exists FOR);
-        // it names the caller. `origin` is read at exactly one place —
-        // `refused()` below.
-        // ------------------------------------------------------------------
-
-        /// THE refusal policy, and the only place `origin` is consulted.
-        ///
-        /// The UI branch reuses `app.d`'s `raiseCommandNotice` — the SAME body
-        /// the menu/keyboard path (`runCommand`) has always used, which is WHY
-        /// File → Open of a cancelled dialog never crashed while the Images
-        /// panel's "Load…" did.
-        void refused(Command cmd, string id, CommandOrigin origin) {
-            if (origin == CommandOrigin.script)
-                throw new Exception("command '" ~ id ~ "' did not apply"
-                    ~ (cmd.refusalReason().length ? ": " ~ cmd.refusalReason() : ""));
-            raiseCommandNotice(cmd);
+        // HTTP owns protocol refusal, result delivery and test-automation
+        // re-baselining. Command construction and UI/forms/history policy are
+        // already bound by the application before this adapter is installed.
+        void refused(Command cmd, string id) {
+            throw new Exception("command '" ~ id ~ "' did not apply"
+                ~ (cmd.refusalReason().length ? ": " ~ cmd.refusalReason() : ""));
         }
 
-        // The dispatcher body itself. Named (not a lambda) so both adapters
-        // below can name it; the body is otherwise unchanged from the lambda
-        // it replaces except at the four policy points marked `refused(...)`.
-        void dispatchCommandLine(string id, string paramsJson, CommandOrigin origin) {
-            import std.json     : parseJSON, JSONType;
-            import command_args : bindArgs;
-
-            // The ten `viewport.*` commands used to be intercepted here,
-            // ahead of `reg.commandFactories` below. Moved into the registry
-            // (task 0761) — see `commands/viewport/{view_preset,layout_preset,
-            // independence,display,grid_steps,master}.d` for the command
-            // classes, each of which declares the argument it takes (task
-            // 4062) rather than having it read for it.
-
-            auto factory = id in reg.commandFactories;
-            if (factory is null)
-                throw new Exception("unknown command id '" ~ id ~ "'");
-            auto cmd = (*factory)();
-            // THE AUTOMATION RE-BASELINE IS `scene.reset`'S, AND ONLY ITS.
-            // This read `cast(SceneReset)cmd !is null` and so also fired on
-            // `file.new`, which registration.d builds from the SAME class.
-            // The retired `/api/reset` handler named the hazard where it
-            // deliberately did NOT put the pointer park into `SceneReset`:
-            // "file.new goes through the command too, and for a human the
-            // pointer really IS where it is." Under the class gate every
-            // `file.new` in `--test` had the unsaved-work record wiped and any
-            // held action dropped BEFORE dispatch, then — after a dispatch
-            // that may have been DEFERRED behind the prompt and never applied
-            // at all — parked the pointer, closed the pie, killed the AI
-            // switch and reset the step trace. The id is the thing that
-            // decides, so gate on the id.
-            immutable bool resetForAutomation =
-                command.g_testMode && id == "scene.reset";
-
-            if (resetForAutomation) {
-                import ui.discard_guard : resetUiPolicyRecord;
-                resetUiPolicyRecord();
-                if (dropPendingGuard !is null) dropPendingGuard();
-            }
-
-            // FormsPanel interactive write: mark a `tool.attr` interactive so
-            // the reEvaluate() seam opens the tool's live session on the first
-            // edit. The latch is set ONLY by formsInteractiveDispatch around one
-            // dispatch — the raw HTTP path never sets it, so wire `tool.attr`
-            // stays inert (faithful). Programmatic-only, never an argstring arg.
-            if (formsInteractiveLatch)
-                if (auto ta = cast(ToolAttrCommand)cmd)
-                    ta.setInteractive(true);
-
-            if (paramsJson.length > 0) {
-                auto pj = parseJSON(paramsJson);
-
-                // TASK 4062 — ONE binder, the same one the keyboard funnel and
-                // the panel funnel call. What stood here was four of them: a
-                // `viewport.*` injector reading the raw string under three
-                // different argument laws, a `"path"` special case casting to
-                // two file classes, `injectParamsInto` over the schema, and two
-                // more injectors casting to thirty-odd tool/select classes.
-                // Every one of those arguments is a DECLARED parameter now, and
-                // `bindArgs` fills the declared slots in declaration order.
-                bindArgs(cmd, pj);
-
-                if (pj.type == JSONType.object) {
-                    // Falloff side-channel — mesh.smooth / mesh.jitter /
-                    // mesh.quantize accept a `falloff` JSON object that
-                    // doesn't fit Param[]'s typed-pointer schema (it's
-                    // a multi-field FalloffPacket). Push it into the
-                    // command via the IFalloffAware interface — single
-                    // cast replaces the per-Command cast-chain that
-                    // existed before Phase 4. Reference-diff cases use
-                    // this to drive cross-engine linear-falloff parity
-                    // for the convolve tools.
-                    if (auto fj = "falloff" in pj.object) {
-                        if (fj.type == JSONType.object) {
-                            import falloff : parseFalloffJson, IFalloffAware;
-                            if (auto fa = cast(IFalloffAware)cmd) {
-                                auto fp = parseFalloffJson(*fj);
-                                fa.setFalloff(fp);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Phase C: while a refire block is open, fire() reverts the
-            // previous live command before applying the new one — net stack
-            // effect = 1 entry per drag/edit cycle. Outside refire, fire()
-            // falls through to plain apply()+record(), preserving Phase A
-            // semantics.
-            {
-                auto zCmd = g_perf.scope_(Cat.commandApply);
-                // Forms-engine query (`?` read-back) short-circuit. A query
-                // command resolves + boxes the live value WITHOUT mutating;
-                // it records no history and bypasses the refire/coalesce path
-                // entirely (a pure read). The boxed JSON is stashed for the
-                // HTTP thread via setCmdResult(); the in-process renderer reads
-                // queryResult() directly. A non-query (write) tool.attr /
-                // tool.pipe.attr falls through to the normal paths below.
-                //
-                // TASK 4062 — ONE block, asked of the BASE. It was three
-                // copy-pasted casts (`ToolAttrCommand`, `ToolPipeAttrCommand`,
-                // `LayerAttr`), which is to say the protocol only worked for
-                // the classes someone had remembered to add a fourth copy for.
-                if (cmd.isQuery()) {
-                    if (!cmd.apply()) { refused(cmd, id, origin); return; }
-                    if (httpServer !is null)
-                        httpServer.setCmdResult(cmd.queryResultJson());
-                    return;
-                }
-                // Refire (undo/redo migration P4) — the dispatch decision +
-                // driver bracket live in EditSession.tryRefireDispatch (task
-                // 0428): a tool.attr inside an open refire window on an
-                // opted-in tool fires the tool's rebuilt command instead of
-                // the plain path below. Non-tool.attr commands inside a
-                // refire window (and non-opted-in tools) keep the plain
-                // fire(cmd) path.
-                // Did the command ACTUALLY change the scene? A UI-origin
-                // line can be held by the unsaved-work prompt and apply
-                // nothing, so the post-dispatch re-baseline below must not
-                // run on the strength of having been ASKED. (A script-origin
-                // refusal throws out of `refused()` and never reaches the
-                // block, but the flag is carried explicitly rather than
-                // inferred from that control flow: the inference is exactly
-                // the kind that silently stops holding when a policy moves.)
-                bool applied = false;
-                if (!session.tryRefireDispatch(cmd, id)) {
-                    // Command-dispatch path: route through recordCoalescing()
-                    // so consecutive COMPATIBLE delta edits (same targets, same
-                    // edit label) collapse into a single undo entry.
-                    // compareOp() defaults to Different for every command
-                    // except the opted-in delta edit, so every other command
-                    // appends exactly as record() would. Interactive tool
-                    // commits stay on record() (one entry per gesture).
-                    //
-                    // THE POLICY SPLIT (task 1520). A UI-origin line goes
-                    // through `runUiCommand` — the unsaved-work guard's single
-                    // point (task 1521) — and a refusal becomes a notice.
-                    // A script-origin line applies directly and a refusal
-                    // throws, which is the contract `/api/command` clients
-                    // read.
-                    if (origin == CommandOrigin.ui) {
-                        // `runUiCommand` OWNS both the guard and the notice —
-                        // and it must, because "refused" and "deferred by the
-                        // unsaved-work prompt" are different answers and only
-                        // the first one is a notice.
-                        runUiCommand(cmd, RecordMode.Coalescing, id);
-                    } else if (!executor.applyOrRefire(cmd, RecordMode.Coalescing, null)) {
-                        refused(cmd, id, origin);
-                    } else {
-                        applied = true;
-                    }
-                } else {
-                    applied = true;   // the refire path fired the command
-                }
-
-                // Scripted origin AND an actual apply. `?origin=ui` exists to
-                // drive the UI POLICY (test_unsaved_guard.d), and a scene reset
-                // taken down that path is a user gesture whose deferral is the
-                // thing under test — re-baselining the harness around it would
-                // destroy the state the case is about.
-                if (resetForAutomation && origin == CommandOrigin.script
-                                       && applied) {
-                    pipeGizmoHost.cancelDrag();
-                    import ai.debug_trace : clearLatestAiDebugTraces;
-                    clearLatestAiDebugTraces();
-                    aiState.setEnabled(false);
-                    import eventlog : parkOverrideMouse;
-                    parkOverrideMouse();
-                    import pie_state : closePie;
-                    closePie();
-                    aiExplore.discardPending();
-                    if (stepTrace !is null) stepTrace.reset();
-                }
-
-                // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
-                // generation, so the re-grade it triggers (recorded later, on the
-                // next XfrmTransformTool.update() tick) APPENDS as its OWN
-                // in-session undo step rather than REPLACING the prior re-grade
-                // (reference fact G2: each separate setAttr command is one step).
-                // Gate: a tool.pipe.attr WRITE (not a `?` query) that is NOT part
-                // of a held interactive interaction. The forms-panel slider scrub
-                // raises formsInteractiveLatch and fires MANY tool.pipe.attr
-                // writes as the mouse drags one slider — those must SHARE one
-                // generation (REPLACE into one step), so the latch suppresses the
-                // per-setAttr bump; the slider's end-of-scrub deactivate bumps the
-                // generation instead (forms_render.d). A raw /api/command or
-                // /api/script tool.pipe.attr (latch down) is a discrete tweak and
-                // bumps here. A falloff-handle drag bypasses this dispatcher
-                // entirely (it setAttrs the stage directly) and bumps on
-                // mouse-up (xfrm_transform.d). bumpTweakGeneration() is a no-op on
-                // history state otherwise — it only advances the token a future
-                // re-grade reads.
-                if (id == "tool.pipe.attr" && !formsInteractiveLatch) {
-                    bool isQuery = false;
-                    isQuery = cmd.isQuery();
-                    if (!isQuery) history.bumpTweakGeneration();
-                }
-            }
+        void resetAutomationBefore(string id) {
+            if (!command.g_testMode || id != "scene.reset") return;
+            import ui.discard_guard : resetUiPolicyRecord;
+            resetUiPolicyRecord();
+            if (dropPendingGuard !is null) dropPendingGuard();
         }
 
-        // ---- The two adapters (task 1520) --------------------------------
-        //
-        // The UI adapter is the EditorApp field: every panel button, the
-        // status-line script actions, the forms panel and the History panel's
-        // Re-run reach the dispatcher through it, and a refusal on that route
-        // becomes a notice.
-        uiCommandDelegate = (string id, string paramsJson) {
-            dispatchCommandLine(id, paramsJson, CommandOrigin.ui);
-        };
-        // The THROWING adapter is deliberately a LOCAL, not a field on
-        // `EditorApp`: nothing in `source/ui/**` can reach it even by
-        // accident, because there is no bound reference to reach. The shared
-        // executor is passed directly to this provider and never exposed to a
-        // panel; `tests/test_ui_no_throwing_dispatch.d` gates that boundary.
-        void delegate(string, string) httpCommandDelegate =
-            (string id, string paramsJson) {
-                dispatchCommandLine(id, paramsJson, CommandOrigin.script);
-            };
-        httpServer.setCommandHandler(httpCommandDelegate);
-        // `POST /api/command?origin=ui` (--test only) drives the UI policy from
-        // a test. It MUST go through the `app.uiCommandDelegate` FIELD, not
-        // through a second closure over the same body: the whole proxy the
-        // tests observe ("the UI adapter did not throw") is only worth
-        // anything if the route exercises the binding the panels use. Nulling
-        // the field after this point is the mutation that proves it, and it
-        // reddens because of the explicit null check here.
-        httpServer.setUiCommandHandler((string id, string paramsJson) {
-            if (uiCommandDelegate is null)
-                throw new Exception("ui command delegate is not wired");
-            uiCommandDelegate(id, paramsJson);
-        });
-
-        // Test-automation seam: let /api/script?interactive=true raise the same
-        // formsInteractiveLatch the forms-panel scrub uses, so a sequence of
-        // tool.pipe.attr writes shares ONE tweak generation (REPLACE-coalesce
-        // into one in-session re-grade step) — the headless analogue of a held
-        // falloff-handle drag. Runs on the main thread inside tickCommand, the
-        // same thread that reads the latch, so no synchronisation is needed.
-        httpServer.setInteractiveLatchHook((bool raised) {
-            formsInteractiveLatch = raised;
-        });
-
-        // FormsPanel value writes go through here: raise the latch, dispatch the
-        // ordinary `tool.attr` via the same handler, lower the latch. The handler
-        // marks the built ToolAttrCommand interactive while the latch is up, so
-        // the first forms edit opens the tool's live session (reEvaluate seam).
-        // UI ORIGIN (task 1520): every caller is a draw — `ui/panels.d`'s
-        // forms rows and the Tool Properties panel. HTTP's
-        // `/api/script?interactive=true` does NOT come through here (it raises
-        // the latch via setInteractiveLatchHook and dispatches through the
-        // command bridge), so it keeps the script policy.
-        formsInteractiveDispatch = (string id, string paramsJson) {
-            formsInteractiveLatch = true;
-            scope(exit) formsInteractiveLatch = false;
-            dispatchCommandLine(id, paramsJson, CommandOrigin.ui);
-        };
-
-        // P-E: wire the forms panel's tweak-boundary hook to the history's
-        // generation counter. A panel slider/drag deactivate (end of a continuous
-        // scrub) or a combo selection (a single discrete pick) bumps the
-        // generation so the NEXT pipe tweak APPENDS as its own in-session undo
-        // step rather than REPLACING the just-finished one (reference fact G2).
-        // The per-frame setAttrs DURING a scrub do NOT bump (the interactive
-        // latch suppresses the app.d per-command bump), so the scrub coalesces
-        // into ONE step; this end-of-scrub hook closes that window.
-        formsPanel.setTweakEndHook(() { history.bumpTweakGeneration(); });
-
-        // Phase 5.6: assign the outer-scope replayUndoEntry delegate so the
-        // History panel replay button can call it from the main-loop render.
-        replayUndoEntry = (size_t index) {
-            import argstring : parseArgstring;
-            string line = history.undoEntryCommandLine(index);
-            if (line.length == 0) return;
-            auto parsed = parseArgstring(line);
-            if (parsed.isEmpty) return;
-            // THE `try/catch` STAYS (task 1520, opponent blocker B3). Phase 1
-            // removes only the REFUSAL throw; three classes still fly out of
-            // the dispatcher body and `origin` does not touch any of them —
-            // an unknown command id, a `parseJSON` failure, and the commands
-            // that throw ON PURPOSE (`commands/mesh/morph.d`,
-            // `commands/mesh/edge_crease.d`). Their stated premise, "the only
-            // caller is /api/command", is FALSE: this replay runs an arbitrary
-            // line from the history, and its callers are the History panel's
-            // Re-run button and its context menu — both INSIDE the draw.
-            // Deleting this catch would put back exactly the crash 1520
-            // removes.
-            //
-            // What DID change: the message is no longer swallowed. The panel
-            // has no error surface of its own, so it goes to the same notice
-            // every other UI-origin failure uses.
-            try {
-                dispatchCommandLine(parsed.commandId, parsed.params.toString(),
-                                    CommandOrigin.ui);
-            } catch (Exception e) {
-                raiseNotice(e.msg);
+        void deliverResult(CommandInvocationResult invocation, string id,
+                           CommandOrigin origin) {
+            if (invocation.outcome == CommandInvocationOutcome.query) {
+                httpServer.setCmdResult(invocation.queryJson);
+                return;
             }
-        };
+            if (origin == CommandOrigin.script
+                && invocation.outcome == CommandInvocationOutcome.refused)
+                refused(invocation.command, id);
+        }
+
+        void resetAutomationAfter(CommandInvocationResult invocation,
+                                  string id, CommandOrigin origin) {
+            if (!command.g_testMode || id != "scene.reset"
+                || origin != CommandOrigin.script || !invocation.applied)
+                return;
+            pipeGizmoHost.cancelDrag();
+            import ai.debug_trace : clearLatestAiDebugTraces;
+            clearLatestAiDebugTraces();
+            aiState.setEnabled(false);
+            import eventlog : parkOverrideMouse;
+            parkOverrideMouse();
+            import pie_state : closePie;
+            closePie();
+            aiExplore.discardPending();
+            if (stepTrace !is null) stepTrace.reset();
+        }
+
+        httpServer.setCommandHandler(
+            (string id, string paramsJson, bool interactive) {
+                resetAutomationBefore(id);
+                auto invocation = binding.invokeLine(id, paramsJson,
+                    CommandInvocationContext(CommandOrigin.script, interactive));
+                deliverResult(invocation, id, CommandOrigin.script);
+                resetAutomationAfter(invocation, id, CommandOrigin.script);
+            });
+
+        // Test-only protocol adapter for the same UI policy used by panels.
+        // A refusal remains a notice/deferred outcome and therefore does not
+        // become the script adapter's status:error.
+        httpServer.setUiCommandHandler(
+            (string id, string paramsJson, bool interactive) {
+                resetAutomationBefore(id);
+                auto invocation = binding.invokeLine(id, paramsJson,
+                    CommandInvocationContext(CommandOrigin.ui, interactive));
+                deliverResult(invocation, id, CommandOrigin.ui);
+            });
     }
 }
-
 // wireHistoryProviders — `/api/history*`, `/api/trace*`,
 // `/api/refire` — the undo service and its observables.
 private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,

@@ -10,6 +10,10 @@ import perf_probe : g_perf, Cat;
 import core.atomic : atomicOp;
 import record_observer_hub : RecordObserverHub, PreparedRecordObserverImage;
 
+/// Selects the history write used after a command applies successfully.
+/// This is command/history policy, not application UI state (task 4711).
+enum RecordMode { Record, Coalescing }
+
 // ---------------------------------------------------------------------------
 // CommandHistory — linear undo/redo stack of Command instances.
 //

@@ -78,7 +78,8 @@ import tool_activation_ownership : ToolTransition;
 
 import bindbc.sdl;
 import bindbc.opengl;
-import editor_app : EditorApp, RecordMode, Layout;
+import editor_app : EditorApp, Layout;
+import command_history : RecordMode;
 // Task 0781 step 2a -- what the two keyboard handlers reach that EditorApp
 // does not carry. All of these were already module-level names in main()'s
 // scope, and none of them imports this module back, so no cycle appears.

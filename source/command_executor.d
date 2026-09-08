@@ -1,8 +1,7 @@
 module command_executor;
 
 import command;
-import command_history : CommandHistory;
-import editor_app : RecordMode;
+import command_history : CommandHistory, RecordMode;
 import tool_activation_ownership : ToolTransition;
 
 // Project-owned command/history orchestration. Exact `grep -rl -w` checks for

@@ -175,6 +175,8 @@ import commands.workplane : WorkplaneEditCommand, WorkplaneRotateCommand, Workpl
 
 import command;
 import command_executor : CommandExecutor;
+import command_history : RecordMode;
+import application_command_binding : ApplicationCommandBinding;
 import registry;
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration moved out of main() below,
@@ -2817,6 +2819,7 @@ void main(string[] args) {
     history = new CommandHistory();
     auto executor = new CommandExecutor(history,
         () => activeTool !is null, &dropActiveTool);
+    ApplicationCommandBinding commandBinding;
 
     // Phase 7: macro recorder captures successful command lines
     // (via history.onRecord delegate) when active. Survives undo /
@@ -4184,13 +4187,8 @@ void main(string[] args) {
         return true;
     };
 
-    // Declared at outer scope so the main-loop UI (status-line `kind: script`
-    // actions, History panel replay button) can call them. They are assigned
-    // inside the `if (httpServer !is null)` block below; httpServer is now
-    // ALWAYS constructed (the listener is gated separately on start()), so the
-    // block always runs and these are always wired — a release build with the
-    // HTTP port closed still dispatches script actions through
-    // uiCommandDelegate.
+    // Application dispatch surfaces used by panels and the main loop. They are
+    // bound below independently of whether the HTTP listener is enabled.
     void delegate(string, string) uiCommandDelegate;
     void delegate(size_t) replayUndoEntry;
     // FormsPanel write path: dispatches a `tool.attr` exactly like
@@ -4200,11 +4198,6 @@ void main(string[] args) {
     // an argstring — see commands/tool/attr.d. Always wired now that
     // httpServer is always constructed (listener gated on start()).
     void delegate(string, string) formsInteractiveDispatch;
-    // Closure-captured latch the command handler reads to decide whether a
-    // `tool.attr` it is about to build should be marked interactive. Set ONLY
-    // by formsInteractiveDispatch around a single dispatch; never touched by
-    // the HTTP path, so raw `/api/command` writes stay non-interactive.
-    bool formsInteractiveLatch = false;
 
     // Set up HTTP server model data provider
     // ---------------------------------------------------------------------
@@ -4385,7 +4378,7 @@ void main(string[] args) {
     // The menu / keyboard / UI-button entry. Unchanged shape for its 8
     // callers; the body is now the single guarded point above.
     void runCommand(Command cmd) {
-        runUiCommand(cmd, RecordMode.Record, "");
+        commandBinding.invokeUiCommand(cmd, RecordMode.Record, "");
     }
 
     // ---- The three answers to the unsaved-work prompt (task 1521) --------
@@ -4730,20 +4723,32 @@ void main(string[] args) {
     app.formsPanel                = formsPanel;
     app.propertyPanel             = propertyPanel;   // task 0722 (A2)
     app.io                        = io;
-    // app.uiCommandDelegate / app.formsInteractiveDispatch are NOT
-    // wired here anymore (their pre-move `= uiCommandDelegate;` lines
-    // copied a still-null local): the moved HTTP block ASSIGNS both through
-    // wireHttpProviders's `ref EditorApp app` parameter, and the call site
-    // below syncs main()'s same-named locals back from `app`.
+
+    // Task 4711: application command binding is assembled here from the live
+    // registry/executor/session and the concrete UI guard/notice policies.
+    // Its UI, forms and History delegates exist even when HTTP is not started.
+    commandBinding = new ApplicationCommandBinding(
+        reg, executor, session, history,
+        (Command c, RecordMode m, string id) => runUiCommand(c, m, id),
+        cast(void delegate(Command))&raiseCommandNotice,
+        cast(void delegate(string))&raiseNotice);
+    uiCommandDelegate = (string id, string paramsJson) {
+        commandBinding.dispatchUi(id, paramsJson);
+    };
+    formsInteractiveDispatch = (string id, string paramsJson) {
+        commandBinding.dispatchInteractiveUi(id, paramsJson);
+    };
+    replayUndoEntry = (size_t index) {
+        commandBinding.replayHistoryEntry(index);
+    };
+    formsPanel.setTweakEndHook(() { commandBinding.endInteractiveTweak(); });
+    app.uiCommandDelegate = uiCommandDelegate;
+    app.formsInteractiveDispatch = formsInteractiveDispatch;
+    app.replayUndoEntry = replayUndoEntry;
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
-    // Task 1520/1521 — the single guarded UI entry + the shared notice raiser.
-    // Real closures, not same-arity casts: `runUiCommand` has a defaulted
-    // third parameter and a cast would reinterpret the ABI (see buildToolVts
-    // below for the crash that shape produced once already).
-    app.runUiCommand = (Command c, RecordMode m, string id) => runUiCommand(c, m, id);
-    app.raiseCommandNotice = cast(void delegate(Command))&raiseCommandNotice;
-    app.raiseNotice        = cast(void delegate(string))&raiseNotice;
+    app.runUiCommand = (Command c, RecordMode m, string id) =>
+        commandBinding.invokeUiCommand(c, m, id);
     app.guardAnswerSave    = cast(void delegate())&guardAnswerSave;
     app.guardAnswerDiscard = cast(void delegate())&guardAnswerDiscard;
     app.guardAnswerCancel  = cast(void delegate())&guardAnswerCancel;
@@ -4777,20 +4782,14 @@ void main(string[] args) {
     app.viewportInputAllowedDg = &ifs.viewportInputAllowed;
     app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
-    // Phase-B ctx wiring (source/http_providers.d): same rules as the blocks
-    // above. Pointer-backed selTypeOrder (mutated via .touch() on both
-    // sides); by-value class refs bvhPick/stepTrace/session (each assigned
-    // exactly once, all before this point); hook delegates for main()'s
-    // nested functions. app.replayUndoEntry is NOT wired here -- the moved
-    // block ASSIGNS it through the `ref EditorApp app` parameter (synced
-    // back below, next to uiCommandDelegate).
+    // Phase-B ctx wiring (source/http_providers.d): pointer-backed selection
+    // order, by-value class refs, and app-owned hook delegates.
     app.selTypeOrderPtr      = &selTypeOrder;
     app.bvhPick              = bvhPick;
     app.stepTrace            = stepTrace;
     app.session              = session;
     app.ensureDisplayCurrent = cast(void delegate())&ensureDisplayCurrent;
     app.derivedEditMode      = cast(EditMode delegate())&derivedEditMode;
-    app.formsInteractiveLatchPtr = &formsInteractiveLatch;
     // Phase-B HTTP wiring call (was the inline `if (httpServer !is null) {
     // ... }` block that sat right after this main()'s outer-scope delegate
     // declarations, app.d ~3633-6044 pre-move). httpServer is ALWAYS
@@ -4798,14 +4797,7 @@ void main(string[] args) {
     // runs unconditionally exactly like the block it replaces. Placed HERE,
     // after the 0419 LATE wiring, because the moved block reads fields from
     // BOTH wiring blocks (0415's at ~2873 and 0419's above).
-    wireHttpProviders(httpServer, app, ifs, executor);
-    // Sync-back: the moved block assigns these three delegates through the
-    // `ref EditorApp app` parameter; main()'s later read sites (copilot
-    // draw, script-action status line, History panel replay button) keep
-    // their original local names, so mirror the values back once.
-    uiCommandDelegate   = app.uiCommandDelegate;
-    formsInteractiveDispatch = app.formsInteractiveDispatch;
-    replayUndoEntry          = app.replayUndoEntry;
+    wireHttpProviders(httpServer, app, ifs, executor, commandBinding);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;
     // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call

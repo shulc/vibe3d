@@ -473,35 +473,16 @@ class HttpServer {
     // The HTTP thread fills req.id/req.params, bumps the bridge's submit
     // epoch, and spins for the main thread's tick() to drain it via
     // commandHandler.
-    private alias CommandHandler = void delegate(string id, string paramsJson);
+    private alias CommandHandler = void delegate(string id, string paramsJson,
+                                                 bool interactive);
     private CommandHandler commandHandler;
     // Task 1520 — the UI-policy adapter. Separate FIELD, not a flag on the
     // one above, because the two carry opposite refusal policies and
     // `/api/command?origin=ui` (--test only) exists to drive the UI one.
     private CommandHandler uiCommandHandler;
-    // Test-automation only: when true, the command bridge's service raises
-    // the app's formsInteractiveLatch (via interactiveLatchHook) around the
-    // dispatch, so a sequence of tool.pipe.attr writes SHARES one tweak
-    // generation — exactly a continuous falloff-handle / slider scrub, which
-    // the per-/api-command generation bump otherwise turns into discrete
-    // steps. Set per-line by the /api/script?interactive=true handler;
-    // consumed + the hook restores the latch in the service body. The
-    // interactive end-of-scrub generation bump is the caller's responsibility
-    // (a following non-interactive tool.pipe.attr or an explicit /api/script
-    // line bumps it), mirroring the forms panel's end-of-scrub hook.
-    //
-    // req.interactive is a PERSISTENT field on the shared command bridge
-    // (constructed once, reused across all 3 command endpoints — argstring,
-    // script batch, history-replay). argstring sets it false (discrete);
-    // script batch sets it to the request's ?interactive= flag;
-    // history-replay does NOT touch it at all — it inherits whatever the
-    // previous dispatch left, exactly as before this refactor.
-    //
-    // Hook the app registers to raise/lower formsInteractiveLatch from the main
-    // thread. Null in builds that never wire it (the latch then stays inert and
-    // ?interactive=true is a no-op — faithful: a raw command path is discrete).
-    private alias InteractiveLatchHook = void delegate(bool raised);
-    private InteractiveLatchHook interactiveLatchHook;
+    // `interactive` travels with every invocation instead of mutating an
+    // application latch. Argstring sets it false; script batches set it from
+    // `?interactive=`; replay inherits the bridge field as before (task 4711).
     // Forms-engine query (read-back) result. The command handler runs on the
     // main thread inside the command bridge's service and, for a `?`-query
     // command, stashes the boxed JSON value into commandBridge.resp.result
@@ -1011,14 +992,6 @@ class HttpServer {
                     // standing as if they were this one's.
                     g_commandGc.begin();
                     scope(exit) g_commandGc.end();
-                    // Continuous-scrub simulation (test only): raise the app
-                    // latch so this tool.pipe.attr shares the live tweak
-                    // generation (REPLACE-coalesce) instead of bumping a new
-                    // one. Restored after dispatch.
-                    immutable bool interactive =
-                        req.interactive && interactiveLatchHook !is null;
-                    if (interactive) interactiveLatchHook(true);
-                    scope(exit) if (interactive) interactiveLatchHook(false);
                     try {
                         // Task 1520: pick the adapter. THIS LAMBDA CATCHES,
                         // which is precisely why no test here can observe the
@@ -1027,9 +1000,9 @@ class HttpServer {
                         // did not throw" — sound only because `uiCommandHandler`
                         // calls the app's `uiCommandDelegate` field itself.
                         if (req.uiOrigin && uiCommandHandler !is null)
-                            uiCommandHandler(req.id, req.params);
+                            uiCommandHandler(req.id, req.params, req.interactive);
                         else
-                            commandHandler(req.id, req.params);
+                            commandHandler(req.id, req.params, req.interactive);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1453,7 +1426,8 @@ class HttpServer {
     /**
      * Set the command handler callback. The handler runs on the main thread,
      * synchronously with respect to the HTTP request: see tickCommand().
-     * The handler should throw on failure; the message is forwarded to the client.
+     * The handler receives the invocation's continuous-interaction bit and
+     * should throw on protocol failure; the message is forwarded to the client.
      */
     public void setCommandHandler(CommandHandler handler) {
         this.commandHandler = handler;
@@ -1461,19 +1435,10 @@ class HttpServer {
 
     /// Task 1520 — the UI-origin adapter, used only by
     /// `POST /api/command?origin=ui` (rejected outside `--test`). It must
-    /// dispatch through the app's `uiCommandDelegate` FIELD, not through a
-    /// second closure over the same body: the proxy every UI-policy test
-    /// observes ("the UI adapter did not throw") is only meaningful if the
-    /// route exercises the binding the 28 panel call sites use.
+    /// dispatch through the application command binding with UI origin, the
+    /// same policy the panel delegates use.
     public void setUiCommandHandler(CommandHandler handler) {
         this.uiCommandHandler = handler;
-    }
-
-    /// Register the main-thread hook that raises/lowers the app's
-    /// formsInteractiveLatch around an interactive (continuous-scrub) command
-    /// dispatch. Test-automation seam for /api/script?interactive=true.
-    public void setInteractiveLatchHook(InteractiveLatchHook hook) {
-        this.interactiveLatchHook = hook;
     }
 
     /**
