@@ -76,8 +76,9 @@ enum string kNoEditTargetReason =
 // ImGui draw has nowhere to go but `_Dmain` — which killed the editor every
 // time a file dialog was cancelled from a panel button.
 //
-// One dispatcher body serves both; this enum is the only thing that differs,
-// and it is read at exactly one place (`refused()` in http_providers.d).
+// One application binding serves both. It reads the origin to select UI policy;
+// the HTTP adapter reads it separately to turn script refusal into a protocol
+// exception (task 4711).
 enum CommandOrigin {
     ui,      /// a panel button, a menu item, a keyboard shortcut — REFUSAL IS A NOTICE
     script,  /// `/api/command`, `/api/script`, a macro — REFUSAL IS AN EXCEPTION

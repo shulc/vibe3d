@@ -69,8 +69,8 @@ void cmd(string line) {
 
 // Drive a CONTINUOUS pipe scrub: a sequence of tool.pipe.attr writes that SHARE
 // one tweak generation (the headless analogue of a held falloff-handle / slider
-// drag). /api/script?interactive=true raises the app's formsInteractiveLatch on
-// the main thread for each line, suppressing the per-command generation bump, so
+// drag). /api/script?interactive=true carries an explicit interactive context
+// for each line, suppressing the per-command generation bump, so
 // the re-grades REPLACE-coalesce into ONE in-session step (P-E). Without this,
 // each /api/command tool.pipe.attr is its OWN generation and APPENDS (discrete).
 void pipeScrub(string[] lines) {

@@ -997,8 +997,8 @@ class HttpServer {
                         // which is precisely why no test here can observe the
                         // real failure mode (an exception escaping an ImGui
                         // draw). What it observes is the proxy "the UI adapter
-                        // did not throw" — sound only because `uiCommandHandler`
-                        // calls the app's `uiCommandDelegate` field itself.
+                        // did not throw" — sound because `uiCommandHandler`
+                        // enters the same application binding as panel delegates.
                         if (req.uiOrigin && uiCommandHandler !is null)
                             uiCommandHandler(req.id, req.params, req.interactive);
                         else

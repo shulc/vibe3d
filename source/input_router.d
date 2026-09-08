@@ -132,8 +132,9 @@ import ai.interaction_log   : makeAiInteractionLogRecord;
 // door into ImGui (its own unittest scans for a second caller -- see
 // tests/unit/imgui_event_gate_test.d, whose existence check now names THIS
 // module, because the dispatcher lives here); `item_pick` is only
-// `pickItemUnderCursor`'s return type; `RecordMode` is `runUiCommand`'s second
-// parameter and `Layout` is `applyWindowMetrics`' first. `pie_state` gained
+// `pickItemUnderCursor`'s return type; `RecordMode` is the command/history
+// policy used by `runUiCommand`, and `Layout` is `applyWindowMetrics`' first.
+// `pie_state` gained
 // `aimPie`/`closePie` (the modal grab at the top of `processEvent`) and
 // `ai.element_candidates` gained `publishElementCandidates` (the two picker
 // bodies' publish). None of them imports this module back.

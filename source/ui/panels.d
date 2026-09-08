@@ -2281,8 +2281,8 @@ void dispatchAction(EditorApp app, ref Action action) {
             // anything to it, and a command that acquired an argument later
             // silently kept its defaults here while the other two funnels bound
             // one. Routing the id through `uiCommandDelegate` — the same
-            // `dispatchCommandLine` body the HTTP door uses, under the UI
-            // refusal policy — means all three funnels now reach `bindArgs`,
+            // application command binding the HTTP door also uses, under the
+            // UI refusal policy — means all three funnels reach `bindArgs`,
             // and a panel row that grows an argument tomorrow needs no change
             // here.
             //

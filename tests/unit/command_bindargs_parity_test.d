@@ -4,7 +4,7 @@
 // WHAT THE TWO DOORS ACTUALLY ARE, because that is the whole content of this
 // test. The keyboard funnel (`input_router.runCommandWithArgs`) is handed an
 // ARGSTRING — `"vertex add 3"` — parses it, and binds the resulting params
-// object. The HTTP funnel (`http_providers.dispatchCommandLine`) is handed a
+// object. The application command binding is handed a
 // JSON BODY — `{"_positional":["vertex","add",3]}`, or a bare `"vertex"`, or a
 // named object — and binds that. Two different normalisations reaching one
 // binder.

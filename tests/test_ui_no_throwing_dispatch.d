@@ -5,18 +5,14 @@
 // throw unwinds through `_Dmain` and kills the editor — that is the whole of
 // task 1520, and it was reproduced twice by hand before any code changed.
 //
-// Phase 1 removed the BOUND references (the panels now dispatch through
-// `uiCommandDelegate`, whose refusal is a notice) and Phase 1b narrowed the
-// `EditorApp.applyOrRefire` FIELD to the non-throwing shape, moving the
-// throwing one to `applyOrRefireThrowing`.
+// Panels dispatch through application-bound `uiCommandDelegate`, whose
+// refusal is a notice. Task 4711 keeps CommandExecutor outside EditorApp and
+// leaves the script exception exclusively in the HTTP adapter.
 //
 // WHY A GATE ON TOP OF THAT. "It cannot be compiled from a panel" would be
-// FALSE and the plan says so: `applyOrRefire` is a public field, `RecordMode`
-// is module-level in `editor_app.d`, and the panel bodies are `with (app)` —
-// so `applyOrRefireThrowing(cmd, RecordMode.Record, "boom")` compiles from
-// `ui/panels.d` today. The claim the fix actually supports is "no BOUND
-// reference under source/ui carries the script policy", and this file is what
-// keeps it true.
+// FALSE: public modules remain importable from a panel. The supported claim is
+// "no call under source/ui reaches CommandExecutor directly", and this file
+// keeps that boundary explicit.
 //
 // HOW TO FIX A FAILURE. Do not add the file to an allowlist. A UI call site
 // that needs to run a command dispatches it through `uiCommandDelegate` (a
@@ -129,8 +125,8 @@ unittest {
 unittest { // THE GATE
     auto hits = scanTree("source/ui");
     if (hits.length) {
-        string msg = "source/ui must not dispatch through the THROWING command "
-                   ~ "funnel — a refusal raised from inside an ImGui draw "
+        string msg = "source/ui must not dispatch through CommandExecutor "
+                   ~ "directly — a refusal raised from inside an ImGui draw "
                    ~ "unwinds through _Dmain and kills the editor (task 1520). "
                    ~ "Offending lines:\n";
         foreach (h; hits)

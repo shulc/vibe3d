@@ -4,7 +4,7 @@
  * TASK 4062. Before this module a command line bound by different rules
  * depending on which door it entered by:
  *
- *   * the HTTP dispatcher (`http_providers.dispatchCommandLine`) ran four
+ *   * the former HTTP-owned dispatcher ran four
  *     hand-written injectors that cast to 37 concrete command classes and
  *     filled their fields through setters — three different laws for the ten
  *     `viewport.*` ids alone;

@@ -4690,17 +4690,9 @@ void main(string[] args) {
     // properties, new target. `ifs` is a `final class`, so this address is
     // stable for the whole run.
     //
-    // Placement is the ordinary one -- with the rest of the pointer wiring,
-    // above `wireHttpProviders` -- and NOT a hard ordering requirement, which
-    // is what an earlier revision of this comment claimed. It said
-    // `wireHttpProviders` "captures `app` by value"; it does not, it takes
-    // `ref EditorApp app` (http_providers.d), and a D closure over a `ref`
-    // parameter reaches the CALLER's variable, so a provider closure sees a
-    // field assigned after the call too (standalone probe, task 0781 step 1c;
-    // the sync-back below is the same fact from the other direction -- the
-    // moved block ASSIGNS main()'s `app` through that `ref`). The wiring that
-    // genuinely must come first is `registerTools(app)`'s, a few blocks above,
-    // which copies `app` BY VALUE.
+    // Placement is ordinary pointer wiring. The application command binding
+    // below must precede HTTP adapter installation, while registerTools(app)
+    // still needs its pointer fields before its earlier by-value copy.
     app.hoveredVertexPtr       = &ifs.hoveredVertex;
     app.hoveredEdgePtr         = &ifs.hoveredEdge;
     app.hoveredFacePtr         = &ifs.hoveredFace;
