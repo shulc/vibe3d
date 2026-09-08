@@ -214,6 +214,9 @@ version(unittest) unittest {
         tool.flagT = (mask & 1) != 0;
         tool.flagR = (mask & 2) != 0;
         tool.flagS = (mask & 4) != 0;
+        // Seed the wrapper/bank pair out of sync so the install postcondition
+        // cannot pass merely because both defaults happen to be false.
+        tool.negScale = true;
         tool.setUndoBindings(history, null);
         tool.seedPreparedActivationResetForTest(false, true, true, true, true);
         tool.moveBank().seedPreparedProductActivationForTest();
@@ -230,8 +233,10 @@ version(unittest) unittest {
         assert(context.validate()); context.install(); context.install();
         assert(history.currentRunId == 1 &&
             context.installTraceForTest() == [18, 1, 19] &&
-            tool.preparedBankInputsForTest() &&
             tool.preparedActivationResetPostForTest(true, true, true));
+        assert(tool.preparedBankInputsForTest(),
+            "prepared Xfrm activation must install wrapper negScale into "
+            ~ "the embedded Scale input bank");
         if (tool.flagT) assert(tool.moveBank().preparedProductActivationForTest());
         else assert(tool.moveBank().preparedProductActivationSeedForTest());
         if (tool.flagR)

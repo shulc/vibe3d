@@ -354,9 +354,6 @@ public:
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
-    version(unittest) final void preparedMoveUpdateOpenForTest(bool value)
-            nothrow @nogc { editCapturing = value; }
-
 protected:
     bool          active;
 

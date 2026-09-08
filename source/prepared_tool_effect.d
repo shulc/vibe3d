@@ -33,7 +33,7 @@ enum PreparedParamKind : ubyte { None, DirtyFlag, SphereAxis }
 enum PreparedDeactivateKind : ubyte {
     None, Array, Clone, RadialArray, Magnet, SmoothShift, StrokeExtrude,
     EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
-    VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
+    VertexMerge, VertexBevel, VertexExtrude, Xfrm,
     CommandWrapper, Tack, TransformNormalUpload, Vertex,
     Mirror, Bridge, Box, Pen, Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend,
     TopologyPen,
@@ -261,7 +261,7 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 }
 
 static assert(PreparedDeactivateEffect(OwnedId(1),
-    PreparedDeactivateKind.Move, false).resourceAccepted);
+    PreparedDeactivateKind.Xfrm, false).resourceAccepted);
 
 @PreparedAggregate struct PreparedBoxParamEffect {
     OwnedId owner;

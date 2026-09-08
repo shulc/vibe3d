@@ -40,7 +40,7 @@ import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+import prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
     PreparedScaleUpdateEffect, PreparedScaleUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
@@ -581,7 +581,8 @@ public:
 
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
-                                           int resolvedAxis) {
+                                           int resolvedAxis,
+                                           scope void delegate() beforeRelocate = null) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         version(unittest) SDL_Keymod mods = 0;
         else SDL_Keymod mods = SDL_GetModState();
@@ -648,6 +649,7 @@ public:
         if (pressPlacesCenter()
             && computeClickRelocateHit(e.x, e.y, center, vts))
         {
+            if (beforeRelocate !is null) beforeRelocate();
             handler.setPosition(center);
             centerManual = true;
             notifyAcenUserPlaced(center);

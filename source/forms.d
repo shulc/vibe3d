@@ -1411,12 +1411,9 @@ __gshared Form[] g_forms;
 /// kill-switch flips this back OFF (every tool on the legacy panel) for
 /// debugging / A-B comparison.
 ///
-/// Two-live-widget resolution (forms_engine_plan.md Phase 5 step 2): the
-/// transform tool's form owns the translate value rows (Position TX/TY/TZ) plus
-/// the T/R/S checkboxes, so when its form renders, app.d suppresses the legacy
-/// translate sliders (`moveSub.drawInputProperties()`) while still drawing the Rotate
-/// / Scale sliders (R/S value editing has no form rows until Phase 5b and lives
-/// ONLY in those legacy sliders). The transform tool already sets
+/// Two-live-widget resolution (forms_engine_plan.md Phase 5 + 5b): the
+/// transform form owns every T/R/S value row and the bank-enable checkboxes, so
+/// app.d suppresses all legacy bank sliders for that frame. The tool already sets
 /// renderParamsAsPanel()==false, so PropertyPanel.draw early-returns for it and
 /// there is no schema-panel double-edit either.
 __gshared bool g_formsPanelEnabled = true;

@@ -8271,7 +8271,8 @@ def complete_xfrm_update_root_gate(xfrm):
         "PreparedXfrmUpdateBoundaryOwner.prepare(",
         "PreparedXfrmSlotPollOwner.prepare(this, projection)",
         "PreparedXfrmReplayOwner.prepare(",
-        "PreparedMoveUpdateOwner.prepare(\n            moveSub, editIsOpen(), queryActionCenter(vts))",
+        "immutable Vec3 actionCenter = queryActionCenter(vts);",
+        "PreparedMoveUpdateOwner.prepare(\n            moveSub, editIsOpen(), actionCenter)",
         "PreparedRotateUpdateOwner.prepare(",
         "PreparedScaleUpdateOwner.prepare(",
         "PreparedXfrmUpdateTailOwner.prepare(",
@@ -8287,6 +8288,7 @@ def complete_xfrm_update_root_gate(xfrm):
         "context.prepareScaleUpdate(scaleOwner)",
         "context.prepareXfrmUpdateTail(tailOwner)")
     if not all(s in body for s in required): return False
+    if body.count("queryActionCenter(vts)") != 1: return False
     if body.count("context.prepareUpload(wrapperUpload,") != 2: return False
     order = (
         "context.markHistoryInstall()",

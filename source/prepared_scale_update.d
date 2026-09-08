@@ -54,11 +54,6 @@ public:
         target_.installPreparedUpdate(image_); consume();
     }
     void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
-    bool meshPrepared() const nothrow @nogc { return false; }
-    ref const(Mesh) candidate() const nothrow @nogc { return image_.candidate; }
-    uint deliveryFlags() const nothrow @nogc { return 0; }
-    uint deliveryDomains() const nothrow @nogc { return 0; }
-    bool historyPrepared() const nothrow @nogc { return false; }
     PreparedScaleUpdateKind effectKind() const nothrow @nogc {
         if (!image_.valid) return PreparedScaleUpdateKind.None;
         final switch (image_.projection.branch) {

@@ -34,7 +34,7 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 // uses.
 import document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+import prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
     PreparedMoveUpdateEffect, PreparedMoveUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;

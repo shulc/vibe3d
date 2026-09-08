@@ -284,8 +284,13 @@ tryRotateBank:
         if (flagR && allowRotDispatch) {
             int resolvedRotateAxis = latchedPart.bank == LatchedHandleBank.Rotate
                                    ? latchedPart.localPart : -1;
+            void commitBeforeRotateRelocate() {
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Rotate);
+            }
             if (!rotateSub.onMouseButtonDownWithResolvedAxis(e, vts,
-                                                             resolvedRotateAxis))
+                                                             resolvedRotateAxis,
+                                                             &commitBeforeRotateRelocate))
                 goto tryScaleBank;
             // An off-gizmo press now ALSO starts a drag — the screen-space
             // arcball — so it no longer falls through to the else-branch's run
@@ -302,11 +307,10 @@ tryRotateBank:
                 rotateSub.lastClickWasOffGizmo && !rotWasRelocate;
             rotateSub.lastClickWasOffGizmo = false;   // consume
             if (rotWasRelocate || rotWasPinnedOffGizmo) {
-                // Session-close for every open bank. rotateSub's own relocate
-                // branch already committed ITS session and mirrored the Move
-                // commit; the pinned branch commits nothing, so both are done
-                // here and both are no-ops when already closed.
-                if (editIsOpen())
+                // A relocate closes the wrapper edit through the callback
+                // BEFORE the bank publishes the moved user pin.  A pinned
+                // off-gizmo press moves no pin, so it closes here instead.
+                if (rotWasPinnedOffGizmo && editIsOpen())
                     commitEditAtBankBoundary(DragBank.Rotate);
                 // Run-close: re-stage the pin the fresh gesture's beginEdit will
                 // freeze as its in-session-cancel baseline. A relocate moved the
@@ -367,8 +371,13 @@ tryScaleBank:
             scaleSub.setInputOptions(negScale);
             int resolvedScaleAxis = latchedPart.bank == LatchedHandleBank.Scale
                                   ? latchedPart.localPart : -1;
+            void commitBeforeScaleRelocate() {
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Scale);
+            }
             if (!scaleSub.onMouseButtonDownWithResolvedAxis(e, vts,
-                                                            resolvedScaleAxis))
+                                                            resolvedScaleAxis,
+                                                            &commitBeforeScaleRelocate))
                 goto noBankConsumed;
             // Scale single-source: a real gizmo drag (dragAxis >= 0 — any
             // of single-axis 0/1/2, uniform disc 3, plane circle 4/5/6)
@@ -386,8 +395,6 @@ tryScaleBank:
             bool scaleWasRelocate = scaleSub.lastClickWasRelocate;
             scaleSub.lastClickWasRelocate = false;   // consume
             if (scaleSub.dragAxis >= 0) {
-                if (scaleWasRelocate && editIsOpen())
-                    commitEditAtBankBoundary(DragBank.Scale);
                 if (scaleWasRelocate && history !is null && history.runOpen()) {
                     closeRunBoundary();
                 }

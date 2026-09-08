@@ -272,7 +272,45 @@ unittest {
         ~ "before=(" ~ pivBefore.x.to!string ~ "," ~ pivBefore.y.to!string
         ~ "," ~ pivBefore.z.to!string ~ ") after=("
            ~ pivAfter.x.to!string ~ "," ~ pivAfter.y.to!string ~ ","
-           ~ pivAfter.z.to!string ~ ")");
+        ~ pivAfter.z.to!string ~ ")");
+}
+
+// Idle Rotate re-grade keeps the display pin aligned with the pivot used by
+// the recompute.  The asymmetric stand makes an unpinned geometry-derived
+// centre move under rotation; changing only the radius then exercises the
+// non-slot re-grade path while the run remains open.
+unittest {
+    establishCubeBaseline();
+    makeAsymmetricCube();
+    postJson("/api/script",
+        "tool.set rotate\n" ~
+        "tool.pipe.attr actionCenter mode auto\n" ~
+        "tool.pipe.attr falloff type radial\n" ~
+        "tool.pipe.attr falloff shape linear\n" ~
+        `tool.pipe.attr falloff center "-0.5,-0.5,-0.5"` ~ "\n" ~
+        `tool.pipe.attr falloff size "2,2,2"` ~ "\n");
+
+    Vec3 gesturePivot = dragViewRingAllVerts(100);
+    assert(evalSoftPlaced(),
+        "setup: Rotate gesture must leave a display soft pin");
+
+    auto changed = postJson("/api/command",
+        `tool.pipe.attr falloff size "4,4,4"`);
+    assert(changed["status"].str == "ok",
+        "idle radius change failed: " ~ changed.toString);
+    settle();
+    Vec3 regradedPivot = evalPivot();
+
+    assert(evalSoftPlaced(),
+        "idle Rotate re-grade must retain its display soft pin");
+    assert(fabs(regradedPivot.x - gesturePivot.x) < 1e-3 &&
+           fabs(regradedPivot.y - gesturePivot.y) < 1e-3 &&
+           fabs(regradedPivot.z - gesturePivot.z) < 1e-3,
+        "idle Rotate radius re-grade must not jump the gizmo pivot; gesture=("
+        ~ gesturePivot.x.to!string ~ "," ~ gesturePivot.y.to!string ~ ","
+        ~ gesturePivot.z.to!string ~ ") regraded=("
+        ~ regradedPivot.x.to!string ~ "," ~ regradedPivot.y.to!string ~ ","
+        ~ regradedPivot.z.to!string ~ ")");
 }
 
 unittest {

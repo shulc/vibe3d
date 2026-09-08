@@ -1562,9 +1562,7 @@ public:
                 regradeBank == DragBank.Rotate ||
                 regradeBank == DragBank.Scale)
             && bankIsNonIdentity(regradeBank)) {
-            if (editIsOpen() && (editCauseBank == DragBank.Move ||
-                                 editCauseBank == DragBank.Rotate ||
-                                 editCauseBank == DragBank.Scale)) {
+            if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: the trigger now spans the whole pipe config — falloff,
                 // snap AND symmetry. A mid-session toggle of any of the three
@@ -1595,7 +1593,8 @@ public:
                     // scale also wants re-weighting (the reference re-Evaluates
                     // the WHOLE held op when falloff changes).
                     applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
-                             /*samplePipeFromBaseline=*/true);
+                             samplePipeFromBaselineForRegrade(regradeBank));
+                    settleRotateRegradeCenter(regradeBank);
                     needsGpuUpdate = true;
                 }
             } else if (history !is null
@@ -1642,7 +1641,9 @@ public:
                     // mirror partners (P-C). The anchor/after brackets still wrap
                     // exactly the recompute, so the recordPipeRefire before/after
                     // pair stays coherent.
-                    applyTRS(dragBaseline);   // mutates mesh.vertices
+                    applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                             samplePipeFromBaselineForRegrade(regradeBank));
+                    settleRotateRegradeCenter(regradeBank);
                     Vec3[] after = mesh.vertices.dup;
 
                     // Index set = the full vertex range; pass an EMPTY idx so the
@@ -1675,13 +1676,14 @@ public:
         // Each sub-tool's update() pulls handler.center from ACEN
         // and refreshes its gizmo orientation from AXIS. They all
         // see the same pipeline state so the three gizmos co-locate.
+        immutable Vec3 actionCenter = queryActionCenter(vts);
         if (flagT)
-            moveSub.updateInput(queryActionCenter(vts), editIsOpen());
+            moveSub.updateInput(actionCenter, editIsOpen());
         if (flagR)
-            rotateSub.updateInput(queryActionCenter(vts), editIsOpen());
+            rotateSub.updateInput(actionCenter, editIsOpen());
         if (flagS) {
             scaleSub.setInputOptions(negScale);
-            scaleSub.updateInput(queryActionCenter(vts), editIsOpen());
+            scaleSub.updateInput(actionCenter, editIsOpen());
         }
         if (activeDrag is moveSub)
             setSharedGizmoPose(moveSub.handler.center, vts);
@@ -1690,7 +1692,7 @@ public:
         else if (activeDrag is scaleSub)
             setSharedGizmoPose(scaleSub.handler.center, vts);
         else
-            setSharedGizmoPose(queryActionCenter(vts), vts);
+            setSharedGizmoPose(actionCenter, vts);
         syncGpuMatrix();
     }
 
@@ -1763,9 +1765,7 @@ public:
             p.bankHeld && p.packetChanged) {
             p.panelRegrade = p.editOpen;
             p.wrapperRegrade = !p.editOpen && history !is null &&
-                history.runOpen() &&
-                cast(ubyte)currentRunBank == p.regradeBank &&
-                regradeStampCurrent();
+                history.runOpen() && regradeStampCurrent();
         }
         return p;
     }
@@ -2011,12 +2011,13 @@ public:
         PreparedMoveUpdateOwner moveOwner;
         PreparedRotateUpdateOwner rotateOwner;
         PreparedScaleUpdateOwner scaleOwner;
+        immutable Vec3 actionCenter = queryActionCenter(vts);
         if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
-            moveSub, editIsOpen(), queryActionCenter(vts));
+            moveSub, editIsOpen(), actionCenter);
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
-            rotateSub, layer, editIsOpen(), queryActionCenter(vts));
+            rotateSub, layer, editIsOpen(), actionCenter);
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
-            scaleSub, layer, editIsOpen(), queryActionCenter(vts));
+            scaleSub, layer, editIsOpen(), actionCenter);
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(this, vts);
 
         bool ok = (!flagT || moveOwner !is null) &&
@@ -2070,12 +2071,13 @@ public:
         PreparedMoveUpdateOwner moveOwner;
         PreparedRotateUpdateOwner rotateOwner;
         PreparedScaleUpdateOwner scaleOwner;
+        immutable Vec3 actionCenter = queryActionCenter(vts);
         if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
-            moveSub, editIsOpen(), queryActionCenter(vts));
+            moveSub, editIsOpen(), actionCenter);
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
-            rotateSub, layer, editIsOpen(), queryActionCenter(vts));
+            rotateSub, layer, editIsOpen(), actionCenter);
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
-            scaleSub, layer, editIsOpen(), queryActionCenter(vts));
+            scaleSub, layer, editIsOpen(), actionCenter);
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(
             this, vts, replay !is null);
 
@@ -2690,7 +2692,7 @@ public:
     }
     version(unittest) final bool preparedBankInputsForTest() const
             nothrow @nogc {
-        return moveSub !is null && rotateSub !is null && scaleSub !is null;
+        return scaleSub.negativeScaleEnabled == negScale;
     }
     version(unittest) final void seedPreparedWrapperUploadForTest() {
         needsGpuUpdate = true;
@@ -3399,6 +3401,29 @@ public:
                                        || run.s.y != 1
                                        || run.s.z != 1;
         }
+    }
+
+    // Idle replay preserves the three pre-cutover sampling rules. Move replay
+    // has always been revert-then-rerun. Rotate/Scale did that only for their
+    // pure presets; a composed preset keeps the live pipe sample so held
+    // neighbour banks retain their established frame/pin semantics.
+    private bool samplePipeFromBaselineForRegrade(DragBank bank) const {
+        final switch (bank) {
+        case DragBank.None:   return false;
+        case DragBank.Move:   return true;
+        case DragBank.Rotate: return flagR && !flagT && !flagS;
+        case DragBank.Scale:  return flagS && !flagT && !flagR;
+        }
+    }
+
+    // Rotate's former absolute-replay entry point advanced the display soft
+    // pin after every idle replay in relocate-capable modes. Keep that side
+    // effect beside both wrapper-owned replay arms now that neither routes
+    // back through the input bank.
+    private void settleRotateRegradeCenter(DragBank bank) {
+        if (bank != DragBank.Rotate || !pressPlacesCenter()) return;
+        if (auto ac = activeAcenStage())
+            ac.setSoftPlaced(lastFoldPivotWorld);
     }
 
     private void resetBankAttr(DragBank bank) {
