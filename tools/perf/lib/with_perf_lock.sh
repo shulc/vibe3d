@@ -95,6 +95,11 @@
 # reversal of the 2026-08-30 change, for a host where no test lane can run.
 set -euo pipefail
 
+if [ "${1:-}" = "--print-runtest-lock" ]; then
+    echo "${VIBE3D_PERF_RUNTEST_LOCK_PATH:-/tmp/vibe3d-run-test.lock}"
+    exit 0
+fi
+
 if [ $# -lt 2 ] || [ "$2" != "--" ]; then
     echo "usage: with_perf_lock.sh <timeout-seconds> -- <command> [args...]" >&2
     exit 2
@@ -117,11 +122,11 @@ fi
 # them; block 1 of that test asserts the DEFAULTS are the real paths, which is
 # the half that would otherwise rot.
 lock_path="${VIBE3D_PERF_LOCK_PATH:-/tmp/vibe3d-perf.lock}"
-# The default MUST match run_test.d's `runLockPath()`
-# (tempDir() ~ "vibe3d-run-test.lock"). If that ever moves, this file silently
+# The default MUST match the value reported by
+# `run_test.d --print-run-lock`. If that ever moves, this file silently
 # stops excluding test runs and every number stays plausible — which is why
-# `tests/unit/perf_lock_test.d` asserts the two agree by reading run_test.d's
-# own source rather than a literal typed twice.
+# `tests/unit/perf_lock_test.d` executes both query surfaces and compares their
+# actual values rather than reconstructing either source expression.
 runtest_lock_path="${VIBE3D_PERF_RUNTEST_LOCK_PATH:-/tmp/vibe3d-run-test.lock}"
 
 # Card 3430's residual, made visible rather than assumed away: neither lock

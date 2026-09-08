@@ -10,7 +10,7 @@ name: nightly-perf
 # workstation, and a daytime build would both slow the desktop and pollute
 # any concurrently-running measurement.
 #
-# Five signals, ALL FIVE gating (task 1460 flipped the first one):
+# Four signals gate; --vs-last is retained as a diagnostic (task 4870):
 #   1. ops absolute vs committed baseline + the debt ledger — GATING.
 #      The Jun-07 baseline is NOT stale and is NOT going to be regenerated:
 #      task 1460 Phase 0 checked out the commit that wrote it, built it the
@@ -32,10 +32,13 @@ name: nightly-perf
 #      what (1) cannot: this is a set of machine-stable composition facts, not
 #      a comparison of timing numbers. A perf case that stops working
 #      used to redden nothing at all; now it reddens here.
-#   2. --vs-last day-over-day gate — GATING. Any per-case kernel median
-#      +20% over the previous comparable nightly fails the run. This is the
-#      "new regression since yesterday" detector that stays meaningful even
-#      while (1) is red with known debt. It also fails with NO VERDICT when
+#   2. --vs-last day-over-day comparison — DIAGNOSTIC. It still reports any
+#      per-case move beyond its adaptive band, but no longer fails the job.
+#      On 2026-09-05 it reported 3 regressed AND 3 improved, while every later
+#      absolute run said no regressions across 57 cases: a symmetric move is
+#      host noise, not a one-direction code regression. The fixed-baseline ops
+#      comparison is the timing gate; lane-health/tools/frames keep their
+#      machine-stable gates. It also reports NO VERDICT when
 #      the ops run above was CONTAMINATED — a foreign vibe3d alive on this
 #      workstation while the matrix measured (task 1840). Such a night is
 #      recorded but never compared, in either direction: its numbers are the
@@ -145,7 +148,7 @@ jobs:
           tools/perf/lib/with_perf_lock.sh 1200 -- \
           rdmd tools/perf/run.d --n 316 2>&1 | tee ops.log
 
-    - name: 'Day-over-day gate (--vs-last)'
+    - name: 'Day-over-day diagnostic (--vs-last)'
       id: vslast
       # `always()`, and it is NOT decoration (task 1460). Until `ops` became
       # gating this step ran unconditionally only because the step before it
@@ -154,8 +157,8 @@ jobs:
       # written, the job summary printing "(no output)" — and the lane would
       # lose its one day-over-day signal on exactly the nights it goes red,
       # which is how `ops` came to be non-gating in the first place. The Gate
-      # below still aggregates every outcome, so this changes what the log
-      # contains, never what the job decides.
+      # below aggregates the actual gates; this step remains visible as a
+      # diagnostic even when an earlier signal is red.
       #
       # History itself is safe either way: lib.history.appendHistory runs
       # AFTER the verdict block in run.d, so a failing ops run still files its
@@ -168,6 +171,12 @@ jobs:
       # step down, by `lanehealth`: `ops` removes results.json before it
       # measures, so a dead `ops` leaves the file absent and lane health fails
       # on it. It is not caught here, and this comment is the record of that.
+      #
+      # DIAGNOSTIC since task 4870. A 2026-09-05 result of 3 regressed and
+      # 3 improved was the signature of host noise, and later absolute runs
+      # found no regression. Keep the table and its non-zero exit visible, but
+      # do not turn that symmetric previous-night noise into a red workflow.
+      continue-on-error: true
       if: always()
       run: |
         set -o pipefail
@@ -279,7 +288,7 @@ jobs:
           echo "|---|---|"
           echo "| ops absolute vs baseline + debt ledger (gating) | ${{ steps.ops.outcome }} |"
           echo "| lane health: rows + declared coverage (gating) | ${{ steps.lanehealth.outcome }} |"
-          echo "| day-over-day --vs-last (gating) | ${{ steps.vslast.outcome }} |"
+          echo "| day-over-day --vs-last (diagnostic) | ${{ steps.vslast.outcome }} |"
           echo "| tools preview invariants (gating) | ${{ steps.tools.outcome }} |"
           echo "| frames --ci counters (gating) | ${{ steps.frames.outcome }} |"
           echo ""
@@ -323,8 +332,11 @@ jobs:
 
     - name: 'Gate'
       # Mirrors ci.yaml's aggregate pattern: the job is red iff a GATING
-      # signal failed. All five are gating since task 1460 — `ops` compares
-      # against tools/perf/baseline_debt.json, which pins every unresolved,
+      # signal failed. The four fixed-baseline/machine-stable signals gate;
+      # `--vs-last` is diagnostic since task 4870 because a previous-night
+      # comparison produced symmetric regressions/improvements with no later
+      # absolute confirmation. `ops` compares against
+      # tools/perf/baseline_debt.json, which pins every unresolved,
       # gate-worthy debt at its measured value, so the step is red for NEW
       # loss and not for the old loss it already records.
       #
@@ -339,6 +351,5 @@ jobs:
         echo "ops=${{ steps.ops.outcome }} lanehealth=${{ steps.lanehealth.outcome }} vslast=${{ steps.vslast.outcome }} tools=${{ steps.tools.outcome }} frames=${{ steps.frames.outcome }}"
         [ "${{ steps.ops.outcome }}" = "success" ] && \
         [ "${{ steps.lanehealth.outcome }}" = "success" ] && \
-        [ "${{ steps.vslast.outcome }}" = "success" ] && \
         [ "${{ steps.tools.outcome }}" = "success" ] && \
         [ "${{ steps.frames.outcome }}" = "success" ]

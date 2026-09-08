@@ -10,6 +10,7 @@
  *   ./run_test.d -j N                # override the worker count (each worker
  *                                      gets its own vibe3d on a private port)
  *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
+ *   ./run_test.d --print-run-lock    # name the host-wide run lock, exit
  *   ./run_test.d --check-protocol    # prepared-protocol census alone, exit 0/2
  *   ./run_test.d --timeout N         # per-test wall-clock cap in seconds
  *                                      (default 600; 0 = no cap)
@@ -60,7 +61,7 @@ import core.time          : msecs, seconds, dur, Duration;
 import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
 import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate,
-                               setpgid, getpgrp;
+                               setpgid, getpgrp, getppid;
 import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT, O_WRONLY, O_APPEND;
 import core.sys.posix.sys.types : ssize_t;
 
@@ -84,6 +85,7 @@ __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
 __gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
+__gshared bool   runLockBorrowed; // verified descendant; outer runner owns fd
 __gshared string projLibPath;  // prebuilt project test-lib (see buildProjectLib); "" => -i fallback
 __gshared Duration g_testTimeout;   // per-test wall-clock cap; zero = no cap
 __gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
@@ -427,15 +429,74 @@ ulong treeSize(string path) {
 // run that made it whenever that run is killed, and a lock held by nobody
 // protects nothing.
 //
-// The lock is on a fixed file in tempDir so it is shared across worktrees /
-// checkouts. flock is released automatically when the fd closes (process exit),
-// so a crashed runner never leaks the lock.
-string runLockPath() { return buildPath(tempDir(), "vibe3d-run-test.lock"); }
+// The lock is the canonical /tmp file, deliberately NOT under tempDir():
+// tempDir() follows TMPDIR, so a capacity-isolated lane would otherwise bypass
+// the nightly perf wrapper that takes this same lock (task 4870). The price is
+// intentional: a test lane can wait behind a nightly measurement and, if it
+// cannot acquire within the default 600 s, exits as `lock_timeout` with NO
+// TESTS RAN. That is a throughput loss, not a broken runner; it buys perf
+// numbers uncontaminated by concurrent test workers. flock is released when
+// the fd closes, so a crashed holder never leaks the lock.
+string runLockPath() { return "/tmp/vibe3d-run-test.lock"; }
+
+// A test of the runner can legitimately invoke a nested run_test.d while the
+// outer runner owns the host lock (tests/test_harness_load_log.d does this to
+// force a post-lock worker-preparation failure). Pass the owner's PID to test
+// processes, not a boolean bypass: a nested runner may reuse the lease only
+// when the canonical lock still names that PID AND Linux /proc proves the PID
+// is its live ancestor. An unrelated process under another TMPDIR satisfies
+// neither fact and must still queue.
+enum inheritedRunLockPidEnv = "VIBE3D_INHERITED_RUN_LOCK_PID";
+
+bool processHasAncestor(int ancestor) {
+    int current = getppid();
+    foreach (_; 0 .. 64) {
+        if (current == ancestor) return true;
+        if (current <= 1) return false;
+        try {
+            int parent;
+            foreach (line; readText(format("/proc/%d/status", current)).splitLines) {
+                if (!line.startsWith("PPid:")) continue;
+                parent = line["PPid:".length .. $].strip.to!int;
+                break;
+            }
+            if (parent <= 0 || parent == current) return false;
+            current = parent;
+        } catch (Exception) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool borrowInheritedRunLock() {
+    const raw = environment.get(inheritedRunLockPidEnv, "");
+    if (!raw.length) return false;
+
+    int holder;
+    try { holder = raw.to!int; } catch (Exception) { return false; }
+    if (holder <= 1 || !processHasAncestor(holder)) return false;
+    try {
+        const stamp = readText(runLockPath()).strip;
+        if (stamp != format("pid %d", holder)) return false;
+    } catch (Exception) {
+        return false;
+    }
+
+    runLockFd = -1;
+    runLockBorrowed = true;
+    g_harness.lockWaitSeconds = 0;
+    g_lockAcquiredMs = nowUnixMs();
+    return true;
+}
 
 // Acquire the host-wide run lock, waiting up to `timeoutSec` for any other
 // runner to finish. Returns true on success; false if the wait timed out.
 bool acquireRunLock(int timeoutSec) {
     import std.string : toStringz;
+    if (borrowInheritedRunLock()) return true;
+
+    runLockBorrowed = false;
     runLockFd = open(runLockPath().toStringz, O_RDWR | O_CREAT, octal!"644");
     if (runLockFd < 0) {
         // Can't create the lockfile — degrade to no-lock rather than block CI.
@@ -458,8 +519,8 @@ bool acquireRunLock(int timeoutSec) {
         if (held.startsWith("pid ")) g_harness.lockHolderPid = held[4 .. $].strip.to!int;
     } catch (Exception) {}
 
-    writeln(yellow("another test run is in progress on this host — waiting "
-        ~ "(another agent may be running ./run_test.d)..."));
+    writeln(yellow("another test run or nightly perf measurement is in "
+        ~ "progress on this host — waiting..."));
     int waited = 0;
     while (waited < timeoutSec) {
         Thread.sleep(1.seconds);
@@ -478,12 +539,14 @@ bool acquireRunLock(int timeoutSec) {
     // take reading the FIRST line of a long log (task 0685 / the 2026-08-13
     // parallel-agent session, where it was mistaken for a regression).
     stderr.writeln(red(format(
-        "NO TESTS RAN — timed out after %ds waiting for another test run on "
-        ~ "this host. This is a host-contention exit, not a failing suite.",
+        "NO TESTS RAN — timed out after %ds waiting for the shared test/perf "
+        ~ "lock on this host. This is a host-contention exit, not a failing suite.",
         timeoutSec)));
     stderr.writeln(dim(
-        "    Several agents/worktrees share one machine and one lock. While\n"
-        ~ "    iterating, run NARROW tests instead: `./run_test.d <name> ...`\n"
+        "    Several agents/worktrees and nightly perf share one machine and\n"
+        ~ "    one canonical lock. Waiting behind perf is intentional: it trades\n"
+        ~ "    test-lane throughput for uncontaminated performance numbers.\n"
+        ~ "    While iterating, run NARROW tests instead: `./run_test.d <name> ...`\n"
         ~ "    (plus `dub test --config=tests`, which takes no lock). Save\n"
         ~ "    the full suite for the merge step."));
     stderr.writeln(dim(format("    Lock: %s (holder's pid is inside it)",
@@ -505,6 +568,11 @@ bool recordLockHolder() {
 }
 
 void releaseRunLock() {
+    // The outer ancestor still owns the canonical fd for a borrowed lease.
+    if (runLockBorrowed) {
+        runLockBorrowed = false;
+        return;
+    }
     if (runLockFd >= 0) {
         flock(runLockFd, LOCK_UN);
         close(runLockFd);
@@ -1778,6 +1846,8 @@ TestResult runOne(string bin, bool verbose, ushort port) {
     cfg.preExecFunction = &ownProcessGroup;
     string[string] childEnv = environment.toAA();
     childEnv["VIBE3D_TEST_PORT"] = port.to!string;
+    if (runLockFd >= 0)
+        childEnv[inheritedRunLockPidEnv] = getpid().to!string;
 
     string outPath = bin ~ ".out";
     File   out_;
@@ -2257,7 +2327,7 @@ void printSummary(TestResult[] results) {
 // ---------------------------------------------------------------------------
 
 int main(string[] args) {
-    bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, checkGate;
+    bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, printRunLock, checkGate;
     bool checkProtocol;
     // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
     // above for what each of these drives.
@@ -2275,6 +2345,7 @@ int main(string[] args) {
     // GL instances. An explicit `-j N` always overrides this default.
     int j = defaultJobs();
     int attach = 0;
+    int runLockProbeSeconds = -1;
     string[] exclude;
     int lockTimeoutSec = 600;
     auto helpInfo = getopt(args,
@@ -2288,6 +2359,11 @@ int main(string[] args) {
                     ~ "exit — for callers that ran `dub build` themselves (CI)", &writeStampOnly,
         "print-scratch","print the scratch directory this checkout would use "
                     ~ "and exit, creating nothing",                             &printScratch,
+        "print-run-lock","print the host-wide run-lock path and exit, "
+                    ~ "creating nothing",                                      &printRunLock,
+        "probe-run-lock","diagnostic: acquire the real host-wide run lock, "
+                    ~ "hold it for N seconds, then exit without building or "
+                    ~ "running tests",                                         &runLockProbeSeconds,
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
                     ~ "starting no vibe3d",                                     &checkGate,
@@ -2319,7 +2395,7 @@ int main(string[] args) {
                     ~ "forces -j1, leaves the endpoint running",              &attach,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
                     ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude,
-        "lock-timeout", "seconds to wait for this host's run lock before "
+        "lock-timeout", "seconds to wait for this host's shared test/perf lock before "
                     ~ "giving up with NO TESTS RAN (default 600). Lowered by "
                     ~ "tests/test_harness_load_log.d, which needs the give-up "
                     ~ "path to be reachable in a bounded time",              &lockTimeoutSec,
@@ -2361,6 +2437,22 @@ int main(string[] args) {
     // test for task 1282 asks it from two different working directories.
     if (printScratch) {
         writeln(scratchDirFor(getcwd()));
+        return 0;
+    }
+
+    // These diagnostics expose the SAME value and acquisition path as a real
+    // run. They exist so the cross-process contract can be tested without
+    // compiling the application or occupying a worker port.
+    if (printRunLock) {
+        writeln(runLockPath());
+        return 0;
+    }
+    if (runLockProbeSeconds >= 0) {
+        if (!acquireRunLock(lockTimeoutSec)) return 1;
+        scope(exit) releaseRunLock();
+        writeln("RUN LOCK ACQUIRED: ", runLockPath());
+        stdout.flush();
+        Thread.sleep(runLockProbeSeconds.seconds);
         return 0;
     }
 
@@ -2637,10 +2729,10 @@ int main(string[] args) {
         }
     }
 
-    // Serialise with any other runner on this host BEFORE we touch ports /
-    // scratch / vibe3d — concurrent runs mutually kill each other's instances
-    // (killStaleVibe by port) and share the scratch dir, causing spurious
-    // "Could not connect" / "No such file" failures. Wait up to 10 min.
+    // Serialise with any other runner and with nightly perf BEFORE we touch
+    // ports / scratch / vibe3d. The canonical path ignores TMPDIR on purpose;
+    // a capacity-isolated run may therefore wait or reach `lock_timeout` after
+    // 600 s. See runLockPath() for the explicit throughput-for-signal trade.
     if (!acquireRunLock(lockTimeoutSec)) {
         g_harness.stage = HarnessStage.lockTimeout;
         g_harness.rc = 1;

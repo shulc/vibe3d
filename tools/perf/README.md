@@ -596,7 +596,7 @@ shape) and the table only includes runs COMPARABLE with the most recent one
 smoke run next to the n=316 matrix would otherwise fabricate thousand-percent
 "drift" out of the config change alone.
 
-### `--vs-last` — the day-over-day gate
+### `--vs-last` — the day-over-day diagnostic
 
 ```bash
 rdmd tools/perf/run.d --vs-last                        # exit 1 on any regression
@@ -652,12 +652,15 @@ and then deleted for being inert are at the head of `lib/vslast.d`, and its
 witness is `tests/unit/perf_vslast_gate_test.d` (which runs in
 `dub test --config=tests`, the first thing under `tools/perf/` that runs in a
 gate lane at all — see D1). Like `--trend` it
-is a pure history read. This is the gating signal of the **nightly-perf
-workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
-absolute lane carries known debt, because it answers a different question —
-"did TONIGHT's run regress against last night's?". (The absolute lane is no
-longer *knowingly red*: task 1460 pinned the debt in `baseline_debt.json` and
-`ops` gates again.)
+is a pure history read. Since task 4870 it is a diagnostic, not a gating signal,
+in the **nightly-perf workflow** (`.github/workflows/perf.yaml`). On 2026-09-05
+it reported 3 regressed and 3 improved while every later absolute run reported
+no regressions across 57 stable cases. That symmetric result is a host-noise
+signature, not a directional code regression. The workflow therefore gates
+timing on the fixed-baseline `ops` comparison and keeps this table for triage.
+Two-night confirmation was not adopted: it adds a day of detection latency and
+a third verdict state without evidence that repeatability, rather than the
+fixed baseline, is the missing discriminator.
 
 **Contaminated runs never gate, in either direction (task 1840).** A run that
 measured while a foreign vibe3d was alive on the host writes its history entry
@@ -682,9 +685,9 @@ A scheduled workflow (03:30 MSK) runs the full n=316 `ops` matrix + `frames
 where the absolute comparison is valid. The runner is a systemd **user**
 service (`~/.config/systemd/user/github-runner-perf.service`) bound to
 `graphical-session.target`, so jobs render through the real display/GPU; it
-is online only while the owner's session is. **All five signals gate** since
-task 1460 — `ops` (absolute vs baseline + debt ledger), `lane-health`,
-`--vs-last`, `tools` and `frames --ci`. Every step after `ops` carries
+is online only while the owner's session is. **Four signals gate** — `ops`
+(absolute vs baseline + debt ledger), `lane-health`, `tools` and `frames --ci`;
+`--vs-last` is diagnostic since task 4870 for the reason above. Every step after `ops` carries
 `if: always()` so an ops-red still prints the rest of the lane's diagnosis;
 `vslast` acquired that guard in the same commit that made `ops` gating, and
 without it the day-over-day comparison would go missing on exactly the nights

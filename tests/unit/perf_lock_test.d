@@ -11,12 +11,11 @@
 // tell you which of two very different worlds it came from. The specific
 // ways it can go silently wrong, one block each:
 //
-//   1. THE TWO PATHS DRIFT. `with_perf_lock.sh` DEFAULTS to
-//      /tmp/vibe3d-run-test.lock; `run_test.d` computes its own from
-//      `tempDir()`. Nothing links them but this assertion. If run_test.d's
-//      path ever moves — or a workflow sets the test seam, or the skip flag —
-//      the perf lane keeps taking a lock NOBODY ELSE TAKES and every night
-//      stays green about it.
+//   1. THE TWO PATHS DRIFT. Both programs expose the value they will actually
+//      use; this test asks under two different TMPDIR values and compares the
+//      answers. If either path moves — or a workflow sets the test seam or
+//      skip flag — the perf lane takes a lock NOBODY ELSE TAKES and every
+//      number stays plausible.
 //   2. THE SECOND ACQUISITION IS NOT ACTUALLY THERE. A `flock` that is
 //      written but never reached (an early `exec`, a misplaced `fi`) leaves
 //      the script running exactly as before.
@@ -36,52 +35,74 @@ module tests.unit.perf_lock_test;
 import std.algorithm : canFind;
 import std.conv      : to, octal;
 import std.exception : enforce;
-import std.file      : exists, readText, tempDir, remove;
+import std.file      : exists, readText, tempDir, remove, mkdir, rmdirRecurse;
 import std.path      : buildPath, dirName;
-import std.process   : execute, thisProcessID;
-import std.string    : indexOf;
+import std.process   : execute, spawnProcess, wait, thisProcessID, environment;
+import std.stdio     : File, stdin;
+import std.string    : strip;
+import core.thread   : Thread;
+import core.time     : msecs;
 
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum scriptPath = buildPath(repoRoot, "tools", "perf", "lib", "with_perf_lock.sh");
 private enum runTestPath = buildPath(repoRoot, "run_test.d");
 
+// The behavioural cell is deliberately FIRST: on the broken tree the value
+// check below also fails, but a string/value mismatch is not evidence that two
+// processes were prevented from overlapping.
+unittest { proveTmpdirContention(); }
+
 // ---------------------------------------------------------------------------
-// 1. The two lock paths agree — read out of BOTH sources, never asserted
-//    against a literal typed twice.
+// 2. The two lock paths agree — ask BOTH programs for the values they will
+//    actually use, under two different TMPDIR values.
 // ---------------------------------------------------------------------------
 unittest
 {
     enforce(exists(scriptPath),  scriptPath  ~ " not found — repo root misderived");
     enforce(exists(runTestPath), runTestPath ~ " not found — repo root misderived");
 
-    // run_test.d builds it as `buildPath(tempDir(), "vibe3d-run-test.lock")`.
-    // Read the BASENAME out of that file rather than hard-coding it here, so
-    // a rename in run_test.d moves this assertion instead of hiding from it.
-    const runTestSrc = readText(runTestPath);
-    const marker = `buildPath(tempDir(), "`;
-    const i = runTestSrc.indexOf(marker);
-    enforce(i >= 0, "run_test.d no longer builds its run-lock path with "
-        ~ "buildPath(tempDir(), \"...\") — this test can no longer read the "
-        ~ "name it must agree with, and MUST be updated rather than deleted");
-    const rest = runTestSrc[i + marker.length .. $];
-    const j = rest.indexOf('"');
-    enforce(j > 0, "unterminated lock-file name in run_test.d");
-    const lockBaseName = rest[0 .. j];
-    assert(lockBaseName == "vibe3d-run-test.lock", lockBaseName);
+    const tag = thisProcessID.to!string;
+    const tmpA = buildPath(tempDir(), "vibe3d-perf-lock-path-a-" ~ tag);
+    const tmpB = buildPath(tempDir(), "vibe3d-perf-lock-path-b-" ~ tag);
+    mkdir(tmpA);
+    mkdir(tmpB);
+    scope(exit) {
+        if (exists(tmpA)) rmdirRecurse(tmpA);
+        if (exists(tmpB)) rmdirRecurse(tmpB);
+    }
 
-    const expected = buildPath(tempDir(), lockBaseName);
-    const script = readText(scriptPath);
-    // The script reads the path through a test seam with a DEFAULT; the
-    // default is what production uses and is therefore what this pins.
-    assert(script.canFind("runtest_lock_path=\"${VIBE3D_PERF_RUNTEST_LOCK_PATH:-"
-                          ~ expected ~ "}\""),
-        "with_perf_lock.sh does not DEFAULT to the same lock run_test.d takes.\n"
-        ~ "  run_test.d computes: " ~ expected ~ "\n"
-        ~ "  with_perf_lock.sh must contain: "
-        ~ "runtest_lock_path=\"${VIBE3D_PERF_RUNTEST_LOCK_PATH:-" ~ expected ~ "}\"\n"
-        ~ "If these drift, the perf lane takes a lock nobody else takes, keeps "
-        ~ "measuring beside live test runs, and every night stays green about it.");
-    // ...and the seam must never be set by a workflow: a lane pointed at a
+    string queriedRunLock(string tmp) {
+        auto env = environment.toAA;
+        env["TMPDIR"] = tmp;
+        env["VIBE3D_HARNESS_LOG"] = "off";
+        auto r = execute([runTestPath, "--print-run-lock"], env);
+        enforce(r.status == 0, "run_test.d --print-run-lock failed:\n" ~ r.output);
+        return r.output.strip;
+    }
+    string queriedPerfRunLock(string tmp) {
+        auto env = environment.toAA;
+        env["TMPDIR"] = tmp;
+        auto r = execute(["bash", scriptPath, "--print-runtest-lock"], env);
+        enforce(r.status == 0,
+            "with_perf_lock.sh --print-runtest-lock failed:\n" ~ r.output);
+        return r.output.strip;
+    }
+
+    const runA = queriedRunLock(tmpA);
+    const runB = queriedRunLock(tmpB);
+    const perfA = queriedPerfRunLock(tmpA);
+    const perfB = queriedPerfRunLock(tmpB);
+    assert(runA == runB,
+        "run_test.d changes its host-wide lock with TMPDIR:\n  A: " ~ runA
+        ~ "\n  B: " ~ runB);
+    assert(perfA == perfB,
+        "with_perf_lock.sh changes its run-test lock with TMPDIR:\n  A: "
+        ~ perfA ~ "\n  B: " ~ perfB);
+    assert(runA == perfA,
+        "the two programs reported different production run-lock paths:\n"
+        ~ "  run_test.d: " ~ runA ~ "\n  with_perf_lock.sh: " ~ perfA);
+
+    // The seam must never be set by a workflow: a lane pointed at a
     // private lock file excludes nothing and says nothing.
     foreach (wf; ["perf.yaml", "ci.yaml", "tsan.yaml", "sanitizer.yaml"]) {
         const p = buildPath(repoRoot, ".github", "workflows", wf);
@@ -97,7 +118,82 @@ unittest
 }
 
 // ---------------------------------------------------------------------------
-// 2 + 3. The real lock, the real script: held => REFUSED, non-zero, and the
+// 1. Two REAL run_test.d processes with different TMPDIR values still contend
+//    for one host-wide lock. The second must time out while the first holds it,
+//    then acquire it after release. This is the mechanism, not a source string.
+// ---------------------------------------------------------------------------
+private void proveTmpdirContention()
+{
+    const tag = thisProcessID.to!string;
+    const tmpA = buildPath(tempDir(), "vibe3d-run-lock-probe-a-" ~ tag);
+    const tmpB = buildPath(tempDir(), "vibe3d-run-lock-probe-b-" ~ tag);
+    const holderLog = buildPath(tempDir(), "vibe3d-run-lock-holder-" ~ tag ~ ".log");
+    mkdir(tmpA);
+    mkdir(tmpB);
+    scope(exit) {
+        if (exists(holderLog)) remove(holderLog);
+        if (exists(tmpA)) rmdirRecurse(tmpA);
+        if (exists(tmpB)) rmdirRecurse(tmpB);
+    }
+
+    auto holderEnv = environment.toAA;
+    holderEnv["TMPDIR"] = tmpA;
+    holderEnv["VIBE3D_HARNESS_LOG"] = "off";
+    auto holderOut = File(holderLog, "w");
+    auto holder = spawnProcess(
+        [runTestPath, "--probe-run-lock", "5", "--lock-timeout", "600"],
+        stdin, holderOut, holderOut, holderEnv);
+    holderOut.close();
+    bool holderReaped;
+    scope(exit) if (!holderReaped) wait(holder);
+
+    bool holderReady;
+    // The holder uses the production 600 s budget. After task 4870 it may be
+    // queued behind a real nightly measurement, which is correct behaviour;
+    // let that wait resolve instead of misreporting it as a broken probe.
+    foreach (_; 0 .. 6_100) {
+        if (exists(holderLog)
+         && readText(holderLog).canFind("RUN LOCK ACQUIRED:")) {
+            holderReady = true;
+            break;
+        }
+        Thread.sleep(100.msecs);
+    }
+    enforce(holderReady,
+        "first run_test.d never reported acquiring its lock:\n"
+        ~ (exists(holderLog) ? readText(holderLog) : "(no log)"));
+
+    auto contenderEnv = environment.toAA;
+    contenderEnv["TMPDIR"] = tmpB;
+    contenderEnv["VIBE3D_HARNESS_LOG"] = "off";
+    auto blocked = execute(
+        [runTestPath, "--probe-run-lock", "0", "--lock-timeout", "1"],
+        contenderEnv);
+    assert(blocked.status != 0,
+        "two run_test.d processes with different TMPDIR values acquired "
+        ~ "simultaneously: the contender exited 0 while the holder reported "
+        ~ "RUN LOCK ACQUIRED");
+    assert(blocked.output.canFind("NO TESTS RAN")
+        && blocked.output.canFind("host-contention exit"),
+        "the contender did not report the real lock-timeout protocol:\n"
+        ~ blocked.output);
+
+    const holderStatus = wait(holder);
+    holderReaped = true;
+    assert(holderStatus == 0,
+        "the holder run_test.d failed:\n" ~ readText(holderLog));
+
+    auto released = execute(
+        [runTestPath, "--probe-run-lock", "0", "--lock-timeout", "1"],
+        contenderEnv);
+    assert(released.status == 0
+        && released.output.canFind("RUN LOCK ACQUIRED:"),
+        "the second TMPDIR could not acquire the lock after release:\n"
+        ~ released.output);
+}
+
+// ---------------------------------------------------------------------------
+// 3 + 4. The real lock, the real script: held => REFUSED, non-zero, and the
 //    wrapped command never ran. Free => runs, and the command's own exit code
 //    survives the wrapper.
 // ---------------------------------------------------------------------------

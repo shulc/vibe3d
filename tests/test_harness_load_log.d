@@ -29,6 +29,9 @@
 //   C. a worker preparation that starts after the lock but cannot write its
 //      object file. It must be `run_incomplete`, never `ran`: selected tests
 //      are not measured tests, and there is no verdict without `Total:`.
+//      Because this test itself runs below the outer runner's canonical lock,
+//      that nested invocation reuses only the owner-PID lease which run_test.d
+//      placed in this test's environment and verifies through /proc ancestry.
 //
 // Cell B is deterministic for a structural reason: this test runs UNDER a
 // run_test.d that holds the host-wide lock, so a child runner cannot get it.
@@ -78,8 +81,14 @@ void main() {
     scope(exit) if (exists(g_logPath)) remove(g_logPath);
 
     // Redirect the child's log to our own file: the point is to read what a
-    // run writes, not to add rows to this host's real record.
-    string[string] env = ["VIBE3D_HARNESS_LOG": g_logPath];
+    // run writes, not to add rows to this host's real record. This deliberately
+    // starts from an empty environment rather than environment.toAA(): cell B
+    // must NOT inherit the outer runner's verified lock lease, because it is
+    // the witness for a genuinely independent runner timing out on that lock.
+    string[string] env = [
+        "VIBE3D_HARNESS_LOG": g_logPath,
+        "VIBE3D_INHERITED_RUN_LOCK_PID": "",
+    ];
 
     // ---------------------------------------------------------------- cell A
     scenario("A: an invocation refused before the lock still leaves a record");
@@ -110,7 +119,10 @@ void main() {
     // Whoever holds the host lock right now is the run_test.d running THIS
     // test. The child must name that pid, or "who were we queued behind" is
     // not actually being captured.
-    auto lockFile = buildPath(tempDir(), "vibe3d-run-test.lock");
+    auto lockQuery = execute(["./run_test.d", "--print-run-lock"], env);
+    assert(lockQuery.status == 0,
+        "B: run_test.d could not report its production lock:\n" ~ lockQuery.output);
+    auto lockFile = lockQuery.output.strip;
     int holder = 0;
     if (exists(lockFile)) {
         auto t = readText(lockFile).strip;
@@ -150,6 +162,9 @@ void main() {
 
     // ---------------------------------------------------------------- cell C
     scenario("C: a run that loses worker output before Total is incomplete");
+    // Unlike cells A/B, execute() here inherits this test's environment. That
+    // retains the outer runner's verified lease while its fd stays owned by
+    // the outer process; the host remains excluded for the entire nested run.
     auto mountPoint = buildPath(tempDir(),
         format("vibe3d-harness-incomplete-%d", thisProcessID));
     mkdirRecurse(mountPoint);

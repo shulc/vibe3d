@@ -106,6 +106,15 @@ module lib.vslast;
 //     from the measurement it judges" hazard on a slower clock. The band is
 //     recomputed at gate time from the same history file the gate already
 //     reads, so it cannot disagree with the data.
+//
+// WORKFLOW VERDICT (task 4870, 2026-09-09). This comparator remains executable
+// and returns non-zero for a diagnostic finding, but the nightly workflow no
+// longer gates on that exit. The 2026-09-05 run reported three regressions and
+// three improvements while every later absolute run found no regressions over
+// 57 stable cases — a symmetric previous-night move is host noise, not a code
+// regression. Two-night confirmation was considered and rejected: it adds a
+// day of latency and a third verdict state without evidence that repeatability
+// is a better discriminator than the fixed absolute baseline.
 
 import std.algorithm : sort, map, endsWith;
 import std.array     : array;
