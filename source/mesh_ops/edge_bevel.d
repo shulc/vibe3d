@@ -1,4 +1,5 @@
 module mesh_ops.edge_bevel;
+// mesh-ops-import: explicit
 
 import mesh;
 import std.math : sqrt;

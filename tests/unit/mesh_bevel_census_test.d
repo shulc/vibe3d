@@ -67,6 +67,7 @@ module tests.unit.mesh_bevel_census_test;
 //     and the specific corner-hub-plus-free-end shape that crashed.
 
 import mesh;
+import mesh_ops.edge_bevel;
 import math : Vec3;
 
 version (unittest):

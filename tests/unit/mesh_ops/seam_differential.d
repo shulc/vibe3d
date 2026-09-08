@@ -46,6 +46,7 @@ module tests.unit.mesh_ops.seam_differential;
 version (unittest):
 
 import mesh;
+import mesh_ops.edge_bevel;
 import math;
 import std.format : format;
 import std.traits : isFloatingPoint, isIntegral, isSomeString, isPointer,

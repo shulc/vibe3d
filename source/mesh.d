@@ -61,19 +61,6 @@ public import mesh_ops.bridge;
 // widening it to a `public import`.
 public import mesh_ops.loop_slice;
 public import mesh_ops.revolve;
-// task 1903 Stage G: the manifold edge bevel is ONE module-level free function
-// — `bevelEdgesByMask` over `ref MeshEditBatch` — plus the family's declared
-// scope `kEdgeBevelEditScope`, not a mixin. PUBLIC so every `import mesh;`
-// re-exports them and `ed.bevelEdgesByMask(mask, w, l, wm)` resolves through
-// UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the
-// ops namespace; narrowing that is audit 0678 M9's job, not this task's.
-// WHAT THE WIDENING ADDS, read rather than assumed (памятка 33): the line it
-// replaces named ONE symbol, the template itself, and mesh.d's own body
-// mentions no other name of that module — so unlike F1's `bandWalk`/`BandCell`
-// case there is nothing here that the mixin body was resolving in mesh.d's
-// scope and that a blanket re-export would newly publish. The module's whole
-// public surface is `bevelEdgesByMask` + `kEdgeBevelEditScope`.
-public import mesh_ops.edge_bevel;
 // Task 4600 closes the reverse dependency for the fin-bundle family: its
 // kernels import `mesh`, so every caller imports `mesh_ops.bevel_fin` directly
 // and this base module deliberately has no edge back to that operation module.
@@ -14750,8 +14737,7 @@ struct Mesh {
     // fields that template used to INJECT are declared below in this struct
     // instead (search `bevelPinnedOrphans_`); a `static assert` tripwire at
     // the foot of edge_bevel.d refuses a member — or an in-struct alias — of
-    // `bevelEdgesByMask` coming back, and the `public import` at the top of
-    // this file is what keeps `import mesh;` clients resolving it.
+    // `bevelEdgesByMask` coming back; callers import the family directly.
 
     // --- edge.bevel valence-4 planar free-end cap parity ----------------------
     // TASK 1903 Stage G MOVED THESE THREE DECLARATIONS HERE, AND MOVED NOTHING

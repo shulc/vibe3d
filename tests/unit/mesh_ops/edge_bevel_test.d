@@ -18,6 +18,7 @@
 module tests.unit.mesh_ops.edge_bevel_test;
 
 import mesh;
+import mesh_ops.edge_bevel;
 import math;
 import tests.unit.fixtures;
 

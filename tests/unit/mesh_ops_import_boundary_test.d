@@ -232,8 +232,8 @@ D");
                    op.moduleName, pathsByModule.get(op.moduleName, [])));
         if (op.explicitImport) ++explicitCount;
     }
-    assert(explicitCount == 4,
-        format("R5 has migrated exactly four operation families in tasks 4600/4601; "
+    assert(explicitCount == 5,
+        format("R5 has migrated exactly five operation families in tasks 4600/4601; "
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);
@@ -268,8 +268,8 @@ D");
         }
     }
 
-    assert(publicOperationEdges == 9,
+    assert(publicOperationEdges == 8,
         format("mesh declares %d direct public import edge(s) to modules under "
-             ~ "source/mesh_ops/*.d; tasks 4600/4601 require exactly 9 after "
-             ~ "the decimate family migration", publicOperationEdges));
+             ~ "source/mesh_ops/*.d; tasks 4600/4601 require exactly 8 after "
+             ~ "the edge-bevel family migration", publicOperationEdges));
 }

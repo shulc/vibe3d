@@ -105,6 +105,7 @@ import std.json;
 import std.math   : sqrt;
 
 import mesh;
+import mesh_ops.edge_bevel;
 import math;
 
 private enum string kFixture = "tests/fixtures/edge_bevel_open_fan_cap.json";

@@ -3,6 +3,7 @@ module commands.mesh.bevel;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import view;
 import editmode;
 import params : Param;

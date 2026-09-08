@@ -77,6 +77,7 @@ import std.format : format;
 import std.math   : cos, sin, sqrt, abs, PI;
 
 import mesh;
+import mesh_ops.edge_bevel;
 import math;
 
 private enum float  kWidth   = 0.1f;
