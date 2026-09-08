@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 518
-task-citation-lines 5125
+task-citation-lines 5121
 citing-files 392
 long-comment-runs 281
 files-with-long-runs 150
@@ -245,7 +245,7 @@ allow source/json_num.d 1
 allow source/layer_params.d 18
 allow source/log.d 1
 allow source/math.d 24
-allow source/mesh.d 507
+allow source/mesh.d 504
 allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
@@ -369,7 +369,7 @@ allow source/tools/edit/topology_pen/json.d 13
 allow source/tools/edit/topology_pen/package.d 1
 allow source/tools/edit/topology_pen/render.d 10
 allow source/tools/edit/topology_pen/snap_guide.d 6
-allow source/tools/edit/topology_pen/tool.d 155
+allow source/tools/edit/topology_pen/tool.d 154
 allow source/tools/edit/vert_merge_tool.d 8
 allow source/tools/edit/vertex_bevel_tool.d 9
 allow source/tools/edit/vertex_extrude_tool.d 9

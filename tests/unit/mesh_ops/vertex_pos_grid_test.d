@@ -17,6 +17,7 @@
 module tests.unit.mesh_ops.vertex_pos_grid_test;
 
 import mesh;
+import mesh_ops.extrude;
 import math;
 import mesh_ops.extrude : VertexPosGrid, g_vertexPosGridCandidates;
 import std.conv : to;

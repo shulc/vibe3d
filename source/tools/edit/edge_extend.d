@@ -6,6 +6,7 @@ import operator : VectorStack;
 
 import tool;
 import mesh;
+import mesh_ops.extrude;
 import math;
 import editmode : EditMode;
 import params : Param;

@@ -13,6 +13,7 @@ import tool;
 // `render.d`'s mixin body resolves in THIS scope, so this direct import also
 // covers its two `selectLoopEdges` call sites.
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
+import mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
 import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
                              // task 1903 Stage F1 — the Loop Slice family is
                              // free functions now, and a SELECTIVE `import
@@ -23,14 +24,6 @@ import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
                              // it as well as for this file.
                              insertEdgeLoops, collectEdgeRing,
                              loopSliceRingEdges, kLoopSliceEditScope,
-                             // task 1903 Stage H — the extrude/extend family
-                             // is free functions now, same reason as the Loop
-                             // Slice pair above: a SELECTIVE `import mesh : …`
-                             // does not pick up a `public import`'s names for
-                             // free (памятка 34), so both the kernel this
-                             // file's duplicate-edges gesture calls and its
-                             // declared scope must be listed explicitly.
-                             extendEdgesByMask, kExtrudeEditScope,
                              // task 3240 (plan 2910 step 3) — the edge-slice
                              // family is free functions now, same reason
                              // again: `splitFaceByVertices` is reached

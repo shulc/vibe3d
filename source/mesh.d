@@ -64,22 +64,6 @@ public import mesh_ops.revolve;
 // Tasks 4600/4601 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
-// task 1903 Stage H: the extrude/extend family is FIVE module-level free
-// functions over `ref MeshEditBatch` — `extrudeEdgesByMask`,
-// `extrudeVerticesByMask`, `extendEdgesByMask`, `extrudeFacesByMask`,
-// `smoothShiftFacesByMask` — plus the family's declared scope
-// `kExtrudeEditScope`, not a mixin. PUBLIC so every `import mesh;`
-// re-exports them and `ed.extrudeFacesByMask(mask, d)` resolves through UFCS
-// (`doc/mesh_edit_seam_plan.md` §4.2). This is the LAST family: task 1903
-// Stage I lands in the same commit and takes the mixin count below to 0, so
-// there is no still-mixin body left for this widening to shadow (памятка 44's
-// concern is moot for the last conversion). WHAT THE WIDENING ADDS, read
-// rather than assumed (памятка 33): the line it replaces named ONE symbol,
-// the template itself, and mesh.d's own body mentions no other name of this
-// module, so there is nothing here that a blanket re-export would newly
-// publish. The module's public surface is the five kernels plus
-// `kExtrudeEditScope`; `VertexPosGrid` and its helpers stay `private`.
-public import mesh_ops.extrude;
 // task 1903 Stage D1: the connected-mask family is module-level free functions
 // (`connectedComponentMask` over `ref Mesh`, `edgeCentroid` over
 // `ref const(Mesh)`), not a mixin. PUBLIC so every `import mesh;` re-exports
@@ -14793,8 +14777,7 @@ struct Mesh {
     // FIVE module-level free functions over `ref MeshEditBatch` in
     // source/mesh_ops/extrude.d. A `static assert` tripwire at the foot of
     // that file refuses a member — or an in-struct alias — of any of the
-    // five coming back, and the `public import` at the top of this file is
-    // what keeps `import mesh;` clients resolving them. This is the LAST
+    // five coming back; callers import the family directly. This is the LAST
     // mixin in `struct Mesh`: task 1903 Stage I's gate (§4.5) asserts the
     // count below is 0.
 
@@ -17071,27 +17054,6 @@ unittest { // T-S1 (weld) — weldVertexPairs -> applyVertexRemapAndRebuild.
     assert(welded == 2);
     assert(m.faces.length == 3, "T-S1 weld: f0 collapsed below 3 corners and was dropped");
     t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 weld");
-}
-
-unittest { // T-S1 (extrude) — mesh_ops/extrude.d's extrudeFacesByMask, a
-    // WHOLESALE-WIPE site (§4.1a — `faceMarks[] = 0` + Subpatch-only
-    // rebuild before this fix), not a plain compaction. Extruding f0
-    // moves it to a cap face APPENDED at the tail (behind new wall
-    // quads); the "kept, non-selected" originals f1,f2,f3 are re-emitted
-    // FIRST, in relative order — f3 lands at new index 2. f3's own verts
-    // (4,5,8,7) are never part of f0's boundary — untouched.
-    auto m = t_s1_grid();
-    m.setFaceHidden(3, true);
-    bool[] mask = new bool[](4);
-    mask[0] = true;
-    // task 1903 Stage H: extrudeFacesByMask takes `ref MeshEditBatch` now
-    // — this fixture has no op-log reader, so the batch is unrecorded.
-    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
-    immutable size_t affected = ed.extrudeFacesByMask(mask, 1.0f);
-    ed.close();
-    assert(affected == 1);
-    assert(m.faces.length > 4, "T-S1 extrude: cap + wall quads appended");
-    t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 extrude");
 }
 
 unittest { // P1.0b.3c whole-field deep detachment and refusal seams.

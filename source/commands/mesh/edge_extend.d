@@ -3,6 +3,7 @@ module commands.mesh.edge_extend;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.extrude;
 import math : Vec3;
 import view;
 import editmode;

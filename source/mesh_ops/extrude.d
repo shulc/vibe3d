@@ -1,4 +1,5 @@
 module mesh_ops.extrude;
+// mesh-ops-import: explicit
 
 import mesh;
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;

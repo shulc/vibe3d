@@ -3,6 +3,7 @@ module commands.mesh.edge_extrude;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.extrude;
 import view;
 import editmode;
 import params : Param;

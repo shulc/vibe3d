@@ -25,6 +25,42 @@ version (unittest) private size_t kernelOnce(alias fn, Args...)(ref Mesh m, Args
     return n;
 }
 
+private static Vec3 extrudeHiddenCentroid(ref Mesh m, size_t fi) {
+    Vec3 c = Vec3(0, 0, 0);
+    auto f = m.faces[fi];
+    foreach (vi; f) c = c + m.vertices[vi];
+    return Vec3(c.x / f.length, c.y / f.length, c.z / f.length);
+}
+
+unittest { // T-S1 (extrude) — hidden mark follows its surviving face.
+    Vec3[] verts = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),
+        Vec3(0, 1, 0), Vec3(1, 1, 0), Vec3(2, 1, 0),
+        Vec3(0, 2, 0), Vec3(1, 2, 0), Vec3(2, 2, 0),
+    ];
+    uint[][] faces = [
+        [0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7],
+    ];
+    auto m = buildRawMesh(verts, faces);
+    m.setFaceHidden(3, true);
+    bool[] mask = new bool[](4);
+    mask[0] = true;
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable affected = ed.extrudeFacesByMask(mask, 1.0f);
+    ed.close();
+    assert(affected == 1);
+    assert(m.faces.length > 4, "T-S1 extrude: cap + wall quads appended");
+    size_t survivor = size_t.max;
+    foreach (fi; 0 .. m.faces.length)
+        if ((extrudeHiddenCentroid(m, fi) - Vec3(1.5f, 1.5f, 0)).length < 1e-4)
+            survivor = fi;
+    assert(survivor != size_t.max, "T-S1 extrude: expected face did not survive");
+    assert(m.isFaceHidden(survivor), "T-S1 extrude: survivor lost hidden mark");
+    foreach (fi; 0 .. m.faces.length)
+        if (fi != survivor) assert(!m.isFaceHidden(fi),
+            "T-S1 extrude: another face picked up the hidden mark");
+}
+
 // Mesh-robustness batch (fuzz-found): a standalone open n-gon (single
 // face, open boundary loop) whose corners are all SHARED (>=2 selected
 // boundary edges per corner) run through an overshoot `width` at

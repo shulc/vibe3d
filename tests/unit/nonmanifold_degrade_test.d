@@ -22,6 +22,7 @@ import std.format    : format;
 
 import math : Vec3;
 import mesh;
+import mesh_ops.extrude;
 import mesh_ops.select_loop : isEdgeBorder, borderEdgeCountAtVertex;
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,7 @@
 module tests.unit.tools.edit.edge_extend_extrude_p0a_reachability_test;
 
 import mesh;
+import mesh_ops.extrude;
 import math : Vec3;
 import std.conv : to;
 

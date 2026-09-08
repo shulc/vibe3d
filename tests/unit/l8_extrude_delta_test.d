@@ -21,6 +21,7 @@ import std.format : format;
 import change_bus : changeBus;
 import command;
 import mesh;
+import mesh_ops.extrude;
 import math    : Vec3;
 import view;
 import editmode;
