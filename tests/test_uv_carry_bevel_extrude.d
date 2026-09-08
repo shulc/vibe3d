@@ -41,7 +41,8 @@ import std.math : fabs, sqrt;
 import std.conv : to;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
-              MeshEditBatch, kEdgeBevelEditScope, bevelEdgesByMask;
+              MeshEditBatch;
+import mesh_ops.edge_bevel : kEdgeBevelEditScope, bevelEdgesByMask;
 import mesh_ops.poly_bevel : kPolyBevelEditScope, bevelFacesByMask;
 import mesh_ops.extrude : kExtrudeEditScope, extrudeFacesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
