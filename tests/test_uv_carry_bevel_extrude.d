@@ -42,8 +42,8 @@ import std.conv : to;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
               MeshEditBatch, kPolyBevelEditScope, bevelFacesByMask,
-              kEdgeBevelEditScope, bevelEdgesByMask,
-              kExtrudeEditScope, extrudeFacesByMask;
+              kEdgeBevelEditScope, bevelEdgesByMask;
+import mesh_ops.extrude : kExtrudeEditScope, extrudeFacesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
 // batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.

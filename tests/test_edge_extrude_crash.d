@@ -44,7 +44,8 @@
 // mechanism, different symptom, intentionally not addressed here).
 
 import std.math : abs;
-import mesh : Mesh, makeCube, MeshEditBatch, extrudeEdgesByMask, kExtrudeEditScope;
+import mesh : Mesh, makeCube, MeshEditBatch;
+import mesh_ops.extrude : extrudeEdgesByMask, kExtrudeEditScope;
 
 // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now. This
 // file drives kernels directly on a bare `Mesh` (its own header: "no HTTP, no

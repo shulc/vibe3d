@@ -25,7 +25,8 @@
 import std.math : fabs;
 
 import mesh : Mesh, MeshMap, MapDomain, makeCube, kUvMapName,
-              MeshEditBatch, extrudeEdgesByMask, kExtrudeEditScope;
+              MeshEditBatch;
+import mesh_ops.extrude : extrudeEdgesByMask, kExtrudeEditScope;
 import snapshot : MeshSnapshot;
 
 // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now; this
