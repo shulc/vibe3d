@@ -1,6 +1,7 @@
 module mesh_ops.extrude;
 
 import mesh;
+import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import math;
 import std.math : sqrt;
 import mesh_edit_delta : MeshEditScope;

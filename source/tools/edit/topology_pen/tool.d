@@ -10,14 +10,10 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-// `selectLoopEdges` / `isEdgeBorder` are FREE FUNCTIONS in
-// `mesh_ops.select_loop` since task 1903 Stage C, re-exported by mesh.d's
-// `public import`. A SELECTIVE import does not pick up a re-export by
-// itself, and UFCS needs the name in this module's scope — so they are
-// listed here by name. `render.d`'s mixin body resolves in THIS scope, so
-// its two `selectLoopEdges` call sites are covered by this line too.
+// `render.d`'s mixin body resolves in THIS scope, so this direct import also
+// covers its two `selectLoopEdges` call sites.
+import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
-                             selectLoopEdges, isEdgeBorder,
                              // task 1903 Stage F1 — the Loop Slice family is
                              // free functions now, and a SELECTIVE `import
                              // mesh : …` is the one spelling that does not

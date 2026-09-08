@@ -2,6 +2,8 @@ module commands.select.loop;
 
 import command;
 import mesh;
+import mesh_ops.select_loop : selectLoopEdges, selectLoopVertices,
+                              selectLoopFaces;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;

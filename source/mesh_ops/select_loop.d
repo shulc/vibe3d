@@ -1,4 +1,5 @@
 module mesh_ops.select_loop;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // The select.loop family: the border predicates, the recovered edge-loop walk

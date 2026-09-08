@@ -33,12 +33,8 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-// `selectLoopEdges` / `isEdgeBorder` / `isVertexBorder` are free functions in
-// `mesh_ops.select_loop` since task 1903 Stage C (re-exported by mesh.d). A
-// selective import does not pick up a re-export on its own and UFCS needs the
-// name in this module's scope, so they are listed by name here.
-import mesh                : Mesh, GpuMesh, MeshCacheKey,
-                             selectLoopEdges, isEdgeBorder, isVertexBorder;
+import mesh                : Mesh, GpuMesh, MeshCacheKey;
+import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,

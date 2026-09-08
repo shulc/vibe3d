@@ -7,8 +7,7 @@
 // call sites below (`m.selectLoopFaces()`, …) are unchanged — UFCS keeps that
 // spelling. The seed-scan counter is the one thing that could not: it was
 // `Mesh.gSelectLoopSeedScanSteps`, a static injected into the struct, and a
-// `Mesh.`-qualified name is not a UFCS call, so it is now the module-level
-// `gSelectLoopSeedScanSteps` this file reads through `import mesh;`.
+// `Mesh.`-qualified name is not a UFCS call, so it is now module-level.
 //
 // Moved here by task 0717 when the family was split out of mesh.d. 0706 had
 // left these in source/ as "blocks that read private"; they do not. The
@@ -19,6 +18,7 @@
 module tests.unit.mesh_ops.select_loop_test;
 
 import mesh;
+import mesh_ops.select_loop;
 import math;
 
 
