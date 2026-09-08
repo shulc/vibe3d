@@ -4483,7 +4483,6 @@ unittest { // extendEdgesByMask: CLOSED-RING boundary probe (task 0477 P11 REV1
            // deliberately coincident with their source until a follow-up
            // drag moves them, per the duplicate-then-drag design — so this
            // probe checks INDEX/topology well-formedness, not face area.)
-    import mesh : makeGridPlane;
     import std.algorithm : sort;
 
     Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges (8 rim + 4 interior)
