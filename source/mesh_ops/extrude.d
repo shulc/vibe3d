@@ -3599,7 +3599,7 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
 // winding reversal itself is independently derivable from the
 // captured index order via the right-hand-rule face normal, not just
 // taken from the reference help text). Deliberately distinct from
-// Mesh.thickenSurface, which shells the WHOLE mesh unconditionally —
+// mesh_ops.thicken.thickenSurface, which shells the WHOLE mesh unconditionally —
 // a different, valid, unrelated feature (task 0358 finding).
 //
 // `maxAngle` (crease-gated normal splitting) and `sharp` (crease-corner

@@ -6,6 +6,8 @@ import bindbc.sdl;
 import operator : VectorStack;
 import tool;
 import mesh;
+import mesh_ops.bridge : bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
+                         kBridgeEditScope;
 import math;
 import editmode : EditMode;
 import params : Param;
@@ -159,9 +161,9 @@ BridgeSelectionResolved resolveBridgeSelection(ref Mesh m, EditMode editMode) {
 ///
 /// The body is UNCHANGED by task 1903 Stage D3, and that is the point of the
 /// second receiver cell: `facesBoundedByLoop` became a free function over
-/// `ref const(Mesh)`, which `const ref Mesh m` binds to and UFCS finds through
-/// mesh.d's `public import`, so `m.facesBoundedByLoop(loop)` still compiles
-/// verbatim. A batch receiver could not have been called from here at all.
+/// `ref const(Mesh)`, which `const ref Mesh m` binds to after this module
+/// imports the operation family directly. A batch receiver could not have
+/// been called from here at all.
 uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
     return m.facesBoundedByLoop(loop);
 }

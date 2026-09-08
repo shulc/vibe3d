@@ -219,8 +219,8 @@ D");
         format("expected exactly one D module named `mesh`; found %d at %s",
                pathsByModule.get("mesh", []).length,
                pathsByModule.get("mesh", [])));
-    assert(operationModules.length == 15,
-        format("expected 15 D modules declared under source/mesh_ops/*.d; "
+    assert(operationModules.length == 16,
+        format("expected 16 D modules declared under source/mesh_ops/*.d; "
              ~ "discovered %d", operationModules.length));
     size_t explicitCount;
     foreach (ref op; operationModules) {
@@ -232,8 +232,8 @@ D");
                    op.moduleName, pathsByModule.get(op.moduleName, [])));
         if (op.explicitImport) ++explicitCount;
     }
-    assert(explicitCount == 12,
-        format("R5 has migrated exactly twelve operation families in tasks 4600-4602; "
+    assert(explicitCount == 14,
+        format("R5 has fourteen explicit operation modules after tasks 4600-4602; "
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);
@@ -268,8 +268,8 @@ D");
         }
     }
 
-    assert(publicOperationEdges == 1,
+    assert(publicOperationEdges == 0,
         format("mesh declares %d direct public import edge(s) to modules under "
-             ~ "source/mesh_ops/*.d; task 4602 requires exactly 1 after "
-             ~ "the connected-mask family migration", publicOperationEdges));
+             ~ "source/mesh_ops/*.d; task 4602 requires exactly 0 after "
+             ~ "the bridge family migration", publicOperationEdges));
 }

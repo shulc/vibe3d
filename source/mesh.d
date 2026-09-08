@@ -12,15 +12,6 @@ import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
 import change_bus : SelDomain, changeBus;
-// task 1903 Stage D3: the Bridge family is module-level free functions — the
-// five entry points and `bridgeFanRows` over `ref MeshEditBatch`,
-// `facesBoundedByLoop` and the three pairing helpers over `ref const(Mesh)` —
-// plus the module-scope `maxBridgeSpans`, not a mixin. PUBLIC so every
-// `import mesh;` re-exports them and `ed.bridgeLoops(a, b)` /
-// `mesh.facesBoundedByLoop(loop)` resolve through UFCS
-// (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
-// namespace; narrowing that is audit 0678 M9's job, not this task's.
-public import mesh_ops.bridge;
 // Tasks 4600-4602 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
@@ -3139,14 +3130,10 @@ struct Mesh {
     /// `MeshEditBatch.setVertexPositions` for all of it.
     ///
     /// WHY IT MOVED, and it is the same reason `setFaceWindings` was put here
-    /// rather than on the handle (§L2-P1): the callers that still need it are
-    /// `Mesh` MEMBERS with no batch to thread — `alignFacesByMask`'s island
-    /// projection and `thickenSurface`'s `symmetric:true` shift, the two
-    /// `Kind.SetPos` rows of stage L2. Threading a `ref MeshEditBatch` into
-    /// them would have meant changing eleven call sites, nine of them tests, to
-    /// pass a handle that is redundant with the receiver; and the alternative —
-    /// a second implementation next to the first — is what this file's own
-    /// rules refuse. The frame is reached the way `editRecorder_` reaches it,
+    /// rather than on the handle (§L2-P1): callers include the `Mesh` member
+    /// `alignFacesByMask` and the extracted `thickenSurface` kernel. The former
+    /// has no batch handle to thread, while both need the same recorded door.
+    /// The frame is reached the way `editRecorder_` reaches it,
     /// through the module-level stack keyed on `&this`, so calling this with no
     /// batch open simply writes and commits, which is exactly what the
     /// pre-migration raw loops did.
@@ -14322,158 +14309,6 @@ struct Mesh {
         return loops;
     }
 
-    /// Build an offset copy of the surface (reversed winding), then stitch every
-    /// open boundary loop original↔offset with a ring of quads → closed shell.
-    /// Self-intersection on tight concavities is a known v1 limitation.
-    /// Returns total faces added (>0) or 0 (no-op: zero thickness or closed input).
-    /// TASK 1903 STAGE L2-h — `ref MeshEditBatch ed` IS A PARAMETER NOW, AND
-    /// FOR EXACTLY ONE REASON: `mesh_ops/bridge.d`'s `bridgeLoopsPaired` is a
-    /// free function over a batch (Track 1, Stage D3) and this kernel's step 5
-    /// calls it. Everything else here reaches the recorder the way every hooked
-    /// `Mesh` mutator does, through the module-level frame — `addVertex`,
-    /// `addFace` and `setVertexPositions` need no handle passed to them.
-    ///
-    /// What the parameter REMOVES is the transitional `MeshEditBatch.unrecorded`
-    /// this function used to open around the rim loop (plan §L2.2's P8). That
-    /// batch was a debt with this stage named in its own comment as the remover:
-    /// the moment `commands/mesh/thicken.d` opened a batch of its own it became
-    /// a nested open, `changeBus.nestedBatchOpens` ticked, and
-    /// `tests/test_thicken.d`'s per-command delta row reddened. Both halves must
-    /// land in ONE commit for that reason.
-    size_t thickenSurface(ref MeshEditBatch ed, float thickness, bool symmetric = false) {
-        import std.math : abs;
-        import std.algorithm : reverse;
-        // Step 1 — pre-mutation gates (mutation-free).
-        if (abs(thickness) < 1e-6f) return 0;
-        const size_t V0 = vertices.length;
-        const size_t F0 = faces.length;
-        uint[][] loops = boundaryLoops(F0);
-        if (loops.length == 0) return 0;
-
-        // Step 2 — per-vertex averaged unit face normals.
-        // Must zero-init: D's float.init is nan, which poisons accumulation.
-        Vec3[] vn = new Vec3[](V0);
-        vn[] = Vec3(0, 0, 0);
-        foreach (fi; 0 .. F0) {
-            Vec3 fn = faceNormal(cast(uint)fi);
-            foreach (vi; faces[fi])
-                vn[vi] = vn[vi] + fn;
-        }
-        foreach (i; 0 .. V0)
-            vn[i] = safeNormalize(vn[i]);
-
-        // Step 3 — create offset vertices (offset pushed toward −normal side).
-        uint[] off = new uint[](V0);
-        if (!symmetric) {
-            foreach (i; 0 .. V0)
-                off[i] = addVertex(vertices[i] - vn[i] * thickness);
-        } else {
-            // --- TASK 1903 STAGE L2-h: THE SYMMETRIC SHIFT IS A `SetPos` ---
-            //
-            // This arm moves EVERY pre-existing vertex, and it used to do so
-            // with a raw `vertices[i] = …` loop that reached no hook. A delta
-            // recording only the appends restores the topology and leaves the
-            // original surface at `orig + n·t/2` — and that is INVISIBLE on the
-            // default `symmetric:false`, where this arm never runs, which is
-            // why the parity fixture's `mesh.thicken` cell drives `true`.
-            //
-            // MEASURED BEFORE IT WAS TAKEN (plan §L2.9 Q-L2-2 asked for a
-            // number, not a choice): on the perf stand the `SetPos` entry is a
-            // fraction of the whole-mesh `MeshSnapshot` it replaces, so the arm
-            // is migrated rather than left dense. The numbers are in the task
-            // card.
-            Vec3[] orig = new Vec3[](V0);
-            foreach (i; 0 .. V0) orig[i] = vertices[i];
-            {
-                import std.array : uninitializedArray;
-                auto idx = uninitializedArray!(uint[])(V0);
-                auto to  = uninitializedArray!(Vec3[])(V0);
-                foreach (i; 0 .. V0) {
-                    idx[i] = cast(uint) i;
-                    to[i]  = orig[i] + vn[i] * (thickness * 0.5f);
-                }
-                // Publishes `Position` itself — the `commitChange` this
-                // replaces is inside the door.
-                setVertexPositions(idx, to);
-            }
-            foreach (i; 0 .. V0)
-                off[i] = addVertex(orig[i] - vn[i] * (thickness * 0.5f));
-        }
-
-        // Step 4 — inner faces with reversed winding (inner skin faces −normal).
-        // Task 0389: each shell face mirrors exactly one front face `fi` — it
-        // inherits that face's Subpatch bit (rim quads, bridged below, then
-        // pick this up automatically via bridgeLoopsPaired's own adjacency
-        // OR — the rim is bounded by one front edge and its mirrored shell
-        // edge, so it ORs this same bit with the front face's).
-        foreach (fi; 0 .. F0) {
-            uint[] of = new uint[](faces[fi].length);
-            foreach (k; 0 .. faces[fi].length)
-                of[k] = off[faces[fi][k]];
-            reverse(of);
-            // A FORWARD-ONLY GAP, NAMED (task 1903 §L2, revision 2):
-            // `recordAddFace` carries the winding alone, so the subpatch bit
-            // set two lines down is in no op-log entry. UNDO IS SAFE —
-            // `AddFaces`' inverse truncates and the bit goes with the face —
-            // and the loss is visible only to a FORWARD replay of a recorded
-            // delta. Stage M inherits it, together with the same gap at
-            // `mesh_ops/bridge.d`'s rim `addFace` and `poly_bevel.d`'s spike
-            // fan.
-            uint newFi = cast(uint)faces.length;
-            addFace(of);
-            resizeSubpatch();
-            setFaceSubpatch(newFi, isFaceSubpatch(cast(uint)fi));
-        }
-
-        // Step 5 — bridge each stored boundary loop to its offset counterpart.
-        // Outer boundary loops from boundaryLoops() are CCW (loop normal agrees
-        // with face normal) → reverse for outward-facing rim quads.
-        // Inner hole loops are CW (loop normal opposes face normal) → keep as-is.
-        Vec3 avgN = Vec3(0, 0, 0);
-        foreach (fi; 0 .. F0)
-            avgN = avgN + faceNormal(cast(uint)fi);
-        avgN = safeNormalize(avgN);
-
-        // TASK 1903 STAGE L2-h — THE TRANSITIONAL BATCH IS GONE (plan §L2.2's
-        // P8). Stage D3 opened an `unrecorded` batch right here, purely so that
-        // `bridgeLoopsPaired` — a free function over `ref MeshEditBatch` since
-        // the track-1 conversion — had one to be called on. Its own comment
-        // named §2.3 rule 2 ("a kernel never opens a batch") as what it
-        // violated and named THIS stage as the remover, with
-        // `changeBus.nestedBatchOpens` and `tests/test_thicken.d`'s per-command
-        // delta as the tripwire in the meantime. The caller's batch is now a
-        // parameter, so the rim loop simply uses it and nothing nests.
-        size_t rimTotal = 0;
-        {
-            foreach (ref loop; loops) {
-                // Compute loop orientation via Newell's method.
-                Vec3 ln = Vec3(0, 0, 0);
-                const size_t LN = loop.length;
-                foreach (k; 0 .. LN) {
-                    Vec3 a = vertices[loop[k]];
-                    Vec3 b = vertices[loop[(k + 1) % LN]];
-                    ln.x += (a.y - b.y) * (a.z + b.z);
-                    ln.y += (a.z - b.z) * (a.x + b.x);
-                    ln.z += (a.x - b.x) * (a.y + b.y);
-                }
-                if (ln.x * avgN.x + ln.y * avgN.y + ln.z * avgN.z > 0.0f)
-                    reverse(loop);
-
-                uint[] pairedB = new uint[](LN);
-                foreach (i; 0 .. LN)
-                    pairedB[i] = off[loop[i]];
-                rimTotal += bridgeLoopsPaired(ed, loop, pairedB);
-            }
-        }
-
-        // Step 6 — finalize.
-        buildLoops();
-        syncSelection();
-        return F0 + rimTotal;
-    }
-
-
-
     // ------------------------------------------------------------------
     // Profile extraction and revolve (surface of revolution)
     // ------------------------------------------------------------------
@@ -14982,11 +14817,10 @@ struct MeshEditBatch {
     /// this one to report it.
     /// TASK 1903 STAGE L2-h — THE BODY MOVED TO `Mesh`, THIS IS THE FORWARD.
     ///
-    /// Same argument `Mesh.setFaceWindings` records for the winding door, in
-    /// the same words: the callers that still need this are `Mesh` MEMBERS
-    /// with no batch to reach (`alignFacesByMask`, `thickenSurface`'s
-    /// symmetric arm), so a method that only exists on the handle is reachable
-    /// from some of its callers and not others. The door is on `Mesh`, keyed —
+    /// Same argument `Mesh.setFaceWindings` records for the winding door:
+    /// `alignFacesByMask` remains a `Mesh` member with no batch handle, while
+    /// the extracted `thickenSurface` kernel uses this same door through its
+    /// batch's mesh. The door is on `Mesh`, keyed —
     /// like `editRecorder_` — on the module-level frame stack rather than on a
     /// field, and this forward keeps every existing `ed.setVertexPositions(...)`
     /// call site reading exactly as it did.

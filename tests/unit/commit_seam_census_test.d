@@ -803,10 +803,10 @@ unittest // Stage D3 — the bridge family, both receivers in one file
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one bridge stamps, derives and delivers once at "
                  ~ "close() instead of once per addFace/addVertex — and it is "
-                 ~ "what the remaining intra-Mesh caller (Mesh.thickenSurface, "
-                 ~ "removed at stage L2) has to open a transitional batch for. "
-                 ~ "The second such caller, mesh_ops/revolve.d, lost its "
-                 ~ "transitional batch at Stage E2 (task 1903 §4.1, §5.2 D3)."
+                 ~ "what makes both dependent kernels — thickenSurface in "
+                 ~ "mesh_ops/thicken.d and revolveProfileEx in "
+                 ~ "mesh_ops/revolve.d — accept their caller's batch and import "
+                 ~ "this family directly (tasks 1903/4602)."
                  , name));
 
     // …and the two wrong spellings, absent. A `ref Mesh` receiver would compile

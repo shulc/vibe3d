@@ -28,14 +28,15 @@
 module tests.unit.mesh_thicken_surface_test;
 
 import mesh;
+import mesh_ops.bridge : kBridgeEditScope;
+import mesh_ops.thicken : thickenSurface;
+static import mesh_ops.thicken;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 
-// The seam's compile-time gate: nothing in this module may take a `Mesh` by
-// VALUE. `tests/unit/mesh_by_value_gate.d` says why nothing behavioural
-// catches that, and carries the gate's own positive control.
-private void byValueGateAnchor() {}
-mixin MeshByValueGate!(__traits(parent, byValueGateAnchor));
+// The seam's compile-time gate: no function in the extracted kernel module may
+// take a `Mesh` by VALUE. The shared gate carries its own positive control.
+mixin MeshByValueGate!(mesh_ops.thicken);
 
 // Helper: count undirected edges shared by exactly one face.
 version (unittest) private size_t countOpenEdges(ref Mesh m) {
@@ -69,7 +70,7 @@ unittest { // thickenSurface: 2×2 grid → 16-face watertight shell
 
     size_t r;
     { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
-      r = m.thickenSurface(ed, 0.2f); ed.close(); }
+      r = ed.thickenSurface(0.2f); ed.close(); }
     assert(r > 0, "thicken 2×2: non-zero result");
     assert(m.vertices.length == 18, "thicken 2×2: 18 verts");
     assert(m.faces.length == 16, "thicken 2×2: 16 faces");
@@ -97,7 +98,7 @@ unittest { // thickenSurface: 3×3 holed grid → 32-face watertight shell
 
     size_t r;
     { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
-      r = m.thickenSurface(ed, 0.2f); ed.close(); }
+      r = ed.thickenSurface(0.2f); ed.close(); }
     assert(r > 0, "thicken holed: non-zero result");
     assert(m.vertices.length == 32, "thicken holed: 32 verts");
     assert(m.faces.length == 32, "thicken holed: 32 faces (8+8+12+4)");

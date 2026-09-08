@@ -8,6 +8,7 @@ import editmode;
 import params : Param;
 import mesh_edit_delta : MeshEditScope;
 import mesh_ops.bridge : kBridgeEditScope;
+import mesh_ops.thicken : thickenSurface;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
@@ -27,7 +28,7 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// migration is THREE changes that must land together:
 ///
 ///   1. the batch opens here and is RECORDING;
-///   2. `Mesh.thickenSurface` takes it as a parameter, which retires the
+///   2. `thickenSurface` takes it as a parameter, which retires the
 ///      transitional `unrecorded` batch it used to open around its rim bridge
 ///      (plan §L2.2's P8) — without that, opening a batch here makes it a
 ///      NESTED open and `tests/test_thicken.d`'s `nestedBatchOpens` delta row
@@ -95,7 +96,7 @@ class MeshThicken : Command, Operator {
         // Recording arm only — the redo arm keeps the first capture, the hatch
         // has the snapshot.
         if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
-        return ed.mesh.thickenSurface(ed, thickness_, symmetric_) != 0;
+        return ed.thickenSurface(thickness_, symmetric_) != 0;
     }
 
     protected override void revertImpl() {

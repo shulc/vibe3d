@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 519
-task-citation-lines 5105
-citing-files 393
+source-files 520
+task-citation-lines 5102
+citing-files 394
 long-comment-runs 281
 files-with-long-runs 150
 
@@ -246,7 +246,7 @@ allow source/json_num.d 1
 allow source/layer_params.d 18
 allow source/log.d 1
 allow source/math.d 24
-allow source/mesh.d 501
+allow source/mesh.d 495
 allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
@@ -269,6 +269,7 @@ allow source/mesh_ops/loop_slice.d 95
 allow source/mesh_ops/poly_bevel.d 65
 allow source/mesh_ops/revolve.d 25
 allow source/mesh_ops/select_loop.d 6
+allow source/mesh_ops/thicken.d 4
 allow source/mesh_planes.d 39
 allow source/mesh_selsets.d 3
 allow source/mesh_stats.d 5
@@ -388,7 +389,7 @@ allow source/tools/transform/xform_kernels.d 7
 allow source/tools/transform/xfrm_apply.d 19
 allow source/tools/transform/xfrm_handles.d 5
 allow source/tools/transform/xfrm_item.d 9
-allow source/tools/transform/xfrm_transform.d 85
+allow source/tools/transform/xfrm_transform.d 84
 allow source/tsan_preinit.d 1
 allow source/ui/availability.d 1
 allow source/ui/channel_rows.d 2

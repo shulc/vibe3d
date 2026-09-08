@@ -532,11 +532,11 @@ static assert(countArrayShapedFields!Mesh == 34,
 // the source text, which is what answered 56 where the compiler answers 54 for
 // the pair above:
 //
-//   2026-09-03, task 3910 — CURRENT:
-//     __traits(allMembers, Mesh).length  == 366
-//     countMemberOverloads!Mesh          == 297
-//     One authoritative registry field plus its bulk loader and canonical
-//     file-order methods are the state/operations specified by the codec plan.
+//   2026-09-08, task 4602 — CURRENT:
+//     __traits(allMembers, Mesh).length  == 365
+//     countMemberOverloads!Mesh          == 296
+//     `thickenSurface` moved to `mesh_ops.thicken`; no replacement member or
+//     compatibility alias remains on the data type.
 //
 //   2026-08-29, task 3290, plan 2910 after step 3 (`fc55c13c`) — superseded:
 //     __traits(allMembers, Mesh).length  == 363
@@ -552,7 +552,7 @@ static assert(countArrayShapedFields!Mesh == 34,
 //
 // THREE CONFIGURATION FACTS, all measured, because `==` on a count is only safe
 // if the count is the same in every lane that compiles this file:
-//   * `-unittest` does not change either number TODAY (363 / 295 with and
+//   * `-unittest` does not change either number TODAY (365 / 296 with and
 //     without). It CAN: the same probe on `b14cc214` answered 377 / 307 plain
 //     and 382 / 311 under `-unittest`, the difference being the five
 //     `version (unittest)` fixture helpers `t_s1_*` that then lived in the
@@ -561,7 +561,7 @@ static assert(countArrayShapedFields!Mesh == 34,
 //     `dub test --config=tests` and green under `dub build`. Declare such
 //     helpers at MODULE scope, which is where step 1 put those five.
 //   * `-version=WithAI` does not change them, and neither does
-//     `-version=WithRender` (363 / 295 under both) — `source/mesh.d` declares
+//     `-version=WithRender` (365 / 296 under both) — `source/mesh.d` declares
 //     no `version` block that adds or removes a member outside `unittest`.
 //   * Both numbers count PRIVATE members, and answer the same from inside
 //     `mesh.d` as from this module — probed on a two-module fixture. That is
@@ -599,7 +599,7 @@ template countMemberOverloads(T) {
     }();
 }
 
-static assert(__traits(allMembers, Mesh).length == 366,
+static assert(__traits(allMembers, Mesh).length == 365,
     "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
   ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
   ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
@@ -620,7 +620,7 @@ static assert(__traits(allMembers, Mesh).length == 366,
   ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
   ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
 
-static assert(countMemberOverloads!Mesh == 297,
+static assert(countMemberOverloads!Mesh == 296,
     "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
   ~ "the name count above: if BOTH moved, a whole new function name landed. If "
   ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "

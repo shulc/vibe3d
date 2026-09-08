@@ -3,6 +3,8 @@ module commands.mesh.bridge;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.bridge : bridgeLoops, bridgeOpenRows, facesBoundedByLoop,
+                         kBridgeEditScope;
 import view;
 import editmode;
 import params : Param;

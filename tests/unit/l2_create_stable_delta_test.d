@@ -773,7 +773,7 @@ unittest
 // the flag and did not check it would be one silent param-name typo away from
 // measuring the default.
 //
-// MUTATION: in `Mesh.thickenSurface`'s symmetric arm, replace the
+// MUTATION: in `mesh_ops.thicken.thickenSurface`'s symmetric arm, replace the
 //           `setVertexPositions(idx, to)` with the raw
 //           `foreach (i; 0 .. V0) vertices[i] = to[i];` it used to be.
 // ---------------------------------------------------------------------------

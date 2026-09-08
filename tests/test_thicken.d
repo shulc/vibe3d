@@ -345,16 +345,13 @@ unittest { // zero thickness leaves mesh unchanged
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: the transitional batch inside `Mesh.thickenSurface` is not NESTED
-// (task 1903 Stage D3, review MAJOR-1).
+// Test 9: thicken and its rim bridge share one caller-owned batch
+// (tasks 1903/4602).
 //
-// `thickenSurface` opens a `MeshEditBatch` of its OWN around the rim loop,
-// because `bridgeLoopsPaired` is a free function over `ref MeshEditBatch` and
-// `thickenSurface` is a `Mesh` member with no caller-held batch to take. That
-// is a documented debt (source/mesh.d, "TASK 1903 Stage D3 — A TRANSITIONAL
-// BATCH"), and the moment ANY caller of `thickenSurface` opens a batch first
-// the rim batch becomes a nested open: `changeBus.nestedBatchOpens` ticks, the
-// inner `close()` no longer stamps, and the debt has to be paid immediately.
+// `mesh_ops.thicken.thickenSurface` receives the command's `MeshEditBatch`
+// and passes that same handle to `bridgeLoopsPaired`. A second batch around
+// either call increments `changeBus.nestedBatchOpens` and splits the operation
+// boundary this command owns.
 //
 // WHY A DELTA HERE AND NOT THE `== 0` IN test_undo_tracker_delete.d. That one
 // is a single end-of-test read of a process-cumulative counter, in a test that
@@ -363,8 +360,8 @@ unittest { // zero thickness leaves mesh unchanged
 // `/api/changes` reported `nestedBatchOpens` 1 and BOTH tests still passed. A
 // before/after delta around this command is the read that cannot.
 //
-// THE MUTATION THAT REDDENS IT (M-NEST): wrap the `mesh.thickenSurface(...)`
-// call in `MeshThicken.evaluate` (source/commands/mesh/thicken.d) in an
+// THE MUTATION THAT REDDENS IT (M-NEST): wrap the `ed.thickenSurface(...)`
+// call in `MeshThicken.runKernel` (source/commands/mesh/thicken.d) in an
 // `auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);` …
 // `ed.close();` pair. Delta becomes 1 and this block reddens by name.
 // ---------------------------------------------------------------------------
@@ -384,15 +381,11 @@ unittest { // mesh.thicken: the kernel's rim batch is the OUTERMOST one
     assert(nestedAfter - nestedBefore == 0,
         "mesh.thicken moved changeBus.nestedBatchOpens by "
       ~ (nestedAfter - nestedBefore).to!string ~ ", expected 0. "
-      ~ "`Mesh.thickenSurface` opens a TRANSITIONAL batch around its rim loop "
-      ~ "(source/mesh.d, \"TASK 1903 Stage D3 — A TRANSITIONAL BATCH\"), which "
-      ~ "is only safe while it is the outermost one. A caller of "
-      ~ "`thickenSurface` has now opened a batch first, so that block must be "
-      ~ "removed in the SAME change: hand the batch down to the kernel and "
-      ~ "drop the transitional open. That removal is stage L2 of "
-      ~ "doc/mesh_edit_seam_plan.md §5.1 (the row that owns `thicken`).");
+      ~ "`mesh.thicken` must keep one caller-owned MeshEditBatch across the "
+      ~ "shell and its rim bridge; an extra batch appeared inside that "
+      ~ "boundary. Pass the existing handle through instead.");
 
-    // Non-vacuity floor: the command really ran, so the rim batch really opened.
+    // Non-vacuity floor: the command really ran, so the batch path was exercised.
     auto m = getModel();
     assert(faceCount(m) == 16,
         "thicken nested-batch probe: expected the 16-face shell, got "

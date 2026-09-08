@@ -111,6 +111,7 @@ module mesh_ops.revolve;
 // ---------------------------------------------------------------------------
 import mesh;
 import math;
+import mesh_ops.bridge : bridgeLoopsPaired;
 // §4.3's per-file table, plus the two entries measuring the file found that
 // the table missed. `MeshEditScope` for `extrudePathStep_`'s tail commit and
 // for the family's declared scope below; `rewriteFaces` / `FaceSource` for

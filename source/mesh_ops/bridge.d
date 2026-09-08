@@ -1,4 +1,5 @@
 module mesh_ops.bridge;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // The Bridge kernel family: five entry points (`bridgeLoopsPaired`,
@@ -59,23 +60,10 @@ module mesh_ops.bridge;
 // second half is what keeps the widening honest — Stage A shipped ten of these
 // with no caller and the review reverted them all (plan §2.6, review S3).
 //
-// THE INTRA-`Mesh` CALLER, and why it holds a TRANSITIONAL batch. Unlike
-// C / D1 / D2, this family is called from inside `struct Mesh` itself:
-// `Mesh.thickenSurface` (source/mesh.d, step 5 — the rim) calls
-// `bridgeLoopsPaired` and has no batch, and it is neither a command nor a tool,
-// so §4.1's "the caller opens the batch" has nowhere to land yet. That site
-// opens a narrow UNRECORDED batch around its bridging loop ONLY, labelled
-// TRANSITIONAL and naming the stage that removes it (**L2**). It is a debt, not
-// a pattern: a KERNEL opening a batch is what §2.3 rule 2 forbids in the
-// finished design.
-//
-// D3 CREATED TWO SUCH SITES AND ONE IS ALREADY GONE. The second was
-// `revolveProfileEx` (source/mesh_ops/revolve.d), a mixin at the time with the
-// same problem; **Stage E2** converted that family, so the kernel now takes its
-// caller's `ref MeshEditBatch` and its transitional block was deleted in that
-// commit. The per-command `changeBus.nestedBatchOpens` delta assert D3 wrote
-// for it in `tests/test_mesh_sweep.d` survived the removal and now pins the
-// finished shape. `test_thicken.d`'s twin is still pinning a live debt.
+// The import-boundary migration moved `thickenSurface` to
+// `mesh_ops.thicken`, removing the last base-module caller. Both it and
+// `revolveProfileEx` now receive their caller's
+// `MeshEditBatch` and import this family directly.
 //
 // WHAT `maxBridgeSpans` BECAME. §2.7 lists it among the non-function members a
 // mixin injects into `Mesh`; §11 decides it: "keep it an `enum` in the ops
@@ -162,7 +150,7 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
     // quad below is in no op-log entry. UNDO IS SAFE — `AddFaces`' inverse
     // TRUNCATES, so the bit goes with the face it was set on — and the loss is
     // visible only to a FORWARD replay of a recorded delta, which ships in the
-    // generic session carrier. Reachable from `Mesh.thickenSurface`, whose
+    // generic session carrier. Reachable from `mesh_ops.thicken.thickenSurface`, whose
     // batch became RECORDING at stage L2-h. Stage M inherits it, along with
     // the same shape at `mesh.d`'s inner-skin `addFace` and
     // `mesh_ops/poly_bevel.d`'s spike fan.

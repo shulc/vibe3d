@@ -9,7 +9,8 @@ import std.range : iota;
 import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
-import mesh_ops.bridge : kBridgeEditScope;   // task 1903 L2-h: thickenSurface takes the batch
+import mesh_ops.bridge : kBridgeEditScope;
+import mesh_ops.thicken : thickenSurface;
 import change_bus : SelDomain;
 // (`import mesh_ops.bridge : MeshBridgeOps;` was here until task 1903 Stage D3
 // turned that family into free functions — the template name no longer exists.
@@ -3479,7 +3480,7 @@ unittest { // thickenSurface: closed cube → no-op
     m.buildLoops();
     const V0 = m.vertices.length, F0 = m.faces.length;
     { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
-      assert(m.thickenSurface(ed, 0.1f) == 0, "thicken cube: no-op"); ed.close(); }
+      assert(ed.thickenSurface(0.1f) == 0, "thicken cube: no-op"); ed.close(); }
     assert(m.vertices.length == V0 && m.faces.length == F0, "thicken cube: unchanged");
 }
 
@@ -3490,7 +3491,7 @@ unittest { // thickenSurface: zero thickness → no-op
     m.addFace([0u,1u,2u,3u]);
     m.buildLoops();
     { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
-      assert(m.thickenSurface(ed, 0.0f) == 0, "zero thickness: no-op"); ed.close(); }
+      assert(ed.thickenSurface(0.0f) == 0, "zero thickness: no-op"); ed.close(); }
     assert(m.vertices.length == 4 && m.faces.length == 1, "zero thickness: unchanged");
 }
 
@@ -3502,7 +3503,7 @@ unittest { // thickenSurface: symmetric mode places originals at ±t/2
     m.addFace([0u,1u,2u,3u]);
     m.buildLoops();
     { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
-      m.thickenSurface(ed, 0.4f, true); ed.close(); }
+      ed.thickenSurface(0.4f, true); ed.close(); }
     foreach (i; 0 .. 4)
         assert(abs(m.vertices[i].z - 0.2f) < 1e-5f, "symmetric: outer vert at +0.2");
     foreach (i; 4 .. 8)
