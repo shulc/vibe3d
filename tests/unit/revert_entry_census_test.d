@@ -592,9 +592,9 @@ static assert(kRecorded.length == 7,
 private struct ExcludedRow { string symbol; string why; }
 
 private static immutable ExcludedRow[] kNotCommandRevert = [
-    ExcludedRow("XfrmTransformTool.commitOwnedEdit",
+    ExcludedRow("XfrmTransformTool.projectOwnedEditClose",
         "`gh.revert()` on a `GestureHook`, not on a `Command` — a hook body "
-      ~ "composed for `setCmdHooks`, not a call this census's batches govern"),
+      ~ "composed for `setHooks`, not a call this census's batches govern"),
 ];
 
 /// Subtract exactly ONE occurrence per excluded row, not the whole key — a

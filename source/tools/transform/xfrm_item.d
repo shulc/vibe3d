@@ -247,25 +247,14 @@ mixin template XfrmItemImpl() {
         return outM;
     }
 
-    // Task 0614 Phase 4 — item-mode commit body, called from `commitEdit`'s
-    // item branch (Move-bank gestures) AND from the Rotate/Scale gesture-end
-    // sites (§Undo — every bank routes item recording through this ONE
-    // wrapper method, since the wrapper is the only instance holding
-    // `itemTargets`/the layer-xform undo factory). Builds ONE
-    // `LayerXformEdit` covering every target, comparing the gesture-open
-    // snapshot against the CURRENT xform; records nothing when nothing
-    // changed (mirrors `buildEditCmd`'s no-op guard) or when undo plumbing
-    // isn't wired (tests that never call `setItemUndoFactory`).
-    private void commitItemEdit(TransformHistoryIntent intent) {
-        if (!itemEditCapturing_) return;
-        scope(exit) {
-            itemEditCapturing_      = false;
-            itemEditTargets_.length = 0;
-            itemEditBefore_.length  = 0;
-        }
-        if (history is null || layerXformEditFactory_ is null) return;
-        if (itemEditTargets_.length == 0) return;
-        if (itemEditTargets_.length != itemEditBefore_.length) return;
+    // Build the item command once without choosing a history route or closing
+    // the capture. The live and prepared adapters make those two installation
+    // decisions after this shared projection returns.
+    private LayerXformEdit projectItemEditCommand() {
+        if (!itemEditCapturing_) return null;
+        if (history is null || layerXformEditFactory_ is null) return null;
+        if (itemEditTargets_.length == 0) return null;
+        if (itemEditTargets_.length != itemEditBefore_.length) return null;
 
         LayerXformTarget[] payload;
         payload.reserve(itemEditTargets_.length);
@@ -276,27 +265,8 @@ mixin template XfrmItemImpl() {
             if (before != after) changed = true;
             payload ~= LayerXformTarget(t, before, after);
         }
-        if (!changed) return;
-
-        auto cmd = layerXformEditFactory_();
-        cmd.setEdit(payload);
-        recordTransformCommand(cmd, intent);
-    }
-
-    private LayerXformEdit buildPreparedItemEditCmd() {
-        if (!itemEditCapturing_ || history is null ||
-            layerXformEditFactory_ is null || itemEditTargets_.length == 0 ||
-            itemEditTargets_.length != itemEditBefore_.length) return null;
-        LayerXformTarget[] payload;
-        payload.reserve(itemEditTargets_.length);
-        bool changed;
-        foreach (i, t; itemEditTargets_) {
-            const before = itemEditBefore_[i];
-            const after = t.xform;
-            if (before != after) changed = true;
-            payload ~= LayerXformTarget(t, before, after);
-        }
         if (!changed) return null;
+
         auto cmd = layerXformEditFactory_();
         cmd.setEdit(payload);
         return cmd;

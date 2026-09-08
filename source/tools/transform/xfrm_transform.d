@@ -526,13 +526,42 @@ struct PreparedXfrmEditCloseImage {
     ubyte expectedBank;
     bool closeWrapper;
     bool historyPrepared;
+    bool installCommitState;
+    bool consumeGestureState;
+    bool settleSoftPin;
+    bool expectedPendingSoft;
+    bool expectedCancelFrozen;
+    Vec3 expectedPendingCenter;
+    Pin expectedUserPin;
+    Pin expectedSoftPin;
+    Pin nextSoftPin;
+    ActionCenterStage expectedAcen;
+    FalloffPacket expectedDragFalloff;
+    FalloffPacket nextDragFalloff;
+    bool expectedPinKnown;
+    bool expectedRunKnown;
     bool valid;
     void clear() nothrow @nogc {
         vertex.clear(); item.clear();
         itemSubject = closeWrapper = false;
+        expectedAcen = null;
         expectedBank = 0;
-        historyPrepared = valid = false;
+        historyPrepared = installCommitState = consumeGestureState =
+            settleSoftPin = valid = false;
     }
+}
+
+private struct OwnedEditCloseProjection {
+    PreparedXfrmEditCloseImage state;
+    Command command;
+    bool valid;
+}
+
+private struct PipeRefireProjection {
+    PreparedXfrmRefireStateImage state;
+    MeshVertexEdit command;
+    bool stale;
+    bool valid;
 }
 
 struct PreparedXfrmUpdatePreProjection {
@@ -1250,7 +1279,7 @@ public:
         foldSrc_.length                   = 0;
         // Task 0614 Phase 4 — defensive: `deactivate()`'s tool-drop commit
         // (gated on the `editIsOpen()` override above) already clears these
-        // via `commitItemEdit()`'s own scope(exit) before this ever runs in
+        // via the live projected-close installer before this ever runs in
         // practice; cleared again here so a fresh activate() never inherits
         // a stale open-session flag from any path that reaches
         // resetTransientState() without going through deactivate() first.
@@ -1924,44 +1953,76 @@ public:
             PreparedRecordContext context,
             bool useItemSubjectOverride = false,
             bool itemSubjectOverride = false) {
-        PreparedXfrmEditCloseImage image;
-        image.expectedSubject = cachedSubjType_;
-        image.expectedBank = cast(ubyte) editCauseBank;
-        image.itemSubject = useItemSubjectOverride
+        const itemSubject = useItemSubjectOverride
             ? itemSubjectOverride : itemSubjectActive();
-        image.vertex = capturePreparedEditClose();
-        image.item = capturePreparedItemEditClose();
-        image.closeWrapper = editIsOpen();
-
-        bool preparedAny;
-        if (image.closeWrapper) {
-            if (editCauseBank == DragBank.None) return image;
-            Command cmd = image.itemSubject ? buildPreparedItemEditCmd()
-                                            : buildPreparedEditCmd(name());
-            if (cmd !is null) {
-                if (context is null || history is null) return image;
-                if (!context.prepare(cmd, PreparedHistoryKind.InSession,
-                                     history.currentRunId).accepted)
-                    return image;
-                preparedAny = true;
-            }
-        }
-        image.historyPrepared = preparedAny;
-        image.valid = true;
-        return image;
+        auto projection = projectPreparedOwnedEditClose(
+            editCauseBank, itemSubject, TransformHistoryIntent.RunClose);
+        if (!projection.valid) return PreparedXfrmEditCloseImage.init;
+        if (!prepareOwnedEditClose(projection, context,
+                                   TransformHistoryIntent.RunClose))
+            return PreparedXfrmEditCloseImage.init;
+        return projection.state;
     }
 
     final bool preparedUpdateEditCloseMatches(
-            ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
+            ref PreparedXfrmEditCloseImage image) const nothrow @nogc {
         return image.valid && cachedSubjType_ == image.expectedSubject &&
             cast(ubyte) editCauseBank == image.expectedBank &&
             preparedEditCloseMatches(image.vertex) &&
-            preparedItemEditCloseMatches(image.item);
+            preparedItemEditCloseMatches(image.item) &&
+            (!image.installCommitState ||
+                (pendingMoveSoftPin == image.expectedPendingSoft &&
+                 (!image.expectedPendingSoft ||
+                    pendingMoveSoftCenter == image.expectedPendingCenter) &&
+                 preparedGestureRecordMatches(image) &&
+                 falloffPacketsEqual(dragFalloff,
+                                     image.expectedDragFalloff) &&
+                 ((g_pipeCtx is null && image.expectedAcen is null) ||
+                  (g_pipeCtx !is null &&
+                   (cast(Pipeline)g_pipeCtx.pipeline).ownsTaskStage(
+                       TaskCode.Acen, image.expectedAcen))) &&
+                 (image.expectedAcen is null ||
+                    image.expectedAcen.projectedEditCloseMatches(
+                        image.expectedUserPin, image.expectedSoftPin,
+                        image.expectedCancelFrozen))));
+    }
+
+    private bool preparedGestureRecordMatches(
+            ref PreparedXfrmEditCloseImage image) const
+            pure nothrow @nogc {
+        const bank = cast(DragBank)image.expectedBank;
+        if (bank == DragBank.Move)
+            return moveRec.pinKnown == image.expectedPinKnown &&
+                   moveRec.runKnown == image.expectedRunKnown;
+        if (bank == DragBank.Rotate)
+            return rotateRec.pinKnown == image.expectedPinKnown &&
+                   rotateRec.runKnown == image.expectedRunKnown;
+        if (bank == DragBank.Scale)
+            return scaleRec.pinKnown == image.expectedPinKnown &&
+                   scaleRec.runKnown == image.expectedRunKnown;
+        return false;
     }
 
     final void installPreparedUpdateEditClose(
             ref PreparedXfrmEditCloseImage image) nothrow @nogc {
         if (!image.valid) return;
+        if (image.installCommitState) {
+            if (image.expectedAcen !is null)
+                image.expectedAcen.installProjectedEditClose(
+                    image.nextSoftPin, image.settleSoftPin);
+            dragFalloff = image.nextDragFalloff;
+            if (image.consumeGestureState) {
+                pendingMoveSoftPin = false;
+                const bank = cast(DragBank)image.expectedBank;
+                if (bank == DragBank.Move) {
+                    moveRec.pinKnown = false; moveRec.runKnown = false;
+                } else if (bank == DragBank.Rotate) {
+                    rotateRec.pinKnown = false; rotateRec.runKnown = false;
+                } else if (bank == DragBank.Scale) {
+                    scaleRec.pinKnown = false; scaleRec.runKnown = false;
+                }
+            }
+        }
         if (image.closeWrapper) {
             installPreparedEditClose(image.vertex);
             installPreparedItemEditClose(image.item);
@@ -3649,38 +3710,9 @@ public:
     // Consumes (clears) both known bits, mirroring the pre-F3b per-site
     // clears (`moveRec.pinKnown = false;` etc.) — call this exactly once per
     // commit.
-    private GestureHooks buildGestureHooks(DragBank bank,
+    private GestureHooks projectGestureHooks(DragBank bank,
         XformState runEnd, GestureFrame frameEnd, Pin softEnd, Pin pinEnd)
     {
-        // P9 (task 0724) — re-baseline the element falloff's sphere CENTRE to
-        // the settled gesture state, at the one chokepoint all three banks
-        // commit through, and AFTER settleGestureCenter has run at every call
-        // site.
-        //
-        // `pickedCenter` became part of the refire trigger (falloff.d's
-        // `falloffPacketsEqual`, Element-gated) so that relocating the sphere
-        // at idle re-grades the preview. But unlike every other input to that
-        // trigger it is not a config the user typed and left alone: it is
-        // ACEN's centre, and ACEN's centre FOLLOWS the gesture -- the drop
-        // settles a soft pin, and a sticky Move rewrites userPlacedCenter to
-        // the post-drag handler position on mouse-up. So the snapshot taken at
-        // mouse-DOWN is guaranteed to disagree with the live centre by
-        // mouse-UP, through no user action at all, and the idle trigger would
-        // read that as "the user moved the sphere" and record one spurious
-        // extra in-session re-grade per gesture. Measured, not feared: without
-        // these three lines test_relocate_boundary_element ("gesture 1 records
-        // ONE in-session entry on mouse-up; got 2"), test_relocate_boundary_p5
-        // and test_falloff_idle_refire all go red.
-        //
-        // Re-baselining here draws the line where it belongs: a centre the
-        // GESTURE moved is the gesture's outcome, not an edit to re-grade
-        // against; only a change made after the gesture settled is a user
-        // edit. Same source (`currentCenter()`) that captureFalloffForDrag
-        // uses, so the two ends of the comparison stay like-for-like.
-        if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element)
-            if (auto ac = activeAcenStage())
-                dragFalloff.pickedCenter = ac.currentCenter();
-
         auto rec = &recFor(bank);
 
         bool pinKnown = rec.pinKnown;
@@ -3692,9 +3724,6 @@ public:
         else                       softStart = runKnown ? rec.softStart : softEnd;
         XformState   runStart = runKnown ? rec.runStart   : runEnd;
         GestureFrame frmStart = runKnown ? rec.frameStart : frameEnd;
-
-        rec.pinKnown = false;
-        rec.runKnown = false;
 
         GestureHooks h;
         if (bank == DragBank.Move) {
@@ -5390,80 +5419,29 @@ public:
             FalloffPacket preF, FalloffPacket postF,
             SnapPacket preSn, SnapPacket postSn,
             SymmetryPacket preSy, SymmetryPacket postSy) {
-        PreparedXfrmRefireStateImage image;
-        if (context is null || history is null || vertexEditFactory is null ||
-            !history.runOpen() || anchor.length != mesh.vertices.length ||
-            after.length != mesh.vertices.length)
-            return image;
+        auto projection = projectPreparedPipeRefire(anchor, after, null,
+            preF, postF, preSn, postSn, preSy, postSy);
+        if (!preparePipeRefireProjection(projection, context))
+            return PreparedXfrmRefireStateImage.init;
+        return projection.state;
+    }
 
-        image.expectedAnchor = refireAnchor.dup;
-        image.nextAnchor = refireAnchor.length == 0
-            ? anchor.dup : refireAnchor.dup;
-        image.expectedPreValid = refirePreValid;
-        image.nextPreValid = true;
-        image.expectedPreFalloff = refirePreFalloff.ownedDup();
-        image.expectedPreSnap = refirePreSnap;
-        image.expectedPreSymmetry = refirePreSym.ownedDup();
-        if (refirePreValid) {
-            preF = refirePreFalloff;
-            preSn = refirePreSnap;
-            preSy = refirePreSym;
-        }
-        image.nextPreFalloff = preF.ownedDup();
-        image.nextPreSnap = preSn;
-        image.nextPreSymmetry = preSy.ownedDup();
-        image.expectedLastMutation = lastMutationVersion;
-        image.expectedGestureMutation = lastAppliedGestureMutationVersion;
-        image.expectedUndoEpoch = armedUndoEpoch;
-        image.nextLastMutation = mesh.mutationVersion;
-        image.nextGestureMutation = mesh.mutationVersion;
-        image.nextUndoEpoch = history.undoEpoch();
+    private bool preparePipeRefireProjection(ref PipeRefireProjection p,
+            PreparedRecordContext context) {
+        if (context is null || !p.valid || p.stale || history is null)
+            return false;
+        return context.prepare(p.command,
+            PreparedHistoryKind.ReplaceInSessionTail,
+            history.currentRunId).accepted;
+    }
 
-        uint[] movedIdx;
-        Vec3[] before;
-        Vec3[] movedAfter;
-        movedIdx.reserve(after.length);
-        before.reserve(after.length);
-        movedAfter.reserve(after.length);
-        foreach (vid, a; after) {
-            Vec3 b = image.nextAnchor[vid];
-            if (a == b) continue;
-            movedIdx ~= cast(uint)vid;
-            before ~= b;
-            movedAfter ~= a;
-        }
-
-        auto cmd = vertexEditFactory();
-        if (cmd is null) return PreparedXfrmRefireStateImage.init;
-        cmd.setEdit(movedIdx, before, movedAfter, name());
-
-        FalloffPacket preFCopy = preF.ownedDup();
-        FalloffPacket postFCopy = postF.ownedDup();
-        SnapPacket preSnCopy = preSn, postSnCopy = postSn;
-        SymmetryPacket preSyCopy = preSy.ownedDup();
-        SymmetryPacket postSyCopy = postSy.ownedDup();
-        XformState xfNow = run;
-        GestureFrame frameNow = frame;
-        cmd.setHooks(
-            () {
-                restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
-                if (auto sn = activeSnapStage()) sn.restoreConfigFromPacket(postSnCopy);
-                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
-                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameNow; refreshFrameValid();
-            },
-            () {
-                restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
-                if (auto sn = activeSnapStage()) sn.restoreConfigFromPacket(preSnCopy);
-                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
-                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameNow; refreshFrameValid();
-            });
-        auto prepared = context.prepare(cmd,
-            PreparedHistoryKind.ReplaceInSessionTail, history.currentRunId);
-        if (!prepared.accepted) return PreparedXfrmRefireStateImage.init;
-        image.valid = true;
-        return image;
+    private PipeRefireProjection projectPreparedPipeRefire(
+            const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
+            FalloffPacket preF, FalloffPacket postF,
+            SnapPacket preSn, SnapPacket postSn,
+            SymmetryPacket preSy, SymmetryPacket postSy) {
+        return projectPipeRefire(anchor, after, idx,
+            preF, postF, preSn, postSn, preSy, postSy);
     }
 
     public bool preparedRefireStateMatches(
@@ -5636,150 +5614,147 @@ public:
         commitOwnedEdit(bank, intent);
     }
 
-    // One payload finalizer for every embedded bank. `bank` is semantic
-    // metadata for the wrapper-owned run snapshots; it is not another session
-    // state machine.
-    private void commitOwnedEdit(DragBank bank,
-                                 TransformHistoryIntent intent) {
-        scope(exit) {
+    // One calculation owns the close image, command payload, gesture endpoints
+    // and pipe hooks. The two callers below intentionally differ only in how
+    // they install that result: live records immediately; prepared enlists the
+    // command and installs the captured state later through its typed owner.
+    private OwnedEditCloseProjection projectOwnedEditClose(
+            DragBank bank, bool itemSubject) {
+        OwnedEditCloseProjection p;
+        auto image = &p.state;
+        image.expectedSubject = cachedSubjType_;
+        image.expectedBank = cast(ubyte)bank;
+        image.itemSubject = itemSubject;
+        image.vertex = capturePreparedEditClose();
+        image.item = capturePreparedItemEditClose();
+        image.closeWrapper = editIsOpen();
+        if (image.closeWrapper && bank == DragBank.None) return p;
+
+        if (image.closeWrapper && !suppressCommit)
+            p.command = itemSubject ? projectItemEditCommand()
+                                    : projectEditCommand(name());
+
+        if (image.closeWrapper && !itemSubject && !suppressCommit) {
+            image.installCommitState = true;
+            image.expectedPendingSoft = pendingMoveSoftPin;
+            image.expectedPendingCenter = pendingMoveSoftCenter;
+            image.expectedDragFalloff = dragFalloff.ownedDup();
+            image.nextDragFalloff = dragFalloff.ownedDup();
+            auto rec = &recFor(bank);
+            image.expectedPinKnown = rec.pinKnown;
+            image.expectedRunKnown = rec.runKnown;
+            image.expectedAcen = activeAcenStage();
+            if (image.expectedAcen !is null) {
+                image.expectedUserPin = image.expectedAcen.currentUserPin();
+                image.expectedSoftPin = image.expectedAcen.currentSoftPin();
+                image.expectedCancelFrozen = image.expectedAcen
+                    .projectedEditCloseSnapshotFrozen();
+            }
+
+            if (p.command !is null) {
+                image.consumeGestureState = true;
+                image.nextSoftPin = image.expectedSoftPin;
+                image.settleSoftPin = pendingMoveSoftPin &&
+                    image.expectedAcen !is null && acenSettleAllowed();
+                if (image.settleSoftPin)
+                    image.nextSoftPin = Pin(true, pendingMoveSoftCenter);
+                if (image.nextDragFalloff.enabled &&
+                    image.nextDragFalloff.type == FalloffType.Element &&
+                    image.expectedAcen !is null)
+                    image.nextDragFalloff.pickedCenter = image.settleSoftPin
+                        ? pendingMoveSoftCenter
+                        : image.expectedAcen.currentCenter();
+
+                Pin pinEnd = image.expectedUserPin;
+                auto gh = projectGestureHooks(bank, run, frame,
+                    image.nextSoftPin, pinEnd);
+                FalloffSetSnapshot fSnap =
+                    snapshotFalloffSet(activeFalloffStages());
+                SnapPacket snSnap; bool haveSn;
+                SymmetryPacket sySnap; bool haveSy;
+                if (auto sn = activeSnapStage()) {
+                    snSnap = sn.snapshotConfigToPacket(); haveSn = true;
+                }
+                if (auto sy = activeSymmetryStage()) {
+                    sySnap = sy.snapshotConfigToPacket(); haveSy = true;
+                }
+                void delegate(void delegate(), void delegate()) setHooks;
+                import commands.mesh.morph_edit : MeshMorphEdit;
+                if (auto mcmd = cast(MeshMorphEdit)p.command)
+                    setHooks = (a, r) { mcmd.setHooks(a, r); };
+                else if (auto vcmd = cast(MeshVertexEdit)p.command)
+                    setHooks = (a, r) { vcmd.setHooks(a, r); };
+                if (setHooks !is null) setHooks(
+                    () {
+                        gh.apply(); restoreFalloffSet(fSnap);
+                        if (haveSn) if (auto sn = activeSnapStage())
+                            sn.restoreConfigFromPacket(snSnap);
+                        if (haveSy) if (auto sy = activeSymmetryStage())
+                            sy.restoreConfigFromPacket(sySnap);
+                    },
+                    () {
+                        gh.revert(); restoreFalloffSet(fSnap);
+                        if (haveSn) if (auto sn = activeSnapStage())
+                            sn.restoreConfigFromPacket(snSnap);
+                        if (haveSy) if (auto sy = activeSymmetryStage())
+                            sy.restoreConfigFromPacket(sySnap);
+                    });
+            }
+        }
+        image.valid = true;
+        p.valid = true;
+        return p;
+    }
+
+    private OwnedEditCloseProjection projectPreparedOwnedEditClose(
+            DragBank bank, bool itemSubject, TransformHistoryIntent) {
+        return projectOwnedEditClose(bank, itemSubject);
+    }
+
+    private bool prepareOwnedEditClose(ref OwnedEditCloseProjection p,
+            PreparedRecordContext context, TransformHistoryIntent intent) {
+        if (!p.valid) return false;
+        if (p.command is null) return true;
+        if (context is null || history is null) return false;
+        const kind = intent == TransformHistoryIntent.BoundaryCommit
+            ? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;
+        const runId = kind == PreparedHistoryKind.InSession
+            ? history.currentRunId : 0;
+        if (!context.prepare(p.command, kind, runId).accepted) return false;
+        p.state.historyPrepared = true;
+        return true;
+    }
+
+    private void installLiveOwnedEditClose(ref OwnedEditCloseProjection p,
+            TransformHistoryIntent intent) {
+        if (!p.valid) return;
+        auto image = &p.state;
+        if (image.installCommitState) {
+            discardAcenUserPlacedSnapshot();
+            if (image.settleSoftPin)
+                settleGestureCenter(image.nextSoftPin.center);
+            dragFalloff = image.nextDragFalloff;
+            if (image.consumeGestureState) {
+                pendingMoveSoftPin = false;
+                auto rec = &recFor(cast(DragBank)image.expectedBank);
+                rec.pinKnown = false;
+                rec.runKnown = false;
+            }
+        }
+        if (image.closeWrapper) {
+            installPreparedEditClose(image.vertex);
+            installPreparedItemEditClose(image.item);
             editCauseBank = DragBank.None;
             editCauseProvisional = false;
         }
-        // Task 0614 Phase 4 — item branch. Builds a LayerXformEdit from the
-        // gesture-open snapshot (itemEditBefore_) versus the CURRENT
-        // (post-drag) xform, mirroring buildEditCmd's `if (!changed) return
-        // null` so a no-op gesture records nothing, and routes the result
-        // through the SAME `recordCommit` chokepoint every vertex
-        // commitEdit override uses (`recordViaInSession ? recordInSession :
-        // record` — `TransformTool.recordCommit`, tools/transform/transform.d).
-        if (itemSubjectActive()) {
-            if (suppressCommit) {
-                itemEditCapturing_      = false;
-                itemEditTargets_.length = 0;
-                itemEditBefore_.length  = 0;
-                return;
-            }
-            commitItemEdit(intent);
-            return;
-        }
+        if (p.command !is null) recordTransformCommand(p.command, intent);
+        p.valid = false;
+    }
 
-        if (suppressCommit) { cancelEdit(); return; }
-
-        // Base commit discards the frozen pin snapshot, then builds + records the
-        // cmd via recordCommit. We replicate the body so we can splice setHooks
-        // between buildEditCmd and recordCommit (buildEditCmd returns null on a
-        // no-op gesture — nothing to hook).
-        discardAcenUserPlacedSnapshot();
-        // Task 1069 — under ROUTING the gesture changed the MAP, not
-        // `mesh.vertices`, so `buildEditCmd` would diff two identical position
-        // arrays and return null. Both commands need the SAME hook pair
-        // spliced in below, so the setter is captured as a delegate rather
-        // than duplicating the ~40 lines that compose the hooks.
-        import commands.mesh.morph_edit : MeshMorphEdit;
-        import command : Command;
-        Command cmd;
-        void delegate(void delegate(), void delegate()) setCmdHooks;
-        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(name())) {
-            cmd = mcmd;
-            setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
-        } else {
-            auto vcmd = buildEditCmd(name());
-            if (vcmd is null) return;
-            cmd = vcmd;
-            setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
-        }
-
-        // BUG-2 — a real edit command was built, so this gesture genuinely moved
-        // geometry (NOT a no-op relocate click). Apply the pending Move-settle soft
-        // pin NOW — after the null check (so a no-op relocate never sets it) and
-        // BEFORE the gesture-END capture below (so the captured endSoft* reflects
-        // the settle that the apply/redo hook must restore). publishState() inside
-        // setSoftPlaced makes the live gizmo follow immediately. The display soft
-        // pin is disjoint from the userPlaced pin captured here.
-        if (pendingMoveSoftPin) {
-            // Route through the shared settle so the 2-entry acenSettleAllowed()
-            // predicate (Element + Local excluded) is the SINGLE mode filter; the
-            // relocate gate that used to live at the mouse-up was dropped (Phase 3).
-            settleGestureCenter(pendingMoveSoftCenter);
-            pendingMoveSoftPin = false;
-        }
-
-        // pin-END — current pin at mouse-up. If the gesture-START pin was never
-        // captured (no preceding beginEdit-open), buildGestureHooks below falls
-        // back to the current pin for START too so the hooks are inert (no pin
-        // jump on undo of a gesture that never moved the pin).
-        Pin pinEnd;
-        // BUG-2 — gesture-END SOFT pin, the LIVE soft state at commit. The Move
-        // mouse-up sets it (notifyAcenSoftPlaced) BEFORE this commit when falloff
-        // is active and the mode allows relocate, so it is already settled here.
-        Pin softEnd;
-        if (auto ac = activeAcenStage()) {
-            pinEnd  = ac.currentUserPin();
-            softEnd = ac.currentSoftPin();
-        }
-
-        // F3b — single chokepoint composing the {apply, revert} pair from
-        // moveRec + this gesture's live END state (run.t/run.r/run.s + frame,
-        // read here since a Move gesture only touches run.t; the R/S fields are
-        // inert start==end automatically). Consumes (clears) moveRec.pinKnown
-        // and moveRec.runKnown.
-        auto gh = buildGestureHooks(bank, run, frame,
-            softEnd, pinEnd);
-
-        // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
-        // transient pipe CONFIG restore (falloff + snap + symmetry) alongside the
-        // pin restore. A transform run is consolidated at DROP as [moveGesture,
-        // pipeRefire]; mergeRun keeps first.revert + last.apply. The refire entry
-        // carries the pipe-CONFIG hooks (recordPipeRefire Step 3.5), the gesture
-        // entry carries PIN hooks — and now ALSO the run-start pipe config. So the
-        // merged first.revert (= this gesture's revert) restores the pin AND every
-        // transient pipe handle (a single post-drop Ctrl+Z reverts geometry + pin
-        // + falloff + snap + symmetry together; before P-A/P-C the handle was
-        // stranded at its post-tweak value). Snapshot the config AT THIS gesture's
-        // commit (= run-start config, since a config tweak only fires AFTER a
-        // gesture commits) and restore it from BOTH hooks. The pin restore + the
-        // three config restores are INDEPENDENT stage mutations
-        // (ActionCenterStage / FalloffStage / SnapStage / SymmetryStage own
-        // disjoint state) — none reads another, so the composed closure calls all
-        // without clobber. ABSOLUTE (assign), splices through mergeRun like the
-        // pin endpoints. The gesture never changes the pipe config, so the
-        // snapshot is the same on apply and revert here; it exists purely so the
-        // merged first.revert carries it.
-        // FALLOFF is SET-aware: snapshot every active instance's config keyed
-        // by stage identity (1-element = the prior single-stage path,
-        // byte-identical). SNAP + SYMMETRY stay SINGLE.
-        FalloffSetSnapshot fSnap = snapshotFalloffSet(activeFalloffStages());
-        SnapPacket     snSnap; bool haveSn = false;
-        SymmetryPacket sySnap; bool haveSy = false;
-        if (auto sn = activeSnapStage())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
-        if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
-
-        setCmdHooks(
-            // apply (redo): the F3b-composed pin + SOFT pin + run/frame restore
-            // (gh.apply), plus the falloff/snap/symmetry config restore this
-            // commit site alone carries (R/S never touch pipe config in their
-            // hooks — that is recordPipeRefire's job). The pin restore + the
-            // three config restores are INDEPENDENT stage mutations, so they
-            // compose in one closure without clobber (P-A).
-            () {
-                gh.apply();
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-            },
-            // revert (undo): the F3b-composed gesture-START restore, plus the
-            // same pipe-config restore. The gesture-START soft state is
-            // typically cleared (gesture-1 of a run had no soft pin), so the
-            // pivot recomputes to the reverted-geometry centroid — closing the
-            // BLOCKER where the gizmo stayed floating at the settled height.
-            () {
-                gh.revert();
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-            },
-        );
-        recordTransformCommand(cmd, intent);
+    private void commitOwnedEdit(DragBank bank,
+                                 TransformHistoryIntent intent) {
+        auto projection = projectOwnedEditClose(bank, itemSubjectActive());
+        installLiveOwnedEditClose(projection, intent);
     }
 
     // Typed history intents preserve four distinct causes. A landed gesture
@@ -6040,7 +6015,7 @@ public:
         scope(exit) suppressCommit = false;
 
         // Item arm (S2, 0614 review). Restores every captured target's
-        // PRE-edit xform — the same beginEdit()-open snapshot commitItemEdit()
+        // PRE-edit xform — the same beginEdit()-open snapshot the close projector
         // would otherwise have diffed against — then clears the trio so
         // editIsOpen() reports closed afterward, and restores the panel
         // display mirrors captured alongside it. Deliberately does NOT touch
@@ -6854,203 +6829,122 @@ private:
     // whole transient pipe config. The three config restores are INDEPENDENT
     // stage mutations (FalloffStage / SnapStage / SymmetryStage own disjoint
     // fields), so one composed closure calls all three without clobber.
-    private void recordPipeRefire(Vec3[] anchor,
-                                  Vec3[] after, size_t[] idx, DragBank bank,
-                                  FalloffPacket preF, FalloffPacket postF,
-                                  SnapPacket preSn, SnapPacket postSn,
-                                  SymmetryPacket preSy, SymmetryPacket postSy) {
-        // `idx` is dead until a scoped-subset caller exists — only null
-        // (full-range) callers today; kept so a future scoped re-grade need not
-        // re-thread the signature.
-        // Step 0 — staleness gate (defense-in-depth; the site already gated, but
-        // the helper must refuse too). On a miss the run's anchor is invalid.
+    private PipeRefireProjection projectPipeRefire(
+            const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
+            FalloffPacket preF, FalloffPacket postF,
+            SnapPacket preSn, SnapPacket postSn,
+            SymmetryPacket preSy, SymmetryPacket postSy) {
+        PipeRefireProjection p;
         if (!regradeStampCurrent()) {
-            refireAnchor.length = 0;
-            refirePreValid      = false;
-            return;
+            p.stale = p.valid = true;
+            return p;
         }
-        // Step 1 — guards: need a history, an OPEN run (a re-grade only extends a
-        // run that has a landed gesture), and a real geometry change.
-        if (history is null) return;
-        if (!history.runOpen()) return;
+        if (history is null || vertexEditFactory is null ||
+            !history.runOpen() || anchor.length != mesh.vertices.length ||
+            (idx.length == 0 ? after.length != mesh.vertices.length
+                             : after.length != idx.length))
+            return p;
 
-        // Step 2 — anchor capture (once per RE-FIRE WINDOW). The FIRST re-grade
-        // after a gesture stores that gesture's post-recompute snapshot; later
-        // CONSECUTIVE re-grades reuse it unchanged. A new gesture CLEARS
-        // refireAnchor at its mouse-up commit (see the per-bank commit sites),
-        // opening a fresh window anchored to the NEW post-gesture geometry — so
-        // a tweak after a second gesture anchors before[] to post-gesture-2, not
-        // the stale post-gesture-1 (the multi-gesture-run anchor hazard).
-        if (refireAnchor.length == 0)
-            refireAnchor = anchor.dup;
-
-        // BUG-2: capture the PRE-tweak pipe config ONCE per re-fire window, from
-        // the same first-frame `preF/preSn/preSy` the site passed in (still
-        // run-start on the FIRST re-grade; clobbered to the prior frame's value on
-        // later frames). On every subsequent frame OVERRIDE the passed-in pre-*
-        // with this stored run-start config so the coalesced entry's revert hook
-        // restores the TRUE run-start pipe config (the viewport falloff viz then
-        // reverts WITH the geometry on an in-session Ctrl+Z), not the
-        // penultimate-frame value. Captured at the SAME point as refireAnchor so
-        // the geometry + config baselines stay in lockstep across the window.
-        if (!refirePreValid) {
-            refirePreFalloff = preF;
-            refirePreSnap    = preSn;
-            refirePreSym     = preSy;
-            refirePreValid   = true;
-        } else {
-            preF  = refirePreFalloff;
+        auto image = &p.state;
+        image.expectedAnchor = refireAnchor.dup;
+        image.nextAnchor = refireAnchor.length == 0
+            ? anchor.dup : refireAnchor.dup;
+        image.expectedPreValid = refirePreValid;
+        image.nextPreValid = true;
+        image.expectedPreFalloff = refirePreFalloff.ownedDup();
+        image.expectedPreSnap = refirePreSnap;
+        image.expectedPreSymmetry = refirePreSym.ownedDup();
+        if (refirePreValid) {
+            preF = refirePreFalloff;
             preSn = refirePreSnap;
             preSy = refirePreSym;
         }
+        image.nextPreFalloff = preF.ownedDup();
+        image.nextPreSnap = preSn;
+        image.nextPreSymmetry = preSy.ownedDup();
+        image.expectedLastMutation = lastMutationVersion;
+        image.expectedGestureMutation = lastAppliedGestureMutationVersion;
+        image.expectedUndoEpoch = armedUndoEpoch;
+        image.nextLastMutation = mesh.mutationVersion;
+        image.nextGestureMutation = mesh.mutationVersion;
+        image.nextUndoEpoch = history.undoEpoch();
 
-        // Step 3 — build the entry. before[] = refireAnchor (post-gesture state)
-        // for the moved indices; after[] = the re-graded positions. Drop any
-        // index that did not actually move vs the anchor (no spurious payload).
-        //
-        // S1 economy: when `idx` is null/empty the index set is the FULL vertex
-        // range (the falloff support can be the whole mesh, so a full pass is the
-        // safe superset) — iterate `after` POSITIONALLY (after[vid] == the
-        // re-graded position of vid, since every site dups the whole
-        // mesh.vertices into `after`). This drops the per-re-grade identity
-        // `size_t[] allIdx` allocation the sites previously materialised. When
-        // `idx` is supplied (a scoped subset) it is honoured, with `after[k]`
-        // positionally aligned to `idx[k]`.
-        immutable bool fullRange = (idx.length == 0);
-        immutable size_t n = fullRange ? after.length : idx.length;
-        size_t[] movedIdx;
-        Vec3[]   before;
-        Vec3[]   movedAfter;
+        const fullRange = idx.length == 0;
+        const n = fullRange ? after.length : idx.length;
+        uint[] movedIdx;
+        Vec3[] before;
+        Vec3[] movedAfter;
         movedIdx.reserve(n);
         before.reserve(n);
         movedAfter.reserve(n);
         foreach (k; 0 .. n) {
-            immutable size_t vid = fullRange ? k : idx[k];
-            if (vid >= refireAnchor.length || vid >= mesh.vertices.length)
-                continue;
-            Vec3 b = refireAnchor[vid];
-            Vec3 a = after[k];
-            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
-            movedIdx   ~= vid;
-            before     ~= b;
+            const vid = fullRange ? k : idx[k];
+            if (vid >= image.nextAnchor.length ||
+                vid >= mesh.vertices.length) continue;
+            const a = after[k];
+            const b = image.nextAnchor[vid];
+            if (a == b) continue;
+            movedIdx ~= cast(uint)vid;
+            before ~= b;
             movedAfter ~= a;
         }
-        // movedIdx.length == 0 → the re-grade produced NO geometry delta. For a
-        // falloff change this is the rare degenerate case (a weight tweak that
-        // moved nothing). For snap it is the NORM (snap is a cursor-time op, not
-        // in the fold). For symmetry it happens when the toggled-on pairing finds
-        // no valid mirror partner on the deformed mesh. In ALL these cases the
-        // pipe CONFIG still changed, and an in-session / post-drop undo must
-        // restore that config (P-C). So instead of returning we record a
-        // CONFIG-ONLY entry: an empty geometry edit (apply/revert no-op on the
-        // mesh) carrying the SAME config-restore hooks. It rides the run like any
-        // refire — replaceInSessionTail REPLACES a prior refire tail or APPENDS
-        // after a gesture, and mergeRun keeps first.revert + last.apply, so the
-        // config endpoints splice coherently. No geometry payload ⇒ no spurious
-        // vertex churn on undo.
-        import std.algorithm : map;
-        import std.array : array;
-        uint[] uidx = movedIdx.map!(v => cast(uint) v).array;
 
-        if (vertexEditFactory is null) return;
-        auto cmd = vertexEditFactory();
-        cmd.setEdit(uidx, before, movedAfter, name());
+        p.command = vertexEditFactory();
+        if (p.command is null) return PipeRefireProjection.init;
+        p.command.setEdit(movedIdx, before, movedAfter, name());
 
-        // Step 3.5 — pipe CONFIG-restore hooks (P-A falloff + P-C snap/symmetry).
-        // The re-grade entry must restore the pipe HANDLES / config together with
-        // the geometry: an in-session Ctrl+Z reverts geometry (the MeshVertexEdit
-        // revert) AND the falloff + snap + symmetry config to their PRE-tweak
-        // values, and redo re-applies all — so the visible handles follow the
-        // undo, not just the mesh. The hooks fire MAIN-thread (C4:
-        // history.undo/redo runs from tickUndo() / navHistory, never the
-        // background /api/undo poster), so mutating + publishing the stages from
-        // inside them is safe — identical to the pin-hook precedent (commitEdit →
-        // ActionCenterStage.restorePinState).
-        //
-        // ABSOLUTE snapshots, NOT deltas (mirrors rotate.d accum hooks): revert →
-        // PRE-tweak packets, apply → POST-tweak packets. This is required for
-        // mergeRun correctness — a consolidated run keeps first.revert +
-        // last.apply, so absolute endpoints splice coherently (a delta would
-        // double-apply across the merge). The captured packets are by-value
-        // copies (struct), so they survive past this stack frame. The three
-        // restores hit DISJOINT stage state (FalloffStage / SnapStage /
-        // SymmetryStage own non-overlapping fields), so one closure calls all
-        // three without clobber.
-        FalloffPacket  preFCopy  = preF,  postFCopy  = postF;
-        SnapPacket     preSnCopy = preSn, postSnCopy = postSn;
-        SymmetryPacket preSyCopy = preSy, postSyCopy = postSy;
-        // P-F Phase 3 (MAJOR-5) — the run-absolute WRAPPER state joins the unified
-        // hook family on the refire entry IDENTICALLY to the gesture-commit entry,
-        // or mergeRun first.revert/last.apply would strand it: an in-session Ctrl+Z
-        // after a snap/falloff mid-run refire would restore geometry but leave the
-        // run state (run.t/run.r/run.s) at the post-refire value (panel desyncs from
-        // geometry). A refire re-grades geometry under the SAME transform, so the
-        // run state does NOT change across it — snapshot the CURRENT WHOLE struct as
-        // BOTH pre and post (pre == post). When the refire entry is merged with the
-        // gesture entries, the struct endpoints splice coherently because every
-        // entry in the run carries the whole-struct hook. DISJOINT from the
-        // pipe-config restores. headlessRotate is re-derived from run.r so the panel
-        // + matrix stay locked.
-        XformState xfNow = run;
-        // BASIS undo splice on the refire entry — IDENTICAL reasoning to xfNow: a
-        // mid-run snap/falloff re-grade does NOT change the persisted gizmo basis,
-        // so snapshot the CURRENT `frame` as BOTH pre and post. It must ride EVERY
-        // entry in the run (gesture + refire) so mergeRun first.revert/last.apply
-        // splices the basis coherently — without it a refire-tail first.revert
-        // would leave the basis at its post-gesture (rotated) value on undo.
-        GestureFrame frameNow = frame;
-        cmd.setHooks(
-            // apply (redo): restore the POST-tweak pipe config + the run state
-            // (unchanged across the refire) + publish.
+        const preFCopy = preF.ownedDup();
+        const postFCopy = postF.ownedDup();
+        const preSnCopy = preSn, postSnCopy = postSn;
+        const preSyCopy = preSy.ownedDup();
+        const postSyCopy = postSy.ownedDup();
+        const xfNow = run;
+        const frameNow = frame;
+        p.command.setHooks(
             () {
-                // FALLOFF set-aware: the captured pre/post packets are the
-                // COMBINED published packet. For a single falloff that IS the
-                // primary's config (restored directly, byte-identical); for a
-                // multi-falloff Composite each stage is restored from the
-                // matching contributor (pipe-order positional, same order the
-                // combiner builds contributors and findAllByTask yields).
                 restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
-                if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
-                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
-                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameNow; refreshFrameValid();
+                if (auto sn = activeSnapStage())
+                    sn.restoreConfigFromPacket(postSnCopy);
+                if (auto sy = activeSymmetryStage())
+                    sy.restoreConfigFromPacket(postSyCopy);
+                run = xfNow;
+                headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow;
+                refreshFrameValid();
             },
-            // revert (undo): restore the PRE-tweak pipe config + the run state +
-            // publish.
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
-                if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
-                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
-                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
-                frame = frameNow; refreshFrameValid();
-            },
-        );
-
-        // Step 4 — record. ALWAYS route through replaceInSessionTail: it is the
-        // single re-fire primitive and owns the REPLACE-vs-APPEND decision,
-        // keyed on the trustworthy Refire bit. It DROPS the tail only when the
-        // tail is THIS run's prior RE-GRADE (InSession && Refire && runId) — so
-        // a CONSECUTIVE tweak replaces the prior re-grade (N tweaks = ONE undo
-        // step), while a tweak whose tail is a plain GESTURE entry (the run's
-        // first tweak, OR the first tweak after a SECOND gesture) APPENDS,
-        // preserving the gesture's geometry contribution. This is the fix for
-        // the multi-gesture-run hazard: keying on "is the tail a refire" instead
-        // of "did any refire happen this run" stops a tweak2 from erasing g2.
-        recordTransformCommand(cmd, TransformHistoryIntent.GenerationRefire);
-
-        // Step 5 — defensive re-stamps (no-ops today: the re-grade does NOT bump
-        // mutationVersion — applyTRS is version-silent and recordInSession never
-        // calls apply()). Kept future-proof should the apply path ever bump.
-        lastMutationVersion               = mesh.mutationVersion;
-        lastAppliedGestureMutationVersion = mesh.mutationVersion;
-        // Task 1906 §2.3 — the census's second term re-stamped in lockstep.
-        // `history` is non-null here (Step 1 returned otherwise), so this is
-        // the same instant on both terms. Without it the next read would see
-        // a re-stamped version against a stale epoch and the census would
-        // report a disagreement of its own making.
-        armedUndoEpoch                    = history.undoEpoch();
+                if (auto sn = activeSnapStage())
+                    sn.restoreConfigFromPacket(preSnCopy);
+                if (auto sy = activeSymmetryStage())
+                    sy.restoreConfigFromPacket(preSyCopy);
+                run = xfNow;
+                headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow;
+                refreshFrameValid();
+            });
+        image.valid = true;
+        p.valid = true;
+        return p;
     }
 
+    private void recordPipeRefire(Vec3[] anchor,
+                                  Vec3[] after, size_t[] idx, DragBank,
+                                  FalloffPacket preF, FalloffPacket postF,
+                                  SnapPacket preSn, SnapPacket postSn,
+                                  SymmetryPacket preSy, SymmetryPacket postSy) {
+        auto projection = projectPipeRefire(anchor, after, idx,
+            preF, postF, preSn, postSn, preSy, postSy);
+        if (!projection.valid) return;
+        if (projection.stale) {
+            refireAnchor.length = 0;
+            refirePreValid = false;
+            return;
+        }
+        recordTransformCommand(
+            projection.command, TransformHistoryIntent.GenerationRefire);
+        installPreparedRefireState(projection.state);
+    }
     // Phase 3 — wrapper-owned drag state.
     //
     // `dragBaseline`: full-mesh snapshot. Lifetime is now RUN-SCOPED
@@ -7651,6 +7545,274 @@ unittest {
     assert(!uploadTool.prepareUpdate(
         uploadVts, wrongGpuContext, uploadLayer, wrongOwner).accepted,
         "complete Xfrm root accepted a foreign GPU owner");
+
+    // Live/prepared close pairs exercise the two installation adapters around
+    // the same projected command. Payload equality is checked directly, then
+    // undo/redo checks that the installed geometry and run hooks agree.
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+    alias DragBank = XfrmTransformTool.DragBank;
+    alias TransformHistoryIntent =
+        XfrmTransformTool.TransformHistoryIntent;
+    struct ClosePairCell {
+        DragBank bank;
+        TransformHistoryIntent intent;
+        float afterX;
+        string failure;
+    }
+    foreach (cell; [
+        ClosePairCell(DragBank.Rotate, TransformHistoryIntent.RunClose, 11,
+            "paired open Rotate close payload diverged"),
+        ClosePairCell(DragBank.Scale, TransformHistoryIntent.RunClose, 22,
+            "paired open Scale close payload diverged"),
+        ClosePairCell(DragBank.Move, TransformHistoryIntent.RunClose, 33,
+            "paired same-bank boundary payload diverged"),
+        ClosePairCell(DragBank.Move, TransformHistoryIntent.BoundaryCommit, 44,
+            "paired cross-bank boundary payload diverged")]) {
+        Mesh liveMesh = makeCube();
+        Mesh preparedMesh = makeCube();
+        liveMesh.resetSelection();
+        preparedMesh.resetSelection();
+        liveMesh.selectVertex(0);
+        preparedMesh.selectVertex(0);
+        EditMode liveMode = EditMode.Vertices;
+        EditMode preparedMode = EditMode.Vertices;
+        GpuMesh liveGpu, preparedGpu;
+        auto liveView = new View(0, 0, 800, 600);
+        auto preparedView = new View(0, 0, 800, 600);
+        auto liveHistory = new CommandHistory();
+        auto preparedHistory = new CommandHistory();
+        auto liveTool = new XfrmTransformTool(
+            () => &liveMesh, &liveGpu, &liveMode);
+        auto preparedTool = new XfrmTransformTool(
+            () => &preparedMesh, &preparedGpu, &preparedMode);
+        foreach (t; [liveTool, preparedTool]) {
+            t.flagT = cell.bank == DragBank.Move;
+            t.flagR = cell.bank == DragBank.Rotate;
+            t.flagS = cell.bank == DragBank.Scale;
+        }
+        liveTool.setUndoBindings(liveHistory,
+            () => new MeshVertexEdit(&liveMesh, liveView, liveMode));
+        preparedTool.setUndoBindings(preparedHistory,
+            () => new MeshVertexEdit(&preparedMesh,
+                                     preparedView, preparedMode));
+        liveTool.activate();
+        preparedTool.activate();
+        VectorStack liveVts, preparedVts;
+        liveTool.update(liveVts);
+        preparedTool.update(preparedVts);
+        liveTool.openLiveSessionForTest();
+        preparedTool.openLiveSessionForTest();
+        liveTool.editCauseBank = preparedTool.editCauseBank = cell.bank;
+        liveTool.run.t = preparedTool.run.t = Vec3(cell.afterX, 2, 3);
+        auto liveRec = &liveTool.recFor(cell.bank);
+        auto preparedRec = &preparedTool.recFor(cell.bank);
+        liveRec.runStart = preparedRec.runStart = XformState.init;
+        liveRec.runKnown = preparedRec.runKnown = true;
+        liveMesh.vertices[0].x = cell.afterX;
+        preparedMesh.vertices[0].x = cell.afterX;
+
+        auto liveProjection = liveTool.projectOwnedEditClose(cell.bank, false);
+        auto preparedProjection = preparedTool.projectPreparedOwnedEditClose(
+            cell.bank, false, cell.intent);
+        auto liveCmd = cast(MeshVertexEdit)liveProjection.command;
+        auto preparedCmd = cast(MeshVertexEdit)preparedProjection.command;
+        assert(liveCmd !is null && preparedCmd !is null &&
+               liveCmd.editIndices() == preparedCmd.editIndices() &&
+               liveCmd.editBefore() == preparedCmd.editBefore() &&
+               liveCmd.editAfter() == preparedCmd.editAfter(), cell.failure);
+
+        liveTool.installLiveOwnedEditClose(liveProjection, cell.intent);
+        auto context = new PreparedRecordContext(preparedHistory, null);
+        assert(preparedTool.prepareOwnedEditClose(
+            preparedProjection, context, cell.intent));
+        assert(context.markHistoryInstall() && context.validate());
+        context.install();
+        preparedTool.installPreparedUpdateEditClose(preparedProjection.state);
+        assert(!liveTool.editIsOpen() && !preparedTool.editIsOpen(),
+            "paired close adapters did not close both captures");
+        assert(liveHistory.undo() && preparedHistory.undo());
+        assert(liveMesh.vertices == preparedMesh.vertices &&
+               liveTool.run == preparedTool.run, cell.failure);
+        assert(liveHistory.redo() && preparedHistory.redo());
+        assert(liveMesh.vertices == preparedMesh.vertices &&
+               liveTool.run == preparedTool.run, cell.failure);
+    }
+
+    import toolpipe.pipeline : ToolPipeContext;
+    auto pairPipe = new ToolPipeContext();
+    auto pairFalloff = new FalloffStage();
+    auto pairSnap = new SnapStage();
+    auto pairSymmetry = new SymmetryStage();
+    pairPipe.pipeline.add(pairFalloff);
+    pairPipe.pipeline.add(pairSnap);
+    pairPipe.pipeline.add(pairSymmetry);
+    g_pipeCtx = pairPipe;
+
+    // A refire whose geometry is unchanged still carries real pipe-config
+    // endpoints. Compare its empty geometry payload and execute both hook
+    // pairs so the value-bearing config payload is witnessed, not inferred.
+    Mesh liveRefireMesh = makeCube();
+    Mesh preparedRefireMesh = makeCube();
+    EditMode liveRefireMode = EditMode.Vertices;
+    EditMode preparedRefireMode = EditMode.Vertices;
+    GpuMesh liveRefireGpu, preparedRefireGpu;
+    auto liveRefireView = new View(0, 0, 800, 600);
+    auto preparedRefireView = new View(0, 0, 800, 600);
+    auto liveRefireHistory = new CommandHistory();
+    auto preparedRefireHistory = new CommandHistory();
+    auto liveRefireTool = new XfrmTransformTool(
+        () => &liveRefireMesh, &liveRefireGpu, &liveRefireMode);
+    auto preparedRefireTool = new XfrmTransformTool(
+        () => &preparedRefireMesh, &preparedRefireGpu,
+        &preparedRefireMode);
+    liveRefireTool.setUndoBindings(liveRefireHistory,
+        () => new MeshVertexEdit(&liveRefireMesh,
+                                 liveRefireView, liveRefireMode));
+    preparedRefireTool.setUndoBindings(preparedRefireHistory,
+        () => new MeshVertexEdit(&preparedRefireMesh,
+                                 preparedRefireView, preparedRefireMode));
+    auto liveSeed = new MeshVertexEdit(
+        &liveRefireMesh, liveRefireView, liveRefireMode);
+    auto preparedSeed = new MeshVertexEdit(
+        &preparedRefireMesh, preparedRefireView, preparedRefireMode);
+    liveSeed.setEdit([0], [liveRefireMesh.vertices[0]],
+        [liveRefireMesh.vertices[0] + Vec3(1, 0, 0)], "Transform");
+    preparedSeed.setEdit([0], [preparedRefireMesh.vertices[0]],
+        [preparedRefireMesh.vertices[0] + Vec3(1, 0, 0)], "Transform");
+    liveRefireHistory.recordInSession(
+        liveSeed, liveRefireHistory.currentRunId);
+    preparedRefireHistory.recordInSession(
+        preparedSeed, preparedRefireHistory.currentRunId);
+    liveRefireTool.lastAppliedGestureMutationVersion =
+        liveRefireMesh.mutationVersion;
+    preparedRefireTool.lastAppliedGestureMutationVersion =
+        preparedRefireMesh.mutationVersion;
+    liveRefireTool.armedUndoEpoch = liveRefireHistory.undoEpoch();
+    preparedRefireTool.armedUndoEpoch = preparedRefireHistory.undoEpoch();
+    FalloffPacket refirePre;
+    refirePre.type = FalloffType.Element;
+    refirePre.enabled = true;
+    refirePre.pickedRadius = 2;
+    FalloffPacket refirePost = refirePre.ownedDup();
+    refirePost.pickedRadius = 7;
+    pairFalloff.restoreConfigFromPacket(refirePost);
+    const liveAnchor = liveRefireMesh.vertices.dup;
+    const preparedAnchor = preparedRefireMesh.vertices.dup;
+    auto liveRefireProjection = liveRefireTool.projectPipeRefire(
+        liveAnchor, liveAnchor, null, refirePre, refirePost,
+        SnapPacket.init, SnapPacket.init,
+        SymmetryPacket.init, SymmetryPacket.init);
+    auto preparedRefireProjection = preparedRefireTool.projectPreparedPipeRefire(
+        preparedAnchor, preparedAnchor, null, refirePre, refirePost,
+        SnapPacket.init, SnapPacket.init,
+        SymmetryPacket.init, SymmetryPacket.init);
+    assert(liveRefireProjection.valid && preparedRefireProjection.valid &&
+           liveRefireProjection.command.editIndices().length == 0 &&
+           preparedRefireProjection.command.editIndices().length == 0 &&
+           liveRefireProjection.command.editBefore() ==
+               preparedRefireProjection.command.editBefore() &&
+           liveRefireProjection.command.editAfter() ==
+               preparedRefireProjection.command.editAfter(),
+        "paired config-only refire payload diverged");
+    auto liveRefireHooks = liveRefireProjection.command.getHooks();
+    auto preparedRefireHooks = preparedRefireProjection.command.getHooks();
+    liveRefireHooks.revert();
+    const liveRefireRevert = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    pairFalloff.restoreConfigFromPacket(refirePost);
+    preparedRefireHooks.revert();
+    const preparedRefireRevert =
+        pairFalloff.snapshotConfigToPacket().pickedRadius;
+    liveRefireHooks.apply();
+    const liveRefireApply = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    pairFalloff.restoreConfigFromPacket(refirePre);
+    preparedRefireHooks.apply();
+    const preparedRefireApply =
+        pairFalloff.snapshotConfigToPacket().pickedRadius;
+    assert(liveRefireRevert == 2 && preparedRefireRevert == 2 &&
+           liveRefireApply == 7 && preparedRefireApply == 7,
+        "paired config-only refire hook payload diverged");
+
+    // Pin/run/pipe endpoints are part of the command payload too. Exercise
+    // both closure pairs against the same deliberately displaced live state.
+    auto pairAcen = new ActionCenterStage(null, null);
+    pairPipe.pipeline.add(pairAcen);
+    Mesh liveHookMesh = makeCube(), preparedHookMesh = makeCube();
+    EditMode liveHookMode = EditMode.Vertices;
+    EditMode preparedHookMode = EditMode.Vertices;
+    GpuMesh liveHookGpu, preparedHookGpu;
+    auto liveHookView = new View(0, 0, 800, 600);
+    auto preparedHookView = new View(0, 0, 800, 600);
+    auto liveHookHistory = new CommandHistory();
+    auto preparedHookHistory = new CommandHistory();
+    auto liveHookTool = new XfrmTransformTool(
+        () => &liveHookMesh, &liveHookGpu, &liveHookMode);
+    auto preparedHookTool = new XfrmTransformTool(
+        () => &preparedHookMesh, &preparedHookGpu, &preparedHookMode);
+    foreach (t; [liveHookTool, preparedHookTool]) {
+        t.flagT = true; t.flagR = t.flagS = false;
+    }
+    liveHookTool.setUndoBindings(liveHookHistory,
+        () => new MeshVertexEdit(&liveHookMesh, liveHookView, liveHookMode));
+    preparedHookTool.setUndoBindings(preparedHookHistory,
+        () => new MeshVertexEdit(&preparedHookMesh,
+                                 preparedHookView, preparedHookMode));
+    pairAcen.restorePinState(Pin(true, Vec3(1, 2, 3)));
+    pairAcen.restoreSoftPlaced(Pin(true, Vec3(4, 5, 6)));
+    liveHookMesh.resetSelection(); preparedHookMesh.resetSelection();
+    liveHookMesh.selectVertex(0); preparedHookMesh.selectVertex(0);
+    liveHookTool.activate(); preparedHookTool.activate();
+    VectorStack liveHookVts, preparedHookVts;
+    liveHookTool.update(liveHookVts); preparedHookTool.update(preparedHookVts);
+    liveHookTool.openLiveSessionForTest();
+    preparedHookTool.openLiveSessionForTest();
+    liveHookTool.editCauseBank = preparedHookTool.editCauseBank = DragBank.Move;
+    foreach (t; [liveHookTool, preparedHookTool]) {
+        auto rec = &t.recFor(DragBank.Move);
+        rec.runStart = XformState.init;
+        rec.runKnown = true;
+        t.run.t = Vec3(8, 9, 10);
+    }
+    pairAcen.restorePinState(Pin(true, Vec3(11, 12, 13)));
+    pairFalloff.restoreConfigFromPacket(refirePre);
+    liveHookMesh.vertices[0].x = 55;
+    preparedHookMesh.vertices[0].x = 55;
+    auto liveHookProjection = liveHookTool.projectOwnedEditClose(
+        DragBank.Move, false);
+    auto preparedHookProjection =
+        preparedHookTool.projectPreparedOwnedEditClose(
+            DragBank.Move, false, TransformHistoryIntent.RunClose);
+    auto liveHookCmd = cast(MeshVertexEdit)liveHookProjection.command;
+    auto preparedHookCmd = cast(MeshVertexEdit)preparedHookProjection.command;
+    assert(liveHookCmd.editAfter() == preparedHookCmd.editAfter(),
+        "paired pin/run/pipe-config geometry payload diverged");
+    auto liveHooks = liveHookCmd.getHooks();
+    auto preparedHooks = preparedHookCmd.getHooks();
+    liveHooks.revert();
+    const livePinRevert = pairAcen.currentUserPin();
+    const liveRunRevert = liveHookTool.run;
+    const livePipeRevert = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    pairAcen.restorePinState(Pin(true, Vec3(99, 99, 99)));
+    pairFalloff.restoreConfigFromPacket(refirePost);
+    preparedHookTool.run.t = Vec3(99, 99, 99);
+    preparedHooks.revert();
+    assert(pairAcen.currentUserPin() == livePinRevert &&
+           preparedHookTool.run == liveRunRevert &&
+           pairFalloff.snapshotConfigToPacket().pickedRadius == livePipeRevert,
+        "paired pin/run/pipe-config revert payload diverged");
+    liveHooks.apply();
+    const livePinApply = pairAcen.currentUserPin();
+    const liveRunApply = liveHookTool.run;
+    const livePipeApply = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    pairAcen.restorePinState(Pin(true, Vec3(98, 98, 98)));
+    pairFalloff.restoreConfigFromPacket(refirePost);
+    preparedHookTool.run.t = Vec3(98, 98, 98);
+    preparedHooks.apply();
+    assert(pairAcen.currentUserPin() == livePinApply &&
+           preparedHookTool.run == liveRunApply &&
+           pairFalloff.snapshotConfigToPacket().pickedRadius == livePipeApply,
+        "paired pin/run/pipe-config apply payload diverged");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

@@ -953,6 +953,28 @@ public:
     /// (tool-drop / guard-trip) path so a committed relocate stays put.
     void discardUserPlacedSnapshot() { cancelFrozen = false; }
 
+    /// Exact action-center latches consumed by a projected transform close.
+    bool projectedEditCloseMatches(Pin expectedUser, Pin expectedSoft,
+                                   bool expectedFrozen) const nothrow @nogc {
+        return userPin == expectedUser && softPin == expectedSoft &&
+               cancelFrozen == expectedFrozen;
+    }
+
+    bool projectedEditCloseSnapshotFrozen() const pure nothrow @nogc {
+        return cancelFrozen;
+    }
+
+    /// Prepared installation counterpart of the live close operations. The
+    /// enclosing transaction owns publication ordering, so this installs only
+    /// the already-projected resident values.
+    void installProjectedEditClose(Pin nextSoft, bool writeSoft)
+            nothrow @nogc {
+        cancelFrozen = false;
+        if (writeSoft)
+            softPin = Pin(nextSoft.placed,
+                nextSoft.placed ? nextSoft.center : Vec3(0, 0, 0));
+    }
+
     // ----- Per-gesture undo-hook pin accessors (record+consolidate, addendum-2)
     //
     // Under per-gesture commit each Move mouse-up records a tagged in-session

@@ -8005,9 +8005,31 @@ xfrm_transform_base = (ROOT / "source/tools/transform/transform.d").read_text()
 xfrm_item_source = (ROOT / "source/tools/transform/xfrm_item.d").read_text()
 def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
     production = without_unittests(owner)
-    item_start = item.find("private LayerXformEdit buildPreparedItemEditCmd()")
+    def method(source, signature):
+        start = source.find(signature)
+        if start < 0:
+            return ""
+        body_start = source.find("{", start)
+        if body_start < 0:
+            return ""
+        return source[start:balanced_source(source, body_start + 1)]
+    prepared_builder = method(xfrm,
+        "final PreparedXfrmEditCloseImage buildPreparedUpdateEditClose(")
+    shared_close = method(xfrm,
+        "private OwnedEditCloseProjection projectOwnedEditClose(")
+    prepared_adapter = method(xfrm,
+        "private OwnedEditCloseProjection projectPreparedOwnedEditClose(")
+    prepare_adapter = method(xfrm,
+        "private bool prepareOwnedEditClose(")
+    live_installer = method(xfrm,
+        "private void installLiveOwnedEditClose(")
+    prepared_installer = method(xfrm,
+        "final void installPreparedUpdateEditClose(")
+    shared_edit = method(base, "protected Command projectEditCommand(")
+    shared_morph = method(base, "private Command projectMorphEditCommand(")
+    item_start = item.find("private LayerXformEdit projectItemEditCommand()")
     item_end = item.find("// Task 0614 Phase 3", item_start)
-    prepared_item = item[item_start:item_end]
+    shared_item = item[item_start:item_end]
     return has_final_class(owner, "PreparedXfrmUpdateEditCloseOwner") and \
         all(x in owner for x in (
         "target.classinfo !is XfrmTransformTool.classinfo",
@@ -8022,26 +8044,55 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
             "e.xfrmUpdateEditClose.validate();",
             "e.xfrmUpdateEditClose.install();",
             "e.xfrmUpdateEditClose.abort();")) and \
+        all(x in prepared_builder for x in (
+            "projectPreparedOwnedEditClose(",
+            "prepareOwnedEditClose(projection, context,",
+            "TransformHistoryIntent.RunClose")) and \
+        all(x in shared_close for x in (
+            "p.command = itemSubject ? projectItemEditCommand()",
+            ": projectEditCommand(name());",
+            "image.nextDragFalloff = dragFalloff.ownedDup();",
+            "projectGestureHooks(bank, run, frame,",
+            "snapshotFalloffSet(activeFalloffStages())")) and \
+        all(x in prepared_adapter for x in (
+            "return projectOwnedEditClose(bank, itemSubject);",)) and \
+        all(x in prepare_adapter for x in (
+            "context.prepare(p.command, kind, runId)",
+            "? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;")) and \
+        all(x in live_installer for x in (
+            "recordTransformCommand(p.command, intent);",
+            "installPreparedEditClose(image.vertex);",
+            "installPreparedItemEditClose(image.item);\n"
+            "            editCauseBank = DragBank.None;")) and \
+        "recordTransformCommand" not in prepared_installer and \
+        all(x in prepared_installer for x in (
+            "installPreparedItemEditClose(image.item);\n"
+            "            editCauseBank = DragBank.None;",)) and \
         all(x in xfrm for x in (
-            "buildPreparedUpdateEditClose(", "buildPreparedItemEditCmd()",
-            "buildPreparedEditCmd(name())",
-            "PreparedHistoryKind.InSession", "history.currentRunId",
             "preparedUpdateEditCloseMatches(",
             "cast(ubyte) editCauseBank == image.expectedBank",
-            "installPreparedItemEditClose(image.item);\n            editCauseBank = DragBank.None;",
             "installPreparedUpdateEditClose(")) and \
-        all(x in base for x in (
-            "private Command buildPreparedMorphEditCmd(string label)",
-            "protected Command buildPreparedEditCmd(string label)",
+        all(x in shared_edit for x in (
+            "if (morphEditOpen_) return projectMorphEditCommand(label);",
             "idx.reserve(editIdx.length);",
-            "morphEditBeforeHas_[i], valNow, hasNow",
+            "cmd.setEdit(idx, before, after, label);")) and \
+        all(x in shared_morph for x in (
+            "morphEditBefore_[i], morphEditBeforeHas_[i],\n"
+            "                                      valNow, hasNow",
+            "cmd.setEdit(morphEditMap_, entries, label);")) and \
+        all(x in base for x in (
             "capturePreparedEditClose()", "preparedEditCloseMatches(",
             "installPreparedEditClose(")) and \
-        all(x in prepared_item for x in (
-            "private LayerXformEdit buildPreparedItemEditCmd()",
+        all(x in shared_item for x in (
+            "private LayerXformEdit projectItemEditCommand()",
             "payload.reserve(itemEditTargets_.length);",
+            "cmd.setEdit(payload);",
             "capturePreparedItemEditClose()", "preparedItemEditCloseMatches(",
-            "installPreparedItemEditClose("))
+            "installPreparedItemEditClose(")) and \
+        not any(x in base + item for x in (
+            "buildPreparedMorphEditCmd", "buildPreparedEditCmd",
+            "buildMorphEditCmd", "buildEditCmd(",
+            "buildPreparedItemEditCmd", "commitItemEdit("))
 
 if not xfrm_update_edit_close_gate(xfrm_close_owner, record_context,
         prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"],
@@ -8054,16 +8105,31 @@ for target, old, new, label in (
     ("context", "e.xfrmUpdateEditClose.validate();", "true;", "drop context validation"),
     ("context", "e.xfrmUpdateEditClose.install();", "", "drop context install"),
     ("context", "e.xfrmUpdateEditClose.abort();", "", "drop context abort"),
-    ("xfrm", "buildPreparedItemEditCmd()", "null", "drop item command"),
-    ("xfrm", "buildPreparedEditCmd(name())", "null", "drop component command"),
+    ("xfrm", "p.command = itemSubject ? projectItemEditCommand()",
+     "p.command = itemSubject ? null", "drop shared item command"),
+    ("xfrm", ": projectEditCommand(name());", ": null;",
+     "drop shared component command"),
+    ("xfrm", "return projectOwnedEditClose(bank, itemSubject);", "return null;",
+     "drop prepared delegation to shared projection"),
+    ("xfrm", "recordTransformCommand(p.command, intent);", "",
+     "drop live immediate install"),
+    ("xfrm", "image.nextDragFalloff = dragFalloff.ownedDup();", "",
+     "drop projected close state"),
+    ("xfrm", "projectGestureHooks(bank, run, frame,", "projectGestureHooks(bank, XformState.init, frame,",
+     "drop projected run payload"),
     ("xfrm", "cast(ubyte) editCauseBank == image.expectedBank", "true",
      "drop cause validation"),
     ("xfrm", "installPreparedItemEditClose(image.item);\n            editCauseBank = DragBank.None;",
      "installPreparedItemEditClose(image.item);", "drop cause close"),
-    ("xfrm", "PreparedHistoryKind.InSession", "PreparedHistoryKind.Plain",
+    ("xfrm", "? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;",
+     "? PreparedHistoryKind.Plain : PreparedHistoryKind.Plain;",
      "misroute normal close as boundary"),
     ("base", "idx.reserve(editIdx.length);", "", "drop detached position ownership"),
-    ("base", "morphEditBeforeHas_[i], valNow, hasNow", "false, valNow, hasNow", "drop morph presence"),
+    ("base", "morphEditBefore_[i], morphEditBeforeHas_[i],\n"
+     "                                      valNow, hasNow",
+     "morphEditBefore_[i], false,\n"
+     "                                      valNow, hasNow",
+     "drop morph presence"),
     ("item", "payload.reserve(itemEditTargets_.length);", "", "drop detached item ownership"),
 ):
     o, c = xfrm_close_owner, record_context

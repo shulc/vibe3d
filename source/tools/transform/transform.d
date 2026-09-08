@@ -31,7 +31,7 @@ struct PreparedTransformActivationImage {
 
 /// Detached witness for closing a transform edit session after its prepared
 /// history command has installed. Variable payloads are owned so preparation
-/// never relies on `buildEditCmd`'s destructive `scope(exit) cancelEdit()`.
+/// and live close can share one non-destructive payload projection.
 struct PreparedTransformEditCloseImage {
     uint[] editIdx;
     Vec3[] editBefore;
@@ -617,15 +617,15 @@ protected:
     protected bool morphEditIsOpen() const { return morphEditOpen_; }
 
     /// Build the routed-gesture undo record, or null when the session was not
-    /// routed / nothing changed. Closes the capture session, exactly like
-    /// `buildEditCmd`.
-    protected Command buildMorphEditCmd(string label) {
+    /// routed / nothing changed. The projection is deliberately
+    /// non-destructive: callers choose separately whether to close the live
+    /// capture or enlist its close in a prepared transaction.
+    private Command projectMorphEditCommand(string label) {
         import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
         import tools.transform.morph_route : defaultStored;
         import morph_target : resolveMorphTarget;
         import mesh : MapKind;
         if (!editCapturing || !morphEditOpen_) return null;
-        scope(exit) cancelEdit();
         if (history is null) return null;
         auto map = mesh.morphMapForWrite(morphEditMap_);
         if (map is null) return null;
@@ -657,39 +657,12 @@ protected:
         return cmd;
     }
 
-    /// Non-destructive twin of `buildMorphEditCmd` for RECORD preparation.
-    private Command buildPreparedMorphEditCmd(string label) {
-        import commands.mesh.morph_edit : MorphEntryEdit;
-        import tools.transform.morph_route : defaultStored;
-        import morph_target : resolveMorphTarget;
-        import mesh : MapKind;
-        if (!editCapturing || !morphEditOpen_ || history is null) return null;
-        auto map = mesh.morphMapForWrite(morphEditMap_);
-        if (map is null) return null;
-        string nm; MapKind kind;
-        if (!resolveMorphTarget(mesh, nm, kind)) return null;
-        MorphEntryEdit[] entries;
-        const size_t n = morphEditBefore_.length;
-        foreach (i; 0 .. n) {
-            if (i >= mesh.vertices.length) break;
-            const bool hasNow = map.isPresent(i);
-            const Vec3 valNow = map.entryOr(i, defaultStored(mesh.vertices[i], kind));
-            if (hasNow == morphEditBeforeHas_[i] &&
-                preparedVec3Equal(valNow, morphEditBefore_[i])) continue;
-            entries ~= MorphEntryEdit(cast(uint)i, morphEditBefore_[i],
-                                      morphEditBeforeHas_[i], valNow, hasNow);
-        }
-        if (entries.length == 0 || morphEditFactory is null) return null;
-        auto cmd = morphEditFactory();
-        cmd.setEdit(morphEditMap_, entries, label);
-        return cmd;
-    }
-
-    /// Builds the exact positional or routed command without closing or
-    /// rewriting the live session arrays.
-    protected Command buildPreparedEditCmd(string label) {
+    /// Project the exact positional or routed command once without closing or
+    /// rewriting the live session arrays. Live and prepared close paths share
+    /// this payload calculation and deliberately install it in different ways.
+    protected Command projectEditCommand(string label) {
         if (!editCapturing || suppressCommit) return null;
-        if (morphEditOpen_) return buildPreparedMorphEditCmd(label);
+        if (morphEditOpen_) return projectMorphEditCommand(label);
         if (history is null || vertexEditFactory is null) return null;
         uint[] idx;
         Vec3[] before;
@@ -702,7 +675,8 @@ protected:
             if (vid >= mesh.vertices.length) continue;
             const Vec3 a = mesh.vertices[vid];
             idx ~= vid; before ~= editBefore[i]; after ~= a;
-            if (!preparedVec3Equal(a, editBefore[i])) changed = true;
+            if (a.x != editBefore[i].x || a.y != editBefore[i].y ||
+                a.z != editBefore[i].z) changed = true;
         }
         if (!changed) return null;
         auto cmd = vertexEditFactory();
@@ -757,49 +731,6 @@ protected:
         morphEditBefore_.length    = 0;
         morphEditBeforeHas_.length = 0;
         editCapturing     = false;
-    }
-
-    // Build a MeshVertexEdit from the captured snapshot + current state.
-    // Returns null when no positions actually changed (no-op drag) or when
-    // no edit session is open / undo plumbing is missing. Always closes the
-    // capture session via cancelEdit() before returning. Subclasses can
-    // call this from their own commitEdit override to attach tool-specific
-    // state hooks before recording on history.
-    protected MeshVertexEdit buildEditCmd(string label) {
-        if (!editCapturing) return null;
-        scope(exit) cancelEdit();
-        if (history is null || vertexEditFactory is null) return null;
-
-        // mesh.vertices.length can shrink between the open edit and
-        // commit (e.g. SceneReset replacing a subdivided mesh with a
-        // fresh cube while a tool drag is still open) — that flow
-        // deactivates the active tool while disposing the mesh, which
-        // triggers this very commit. Drop any stale indices that no
-        // longer reference a live vert; the edit either records the
-        // surviving subset or returns null when nothing's left.
-        Vec3[] after_;
-        after_.length = editIdx.length;
-        bool changed = false;
-        size_t valid = 0;
-        foreach (i, vid; editIdx) {
-            if (vid >= mesh.vertices.length) continue;
-            editIdx[valid]    = vid;
-            editBefore[valid] = editBefore[i];
-            after_[valid]     = mesh.vertices[vid];
-            if (after_[valid].x != editBefore[valid].x
-             || after_[valid].y != editBefore[valid].y
-             || after_[valid].z != editBefore[valid].z)
-                changed = true;
-            ++valid;
-        }
-        editIdx.length    = valid;
-        editBefore.length = valid;
-        after_.length     = valid;
-        if (!changed) return null;
-
-        auto cmd = vertexEditFactory();
-        cmd.setEdit(editIdx.dup, editBefore.dup, after_, label);
-        return cmd;
     }
 
     // Undo/redo migration P0 — single-chokepoint commit latch. The wrapper
@@ -937,11 +868,13 @@ protected:
         // restores the pin itself); leaving a stale frozen snapshot behind would
         // let a LATER cancel revert a relocate that was already committed.
         discardAcenUserPlacedSnapshot();
-        // Task 1069 — a ROUTED gesture changed the map, not `mesh.vertices`,
-        // so `buildEditCmd` would diff two identical position arrays and
-        // return null: the drag would reach the undo stack not at all.
-        if (auto mcmd = buildMorphEditCmd(label)) { recordCommit(mcmd); return; }
-        auto cmd = buildEditCmd(label);
+        auto projected = projectEditCommand(label);
+        cancelEdit();
+        auto cmd = cast(MeshVertexEdit) projected;
+        if (auto mcmd = cast(MeshMorphEdit) projected) {
+            recordCommit(mcmd);
+            return;
+        }
         if (cmd is null) return;
         recordCommit(cmd);
     }
@@ -953,8 +886,7 @@ protected:
     protected bool prepareEditRecord(PreparedRecordContext context, string label) {
         if (context is null || suppressCommit || !editIsOpen() || history is null)
             return false;
-        Command cmd = buildMorphEditCmd(label);
-        if (cmd is null) cmd = buildEditCmd(label);
+        Command cmd = projectEditCommand(label);
         if (cmd is null) return false;
         auto kind = recordViaInSession ? PreparedHistoryKind.InSession
                                        : PreparedHistoryKind.Plain;
