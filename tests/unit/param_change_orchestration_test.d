@@ -9,7 +9,7 @@ module tests.unit.param_change_orchestration_test;
 
 import std.file : readText;
 import std.path : buildPath, dirName;
-import std.string : indexOf;
+import std.string : count, indexOf, strip;
 
 import command_history : CommandHistory;
 import edit_session;
@@ -143,12 +143,17 @@ unittest {
     immutable wrapperPath = buildPath(repoRoot, "source", "tools", "common",
                                       "command_wrapper.d");
     immutable panelsPath = buildPath(repoRoot, "source", "ui", "panels.d");
+    immutable runnerPath = buildPath(repoRoot, "source", "frame_runner.d");
+    immutable appPath = buildPath(repoRoot, "source", "app.d");
     immutable panelCode = blankNonCode(readText(panelPath));
     immutable attrCode = blankNonCode(readText(attrPath));
     immutable wrapperCode = blankNonCode(readText(wrapperPath));
     immutable panelsCode = blankNonCode(readText(panelsPath));
+    immutable runnerCode = blankNonCode(readText(runnerPath));
+    immutable appCode = blankNonCode(readText(appPath));
     assert(panelCode.length > 1_000 && attrCode.length > 1_000
-           && wrapperCode.length > 10_000 && panelsCode.length > 50_000,
+           && wrapperCode.length > 10_000 && panelsCode.length > 50_000
+           && runnerCode.length > 2_000 && appCode.length > 100_000,
         "parameter orchestration witness read too little production source");
     assert(panelCode.indexOf("t.evaluate();") < 0,
         "parameter orchestration witness: PropertyPanel still owns the "
@@ -160,10 +165,28 @@ unittest {
       ~ "EditSession");
     assert(wrapperCode.indexOf(
            "abstract class CommandWrapperTool : Tool, FrameParameterEvalClient") >= 0
-           && wrapperCode.indexOf("override void evaluateParameterFrame()") >= 0
-           && panelsCode.indexOf("session.tickParameterEvaluation();") >= 0,
-        "frame parameter witness: CommandWrapperTool and the UI-frame lifecycle "
-      ~ "tick are no longer joined by the explicit frame capability");
+           && wrapperCode.indexOf("override void evaluateParameterFrame()") >= 0,
+        "frame parameter witness: CommandWrapperTool lost the explicit frame capability");
+
+    enum sessionTick = "session.tickParameterEvaluation();";
+    enum runnerPhase = "void tickParameterEvaluation(EditSession session) {\n"
+                     ~ "        session.tickParameterEvaluation();\n"
+                     ~ "    }";
+    enum phaseCall = "frameRunner.tickParameterEvaluation(session);";
+    enum sidePanelCall = "drawSidePanel(app);";
+    assert(runnerCode.count(runnerPhase) == 1,
+        "frame parameter owner: FrameRunner must own exactly one named "
+      ~ "EditSession tick phase");
+    assert(panelsCode.count(sessionTick) == 0,
+        "frame parameter owner: drawSidePanel must not own the EditSession tick");
+    assert(appCode.count(phaseCall) == 1 && appCode.count(sidePanelCall) == 1,
+        "frame parameter wiring: expected one phase call and one side-panel draw");
+    const phasePos = appCode.indexOf(phaseCall);
+    const panelPos = appCode.indexOf(sidePanelCall);
+    assert(phasePos >= 0 && panelPos >= 0 && phasePos < panelPos
+           && appCode[phasePos + phaseCall.length .. panelPos].strip.length == 0,
+        "frame parameter timing: the named phase must remain immediately before "
+      ~ "drawSidePanel");
 }
 
 // The source census above constrains ownership, but it cannot see what

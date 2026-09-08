@@ -3,6 +3,7 @@ module frame_runner;
 import ai.element_candidates : publishElementCandidates;
 import bg_gpu_cache : BgGpuCache;
 import document : Document;
+import edit_session : EditSession;
 import editmode : EditMode;
 import editor_app : EditorApp, OverlayMode;
 import eventlog : queryMouse;
@@ -43,6 +44,13 @@ final class FrameRunner {
     /// Tear down frame-owned GL resources while the context is still live.
     void shutdown() {
         bgGpuCache_.shutdown();
+    }
+
+    /// Task 4720: tick explicit observers at the pre-side-panel boundary.
+    /// This preserves frame order while removing panel ownership; the closed
+    /// properties witness is tests/test_tool_sticky.d.
+    void tickParameterEvaluation(EditSession session) {
+        session.tickParameterEvaluation();
     }
 
     void tick(ref Viewport vp, bool doingCameraDrag) {

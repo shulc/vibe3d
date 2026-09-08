@@ -205,7 +205,7 @@ allow source/falloff_handles.d 3
 allow source/falloff_render.d 3
 allow source/forms.d 4
 allow source/forms_render.d 3
-allow source/frame_runner.d 1
+allow source/frame_runner.d 2
 allow source/frame_stall.d 1
 allow source/geometry_clipboard.d 4
 allow source/gizmo.d 3
@@ -396,7 +396,7 @@ allow source/ui/discard_guard.d 4
 allow source/ui/image_rows.d 16
 allow source/ui/item_glyphs.d 3
 allow source/ui/item_rows.d 11
-allow source/ui/panels.d 71
+allow source/ui/panels.d 70
 allow source/ui/pie_render.d 1
 allow source/ui/stat_record.d 1
 allow source/ui/stat_rows.d 1

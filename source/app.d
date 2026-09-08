@@ -5573,6 +5573,7 @@ void main(string[] args) {
                             cast(float) vv.winW, cast(float) vv.winH);
             }
         }
+        frameRunner.tickParameterEvaluation(session);
         drawSidePanel(app);
         drawTabPanel(app);
 
