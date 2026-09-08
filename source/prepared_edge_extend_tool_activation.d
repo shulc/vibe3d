@@ -155,7 +155,7 @@ version(unittest) unittest {
     assert(context.validate()); context.install(); context.install();
     assert(tool.preparedActivationInstalledForTest(expectedPivot) &&
         tool.preparedEmbeddedMoveInstalledForTest() &&
-        tool.preparedEmbeddedLinksForTest() &&
+        tool.preparedEmbeddedInputsForTest() &&
         context.installTraceForTest() == [37,18,8,19,38]);
 
     auto offMesh = makeCube(); offMesh.syncSelection(); offMesh.selectEdge(1);

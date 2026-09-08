@@ -9,10 +9,7 @@ import tools.transform.transform;
 
 struct PreparedScaleActivationImage {
     PreparedTransformActivationImage base;
-    Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);
-    Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);
-    Vec3 activationCenter;
-    Vec3[] activationVertices;
+    Vec3 pendingScale = Vec3(1,1,1);
     bool pendingScaleValid, valid;
     void clear() nothrow @nogc { this = PreparedScaleActivationImage.init; }
 }
@@ -49,7 +46,6 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_scale_update : PreparedScaleUpdateOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
-import snapshot : MeshSnapshot;
 
 enum PreparedScaleUpdateBranch : ubyte {
     InactiveNoop,
@@ -57,19 +53,12 @@ enum PreparedScaleUpdateBranch : ubyte {
     IdleRefresh,
     SelectionRefresh,
     MutationRefresh,
-    PanelRegrade,
-    WrapperRegrade,
 }
 
 struct PreparedScaleUpdateProjection {
     PreparedScaleUpdateBranch branch;
     ulong selectionHash, mutationVersion;
-    bool selectionChanged, mutationChanged, editOpen, packetChanged;
-    bool panelRegrade, wrapperRegrade;
-    bool dragLive, heldNonIdentity, wrapperEligible;
-    FalloffPacket liveFalloff;
-    SnapPacket liveSnap;
-    SymmetryPacket liveSymmetry;
+    bool selectionChanged, mutationChanged, ownerEditOpen;
     Vec3 actionCenter;
     bool valid;
     void clear() nothrow @nogc { this = PreparedScaleUpdateProjection.init; }
@@ -77,27 +66,14 @@ struct PreparedScaleUpdateProjection {
 
 struct PreparedScaleUpdateImage {
     PreparedScaleUpdateProjection projection;
-    MeshSnapshot expectedLive;
     Mesh candidate;
-    Vec3 expectedScale, nextScale, expectedProp, nextProp;
-    Vec3[] expectedActivation, nextActivation;
-    Vec3 expectedActivationCenter, nextActivationCenter;
-    int[] expectedIndices, nextIndices;
-    bool[] expectedMask, nextMask;
-    int expectedCount, nextCount;
     ulong expectedSelectionHash, nextSelectionHash;
     ulong expectedMutationVersion, nextMutationVersion;
     bool expectedCacheDirty, nextCacheDirty;
     bool expectedCenterManual, nextCenterManual;
-    bool expectedNeedsGpu, nextNeedsGpu;
     Vec3 expectedCachedCenter, nextCachedCenter;
     Vec3 expectedHandlerCenter, nextHandlerCenter;
-    FalloffPacket expectedFalloff, nextFalloff;
-    SnapPacket expectedSnap, nextSnap;
-    SymmetryPacket expectedSymmetry, nextSymmetry;
-    PreparedXfrmRefireStateImage wrapperRefire;
-    uint deliveryFlags, deliveryDomains;
-    bool meshPrepared, valid;
+    bool valid;
     void clear() nothrow @nogc { this = PreparedScaleUpdateImage.init; }
 }
 
@@ -179,31 +155,9 @@ public:
     ScaleHeadHandle headX, headY, headZ;
 
 private:
-    // Standalone-only (`wrapperRef is null`): in the wrapped role the truth is
-    // `run.s` on the wrapper. Every wrapped read is re-pointed to
-    // `wrap.publishedScale()`; these fields are kept so the `wrapperRef is null`
-    // branches compile and the standalone panel continues to work.
-    // (`dragScaleAccum` below is the exception in this block — it is role-free:
-    // the WRAPPER drains it, through `pendingScale`, to fold the drag onto its
-    // own run total.)
-    Vec3     scaleAccum     = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
+    // Per-gesture input accumulation. The owner drains this through
+    // `pendingScale` and owns the run-total scale separately.
     Vec3     dragScaleAccum = Vec3(1, 1, 1);  // scale within current drag (for yellow arrows)
-    Vec3     propScale      = Vec3(1, 1, 1);  // persistent value shown in Tool Properties
-    Vec3[]   activationVertices;              // mesh snapshot at tool activation (for props apply)
-    Vec3     activationCenter;               // gizmo center at activation
-    // PER-DRAG TRANSIENT, not session state — the distinction task 0800 asked
-    // for. It is the `scaleAccum` base this drag multiplies onto, and its
-    // contract is: **every site that arms a drag assigns it first**. There are
-    // exactly two such sites (the handle press and `armPlaneDrag()` — the only
-    // two writes of a live `dragAxis`), each assigning it alongside
-    // `dragScaleAccum` / `dragScaleScalarDelta`, and its only consumer
-    // (`setDragAxisScale`) runs only while that drag is live. So, unlike its
-    // neighbours `scaleAccum` / `propScale`, it deliberately has NO `activate()`
-    // reset and NO undo/cancel hook: there is no moment at which a value left
-    // over from a previous session can be read. Measured, not argued — poisoning
-    // this default to a non-identity value changes nothing in the app or the
-    // suite, because no read ever precedes an arm-site write.
-    Vec3     dragStartScaleAccum = Vec3(1, 1, 1);
     float    dragScaleScalarDelta;
     SDL_bool preDragRelativeMouse = SDL_FALSE;
     bool     ownsRelativeMouse;
@@ -234,22 +188,8 @@ private:
     int   planeAxisH = -1, planeAxisV = -1;   // basis-axis indices 0/1/2
     float planeAccumX = 0.0f, planeAccumY = 0.0f;
 
-    // Phase C.3: Tool Properties state at the start of the current edit
-    // session, restored by hooks on undo of the matching MeshVertexEdit.
-    // Standalone-only: the wrapped commit-hook restore is gated on
-    // `wrapperRef is null`.
-    Vec3   preEditScaleAccum;
-    Vec3   preEditPropScale;
-
-    // Numeric scale attrs (`xfrm.transform SX/SY/SZ`).
-    // Driven via `tool.attr <toolId> SX <factor>` — used by the headless
-    // apply path to scale verts about the ACEN center, weighted by the
-    // active falloff stage. Default 1.0 (identity scale).
-    Vec3   headlessScale = Vec3(1, 1, 1);
-
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
-    final Tool preparedWrapperForUpdate() nothrow @nogc { return wrapperRef; }
     final EditMode preparedEditModeForUpdate() const nothrow @nogc { return *editMode; }
     // ── scale single-source plumbing (mirrors RotateTool / MoveTool) ──
     // Gesture-scalar producer output. The principal-axis / uniform-disc /
@@ -275,17 +215,16 @@ public:
     Vec3 inputBasisY = Vec3(0, 1, 0);
     Vec3 inputBasisZ = Vec3(0, 0, 1);
 
-    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
-    // When wrapper-driven (`wrapperRef !is null`) AND the wrapper chained this
+    // Owner-provided input-frame channel (gesture-frame unification, Phase 2).
+    // When the owner chained this
     // gesture off the persisted gizmo frame, the wrapper pushes that ONE unified
     // frame here (via `setWrapperInputFrame`, called once per gesture from
     // `beginScaleDragSession`). The single-axis DECOMPOSE site then projects onto
     // THIS frame instead of the bank's own `inputBasis*`. Replaces the prior
     // hand-synced override that copied the wrapper's persisted basis into
     // `inputBasis*` at gesture start — same value (the channel carries the unified
-    // `frame`, the persisted gesture frame when chained). The STANDALONE path
-    // (`wrapperRef is null`) NEVER
-    // consults this; it keeps its own `inputBasis*` (seeded by `currentBasis`).
+    // `frame`, the persisted gesture frame when chained). An unchained gesture
+    // keeps its own `inputBasis*` (seeded by `currentBasis`).
     Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
     Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
     Vec3 wrapperInputFrameZ = Vec3(0, 0, 1);
@@ -307,16 +246,13 @@ public:
     // frame when wrapper-chained, else the bank's drag-start-frozen
     // `inputBasis*` (standalone / fresh non-chained).
     Vec3 inAxisX() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameX : inputBasisX;
+        return wrapperInputFrameValid ? wrapperInputFrameX : inputBasisX;
     }
     Vec3 inAxisY() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameY : inputBasisY;
+        return wrapperInputFrameValid ? wrapperInputFrameY : inputBasisY;
     }
     Vec3 inAxisZ() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameZ : inputBasisZ;
+        return wrapperInputFrameValid ? wrapperInputFrameZ : inputBasisZ;
     }
 
     // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
@@ -325,7 +261,7 @@ public:
     // here, mirroring the render-rung asserts. Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
         import std.math : abs;
-        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        if (!wrapperInputFrameValid) return;
         enum float tol = 1e-3f;
         assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
                "scale wrapperInputFrameX not unit length");
@@ -341,17 +277,10 @@ public:
                "scale wrapperInputFrame Y·Z not orthogonal");
     }
 
-    // Back-pointer to the unified `XfrmTransformTool`, wired at the
-    // wrapper's `activate()`. Typed as the base class to avoid a
-    // field-level circular import (mirrors `MoveTool` / `RotateTool`);
-    // cast to `XfrmTransformTool` locally where needed. Null for a
-    // standalone (unit-test) instance, which keeps the legacy kernel path.
-    TransformTool wrapperRef;
+    bool negativeScaleEnabled;
 
-    // Embedded role: the composing wrapper owns the edit snapshot and history
-    // payload.  Standalone construction keeps the original local session.
-    private void beginStandaloneEdit() {
-        if (wrapperRef is null) beginEdit();
+    void setInputOptions(bool allowNegativeScale) nothrow @nogc {
+        negativeScaleEnabled = allowNegativeScale;
     }
 
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
@@ -368,8 +297,6 @@ public:
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
             nothrow @nogc {
         cachedCenter = center;
-        if (!editIsOpen())
-            activationCenter = center;
         handler.setPosition(center);
         // flex_border_handles_plan.md Phase 2 — apply the wrapper's Model-C
         // RENDER basis UNCONDITIONALLY (old `dragAxis < 0` render gate removed,
@@ -412,11 +339,6 @@ public:
 
     override void activate() {
         super.activate();
-        scaleAccum = Vec3(1, 1, 1);
-        propScale  = Vec3(1, 1, 1);
-        activationVertices = mesh.vertices.dup;
-        activationCenter   = handler.center;
-        headlessScale = Vec3(1, 1, 1);
         // Reset the gesture-producer scratch on (re)activation.
         pendingScaleValid = false;
         pendingScale      = Vec3(1, 1, 1);
@@ -425,43 +347,30 @@ public:
         PreparedScaleActivationImage image;
         auto live = mesh; if (live is null) return image;
         image.base = buildPreparedActivationImage();
-        image.activationVertices = live.vertices.dup;
-        image.activationCenter = handler.center; image.valid = true; return image;
+        image.valid = true; return image;
     }
     final void installPreparedProductActivation(ref PreparedScaleActivationImage image)
             nothrow @nogc {
         if (!image.valid) return;
-        installPreparedActivation(image.base); scaleAccum = image.scaleAccum;
-        propScale = image.propScale; activationVertices = image.activationVertices;
-        image.activationVertices = null; activationCenter = image.activationCenter;
-        headlessScale = image.headlessScale;
+        installPreparedActivation(image.base);
         pendingScaleValid = image.pendingScaleValid;
         pendingScale = image.pendingScale; image.clear();
     }
     version(unittest) void seedPreparedProductActivationForTest() {
-        seedPreparedActivationForTest(); scaleAccum = propScale = headlessScale = Vec3(4,5,6);
-        activationVertices = [Vec3(9,9,9)]; activationCenter = Vec3(8,8,8);
+        seedPreparedActivationForTest();
         handler.setPosition(Vec3(2,3,4));
         pendingScaleValid = true; pendingScale = Vec3(7,7,7);
     }
     version(unittest) void mutatePreparedHandlerForTest(Vec3 center) {
         handler.setPosition(center);
     }
-    version(unittest) bool preparedProductActivationForTest(size_t count,
-            Vec3 first, const Vec3* livePtr, Vec3 center) const nothrow @nogc {
-        return preparedActivationForTest() && scaleAccum == Vec3(1,1,1) &&
-            propScale == Vec3(1,1,1) && headlessScale == Vec3(1,1,1) &&
-            activationVertices.length == count && activationVertices.length != 0 &&
-            activationVertices[0] == first && activationVertices.ptr !is livePtr &&
-            activationCenter == center && !pendingScaleValid &&
+    version(unittest) bool preparedProductActivationForTest() const
+            nothrow @nogc {
+        return preparedActivationForTest() && !pendingScaleValid &&
             pendingScale == Vec3(1,1,1);
     }
     version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
-        return preparedActivationSeedForTest() && scaleAccum == Vec3(4,5,6) &&
-            propScale == Vec3(4,5,6) && headlessScale == Vec3(4,5,6) &&
-            activationVertices.length == 1 &&
-            activationVertices[0] == Vec3(9,9,9) &&
-            activationCenter == Vec3(8,8,8) && handler.center == Vec3(2,3,4) &&
+        return preparedActivationSeedForTest() && handler.center == Vec3(2,3,4) &&
             pendingScaleValid && pendingScale == Vec3(7,7,7);
     }
     final PreparedTransformProductEffect prepareActivate(
@@ -477,36 +386,24 @@ public:
         return PreparedTransformProductEffect(preparedToolStateOwner,
             PreparedTransformProductKind.Scale, ok);
     }
-    final PreparedScaleUpdateEffect prepareUpdate(ref VectorStack vts,
-            PreparedRecordContext context, Layer layer) {
+    final PreparedScaleUpdateEffect prepareUpdate(bool ownerEditOpen,
+            Vec3 actionCenter, PreparedRecordContext context, Layer layer) {
         if (context is null) return PreparedScaleUpdateEffect(
             preparedToolStateOwner, PreparedScaleUpdateKind.None, false);
         scope(failure) context.discard();
-        auto projection = projectPreparedUpdate(vts);
-        bool selectionHistory = projection.valid && projection.selectionChanged &&
-            prepareEditRecord(context, "Scale");
-        auto owner = PreparedScaleUpdateOwner.prepare(this, layer, vts, context);
-        bool ok = owner !is null;
-        if (ok) {
-            bool hasHistory = selectionHistory || owner.historyPrepared();
-            ok = hasHistory ? context.markHistoryInstall()
-                            : context.markNoHistoryInstall();
-            if (ok && owner.meshPrepared()) {
-                ok = owner.deliveryFlags() != 0 &&
-                    context.prepareStampedMeshImage(layer, owner.candidate(),
-                        owner.deliveryFlags(), owner.deliveryDomains());
-            }
-            if (ok) ok = context.prepareScaleUpdate(owner);
-        }
+        auto owner = PreparedScaleUpdateOwner.prepare(
+            this, layer, ownerEditOpen, actionCenter);
+        bool ok = owner !is null && context.markNoHistoryInstall();
+        if (ok) ok = context.prepareScaleUpdate(owner);
         if (!ok) context.discard();
         return PreparedScaleUpdateEffect(preparedToolStateOwner,
             owner is null ? PreparedScaleUpdateKind.None : owner.effectKind(), ok);
     }
 
-    /// Pointer-free classification of every `update` arm.  Packet and action-
-    /// centre values are copied now; no VectorStack or wrapper borrow escapes.
+    /// Pointer-free classification of bank-owned refresh work. The wrapper
+    /// supplies its edit gate and already-evaluated action-center pose.
     final PreparedScaleUpdateProjection projectPreparedUpdate(
-            ref VectorStack vts) {
+            bool ownerEditOpen, Vec3 actionCenter) {
         PreparedScaleUpdateProjection image;
         image.valid = true;
         if (!active) {
@@ -525,142 +422,43 @@ public:
         image.mutationVersion = mesh.mutationVersion;
         image.selectionChanged = image.selectionHash != lastSelectionHash;
         image.mutationChanged = image.mutationVersion != lastMutationVersion;
-        image.editOpen = editIsOpen();
-        image.liveFalloff = currentFalloff(vts);
-        image.liveSnap = currentSnap(vts);
-        image.liveSymmetry = currentSymmetry(vts);
-        image.packetChanged =
-            !falloffPacketsEqual(image.liveFalloff, dragFalloff) ||
-            !snapPacketsEqual(image.liveSnap, dragSnap) ||
-            !symmetryPacketsEqual(image.liveSymmetry, dragSymmetry);
-
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        XfrmTransformTool wrap;
-        if (wrapperRef !is null)
-            wrap = cast(XfrmTransformTool) wrapperRef;
-        image.dragLive = wrap !is null && wrap.dragInFlight();
-        image.heldNonIdentity = wrap !is null
-            ? wrap.publishedScale() != Vec3(1, 1, 1)
-            : scaleAccum != Vec3(1, 1, 1);
-        image.wrapperEligible = wrap !is null && wrap.preparedRefireEligible(false);
-
-        const bool effectiveEditOpen = image.editOpen && !image.selectionChanged;
-        image.panelRegrade = !image.dragLive && image.heldNonIdentity &&
-            image.packetChanged && effectiveEditOpen;
-        image.wrapperRegrade = !image.dragLive && image.heldNonIdentity &&
-            image.packetChanged && !effectiveEditOpen && image.wrapperEligible;
+        image.ownerEditOpen = ownerEditOpen;
 
         if (image.selectionChanged) {
             image.branch = PreparedScaleUpdateBranch.SelectionRefresh;
         } else if (image.mutationChanged) {
             image.branch = PreparedScaleUpdateBranch.MutationRefresh;
-        } else if (image.panelRegrade) {
-            image.branch = PreparedScaleUpdateBranch.PanelRegrade;
-        } else if (image.wrapperRegrade) {
-            image.branch = PreparedScaleUpdateBranch.WrapperRegrade;
         } else {
             image.branch = PreparedScaleUpdateBranch.IdleRefresh;
         }
-        if (!effectiveEditOpen)
-            image.actionCenter = queryActionCenter(vts);
+        if (!(ownerEditOpen && !image.selectionChanged))
+            image.actionCenter = actionCenter;
         return image;
     }
 
-    final PreparedScaleUpdateImage buildPreparedUpdate(ref VectorStack vts,
-            PreparedRecordContext context = null) {
+    final PreparedScaleUpdateImage buildPreparedUpdate(
+            bool ownerEditOpen, Vec3 actionCenter) {
         PreparedScaleUpdateImage image;
-        image.projection = projectPreparedUpdate(vts);
+        image.projection = projectPreparedUpdate(ownerEditOpen, actionCenter);
         if (!image.projection.valid) return image;
-        auto live = mesh; if (live is null) return image;
-        image.expectedLive = MeshSnapshot.capture(*live);
-        image.expectedScale = image.nextScale = scaleAccum;
-        image.expectedProp = image.nextProp = propScale;
-        image.expectedActivation = activationVertices.dup;
-        image.nextActivation = activationVertices.dup;
-        image.expectedActivationCenter = image.nextActivationCenter = activationCenter;
-        image.expectedIndices = vertexIndicesToProcess.dup;
-        image.nextIndices = vertexIndicesToProcess.dup;
-        image.expectedMask = toProcess.dup; image.nextMask = toProcess.dup;
-        image.expectedCount = image.nextCount = vertexProcessCount;
         image.expectedSelectionHash = image.nextSelectionHash = lastSelectionHash;
         image.expectedMutationVersion = image.nextMutationVersion = lastMutationVersion;
         image.expectedCacheDirty = image.nextCacheDirty = vertexCacheDirty;
         image.expectedCenterManual = image.nextCenterManual = centerManual;
-        image.expectedNeedsGpu = image.nextNeedsGpu = needsGpuUpdate;
         image.expectedCachedCenter = image.nextCachedCenter = cachedCenter;
         image.expectedHandlerCenter = image.nextHandlerCenter = handler.center;
-        image.expectedFalloff = dragFalloff.ownedDup();
-        image.nextFalloff = dragFalloff.ownedDup();
-        image.expectedSnap = dragSnap; image.nextSnap = dragSnap;
-        image.expectedSymmetry = dragSymmetry.ownedDup();
-        image.nextSymmetry = dragSymmetry.ownedDup();
 
         if (image.projection.selectionChanged || image.projection.mutationChanged) {
             image.nextSelectionHash = image.projection.selectionHash;
             image.nextMutationVersion = image.projection.mutationVersion;
             image.nextCacheDirty = true;
-            if (image.projection.selectionChanged) {
-                image.nextScale = Vec3(1,1,1); image.nextProp = Vec3(1,1,1);
-                image.nextActivation = live.vertices.dup;
+            if (image.projection.selectionChanged)
                 image.nextCenterManual = false;
-            }
         }
-
-        if (image.projection.panelRegrade || image.projection.wrapperRegrade) {
-            image.nextFalloff = image.projection.liveFalloff.ownedDup();
-            image.nextSnap = image.projection.liveSnap;
-            image.nextSymmetry = image.projection.liveSymmetry.ownedDup();
-            if (image.nextCacheDirty) {
-                if (*editMode == EditMode.Vertices)
-                    image.nextIndices = live.selectedVertexIndicesVertices();
-                else if (*editMode == EditMode.Edges)
-                    image.nextIndices = live.selectedVertexIndicesEdges();
-                else image.nextIndices = live.selectedVertexIndicesFaces();
-                image.nextCount = cast(int)image.nextIndices.length;
-                image.nextMask.length = live.vertices.length;
-                image.nextMask[] = false;
-                foreach (vi; image.nextIndices) image.nextMask[vi] = true;
-                image.nextCacheDirty = false;
-            }
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool)wrapperRef) {
-                auto prepared = wrap.buildPreparedRefireCandidate(
-                    image.nextFalloff, image.nextSnap, image.nextSymmetry);
-                image.candidate = prepared.mesh;
-                image.deliveryFlags = prepared.deliveryFlags;
-                image.deliveryDomains = prepared.deliveryDomains;
-                image.meshPrepared = prepared.applied;
-                if (image.projection.wrapperRegrade && image.meshPrepared) {
-                    image.wrapperRefire = wrap.buildPreparedRefireState(
-                        context, image.expectedLive.vertices,
-                        image.candidate.vertices,
-                        image.expectedFalloff, image.nextFalloff,
-                        image.expectedSnap, image.nextSnap,
-                        image.expectedSymmetry, image.nextSymmetry);
-                    if (!image.wrapperRefire.valid)
-                        return PreparedScaleUpdateImage.init;
-                }
-            } else {
-                image.expectedLive.restore(image.candidate);
-                import tools.transform.xform_kernels : applyScaleFromActivation;
-                auto delivery = beginPreparedShadow(image.candidate);
-                applyScaleFromActivation(&image.candidate, image.nextIndices,
-                    image.nextActivation, image.nextActivationCenter,
-                    handler.axisX, handler.axisY, handler.axisZ,
-                    image.nextScale, image.nextFalloff, dragAimSpace(),
-                    queryClusterPivots(vts), queryClusterAxes(vts),
-                    image.nextSymmetry, image.nextMask);
-                drainPreparedShadowDelivery(image.candidate,
-                    image.deliveryFlags, image.deliveryDomains);
-                image.meshPrepared = true;
-            }
-            image.nextNeedsGpu = true;
-        }
-        const bool effectiveEditOpen = image.projection.editOpen &&
+        const bool effectiveEditOpen = image.projection.ownerEditOpen &&
             !image.projection.selectionChanged;
         if (!effectiveEditOpen) {
             image.nextCachedCenter = image.projection.actionCenter;
-            image.nextActivationCenter = image.projection.actionCenter;
             image.nextHandlerCenter = image.projection.actionCenter;
         }
         image.valid = true; return image;
@@ -668,63 +466,32 @@ public:
 
     final bool preparedUpdateMatches(ref const PreparedScaleUpdateImage image,
             in Mesh live) const nothrow @nogc {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        return image.valid && image.expectedLive.matches(live) &&
-            preparedVec3Equal(scaleAccum, image.expectedScale) &&
-            preparedVec3Equal(propScale, image.expectedProp) &&
-            preparedVec3SliceEqual(activationVertices, image.expectedActivation) &&
-            preparedVec3Equal(activationCenter, image.expectedActivationCenter) &&
-            vertexIndicesToProcess == image.expectedIndices &&
-            toProcess == image.expectedMask && vertexProcessCount == image.expectedCount &&
-            lastSelectionHash == image.expectedSelectionHash &&
+        return image.valid && lastSelectionHash == image.expectedSelectionHash &&
             lastMutationVersion == image.expectedMutationVersion &&
             vertexCacheDirty == image.expectedCacheDirty &&
             centerManual == image.expectedCenterManual &&
-            needsGpuUpdate == image.expectedNeedsGpu &&
             preparedVec3Equal(cachedCenter, image.expectedCachedCenter) &&
-            preparedVec3Equal(handler.center, image.expectedHandlerCenter) &&
-            falloffPacketsEqual(dragFalloff, image.expectedFalloff) &&
-            snapPacketsEqual(dragSnap, image.expectedSnap) &&
-            symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) &&
-            (!image.wrapperRefire.valid ||
-                ((cast(XfrmTransformTool)wrapperRef) !is null &&
-                 (cast(XfrmTransformTool)wrapperRef)
-                    .preparedRefireStateMatches(image.wrapperRefire)));
+            preparedVec3Equal(handler.center, image.expectedHandlerCenter);
     }
 
     final void installPreparedUpdate(ref PreparedScaleUpdateImage image)
             nothrow @nogc {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
         if (!image.valid) return;
-        scaleAccum = image.nextScale; propScale = image.nextProp;
-        activationVertices = image.nextActivation; image.nextActivation = null;
-        activationCenter = image.nextActivationCenter;
-        vertexIndicesToProcess = image.nextIndices; image.nextIndices = null;
-        toProcess = image.nextMask; image.nextMask = null;
-        vertexProcessCount = image.nextCount;
         lastSelectionHash = image.nextSelectionHash;
         lastMutationVersion = image.nextMutationVersion;
         vertexCacheDirty = image.nextCacheDirty;
-        centerManual = image.nextCenterManual; needsGpuUpdate = image.nextNeedsGpu;
+        centerManual = image.nextCenterManual;
         cachedCenter = image.nextCachedCenter; handler.center = image.nextHandlerCenter;
-        dragFalloff = image.nextFalloff; image.nextFalloff = FalloffPacket.init;
-        dragSnap = image.nextSnap;
-        dragSymmetry = image.nextSymmetry; image.nextSymmetry = SymmetryPacket.init;
-        if (image.wrapperRefire.valid)
-            if (auto wrap = cast(XfrmTransformTool)wrapperRef)
-                wrap.installPreparedRefireState(image.wrapperRefire);
         image.clear();
     }
 
-    // `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`
-    // / `tool.doApply` headless flows. Each is a per-axis scale factor
-    // about the ACEN center, applied along the AXIS-stage basis.
-    override Param[] params() {
-        return [
-            Param.float_("SX", "Scale X", &headlessScale.x, 1.0f),
-            Param.float_("SY", "Scale Y", &headlessScale.y, 1.0f),
-            Param.float_("SZ", "Scale Z", &headlessScale.z, 1.0f),
-        ];
+    version(unittest) final void seedPreparedUpdateProjectionForTest(
+            bool isActive, int axis, ulong selectionHash,
+            ulong mutationVersion) nothrow @nogc {
+        active = isActive;
+        dragAxis = axis;
+        lastSelectionHash = selectionHash;
+        lastMutationVersion = mutationVersion;
     }
 
     // No `applyHeadless()` override — same reason MoveTool and RotateTool have
@@ -734,21 +501,12 @@ public:
     // `run.s` through `applyTRS`, the single geometry-apply entry point. This
     // sub-tool's version could not run and has been removed (audit №4, T3).
 
-    // Phase 7.5h: tool-session boundary — bake pending edit into one
-    // undo entry on tool switch.
-    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Scale, prepareEditRecord(context, "Scale"));
-    }
-
     override void deactivate() {
         restoreRelativeMouseMode();
-        if (editIsOpen())
-            commitEdit("Scale");
         super.deactivate();
     }
 
-    override void update(ref VectorStack vts) {
+    void updateInput(Vec3 actionCenter, bool ownerEditOpen) {
         if (!active) return;
 
         // Selection / mesh cannot change during a drag — skip checks entirely.
@@ -767,217 +525,26 @@ public:
         bool mutChanged = (currentMutVer != lastMutationVersion);
 
         if (selChanged || mutChanged) {
-            // Phase 7.5h: close out any pending edit FIRST so this
-            // session's drags + falloff tweaks land as one history
-            // entry.
-            if (editIsOpen() && selChanged)
-                commitEdit("Scale");
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
 
-            // Geometry-only change: per-edit hooks have already
-            // restored scaleAccum / propScale. activationVertices stays
-            // at the activate-time baseline — applying scaleAccum to
-            // activationVertices around activationCenter always
-            // reproduces current mesh state.
-
-            // Selection change: zero accumulators and refresh
-            // everything.
-            if (selChanged) {
-                scaleAccum         = Vec3(1, 1, 1);
-                propScale          = Vec3(1, 1, 1);
-                activationVertices = mesh.vertices.dup;
-                centerManual       = false;
-            }
-        }
-
-        // Phase 7.5h: live falloff change → re-apply with new weights.
-        // Scale's existing applyScaleFromActivationCpuOnly rebuilds
-        // verts from activationVertices using the captured dragFalloff;
-        // trigger it on packet change.
-        //
-        // Phase 2 (Q5 / brief item 5): idle-time gate + reachability note —
-        // identical to the rotate falloff site (rotate.d update()). For a GIZMO
-        // scale run the session self-closes at every handle mouse-up, so this
-        // site is DEAD at idle; it is reachable only for an OPEN PANEL scale
-        // session (tool.attr SX … with scaleAccum != identity), where the
-        // existing in-place mutation IS the correct coalesce-until-drop behavior
-        // (scenario C, out of scope). The OBJ-4 wrap (record-as-tagged-entry) is
-        // therefore NOT applied — its target idle gizmo-run re-apply no longer
-        // exists post-Phase-2. Only the idle-time gate below lands; flagged for
-        // the plan owner. (See the rotate site for the full rationale.)
-        // Two-arm branch (Phase 2; mirrors the wrapper-Move + rotate sites):
-        //  - ARM 1 (open panel session, editIsOpen() true): the OLD in-place
-        //    coalesce, UNCHANGED — a scale panel session (tool.attr SX … with
-        //    scaleAccum != identity) folds the re-apply into its single drop
-        //    commit and records nothing (scenario C, out of scope).
-        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the wrapper's
-        //    run is open with a landed Scale gesture): the NEW record path. The
-        //    re-grade is baked as a tagged in-session entry in the current run.
-        //    The wrapper owns the run / history / currentRunBank / refire state,
-        //    so the bank+staleness gate and the record route through its public
-        //    R/S seam (refireScaleEligible / recordFalloffRefireScale).
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        bool dragLive = false;
-        XfrmTransformTool wrap = null;
-        if (wrapperRef !is null) {
-            if (auto w = cast(XfrmTransformTool) wrapperRef) {
-                dragLive = w.dragInFlight();
-                wrap = w;
-            }
-        }
-        // Refire gate: in the WRAPPED role read wrapper truth (`publishedScale()`
-        // = run.s — never stale after undo) rather than the sub-tool accumulator.
-        // In the standalone role keep the accumulator gate. Note A: ships in the
-        // SAME commit as the commit-hook restore gate below.
-        bool heldNonIdentity = (wrap !is null)
-            ? (wrap.publishedScale() != Vec3(1, 1, 1))
-            : (scaleAccum != Vec3(1, 1, 1));
-        if (!dragLive && heldNonIdentity) {
-            if (editIsOpen()) {
-                // ARM 1 — panel session: old in-place coalesce, no record.
-                // P-C: trigger spans falloff + snap + symmetry.
-                FalloffPacket liveF  = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
-                SymmetryPacket liveSy = currentSymmetry(vts);
-                if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
-                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
-                    dragFalloff  = liveF;
-                    dragSnap     = liveSn;
-                    dragSymmetry = liveSy;
-                    buildVertexCacheIfNeeded();
-                    applyScaleFromActivationCpuOnly(vts);
-                    needsGpuUpdate = true;
-                }
-            } else if (wrap !is null && wrap.refireScaleEligible()) {
-                // ARM 2 — committed gizmo gesture: re-grade + record. The
-                // bank (Scale) + staleness gates live inside refireScaleEligible.
-                // P-C: trigger spans falloff + snap + symmetry.
-                FalloffPacket liveF  = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
-                SymmetryPacket liveSy = currentSymmetry(vts);
-                if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
-                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
-                    // Capture the pre-recompute (post-gesture) geometry LIVE for
-                    // the once-per-window anchor (OBJ-3 W1: live, never frozen).
-                    Vec3[] anchor = mesh.vertices.dup;
-                    // P-A / P-C: PRE-tweak config = still-current captured packets;
-                    // POST = the live packets. Captured BEFORE the re-read below so
-                    // the re-grade entry's hooks restore the whole config.
-                    FalloffPacket  preF  = dragFalloff,  postF  = liveF;
-                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
-                    SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
-                    dragFalloff  = liveF;
-                    dragSnap     = liveSn;
-                    dragSymmetry = liveSy;
-                    buildVertexCacheIfNeeded();
-                    applyScaleFromActivationCpuOnly(vts);   // mutates mesh.vertices
-                    Vec3[] after = mesh.vertices.dup;
-                    // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireScale(anchor, after, null,
-                                                  preF, postF, preSn, postSn,
-                                                  preSy, postSy);
-                    needsGpuUpdate = true;
-                }
-            }
+            if (selChanged) centerManual = false;
         }
 
         // Pull the gizmo center from the ACEN stage every frame: mode /
         // userPlaced changes don't bump the selection hash or mesh
         // mutation, so they would otherwise not propagate to the
-        // visible gizmo. activationCenter (= scale pivot for the next
-        // drag / prop-apply) tracks cachedCenter so a mid-tool ACEN
-        // mode change reaches the next scale operation too.
+        // visible gizmo.
         //
-        // 7.5h: skip during an open edit — the active scale's pivot is
-        // activationCenter (captured when the session began), and re-
-        // pulling from ACEN here would drift it as the bbox-centroid
+        // Skip during an owner edit: re-pulling from ACEN here would drift it
+        // as the bbox-centroid
         // of the deformed selection moves under non-uniform per-vertex
         // weight.
-        if (!editIsOpen()) {
-            cachedCenter = queryActionCenter(vts);
-            activationCenter = cachedCenter;
+        if (!ownerEditOpen) {
+            cachedCenter = actionCenter;
             handler.setPosition(cachedCenter);
         }
-    }
-
-    private void snapshotEditState() {
-        preEditScaleAccum = scaleAccum;
-        preEditPropScale  = propScale;
-    }
-
-    protected override void commitEdit(string label) {
-        if (suppressCommit) { cancelEdit(); return; }
-        // Task 1069 — a ROUTED gesture writes the map, not `mesh.vertices`, so
-        // `buildEditCmd` returns null and the drag would never reach undo.
-        // Both commands take the SAME hook pair, so the setter is captured as
-        // a delegate rather than duplicating the hook composition below.
-        import commands.mesh.morph_edit : MeshMorphEdit;
-        import command : Command;
-        Command cmd;
-        void delegate(void delegate(), void delegate()) setCmdHooks;
-        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(label)) {
-            cmd = mcmd;
-            setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
-        } else {
-            auto vcmd = buildEditCmd(label);
-            if (vcmd is null) return;
-            cmd = vcmd;
-            setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
-        }
-
-        Vec3 accBefore  = preEditScaleAccum;
-        Vec3 propBefore = preEditPropScale;
-        Vec3 accAfter   = scaleAccum;
-        Vec3 propAfter  = propScale;
-
-        // P-A + P-C — UNIFORM hook family (see rotate.d commitEdit for the full
-        // rationale): compose the WHOLE transient pipe CONFIG restore (falloff +
-        // snap + symmetry) into this gesture's accumulator hooks so mergeRun's
-        // merged first.revert restores both the accumulators AND the run-start
-        // pipe config (snapshot captured at this gesture's commit = run-start,
-        // since a config tweak only fires after a gesture commits). ABSOLUTE
-        // assign; the accum field + the three disjoint stages compose without
-        // clobber.
-        // FALLOFF is now SET-aware: snapshot every active falloff instance's
-        // config (1-element = the prior single-stage behaviour, byte-identical),
-        // keyed by stage identity so restore targets the same instances. SNAP +
-        // SYMMETRY stay SINGLE (one stage each).
-        import toolpipe.stages.falloff : FalloffSetSnapshot, snapshotFalloffSet,
-                                         restoreFalloffSet;
-        FalloffSetSnapshot fSnap = snapshotFalloffSet(falloffStagesForHooks());
-        SnapPacket     snSnap; bool haveSn = false;
-        SymmetryPacket sySnap; bool haveSy = false;
-        if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
-        if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
-        // P-F Phase 3a (MAJOR-5) — capture the WRAPPER field-snapshot hooks (the
-        // run-absolute `run.s` pre/post) into locals so the closures below
-        // compose them alongside the accumulator + pipe-config restores. Null when
-        // standalone (no wrapper) ⇒ inert. DISJOINT wrapper field — composes into
-        // the same closure without clobbering scaleAccum/propScale.
-        setCmdHooks(
-            () {
-                // Accumulator restore is standalone-only: the wrapped role's
-                // geometry is driven by wrapApply (run.s restored by the wrapper
-                // hook). Gate on wrapperRef is null so a wrapped undo-to-identity
-                // leaves scaleAccum at its stale value without corrupting the
-                // refire gate (which now reads wrapper truth, not this accumulator).
-                if (wrapperRef is null) { scaleAccum = accAfter;  propScale = propAfter; }
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-            },
-            () {
-                if (wrapperRef is null) { scaleAccum = accBefore; propScale = propBefore; }
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-            }
-        );
-        recordCommit(cmd);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
@@ -986,21 +553,6 @@ public:
         // Task 0206: gate cachedVp on the interactive (owner-cell) draw —
         // see Tool.draw's doc comment.
         if (!visualOnly) cachedVp = vp;
-
-        // Wrapped: wrapper owns the Model-C renderBasis (set every frame before
-        // draw); standalone (no wrapper — unit tests) self-orients from the live
-        // basis. Re-deriving while wrapped would clobber the gesture-frozen frame.
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
-
-        // Flush pending partial-selection GPU upload once per frame.
-        if (needsGpuUpdate) {
-            uploadToGpu();
-            needsGpuUpdate = false;
-        }
 
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
@@ -1020,12 +572,6 @@ public:
         if (!active) return;
         if (!visualOnly) cachedVp = vp;
 
-        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
         handler.drawAxisBoxesOnly(shader, vp);
@@ -1045,9 +591,8 @@ public:
         // the disc renders for the duration of the LMB hold — even
         // when the click lands outside a gizmo handle (no drag will
         // start, but the user still gets visual confirmation of where
-        // the falloff is anchored). Must happen BEFORE
-        // captureFalloffForDrag(vts) below. No-ops when no Screen-type
-        // falloff stage is active.
+        // the falloff is anchored). No-ops when no Screen-type falloff stage
+        // is active.
         {
             import falloff_handles : screenFalloffActive,
                                      screenFalloffSetCenter,
@@ -1063,7 +608,6 @@ public:
             // Freeze the input-projection basis for the gesture (= the
             // current idle basis = the frozen rendered orientation today).
             currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
-            dragStartScaleAccum = scaleAccum;
             dragScaleAccum = Vec3(1, 1, 1);
             dragScaleScalarDelta = 0.0f;
             version(unittest) {
@@ -1074,18 +618,6 @@ public:
                 ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
             }
 
-            buildVertexCacheIfNeeded();
-            // Capture falloff/symmetry so the standalone (no-wrapper)
-            // fast-path predicate below is meaningful; the unified path
-            // re-captures these in XfrmTransformTool.beginScaleDragSession.
-            // Phase 7.6d: symmetry mirror breaks the single-uniform scale
-            // gpuMatrix fast path the same way falloff does.
-            bool falloffActive = captureFalloffForDrag(vts);
-            bool symmActive    = captureSymmetryForDrag(vts);
-            wholeMeshDrag = !falloffActive && !symmActive
-                && (vertexProcessCount == cast(int)mesh.vertices.length);
-            snapshotEditState();   // capture pre-drag Tool-Properties state.
-            beginStandaloneEdit(); // standalone snapshot; wrapper owns embedded undo
             return true;
         }
 
@@ -1116,29 +648,9 @@ public:
         if (pressPlacesCenter()
             && computeClickRelocateHit(e.x, e.y, center, vts))
         {
-            // Phase 7.5h: relocating to a new pivot is a new logical tool
-            // session — bake the prior session into one undo entry first,
-            // then capture a fresh baseline at the new pivot.
-            if (editIsOpen())
-                commitEdit("Scale");
-            // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's
-            // Move session may also be open. A relocate commits EVERY open
-            // session, so close the wrapper's Move run too (independent of
-            // this scale session → two distinct runs, correct). Reached via
-            // the base-typed wrapperRef cast. Null / standalone unit-test
-            // instance → skipped.
-            if (wrapperRef !is null) {
-                import tools.transform.xfrm_transform : XfrmTransformTool;
-                if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                    wrap.commitSessionAtScaleBoundaryIfOpen();
-            }
             handler.setPosition(center);
             centerManual = true;
             notifyAcenUserPlaced(center);
-            activationVertices = mesh.vertices.dup;
-            activationCenter   = center;
-            scaleAccum         = Vec3(1, 1, 1);
-            propScale          = Vec3(1, 1, 1);
             lastClickWasRelocate = true;
         } else {
             // PINNED (or a relocate ray that missed its plane). Nothing about
@@ -1253,7 +765,6 @@ public:
         // handle drag does, so the drag direction cannot reverse if the
         // rendered frame moves under it.
         currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
-        dragStartScaleAccum  = scaleAccum;
         dragScaleAccum       = Vec3(1, 1, 1);
         dragScaleScalarDelta = 0.0f;
         version(unittest) {
@@ -1263,13 +774,6 @@ public:
             preDragRelativeMouse = SDL_GetRelativeMouseMode();
             ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
         }
-        buildVertexCacheIfNeeded();
-        bool falloffActive = captureFalloffForDrag(vts);
-        bool symmActive    = captureSymmetryForDrag(vts);
-        wholeMeshDrag = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-        snapshotEditState();
-        beginStandaloneEdit();
         return true;
     }
 
@@ -1293,24 +797,12 @@ public:
         // every frame and uploads / resets gpuMatrix in
         // XfrmTransformTool.onMouseButtonUp). This sub-tool only resets
         // its own drag bookkeeping here; no geometry, no upload.
-        wholeMeshDrag = false;
         restoreRelativeMouseMode();
 
         dragAxis = -1;
-        propScale = scaleAccum;
-        // Phase 7.5h: don't reset activationVertices / activationCenter
-        // here. The invariant is `mesh == scaleAlongBasis(activationVertices,
-        // activationCenter, ..., scaleAccum)`; resetting the baseline
-        // while leaving scaleAccum non-identity breaks it (next slider
-        // edit / falloff re-apply would compound scaleAccum onto an
-        // already-scaled baseline). Baseline lives until the session
-        // closes at deactivate / selection change / new tool session.
         // Drop the snap overlay so it doesn't linger after the drag.
         lastSnap = SnapResult.init;
         clearLastSnap();
-        // 7.5h: don't commit at mouseUp — keep edit open so mid-tool
-        // falloff changes / further drags re-apply onto the same
-        // activationVertices baseline.
         return true;
     }
 
@@ -1424,30 +916,17 @@ public:
         pendingScaleValid = true;
     }
 
-    // Task 0332 — gated on the wrapper's `negScale` param: when on, a
+    // Task 0332 — gated on the owner-provided negative-scale option: when on, a
     // negative scale factor (the drag has crossed zero) is let through
-    // unclamped (mirror). Off (default, and the standalone/unwrapped
-    // unit-test construction) keeps the pre-0332 clamp-at-0 behavior.
+    // unclamped (mirror). Off keeps the pre-0332 clamp-at-0 behavior.
     // Regardless of the flag, a non-finite delta (NaN/inf, float drift
     // in the accumulated `dragScaleScalarDelta`) is rejected back to the
     // identity factor 1.0 — never propagated into the kernel.
     private float clampScaleFactor(float f) {
         import std.math : isFinite;
         if (!isFinite(f)) return 1.0f;
-        if (negScaleAllowed()) return f;
+        if (negativeScaleEnabled) return f;
         return f < 0.0f ? 0.0f : f;
-    }
-
-    // Cross-instance query for the wrapper's negScale flag (mirrors the
-    // existing `cast(XfrmTransformTool) wrapperRef` pattern used throughout
-    // this class). Standalone (wrapperRef is null, unit-test construction
-    // only) has no negScale param at all — always clamp there.
-    private bool negScaleAllowed() {
-        if (wrapperRef is null) return false;
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-            return wrap.negScaleEnabled();
-        return false;
     }
 
     // Per-INDEX form of `setDragAxisScale`. The plane drag needs a DIFFERENT
@@ -1460,40 +939,14 @@ public:
         }
     }
 
-    // Publish this motion's within-drag factor, and — STANDALONE ONLY — fold it
-    // into the run total.
-    //
-    // Task 0802. The run total is `drag-start base ⊗ this drag's factor`, and it
-    // has ONE owner per role, not two agreeing copies:
-    //   - WRAPPED: the wrapper owns it. It drains `dragScaleAccum` (published
-    //     just below, via `pendingScale`) and folds it onto ITS OWN drag-start
-    //     snapshot: `run.s = gestureStart.s ⊗ f` (xfrm_transform.d, the
-    //     `activeDrag is scaleSub` branch). Writing `scaleAccum` here as well was
-    //     a DEAD STORE — and not even a copy of the wrapper's number: its base
-    //     `dragStartScaleAccum` is this sub-tool's accumulator, which the wrapped
-    //     role stopped maintaining when the role split landed, so the two
-    //     "mirrored" products are computed from DIFFERENT bases and only the
-    //     wrapper's is ever read.
-    //   - STANDALONE: this sub-tool owns it; `scaleAccum` is the truth its kernel
-    //     and its Tool-Properties rows read, so the fold stays.
-    // The `dragScaleAccum` publication is role-free: the wrapper's drain and the
-    // standalone yellow-arrow display both read it.
+    // Publish this motion's within-drag factor. The owner folds it onto its
+    // gesture-start run value; this bank owns no cumulative transform state.
     private void setDragAxisScale(bool scaleX, bool scaleY, bool scaleZ,
                                   float scaleFactor)
     {
-        immutable bool ownsRunTotal = wrapperRef is null;
-        if (scaleX) {
-            dragScaleAccum.x = scaleFactor;
-            if (ownsRunTotal) scaleAccum.x = dragStartScaleAccum.x * scaleFactor;
-        }
-        if (scaleY) {
-            dragScaleAccum.y = scaleFactor;
-            if (ownsRunTotal) scaleAccum.y = dragStartScaleAccum.y * scaleFactor;
-        }
-        if (scaleZ) {
-            dragScaleAccum.z = scaleFactor;
-            if (ownsRunTotal) scaleAccum.z = dragStartScaleAccum.z * scaleFactor;
-        }
+        if (scaleX) dragScaleAccum.x = scaleFactor;
+        if (scaleY) dragScaleAccum.y = scaleFactor;
+        if (scaleZ) dragScaleAccum.z = scaleFactor;
     }
 
     private int motionDeltaX(ref const SDL_MouseMotionEvent e) const {
@@ -1510,108 +963,32 @@ public:
         ownsRelativeMouse = false;
     }
 
-    override void drawProperties() {
-        if (wrapperRef !is null) {
-            // WRAPPED role (FORMS=0 kill-switch only — FORMS=1 suppresses this
-            // path entirely). Seed propScale from wrapper truth each frame;
-            // REPLACES the dragAxis>=0 accumulator mirror (Note B: publishedScale()
-            // already reflects the in-progress gizmo factor in the wrapped path,
-            // so assigning scaleAccum on top would double-count the drag).
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                propScale = wrap.publishedScale();
-        } else if (dragAxis >= 0) {
-            propScale = scaleAccum;
-        }
+    struct PanelInput {
+        Vec3 scale;
+        bool active;
+        bool done;
+    }
+
+    PanelInput drawInputProperties(Vec3 publishedValue) {
+        Vec3 value = publishedValue;
         // Task 0332: negScale relaxes both the slider's v_min floor and the
         // post-write clamp below so a panel drag can cross zero into a
         // negative (mirrored) factor.
-        bool  allowNeg  = negScaleAllowed();
-        float scaleVMin = allowNeg ? -float.max : 0.0f;
-        ImGui.DragFloat("X", &propScale.x, 0.01f, scaleVMin, float.max, "%.4f");
+        float scaleVMin = negativeScaleEnabled ? -float.max : 0.0f;
+        ImGui.DragFloat("X", &value.x, 0.01f, scaleVMin, float.max, "%.4f");
         bool xActive = ImGui.IsItemActive(), xDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Y", &propScale.y, 0.01f, scaleVMin, float.max, "%.4f");
+        ImGui.DragFloat("Y", &value.y, 0.01f, scaleVMin, float.max, "%.4f");
         bool yActive = ImGui.IsItemActive(), yDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Z", &propScale.z, 0.01f, scaleVMin, float.max, "%.4f");
+        ImGui.DragFloat("Z", &value.z, 0.01f, scaleVMin, float.max, "%.4f");
         bool zActive = ImGui.IsItemActive(), zDone = ImGui.IsItemDeactivatedAfterEdit();
 
-        bool anyActive = xActive || yActive || zActive;
-        bool anyDone   = xDone   || yDone   || zDone;
-        if (!(anyActive || anyDone)) return;
-
-        // Clamp and update scaleAccum from propScale.
-        if (xActive || xDone) { if (!allowNeg && propScale.x < 0) propScale.x = 0; scaleAccum.x = propScale.x; }
-        if (yActive || yDone) { if (!allowNeg && propScale.y < 0) propScale.y = 0; scaleAccum.y = propScale.y; }
-        if (zActive || zDone) { if (!allowNeg && propScale.z < 0) propScale.z = 0; scaleAccum.z = propScale.z; }
-
-        buildVertexCacheIfNeeded();
-        // Phase 7.5: re-capture falloff per active frame; per-vertex
-        // weight breaks the wholeMesh GPU bypass fast path.
-        // drawProperties() doesn't have a dispatcher-built vts —
-        // construct one locally for the falloff/symmetry re-capture.
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket propSubj;
-        VectorStack propVts;
-        buildLocalVts(propSubj, propVts);
-        bool falloffActive = captureFalloffForDrag(propVts);
-        bool symmActive    = captureSymmetryForDrag(propVts);
-        bool wholeMesh = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-
-        // Phase C.3: snapshot pre-drag state on the FIRST active frame
-        // only (before beginEdit() opens the session); subsequent frames
-        // are no-ops on both calls.
-        if (anyActive && !editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        } else if (anyActive) {
-            beginStandaloneEdit();   // idempotent
+        if (!negativeScaleEnabled) {
+            if (value.x < 0.0f) value.x = 0.0f;
+            if (value.y < 0.0f) value.y = 0.0f;
+            if (value.z < 0.0f) value.z = 0.0f;
         }
-
-        // Update CPU vertices (fast, no GPU) from THE VALUE THIS SLIDER JUST
-        // SET, not from whatever the run truth held before it (task 0801).
-        // `propScale` is the role-correct absolute factor at this point:
-        //   - STANDALONE: it equals `scaleAccum` (the writes just above keep the
-        //     two in lockstep, and every other site assigns them together), so
-        //     the kernel gets exactly what it got before.
-        //   - WRAPPED: it is the wrapper's run truth, re-seeded at the top of
-        //     this function, with this frame's edit folded in. Passing it is
-        //     what makes the wrapped slider drive geometry at all — the
-        //     truth-reading entry below would re-apply the UNCHANGED wrapper
-        //     value and the edit would be inert (it was, 2026-06-11..2026-08-15).
-        applyScaleAbsoluteCpuOnly(propVts, propScale);
-
-        if (anyActive) {
-            if (wholeMesh && wrapperRef is null) {
-                // STANDALONE whole-mesh: GPU bypass — upload base once at drag
-                // start, then only update matrix (matrix is around
-                // activationVertices, the correct base with no wrapper baseline).
-                if (!propsDragging) {
-                    uploadPropsBase(activationVertices);
-                    propsDragging = true;
-                }
-                gpuMatrix = pivotScaleMatrixBasis(activationCenter,
-                    handler.axisX, handler.axisY, handler.axisZ,
-                    scaleAccum.x, scaleAccum.y, scaleAccum.z);
-            } else {
-                // WRAPPED path (Phase 1): GPU bypass would preview from the wrong
-                // base (activationVertices), ignoring baked history in
-                // dragBaseline. applyTRS wrote correct CPU verts — defer upload.
-                // Partial selection always defers too.
-                needsGpuUpdate = true;
-            }
-        } else {
-            // Drag ended: commit final CPU state to GPU. 7.5h: don't
-            // commit the edit here — props sliders are part of the
-            // same tool session as gizmo drags.
-            if (propsDragging) {
-                gpu.upload(*mesh);
-                gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-                propsDragging = false;
-            } else {
-                needsGpuUpdate = true;
-            }
-        }
+        return PanelInput(value, xActive || yActive || zActive,
+                          xDone || yDone || zDone);
     }
 
 private:
@@ -1622,87 +999,6 @@ private:
         if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ)) return -1.0f;
         if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ)) return -1.0f;
         return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
-    }
-
-    // Apply scale from activationVertices to CPU vertices only (no GPU).
-    // Uses current scaleAccum for all three basis axes.
-    // Phase 7.5: per-axis factor blended toward 1.0 by falloff weight,
-    // evaluated at the activation-time vert position so the weight
-    // doesn't drift as the slider scales the vert through the falloff
-    // field.
-    //
-    // Single-source: the property-panel slider path and the kept-open-edit
-    // falloff-reapply both reach geometry through here. It now DELEGATES to
-    // the wrapper's `applyScaleAbsoluteFromRun` → `applyTRS(dragBaseline)` so
-    // the "ui" (panel) path shares the SAME single geometry-apply entry point
-    // AND the SAME run baseline as the "handle" (drag) and "headless" (numeric)
-    // paths. Applying from the run baseline (not activationVertices) preserves
-    // baked cross-axis history. The wrapper owns the edit session and undo hooks.
-    //
-    // Standalone fallback (a bare ScaleTool with no wrapper — only unit-test
-    // construction): the original `applyScaleFromActivation` kernel call,
-    // numerically identical for the absolute scaleAccum apply.
-    //
-    // TWO ENTRIES, because the callers disagree about ONE thing: which value is
-    // the truth at the moment of the call (task 0801).
-    //   - `applyScaleAbsoluteCpuOnly(vts, factors)` — the caller HOLDS the new
-    //     absolute value (the legacy slider arm). It publishes `factors` to the
-    //     wrapper, so the edit is what lands. Forms value batches bypass this
-    //     bank and normalize once in the wrapper.
-    //   - `applyScaleFromActivationCpuOnly(vts)` — the caller holds NOTHING new
-    //     (the idle falloff-refire arms in update()); the value is whatever the
-    //     run currently holds, re-applied under fresh falloff weights.
-    // Phase 5b collapsed both onto the second reading. That is right for the
-    // refire and wrong for a panel edit, and the FORMS=0 legacy slider — the one
-    // panel caller that does NOT write `run.s` before calling — was silently
-    // inert for it from 2026-06-11 to 2026-08-15: it wrote `scaleAccum` and this
-    // method then re-applied the UNCHANGED `run.s` over the top.
-    void applyScaleAbsoluteCpuOnly(ref VectorStack vts, Vec3 factors) {
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            auto wrap = cast(XfrmTransformTool) wrapperRef;
-            if (wrap !is null) {
-                // Phase 1 (R/S run-baseline fix): apply from the WRAPPER's run
-                // baseline (`dragBaseline`), NOT activationVertices. After a
-                // cross-axis gizmo gesture the prior transform is baked into
-                // dragBaseline + mesh, not into activationVertices, so applying
-                // the full factor from activationVertices would discard it.
-                // The run-baseline entry sets `run.s = factors` (clamped there by
-                // the negScale rule) and applies it absolutely against
-                // dragBaseline-with-baked-history. The caller has already opened
-                // the wrapper edit with Scale provenance.
-                wrap.applyScaleAbsoluteFromRun(factors);
-                return;
-            }
-        }
-        import tools.transform.xform_kernels : applyScaleFromActivation;
-        applyScaleFromActivation(mesh, vertexIndicesToProcess,
-                                 activationVertices,
-                                 activationCenter,
-                                 handler.axisX, handler.axisY, handler.axisZ,
-                                 factors,
-                                 dragFalloff, dragAimSpace(),
-                                 queryClusterPivots(vts), queryClusterAxes(vts),
-                                 dragSymmetry, toProcess);
-    }
-
-    // Re-apply THE CURRENT RUN TOTAL (no new value) — the idle falloff-refire
-    // arms in update(). In the WRAPPED role that total is the wrapper's
-    // `publishedScale()` (`run.s`, never stale after an undo), NOT this
-    // sub-tool's `scaleAccum`, which the wrapped role no longer maintains.
-    void applyScaleFromActivationCpuOnly(ref VectorStack vts) {
-        applyScaleAbsoluteCpuOnly(vts, currentRunScale());
-    }
-
-    // The run-total per-axis factor as of now: wrapper truth when wrapped, the
-    // sub-tool accumulator when standalone.
-    private Vec3 currentRunScale() {
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                return wrap.publishedScale();
-        }
-        return scaleAccum;
     }
 
     int hitTestAxes(int mx, int my) {

@@ -347,8 +347,8 @@ public:
         // sub-tools its flags enable, so a bank that was switched on while the
         // tool was down has to be visible to that call.
         syncBankFlags();
-        // Bring the embedded gizmo online (its sub-tools' activate + wrapperRef
-        // wiring). The wrapper never owns geometry here, but it needs to be
+        // Bring the embedded gizmo online (including each enabled input bank).
+        // The wrapper never owns geometry here, but it needs to be
         // active so its banks render + hit-test.
         xfrm.activate();
         // The Move sub-tool is ALSO the off-handle haul engine (see the header
@@ -429,8 +429,8 @@ public:
     version(unittest) final bool preparedEmbeddedMoveInstalledForTest() {
         return xfrm.moveBank().preparedProductActivationForTest();
     }
-    version(unittest) final bool preparedEmbeddedLinksForTest() const nothrow @nogc {
-        return xfrm.preparedWrapperLinksForTest();
+    version(unittest) final bool preparedEmbeddedInputsForTest() const nothrow @nogc {
+        return xfrm.preparedBankInputsForTest();
     }
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {

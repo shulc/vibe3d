@@ -57,7 +57,7 @@ enum PreparedRotateUpdateKind : ubyte {
 }
 enum PreparedScaleUpdateKind : ubyte {
     None, InactiveNoop, DraggingNoop, IdleRefresh, SelectionRefresh,
-    MutationRefresh, PanelRegrade, WrapperRegrade
+    MutationRefresh
 }
 enum PreparedXfrmUpdateKind : ubyte { None, InactiveNoop, Active }
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }

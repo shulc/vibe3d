@@ -9,7 +9,7 @@ import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
 import prepared_xfrm_update_edit_close : PreparedXfrmUpdateEditCloseOwner;
 import prepared_xfrm_slot_poll : PreparedXfrmSlotPollOwner;
 import prepared_xfrm_update_boundary : PreparedXfrmUpdateBoundaryOwner;
-import prepared_xfrm_move_regrade : PreparedXfrmMoveRegradeOwner;
+import prepared_xfrm_replay : PreparedXfrmReplayOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_scale_update : PreparedScaleUpdateOwner;
@@ -443,7 +443,7 @@ struct PreparedXfrmRefireCandidate {
     }
 }
 
-struct PreparedXfrmMoveRegradeImage {
+struct PreparedXfrmReplayImage {
     MeshSnapshot expectedLive;
     Mesh candidate;
     int[] expectedIndices;
@@ -471,7 +471,7 @@ struct PreparedXfrmMoveRegradeImage {
     Layer[] itemTargets;
     ItemXform[] expectedItemXforms;
     ItemXform[] nextItemXforms;
-    PreparedXfrmRefireStateImage wrapperRefire;
+    PreparedXfrmRefireStateImage historyRefire;
     uint deliveryFlags;
     uint deliveryDomains;
     bool panel;
@@ -479,7 +479,7 @@ struct PreparedXfrmMoveRegradeImage {
     bool meshPrepared;
     bool itemPrepared;
     bool valid;
-    void clear() nothrow @nogc { this = PreparedXfrmMoveRegradeImage.init; }
+    void clear() nothrow @nogc { this = PreparedXfrmReplayImage.init; }
 }
 
 /// Detached final phase of `update`: subject publication, shared gizmo pose
@@ -964,10 +964,9 @@ public:
 
     override void activate() {
         super.activate();   // sets active=true, runs resetTransientState()
-        // One-time activation wiring (NOT part of resyncSession): bring the
-        // composed sub-tools online and back-link them to this wrapper.
+        // Bring the composed input banks online.
         foreach (sub; enabledSubs()) sub.activate();
-        scaleSub.wrapperRef = this;    // scale single-source plumbing
+        scaleSub.setInputOptions(negScale);
 
         // Record+consolidate: a fresh run opens for this tool session. Allocate a
         // run id so this session's gestures are tagged distinctly from any prior
@@ -1205,7 +1204,7 @@ public:
     // accumulators and per-drag fast-path state. Shared by activate() and
     // resyncSession() so the two can't drift. Touches only drag-invariant
     // bookkeeping (no open edit exists when resyncSession() runs); the one-time
-    // sub-tool activation + wrapperRef wiring stays in activate().
+    // sub-tool activation and owner-provided inputs stay in activate().
     protected override void resetTransientState() {
         super.resetTransientState();
         // P-F Phase 3 — display-field preservation on the resync-after-undo path.
@@ -1262,7 +1261,6 @@ public:
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
         bool accepted = prepareEditRecord(context, "Move");
-        if (flagS) accepted = scaleSub.prepareDeactivate(context).historyAccepted || accepted;
         // TASK 4053 measured what this line does NOT do, and left it alone.
         // The consolidate prepares INTO the history token, and the door below
         // picks `markNoHistoryInstall()` whenever the run recorded no NEW
@@ -1561,10 +1559,12 @@ public:
         if (activeDrag is null
             && dragBaseline.length == mesh.vertices.length
             && (regradeBank == DragBank.Move ||
-                regradeBank == DragBank.Rotate)
+                regradeBank == DragBank.Rotate ||
+                regradeBank == DragBank.Scale)
             && bankIsNonIdentity(regradeBank)) {
             if (editIsOpen() && (editCauseBank == DragBank.Move ||
-                                 editCauseBank == DragBank.Rotate)) {
+                                 editCauseBank == DragBank.Rotate ||
+                                 editCauseBank == DragBank.Scale)) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: the trigger now spans the whole pipe config — falloff,
                 // snap AND symmetry. A mid-session toggle of any of the three
@@ -1601,7 +1601,8 @@ public:
             } else if (history !is null
                     && history.runOpen()
                     && (currentRunBank == DragBank.Move ||
-                        currentRunBank == DragBank.Rotate)
+                        currentRunBank == DragBank.Rotate ||
+                        currentRunBank == DragBank.Scale)
                     && regradeStampCurrent()) {
                 // ARM 2 — committed gizmo gesture: re-grade + record.
                 // Staleness gate (OBJ-1) checked at the SITE before the recompute
@@ -1678,7 +1679,10 @@ public:
             moveSub.updateInput(queryActionCenter(vts), editIsOpen());
         if (flagR)
             rotateSub.updateInput(queryActionCenter(vts), editIsOpen());
-        if (flagS) scaleSub.update(vts);
+        if (flagS) {
+            scaleSub.setInputOptions(negScale);
+            scaleSub.updateInput(queryActionCenter(vts), editIsOpen());
+        }
         if (activeDrag is moveSub)
             setSharedGizmoPose(moveSub.handler.center, vts);
         else if (activeDrag is rotateSub)
@@ -1746,7 +1750,8 @@ public:
         p.regradeBank = cast(ubyte)regradeBank;
         p.bankHeld = dragBaseline.length == mesh.vertices.length &&
             (regradeBank == DragBank.Move ||
-             regradeBank == DragBank.Rotate) &&
+             regradeBank == DragBank.Rotate ||
+             regradeBank == DragBank.Scale) &&
             bankIsNonIdentity(regradeBank);
         p.liveFalloff = currentFalloff(vts).ownedDup();
         p.liveSnap = currentSnap(vts);
@@ -1989,7 +1994,7 @@ public:
 
     /// Prepared composition of the already-closed T/R/S update products and
     /// the wrapper tail. The wrapper pre-phase (selection/run boundary and
-    /// Move re-grade) is deliberately a separate owner so its history must be
+    /// wrapper replay) is deliberately a separate owner so its history must be
     /// decided before this method is used by the complete root producer.
     final PreparedXfrmUpdateEffect prepareUpdateBanksAndTail(
             ref VectorStack vts, PreparedRecordContext context, Layer layer) {
@@ -2011,22 +2016,15 @@ public:
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
             rotateSub, layer, editIsOpen(), queryActionCenter(vts));
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
-            scaleSub, layer, vts, context);
+            scaleSub, layer, editIsOpen(), queryActionCenter(vts));
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(this, vts);
 
         bool ok = (!flagT || moveOwner !is null) &&
                   (!flagR || rotateOwner !is null) &&
                   (!flagS || scaleOwner !is null) && tailOwner !is null;
-        bool hasHistory = scaleOwner !is null && scaleOwner.historyPrepared();
-        if (ok) ok = hasHistory ? context.markHistoryInstall()
-                                : context.markNoHistoryInstall();
+        if (ok) ok = context.markNoHistoryInstall();
         if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
         if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
-        if (ok && flagS && scaleOwner.meshPrepared()) {
-            ok = scaleOwner.deliveryFlags() != 0 &&
-                context.prepareStampedMeshImage(layer, scaleOwner.candidate(),
-                    scaleOwner.deliveryFlags(), scaleOwner.deliveryDomains());
-        }
         if (ok && flagS) ok = context.prepareScaleUpdate(scaleOwner);
         if (ok) ok = context.prepareXfrmUpdateTail(tailOwner);
         if (!ok) context.discard();
@@ -2064,9 +2062,9 @@ public:
                 this, projection);
         }
         auto slotOwner = PreparedXfrmSlotPollOwner.prepare(this, projection);
-        PreparedXfrmMoveRegradeOwner moveRegrade;
+        PreparedXfrmReplayOwner replay;
         if (projection.panelRegrade || projection.wrapperRegrade)
-            moveRegrade = PreparedXfrmMoveRegradeOwner.prepare(
+            replay = PreparedXfrmReplayOwner.prepare(
                 this, layer, projection, context);
 
         PreparedMoveUpdateOwner moveOwner;
@@ -2077,20 +2075,19 @@ public:
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
             rotateSub, layer, editIsOpen(), queryActionCenter(vts));
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
-            scaleSub, layer, vts, context);
+            scaleSub, layer, editIsOpen(), queryActionCenter(vts));
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(
-            this, vts, moveRegrade !is null);
+            this, vts, replay !is null);
 
         bool ok = projection.valid && slotOwner !is null && tailOwner !is null &&
             (!boundary || (editClose !is null && boundaryOwner !is null)) &&
             (!(projection.panelRegrade || projection.wrapperRegrade) ||
-                moveRegrade !is null) &&
+                replay !is null) &&
             (!flagT || moveOwner !is null) &&
             (!flagR || rotateOwner !is null) &&
             (!flagS || scaleOwner !is null);
         bool hasHistory = (editClose !is null && editClose.historyPrepared()) ||
-            (moveRegrade !is null && moveRegrade.historyPrepared()) ||
-            (scaleOwner !is null && scaleOwner.historyPrepared());
+            (replay !is null && replay.historyPrepared());
         if (ok && boundaryOwner !is null && boundaryOwner.closesRun()) {
             auto consolidated = context.consolidate(history.currentRunId);
             ok = consolidated.accepted && context.nextRun() != 0;
@@ -2103,40 +2100,35 @@ public:
         if (ok && boundaryOwner !is null)
             ok = context.prepareXfrmUpdateBoundary(boundaryOwner);
         if (ok) ok = context.prepareXfrmSlotPoll(slotOwner);
-        if (ok && moveRegrade !is null && moveRegrade.meshPrepared()) {
-            ok = moveRegrade.deliveryFlags() != 0 &&
-                context.prepareStampedMeshImage(layer, moveRegrade.candidate(),
-                    moveRegrade.deliveryFlags(), moveRegrade.deliveryDomains());
+        if (ok && replay !is null && replay.meshPrepared()) {
+            ok = replay.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, replay.candidate(),
+                    replay.deliveryFlags(), replay.deliveryDomains());
         }
-        if (ok && moveRegrade !is null)
-            ok = context.prepareXfrmMoveRegrade(moveRegrade);
+        if (ok && replay !is null)
+            ok = context.prepareXfrmReplay(replay);
 
         // Wrapper upload precedes the sub-tool updates. Item re-grade has no
         // vertex upload; tail still clears its deferred flag exactly once.
         if (ok && ((needsGpuUpdate && vertexProcessCount > 0) ||
-                   (moveRegrade !is null && moveRegrade.wantsWrapperUpload()))) {
+                   (replay !is null && replay.wantsWrapperUpload()))) {
             if (gpu is null)
                 ok = false;
             else if (gpu.suppressCageUpload) {
-                if (moveRegrade !is null && moveRegrade.meshPrepared())
+                if (replay !is null && replay.meshPrepared())
                     ok = context.preparePositionCommitOnEnlisted(layer);
                 else
                     ok = context.preparePositionCommit(layer);
             } else if (wrapperUpload is null || !wrapperUpload.owns(gpu))
                 ok = false;
-            else if (moveRegrade !is null && moveRegrade.meshPrepared())
+            else if (replay !is null && replay.meshPrepared())
                 ok = context.prepareUpload(wrapperUpload,
-                                           moveRegrade.candidate());
+                                           replay.candidate());
             else
                 ok = context.prepareUpload(wrapperUpload, layer.meshRef());
         }
         if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
         if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
-        if (ok && flagS && scaleOwner.meshPrepared()) {
-            ok = scaleOwner.deliveryFlags() != 0 &&
-                context.prepareStampedMeshImage(layer, scaleOwner.candidate(),
-                    scaleOwner.deliveryFlags(), scaleOwner.deliveryDomains());
-        }
         if (ok && flagS) ok = context.prepareScaleUpdate(scaleOwner);
         if (ok) ok = context.prepareXfrmUpdateTail(tailOwner);
         if (!ok) context.discard();
@@ -2369,7 +2361,7 @@ public:
     // Phase 5 + 5b), it OWNS ALL the TRS value rows — Position (TX/TY/TZ),
     // Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) — and drives them through the
     // reEvaluate() seam (a plain `interactive` tool.attr per axis). The legacy
-    // moveSub/rotateSub/scaleSub.drawProperties() sliders must therefore NOT
+    // input-bank sliders must therefore NOT
     // also render, or two live widgets would fight over the same per-frame
     // edit (run.t / the rotate-scale activation deltas) and the
     // panel would show each value row TWICE — once readable (form, left labels)
@@ -2391,7 +2383,7 @@ public:
                 moveSub.handler.setPosition(moveSub.handler.center + worldDelta);
                 moveSub.cachedCenter = moveSub.handler.center;
             }
-            if (input.done) gpu.upload(*mesh);
+            if (input.done) needsGpuUpdate = true;
         }
         if (flagR) {
             auto input = rotateSub.drawInputProperties(publishedRotate());
@@ -2405,13 +2397,14 @@ public:
                 applyRotateAbsoluteFromRun(radians);
                 needsGpuUpdate = true;
             }
-            if (input.done) gpu.upload(*mesh);
+            if (input.done) needsGpuUpdate = true;
         }
         if (flagS) {
+            scaleSub.setInputOptions(negScale);
             if (uniform) {
                 // Single "Scale" row seeded from wrapper truth each frame
                 // (run.s.x == y == z in uniform mode). Mirrors the
-                // scaleSub.drawProperties() propScale-seed pattern but
+                // bank input row pattern but
                 // fans the single edit value back into all three axes.
                 import ImGui = d_imgui;
                 uniformVal = publishedScale().x;
@@ -2420,12 +2413,24 @@ public:
                 // cross zero into a negative (mirrored) factor.
                 float scaleVMin = negScale ? -float.max : 0.0f;
                 ImGui.DragFloat("Scale", &uniformVal, 0.01f, scaleVMin, float.max, "%.4f");
-                if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+                bool active = ImGui.IsItemActive();
+                bool done = ImGui.IsItemDeactivatedAfterEdit();
+                if (active || done) {
                     if (!negScale && uniformVal < 0.0f) uniformVal = 0.0f;
-                    run.s = Vec3(uniformVal, uniformVal, uniformVal);
+                    captureDragBaselineIfStale(DragBank.Scale);
+                    applyScaleAbsoluteFromRun(
+                        Vec3(uniformVal, uniformVal, uniformVal));
+                    needsGpuUpdate = true;
                 }
+                if (done) needsGpuUpdate = true;
             } else {
-                scaleSub.drawProperties();
+                auto input = scaleSub.drawInputProperties(publishedScale());
+                if (input.active || input.done) {
+                    captureDragBaselineIfStale(DragBank.Scale);
+                    applyScaleAbsoluteFromRun(input.scale);
+                    needsGpuUpdate = true;
+                }
+                if (input.done) needsGpuUpdate = true;
             }
         }
     }
@@ -2680,12 +2685,12 @@ public:
             preparedActivationFlags() == flags && moveSub is move &&
             rotateSub is rotate && scaleSub is scale;
     }
-    final void installPreparedWrapperLinks() nothrow @nogc {
-        scaleSub.wrapperRef = this;
+    final void installPreparedBankInputs() nothrow @nogc {
+        scaleSub.setInputOptions(negScale);
     }
-    version(unittest) final bool preparedWrapperLinksForTest() const
+    version(unittest) final bool preparedBankInputsForTest() const
             nothrow @nogc {
-        return scaleSub.wrapperRef is this;
+        return moveSub !is null && rotateSub !is null && scaleSub !is null;
     }
     version(unittest) final void seedPreparedWrapperUploadForTest() {
         needsGpuUpdate = true;
@@ -3433,7 +3438,7 @@ public:
         // keeps ONE frozen baseline and the field accumulates the run total across
         // gestures. Move's drain does `run.t += pending`; Scale's drain
         // (1677 `run.s = f`) writes the within-run absolute factor anchored
-        // at the run-start accumulator (dragStartScaleAccum), so a same-axis repeat
+        // at the run-start accumulator, so a same-axis repeat
         // multiplies into the run total. Scale factors commute per-axis ⇒ no
         // cross-axis hazard, fully run-absolute exactly like Move.
         //
@@ -4295,9 +4300,8 @@ public:
                 // scale component of the per-gesture run snapshot). For a fresh run
                 // the snapshot is identity ⇒ run.s = f (byte-identical to pre-3a).
                 // For a same-bank repeat the snapshot is the held run total ⇒ the
-                // factors multiply into the run total (mirrors the producer's own
-                // `scaleAccum.x = dragStartScaleAccum.x * scaleFactor` in
-                // scale.d). Per-axis factors commute ⇒ no cross-axis hazard.
+                // factors multiply into the run total. Per-axis factors commute ⇒
+                // no cross-axis hazard.
                 // The held T/R are NOT touched — they compose into the fold via
                 // the preset flags. composeFor (3253) reads this FULL run-absolute
                 // run.s against the FROZEN dragBaseline — no divide.
@@ -4843,9 +4847,8 @@ public:
     mixin XfrmApplyImpl;
 
     // Phase 1 (R/S run-baseline) — the FIX. The Rotate/Scale panel-apply path
-    // used to rebuild absolutely from the SUB-TOOL's session-start snapshot
-    // (origVertices / activationVertices = the original mesh at sub-tool
-    // activation). After a cross-axis gizmo gesture the prior axis is baked into
+    // used to rebuild absolutely from a sub-tool session-start snapshot. After
+    // a cross-axis gizmo gesture the prior axis is baked into
     // the wrapper's run baseline (`dragBaseline`) + mesh, NOT into the sub-tool
     // snapshot, so a panel edit applied from that snapshot DISCARDED the baked
     // axis. These two entry points re-route the R/S panel apply onto the SAME
@@ -4918,9 +4921,9 @@ public:
     // Legacy FORMS=0 / idle-refire companion to the rotate entry above.
     // Live value batches bypass the embedded ScaleTool and normalize run.s in
     // reEvaluate() before the batch's single wrapper fold.
-    public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
+    public void applyScaleAbsoluteFromRun(Vec3 factors) {
         prepareRunAbsoluteApply();
-        run.s = normalizeScaleRunValue(scaleAccum);
+        run.s = normalizeScaleRunValue(factors);
         bool pureScalePreset = flagS && !flagT && !flagR;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureScalePreset);
@@ -4936,7 +4939,7 @@ public:
     // `test_fixture_scale*`) stay green.
     // P-C: re-capture the live falloff + symmetry + snap packets into the
     // wrapper's dragFalloff / dragSymmetry / dragSnap via a FRESH pipeline
-    // evaluate. The Move re-grade arm calls this before `applyTRS` so the
+    // evaluate. The wrapper replay arm calls this before `applyTRS` so the
     // symmetry pass reads a packet with a POPULATED pairOf table: a symmetry
     // stage just toggled on publishes a stale-EMPTY pairOf on its first
     // evaluate (cachedReady_ flips true only after that rebuild — see
@@ -5002,8 +5005,7 @@ public:
     //
     // No-op when no T flag — panel sliders for X/Y/Z only apply
     // under the Move (T) preset; Rotate / Scale presets have their
-    // own panel paths in `rotateSub.drawProperties` /
-    // `scaleSub.drawProperties`.
+    // own input-bank panel paths.
     public void applyMovePanelDelta(Vec3 basisLocalDelta) {
         if (!flagT) return;
         if (basisLocalDelta.x == 0 && basisLocalDelta.y == 0
@@ -5121,10 +5123,6 @@ public:
     // the edit-session API.
     override public bool publicEditIsOpen() const { return editIsOpen(); }
 
-    // True while ANY gizmo bank's drag is in flight. Embedded R/S tools query
-    // this to keep idle refire work out from underneath another bank's gesture.
-    public bool dragInFlight() const { return activeDrag !is null; }
-
     // P-F introspection seam (test-only): the LIVE published transform attrs the
     // panel binds (run.t/Rotate/Scale, the TX..SZ Param.float_
     // pointees). The /api/toolpipe/eval provider emits these so the run-absolute
@@ -5134,13 +5132,6 @@ public:
     public Vec3 publishedTranslate() const { return run.t; }
     public Vec3 publishedRotate()    const { return headlessRotate; }
     public Vec3 publishedScale()     const { return run.s; }
-
-    // Task 0332 — cross-instance query for the wrapped ScaleTool's clamp
-    // gates (`clampScaleFactor`, the panel post-write clamps and the ImGui
-    // `v_min` floors). Standalone `ScaleTool` (wrapperRef is null, unit-test
-    // construction only) has no negScale param at all and keeps the pre-0332
-    // clamp-at-0 behavior unconditionally.
-    public bool negScaleEnabled() const { return negScale; }
 
     // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
     // /api/toolpipe/eval. `valid` is false until the first applyTRS of a run
@@ -5152,30 +5143,6 @@ public:
         right  = runFrameR;
         up     = runFrameU;
         fwd    = runFrameF;
-    }
-
-    // Scale keeps a temporary explicit seam until its bank migration lands.
-    public bool refireScaleEligible() const {
-        return history !is null
-            && history.runOpen()
-            && currentRunBank == DragBank.Scale
-            && regradeStampCurrent();
-    }
-
-    /// Preparation-time twin of the public eligibility gates.  The legacy
-    /// gates intentionally score the version-vs-undo-epoch census; a detached
-    /// producer must perform zero live writes, including those diagnostic
-    /// counters, so it reads the exact shipped predicate without scoring it.
-    public bool preparedRefireEligible(bool rotateBank) const {
-        // recorded remainder (1906 §3.6): conversion-only twin of row 21's
-        // gesture-identity guard. A Position epoch observes this tool's own
-        // version-silent fold, so it cannot answer whether a foreign edit
-        // invalidated the last landed gesture. This duplicate retires at P1.0c.
-        return history !is null
-            && history.runOpen()
-            && currentRunBank == (rotateBank ? DragBank.Rotate : DragBank.Scale)
-            && mesh !is null
-            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
     }
 
     /// Evaluate the wrapper's canonical fold on an isolated clone.  This is
@@ -5273,10 +5240,10 @@ public:
         return result;
     }
 
-    public PreparedXfrmMoveRegradeImage buildPreparedMoveRegrade(
+    public PreparedXfrmReplayImage buildPreparedReplay(
             ref const PreparedXfrmUpdatePreProjection projection,
             PreparedRecordContext context) {
-        PreparedXfrmMoveRegradeImage image;
+        PreparedXfrmReplayImage image;
         if (!projection.valid || (!projection.panelRegrade &&
                                   !projection.wrapperRegrade) || mesh is null)
             return image;
@@ -5325,20 +5292,20 @@ public:
         image.panel = projection.panelRegrade;
         image.wrapper = projection.wrapperRegrade;
         if (image.wrapper) {
-            image.wrapperRefire = buildPreparedRefireState(context,
+            image.historyRefire = buildPreparedRefireState(context,
                 image.expectedLive.vertices, image.candidate.vertices,
                 image.expectedFalloff, image.nextFalloff,
                 image.expectedSnap, image.nextSnap,
                 image.expectedSymmetry, image.nextSymmetry);
-            if (!image.wrapperRefire.valid)
-                return PreparedXfrmMoveRegradeImage.init;
+            if (!image.historyRefire.valid)
+                return PreparedXfrmReplayImage.init;
         }
         image.valid = true;
         return image;
     }
 
-    public bool preparedMoveRegradeMatches(
-            ref const PreparedXfrmMoveRegradeImage image, in Mesh live) const
+    public bool preparedReplayMatches(
+            ref const PreparedXfrmReplayImage image, in Mesh live) const
             nothrow @nogc {
         if (!image.valid || !image.expectedLive.matches(live) ||
             vertexIndicesToProcess != image.expectedIndices ||
@@ -5360,12 +5327,12 @@ public:
         foreach (i, target; image.itemTargets)
             if (target is null || itemTargets[i] !is target ||
                 target.xform != image.expectedItemXforms[i]) return false;
-        return !image.wrapperRefire.valid ||
-            preparedRefireStateMatches(image.wrapperRefire);
+        return !image.historyRefire.valid ||
+            preparedRefireStateMatches(image.historyRefire);
     }
 
-    public void installPreparedMoveRegrade(
-            ref PreparedXfrmMoveRegradeImage image) nothrow @nogc {
+    public void installPreparedReplay(
+            ref PreparedXfrmReplayImage image) nothrow @nogc {
         if (!image.valid) return;
         vertexIndicesToProcess = image.nextIndices; image.nextIndices = null;
         toProcess = image.nextMask; image.nextMask = null;
@@ -5382,8 +5349,8 @@ public:
         dragSymmetry = image.nextSymmetry;
         foreach (i, target; image.itemTargets)
             target.xform = image.nextItemXforms[i];
-        if (image.wrapperRefire.valid)
-            installPreparedRefireState(image.wrapperRefire);
+        if (image.historyRefire.valid)
+            installPreparedRefireState(image.historyRefire);
         image.clear();
     }
 
@@ -5497,29 +5464,6 @@ public:
         lastAppliedGestureMutationVersion = image.nextGestureMutation;
         armedUndoEpoch = image.nextUndoEpoch;
         image.clear();
-    }
-
-    // Scale keeps a temporary record seam until its bank migration lands.
-    public void recordFalloffRefireScale(Vec3[] anchor,
-                                         Vec3[] after, size_t[] idx,
-                                         FalloffPacket preF, FalloffPacket postF,
-                                         SnapPacket preSn,  SnapPacket postSn,
-                                         SymmetryPacket preSy, SymmetryPacket postSy) {
-        recordPipeRefire(anchor, after, idx, DragBank.Scale,
-                         preF, postF, preSn, postSn, preSy, postSy);
-    }
-
-    // Cross-slot relocate boundary. Embedded R/S handlers can detect a relocate,
-    // but the one live edit and its bank provenance belong to this wrapper. This
-    // public seam lets those sibling handlers request the wrapper's hard-boundary
-    // close without receiving history capability themselves.
-    private void commitSessionAtBankBoundaryIfOpen(DragBank incomingBank) {
-        if (!editIsOpen()) return;
-        commitEditAtBankBoundary(incomingBank);
-    }
-
-    public void commitSessionAtScaleBoundaryIfOpen() {
-        commitSessionAtBankBoundaryIfOpen(DragBank.Scale);
     }
 
     private void beginEditForBank(DragBank bank) {
@@ -7521,42 +7465,40 @@ unittest {
         installedMutation == 22,
         "consumed Xfrm boundary image installed twice");
 
-    // Move re-grade runs the fold on an isolated wrapper, including its cache
+    // Wrapper replay runs the fold on an isolated wrapper, including its cache
     // outputs. The mesh resource remains a separate context entry, so direct
     // state installation below must not write the live mesh.
-    Mesh moveRegradeMesh = makeCube();
-    auto moveRegradeBefore = MeshSnapshot.capture(moveRegradeMesh);
-    auto moveRegradeTool = new XfrmTransformTool(
-        () => &moveRegradeMesh, &refireGpu, &refireMode);
-    moveRegradeTool.flagT = true;
-    moveRegradeTool.flagR = false;
-    moveRegradeTool.flagS = false;
-    moveRegradeTool.run.t = Vec3(2, 0, 0);
-    moveRegradeTool.dragBaseline = moveRegradeMesh.vertices.dup;
-    moveRegradeTool.runBaselineValid = true;
-    moveRegradeTool.runFrameValid = true;
+    Mesh replayMesh = makeCube();
+    auto replayBefore = MeshSnapshot.capture(replayMesh);
+    auto replayTool = new XfrmTransformTool(
+        () => &replayMesh, &refireGpu, &refireMode);
+    replayTool.flagT = true;
+    replayTool.flagR = false;
+    replayTool.flagS = false;
+    replayTool.run.t = Vec3(2, 0, 0);
+    replayTool.dragBaseline = replayMesh.vertices.dup;
+    replayTool.runBaselineValid = true;
+    replayTool.runFrameValid = true;
     PreparedXfrmUpdatePreProjection regradeProjection;
     regradeProjection.valid = true;
     regradeProjection.panelRegrade = true;
-    auto regrade = moveRegradeTool.buildPreparedMoveRegrade(
+    auto regrade = replayTool.buildPreparedReplay(
         regradeProjection, null);
     assert(regrade.valid && regrade.meshPrepared &&
-        moveRegradeBefore.matches(moveRegradeMesh) &&
-        regrade.candidate.vertices != moveRegradeMesh.vertices,
-        "prepared Move re-grade must own a detached changed candidate");
-    assert(moveRegradeTool.preparedMoveRegradeMatches(
-        regrade, moveRegradeMesh));
-    moveRegradeMesh.vertices[0].x += 1;
-    assert(!moveRegradeTool.preparedMoveRegradeMatches(
-        regrade, moveRegradeMesh),
-        "prepared Move re-grade accepted a stale live mesh");
-    moveRegradeBefore.restore(moveRegradeMesh);
-    moveRegradeTool.installPreparedMoveRegrade(regrade);
-    assert(!regrade.valid && moveRegradeBefore.matches(moveRegradeMesh),
-        "Move re-grade private-state install wrote the live mesh");
-    moveRegradeTool.installPreparedMoveRegrade(regrade);
-    assert(moveRegradeBefore.matches(moveRegradeMesh),
-        "consumed Move re-grade image installed twice");
+        replayBefore.matches(replayMesh) &&
+        regrade.candidate.vertices != replayMesh.vertices,
+        "prepared wrapper replay must own a detached changed candidate");
+    assert(replayTool.preparedReplayMatches(regrade, replayMesh));
+    replayMesh.vertices[0].x += 1;
+    assert(!replayTool.preparedReplayMatches(regrade, replayMesh),
+        "prepared wrapper replay accepted a stale live mesh");
+    replayBefore.restore(replayMesh);
+    replayTool.installPreparedReplay(regrade);
+    assert(!regrade.valid && replayBefore.matches(replayMesh),
+        "wrapper replay private-state install wrote the live mesh");
+    replayTool.installPreparedReplay(regrade);
+    assert(replayBefore.matches(replayMesh),
+        "consumed wrapper replay image installed twice");
 
     // Complete-root idle cell: one no-history marker followed by the slot
     // latch, Move refresh and wrapper tail. Preparation leaves both mesh and

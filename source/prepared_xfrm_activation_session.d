@@ -32,7 +32,7 @@ private:
 private shared ulong nextXfrmActivationOwner;
 
 /// Exact two-phase Xfrm activation owner. Pre installs the wrapper reset,
-/// enabled product activations in T/R/S order and unconditional wrapper links.
+/// enabled product activations in T/R/S order and owner-provided bank inputs.
 /// Post installs routing/session tail after the prepared history marker.
 final class PreparedXfrmActivationSessionOwner {
 private:
@@ -134,7 +134,7 @@ public:
         if (moveOwner_ !is null) moveOwner_.install();
         if (rotateOwner_ !is null) rotateOwner_.install();
         if (scaleOwner_ !is null) scaleOwner_.install();
-        target_.installPreparedWrapperLinks();
+        target_.installPreparedBankInputs();
         preInstalled_ = true;
     }
 
@@ -219,7 +219,6 @@ version(unittest) unittest {
         tool.moveBank().seedPreparedProductActivationForTest();
         tool.rotateBank().seedPreparedProductActivationForTest();
         tool.scaleBank().seedPreparedProductActivationForTest();
-        auto first = mesh.vertices[0]; auto livePtr = mesh.vertices.ptr;
         auto context = new PreparedRecordContext(history,
             new RecordObserverHub());
         auto effect = tool.prepareActivate(context);
@@ -231,15 +230,14 @@ version(unittest) unittest {
         assert(context.validate()); context.install(); context.install();
         assert(history.currentRunId == 1 &&
             context.installTraceForTest() == [18, 1, 19] &&
-            tool.preparedWrapperLinksForTest() &&
+            tool.preparedBankInputsForTest() &&
             tool.preparedActivationResetPostForTest(true, true, true));
         if (tool.flagT) assert(tool.moveBank().preparedProductActivationForTest());
         else assert(tool.moveBank().preparedProductActivationSeedForTest());
         if (tool.flagR)
             assert(tool.rotateBank().preparedProductActivationForTest());
         else assert(tool.rotateBank().preparedProductActivationSeedForTest());
-        if (tool.flagS) assert(tool.scaleBank().preparedProductActivationForTest(
-            mesh.vertices.length, first, livePtr, Vec3(2,3,4)));
+        if (tool.flagS) assert(tool.scaleBank().preparedProductActivationForTest());
         else assert(tool.scaleBank().preparedProductActivationSeedForTest());
     }
 

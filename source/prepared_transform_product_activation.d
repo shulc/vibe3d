@@ -79,8 +79,7 @@ public:
         }
     }
     version(unittest) bool payloadEmpty() const nothrow @nogc {
-        return !move_.valid && !rotate_.valid && !scale_.valid &&
-            scale_.activationVertices.length == 0;
+        return !move_.valid && !rotate_.valid && !scale_.valid;
     }
     version(unittest) static size_t abortCountForTest() nothrow @nogc {
         return abortCount_;
@@ -134,8 +133,6 @@ version(unittest) unittest {
         rotateContext.installTraceForTest() == [15,8]);
 
     scale.seedPreparedProductActivationForTest();
-    auto scaleFirst = mesh.vertices[0];
-    auto scaleLivePtr = mesh.vertices.ptr;
     auto aborted = PreparedTransformProductActivationOwner.prepare(scale);
     assert(aborted !is null && aborted.begin()); aborted.abort();
     assert(aborted.payloadEmpty() && !aborted.begin());
@@ -155,8 +152,7 @@ version(unittest) unittest {
     scale.mutatePreparedHandlerForTest(Vec3(20,30,40));
     mesh.vertices[0].x += 5;
     retry.install(); retry.install();
-    assert(scale.preparedProductActivationForTest(mesh.vertices.length,
-        scaleFirst, scaleLivePtr, Vec3(2,3,4)) && fresh.payloadEmpty() &&
+    assert(scale.preparedProductActivationForTest() && fresh.payloadEmpty() &&
         retry.installTraceForTest() == [15,8]);
 
     class DerivedMove : MoveTool {
@@ -208,8 +204,6 @@ version(unittest) unittest {
         rotateProducerContext.installTraceForTest() == [15,8]);
 
     scale.seedPreparedProductActivationForTest();
-    auto producerScaleFirst = mesh.vertices[0];
-    auto producerScalePtr = mesh.vertices.ptr;
     auto scaleProducerContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
     auto scaleEffect = scale.prepareActivate(scaleProducerContext);
@@ -219,8 +213,7 @@ version(unittest) unittest {
         scale.preparedProductActivationSeedForTest());
     assert(scaleProducerContext.validate());
     scaleProducerContext.install(); scaleProducerContext.install();
-    assert(scale.preparedProductActivationForTest(mesh.vertices.length,
-        producerScaleFirst, producerScalePtr, Vec3(2,3,4)) &&
+    assert(scale.preparedProductActivationForTest() &&
         scaleProducerContext.installTraceForTest() == [15,8]);
 
     auto derived = new DerivedRotate(() => &mesh, &gpu, &mode);

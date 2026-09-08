@@ -247,11 +247,8 @@ presets:
       H: "2"
       presentation: "full"
 
-  # Bare Transform: all three handler banks visible (the reference's
-  # `Transform` preset with T=R=S=1). Documented limitation: each
-  # sub-tool maintains its own edit session, so single-drag undo
-  # records one entry per sub-tool. Most users want one of the per-
-  # mode presets above instead.
+  # Bare Transform: all three handler banks are visible. The wrapper owns one
+  # edit session and history intent while each bank only produces input.
   - id: Transform
     base: xfrm.transform
     attrs:

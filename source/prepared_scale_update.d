@@ -4,10 +4,9 @@ import core.atomic : atomicOp;
 import document : Layer;
 import editmode : EditMode;
 import mesh : Mesh;
-import operator : VectorStack;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedScaleUpdateKind;
-import tool : Tool;
+import math : Vec3;
 import tools.transform.scale : ScaleTool, PreparedScaleUpdateImage,
     PreparedScaleUpdateBranch;
 
@@ -17,19 +16,19 @@ private shared ulong nextScaleUpdateOwner;
 
 final class PreparedScaleUpdateOwner {
 private:
-    ScaleTool target_; Layer layer_; Mesh* mesh_; Tool wrapper_; EditMode mode_;
+    ScaleTool target_; Layer layer_; Mesh* mesh_; EditMode mode_;
     PreparedScaleUpdateImage image_; immutable ulong owner_; ulong generation_;
     bool pending_, validated_, consumed_;
     PreparedScaleUpdateToken prepared_; ValidatedScaleUpdateToken validatedToken_;
 public:
     @disable this();
     static PreparedScaleUpdateOwner prepare(ScaleTool target, Layer layer,
-            ref VectorStack vts, PreparedRecordContext context) {
+            bool ownerEditOpen, Vec3 actionCenter) {
         if (target is null || target.classinfo !is ScaleTool.classinfo ||
             layer is null || target.preparedMeshForUpdate() !is &layer.meshRef())
             return null;
         auto owner = new PreparedScaleUpdateOwner(target, layer);
-        owner.image_ = target.buildPreparedUpdate(vts, context);
+        owner.image_ = target.buildPreparedUpdate(ownerEditOpen, actionCenter);
         return owner.image_.valid ? owner : null;
     }
     bool begin() nothrow @nogc {
@@ -40,7 +39,7 @@ public:
     bool validate() nothrow @nogc {
         if (!pending_ || validated_ || consumed_ || target_ is null ||
             target_.classinfo !is ScaleTool.classinfo || layer_ is null ||
-            mesh_ !is &layer_.meshRef() || target_.preparedWrapperForUpdate() !is wrapper_ ||
+            mesh_ !is &layer_.meshRef() ||
             target_.preparedEditModeForUpdate() != mode_ ||
             prepared_.owner != owner_ || prepared_.generation != generation_ ||
             !target_.preparedUpdateMatches(image_, layer_.meshRef())) return false;
@@ -55,11 +54,11 @@ public:
         target_.installPreparedUpdate(image_); consume();
     }
     void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
-    bool meshPrepared() const nothrow @nogc { return image_.meshPrepared; }
+    bool meshPrepared() const nothrow @nogc { return false; }
     ref const(Mesh) candidate() const nothrow @nogc { return image_.candidate; }
-    uint deliveryFlags() const nothrow @nogc { return image_.deliveryFlags; }
-    uint deliveryDomains() const nothrow @nogc { return image_.deliveryDomains; }
-    bool historyPrepared() const nothrow @nogc { return image_.wrapperRefire.valid; }
+    uint deliveryFlags() const nothrow @nogc { return 0; }
+    uint deliveryDomains() const nothrow @nogc { return 0; }
+    bool historyPrepared() const nothrow @nogc { return false; }
     PreparedScaleUpdateKind effectKind() const nothrow @nogc {
         if (!image_.valid) return PreparedScaleUpdateKind.None;
         final switch (image_.projection.branch) {
@@ -68,8 +67,6 @@ public:
         case PreparedScaleUpdateBranch.IdleRefresh: return PreparedScaleUpdateKind.IdleRefresh;
         case PreparedScaleUpdateBranch.SelectionRefresh: return PreparedScaleUpdateKind.SelectionRefresh;
         case PreparedScaleUpdateBranch.MutationRefresh: return PreparedScaleUpdateKind.MutationRefresh;
-        case PreparedScaleUpdateBranch.PanelRegrade: return PreparedScaleUpdateKind.PanelRegrade;
-        case PreparedScaleUpdateBranch.WrapperRegrade: return PreparedScaleUpdateKind.WrapperRegrade;
         }
     }
     version(unittest) bool targetMatchesForTest() const nothrow @nogc {
@@ -79,11 +76,11 @@ public:
 private:
     this(ScaleTool target, Layer layer) {
         target_ = target; layer_ = layer; mesh_ = target.preparedMeshForUpdate();
-        wrapper_ = target.preparedWrapperForUpdate(); mode_ = target.preparedEditModeForUpdate();
+        mode_ = target.preparedEditModeForUpdate();
         owner_ = atomicOp!"+="(nextScaleUpdateOwner, 1UL);
     }
     void consume() nothrow @nogc {
-        image_.clear(); target_ = null; layer_ = null; mesh_ = null; wrapper_ = null;
+        image_.clear(); target_ = null; layer_ = null; mesh_ = null;
         pending_ = validated_ = false; consumed_ = true;
         prepared_.owner = prepared_.generation = 0;
         validatedToken_.owner = validatedToken_.generation = 0;
@@ -96,15 +93,16 @@ version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
 
     auto layer = new Layer; layer.meshRef() = makeCube();
-    GpuMesh gpu; EditMode mode = EditMode.Polygons; VectorStack vts;
+    GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto tool = new ScaleTool(() => &layer.meshRef(), &gpu, &mode);
     auto context = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
-    auto direct = PreparedScaleUpdateOwner.prepare(tool, layer, vts, context);
+    auto direct = PreparedScaleUpdateOwner.prepare(
+        tool, layer, false, Vec3(0, 0, 0));
     assert(direct !is null && direct.targetMatchesForTest(), "scale image mismatch immediately after prepare");
     direct.abort(); context.discard();
     context = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
-    auto effect = tool.prepareUpdate(vts, context, layer);
+    auto effect = tool.prepareUpdate(false, Vec3(0, 0, 0), context, layer);
     assert(effect.accepted);
     assert(effect.kind == PreparedScaleUpdateKind.InactiveNoop);
     assert(context.validate());
@@ -115,7 +113,8 @@ version(unittest) unittest {
     auto staleTool = new ScaleTool(() => &staleLayer.meshRef(), &gpu, &mode);
     auto staleContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
-    assert(staleTool.prepareUpdate(vts, staleContext, staleLayer).accepted);
-    staleLayer.meshRef().vertices[0].x += 1;
+    assert(staleTool.prepareUpdate(false, Vec3(0, 0, 0),
+        staleContext, staleLayer).accepted);
+    staleTool.seedPreparedUpdateProjectionForTest(true, -1, 1, 1);
     assert(!staleContext.validate()); staleContext.discard();
 }

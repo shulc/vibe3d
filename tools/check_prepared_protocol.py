@@ -332,7 +332,7 @@ param_hooks = [r for r in CURRENT_WRITERS["hooks"]
                if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
 relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
-if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 25, 73):
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 25, 70):
     fail("P1.0b.0 reviewed writer cardinality changed")
 
 # P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
@@ -367,9 +367,6 @@ B3D_PREPARED_LEGACY = {
     ("tools.edit.vert_merge_tool", "VertexMergeTool", "deactivate"),
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "deactivate"),
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "deactivate"),
-    ("tools.transform.move", "MoveTool", "deactivate"),
-    ("tools.transform.rotate", "RotateTool", "deactivate"),
-    ("tools.transform.scale", "ScaleTool", "deactivate"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "deactivate"),
     ("tools.create.box", "BoxTool", "onParamChanged"),
 }
@@ -410,9 +407,7 @@ B5L_PREPARED_LEGACY = {
     ("tools.transform.rotate", "RotateTool", "activate"),
     ("tools.transform.scale", "ScaleTool", "activate"),
 }
-B5M_PREPARED_LEGACY = {
-    ("tools.transform.move", "MoveTool", "update"),
-}
+B5M_PREPARED_LEGACY = set()
 B5N_PREPARED_LEGACY = {
     ("tool", "Tool", "activate"),
     ("tool", "Tool", "deactivate"),
@@ -469,8 +464,9 @@ B5P_PREPARED_LEGACY = {
 }
 B5Q_PREPARED_LEGACY = {
     ("tools.edit.edge_extend", "EdgeExtendTool", "update"),
-    ("tools.transform.rotate", "RotateTool", "update"),
-    ("tools.transform.scale", "ScaleTool", "update"),
+    ("tools.transform.move", "MoveTool", "deactivate"),
+    ("tools.transform.rotate", "RotateTool", "deactivate"),
+    ("tools.transform.scale", "ScaleTool", "deactivate"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "update"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
     ("tools.slice.slice_tool", "SliceTool", "onParamChanged"),
@@ -588,7 +584,7 @@ if reason_replace:
     reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
     expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
 
-# P1.0b.3d dormant implementation/route axis. All twenty frozen roots stay on
+# P1.0b.3d dormant implementation/route axis. All seventeen frozen roots stay on
 # their exact Legacy bodies; a sibling producer exists and only producer code
 # may invoke another producer. No production door constructs the injected
 # context or imports the observer owner directly.
@@ -611,10 +607,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
     "tools/edit/vertex_bevel_tool":"935c400d06133076e34d5c6a5d62d1ba2a93eb7b4eac88a7a1c9bdd42639aabf",
     "tools/edit/vertex_extrude_tool":"5bd4def636ee6e51247ad7c4b11055ffa57985038233cb97c82c86d13200dcca",
-    "tools/transform/move":"bbea8820c86c337a470a96ba2fa1791c0c981d6e90235502f34005f74a464260",
-    "tools/transform/rotate":"e04de99122832355fb43cb7546a1c99f303aeb6252e0334141ce6e522a31ae50",
-    "tools/transform/scale":"02f3b4fcce5380905aba0a2a7c86530a6d386be63b87332c1c12a66bee7a930a",
-    "tools/transform/xfrm_transform":"66269524a4698244927959e9bf1b07d13d8e39b0b56c165cf20f5739dcbae844",
+    "tools/transform/xfrm_transform":"bc882d745e61bbec7a88bd49e7b813ebe4544d92ef837138c1f330bdf51f84f4",
     "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
 }
 def validate_b3d_producers(sources, only=None):
@@ -666,7 +659,7 @@ for path, text in prepared_source_texts.items():
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
             "prepared_xfrm_update_edit_close",
-            "prepared_xfrm_move_regrade",
+            "prepared_xfrm_replay",
             "prepared_stroke_extrude_activation",
             "prepared_vertex_merge_activation",
             "prepared_poly_inset_activation",
@@ -710,6 +703,9 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extend_deactivate",
             "prepared_box_param",
             "prepared_tool_transition",
+            "tools.transform.move",
+            "tools.transform.rotate",
+            "tools.transform.scale",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -7439,7 +7435,7 @@ def xfrm_activation_session_gate(owner, context, xfrm, transform):
             pre_install.find("if (moveOwner_ !is null) moveOwner_.install();") <
             pre_install.find("if (rotateOwner_ !is null) rotateOwner_.install();") <
             pre_install.find("if (scaleOwner_ !is null) scaleOwner_.install();") <
-            pre_install.find("target_.installPreparedWrapperLinks();") and
+            pre_install.find("target_.installPreparedBankInputs();") and
         "target_.installPreparedActivationResetPost(reset_);" in post_install and
         "shapeValid()" not in pre_install and "shapeValid()" not in post_install and
         "bool prepareXfrmActivationPre(PreparedXfrmActivationSessionOwner owner)" in context and
@@ -7480,7 +7476,7 @@ def xfrm_activation_session_gate(owner, context, xfrm, transform):
         "PreparedXfrmActivationSessionOwner" not in legacy and
         "prepareXfrmActivation" not in legacy and
         "final CommandHistory preparedHistoryOwner() nothrow @nogc" in transform and
-        "final void installPreparedWrapperLinks() nothrow @nogc" in xfrm)
+        "final void installPreparedBankInputs() nothrow @nogc" in xfrm)
 if not xfrm_activation_session_gate(xfrm_activation_owner, record_context,
         xfrm_activation_reset, transform_tool):
     fail("Xfrm activation session owner contract drift")
@@ -7501,8 +7497,8 @@ for target, old, new, label in (
      "drop post generation"),
     ("owner", "if (rotateOwner_ !is null) rotateOwner_.install();", "",
      "drop Rotate activation"),
-    ("owner", "target_.installPreparedWrapperLinks();", "",
-     "drop wrapper links"),
+    ("owner", "target_.installPreparedBankInputs();", "",
+     "drop bank inputs"),
     ("owner", "consumed_ ||\n            validatedPre_.owner",
      "consumed_ || !shapeValid() ||\n            validatedPre_.owner",
      "reread live shape during pre install"),
@@ -7569,36 +7565,21 @@ def transform_product_gate(owner, context, move, rotate, scale):
         "(cast(ScaleTool) target_).installPreparedProductActivation(scale_);" in owner and
         "void scrub() nothrow @nogc { move_.clear(); rotate_.clear(); scale_.clear(); }" in owner and
         "return !move_.valid && !rotate_.valid && !scale_.valid" in owner and
-        "rotate_.origVertices.length == 0" in owner and
-        "scale_.activationVertices.length == 0" in owner and
         "struct PreparedMoveActivationImage" in move and
         "image.propInput = Vec3(0, 0, 0)" in move and
         "installPreparedActivation(image.base); propInput = image.propInput; image.clear();" in move and
         "struct PreparedRotateActivationImage" in rotate and
-        "image.origVertices = live.vertices.dup;" in rotate and
-        "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);" in rotate and
         "image.pendingRotateAxis = -1; image.pendingRotateAngle = 0;" in rotate and
         "image.pendingRotateViewAxis = Vec3(0,0,0);" in rotate and
-        "image.origVertices = null;" in rotate and
-        "installPreparedActivation(image.base); angleAccum = image.angleAccum;\n"
-        "        propDeg = image.propDeg; origVertices = image.origVertices;\n"
-        "        image.origVertices = null; headlessRotate = image.headlessRotate;\n"
+        "installPreparedActivation(image.base);\n"
         "        pendingRotateAxis = image.pendingRotateAxis;\n"
         "        pendingRotateAngle = image.pendingRotateAngle;\n"
         "        pendingRotateViewAxis = image.pendingRotateViewAxis; image.clear();" in rotate and
         "struct PreparedScaleActivationImage" in scale and
-        "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);" in scale and
-        "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);" in scale and
+        "Vec3 pendingScale = Vec3(1,1,1);" in scale and
         "bool pendingScaleValid, valid;" in scale and
-        "image.activationVertices = live.vertices.dup;" in scale and
-        "image.activationCenter = handler.center" in scale and
         "handler.setPosition(Vec3(2,3,4));" in scale and
-        "activationCenter == center" in scale and
-        "image.activationVertices = null;" in scale and
-        "installPreparedActivation(image.base); scaleAccum = image.scaleAccum;\n"
-        "        propScale = image.propScale; activationVertices = image.activationVertices;\n"
-        "        image.activationVertices = null; activationCenter = image.activationCenter;\n"
-        "        headlessScale = image.headlessScale;\n"
+        "installPreparedActivation(image.base);\n"
         "        pendingScaleValid = image.pendingScaleValid;\n"
         "        pendingScale = image.pendingScale; image.clear();" in scale and
         "bool prepareTransformProductActivation(PreparedTransformProductActivationOwner owner)" in context and
@@ -7642,22 +7623,13 @@ for target, old, new, label in (
     ("owner", "(cast(MoveTool) target_).installPreparedProductActivation(move_);", "", "drop fixed Move switch install"),
     ("owner", "(cast(RotateTool) target_).installPreparedProductActivation(rotate_);", "", "drop fixed Rotate switch install"),
     ("owner", "move_.clear(); rotate_.clear(); scale_.clear();", "move_.clear();", "omit union payload scrub"),
-    ("rotate", "image.origVertices = live.vertices.dup;", "image.origVertices = live.vertices;", "shallow Rotate baseline"),
     ("rotate", "image.pendingRotateAxis = -1", "image.pendingRotateAxis = 0", "change Rotate pending axis"),
     ("rotate", "image.pendingRotateAngle = 0;", "image.pendingRotateAngle = 1;", "change Rotate pending angle"),
-    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.angleAccum = Vec3(1,0,0); image.propDeg = image.headlessRotate = Vec3(0,0,0);", "change Rotate angle accumulator"),
-    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.propDeg = Vec3(1,0,0); image.angleAccum = image.headlessRotate = Vec3(0,0,0);", "change Rotate property accumulator"),
-    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.headlessRotate = Vec3(1,0,0); image.angleAccum = image.propDeg = Vec3(0,0,0);", "change Rotate headless accumulator"),
     ("move", "installPreparedActivation(image.base); propInput = image.propInput; image.clear();", "installPreparedActivation(image.base); image.clear();", "drop Move value install"),
     ("move", "image.propInput = Vec3(0, 0, 0)", "image.propInput = Vec3(1, 0, 0)", "change Move fixed value"),
     ("rotate", "pendingRotateAngle = image.pendingRotateAngle;\n        pendingRotateViewAxis", "pendingRotateViewAxis = image.pendingRotateViewAxis;\n        pendingRotateAngle", "reorder Rotate fixed install"),
-    ("scale", "image.activationVertices = live.vertices.dup;", "image.activationVertices = live.vertices;", "shallow Scale baseline"),
-    ("scale", "image.activationCenter = handler.center", "image.activationCenter = Vec3.init", "drop Scale center"),
     ("scale", "handler.setPosition(Vec3(2,3,4));", "handler.setPosition(Vec3(8,8,8));", "collapse old/captured Scale center distinction"),
-    ("scale", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);", "Vec3 scaleAccum = Vec3(0,0,0), propScale = Vec3(1,1,1);", "change Scale accumulator ones"),
-    ("scale", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(0,0,0);", "change Scale property ones"),
-    ("scale", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);", "Vec3 headlessScale = Vec3(0,0,0), pendingScale = Vec3(1,1,1);", "change Scale headless ones"),
-    ("scale", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(0,0,0);", "change Scale pending ones"),
+    ("scale", "Vec3 pendingScale = Vec3(1,1,1);", "Vec3 pendingScale = Vec3(0,0,0);", "change Scale pending ones"),
     ("scale", "bool pendingScaleValid, valid;", "bool pendingScaleValid = true, valid;", "change Scale pending-valid default"),
     ("scale", "pendingScaleValid = image.pendingScaleValid;\n        pendingScale = image.pendingScale; image.clear();", "pendingScale = image.pendingScale;\n        pendingScaleValid = image.pendingScaleValid; image.clear();", "reorder Scale fixed install tail"),
     ("context", "e.transformProductActivation.abort();", "", "drop context abort"),
@@ -7703,19 +7675,16 @@ for source, name in ((move_tool, "Move"), (rotate_tool, "Rotate"), (scale_tool, 
         fail(f"Transform product owner reached from production {name} hook")
 
 
-# Exact Move update owner plus dormant Prepared+Legacy producer. The production
-# update root itself remains Legacy until P1.0c.
+# Exact Move input-refresh owner. The wrapper supplies the edit gate and ACEN
+# pose explicitly; the bank has no production update hook or owner backlink.
 move_update_owner = prepared_module_source("prepared_move_update")
 def move_update_gate(owner, context, move):
     production = without_unittests(owner)
-    update_match = re.search(r"override\s+void\s+update\s*\(ref VectorStack vts\)\s*\{", move)
-    if not update_match: return False
-    update_body = move[update_match.end():balanced_source(move, update_match.end())-1]
     return (
         has_final_class(owner, "PreparedMoveUpdateOwner") and
         has_prepared_token_pair(owner, "MoveUpdate") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
-        production.count("VectorStack") == 2 and
+        "VectorStack" not in production and
         "target.classinfo !is MoveTool.classinfo" in owner and
         "prepared_.owner != owner_" in owner and
         "prepared_.generation != generation_" in owner and
@@ -7729,20 +7698,21 @@ def move_update_gate(owner, context, move):
         "image_.clear(); pending_ = validated_ = false; consumed_ = true;" in owner and
         "enum PreparedMoveUpdateBranch : ubyte" in move and
         "InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh" in move and
+        "final PreparedMoveUpdateImage buildPreparedMoveUpdate(\n            bool ownerEditOpen, Vec3 actionCenter)" in move and
         "if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }" in move and
         "if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }" in move and
-        "auto wrapper = cast(XfrmTransformTool) wrapperRef;" in move and
-        "if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();" in move and
+        "if (ownerEditOpen) {" in move and
         "image.branch = PreparedMoveUpdateBranch.WrapperEditOpenNoop;" in move and
-        "image.branch = PreparedMoveUpdateBranch.Refresh;\n        image.center = queryActionCenter(vts);" in move and
+        "image.branch = PreparedMoveUpdateBranch.Refresh;\n        image.center = actionCenter;" in move and
         "final void installPreparedMoveUpdate(ref PreparedMoveUpdateImage image)\n            nothrow @nogc" in move and
         "cachedCenter = image.center;\n            handler.setPosition(image.center);\n        }\n        image.clear();" in move and
         "bool prepareMoveUpdate(PreparedMoveUpdateOwner owner)" in context and
         "e.moveUpdate.validate();" in context and
         "e.moveUpdate.install();" in context and
         "e.moveUpdate.abort();" in context and
-        "PreparedMoveUpdateOwner" not in update_body and
-        "prepareMoveUpdate" not in update_body)
+        "void updateInput(Vec3 actionCenter, bool ownerEditOpen)" in move and
+        "override void update(ref VectorStack" not in move and
+        "wrapperRef" not in move)
 if not move_update_gate(move_update_owner, record_context, move_tool):
     fail("Move update owner contract drift")
 move_update_production_calls = sum(
@@ -7750,7 +7720,7 @@ move_update_production_calls = sum(
     without_unittests(text).count(".prepareMoveUpdate(")
     for text in prepared_source_texts.values())
 if move_update_production_calls != 6:
-    fail("Move update owner escaped its three dormant producers")
+    fail("Move update owner escaped its three explicit-input producers")
 
 def move_update_producer_gate(move):
     start = move.find("final PreparedMoveUpdateEffect prepareUpdate(")
@@ -7761,7 +7731,7 @@ def move_update_producer_gate(move):
         "if (context is null) return PreparedMoveUpdateEffect(\n"
         "            preparedToolStateOwner, PreparedMoveUpdateKind.None, false);",
         "scope(failure) context.discard();",
-        "PreparedMoveUpdateOwner.prepare(this, vts)",
+        "PreparedMoveUpdateOwner.prepare(\n            this, ownerEditOpen, actionCenter)",
         "auto kind = owner is null ? PreparedMoveUpdateKind.None : owner.effectKind();",
         "context.prepareMoveUpdate(owner) &&\n            context.markNoHistoryInstall();",
         "if (!ok) context.discard();",
@@ -7785,9 +7755,9 @@ for target, old, new, label in (
     ("owner", "image_.clear(); pending_ = validated_ = false; consumed_ = true;", "pending_ = validated_ = false; consumed_ = true;", "omit payload scrub"),
     ("move", "if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }", "", "drop inactive guard"),
     ("move", "if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }", "", "drop drag guard"),
-    ("move", "auto wrapper = cast(XfrmTransformTool) wrapperRef;", "auto wrapper = cast(XfrmTransformTool) null;", "drop wrapper cast observation"),
-    ("move", "if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();", "", "drop wrapper edit-open observation"),
-    ("move", "image.center = queryActionCenter(vts);", "image.center = Vec3.init;", "drop captured center"),
+    ("move", "if (ownerEditOpen) {", "if (false) {", "drop explicit owner edit gate"),
+    ("move", "image.center = actionCenter;", "image.center = Vec3.init;", "drop captured center"),
+    ("move", "void updateInput(Vec3 actionCenter, bool ownerEditOpen)", "void updateInput(Vec3 actionCenter, bool ignored)", "drop live explicit input contract"),
     ("move", "cachedCenter = image.center;", "", "drop cached-center install"),
     ("move", "cachedCenter = image.center;\n            handler.setPosition(image.center);", "handler.setPosition(image.center);\n            cachedCenter = image.center;", "reorder fixed install"),
     ("context", "e.moveUpdate.validate();", "true;", "drop context validation"),
@@ -7803,15 +7773,15 @@ for target, old, new, label in (
 
 for old, new, label in (
     ("scope(failure) context.discard();", "", "drop function failure cleanup"),
-    ("PreparedMoveUpdateOwner.prepare(this, vts)", "null", "drop owner prepare"),
+    ("PreparedMoveUpdateOwner.prepare(\n            this, ownerEditOpen, actionCenter)", "null", "drop owner prepare"),
     ("context.prepareMoveUpdate(owner) &&", "true &&", "drop context enlist"),
     ("context.markNoHistoryInstall();", "true;", "drop NoHistory ordering"),
     ("if (!ok) context.discard();", "", "drop refusal discard"),
     ("owner.effectKind()", "PreparedMoveUpdateKind.None", "drop branch result"),
     ("PreparedMoveUpdateEffect(preparedToolStateOwner, kind, ok)",
      "PreparedMoveUpdateEffect(OwnedId.init, kind, ok)", "wrong accepted owner"),
-    ("auto owner = PreparedMoveUpdateOwner.prepare(this, vts);",
-     "auto owner = PreparedMoveUpdateOwner.prepare(this, vts); owner.install();",
+    ("auto owner = PreparedMoveUpdateOwner.prepare(\n            this, ownerEditOpen, actionCenter);",
+     "auto owner = PreparedMoveUpdateOwner.prepare(\n            this, ownerEditOpen, actionCenter); owner.install();",
      "early owner install"),
 ):
     mutant = move_tool.replace(old, new, 1)
@@ -7819,24 +7789,16 @@ for old, new, label in (
         fail(f"Move update producer mutation did not RED: {label}")
 
 
-# Exact Rotate/Scale update owners. These are the first update roots whose
-# detached effect jointly owns mesh delivery, optional refire history and two
-# live tool instances (sub-tool + wrapper), so every identity and install rung
-# is pinned here rather than inferred from the passing behavior tests.
+# Exact Rotate/Scale input-refresh owners. They validate only their bank, mesh,
+# mode and detached refresh image; history and mesh delivery stay in wrapper.
 def rs_update_gate(owner, context, tool_source, stem, cls):
     production = without_unittests(owner)
     lower = stem.lower()
-    update_match = re.search(r"override\s+void\s+update\s*\(ref VectorStack vts\)\s*\{",
-                             tool_source)
-    if not update_match: return False
-    update_body = tool_source[update_match.end():balanced_source(
-        tool_source, update_match.end())-1]
     return has_final_class(owner, f"Prepared{stem}UpdateOwner") and \
         has_prepared_token_pair(owner, f"{stem}Update") and \
         all(x in owner for x in (
         f"target.classinfo !is {cls}.classinfo",
         "mesh_ !is &layer_.meshRef()",
-        "target_.preparedWrapperForUpdate() !is wrapper_",
         "target_.preparedEditModeForUpdate() != mode_",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
@@ -7844,6 +7806,8 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
         f"target_.installPreparedUpdate(image_); consume();",
         "image_.clear(); target_ = null; layer_ = null; mesh_ = null;")) and \
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
+        "wrapperRef" not in tool_source and \
+        "override void update(ref VectorStack" not in tool_source and \
         all(x in context for x in (
             f"bool prepare{stem}Update(Prepared{stem}UpdateOwner owner)",
             f"e.{lower}Update.validate();",
@@ -7851,13 +7815,16 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
             f"e.{lower}Update.abort();")) and \
         all(x in tool_source for x in (
             f"final Prepared{stem}UpdateEffect prepareUpdate(",
-            f"Prepared{stem}UpdateOwner.prepare(this, layer, vts, context)",
-            "context.markHistoryInstall()", "context.markNoHistoryInstall()",
-            "context.prepareStampedMeshImage(layer, owner.candidate()",
+            f"Prepared{stem}UpdateOwner.prepare(\n            this, layer, ownerEditOpen, actionCenter)",
+            "bool ok = owner !is null && context.markNoHistoryInstall();",
             f"context.prepare{stem}Update(owner)",
-            "if (!ok) context.discard();")) and \
-        not any(x in update_body for x in (
-            f"Prepared{stem}UpdateOwner", f"prepare{stem}Update"))
+            "if (!ok) context.discard();",
+            "bool ownerEditOpen, Vec3 actionCenter",
+            "image.ownerEditOpen = ownerEditOpen;",
+            "image.actionCenter = actionCenter;",
+            "void updateInput(Vec3 actionCenter, bool ownerEditOpen)")) and \
+        "context.markHistoryInstall()" not in tool_source and \
+        "context.prepareStampedMeshImage(layer, owner.candidate()" not in tool_source
 
 for stem, cls, owner_module, tool_source in (
     ("Rotate", "RotateTool", "prepared_rotate_update", rotate_tool),
@@ -7869,7 +7836,6 @@ for stem, cls, owner_module, tool_source in (
     for target, old, new, label in (
         ("owner", f"target.classinfo !is {cls}.classinfo", "false", "broaden exact class"),
         ("owner", "mesh_ !is &layer_.meshRef()", "false", "drop mesh identity"),
-        ("owner", "target_.preparedWrapperForUpdate() !is wrapper_", "false", "drop wrapper identity"),
         ("owner", "target_.preparedEditModeForUpdate() != mode_", "false", "drop mode identity"),
         ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
         ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
@@ -7877,9 +7843,11 @@ for stem, cls, owner_module, tool_source in (
         ("context", f"e.{stem.lower()}Update.validate();", "true;", "drop context validate"),
         ("context", f"e.{stem.lower()}Update.install();", "", "drop context install"),
         ("context", f"e.{stem.lower()}Update.abort();", "", "drop context abort"),
-        ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
-        ("tool", "context.prepareStampedMeshImage(layer, owner.candidate()", "context.prepareStampedMeshImageMissing(layer, owner.candidate()", "drop mesh enlist"),
+        ("tool", "bool ok = owner !is null && context.markNoHistoryInstall();", "bool ok = owner !is null;", "drop no-history marker"),
         ("tool", f"context.prepare{stem}Update(owner)", "true", "drop owner enlist"),
+        ("tool", "image.ownerEditOpen = ownerEditOpen;", "image.ownerEditOpen = false;", "drop explicit edit input"),
+        ("tool", "image.actionCenter = actionCenter;", "image.actionCenter = Vec3.init;", "drop explicit pose input"),
+        ("tool", "void updateInput(Vec3 actionCenter, bool ownerEditOpen)", "void updateInput(Vec3 actionCenter, bool ignored)", "drop live explicit input contract"),
     ):
         mo, co, ts = rs_owner, record_context, tool_source
         if target == "owner": mo = mo.replace(old, new, 1)
@@ -8234,62 +8202,62 @@ for target, old, new, label in (
     if xfrm_update_boundary_gate(o, c, x, a):
         fail(f"Xfrm update boundary mutation did not RED: {label}")
 
-xfrm_move_regrade_owner = prepared_module_source("prepared_xfrm_move_regrade")
-def xfrm_move_regrade_gate(owner, context, xfrm):
-    return has_final_class(owner, "PreparedXfrmMoveRegradeOwner") and \
+xfrm_replay_owner = prepared_module_source("prepared_xfrm_replay")
+def xfrm_replay_gate(owner, context, xfrm):
+    return has_final_class(owner, "PreparedXfrmReplayOwner") and \
         all(s in owner for s in (
         "target.classinfo !is XfrmTransformTool.classinfo",
         "target.preparedMeshForUpdate() !is &layer.meshRef()",
         "prepared_.owner != owner_", "prepared_.generation != generation_",
         "validatedToken_.owner != owner_",
         "validatedToken_.generation != generation_",
-        "target_.preparedMoveRegradeMatches(image_, layer_.meshRef())",
-        "target_.installPreparedMoveRegrade(image_);")) and \
+        "target_.preparedReplayMatches(image_, layer_.meshRef())",
+        "target_.installPreparedReplay(image_);")) and \
         all(s in context for s in (
-            "bool prepareXfrmMoveRegrade(PreparedXfrmMoveRegradeOwner owner)",
-            "e.xfrmMoveRegrade.validate();", "e.xfrmMoveRegrade.install();",
-            "e.xfrmMoveRegrade.abort();")) and \
+            "bool prepareXfrmReplay(PreparedXfrmReplayOwner owner)",
+            "e.xfrmReplay.validate();", "e.xfrmReplay.install();",
+            "e.xfrmReplay.abort();")) and \
         all(s in xfrm for s in (
-            "PreparedXfrmMoveRegradeImage buildPreparedMoveRegrade(",
+            "PreparedXfrmReplayImage buildPreparedReplay(",
             "buildPreparedRefireCandidate(",
             "detachedItemTargets[i] = new Layer();",
             "detachedItemTargets[i].xform = target.xform;",
             "result.nextItemXforms[i] = target.xform;",
-            "image.wrapperRefire = buildPreparedRefireState(",
-            "preparedMoveRegradeMatches(",
-            "installPreparedMoveRegrade(",
+            "image.historyRefire = buildPreparedRefireState(",
+            "preparedReplayMatches(",
+            "installPreparedReplay(",
             "vertexIndicesToProcess = image.nextIndices;",
             "dragFalloff = image.nextFalloff;",
             "dragSnap = image.nextSnap;",
             "dragSymmetry = image.nextSymmetry;",
             "target.xform = image.nextItemXforms[i];",
-            "installPreparedRefireState(image.wrapperRefire);"))
-if not xfrm_move_regrade_gate(xfrm_move_regrade_owner, record_context,
+            "installPreparedRefireState(image.historyRefire);"))
+if not xfrm_replay_gate(xfrm_replay_owner, record_context,
         prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]):
-    fail("Xfrm Move re-grade owner contract drift")
+    fail("Xfrm replay owner contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
     ("owner", "target.preparedMeshForUpdate() !is &layer.meshRef()", "false", "drop source identity"),
-    ("owner", "target_.preparedMoveRegradeMatches(image_, layer_.meshRef())", "true", "drop validation"),
-    ("owner", "target_.installPreparedMoveRegrade(image_);", "", "drop install"),
-    ("context", "e.xfrmMoveRegrade.validate();", "true;", "drop context validation"),
-    ("context", "e.xfrmMoveRegrade.install();", "", "drop context install"),
-    ("context", "e.xfrmMoveRegrade.abort();", "", "drop context abort"),
+    ("owner", "target_.preparedReplayMatches(image_, layer_.meshRef())", "true", "drop validation"),
+    ("owner", "target_.installPreparedReplay(image_);", "", "drop install"),
+    ("context", "e.xfrmReplay.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmReplay.install();", "", "drop context install"),
+    ("context", "e.xfrmReplay.abort();", "", "drop context abort"),
     ("xfrm", "detachedItemTargets[i] = new Layer();", "detachedItemTargets[i] = target;", "alias live item"),
     ("xfrm", "vertexIndicesToProcess = image.nextIndices;", "", "drop cache install"),
     ("xfrm", "dragFalloff = image.nextFalloff;", "", "drop falloff install"),
     ("xfrm", "target.xform = image.nextItemXforms[i];", "", "drop item install"),
-    ("xfrm", "installPreparedRefireState(image.wrapperRefire);", "", "drop refire state"),
+    ("xfrm", "installPreparedRefireState(image.historyRefire);", "", "drop refire state"),
 ):
-    o, c = xfrm_move_regrade_owner, record_context
+    o, c = xfrm_replay_owner, record_context
     x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
     if target == "owner": o = o.replace(old, new, 1)
     elif target == "context": c = c.replace(old, new, 1)
     else:
         before, found, after = x.rpartition(old)
         x = before + new + after if found else x
-    if xfrm_move_regrade_gate(o, c, x):
-        fail(f"Xfrm Move re-grade mutation did not RED: {label}")
+    if xfrm_replay_gate(o, c, x):
+        fail(f"Xfrm replay mutation did not RED: {label}")
 
 def complete_xfrm_update_root_gate(xfrm):
     signature = "final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,"
@@ -8302,8 +8270,8 @@ def complete_xfrm_update_root_gate(xfrm):
         "PreparedXfrmUpdateEditCloseOwner.prepare(",
         "PreparedXfrmUpdateBoundaryOwner.prepare(",
         "PreparedXfrmSlotPollOwner.prepare(this, projection)",
-        "PreparedXfrmMoveRegradeOwner.prepare(",
-        "PreparedMoveUpdateOwner.prepare(moveSub, vts)",
+        "PreparedXfrmReplayOwner.prepare(",
+        "PreparedMoveUpdateOwner.prepare(\n            moveSub, editIsOpen(), queryActionCenter(vts))",
         "PreparedRotateUpdateOwner.prepare(",
         "PreparedScaleUpdateOwner.prepare(",
         "PreparedXfrmUpdateTailOwner.prepare(",
@@ -8312,7 +8280,7 @@ def complete_xfrm_update_root_gate(xfrm):
         "context.prepareXfrmUpdateEditClose(editClose)",
         "context.prepareXfrmUpdateBoundary(boundaryOwner)",
         "context.prepareXfrmSlotPoll(slotOwner)",
-        "context.prepareXfrmMoveRegrade(moveRegrade)",
+        "context.prepareXfrmReplay(replay)",
         "context.prepareUpload(wrapperUpload,",
         "context.prepareMoveUpdate(moveOwner)",
         "context.prepareRotateUpdate(rotateOwner)",
@@ -8325,7 +8293,7 @@ def complete_xfrm_update_root_gate(xfrm):
         "context.prepareXfrmUpdateEditClose(editClose)",
         "context.prepareXfrmUpdateBoundary(boundaryOwner)",
         "context.prepareXfrmSlotPoll(slotOwner)",
-        "context.prepareXfrmMoveRegrade(moveRegrade)",
+        "context.prepareXfrmReplay(replay)",
         "context.prepareUpload(wrapperUpload,",
         "context.prepareMoveUpdate(moveOwner)",
         "context.prepareRotateUpdate(rotateOwner)",
@@ -8342,7 +8310,7 @@ for old, new, label in (
     ("context.prepareXfrmUpdateEditClose(editClose)", "true", "drop edit close"),
     ("context.prepareXfrmUpdateBoundary(boundaryOwner)", "true", "drop boundary"),
     ("context.prepareXfrmSlotPoll(slotOwner)", "true", "drop slot latch"),
-    ("context.prepareXfrmMoveRegrade(moveRegrade)", "true", "drop Move re-grade"),
+    ("context.prepareXfrmReplay(replay)", "true", "drop replay"),
     ("context.prepareUpload(wrapperUpload,", "context.prepareUpload(null,", "drop upload owner"),
     ("context.prepareRotateUpdate(rotateOwner)", "true", "drop Rotate bank"),
     ("context.prepareScaleUpdate(scaleOwner)", "true", "drop Scale bank"),

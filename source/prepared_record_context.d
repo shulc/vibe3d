@@ -40,7 +40,7 @@ import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
 import prepared_xfrm_update_edit_close : PreparedXfrmUpdateEditCloseOwner;
 import prepared_xfrm_slot_poll : PreparedXfrmSlotPollOwner;
 import prepared_xfrm_update_boundary : PreparedXfrmUpdateBoundaryOwner;
-import prepared_xfrm_move_regrade : PreparedXfrmMoveRegradeOwner;
+import prepared_xfrm_replay : PreparedXfrmReplayOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
@@ -223,7 +223,7 @@ private enum PreparedResourceKind : ubyte {
     TransformProductActivationState, MoveUpdateState, RotateUpdateState,
     ScaleUpdateState, XfrmUpdateEditCloseState, XfrmSlotPollState,
     XfrmUpdateBoundaryState,
-    XfrmMoveRegradeState,
+    XfrmReplayState,
     XfrmUpdateTailState,
     InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
@@ -262,7 +262,7 @@ private struct PreparedResourceEntry {
     PreparedXfrmUpdateEditCloseOwner xfrmUpdateEditClose;
     PreparedXfrmSlotPollOwner xfrmSlotPoll;
     PreparedXfrmUpdateBoundaryOwner xfrmUpdateBoundary;
-    PreparedXfrmMoveRegradeOwner xfrmMoveRegrade;
+    PreparedXfrmReplayOwner xfrmReplay;
     PreparedXfrmUpdateTailOwner xfrmUpdateTail;
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
@@ -701,16 +701,16 @@ public:
         e.kind = PreparedResourceKind.XfrmUpdateBoundaryState;
         e.xfrmUpdateBoundary = owner; resources_ ~= e; return true;
     }
-    bool prepareXfrmMoveRegrade(PreparedXfrmMoveRegradeOwner owner) {
+    bool prepareXfrmReplay(PreparedXfrmReplayOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
         if (!owner.begin()) return false;
         scope(failure) owner.abort();
         version (unittest) if (failAfterResourceBegin_)
-            throw new Exception("injected Xfrm Move re-grade enlist failure");
+            throw new Exception("injected Xfrm replay enlist failure");
         PreparedResourceEntry e;
-        e.kind = PreparedResourceKind.XfrmMoveRegradeState;
-        e.xfrmMoveRegrade = owner; resources_ ~= e; return true;
+        e.kind = PreparedResourceKind.XfrmReplayState;
+        e.xfrmReplay = owner; resources_ ~= e; return true;
     }
     bool prepareStrokeExtrudeActivation(PreparedStrokeExtrudeActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1479,9 +1479,9 @@ public:
             case PreparedResourceKind.XfrmUpdateBoundaryState:
                 ok = e.xfrmUpdateBoundary !is null &&
                     e.xfrmUpdateBoundary.validate(); break;
-            case PreparedResourceKind.XfrmMoveRegradeState:
-                ok = e.xfrmMoveRegrade !is null &&
-                    e.xfrmMoveRegrade.validate(); break;
+            case PreparedResourceKind.XfrmReplayState:
+                ok = e.xfrmReplay !is null &&
+                    e.xfrmReplay.validate(); break;
             case PreparedResourceKind.InheritedNoopState:
                 ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
             case PreparedResourceKind.XfrmActivationPreState:
@@ -1766,8 +1766,8 @@ public:
             e.xfrmUpdateBoundary.install();
             version(unittest) installTrace_[installTraceLength_++] = 62;
             break;
-        case PreparedResourceKind.XfrmMoveRegradeState:
-            e.xfrmMoveRegrade.install();
+        case PreparedResourceKind.XfrmReplayState:
+            e.xfrmReplay.install();
             version(unittest) installTrace_[installTraceLength_++] = 63;
             break;
         case PreparedResourceKind.InheritedNoopState:
@@ -2105,8 +2105,8 @@ private:
         case PreparedResourceKind.XfrmSlotPollState: e.xfrmSlotPoll.abort(); break;
         case PreparedResourceKind.XfrmUpdateBoundaryState:
             e.xfrmUpdateBoundary.abort(); break;
-        case PreparedResourceKind.XfrmMoveRegradeState:
-            e.xfrmMoveRegrade.abort(); break;
+        case PreparedResourceKind.XfrmReplayState:
+            e.xfrmReplay.abort(); break;
         case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
         case PreparedResourceKind.XfrmActivationPreState:
         case PreparedResourceKind.XfrmActivationPostState:

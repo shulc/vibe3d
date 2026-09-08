@@ -2,13 +2,13 @@
   "bypasses": [
     {
       "caller": "armPreparedTool",
-      "line": 3790,
+      "line": 3794,
       "path": "source/app.d",
       "symbol": "prepareArm"
     },
     {
       "caller": "armPreparedTool",
-      "line": 3806,
+      "line": 3810,
       "path": "source/app.d",
       "symbol": "commitPreparedArm"
     }
@@ -1140,53 +1140,32 @@
       "symbol": "deactivate"
     },
     {
-      "aggregate": "MoveTool",
-      "module": "tools.transform.move",
-      "semantic_sha256": "c2576125d093ceb008c61774033e562e38f7fc8478b0916e5e90f34c02d260f2",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
-    },
-    {
       "aggregate": "RotateTool",
       "module": "tools.transform.rotate",
-      "semantic_sha256": "d966558aa2b8ba18a5731eea56c905fbdccfed339612fb696039fcea01663adb",
+      "semantic_sha256": "d4f493b6ae6bb2d2940235066ba5bdaff9a6a836232b76fe6c586ac25d3a2266",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "RotateTool",
       "module": "tools.transform.rotate",
-      "semantic_sha256": "69fc3cd4c45f548bc0348b8232f612c8d55ccf4b657db73dcacaf3e47aa391c5",
+      "semantic_sha256": "cfcb222d97ee28be7a73326f8d51ab74093d836f2b193cb0b20e524acfb8dbba",
       "signature": "void()",
       "symbol": "deactivate"
     },
     {
-      "aggregate": "RotateTool",
-      "module": "tools.transform.rotate",
-      "semantic_sha256": "ff2408f791c6b92461dfaf33e1595be741f0ea0d7fb67d29fec657647566bf09",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
-    },
-    {
       "aggregate": "ScaleTool",
       "module": "tools.transform.scale",
-      "semantic_sha256": "8eb50f78688edb3771642e8a07abdb06b7d48afcbf5f3f1b03044931e3cb67ff",
+      "semantic_sha256": "0f17c0e22efeee118533495cad2291fdd7a31127ce288aab86e10af09b09213a",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "ScaleTool",
       "module": "tools.transform.scale",
-      "semantic_sha256": "9a962121454efcd04a7e717f6106908d57f216bef16eb6b1fba492312a86543a",
+      "semantic_sha256": "d7de595f7f83ece3390fee4aa9e59d1fe64ee9624f058a48685f58de350167d0",
       "signature": "void()",
       "symbol": "deactivate"
-    },
-    {
-      "aggregate": "ScaleTool",
-      "module": "tools.transform.scale",
-      "semantic_sha256": "5bce1615d4135e30a6bb76cffdcccde437e03b009a2447a4757f96cb11b1df99",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
     },
     {
       "aggregate": "TransformTool",
@@ -1205,7 +1184,7 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "50eff10eeaed5626afc7bbdde4c0c41806bd58ac47c5bf5f8c388e989ee0965f",
+      "semantic_sha256": "be91814babb7513836739a7a68e8a3cb1d7c4040d4fad4cd8c01809e9e483921",
       "signature": "void()",
       "symbol": "activate"
     },
@@ -1219,7 +1198,7 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "a8d67ae183fc95b81a22277e6ccecaffbbcadb2196433875e1fca5f14e7b75a4",
+      "semantic_sha256": "b6371d108d455621aa15b6f8cc6fea9fefd001cb292698610ede7a6dc08244d5",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
@@ -1552,20 +1531,6 @@
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
       "semantic_sha256": "2bd3784f6d56d912693be4bdb930d83d43bd2c8132e34c80a237614decd04839",
-      "signature": "Param[]()",
-      "symbol": "params"
-    },
-    {
-      "aggregate": "RotateTool",
-      "module": "tools.transform.rotate",
-      "semantic_sha256": "ed3213edcc1eef7f049f421b0137c96f19a51a0f23b299f40b4f1aa7ef99b18b",
-      "signature": "Param[]()",
-      "symbol": "params"
-    },
-    {
-      "aggregate": "ScaleTool",
-      "module": "tools.transform.scale",
-      "semantic_sha256": "f1c92e5665855324ebfe817885e7de976c7ac07005e14f6ba0055d4485ce2c63",
       "signature": "Param[]()",
       "symbol": "params"
     },

@@ -13,7 +13,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest // migrated input banks contain no edit/history lifecycle branch
 {
-    enum migratedBanks = ["move", "rotate"];
+    enum migratedBanks = ["move", "rotate", "scale"];
     enum forbidden = [
         "wrapperRef", "beginStandaloneEdit", "beginEdit(", "commitEdit(",
         "cancelEdit(", "editIsOpen(", "prepareEditRecord(",
@@ -22,8 +22,8 @@ unittest // migrated input banks contain no edit/history lifecycle branch
 
     // Population before predicate: each completed bank slice is named exactly
     // once, and every named source must contain a real class body.
-    assert(migratedBanks.length == 2,
-        "transform input-bank census: expected 2 migrated banks after R slice");
+    assert(migratedBanks.length == 3,
+        "transform input-bank census: expected 3 migrated banks after S slice");
     size_t scanned;
     foreach (bank; migratedBanks) {
         const code = blankNonCode(readText(buildPath(repoRoot, "source", "tools",
@@ -43,6 +43,6 @@ unittest // migrated input banks contain no edit/history lifecycle branch
             lifecycleHits.to!string ~ ")");
         ++scanned;
     }
-    assert(scanned == 2,
-        "transform input-bank census: T/R population was not traversed");
+    assert(scanned == 3,
+        "transform input-bank census: T/R/S population was not traversed");
 }

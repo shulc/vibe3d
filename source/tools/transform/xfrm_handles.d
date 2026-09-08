@@ -364,6 +364,7 @@ tryRotateBank:
         }
 tryScaleBank:
         if (flagS && allowScaleDispatch) {
+            scaleSub.setInputOptions(negScale);
             int resolvedScaleAxis = latchedPart.bank == LatchedHandleBank.Scale
                                   ? latchedPart.localPart : -1;
             if (!scaleSub.onMouseButtonDownWithResolvedAxis(e, vts,
@@ -385,6 +386,8 @@ tryScaleBank:
             bool scaleWasRelocate = scaleSub.lastClickWasRelocate;
             scaleSub.lastClickWasRelocate = false;   // consume
             if (scaleSub.dragAxis >= 0) {
+                if (scaleWasRelocate && editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Scale);
                 if (scaleWasRelocate && history !is null && history.runOpen()) {
                     closeRunBoundary();
                 }
