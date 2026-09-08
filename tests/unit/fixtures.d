@@ -7,6 +7,7 @@
 module tests.unit.fixtures;
 
 import mesh;
+import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 import math;
 
 /// Index in `m.edges[]` of the edge joining `a` and `b`, or **-1** when there

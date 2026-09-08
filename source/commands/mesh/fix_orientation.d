@@ -3,6 +3,7 @@ module commands.mesh.fix_orientation;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.cleanup : fixFaceOrientation, kCleanupEditScope;
 import view;
 import editmode;
 import mesh_edit_delta : MeshEditScope;

@@ -61,16 +61,6 @@ public import mesh_ops.bridge;
 // widening it to a `public import`.
 public import mesh_ops.loop_slice;
 public import mesh_ops.revolve;
-// task 1903 Stage E1: the mesh-hygiene / orientation-repair family is
-// module-level free functions — `unifyFaces`, `cleanDegenerateFaces`,
-// `cleanupMesh` and `fixFaceOrientation` over `ref MeshEditBatch`, the three
-// read-only detectors `mesh_analysis.d` shares over `ref const(Mesh)` — not a
-// mixin. PUBLIC so every `import mesh;` re-exports them and
-// `ed.cleanupMesh(opts)` / `mesh.computeOrientationFlipMask(false)` resolve
-// through UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door
-// for the ops namespace; narrowing that is audit 0678 M9's job, not this
-// task's.
-public import mesh_ops.cleanup;
 // task 1903 Stage G: the manifold edge bevel is ONE module-level free function
 // — `bevelEdgesByMask` over `ref MeshEditBatch` — plus the family's declared
 // scope `kEdgeBevelEditScope`, not a mixin. PUBLIC so every `import mesh;`
@@ -14713,8 +14703,8 @@ struct Mesh {
     // a batch and one `mesh.cleanup` stamps, derives and delivers ONCE instead
     // of once per internal commit; the three read-only detectors
     // `source/mesh_analysis.d` shares stay `ref const(Mesh)` and their call
-    // sites are unchanged. Re-exported by the `public import` at the top of
-    // this file. Do not reinstate the mixin: a member of `Mesh` BEATS a
+    // sites are unchanged. Callers import this family directly. Do not
+    // reinstate the mixin: a member of `Mesh` BEATS a
     // same-name UFCS free function silently, so it would rebind every call
     // site to a dead body (`static assert` at the foot of that file, and the
     // named roster in tests/unit/commit_seam_census_test.d).

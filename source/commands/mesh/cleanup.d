@@ -3,6 +3,7 @@ module commands.mesh.cleanup;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;

@@ -1,4 +1,5 @@
 module mesh_ops.cleanup;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // The mesh-hygiene + orientation-repair kernel family: four mutating entry
