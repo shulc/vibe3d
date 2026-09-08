@@ -111,6 +111,17 @@ jobs:
         # fail on a link error with no relation to anything this lane measures.
         clean: false
 
+    - name: 'Drop workspace-local dub dependency selections'
+      # clean:false deliberately preserves the workspace, including the
+      # gitignored dub.selections.json that dub writes after resolving. That
+      # local file overrides even exact commit pins in dub.json: after the
+      # lwo2-writer PTAG fix moved its pin, this lane kept compiling the old
+      # writer and was the only checkout still exporting one trailing PTAG for
+      # two POLS kinds. Resolve from the committed manifest on every run; dub
+      # regenerates the selection file before any build needs it. This is the
+      # same boundary enforced by the container release build.
+      run: rm -f dub.selections.json
+
     - name: 'D toolchain on PATH'
       run: echo "$HOME/.local/dlang/dmd2/linux/bin64" >> "$GITHUB_PATH"
 
