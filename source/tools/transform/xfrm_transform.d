@@ -112,7 +112,8 @@ import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
 import tool            : ToolFlag;
-import edit_session    : LiveEvalClient, SlotActivationClient,
+import edit_session    : LiveEvalClient, ParameterChangeBatch,
+                         ParameterChangeSource, SlotActivationClient,
                          LifecycleUndoEmitter;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
@@ -711,10 +712,21 @@ public:
     private Vec3 attrBaseTranslate = Vec3(0, 0, 0);
     private Vec3 attrBaseRotate    = Vec3(0, 0, 0);
     private Vec3 attrBaseScale     = Vec3(1, 1, 1);
-    // Payload provenance for the single wrapper-owned open edit. This labels
-    // and hooks a panel/boundary close; EditSession remains the only lifecycle
-    // state machine.
-    private DragBank editBank = DragBank.None;
+    // Cause of the operation that OPENED the single wrapper-owned edit.  A
+    // later value batch may change another channel in the same live parameter
+    // region, but it does not rewrite this boundary identity.  Replay order is
+    // therefore unable to manufacture provenance.
+    private DragBank editCauseBank = DragBank.None;
+    private bool editCauseProvisional;
+
+    // Last completed value-batch observation. These fields are surfaced only
+    // through the existing test-state endpoint so the actual command path can
+    // prove both the write set and the one-fold rate.
+    private string[] lastValueReplayChannels;
+    private ParameterChangeSource lastValueReplaySource;
+    private bool lastValueReplayValid;
+    private DragBank lastValueReplayCause = DragBank.None;
+    private ulong valueReplayFolds;
 
     // F3a — per-bank gesture records (see the `GestureRecord` doc comment
     // above for the two-known-bit / runStart-vs-gestureStart rationale). One
@@ -1212,7 +1224,13 @@ public:
             headlessRotate = Vec3(0, 0, 0);
         }
         activeDrag                = null;
-        editBank                 = DragBank.None;
+        editCauseBank            = DragBank.None;
+        editCauseProvisional     = false;
+        lastValueReplayChannels.length = 0;
+        lastValueReplaySource    = ParameterChangeSource.ScriptedValue;
+        lastValueReplayValid     = false;
+        lastValueReplayCause     = DragBank.None;
+        valueReplayFolds         = 0;
         dragBaseline.length       = 0;
         resetRun();                          // apply-path Phase 2: fresh run (+ P-F frozen frame)
         moveDragFastPath          = false;
@@ -1632,8 +1650,7 @@ public:
                     // is covered by the whole-mesh dragBaseline). The falloff
                     // support can be the whole mesh, so a full-range pass is the
                     // safe superset.
-                    recordPipeRefire("Falloff", anchor, after,
-                                     null, DragBank.Move,
+                    recordPipeRefire(anchor, after, null, DragBank.Move,
                                      preF, postF, preSn, postSn, preSy, postSy);
                     needsGpuUpdate = true;
                 }
@@ -1894,7 +1911,7 @@ public:
             bool itemSubjectOverride = false) {
         PreparedXfrmEditCloseImage image;
         image.expectedSubject = cachedSubjType_;
-        image.expectedBank = cast(ubyte) editBank;
+        image.expectedBank = cast(ubyte) editCauseBank;
         image.itemSubject = useItemSubjectOverride
             ? itemSubjectOverride : itemSubjectActive();
         image.vertex = capturePreparedEditClose();
@@ -1903,15 +1920,9 @@ public:
 
         bool preparedAny;
         if (image.closeWrapper) {
-            string label;
-            final switch (editBank) {
-                case DragBank.None: return image;
-                case DragBank.Move: label = "Move"; break;
-                case DragBank.Rotate: label = "Rotate"; break;
-                case DragBank.Scale: label = "Scale"; break;
-            }
+            if (editCauseBank == DragBank.None) return image;
             Command cmd = image.itemSubject ? buildPreparedItemEditCmd()
-                                            : buildPreparedEditCmd(label);
+                                            : buildPreparedEditCmd(name());
             if (cmd !is null) {
                 if (context is null || history is null) return image;
                 if (!context.prepare(cmd, PreparedHistoryKind.InSession,
@@ -1928,7 +1939,7 @@ public:
     final bool preparedUpdateEditCloseMatches(
             ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
         return image.valid && cachedSubjType_ == image.expectedSubject &&
-            cast(ubyte) editBank == image.expectedBank &&
+            cast(ubyte) editCauseBank == image.expectedBank &&
             preparedEditCloseMatches(image.vertex) &&
             preparedItemEditCloseMatches(image.item);
     }
@@ -1939,7 +1950,8 @@ public:
         if (image.closeWrapper) {
             installPreparedEditClose(image.vertex);
             installPreparedItemEditClose(image.item);
-            editBank = DragBank.None;
+            editCauseBank = DragBank.None;
+            editCauseProvisional = false;
         }
         image.clear();
     }
@@ -4526,8 +4538,7 @@ public:
         }
 
         if (editIsOpen())
-            commitOwnedEdit(DragBank.Move, "Move",
-                TransformHistoryIntent.RunGesture);
+            commitOwnedEdit(DragBank.Move, TransformHistoryIntent.RunGesture);
         // A no-op commit (no cmd built) never consumes the request; drop it so
         // it cannot leak into an unrelated later commit.
         pendingMoveSoftPin = false;
@@ -4655,8 +4666,7 @@ public:
         // harmless placeholder). Consumes (clears) rotateRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
-        commitOwnedEdit(DragBank.Rotate, "Rotate",
-            TransformHistoryIntent.RunGesture);
+        commitOwnedEdit(DragBank.Rotate, TransformHistoryIntent.RunGesture);
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
@@ -4747,8 +4757,7 @@ public:
         // placeholder). Consumes (clears) scaleRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
-        commitOwnedEdit(DragBank.Scale, "Scale",
-            TransformHistoryIntent.RunGesture);
+        commitOwnedEdit(DragBank.Scale, TransformHistoryIntent.RunGesture);
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
@@ -4837,6 +4846,10 @@ public:
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
     }
+
+    // Legacy FORMS=0 sliders and idle pipe re-fire still enter from an embedded
+    // bank.  Value-batch replay no longer calls either method: it updates the
+    // wrapper's canonical TRS directly and folds once in reEvaluate().
     public void applyRotateAbsoluteFromRun(Vec3 angleAccumRad) {
         import std.math : PI;
         import math : matrixFromEulerZYX;
@@ -4844,34 +4857,17 @@ public:
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
-        // MATRIX-AS-TRUTH (recompose-from-euler semantics) — a numeric/panel RX/RY/RZ write is
-        // an ABSOLUTE orientation set, so RECOMPOSE the truth from the written euler.
-        // matrixFromEulerZYX pins to the SAME Rz·Ry·Rx convention the global fold
-        // applies (composeFor consumes run.r directly), so a bare write of
-        // RZ=90 lands as an exact 90° world-Z rotation. This is the ONLY place a
-        // panel/numeric edit feeds run.r; the gizmo drain feeds it directly.
         run.r = matrixFromEulerZYX(headlessRotate);
-        // Euler-slot path: applyTRS defaults the transient view-ring rotation
-        // to zero (MS-3.4), so a prior view-ring drag cannot re-apply on top.
         bool pureRotatePreset = flagR && !flagT && !flagS;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureRotatePreset);
         if (pressPlacesCenter()) {
-            // The pin family is WORLD (see `lastFoldPivotWorld`) — feeding the
-            // layer-space `lastFoldPivot` here would settle the gizmo `pos`
-            // away from the geometry on a displaced layer.
             if (auto ac = activeAcenStage())
                 ac.setSoftPlaced(lastFoldPivotWorld);
         }
     }
-
-    // Tasks 3023 (capture) / 3310 (fix) — THE negScale FLOOR, in one place
-    // because it has TWO doors into geometry, and neither is reachable from
-    // the other:
-    //
-    //   * `applyScaleAbsoluteFromRun` below — the live/panel door;
-    //   * `applyHeadless` — the numeric door (`tool.attr SX …` +
-    //     `tool.doApply`), which until task 3310 had no floor at all.
+    // Tasks 3023 (capture) / 3310 (fix) — THE negScale FLOOR shared by
+    // canonical value replay, the legacy/refire door below, and applyHeadless.
     //
     // The law is MEASURED, not designed (fixture
     // `tests/fixtures/scale_negative_typed_value.json`, gap-registry row 85):
@@ -4889,48 +4885,21 @@ public:
         return s;
     }
 
-    public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
-        prepareRunAbsoluteApply();
-        // Task 0332 / 3310 — one of the TWO doors that drive geometry from
-        // `run.s`; the other is `applyHeadless`. Reached from
-        // `ScaleTool.applyScaleAbsoluteCpuOnly`'s wrapped branch, which has
-        // two callers of its own:
-        //
-        //   (a) `applyScalePanelValue` — the panel / live-session `tool.attr`
-        //       write, via `reEvaluate()`. It carries its OWN copy of this
-        //       floor, applied to the `factors` it then hands us, so on THIS
-        //       path the two floors are in series.
-        //   (b) `applyScaleFromActivationCpuOnly` — the idle falloff-refire
-        //       arm, which passes `wrap.publishedScale()` (i.e. `run.s`)
-        //       straight through and never touches scale.d's floor.
-        //
-        // WHAT WAS MEASURED, task 3310, and say it whole: removing THIS floor
-        // alone reddens nothing, and removing scale.d's alone reddens nothing;
-        // removing BOTH reddens `test_xfrm_negscale` Case 4 and the session
-        // column of `test_fixture_negscale_typed_value`. So caller (b) is a
-        // static reason this floor is not redundant, and it has NO test — do
-        // not read "not redundant" as "witnessed".
-        //
-        // The comment that used to stand here claimed this was "the WRAPPED
-        // role's single choke point" and that scale.d's clamp "never reaches
-        // actual geometry here — this method re-reads `wrap.publishedScale()`
-        // / `run.s` fresh". Both halves are FALSE and were measured false in
-        // task 3310: there is a second door (`applyHeadless`), and this method
-        // re-reads nothing — it takes the caller's value as `scaleAccum` and
-        // WRITES `run.s` from it, so on path (a) it is scale.d's already-
-        // floored copy that arrives. Editing only scale.d is therefore a
-        // NO-OP, which is exactly the wrong place to send the next reader.
-        //
-        // Two steps, in this order: reject non-finite to the identity 1.0
-        // UNCONDITIONALLY (`ScaleTool.clampScaleFactor`'s first step; the
-        // reference's own setter lets a NaN through, so this half is OURS and
-        // is not part of the measured law), then the measured floor.
+    private Vec3 normalizeScaleRunValue(Vec3 value) const {
         import std.math : isFinite;
         float rejectNonFinite(float f) { return isFinite(f) ? f : 1.0f; }
-        scaleAccum.x = rejectNonFinite(scaleAccum.x);
-        scaleAccum.y = rejectNonFinite(scaleAccum.y);
-        scaleAccum.z = rejectNonFinite(scaleAccum.z);
-        run.s = floorNegativeScale(scaleAccum);
+        value.x = rejectNonFinite(value.x);
+        value.y = rejectNonFinite(value.y);
+        value.z = rejectNonFinite(value.z);
+        return floorNegativeScale(value);
+    }
+
+    // Legacy FORMS=0 / idle-refire companion to the rotate entry above.
+    // Live value batches bypass the embedded ScaleTool and normalize run.s in
+    // reEvaluate() before the batch's single wrapper fold.
+    public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
+        prepareRunAbsoluteApply();
+        run.s = normalizeScaleRunValue(scaleAccum);
         bool pureScalePreset = flagS && !flagT && !flagR;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureScalePreset);
@@ -5053,7 +5022,12 @@ public:
         // same run baseline without inventing a second session owner.
         bool fresh = captureBaselinePacketsNoSession();
         buildVertexCacheIfNeeded();
-        beginEditForBank(bank);
+        if (bank != DragBank.None) {
+            beginEditForBank(bank);
+        } else {
+            assert(editIsOpen(),
+                "a stage replay requires an already-open wrapper edit");
+        }
 
         // Pin the wrapper-owned selection/mutation tracking to the CURRENT mesh
         // state at the moment the session opens. activate() seeds these to
@@ -5119,12 +5093,6 @@ public:
     // (full-mesh, length-equal to mesh.vertices), NOT editBaseline() which is
     // partial and reordered (see :277-282) and would trip applyTRS's length
     // assert. Shared by reEvaluate() and the panel-delta path's setup.
-    private void replayTranslateFromBaseline() {
-        captureDragBaselineIfStale(DragBank.Move);
-        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
-        needsGpuUpdate = true;
-    }
-
     // Phase 3 — public accessor for MoveTool's `update()` to gate
     // its ACEN-pull on whether the wrapper has an open edit
     // session. `editIsOpen()` is protected on `TransformTool`;
@@ -5354,7 +5322,7 @@ public:
         image.panel = projection.panelRegrade;
         image.wrapper = projection.wrapperRegrade;
         if (image.wrapper) {
-            image.wrapperRefire = buildPreparedRefireState(context, "Falloff",
+            image.wrapperRefire = buildPreparedRefireState(context,
                 image.expectedLive.vertices, image.candidate.vertices,
                 image.expectedFalloff, image.nextFalloff,
                 image.expectedSnap, image.nextSnap,
@@ -5421,7 +5389,7 @@ public:
     /// census counters. `anchor` is the live post-gesture image and `after` is
     /// the already detached recompute candidate.
     public PreparedXfrmRefireStateImage buildPreparedRefireState(
-            PreparedRecordContext context, string label,
+            PreparedRecordContext context,
             const Vec3[] anchor, const Vec3[] after,
             FalloffPacket preF, FalloffPacket postF,
             SnapPacket preSn, SnapPacket postSn,
@@ -5471,7 +5439,7 @@ public:
 
         auto cmd = vertexEditFactory();
         if (cmd is null) return PreparedXfrmRefireStateImage.init;
-        cmd.setEdit(movedIdx, before, movedAfter, label);
+        cmd.setEdit(movedIdx, before, movedAfter, name());
 
         FalloffPacket preFCopy = preF.ownedDup();
         FalloffPacket postFCopy = postF.ownedDup();
@@ -5534,21 +5502,21 @@ public:
     // the correct bank tag. The helper re-checks the staleness gate as
     // defense-in-depth (§4.1 step 0) and re-stamps lastAppliedGestureMutationVersion
     // after the record (a no-op today; defensive).
-    public void recordFalloffRefireRotate(string label, Vec3[] anchor,
+    public void recordFalloffRefireRotate(Vec3[] anchor,
                                           Vec3[] after, size_t[] idx,
                                           FalloffPacket preF, FalloffPacket postF,
                                           SnapPacket preSn,  SnapPacket postSn,
                                           SymmetryPacket preSy, SymmetryPacket postSy) {
-        recordPipeRefire(label, anchor, after, idx, DragBank.Rotate,
+        recordPipeRefire(anchor, after, idx, DragBank.Rotate,
                          preF, postF, preSn, postSn, preSy, postSy);
     }
 
-    public void recordFalloffRefireScale(string label, Vec3[] anchor,
+    public void recordFalloffRefireScale(Vec3[] anchor,
                                          Vec3[] after, size_t[] idx,
                                          FalloffPacket preF, FalloffPacket postF,
                                          SnapPacket preSn,  SnapPacket postSn,
                                          SymmetryPacket preSy, SymmetryPacket postSy) {
-        recordPipeRefire(label, anchor, after, idx, DragBank.Scale,
+        recordPipeRefire(anchor, after, idx, DragBank.Scale,
                          preF, postF, preSn, postSn, preSy, postSy);
     }
 
@@ -5571,7 +5539,15 @@ public:
 
     private void beginEditForBank(DragBank bank) {
         beginEdit();
-        if (editIsOpen()) editBank = bank;
+        // The operation that opened a live parameter region owns its close.
+        // Held nonidentity values replayed by later batches are operands, not
+        // new causes, and a later channel write inside the same region does not
+        // manufacture an internal boundary.
+        if (editIsOpen() && (editCauseBank == DragBank.None ||
+                             editCauseProvisional)) {
+            editCauseBank = bank;
+            editCauseProvisional = false;
+        }
     }
 
     // Session-open chokepoint override: every path that opens the wrapper edit
@@ -5688,33 +5664,32 @@ public:
     // run, matching the pre-1905 commitEdit path. Only a bank transition is a
     // BoundaryCommit and therefore a distinct undo unit.
     private void commitEditAtBankBoundary(DragBank incomingBank) {
-        if (editBank == incomingBank)
+        if (editCauseBank == incomingBank)
             commitOpenEdit(TransformHistoryIntent.RunClose);
         else
             commitOpenEdit(TransformHistoryIntent.BoundaryCommit);
     }
 
     private void commitOpenEdit(TransformHistoryIntent intent) {
-        const bank = editBank;
-        final switch (bank) {
-            case DragBank.None:
-                assert(0, "an open wrapper edit must retain its originating bank");
-                return;
-            case DragBank.Move:   commitOwnedEdit(bank, "Move",
-                intent); break;
-            case DragBank.Rotate: commitOwnedEdit(bank, "Rotate",
-                intent); break;
-            case DragBank.Scale:  commitOwnedEdit(bank, "Scale",
-                intent); break;
+        const bank = editCauseBank;
+        if (bank == DragBank.None) {
+            assert(0, "an open wrapper edit must retain its operation cause");
+            return;
         }
+        // History rows are named by the wrapper command, never by whichever
+        // bank happens to supply or hold an operand for the fold.
+        commitOwnedEdit(bank, intent);
     }
 
     // One payload finalizer for every embedded bank. `bank` is semantic
     // metadata for the wrapper-owned run snapshots; it is not another session
     // state machine.
-    private void commitOwnedEdit(DragBank bank, string label,
+    private void commitOwnedEdit(DragBank bank,
                                  TransformHistoryIntent intent) {
-        scope(exit) editBank = DragBank.None;
+        scope(exit) {
+            editCauseBank = DragBank.None;
+            editCauseProvisional = false;
+        }
         // Task 0614 Phase 4 — item branch. Builds a LayerXformEdit from the
         // gesture-open snapshot (itemEditBefore_) versus the CURRENT
         // (post-drag) xform, mirroring buildEditCmd's `if (!changed) return
@@ -5749,11 +5724,11 @@ public:
         import command : Command;
         Command cmd;
         void delegate(void delegate(), void delegate()) setCmdHooks;
-        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(label)) {
+        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(name())) {
             cmd = mcmd;
             setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
         } else {
-            auto vcmd = buildEditCmd(label);
+            auto vcmd = buildEditCmd(name());
             if (vcmd is null) return;
             cmd = vcmd;
             setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
@@ -5921,54 +5896,103 @@ public:
         return runBaselineValid && history !is null && history.runOpen();
     }
 
-    // Re-run the live transform from the session baseline using the CURRENT
-    // (already-injected) headless attrs, ABSOLUTELY (Decision D1). Per active
-    // flag:
-    //   - flagT → replayTranslateFromBaseline() (equivalent to applyMovePanelDelta
-    //     minus the delta accumulation / run.t zeroing).
-    //   - flagR/S → embedded input/value producers feeding the wrapper's shared
-    //     run baseline and applyTRS fold.
-    // (forms plan Phase 5b widened this body from the prior T-only seam — the
-    // gate, trigger sites and the `interactive` discriminator are unchanged.)
-    //
-    // NOTE: do NOT early-return on !editIsOpen(). reEvaluate() must also be able
-    // to OPEN the wrapper session for the forms command-trigger path. The
-    // "fire only when already-live OR
-    // forms-interactive" gate lives in the attr command, not here.
-    override void reEvaluate() {
-        // Foot-gun retired (was a silent `if (!flagT) return;`): a re-eval against
-        // a preset whose every relevant flag is off would silently no-op, looking
-        // like the seam is broken when it is simply out of scope. Surface it.
-        if (!flagT && !flagR && !flagS) {
-            return;
+    private static ubyte replayBankBit(DragBank bank)
+            pure nothrow @safe @nogc {
+        return bank == DragBank.None ? 0
+             : cast(ubyte)(1 << cast(int)bank);
+    }
+
+    private static DragBank replayBankForChannel(string channel)
+            pure nothrow @safe @nogc {
+        if (channel == "T" || channel == "TX" || channel == "TY" ||
+            channel == "TZ") return DragBank.Move;
+        if (channel == "R" || channel == "RX" || channel == "RY" ||
+            channel == "RZ" || channel == "rotFalloffBlend")
+            return DragBank.Rotate;
+        if (channel == "S" || channel == "SX" || channel == "SY" ||
+            channel == "SZ" || channel == "uniformScale" ||
+            channel == "uniform" || channel == "negScale")
+            return DragBank.Scale;
+        return DragBank.None;
+    }
+
+    private static string replayBankName(DragBank bank)
+            pure nothrow @safe @nogc {
+        final switch (bank) {
+            case DragBank.None:   return "none";
+            case DragBank.Move:   return "move";
+            case DragBank.Rotate: return "rotate";
+            case DragBank.Scale:  return "scale";
         }
-        // T always re-runs (its baseline replay is harmless at zero translate
-        // and the wrapper session is the all-flags preset's "is-live" primer).
-        if (flagT) replayTranslateFromBaseline();
-        // Only drive R/S when their value is non-identity. This prevents an
-        // untouched slot from claiming the wrapper edit's bank provenance.
-        //
-        // This gate STAYS on the DERIVED euler `headlessRotate` (NOT the matrix
-        // `run.r`), unlike the held-rotation identity checks elsewhere: on the
-        // headless attr / panel re-eval path the param write lands the new value
-        // into `headlessRotate` first, while `run.r` is only RECOMPOSED INSIDE
-        // applyRotatePanelValue (recompose-from-euler). So at this gate `headlessRotate` is the
-        // freshly-written truth and `run.r` is still the stale pre-edit matrix —
-        // gating on `run.r` would skip a genuine panel rotate. (Gimbal lock cannot
-        // false-zero here: the value just came FROM the euler the user/script set.)
-        bool hasR = flagR && (headlessRotate.x != 0 || headlessRotate.y != 0
-                                                     || headlessRotate.z != 0);
-        bool hasS = flagS && (run.s.x != 1 || run.s.y != 1
-                                                    || run.s.z != 1);
-        // Open the wrapper before invoking the embedded value producer so both
-        // component and item subjects have one correctly-labelled payload.
-        if (hasR) {
-            beginEditForBank(DragBank.Rotate);
-            rotateSub.applyRotatePanelValue(headlessRotate);
+    }
+
+    private static string replaySourceName(ParameterChangeSource source)
+            pure nothrow @safe @nogc {
+        final switch (source) {
+            case ParameterChangeSource.InteractiveValue: return "interactive";
+            case ParameterChangeSource.ScriptedValue:    return "scripted";
+            case ParameterChangeSource.StageAttribute:   return "stage";
+            case ParameterChangeSource.SlotActivation:   return "slot";
         }
-        if (hasS) {
-            beginEditForBank(DragBank.Scale);
-            scaleSub.applyScalePanelValue(run.s);
+    }
+
+    // Re-run one logical parameter batch from the frozen session baseline.
+    // The write-set says WHY the replay happened; current nonidentity values
+    // are merely operands in the canonical T/R/S fold.  This distinction keeps
+    // RX->0 and SX->1 observable and prevents a held bank from claiming a TX
+    // edit.  Stage batches have no value-channel cause and re-weight the same
+    // canonical operation without changing its owner.
+    override void reEvaluate(ParameterChangeBatch batch) {
+        immutable bool valueBatch =
+            batch.source == ParameterChangeSource.InteractiveValue ||
+            batch.source == ParameterChangeSource.ScriptedValue;
+        DragBank cause = DragBank.None;
+        ubyte changedBanks;
+
+        if (valueBatch) {
+            lastValueReplayChannels = batch.names.dup;
+            lastValueReplaySource = batch.source;
+            lastValueReplayValid = true;
+            foreach (channel; batch.names) {
+                const bank = replayBankForChannel(channel);
+                if (cause == DragBank.None && bank != DragBank.None)
+                    cause = bank;
+                changedBanks |= replayBankBit(bank);
+            }
+            lastValueReplayCause = cause;
+            // A wrapper-only option with no TRS effect (currently slipUV) is a
+            // real write but does not manufacture a geometry replay.
+            if (cause == DragBank.None) return;
+
+            // Setter projections land before BatchComplete.  Finish the two
+            // canonical representations whose bound display values are not the
+            // fold truth, preserving the existing rotation convention and
+            // scale non-finite/negative clamps.
+            if (changedBanks & replayBankBit(DragBank.Rotate)) {
+                import math : matrixFromEulerZYX;
+                run.r = matrixFromEulerZYX(headlessRotate);
+            }
+            if (changedBanks & replayBankBit(DragBank.Scale))
+                run.s = normalizeScaleRunValue(run.s);
+        }
+
+        if (!flagT && !flagR && !flagS) return;
+
+        // Value batches may open a wrapper edit; a stage batch is delivered
+        // only while one is already open.  The opener's cause remains the
+        // region owner across later batches, preserving the existing boundary
+        // contract while each batch still reports its own replay cause.
+        captureDragBaselineIfStale(cause);
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                 /*samplePipeFromBaseline=*/true);
+        needsGpuUpdate = true;
+        if (valueBatch) ++valueReplayFolds;
+
+        if (valueBatch &&
+            (changedBanks & replayBankBit(DragBank.Rotate)) &&
+            pressPlacesCenter()) {
+            if (auto ac = activeAcenStage())
+                ac.setSoftPlaced(lastFoldPivotWorld);
         }
     }
 
@@ -5990,11 +6014,14 @@ public:
         if (!flagT && !flagR && !flagS) {
             return;
         }
-        // Open exactly ONE bare wrapper session — the first enabled slot in
-        // T→R→S priority. This is only a hasLiveEval primer.
+        // Preserve the opener's historical first-enabled-bank owner for tests
+        // that manually mutate geometry, but mark it provisional: the first
+        // real value batch replaces it with that operation's actual cause.
+        const wasOpen = editIsOpen();
         if      (flagT) captureDragBaselineIfStale(DragBank.Move);
         else if (flagR) captureDragBaselineIfStale(DragBank.Rotate);
         else if (flagS) captureDragBaselineIfStale(DragBank.Scale);
+        if (!wasOpen && editIsOpen()) editCauseProvisional = true;
         // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
     }
 
@@ -6128,7 +6155,8 @@ public:
         // drag. cancelEdit() is idempotent when the wrapper session was never
         // open (pure R/S cancel path).
         cancelEdit();
-        editBank           = DragBank.None;
+        editCauseBank      = DragBank.None;
+        editCauseProvisional = false;
         activeDrag          = null;
         dragBaseline.length = 0;
         resetRun();                    // apply-path Phase 2: cancelled run (+ P-F frozen frame)
@@ -6560,6 +6588,20 @@ private:
         runFrameObj["up"]     = JSONValue([JSONValue(runFrameU.x), JSONValue(runFrameU.y), JSONValue(runFrameU.z)]);
         runFrameObj["fwd"]    = JSONValue([JSONValue(runFrameF.x), JSONValue(runFrameF.y), JSONValue(runFrameF.z)]);
         root["runFrame"] = runFrameObj;
+        // Task 4691: expose the last VALUE batch's causal write-set separately
+        // from the held canonical TRS values.  Tests use the cumulative fold
+        // count to prove one geometry fold per accepted value batch.
+        auto replay = JSONValue.emptyObject;
+        replay["source"] = JSONValue(lastValueReplayValid
+            ? replaySourceName(lastValueReplaySource) : "none");
+        replay["cause"] = JSONValue(replayBankName(lastValueReplayCause));
+        JSONValue[] channels;
+        channels.reserve(lastValueReplayChannels.length);
+        foreach (channel; lastValueReplayChannels)
+            channels ~= JSONValue(channel);
+        replay["channels"] = JSONValue(channels);
+        replay["folds"] = JSONValue(cast(long)valueReplayFolds);
+        root["valueReplay"] = replay;
         return root;
     }
 
@@ -6849,7 +6891,7 @@ private:
     // whole transient pipe config. The three config restores are INDEPENDENT
     // stage mutations (FalloffStage / SnapStage / SymmetryStage own disjoint
     // fields), so one composed closure calls all three without clobber.
-    private void recordPipeRefire(string label, Vec3[] anchor,
+    private void recordPipeRefire(Vec3[] anchor,
                                   Vec3[] after, size_t[] idx, DragBank bank,
                                   FalloffPacket preF, FalloffPacket postF,
                                   SnapPacket preSn, SnapPacket postSn,
@@ -6949,7 +6991,7 @@ private:
 
         if (vertexEditFactory is null) return;
         auto cmd = vertexEditFactory();
-        cmd.setEdit(uidx, before, movedAfter, label);
+        cmd.setEdit(uidx, before, movedAfter, name());
 
         // Step 3.5 — pipe CONFIG-restore hooks (P-A falloff + P-C snap/symmetry).
         // The re-grade entry must restore the pipe HANDLES / config together with

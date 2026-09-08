@@ -2,13 +2,13 @@
   "bypasses": [
     {
       "caller": "armPreparedTool",
-      "line": 3810,
+      "line": 3790,
       "path": "source/app.d",
       "symbol": "prepareArm"
     },
     {
       "caller": "armPreparedTool",
-      "line": 3826,
+      "line": 3806,
       "path": "source/app.d",
       "symbol": "commitPreparedArm"
     }
@@ -1163,7 +1163,7 @@
     {
       "aggregate": "RotateTool",
       "module": "tools.transform.rotate",
-      "semantic_sha256": "e8f8de12edcec914229a95c08193e5bb554190c48a88634c07709b54ce48facc",
+      "semantic_sha256": "ff2408f791c6b92461dfaf33e1595be741f0ea0d7fb67d29fec657647566bf09",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
@@ -1184,7 +1184,7 @@
     {
       "aggregate": "ScaleTool",
       "module": "tools.transform.scale",
-      "semantic_sha256": "451d97cd788d6291951fad7425f84e6378c15582144b2e2fa2d2d8b5d04ecbbb",
+      "semantic_sha256": "5bce1615d4135e30a6bb76cffdcccde437e03b009a2447a4757f96cb11b1df99",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
@@ -1219,7 +1219,7 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "86d27476d970185b7691c5ae45aa3b7831826b1df3b85300c466ac0b78b8a399",
+      "semantic_sha256": "a8d67ae183fc95b81a22277e6ccecaffbbcadb2196433875e1fca5f14e7b75a4",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },

@@ -506,7 +506,7 @@ public:
                 image.meshPrepared = prepared.applied;
                 if (image.projection.wrapperRegrade && image.meshPrepared) {
                     image.wrapperRefire = wrap.buildPreparedRefireState(
-                        context, "Falloff", image.expectedLive.vertices,
+                        context, image.expectedLive.vertices,
                         image.candidate.vertices,
                         image.expectedFalloff, image.nextFalloff,
                         image.expectedSnap, image.nextSnap,
@@ -799,7 +799,7 @@ public:
                     applyAbsoluteFromOrigCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireRotate("Falloff", anchor, after, null,
+                    wrap.recordFalloffRefireRotate(anchor, after, null,
                                                    preF, postF, preSn, postSn,
                                                    preSy, postSy);
                     needsGpuUpdate = true;
@@ -1589,77 +1589,6 @@ public:
         }
     }
 
-    // Value-driven panel entry point (forms-engine Phase 5b). The forms panel
-    // dispatches an absolute `RX`/`RY`/`RZ` value (degrees) through the
-    // `reEvaluate()` seam, which calls this once per edit. It mirrors the
-    // ABSOLUTE arm of `drawProperties` above WITHOUT any ImGui calls: the
-    // caller already holds the value, so there is no `DragFloat` / `IsItemActive`
-    // gating — every call is treated as an active edit (the wrapper's commit
-    // guards close the session, exactly as for a gizmo drag). The geometry apply,
-    // session/snapshot gating, per-edit falloff/symmetry re-capture and the
-    // `propsDragging` whole-mesh GPU bypass are kept identical to the inline path
-    // so a panel value edit blends through falloff and uses the fast path the
-    // same way a slider drag does.
-    void applyRotatePanelValue(Vec3 deg) {
-        import std.math : PI;
-
-        // Absolute value-driven: the panel value IS angleAccum (no accumulation).
-        propDeg = deg;
-        angleAccum.x = deg.x * PI / 180.0f;
-        angleAccum.y = deg.y * PI / 180.0f;
-        angleAccum.z = deg.z * PI / 180.0f;
-
-        buildVertexCacheIfNeeded();
-        // Re-capture falloff/symmetry each edit (mirrors drawProperties); gates
-        // the whole-mesh GPU bypass off when a per-vertex weight breaks the
-        // single-uniform fast path. No dispatcher vts here — build a local one.
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket propSubj;
-        VectorStack propVts;
-        buildLocalVts(propSubj, propVts);
-        bool falloffActive = captureFalloffForDrag(propVts);
-        bool symmActive    = captureSymmetryForDrag(propVts);
-        bool wholeMesh = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-
-        // Snapshot pre-edit Tool-Properties state on the FIRST edit of the
-        // session (before beginEdit opens it); beginEdit is idempotent after.
-        if (!editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        } else {
-            beginStandaloneEdit();   // idempotent
-        }
-
-        // Rebuild CPU vertices via the shared apply path, carrying THIS call's
-        // absolute value. In the WRAPPED path it delegates to
-        // applyRotateAbsoluteFromRun → applyTRS(dragBaseline); standalone it runs
-        // the origVertices kernel. The forms caller (`reEvaluate()` →
-        // applyRotatePanelValue(headlessRotate)) passes the wrapper's own euler,
-        // so recomposing it there is an identity write; any other caller (the
-        // FORMS=0 legacy slider reaches the same value through drawProperties)
-        // gets its edit applied instead of discarded.
-        applyRotateAbsoluteCpuOnly(propVts, angleAccum);
-
-        if (wholeMesh && wrapperRef is null) {
-            // STANDALONE whole-mesh: GPU bypass — upload base once, then only
-            // update matrix. The matrix is computed around origVertices, which IS
-            // the correct base when there is no wrapper run baseline.
-            if (!propsDragging) {
-                uploadPropsBase(origVertices);
-                propsDragging = true;
-            }
-            gpuMatrix = computePropsRotationMatrix();
-        } else {
-            // WRAPPED path (Phase 1): the GPU bypass would preview from the wrong
-            // base (origVertices) — it ignores the baked cross-axis history in
-            // dragBaseline. applyTRS already wrote the correct CPU verts, so defer
-            // the upload; the wrapper re-uploads from the live mesh. Also the
-            // partial-selection / falloff path always defers.
-            needsGpuUpdate = true;
-        }
-    }
-
 private:
 
     // Phase 4 of the action-center parity plan: per-cluster pivot for
@@ -1725,9 +1654,9 @@ private:
     // TWO ENTRIES, because the callers disagree about ONE thing: which value is
     // the truth at the moment of the call (task 0801, scale.d carries the twin).
     //   - `applyRotateAbsoluteCpuOnly(vts, anglesRad)` — the caller HOLDS the new
-    //     absolute euler (both panel arms: the legacy slider and the forms
-    //     `applyRotatePanelValue`). It recomposes `run.r` from `anglesRad`, so
-    //     the edit is what lands.
+    //     absolute euler (the legacy slider arm). It recomposes `run.r` from
+    //     `anglesRad`, so the edit is what lands. Forms value batches bypass
+    //     this bank and recompose once in the wrapper.
     //   - `applyAbsoluteFromOrigCpuOnly(vts)` — the caller holds NOTHING new (the
     //     idle falloff-refire arms in update()); the value is whatever the run
     //     currently holds, re-applied under fresh falloff weights. That reading

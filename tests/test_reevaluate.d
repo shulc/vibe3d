@@ -84,6 +84,10 @@ long undoCount() {
     return getJson("/api/history")["undo"].array.length;
 }
 
+JSONValue valueReplay() {
+    return getJson("/api/tool/state")["valueReplay"];
+}
+
 bool canUndo() {
     return getJson("/api/undo/status")["canUndo"].boolean;
 }
@@ -451,12 +455,31 @@ unittest {
 
     cmd("tool.beginSession");
     cmd("tool.attr Transform TX 1");
+    auto replayT = valueReplay();
+    assert(replayT["cause"].str == "move" &&
+           replayT["channels"].array.length == 1 &&
+           replayT["channels"].array[0].str == "TX" &&
+           replayT["folds"].integer == 1,
+        "TX batch must cause exactly one Move replay fold; got " ~
+        replayT.toString);
     auto vT = vertexAt(6);
     assert(approxEqual(vT[0], 1.5),
         "combined T slot moves geometry: TX=1 ⇒ v6.x=1.5, got " ~ vT[0].to!string);
 
     cmd("tool.attr Transform RZ 90");
+    auto replayR = valueReplay();
+    assert(replayR["cause"].str == "rotate" &&
+           replayR["channels"].array[0].str == "RZ" &&
+           replayR["folds"].integer == 2,
+        "RZ batch must add exactly one Rotate replay fold; got " ~
+        replayR.toString);
     cmd("tool.attr Transform SX 2");
+    auto replayS = valueReplay();
+    assert(replayS["cause"].str == "scale" &&
+           replayS["channels"].array[0].str == "SX" &&
+           replayS["folds"].integer == 3,
+        "SX batch must add exactly one Scale replay fold; got " ~
+        replayS.toString);
     auto vAll = vertexAt(6);
     assert(!(approxEqual(vAll[0], 0.5) && approxEqual(vAll[1], 0.5)
                                        && approxEqual(vAll[2], 0.5)),
@@ -471,11 +494,49 @@ unittest {
     assert(recorded["command"].str == "mesh.vertex_edit",
         "combined T+R+S must record the wrapper's vertex-edit command; got "
         ~ recorded.toString);
-    assert(recorded["label"].str == "Scale 8 verts",
-        "combined T+R+S recorded entry must retain the final Scale bank; got "
+    assert(recorded["label"].str == "Transform 8 verts",
+        "combined T+R+S entry must be named by the Transform command; got "
         ~ recorded["label"].str);
 
     // Undoing every recorded entry restores the original mesh.
     foreach (_; 0 .. entries) postJson("/api/command", commandBody("history.undo"));
     assertVertex(6, 0.5, 0.5, 0.5, "undoing all entries restores the original (combined T+R+S)");
+}
+
+// Identity returns are still causal writes.  The replay selector must not use
+// the post-write nonidentity value as a substitute for the actual write-set.
+unittest {
+    drainAndReset();
+    cmd("tool.set TransformRotate off");
+    drainAndReset();
+    cmd("tool.set TransformRotate");
+    cmd("tool.beginSession");
+    cmd("tool.attr TransformRotate RZ 30");
+    cmd("tool.attr TransformRotate RZ 0");
+    auto rotateReturn = valueReplay();
+    assert(rotateReturn["cause"].str == "rotate" &&
+           rotateReturn["channels"].array.length == 1 &&
+           rotateReturn["channels"].array[0].str == "RZ" &&
+           rotateReturn["folds"].integer == 2,
+        "RZ->0 must remain a causal Rotate batch with one final fold; got " ~
+        rotateReturn.toString);
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "RZ->0 must restore identity geometry from the session baseline");
+    cmd("tool.set TransformRotate off");
+
+    drainAndReset();
+    cmd("tool.set TransformScale");
+    cmd("tool.beginSession");
+    cmd("tool.attr TransformScale SX 2");
+    cmd("tool.attr TransformScale SX 1");
+    auto scaleReturn = valueReplay();
+    assert(scaleReturn["cause"].str == "scale" &&
+           scaleReturn["channels"].array.length == 1 &&
+           scaleReturn["channels"].array[0].str == "SX" &&
+           scaleReturn["folds"].integer == 2,
+        "SX->1 must remain a causal Scale batch with one final fold; got " ~
+        scaleReturn.toString);
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "SX->1 must restore identity geometry from the session baseline");
+    cmd("tool.set TransformScale off");
 }

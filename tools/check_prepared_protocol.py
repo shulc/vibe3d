@@ -8056,11 +8056,11 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
             "e.xfrmUpdateEditClose.abort();")) and \
         all(x in xfrm for x in (
             "buildPreparedUpdateEditClose(", "buildPreparedItemEditCmd()",
-            "buildPreparedEditCmd(label)",
+            "buildPreparedEditCmd(name())",
             "PreparedHistoryKind.InSession", "history.currentRunId",
             "preparedUpdateEditCloseMatches(",
-            "cast(ubyte) editBank == image.expectedBank",
-            "installPreparedItemEditClose(image.item);\n            editBank = DragBank.None;",
+            "cast(ubyte) editCauseBank == image.expectedBank",
+            "installPreparedItemEditClose(image.item);\n            editCauseBank = DragBank.None;",
             "installPreparedUpdateEditClose(")) and \
         all(x in base for x in (
             "private Command buildPreparedMorphEditCmd(string label)",
@@ -8087,11 +8087,11 @@ for target, old, new, label in (
     ("context", "e.xfrmUpdateEditClose.install();", "", "drop context install"),
     ("context", "e.xfrmUpdateEditClose.abort();", "", "drop context abort"),
     ("xfrm", "buildPreparedItemEditCmd()", "null", "drop item command"),
-    ("xfrm", "buildPreparedEditCmd(label)", "null", "drop component command"),
-    ("xfrm", "cast(ubyte) editBank == image.expectedBank", "true",
-     "drop bank validation"),
-    ("xfrm", "installPreparedItemEditClose(image.item);\n            editBank = DragBank.None;",
-     "installPreparedItemEditClose(image.item);", "drop bank close"),
+    ("xfrm", "buildPreparedEditCmd(name())", "null", "drop component command"),
+    ("xfrm", "cast(ubyte) editCauseBank == image.expectedBank", "true",
+     "drop cause validation"),
+    ("xfrm", "installPreparedItemEditClose(image.item);\n            editCauseBank = DragBank.None;",
+     "installPreparedItemEditClose(image.item);", "drop cause close"),
     ("xfrm", "PreparedHistoryKind.InSession", "PreparedHistoryKind.Plain",
      "misroute normal close as boundary"),
     ("base", "idx.reserve(editIdx.length);", "", "drop detached position ownership"),

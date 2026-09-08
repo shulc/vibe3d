@@ -66,6 +66,16 @@ enum ParameterChangePhase {
     BatchComplete,
 }
 
+/// The values that were actually written in one logical parameter batch.
+/// `names` is the write set, not a projection from the provider's current
+/// values: an RX write back to 0 and an SX write back to 1 therefore remain
+/// observable causes.  EditSession owns the accumulation and the slice is
+/// valid only for the synchronous BatchComplete dispatch.
+struct ParameterChangeBatch {
+    ParameterChangeSource source;
+    string[] names;
+}
+
 // ---------------------------------------------------------------------------
 // LiveEvalClient — optional capability: the tool supports live re-evaluation
 // (an attribute / pipe-stage edit re-runs the open session's apply).
@@ -106,7 +116,7 @@ interface LiveEvalClient {
     // straight from the baseline, never accumulate a per-call delta). The
     // result coalesces into the session's single undo entry, committed when
     // the session ends.
-    void reEvaluate();
+    void reEvaluate(ParameterChangeBatch batch);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +279,13 @@ final class EditSession {
     // (tryRefireDispatch's non-reentrancy tripwire). Everything else is
     // computed from tool_() — see SessionPhase.
     private bool refireDriving_ = false;
+    // One write-set accumulator for the synchronous ValueWritten ->
+    // BatchComplete protocol.  It deliberately records names at write time;
+    // reconstructing the set from final values would lose identity returns.
+    private ParamProvider parameterBatchProvider_;
+    private string[] parameterBatchNames_;
+    private ParameterChangeSource parameterBatchSource_;
+    private bool parameterBatchSourceKnown_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool) {
@@ -313,6 +330,7 @@ final class EditSession {
             case ParameterChangePhase.ValueWritten:
                 assert(provider !is null,
                     "parameter ValueWritten requires its provider");
+                rememberParameterWrite(provider, name, source);
                 final switch (source) {
                     case ParameterChangeSource.InteractiveValue: {
                         auto t = cast(Tool)provider;
@@ -344,6 +362,20 @@ final class EditSession {
                 }
 
             case ParameterChangePhase.BatchComplete:
+                assert(provider !is null,
+                    "parameter BatchComplete requires its provider");
+                assert(parameterBatchProvider_ is provider,
+                    "parameter BatchComplete must close its provider's write batch");
+                assert(parameterBatchNames_.length != 0,
+                    "parameter BatchComplete requires at least one written value");
+                assert(parameterBatchSourceKnown_ && parameterBatchSource_ == source,
+                    "parameter BatchComplete source must match its written values");
+                auto batch = ParameterChangeBatch(source, parameterBatchNames_);
+                scope(exit) {
+                    parameterBatchProvider_ = null;
+                    parameterBatchNames_.length = 0;
+                    parameterBatchSourceKnown_ = false;
+                }
                 final switch (source) {
                     case ParameterChangeSource.InteractiveValue:
                     case ParameterChangeSource.ScriptedValue: {
@@ -353,7 +385,7 @@ final class EditSession {
                         // Notification already ran for every write.  Evaluate
                         // the grouped value set before a live replay reads it.
                         t.evaluate();
-                        applyValueToLiveSession(
+                        applyValueToLiveSession(batch,
                             source == ParameterChangeSource.InteractiveValue);
                         return;
                     }
@@ -363,14 +395,31 @@ final class EditSession {
                         // activated. Re-evaluation is the re-weigh and cannot
                         // precede that boundary decision.
                         if (requestSlotActivationEnd()) return;
-                        applyStageToLiveSession();
+                        applyStageToLiveSession(batch);
                         return;
                     case ParameterChangeSource.SlotActivation:
                         if (requestSlotActivationEnd()) return;
-                        applyStageToLiveSession();
+                        applyStageToLiveSession(batch);
                         return;
                 }
         }
+    }
+
+    private void rememberParameterWrite(ParamProvider provider, string name,
+                                        ParameterChangeSource source) {
+        assert(name.length != 0, "a parameter write requires a channel name");
+        if (parameterBatchProvider_ is null) {
+            parameterBatchProvider_ = provider;
+            parameterBatchSource_ = source;
+            parameterBatchSourceKnown_ = true;
+        }
+        assert(parameterBatchProvider_ is provider,
+            "one parameter batch cannot span providers");
+        assert(parameterBatchSource_ == source,
+            "one parameter batch cannot span change sources");
+        foreach (written; parameterBatchNames_)
+            if (written == name) return;
+        parameterBatchNames_ ~= name;
     }
 
     // A `tool.attr` VALUE write has been injected onto the active tool
@@ -388,11 +437,12 @@ final class EditSession {
     //     every existing HTTP tool.attr golden depends on this).
     // A tool that is not a LiveEvalClient keeps the former base-Tool default:
     // hasLiveAttrEval()==false and reEvaluate() a no-op — i.e. nothing.
-    private void applyValueToLiveSession(bool interactive) {
+    private void applyValueToLiveSession(ParameterChangeBatch batch,
+                                         bool interactive) {
         auto lc = cast(LiveEvalClient) tool_();
         if (lc is null) return;
-        if (lc.hasLiveAttrEval())  lc.reEvaluate();
-        else if (interactive)      lc.reEvaluate();
+        if (lc.hasLiveAttrEval())  lc.reEvaluate(batch);
+        else if (interactive)      lc.reEvaluate(batch);
     }
 
     // A pipe-stage config edit (tool.pipe.attr / falloff.preset / falloff
@@ -404,9 +454,9 @@ final class EditSession {
     // session stays inert. DELIBERATELY gated on the narrower hasLiveEval()
     // (not hasLiveAttrEval()) — see LiveEvalClient.hasLiveAttrEval for the
     // falloff-refire entry-count contract this asymmetry preserves.
-    private void applyStageToLiveSession() {
+    private void applyStageToLiveSession(ParameterChangeBatch batch) {
         auto lc = cast(LiveEvalClient) tool_();
-        if (lc !is null && lc.hasLiveEval()) lc.reEvaluate();
+        if (lc !is null && lc.hasLiveEval()) lc.reEvaluate(batch);
     }
 
     private bool requestSlotActivationEnd() {
@@ -424,7 +474,8 @@ final class EditSession {
         // the command, while the idle poll is a frame later and cannot undo an
         // already-recomputed geometry result.
         if (requestSlotActivationEnd()) return;
-        applyStageToLiveSession();
+        applyStageToLiveSession(ParameterChangeBatch(
+            ParameterChangeSource.StageAttribute, null));
     }
 
     // ----- refire (undo/redo migration P4) ----------------------------------

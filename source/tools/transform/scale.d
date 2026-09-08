@@ -632,7 +632,7 @@ public:
                 image.meshPrepared = prepared.applied;
                 if (image.projection.wrapperRegrade && image.meshPrepared) {
                     image.wrapperRefire = wrap.buildPreparedRefireState(
-                        context, "Falloff", image.expectedLive.vertices,
+                        context, image.expectedLive.vertices,
                         image.candidate.vertices,
                         image.expectedFalloff, image.nextFalloff,
                         image.expectedSnap, image.nextSnap,
@@ -877,7 +877,7 @@ public:
                     applyScaleFromActivationCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireScale("Falloff", anchor, after, null,
+                    wrap.recordFalloffRefireScale(anchor, after, null,
                                                   preF, postF, preSn, postSn,
                                                   preSy, postSy);
                     needsGpuUpdate = true;
@@ -1614,97 +1614,6 @@ public:
         }
     }
 
-    // Value-driven panel entry point (forms-engine Phase 5b). The forms panel
-    // dispatches an absolute `SX`/`SY`/`SZ` factor through the `reEvaluate()`
-    // seam, which calls this once per edit. It mirrors the ABSOLUTE arm of
-    // `drawProperties` above WITHOUT any ImGui calls: the caller already holds
-    // the value, so there is no `DragFloat` / `IsItemActive` gating — every call
-    // is treated as an active edit (the wrapper's commit guards close the
-    // session, exactly as for a gizmo drag). The geometry apply, session/snapshot
-    // gating, per-edit falloff/symmetry re-capture and the `propsDragging`
-    // whole-mesh GPU bypass are kept identical to the inline path so a panel
-    // value edit blends through falloff and uses the fast path the same way a
-    // slider drag does.
-    void applyScalePanelValue(Vec3 factors) {
-        // Absolute value-driven: the panel value IS scaleAccum (clamped >= 0
-        // unless task 0332's negScale is on for the wrapper — see
-        // negScaleAllowed()).
-        //
-        // Task 3310 — READ THIS BEFORE EDITING THIS CLAMP. On the only caller
-        // this method has in the shipped build (`XfrmTransformTool.reEvaluate`
-        // -> `scaleSub.applyScalePanelValue(run.s)`, always in the WRAPPED
-        // role) the value below is handed on to
-        // `XfrmTransformTool.applyScaleAbsoluteFromRun`, which floors it AGAIN.
-        // The two are in series and each one alone suffices, so REMOVING THIS
-        // CLAMP CHANGES NOTHING THAT ANY TEST CAN SEE — measured, task 3310.
-        // It is kept because it is the only floor on the STANDALONE role
-        // (`wrapperRef is null`, the unit-test construction), whose branch of
-        // `applyScaleAbsoluteCpuOnly` goes to the kernel directly; that role
-        // has no caller of this method today, so this clamp has no witness of
-        // its own and a mutation of it stays green. The floor that does carry
-        // a witness the other cannot is the one in
-        // `applyScaleAbsoluteFromRun`, and the NUMERIC door's is in
-        // `applyHeadless`.
-        if (!negScaleAllowed()) {
-            if (factors.x < 0) factors.x = 0;
-            if (factors.y < 0) factors.y = 0;
-            if (factors.z < 0) factors.z = 0;
-        }
-        scaleAccum = factors;
-        propScale  = factors;
-
-        buildVertexCacheIfNeeded();
-        // Re-capture falloff/symmetry each edit (mirrors drawProperties); gates
-        // the whole-mesh GPU bypass off when a per-vertex weight breaks the
-        // single-uniform fast path. No dispatcher vts here — build a local one.
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket propSubj;
-        VectorStack propVts;
-        buildLocalVts(propSubj, propVts);
-        bool falloffActive = captureFalloffForDrag(propVts);
-        bool symmActive    = captureSymmetryForDrag(propVts);
-        bool wholeMesh = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-
-        // Snapshot pre-edit Tool-Properties state on the FIRST edit of the
-        // session (before beginEdit opens it); beginEdit is idempotent after.
-        if (!editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        } else {
-            beginStandaloneEdit();   // idempotent
-        }
-
-        // Rebuild CPU vertices via the shared apply path, carrying THIS call's
-        // absolute value. In the WRAPPED path it delegates to
-        // applyScaleAbsoluteFromRun → applyTRS(dragBaseline); standalone it runs
-        // the activationVertices kernel. The forms caller
-        // (`reEvaluate()` → applyScalePanelValue(run.s)) passes the wrapper's own
-        // `run.s`, so publishing `factors` back to it is an identity write there;
-        // any other caller (the FORMS=0 legacy slider reaches the same value
-        // through drawProperties) gets its edit applied instead of discarded.
-        applyScaleAbsoluteCpuOnly(propVts, factors);
-
-        if (wholeMesh && wrapperRef is null) {
-            // STANDALONE whole-mesh: GPU bypass — upload base once, then only
-            // update matrix (around activationVertices, the correct base with no
-            // wrapper run baseline).
-            if (!propsDragging) {
-                uploadPropsBase(activationVertices);
-                propsDragging = true;
-            }
-            gpuMatrix = pivotScaleMatrixBasis(activationCenter,
-                handler.axisX, handler.axisY, handler.axisZ,
-                scaleAccum.x, scaleAccum.y, scaleAccum.z);
-        } else {
-            // WRAPPED path (Phase 1): the GPU bypass would preview from the wrong
-            // base (activationVertices), ignoring baked history in dragBaseline.
-            // applyTRS wrote correct CPU verts — defer the upload. Partial
-            // selection / falloff always defers too.
-            needsGpuUpdate = true;
-        }
-    }
-
 private:
     float gizmoScreenWidth(Vec3 center) {
         Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
@@ -1737,9 +1646,9 @@ private:
     // TWO ENTRIES, because the callers disagree about ONE thing: which value is
     // the truth at the moment of the call (task 0801).
     //   - `applyScaleAbsoluteCpuOnly(vts, factors)` — the caller HOLDS the new
-    //     absolute value (both panel arms: the legacy slider and the forms
-    //     `applyScalePanelValue`). It publishes `factors` to the wrapper, so the
-    //     edit is what lands.
+    //     absolute value (the legacy slider arm). It publishes `factors` to the
+    //     wrapper, so the edit is what lands. Forms value batches bypass this
+    //     bank and normalize once in the wrapper.
     //   - `applyScaleFromActivationCpuOnly(vts)` — the caller holds NOTHING new
     //     (the idle falloff-refire arms in update()); the value is whatever the
     //     run currently holds, re-applied under fresh falloff weights.

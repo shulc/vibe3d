@@ -11,9 +11,9 @@
 //     got there.
 //   - Clamp gate: `negScale` (default OFF) gates the scale-factor floor on
 //     EVERY path that can reach the kernel — source/tools/transform/scale.d's
-//     `clampScaleFactor` (gizmo drag) and `applyScalePanelValue` (panel
-//     write), source/tools/transform/xfrm_transform.d's uniform-slider
-//     post-write clamp and `applyScaleAbsoluteFromRun` (live/panel door), and
+//     `clampScaleFactor` (gizmo drag), source/tools/transform/xfrm_transform.d's
+//     uniform-slider post-write clamp, `normalizeScaleRunValue` (live value
+//     batch) and `applyScaleAbsoluteFromRun` (legacy/refire door), and
 //     since task 3310 `applyHeadless` (the NUMERIC door: `tool.attr SX …` +
 //     `tool.doApply`).
 //
@@ -358,13 +358,11 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Cases 4/5 — the PANEL-WRITE path (`applyScalePanelValue`'s clamp,
-// source/tools/scale.d, the exact site the historical bug lived at as the
-// ImGui `v_min` floor). Reviewer NIT: Cases 2/3 above only exercise the
-// gizmo-drag `clampScaleFactor` path; this pins the SEPARATE
-// `applyScalePanelValue` clamp too.
+// Cases 4/5 — the live VALUE-BATCH path (`normalizeScaleRunValue` in the
+// wrapper). Cases 2/3 above only exercise the gizmo-drag `clampScaleFactor`
+// path; this pins the separate post-write clamp used by batch replay.
 //
-// `applyScalePanelValue` is reached through `XfrmTransformTool.reEvaluate()`,
+// `normalizeScaleRunValue` is reached through `XfrmTransformTool.reEvaluate()`,
 // which `ToolAttrCommand.apply()` (source/commands/tool/attr.d) triggers
 // whenever `t.hasLiveAttrEval()` is true at the moment of a raw HTTP
 // `tool.attr` write — i.e. a value edit that lands INSIDE an already-live
@@ -375,24 +373,21 @@ unittest {
 // `tests/test_rs_insession_cancel.d` uses to reach this exact seam
 // (`tool.set TransformScale` -> `tool.beginSession` -> `tool.attr … SX 2` ->
 // v6.x becomes 1.0). So: open the session, THEN write `SX` — that write both
-// sets `run.s.x` AND (because the session is live) re-triggers `reEvaluate()`
-// -> `scaleSub.applyScalePanelValue(run.s)`, landing on the exact clamp this
-// case pins.
+// sets `run.s.x` AND (because the session is live) re-triggers the wrapper's
+// one-fold batch replay, landing on the exact clamp this case pins.
 //
 // NOTE on what stays UNTESTED: the actual ImGui `DragFloat` `v_min` floor
 // (`scale.d`'s panel sliders, `xfrm_transform.d`'s uniform slider) requires a
 // live ImGui mouse-drag on a rendered widget, which this headless HTTP
 // harness cannot drive (no GUI event loop in `--test` mode) — that specific
 // site is verified by code review only, not by an automated regression test.
-// `applyScalePanelValue` is the programmatic twin of that same clamp law
-// (both guard "the panel value must not go negative unless negScale"), and
-// IS headlessly reachable, so it is regression-tested here as the closest
-// available proxy for the historically-missed floor.
+// The wrapper's batch normalization is headlessly reachable, so it is the
+// regression witness for the historically-missed live-value floor.
 // ---------------------------------------------------------------------------
 
 // Open a live scale session with NO geometry change (`tool.beginSession`),
 // then write `SX` as a raw HTTP `tool.attr` — landing inside the live
-// session, this write re-triggers `reEvaluate()` -> `applyScalePanelValue(run.s)`
+// session, this write re-triggers `reEvaluate()` and its canonical Scale clamp
 // (NOT just the raw unclamped Param-pointer write Case 1 exercises).
 double[3][] setSXViaPanelPath(bool negScale, double sx) {
     cmd("tool.set scale on");

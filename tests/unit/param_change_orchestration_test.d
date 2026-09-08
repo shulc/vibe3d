@@ -31,6 +31,8 @@ private final class ProbeTool : Tool, FrameParameterEvalClient, LiveEvalClient,
     bool liveValue;
     bool liveStage;
     bool consumeSlot;
+    ParameterChangeSource replaySource;
+    string[] replayNames;
 
     this(Trace trace) { this.trace = trace; }
 
@@ -41,7 +43,11 @@ private final class ProbeTool : Tool, FrameParameterEvalClient, LiveEvalClient,
     override void evaluateParameterFrame() { trace.add("F"); }
     override bool hasLiveEval() const { return liveStage; }
     override bool hasLiveAttrEval() const { return liveValue; }
-    override void reEvaluate() { trace.add("R"); }
+    override void reEvaluate(ParameterChangeBatch batch) {
+        replaySource = batch.source;
+        replayNames = batch.names.dup;
+        trace.add("R");
+    }
     override bool endHeldRunIfSlotActivated() {
         trace.add("H");
         return consumeSlot;
@@ -85,6 +91,9 @@ unittest { // source and phase determine the notification/evaluation order
         ParameterChangeSource.ScriptedValue, ParameterChangePhase.BatchComplete);
     assert(trace.value == "SER",
         "live scripted value must notify, evaluate, then replay; got " ~ trace.value);
+    assert(tool.replaySource == ParameterChangeSource.ScriptedValue &&
+           tool.replayNames == ["x"],
+        "scripted replay must receive its exact source/write-set");
 
     trace.clear();
     tool.liveValue = false;
@@ -97,6 +106,9 @@ unittest { // source and phase determine the notification/evaluation order
     assert(trace.value == "IIER",
         "two writes in one interactive batch require two notifications, one evaluate, "
       ~ "then one opener replay; got " ~ trace.value);
+    assert(tool.replaySource == ParameterChangeSource.InteractiveValue &&
+           tool.replayNames == ["x", "y"],
+        "interactive replay must receive all actually-written channels once");
 }
 
 unittest { // stage attributes re-grade; slot activation ends before re-grade
@@ -214,7 +226,7 @@ private final class PanelProbeTool : Tool, LiveEvalClient,
     override void evaluate() { trace.add("E"); }
     override bool hasLiveEval() const { return liveStage; }
     override bool hasLiveAttrEval() const { return false; }
-    override void reEvaluate() { trace.add("R"); }
+    override void reEvaluate(ParameterChangeBatch batch) { trace.add("R"); }
     override bool endHeldRunIfSlotActivated() {
         trace.add("H");
         if (!consumeSlot) return false;
