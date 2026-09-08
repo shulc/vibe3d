@@ -200,7 +200,7 @@
         ]
       },
       {
-        "state": "after_scale_row",
+        "state": "after_held_row",
         "vertex_count": 8,
         "extent_x": 2.0,
         "extent_y": 1.0,
@@ -640,6 +640,105 @@
       "tool_drop_changed_geometry": false,
       "translate_row_moved_the_mesh_rigidly": false
     }
+  },
+  "discriminator": {
+    "question": "Two lanes alone could not tell a BANK rule from a RECORD-COUNT rule: deleting the held row edit removes a bank transition AND a pending apply at the same time. A third lane holds the apply count at two and removes the bank transition -- the one combination the other two do not cover.",
+    "rivals": [
+      {
+        "rule": "bank",
+        "predicts": "the same-bank pack behaves like the one-edit control: ONE stage above the floor"
+      },
+      {
+        "rule": "record-count",
+        "predicts": "the same-bank pack behaves like the mixed pack: TWO stages above the floor"
+      }
+    ],
+    "lanes": [
+      {
+        "lane": "test",
+        "held_row_edit": "scale row, x factor 2",
+        "pack_has_a_bank_transition": true,
+        "applies_in_the_pack": 2,
+        "stages_above_floor": 2,
+        "first_press_at_move_state": 5,
+        "first_press_at_floor": 7,
+        "first_press_with_empty_mesh": 13,
+        "stage_sequence": [
+          {
+            "stage": "after_translate_row",
+            "first_press": 1
+          },
+          {
+            "stage": "after_move_drag",
+            "first_press": 5
+          },
+          {
+            "stage": "floor",
+            "first_press": 7
+          },
+          {
+            "stage": "empty",
+            "first_press": 13
+          }
+        ],
+        "every_undo_press_logged_once": true
+      },
+      {
+        "lane": "ctrl_samebank",
+        "held_row_edit": "translate row, y +1",
+        "pack_has_a_bank_transition": false,
+        "applies_in_the_pack": 2,
+        "stages_above_floor": 2,
+        "first_press_at_move_state": 5,
+        "first_press_at_floor": 7,
+        "first_press_with_empty_mesh": 13,
+        "stage_sequence": [
+          {
+            "stage": "after_translate_row",
+            "first_press": 1
+          },
+          {
+            "stage": "after_move_drag",
+            "first_press": 5
+          },
+          {
+            "stage": "floor",
+            "first_press": 7
+          },
+          {
+            "stage": "empty",
+            "first_press": 13
+          }
+        ],
+        "every_undo_press_logged_once": true
+      },
+      {
+        "lane": "ctrl_noscale",
+        "held_row_edit": null,
+        "pack_has_a_bank_transition": false,
+        "applies_in_the_pack": 1,
+        "stages_above_floor": 1,
+        "first_press_at_move_state": null,
+        "first_press_at_floor": 5,
+        "first_press_with_empty_mesh": 11,
+        "stage_sequence": [
+          {
+            "stage": "after_translate_row",
+            "first_press": 1
+          },
+          {
+            "stage": "floor",
+            "first_press": 5
+          },
+          {
+            "stage": "empty",
+            "first_press": 11
+          }
+        ],
+        "every_undo_press_logged_once": true
+      }
+    ],
+    "verdict": "The bank rule is REFUTED and the record-count rule holds. The same-bank pack and the mixed pack read IDENTICALLY, press for press; only dropping to a single apply changes the shape. So the undo boundary of a live parameter region depends on how many applies the region holds and NOT on which banks they touched -- which is what the static read said, arrived at independently."
   },
   "not_measured": [
     "The numeric panel ROW itself. Six measured cells show that typing either write command applies nothing on its own -- with or without a live gesture window behind it -- and that an out-of-band apply after the write stacks onto the committed mesh instead of re-evaluating from the run baseline. The row's own absolute semantics are issued by the form layer and are not reachable through this transport, so the cross-check drives the write plus an explicit apply and says so. This changes the VALUES the walk passes through; it does not touch the step STRUCTURE the law predicts, which is what the reading scores.",
