@@ -1414,7 +1414,7 @@ __gshared Form[] g_forms;
 /// Two-live-widget resolution (forms_engine_plan.md Phase 5 step 2): the
 /// transform tool's form owns the translate value rows (Position TX/TY/TZ) plus
 /// the T/R/S checkboxes, so when its form renders, app.d suppresses the legacy
-/// translate sliders (`moveSub.drawProperties()`) while still drawing the Rotate
+/// translate sliders (`moveSub.drawInputProperties()`) while still drawing the Rotate
 /// / Scale sliders (R/S value editing has no form rows until Phase 5b and lives
 /// ONLY in those legacy sliders). The transform tool already sets
 /// renderParamsAsPanel()==false, so PropertyPanel.draw early-returns for it and

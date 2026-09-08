@@ -966,7 +966,6 @@ public:
         // One-time activation wiring (NOT part of resyncSession): bring the
         // composed sub-tools online and back-link them to this wrapper.
         foreach (sub; enabledSubs()) sub.activate();
-        moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
 
@@ -1263,7 +1262,6 @@ public:
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
         bool accepted = prepareEditRecord(context, "Move");
-        if (flagT) accepted = moveSub.prepareDeactivate(context).historyAccepted || accepted;
         if (flagR) accepted = rotateSub.prepareDeactivate(context).historyAccepted || accepted;
         if (flagS) accepted = scaleSub.prepareDeactivate(context).historyAccepted || accepted;
         // TASK 4053 measured what this line does NOT do, and left it alone.
@@ -1674,7 +1672,10 @@ public:
         // Each sub-tool's update() pulls handler.center from ACEN
         // and refreshes its gizmo orientation from AXIS. They all
         // see the same pipeline state so the three gizmos co-locate.
-        foreach (sub; enabledSubs()) sub.update(vts);
+        if (flagT)
+            moveSub.updateInput(queryActionCenter(vts), editIsOpen());
+        if (flagR) rotateSub.update(vts);
+        if (flagS) scaleSub.update(vts);
         if (activeDrag is moveSub)
             setSharedGizmoPose(moveSub.handler.center, vts);
         else if (activeDrag is rotateSub)
@@ -1997,7 +1998,8 @@ public:
         PreparedMoveUpdateOwner moveOwner;
         PreparedRotateUpdateOwner rotateOwner;
         PreparedScaleUpdateOwner scaleOwner;
-        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(moveSub, vts);
+        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
+            moveSub, editIsOpen(), queryActionCenter(vts));
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
             rotateSub, layer, vts, context);
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
@@ -2068,7 +2070,8 @@ public:
         PreparedMoveUpdateOwner moveOwner;
         PreparedRotateUpdateOwner rotateOwner;
         PreparedScaleUpdateOwner scaleOwner;
-        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(moveSub, vts);
+        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
+            moveSub, editIsOpen(), queryActionCenter(vts));
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
             rotateSub, layer, vts, context);
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
@@ -2382,7 +2385,18 @@ public:
 
     override void drawProperties() {
         if (suppressTRSProperties) return;   // form owns all TRS value rows
-        if (flagT) moveSub.drawProperties();
+        if (flagT) {
+            auto input = moveSub.drawInputProperties(run.t);
+            if (input.active && input.delta != Vec3(0, 0, 0)) {
+                applyMovePanelDelta(input.delta);
+                Vec3 worldDelta = moveSub.handler.axisX * input.delta.x
+                                + moveSub.handler.axisY * input.delta.y
+                                + moveSub.handler.axisZ * input.delta.z;
+                moveSub.handler.setPosition(moveSub.handler.center + worldDelta);
+                moveSub.cachedCenter = moveSub.handler.center;
+            }
+            if (input.done) gpu.upload(*mesh);
+        }
         if (flagR) rotateSub.drawProperties();
         if (flagS) {
             if (uniform) {
@@ -2658,14 +2672,12 @@ public:
             rotateSub is rotate && scaleSub is scale;
     }
     final void installPreparedWrapperLinks() nothrow @nogc {
-        moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;
         scaleSub.wrapperRef = this;
     }
     version(unittest) final bool preparedWrapperLinksForTest() const
             nothrow @nogc {
-        return moveSub.wrapperRef is this && rotateSub.wrapperRef is this &&
-            scaleSub.wrapperRef is this;
+        return rotateSub.wrapperRef is this && scaleSub.wrapperRef is this;
     }
     version(unittest) final void seedPreparedWrapperUploadForTest() {
         needsGpuUpdate = true;

@@ -180,19 +180,18 @@ class MoveTool : TransformTool {
     Vec3 inputBasisY = Vec3(0, 1, 0);
     Vec3 inputBasisZ = Vec3(0, 0, 1);
 
-    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
-    // When this bank is driven by `XfrmTransformTool` (`wrapperRef !is null`)
-    // AND the wrapper chained this gesture off the persisted gizmo frame, the
-    // wrapper pushes that ONE unified frame here (via `setWrapperInputFrame`,
+    // Chained input-frame channel (gesture-frame unification, Phase 2).
+    // When the owner chained this gesture off the persisted gizmo frame, it
+    // pushes that ONE unified frame here (via `setWrapperInputFrame`,
     // called once per gesture from `beginMoveDragSession`). The DECOMPOSE read
     // sites then project the world delta onto THIS frame instead of the bank's
     // own `inputBasisX/Y/Z`. This replaces the prior hand-synced override that
     // overwrote `inputBasis*` from the wrapper's persisted basis at gesture start —
     // same value (the channel carries the unified `frame`, the persisted gesture
     // frame when chained), now sourced from the single frame. The STANDALONE
-    // path (`wrapperRef is null`) NEVER consults this; it keeps reading its own
-    // `inputBasis*` (seeded by the `currentBasis(inputBasis*, vts)` writes). The
-    // center-box drag (dragAxis==3) is basis-free/screen-plane and is excluded
+    // unchained path keeps reading the bank's own `inputBasis*` (seeded by the
+    // `currentBasis(inputBasis*, vts)` writes). The center-box drag
+    // (dragAxis==3) is basis-free/screen-plane and is excluded
     // at the push site (the wrapper passes `chained=false` for it), so it falls
     // back to the live `inputBasis*` exactly as before.
     Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
@@ -220,7 +219,7 @@ class MoveTool : TransformTool {
     // render-rung asserts. Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
         import std.math : abs;
-        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        if (!wrapperInputFrameValid) return;
         enum float tol = 1e-3f;
         assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
                "move wrapperInputFrameX not unit length");
@@ -236,33 +235,18 @@ class MoveTool : TransformTool {
                "move wrapperInputFrame Y·Z not orthogonal");
     }
 
-    // Source selector for the WRAPPED-role DECOMPOSE reads. When this bank is
-    // wrapper-driven and the gesture chained off the unified frame, the input
-    // projection reads that frame; otherwise (standalone, or fresh/center-box
-    // non-chained) it reads the bank's own drag-start-frozen `inputBasis*`.
+    // Source selector for DECOMPOSE reads. A chained gesture reads the explicit
+    // owner frame; a fresh or center-box gesture reads the bank's drag-start
+    // frame.
     Vec3 inAxisX() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameX : inputBasisX;
+        return wrapperInputFrameValid ? wrapperInputFrameX : inputBasisX;
     }
     Vec3 inAxisY() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameY : inputBasisY;
+        return wrapperInputFrameValid ? wrapperInputFrameY : inputBasisY;
     }
     Vec3 inAxisZ() const {
-        return (wrapperRef !is null && wrapperInputFrameValid)
-             ? wrapperInputFrameZ : inputBasisZ;
+        return wrapperInputFrameValid ? wrapperInputFrameZ : inputBasisZ;
     }
-
-    // Phase 4 — property-panel back-pointer. Set by the wrapper at
-    // `activate()` (the only path that constructs MoveTool); read
-    // by `drawProperties` to route slider edits through
-    // `wrapperRef.applyMovePanelDelta(localDiff)` so panel and drag
-    // share the same `applyTRS` evaluate. Stored as `TransformTool`
-    // to avoid a top-level import of `tools.transform.xfrm_transform` (which
-    // imports back into MoveTool — mutual dependence is fine at the
-    // type level but ugly at the module level). `drawProperties`
-    // casts when needed.
-    TransformTool wrapperRef;
 
     // Phase 3 — `dragDelta` + `dragDeltaAtDragStart` deleted. The
     // wrapper now owns the accumulated world delta (its
@@ -362,23 +346,18 @@ public:
 
     /// Detached image for the exact Move update root. VectorStack and wrapper
     /// references are observations only: neither escapes this call.
-    final PreparedMoveUpdateImage buildPreparedMoveUpdate(ref VectorStack vts) {
+    final PreparedMoveUpdateImage buildPreparedMoveUpdate(
+            bool ownerEditOpen, Vec3 actionCenter) {
         PreparedMoveUpdateImage image;
         image.valid = true;
         if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }
         if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }
-        bool wrapEditOpen;
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            auto wrapper = cast(XfrmTransformTool) wrapperRef;
-            if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();
-        }
-        if (wrapEditOpen) {
+        if (ownerEditOpen) {
             image.branch = PreparedMoveUpdateBranch.WrapperEditOpenNoop;
             return image;
         }
         image.branch = PreparedMoveUpdateBranch.Refresh;
-        image.center = queryActionCenter(vts);
+        image.center = actionCenter;
         return image;
     }
 
@@ -397,12 +376,13 @@ public:
     /// Prepared twin of update(). Still dormant: task 4053's cutover moved the
     /// ARM and two DROP transitions, not the per-frame update, so the
     /// production override remains the byte-for-byte legacy route.
-    final PreparedMoveUpdateEffect prepareUpdate(ref VectorStack vts,
-            PreparedRecordContext context) {
+    final PreparedMoveUpdateEffect prepareUpdate(bool ownerEditOpen,
+            Vec3 actionCenter, PreparedRecordContext context) {
         if (context is null) return PreparedMoveUpdateEffect(
             preparedToolStateOwner, PreparedMoveUpdateKind.None, false);
         scope(failure) context.discard();
-        auto owner = PreparedMoveUpdateOwner.prepare(this, vts);
+        auto owner = PreparedMoveUpdateOwner.prepare(
+            this, ownerEditOpen, actionCenter);
         auto kind = owner is null ? PreparedMoveUpdateKind.None : owner.effectKind();
         bool ok = owner !is null && context.prepareMoveUpdate(owner) &&
             context.markNoHistoryInstall();
@@ -411,9 +391,9 @@ public:
     }
 
     version(unittest) final void seedPreparedMoveUpdateForTest(
-            bool isActive, int axis, TransformTool wrapper, Vec3 cached,
+            bool isActive, int axis, Vec3 cached,
             Vec3 handlerCenter) nothrow @nogc {
-        active = isActive; dragAxis = axis; wrapperRef = wrapper;
+        active = isActive; dragAxis = axis;
         cachedCenter = cached; handler.center = handlerCenter;
     }
     version(unittest) final bool preparedMoveUpdateStateForTest(
@@ -455,15 +435,6 @@ public:
     // route through the unified `applyTRS(mesh.vertices.dup)` path.
     // No factory builds a bare MoveTool any more, so the sub-tool's
     // own `applyHeadless` was dead code and was removed.
-
-    // Phase 3 — the edit session lives on the wrapper now. MoveTool's
-    // deactivate just resets sub-tool state via `super.deactivate()`;
-    // the wrapper's `deactivate()` already committed any open edit
-    // before forwarding.
-    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Move, prepareEditRecord(context, "Move"));
-    }
 
     override void deactivate() {
         super.deactivate();
@@ -524,7 +495,7 @@ public:
     // change), or (b) versions mismatched and the wrapper already
     // committed — either way reading the current ACEN center is
     // correct.
-    override void update(ref VectorStack vts) {
+    void updateInput(Vec3 actionCenter, bool ownerEditOpen) {
         if (!active) return;
 
         // Skip during drag — selection and mesh can't change "outside"
@@ -533,24 +504,10 @@ public:
         // off the cursor.
         if (dragAxis >= 0) return;
 
-        // Wrapper owns the open-edit gate (skip ACEN pull while a
-        // tool-session edit is open — drag / slider already maintain
-        // handler.center; re-pulling from ACEN here would snap the
-        // gizmo to the bbox-centroid of the deformed selection).
-        // Use the wrapper's `editIsOpen()` when available; bare
-        // MoveTool (unit tests) sees this as a no-op (wrapperRef ==
-        // null).
-        bool wrapEditOpen = false;
-        if (wrapperRef !is null) {
-            // The cast can only fail if MoveTool got wired to a non-
-            // XfrmTransformTool wrapperRef. That isn't a path that
-            // exists today, so treat it as a programmer bug.
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            auto w = cast(XfrmTransformTool) wrapperRef;
-            if (w !is null) wrapEditOpen = w.publicEditIsOpen();
-        }
-        if (!wrapEditOpen) {
-            cachedCenter = queryActionCenter(vts);
+        // The owner passes both the pose and its edit-open decision explicitly;
+        // the input bank never reaches back into the edit lifecycle.
+        if (!ownerEditOpen) {
+            cachedCenter = actionCenter;
             handler.setPosition(cachedCenter);
         }
     }
@@ -562,17 +519,6 @@ public:
         // cachedVp — a Quad/Split visual replica draws under a foreign
         // cell's projection (see Tool.draw's doc comment).
         if (!visualOnly) cachedVp = vp;
-
-        // Orient the gizmo. When WRAPPED (XfrmTransformTool), the wrapper owns
-        // the rendered basis: it calls setWrapperGizmoPose with the Model-C
-        // renderBasis every frame BEFORE draw, so re-deriving currentBasis here
-        // would clobber the gesture-frozen render frame. Only a STANDALONE bank
-        // (no wrapper — unit tests) self-orients from the live basis.
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
 
         // Flush pending GPU upload once per frame (partial selection during drag).
         if (needsGpuUpdate) {
@@ -611,13 +557,6 @@ public:
         if (!active) return;
         if (!visualOnly) cachedVp = vp;
 
-        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
-
         if (needsGpuUpdate) {
             uploadToGpu();
             needsGpuUpdate = false;
@@ -631,13 +570,6 @@ public:
     {
         if (!active) return;
         if (!visualOnly) cachedVp = vp;
-
-        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
 
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -1240,29 +1172,21 @@ public:
         return true;
     }
 
-    override void drawProperties() {
-        // Phase 4 — slider edits route through
-        // `XfrmTransformTool.applyMovePanelDelta`, the same
-        // `applyTRS` evaluate the drag uses. Without a wrapper
-        // (legacy unit-test paths that construct a bare MoveTool
-        // directly) the panel does nothing — gizmo drag is the
-        // only mutation path. Production never hits this branch:
-        // MoveTool is only instantiated by `XfrmTransformTool`
-        // which sets `wrapperRef` at `activate()`.
-        Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
+    struct PanelInput {
+        Vec3 delta;
+        bool active;
+        bool done;
+    }
 
-        // The wrapper's `run.t` is the BASIS-LOCAL
+    PanelInput drawInputProperties(Vec3 publishedValue) {
+        // The owner's published translation is the BASIS-LOCAL
         // cumulative for the current drag. With dragAxis >= 0 we
         // mirror that into propInput so the sliders track the live
         // drag. Outside a drag, propInput stays at whatever the
         // last slider edit left it (= 0 after a tool-session
         // commit, since reactivate zeroes the wrapper's
         // run.t).
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        auto wrap = cast(XfrmTransformTool) wrapperRef;
-        if (wrap !is null && dragAxis >= 0) {
-            propInput = wrap.run.t;
-        }
+        if (dragAxis >= 0) propInput = publishedValue;
         Vec3 propBefore = propInput;
 
         ImGui.DragFloat("X", &propInput.x, 0.01f, 0, 0, "%.4f");
@@ -1275,28 +1199,11 @@ public:
         bool zActive = ImGui.IsItemActive();
         bool zDone   = ImGui.IsItemDeactivatedAfterEdit();
 
-        if (wrap !is null && (xActive || yActive || zActive)) {
-            // localDiff is the slider edit's basis-local delta this
-            // frame. Hand it to the wrapper, which captures (idempotent)
-            // a drag baseline + edit baseline, accumulates into its
-            // `run.t`, and runs `applyTRS`.
-            Vec3 localDiff = propInput - propBefore;
-            if (localDiff.x != 0 || localDiff.y != 0 || localDiff.z != 0) {
-                wrap.applyMovePanelDelta(localDiff);
-                // Visual gizmo follow — same world-delta projection
-                // applyTRS does in the non-per-cluster T branch.
-                Vec3 delta = ax*localDiff.x + ay*localDiff.y + az*localDiff.z;
-                handler.setPosition(handler.center + delta);
-                cachedCenter = handler.center;
-            }
-        }
-
-        if (wrap !is null && (xDone || yDone || zDone)) {
-            gpu.upload(*mesh);
-            // 7.5h: don't commit here either — props sliders are part
-            // of the same tool session as gizmo drags. Commit fires
-            // at deactivate / selection change.
-        }
+        PanelInput result;
+        result.active = xActive || yActive || zActive;
+        result.done = xDone || yDone || zDone;
+        if (result.active) result.delta = propInput - propBefore;
+        return result;
     }
 
     // Phase 3 — the `applyDelta` / `applyDeltaImmediate` /
