@@ -655,6 +655,25 @@
     ],
     "lanes": [
       {
+        "redo_stage_sequence": [
+          {
+            "stage": "floor",
+            "first_press": 1
+          },
+          {
+            "stage": "after_move_drag",
+            "first_press": 5
+          },
+          {
+            "stage": "after_held_row",
+            "first_press": 6
+          },
+          {
+            "stage": "after_translate_row",
+            "first_press": 7
+          }
+        ],
+        "redo_steps_from_move_state_to_final": 2,
         "lane": "test",
         "held_row_edit": "scale row, x factor 2",
         "pack_has_a_bank_transition": true,
@@ -684,6 +703,25 @@
         "every_undo_press_logged_once": true
       },
       {
+        "redo_stage_sequence": [
+          {
+            "stage": "floor",
+            "first_press": 1
+          },
+          {
+            "stage": "after_move_drag",
+            "first_press": 5
+          },
+          {
+            "stage": "after_held_row",
+            "first_press": 6
+          },
+          {
+            "stage": "after_translate_row",
+            "first_press": 7
+          }
+        ],
+        "redo_steps_from_move_state_to_final": 2,
         "lane": "ctrl_samebank",
         "held_row_edit": "translate row, y +1",
         "pack_has_a_bank_transition": false,
@@ -713,6 +751,21 @@
         "every_undo_press_logged_once": true
       },
       {
+        "redo_stage_sequence": [
+          {
+            "stage": "floor",
+            "first_press": 1
+          },
+          {
+            "stage": "after_move_drag",
+            "first_press": 5
+          },
+          {
+            "stage": "after_translate_row",
+            "first_press": 6
+          }
+        ],
+        "redo_steps_from_move_state_to_final": 1,
         "lane": "ctrl_noscale",
         "held_row_edit": null,
         "pack_has_a_bank_transition": false,
@@ -738,9 +791,12 @@
         "every_undo_press_logged_once": true
       }
     ],
+    "replicated_on_the_redo_axis": "The same split appears going FORWARD. Redo replays the live region one apply at a time: the two-apply packs take TWO steps from the post-move state to the final one (visiting the held-row state on the way) and the one-apply pack takes ONE. The mixed pack and the same-bank pack are again identical, so the redo direction confirms the record-count rule independently of the undo direction.",
+    "undo_redo_asymmetry": "UNDO coalesces the live region's applies -- one press removes the whole pack and the held-row state is NEVER returned -- while REDO replays them separately and DOES pass through that state. So the two directions are not mirror images, and a port that assumes symmetry here will diverge on the forward leg.",
     "verdict": "The bank rule is REFUTED and the record-count rule holds. The same-bank pack and the mixed pack read IDENTICALLY, press for press; only dropping to a single apply changes the shape. So the undo boundary of a live parameter region depends on how many applies the region holds and NOT on which banks they touched -- which is what the static read said, arrived at independently."
   },
   "not_measured": [
+    "The redo half ran to the final state in every lane and then ABORTED on its next snapshot with a transport timeout, so the counts above cover the interval from the floor up to the final state and nothing beyond it. The undo half is unaffected: it is the counted window, it closed first, and every one of its walks reached a CONFIRMED empty mesh.",
     "The numeric panel ROW itself. Six measured cells show that typing either write command applies nothing on its own -- with or without a live gesture window behind it -- and that an out-of-band apply after the write stacks onto the committed mesh instead of re-evaluating from the run baseline. The row's own absolute semantics are issued by the form layer and are not reachable through this transport, so the cross-check drives the write plus an explicit apply and says so. This changes the VALUES the walk passes through; it does not touch the step STRUCTURE the law predicts, which is what the reading scores.",
     "Where the boundary click moved the action centre. Its delivery is witnessed by the history blocks it opened; the centre itself is not read on this channel.",
     "Whether a populated group table would consolidate two steps. The shipped product has none, so the consolidating branch is decoded but never exercised."
