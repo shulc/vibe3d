@@ -8051,25 +8051,32 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
         all(x in shared_close for x in (
             "p.command = itemSubject ? projectItemEditCommand()",
             ": projectEditCommand(name());",
+            "image.discardAcenSnapshot = !itemSubject && !suppressCommit;",
             "image.nextDragFalloff = dragFalloff.ownedDup();",
+            ".projectedCenterAfterSoftPin(",
             "projectGestureHooks(bank, run, frame,",
             "snapshotFalloffSet(activeFalloffStages())")) and \
         all(x in prepared_adapter for x in (
             "return projectOwnedEditClose(bank, itemSubject);",)) and \
         all(x in prepare_adapter for x in (
             "context.prepare(p.command, kind, runId)",
-            "? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;")) and \
+            "? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;",
+            "? history.currentRunId : 0;")) and \
         all(x in live_installer for x in (
             "recordTransformCommand(p.command, intent);",
+            "if (image.discardAcenSnapshot)\n"
+            "            discardAcenUserPlacedSnapshot();",
             "installPreparedEditClose(image.vertex);",
-            "installPreparedItemEditClose(image.item);\n"
-            "            editCauseBank = DragBank.None;")) and \
+            "installPreparedItemEditClose(image.item);",
+            "editCauseBank = DragBank.None;")) and \
         "recordTransformCommand" not in prepared_installer and \
         all(x in prepared_installer for x in (
-            "installPreparedItemEditClose(image.item);\n"
-            "            editCauseBank = DragBank.None;",)) and \
+            "if (image.discardAcenSnapshot && image.expectedAcen !is null)",
+            "installPreparedItemEditClose(image.item);",
+            "editCauseBank = DragBank.None;")) and \
         all(x in xfrm for x in (
             "preparedUpdateEditCloseMatches(",
+            "ref const PreparedXfrmEditCloseImage image",
             "cast(ubyte) editCauseBank == image.expectedBank",
             "installPreparedUpdateEditClose(")) and \
         all(x in shared_edit for x in (
@@ -8089,7 +8096,7 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
             "cmd.setEdit(payload);",
             "capturePreparedItemEditClose()", "preparedItemEditCloseMatches(",
             "installPreparedItemEditClose(")) and \
-        not any(x in base + item for x in (
+        not any(x in base + item + xfrm for x in (
             "buildPreparedMorphEditCmd", "buildPreparedEditCmd",
             "buildMorphEditCmd", "buildEditCmd(",
             "buildPreparedItemEditCmd", "commitItemEdit("))
@@ -8109,6 +8116,9 @@ for target, old, new, label in (
      "p.command = itemSubject ? null", "drop shared item command"),
     ("xfrm", ": projectEditCommand(name());", ": null;",
      "drop shared component command"),
+    ("xfrm", "image.item = capturePreparedItemEditClose();",
+     "image.item = capturePreparedItemEditClose();\n        buildEditCmd(name());",
+     "restore forbidden Xfrm command owner"),
     ("xfrm", "return projectOwnedEditClose(bank, itemSubject);", "return null;",
      "drop prepared delegation to shared projection"),
     ("xfrm", "recordTransformCommand(p.command, intent);", "",
@@ -8119,11 +8129,14 @@ for target, old, new, label in (
      "drop projected run payload"),
     ("xfrm", "cast(ubyte) editCauseBank == image.expectedBank", "true",
      "drop cause validation"),
-    ("xfrm", "installPreparedItemEditClose(image.item);\n            editCauseBank = DragBank.None;",
-     "installPreparedItemEditClose(image.item);", "drop cause close"),
+    ("xfrm", "        editCauseBank = DragBank.None;\n"
+     "        editCauseProvisional = false;",
+     "        editCauseProvisional = false;", "drop cause close"),
     ("xfrm", "? PreparedHistoryKind.Plain : PreparedHistoryKind.InSession;",
      "? PreparedHistoryKind.Plain : PreparedHistoryKind.Plain;",
      "misroute normal close as boundary"),
+    ("xfrm", "? history.currentRunId : 0;", ": 0;",
+     "drop in-session run id"),
     ("base", "idx.reserve(editIdx.length);", "", "drop detached position ownership"),
     ("base", "morphEditBefore_[i], morphEditBeforeHas_[i],\n"
      "                                      valNow, hasNow",

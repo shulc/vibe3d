@@ -886,6 +886,7 @@ protected:
     protected bool prepareEditRecord(PreparedRecordContext context, string label) {
         if (context is null || suppressCommit || !editIsOpen() || history is null)
             return false;
+        scope(exit) cancelEdit();
         Command cmd = projectEditCommand(label);
         if (cmd is null) return false;
         auto kind = recordViaInSession ? PreparedHistoryKind.InSession

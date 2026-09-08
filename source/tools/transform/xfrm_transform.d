@@ -167,6 +167,7 @@ import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
                           SnapPacket, SymmetryPacket, SubjectPacket;
+import toolpipe.subject  : SubjectSource, evaluateSubject;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import snapshot          : MeshSnapshot;
 
@@ -526,6 +527,7 @@ struct PreparedXfrmEditCloseImage {
     ubyte expectedBank;
     bool closeWrapper;
     bool historyPrepared;
+    bool discardAcenSnapshot;
     bool installCommitState;
     bool consumeGestureState;
     bool settleSoftPin;
@@ -546,8 +548,8 @@ struct PreparedXfrmEditCloseImage {
         itemSubject = closeWrapper = false;
         expectedAcen = null;
         expectedBank = 0;
-        historyPrepared = installCommitState = consumeGestureState =
-            settleSoftPin = valid = false;
+        historyPrepared = discardAcenSnapshot = installCommitState =
+            consumeGestureState = settleSoftPin = valid = false;
     }
 }
 
@@ -1956,7 +1958,7 @@ public:
         const itemSubject = useItemSubjectOverride
             ? itemSubjectOverride : itemSubjectActive();
         auto projection = projectPreparedOwnedEditClose(
-            editCauseBank, itemSubject, TransformHistoryIntent.RunClose);
+            editCauseBank, itemSubject);
         if (!projection.valid) return PreparedXfrmEditCloseImage.init;
         if (!prepareOwnedEditClose(projection, context,
                                    TransformHistoryIntent.RunClose))
@@ -1965,30 +1967,32 @@ public:
     }
 
     final bool preparedUpdateEditCloseMatches(
-            ref PreparedXfrmEditCloseImage image) const nothrow @nogc {
+            ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
         return image.valid && cachedSubjType_ == image.expectedSubject &&
             cast(ubyte) editCauseBank == image.expectedBank &&
             preparedEditCloseMatches(image.vertex) &&
             preparedItemEditCloseMatches(image.item) &&
+            (!image.discardAcenSnapshot ||
+                (((g_pipeCtx is null && image.expectedAcen is null) ||
+                  (g_pipeCtx !is null &&
+                   (cast(Pipeline)g_pipeCtx.pipeline).ownsTaskStage(
+                       TaskCode.Acen,
+                       cast(ActionCenterStage)image.expectedAcen))) &&
+                 (image.expectedAcen is null ||
+                    image.expectedAcen.projectedEditCloseMatches(
+                        image.expectedUserPin, image.expectedSoftPin,
+                        image.expectedCancelFrozen)))) &&
             (!image.installCommitState ||
                 (pendingMoveSoftPin == image.expectedPendingSoft &&
                  (!image.expectedPendingSoft ||
                     pendingMoveSoftCenter == image.expectedPendingCenter) &&
                  preparedGestureRecordMatches(image) &&
                  falloffPacketsEqual(dragFalloff,
-                                     image.expectedDragFalloff) &&
-                 ((g_pipeCtx is null && image.expectedAcen is null) ||
-                  (g_pipeCtx !is null &&
-                   (cast(Pipeline)g_pipeCtx.pipeline).ownsTaskStage(
-                       TaskCode.Acen, image.expectedAcen))) &&
-                 (image.expectedAcen is null ||
-                    image.expectedAcen.projectedEditCloseMatches(
-                        image.expectedUserPin, image.expectedSoftPin,
-                        image.expectedCancelFrozen))));
+                                     image.expectedDragFalloff)));
     }
 
     private bool preparedGestureRecordMatches(
-            ref PreparedXfrmEditCloseImage image) const
+            ref const PreparedXfrmEditCloseImage image) const
             pure nothrow @nogc {
         const bank = cast(DragBank)image.expectedBank;
         if (bank == DragBank.Move)
@@ -2006,10 +2010,10 @@ public:
     final void installPreparedUpdateEditClose(
             ref PreparedXfrmEditCloseImage image) nothrow @nogc {
         if (!image.valid) return;
+        if (image.discardAcenSnapshot && image.expectedAcen !is null)
+            image.expectedAcen.installProjectedEditClose(
+                image.nextSoftPin, image.settleSoftPin);
         if (image.installCommitState) {
-            if (image.expectedAcen !is null)
-                image.expectedAcen.installProjectedEditClose(
-                    image.nextSoftPin, image.settleSoftPin);
             dragFalloff = image.nextDragFalloff;
             if (image.consumeGestureState) {
                 pendingMoveSoftPin = false;
@@ -2026,9 +2030,9 @@ public:
         if (image.closeWrapper) {
             installPreparedEditClose(image.vertex);
             installPreparedItemEditClose(image.item);
-            editCauseBank = DragBank.None;
-            editCauseProvisional = false;
         }
+        editCauseBank = DragBank.None;
+        editCauseProvisional = false;
         image.clear();
     }
 
@@ -3707,9 +3711,8 @@ public:
     // Move ALONE restores the userPin — `bank == DragBank.Move` inside the
     // helper, so all three call sites look identical.
     //
-    // Consumes (clears) both known bits, mirroring the pre-F3b per-site
-    // clears (`moveRec.pinKnown = false;` etc.) — call this exactly once per
-    // commit.
+    // The projector only reads the known bits. The selected installer consumes
+    // them exactly once after the projected state has been validated.
     private GestureHooks projectGestureHooks(DragBank bank,
         XformState runEnd, GestureFrame frameEnd, Pin softEnd, Pin pinEnd)
     {
@@ -4743,7 +4746,7 @@ public:
         // F3b — single chokepoint composing the {apply, revert} pair from
         // rotateRec + this gesture's live END state (Rotate never restores
         // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
-        // harmless placeholder). Consumes (clears) rotateRec.runKnown.
+        // harmless placeholder). The close installer clears rotateRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
         commitOwnedEdit(DragBank.Rotate, TransformHistoryIntent.RunGesture);
@@ -4834,7 +4837,7 @@ public:
         // F3b — single chokepoint composing the {apply, revert} pair from
         // scaleRec + this gesture's live END state (Scale never restores
         // the userPin — pinEnd is unused, Pin.init is a harmless
-        // placeholder). Consumes (clears) scaleRec.runKnown.
+        // placeholder). The close installer clears scaleRec.runKnown.
         // The wrapper owns both payload construction and the history decision;
         // the bank has already finished its input/value work at this point.
         commitOwnedEdit(DragBank.Scale, TransformHistoryIntent.RunGesture);
@@ -5630,6 +5633,17 @@ public:
         image.closeWrapper = editIsOpen();
         if (image.closeWrapper && bank == DragBank.None) return p;
 
+        image.discardAcenSnapshot = !itemSubject && !suppressCommit;
+        if (image.discardAcenSnapshot) {
+            image.expectedAcen = activeAcenStage();
+            if (image.expectedAcen !is null) {
+                image.expectedUserPin = image.expectedAcen.currentUserPin();
+                image.expectedSoftPin = image.expectedAcen.currentSoftPin();
+                image.expectedCancelFrozen = image.expectedAcen
+                    .projectedEditCloseSnapshotFrozen();
+            }
+        }
+
         if (image.closeWrapper && !suppressCommit)
             p.command = itemSubject ? projectItemEditCommand()
                                     : projectEditCommand(name());
@@ -5643,13 +5657,6 @@ public:
             auto rec = &recFor(bank);
             image.expectedPinKnown = rec.pinKnown;
             image.expectedRunKnown = rec.runKnown;
-            image.expectedAcen = activeAcenStage();
-            if (image.expectedAcen !is null) {
-                image.expectedUserPin = image.expectedAcen.currentUserPin();
-                image.expectedSoftPin = image.expectedAcen.currentSoftPin();
-                image.expectedCancelFrozen = image.expectedAcen
-                    .projectedEditCloseSnapshotFrozen();
-            }
 
             if (p.command !is null) {
                 image.consumeGestureState = true;
@@ -5661,9 +5668,9 @@ public:
                 if (image.nextDragFalloff.enabled &&
                     image.nextDragFalloff.type == FalloffType.Element &&
                     image.expectedAcen !is null)
-                    image.nextDragFalloff.pickedCenter = image.settleSoftPin
-                        ? pendingMoveSoftCenter
-                        : image.expectedAcen.currentCenter();
+                    image.nextDragFalloff.pickedCenter = image.expectedAcen
+                        .projectedCenterAfterSoftPin(
+                            image.nextSoftPin, image.settleSoftPin);
 
                 Pin pinEnd = image.expectedUserPin;
                 auto gh = projectGestureHooks(bank, run, frame,
@@ -5707,7 +5714,7 @@ public:
     }
 
     private OwnedEditCloseProjection projectPreparedOwnedEditClose(
-            DragBank bank, bool itemSubject, TransformHistoryIntent) {
+            DragBank bank, bool itemSubject) {
         return projectOwnedEditClose(bank, itemSubject);
     }
 
@@ -5729,8 +5736,9 @@ public:
             TransformHistoryIntent intent) {
         if (!p.valid) return;
         auto image = &p.state;
-        if (image.installCommitState) {
+        if (image.discardAcenSnapshot)
             discardAcenUserPlacedSnapshot();
+        if (image.installCommitState) {
             if (image.settleSoftPin)
                 settleGestureCenter(image.nextSoftPin.center);
             dragFalloff = image.nextDragFalloff;
@@ -5744,9 +5752,9 @@ public:
         if (image.closeWrapper) {
             installPreparedEditClose(image.vertex);
             installPreparedItemEditClose(image.item);
-            editCauseBank = DragBank.None;
-            editCauseProvisional = false;
         }
+        editCauseBank = DragBank.None;
+        editCauseProvisional = false;
         if (p.command !is null) recordTransformCommand(p.command, intent);
         p.valid = false;
     }
@@ -7615,13 +7623,17 @@ unittest {
 
         auto liveProjection = liveTool.projectOwnedEditClose(cell.bank, false);
         auto preparedProjection = preparedTool.projectPreparedOwnedEditClose(
-            cell.bank, false, cell.intent);
+            cell.bank, false);
         auto liveCmd = cast(MeshVertexEdit)liveProjection.command;
         auto preparedCmd = cast(MeshVertexEdit)preparedProjection.command;
         assert(liveCmd !is null && preparedCmd !is null &&
-               liveCmd.editIndices() == preparedCmd.editIndices() &&
-               liveCmd.editBefore() == preparedCmd.editBefore() &&
-               liveCmd.editAfter() == preparedCmd.editAfter(), cell.failure);
+               liveCmd.editIndices() == [0u] &&
+               preparedCmd.editIndices() == [0u] &&
+               liveCmd.editBefore() == [Vec3(-0.5f, -0.5f, -0.5f)] &&
+               preparedCmd.editBefore() == [Vec3(-0.5f, -0.5f, -0.5f)] &&
+               liveCmd.editAfter() == [Vec3(cell.afterX, -0.5f, -0.5f)] &&
+               preparedCmd.editAfter() ==
+                   [Vec3(cell.afterX, -0.5f, -0.5f)], cell.failure);
 
         liveTool.installLiveOwnedEditClose(liveProjection, cell.intent);
         auto context = new PreparedRecordContext(preparedHistory, null);
@@ -7782,7 +7794,7 @@ unittest {
         DragBank.Move, false);
     auto preparedHookProjection =
         preparedHookTool.projectPreparedOwnedEditClose(
-            DragBank.Move, false, TransformHistoryIntent.RunClose);
+            DragBank.Move, false);
     auto liveHookCmd = cast(MeshVertexEdit)liveHookProjection.command;
     auto preparedHookCmd = cast(MeshVertexEdit)preparedHookProjection.command;
     assert(liveHookCmd.editAfter() == preparedHookCmd.editAfter(),
@@ -7793,26 +7805,117 @@ unittest {
     const livePinRevert = pairAcen.currentUserPin();
     const liveRunRevert = liveHookTool.run;
     const livePipeRevert = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    assert(livePinRevert == Pin(true, Vec3(1, 2, 3)) &&
+           liveRunRevert == XformState.init && livePipeRevert == 2,
+        "live pin/run/pipe-config revert payload diverged");
     pairAcen.restorePinState(Pin(true, Vec3(99, 99, 99)));
     pairFalloff.restoreConfigFromPacket(refirePost);
     preparedHookTool.run.t = Vec3(99, 99, 99);
     preparedHooks.revert();
-    assert(pairAcen.currentUserPin() == livePinRevert &&
-           preparedHookTool.run == liveRunRevert &&
-           pairFalloff.snapshotConfigToPacket().pickedRadius == livePipeRevert,
+    assert(pairAcen.currentUserPin() == Pin(true, Vec3(1, 2, 3)) &&
+           preparedHookTool.run == XformState.init &&
+           pairFalloff.snapshotConfigToPacket().pickedRadius == 2,
         "paired pin/run/pipe-config revert payload diverged");
     liveHooks.apply();
     const livePinApply = pairAcen.currentUserPin();
     const liveRunApply = liveHookTool.run;
     const livePipeApply = pairFalloff.snapshotConfigToPacket().pickedRadius;
+    assert(livePinApply == Pin(true, Vec3(11, 12, 13)) &&
+           liveRunApply.t == Vec3(8, 9, 10) && livePipeApply == 2,
+        "live pin/run/pipe-config apply payload diverged");
     pairAcen.restorePinState(Pin(true, Vec3(98, 98, 98)));
     pairFalloff.restoreConfigFromPacket(refirePost);
     preparedHookTool.run.t = Vec3(98, 98, 98);
     preparedHooks.apply();
-    assert(pairAcen.currentUserPin() == livePinApply &&
-           preparedHookTool.run == liveRunApply &&
-           pairFalloff.snapshotConfigToPacket().pickedRadius == livePipeApply,
+    assert(pairAcen.currentUserPin() == Pin(true, Vec3(11, 12, 13)) &&
+           preparedHookTool.run.t == Vec3(8, 9, 10) &&
+           pairFalloff.snapshotConfigToPacket().pickedRadius == 2,
         "paired pin/run/pipe-config apply payload diverged");
+
+    // P9: an explicit Auto relocate outranks the Move settle soft pin.
+    Mesh p9Mesh = makeCube();
+    p9Mesh.resetSelection();
+    p9Mesh.selectVertex(0);
+    EditMode p9Mode = EditMode.Vertices;
+    GpuMesh p9Gpu;
+    auto p9Pipe = new ToolPipeContext();
+    auto p9Acen = new ActionCenterStage(() => &p9Mesh, &p9Mode);
+    auto p9Falloff = new FalloffStage(() => &p9Mesh, &p9Mode);
+    p9Pipe.pipeline.add(p9Acen);
+    p9Pipe.pipeline.add(p9Falloff);
+    p9Acen.mode = ActionCenterStage.Mode.Auto;
+    p9Falloff.type = FalloffType.Element;
+    g_pipeCtx = p9Pipe;
+    immutable Vec3 p9UserCenter = Vec3(3, 4, 5);
+    immutable Vec3 p9SoftCenter = Vec3(8, 9, 10);
+    p9Acen.setUserPlaced(p9UserCenter);
+    auto p9History = new CommandHistory();
+    auto p9View = new View(0, 0, 800, 600);
+    auto p9Tool = new XfrmTransformTool(() => &p9Mesh, &p9Gpu, &p9Mode);
+    p9Tool.flagT = true;
+    p9Tool.setUndoBindings(p9History,
+        () => new MeshVertexEdit(&p9Mesh, p9View, p9Mode));
+    p9Tool.activate();
+    p9Tool.openLiveSessionForTest();
+    p9Tool.editCauseBank = DragBank.Move;
+    p9Tool.editCauseProvisional = false;
+    p9Tool.currentRunBank = DragBank.Move;
+    p9Tool.run.t = Vec3(1, 0, 0);
+    p9Tool.recFor(DragBank.Move).runStart = XformState.init;
+    p9Tool.recFor(DragBank.Move).runKnown = true;
+    p9Mesh.vertices[0].x += 1;
+    p9Tool.pendingMoveSoftPin = true;
+    p9Tool.pendingMoveSoftCenter = p9SoftCenter;
+    auto p9Projection = p9Tool.projectOwnedEditClose(DragBank.Move, false);
+    assert(p9Acen.currentCenter() == p9UserCenter &&
+           p9Projection.state.nextDragFalloff.pickedCenter == p9UserCenter,
+        "projected Element falloff ignored userPin precedence");
+    p9Tool.installLiveOwnedEditClose(
+        p9Projection, TransformHistoryIntent.RunGesture);
+    size_t p9BeforeModel, p9BeforeUi;
+    p9History.undoDepthCounts(p9BeforeModel, p9BeforeUi);
+    p9Tool.armRegradeStamp();
+    SubjectPacket p9Subject;
+    VectorStack p9Vts;
+    evaluateSubject(p9Subject, p9Vts,
+        SubjectSource(&p9Mesh, p9Mode, SelType.Vertex, Viewport.init));
+    assert(p9Vts.get!FalloffPacket().pickedCenter == p9UserCenter,
+        "live Element falloff ignored userPin precedence");
+    p9Gpu.suppressCageUpload = true;
+    p9Tool.update(p9Vts);
+    size_t p9AfterModel, p9AfterUi;
+    p9History.undoDepthCounts(p9AfterModel, p9AfterUi);
+    assert(p9BeforeModel == 1 && p9AfterModel == 1,
+        "Auto relocate plus Move settle created an idle re-grade undo record");
+
+    // A closed Rotate/Scale mouse-up must still end the prior pin snapshot and
+    // operation cause before the next session stages its cancel baseline.
+    immutable Vec3 committedPin = Vec3(13, 14, 15);
+    p9Acen.freezeUserPlacedSnapshot();
+    p9Acen.setUserPlaced(committedPin);
+    p9Tool.editCauseBank = DragBank.Rotate;
+    p9Tool.editCauseProvisional = true;
+    p9Tool.commitOwnedEdit(DragBank.Rotate, TransformHistoryIntent.RunGesture);
+    assert(!p9Acen.projectedEditCloseSnapshotFrozen() &&
+           p9Tool.editCauseBank == DragBank.None &&
+           !p9Tool.editCauseProvisional,
+        "closed owned edit retained pin snapshot or operation cause");
+    p9Acen.stageCurrentPinState();
+    p9Acen.freezeUserPlacedSnapshot();
+    p9Acen.setUserPlaced(Vec3(90, 91, 92));
+    p9Acen.restoreUserPlacedSnapshot();
+    assert(p9Acen.currentUserPin() == Pin(true, committedPin),
+        "next session restored a stale action-center cancel baseline");
+
+    // prepareEditRecord preserves the destructive close of its old builders.
+    p9Tool.openLiveSessionForTest();
+    p9Mesh.vertices[0].x += 1;
+    auto p9PrepareContext = new PreparedRecordContext(p9History, null);
+    auto p9Deactivate = p9Tool.prepareDeactivate(p9PrepareContext);
+    assert(p9Deactivate.kind == PreparedDeactivateKind.Xfrm &&
+           p9Deactivate.historyAccepted && !p9Tool.editIsOpen(),
+        "prepared edit record left its capture session open");
+    p9PrepareContext.discard();
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

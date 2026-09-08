@@ -1072,6 +1072,12 @@ public:
         return computeCenter(liveSelType());
     }
 
+    /// Exact centre after a projected soft-pin write, without mutating this
+    /// stage. In particular, an explicit user pin keeps its higher precedence.
+    Vec3 projectedCenterAfterSoftPin(Pin nextSoft, bool writeSoft) const {
+        return computeCenter(liveSelType(), writeSoft ? nextSoft : softPin);
+    }
+
     /// BUG-1 / flex_border_handles_plan.md Phase 3 — the 2-entry "is a gesture
     /// settle (soft-pin) meaningful in this mode?" predicate. The wrapper's
     /// settleGestureCenter() consults it before pinning the drop center, and the
@@ -1328,8 +1334,13 @@ private:
     // call (review Blocker 2 — see evaluate()'s doc comment and
     // `liveSelType()` above).
     Vec3 computeCenter(SelType subjType) const {
+        return computeCenter(subjType, softPin);
+    }
+
+    private Vec3 computeCenter(SelType subjType, Pin projectedSoft) const {
         if (honoursPlacedCenter(mode) && userPin.placed) return userPin.center;
-        if (settlePinHonored()    && softPin.placed) return softPin.center;
+        if (settlePinHonored() && projectedSoft.placed)
+            return projectedSoft.center;
         // Item mode 0614: redirect the selection-derived modes to the
         // item's world pivot BEFORE the geometry-selection switch below —
         // there is no selection to derive a center from when the subject is
