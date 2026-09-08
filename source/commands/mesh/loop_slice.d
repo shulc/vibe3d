@@ -3,6 +3,7 @@ module commands.mesh.loop_slice;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.loop_slice;
 import view;
 import editmode;
 import shader;

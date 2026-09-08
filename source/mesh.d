@@ -30,36 +30,6 @@ public import mesh_ops.cut;
 // (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
 // namespace; narrowing that is audit 0678 M9's job, not this task's.
 public import mesh_ops.bridge;
-// task 1903 Stage F1: the Loop Slice ring-walk + insertion family is
-// module-level free functions — `insertEdgeLoops` (both overloads) and
-// `insertEdgeLoopsMulti` over `ref MeshEditBatch`, `loopSliceRingEdges` /
-// `collectEdgeRing` / `walkRingSide` / `railContinuation` over
-// `ref const(Mesh)`, the receiver-less `capShellCycles` / `ngonExitEdge` /
-// `curvatureSplinePoint`, the module-scope `EdgeRingEntry` and the family's
-// declared scope `kLoopSliceEditScope` — not a mixin. PUBLIC so every
-// `import mesh;` re-exports them and `ed.insertEdgeLoops(seed, pos)` /
-// `mesh.loopSliceRingEdges(seed)` resolve through UFCS
-// (`doc/mesh_edit_seam_plan.md` §4.2).
-//
-// `bandWalk` / `BandCell` COME ALONG, and the reason is worth stating exactly
-// because it generalises (corrected at the F1 review, m5). They were never
-// members. Before F1 mesh.d imported them by name (`import mesh_ops.loop_slice
-// : MeshLoopSliceOps, bandWalk, BandCell;`) and mesh.d's own body never
-// mentioned either one — the import existed for the MIXIN BODY, which called
-// `bandWalk(faces, bandFaces)` and, being a `mixin template`, resolved that
-// name at its INSTANTIATION site, i.e. here. F1 deletes the instantiation, so
-// that need is gone: the Loop Slice tool imports both DIRECTLY
-// (`tools/slice/loop_slice_tool.d`), and after F1 this re-export serves no
-// current caller while newly exporting both names to every `import mesh;`
-// client. Kept anyway, per the E3/E4 convention that a conversion stage does
-// not change what mesh.d re-exports — but it is a widening, not a
-// continuation, and narrowing it is audit 0678 M9's job, not this task's.
-//
-// THE GENERAL RULE FOR F2/G/H: a converting stage inherits whatever imports
-// the mixin BODY was resolving in mesh.d's scope. Read each remaining
-// family's mesh.d import line for names mesh.d itself never mentions before
-// widening it to a `public import`.
-public import mesh_ops.loop_slice;
 // Tasks 4600/4601 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
@@ -13546,8 +13516,8 @@ struct Mesh {
     // + `EdgeRingEntry` is NO LONGER a mixin either: task 1903 Stage F1 made it
     // module-level free functions in source/mesh_ops/loop_slice.d — the two
     // insert entries over `ref MeshEditBatch`, the four ring-walk entries over
-    // `ref const(Mesh)` — re-exported by the `public import` at the top of this
-    // file. `capShellCycles` in particular is no longer a `static` member, so
+    // `ref const(Mesh)` — imported directly by their callers. `capShellCycles`
+    // in particular is no longer a `static` member, so
     // `mesh_ops/cut.d` spells it BARE again (it had to say `Mesh.capShellCycles`
     // between Stage E3 and Stage F1, while cut.d was converted and this file was
     // not). Do not reinstate the `MeshLoopSliceOps` mixin here — see the note on

@@ -14,16 +14,9 @@ import tool;
 // covers its two `selectLoopEdges` call sites.
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
+import mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
+                             loopSliceRingEdges, kLoopSliceEditScope;
 import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
-                             // task 1903 Stage F1 — the Loop Slice family is
-                             // free functions now, and a SELECTIVE `import
-                             // mesh : …` is the one spelling that does not
-                             // pick them up for free. `render.d`'s
-                             // `PenRenderOps` body binds its free names in
-                             // THIS scope, so `loopSliceRingEdges` is here for
-                             // it as well as for this file.
-                             insertEdgeLoops, collectEdgeRing,
-                             loopSliceRingEdges, kLoopSliceEditScope,
                              // task 3240 (plan 2910 step 3) — the edge-slice
                              // family is free functions now, same reason
                              // again: `splitFaceByVertices` is reached

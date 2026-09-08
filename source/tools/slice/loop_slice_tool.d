@@ -15,7 +15,8 @@ import math;
 // `bandFaces` branch, source/mesh_ops/loop_slice.d), not re-derive it.
 // `mesh.d` also imports these (privately, for its own mixin) but a private
 // import is not transitive, so this tool needs its own.
-import mesh_ops.loop_slice : bandWalk, BandCell;
+import mesh_ops.loop_slice : bandWalk, BandCell, loopSliceRingEdges,
+    collectEdgeRing, insertEdgeLoopsMulti, kLoopSliceEditScope;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;

@@ -1,6 +1,7 @@
 module mesh_ops.cut;
 
 import mesh;
+import mesh_ops.loop_slice : capShellCycles;
 import math;
 import mesh_edit_delta : MeshEditScope;
 

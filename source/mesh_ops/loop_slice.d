@@ -1,4 +1,5 @@
 module mesh_ops.loop_slice;
+// mesh-ops-import: explicit
 
 import mesh;
 import math;

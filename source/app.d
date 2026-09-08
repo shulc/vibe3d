@@ -24,6 +24,7 @@ import nfde;
 import app_version      : appAboutLines;
 import math;
 import mesh;
+import mesh_ops.loop_slice : loopSliceRingEdges;
 // Task 1906 stage 2 — the bus-driven per-mesh-address dirty epochs the display
 // and cage/preview upload families key on (see mesh_dirty.d's header).
 import mesh_dirty       : MeshDirtyKey, g_displayEpochs, g_geomEpochs;
