@@ -3,6 +3,7 @@ module commands.mesh.stroke_extrude;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.revolve;
 import view;
 import editmode;
 import math    : Vec3;

@@ -1,4 +1,5 @@
 module mesh_ops.revolve;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // TWO kernel families that share a file and nothing else. The Radial Sweep /

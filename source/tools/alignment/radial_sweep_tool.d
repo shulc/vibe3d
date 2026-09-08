@@ -9,6 +9,7 @@ import std.math : PI, abs, cos, sin;
 
 import tool;
 import mesh;
+import mesh_ops.revolve;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry;

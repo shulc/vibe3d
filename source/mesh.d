@@ -60,7 +60,6 @@ public import mesh_ops.bridge;
 // family's mesh.d import line for names mesh.d itself never mentions before
 // widening it to a `public import`.
 public import mesh_ops.loop_slice;
-public import mesh_ops.revolve;
 // Tasks 4600/4601 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
@@ -14649,7 +14648,7 @@ struct Mesh {
     // is the polygon-mode source-face deletion, which sits outside the batch by
     // the command's own choice (see commands/mesh/sweep.d — stage L10).
     //
-    // Re-exported by the `public import` at the top of this file. Do not
+    // Callers import the family directly. Do not
     // reinstate the mixin: a member of `Mesh` BEATS a same-name UFCS free
     // function silently, so it would rebind every call site to a dead body
     // (`static assert` at the foot of that file, and the named roster in
