@@ -2247,10 +2247,6 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
                 jsonNum(tan.z, "%f"),
                 jsonNum(len, "%f"));
         });
-
-        // Helper: inject _positional args from the argstring pipeline into
-        // tool.* commands. Called from inside setCommandHandler after the
-        // generic injectParamsInto pass. Extracted to keep the handler tidy.
     }
 }
 
@@ -2324,6 +2320,7 @@ private void wireCommandAdapters(HttpServer httpServer, ref EditorApp app,
             });
     }
 }
+
 // wireHistoryProviders — `/api/history*`, `/api/trace*`,
 // `/api/refire` — the undo service and its observables.
 private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,

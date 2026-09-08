@@ -983,9 +983,9 @@ class HttpServer {
                     // measuring nothing, which is the failure this comment
                     // exists to prevent someone re-introducing.
                     //
-                    // Outermost in the scope so the window covers the latch
-                    // hook too (scope(exit) unwinds in reverse declaration
-                    // order, so this `end()` runs after the latch is dropped).
+                    // Outermost in the scope so the window covers application
+                    // binding and adapter delivery too. `scope(exit)` keeps
+                    // the bracket intact across every return path.
                     // `end()` runs on a throw as well — the catch below is
                     // INSIDE it — so a failing command still publishes its
                     // cost instead of leaving the previous command's figures
