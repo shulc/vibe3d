@@ -3,6 +3,7 @@ module commands.mesh.reduce;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.decimate : reduceToTarget, kReduceEditScope;
 import view;
 import editmode;
 import params : Param;

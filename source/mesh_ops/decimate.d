@@ -1,4 +1,5 @@
 module mesh_ops.decimate;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // The decimation family: one kernel, `reduceToTarget` — iterative edge-collapse

@@ -98,13 +98,6 @@ public import mesh_ops.bevel_vertex;
 // publish. The module's public surface is the five kernels plus
 // `kExtrudeEditScope`; `VertexPosGrid` and its helpers stay `private`.
 public import mesh_ops.extrude;
-// task 1903 Stage D2: the decimation family is ONE module-level free function
-// (`reduceToTarget` over `ref MeshEditBatch`), not a mixin. PUBLIC so every
-// `import mesh;` re-exports it and `ed.reduceToTarget(target, pb)` resolves
-// through UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door
-// for the ops namespace; narrowing that is audit 0678 M9's job, not this
-// task's.
-public import mesh_ops.decimate;
 // task 1903 Stage D1: the connected-mask family is module-level free functions
 // (`connectedComponentMask` over `ref Mesh`, `edgeCentroid` over
 // `ref const(Mesh)`), not a mixin. PUBLIC so every `import mesh;` re-exports
@@ -14714,8 +14707,8 @@ struct Mesh {
     // source/mesh_ops/decimate.d, over `ref MeshEditBatch` — the first
     // MUTATING family to cross the seam, so the kernel can no longer be
     // reached without a batch, and one reduce now stamps, derives and
-    // delivers ONCE instead of once per internal commit. Re-exported by the
-    // `public import` at the top of this file. Do not reinstate the
+    // delivers ONCE instead of once per internal commit. Callers import the
+    // family directly. Do not reinstate the
     // `MeshDecimateOps` mixin here — a member BEATS a same-name UFCS free
     // function, so the mixin would silently take every call back, the batch
     // receiver would go with it, and the conversion would mean nothing
