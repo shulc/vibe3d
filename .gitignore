@@ -144,6 +144,3 @@ third_party/nfde/.dub/
 # final CI gate step to read; it is a per-run artefact, never committed.
 build_class.txt
 .gesture-lane/
-
-# per-lane dub package cache pin (task 4551): holds an absolute local path
-dub.settings.json
