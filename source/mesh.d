@@ -21,16 +21,9 @@ import change_bus : SelDomain, changeBus;
 // (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
 // namespace; narrowing that is audit 0678 M9's job, not this task's.
 public import mesh_ops.bridge;
-// Tasks 4600/4601 close one reverse dependency at a time: every migrated
+// Tasks 4600-4602 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
-// task 1903 Stage D1: the connected-mask family is module-level free functions
-// (`connectedComponentMask` over `ref Mesh`, `edgeCentroid` over
-// `ref const(Mesh)`), not a mixin. PUBLIC so every `import mesh;` re-exports
-// them and `mesh.connectedComponentMask(vi)` keeps resolving through UFCS
-// unchanged (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for
-// the ops namespace; narrowing that is audit 0678 M9's job, not this task's.
-public import mesh_ops.connected_mask;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward, WireKeyPolicy;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource,
@@ -14728,8 +14721,9 @@ struct Mesh {
     // LONGER a mixin: task 1903 Stage D1 made it module-level free functions in
     // source/mesh_ops/connected_mask.d (`connectedComponentMask` over
     // `ref Mesh`, because it calls the memoizing `vertexAdjacencyCSR` and so
-    // cannot be `const`; `edgeCentroid` over `ref const(Mesh)`), re-exported by
-    // the `public import` at the top of this file. Do not reinstate the
+    // cannot be `const`; `edgeCentroid` over `ref const(Mesh)`). Task 4602
+    // removed the base-module re-export; callers import the operation family
+    // directly. Do not reinstate the
     // `MeshConnectedMaskOps` mixin here — a member BEATS a same-name UFCS free
     // function, so the mixin would silently take every call back and the
     // conversion would mean nothing (`doc/mesh_edit_seam_plan.md` Revision 2

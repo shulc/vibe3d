@@ -104,6 +104,7 @@ import math : Vec3, Pin, Viewport, translationMatrix,
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;
+import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles;
 import eventlog : queryMouse;
 import shader : Shader;
@@ -4995,7 +4996,7 @@ public:
         // (the first-active-frame — accumulation starts from zero). Zeroing on
         // every call would wipe the prior cumulative. The += sits between the
         // capture and applyTRS, which is why this path stays hand-rolled: the
-        // batch fold (task 4691) captures and applies with nothing in between.
+        // single batch fold captures and applies with nothing in between.
         bool freshBaseline = captureDragBaselineIfStale(DragBank.Move);
         if (freshBaseline)
             run.t = Vec3(0, 0, 0);

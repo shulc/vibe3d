@@ -1,4 +1,5 @@
 module mesh_ops.connected_mask;
+// mesh-ops-import: explicit
 
 // ---------------------------------------------------------------------------
 // The connected-mask family: the connected-component vertex mask
@@ -36,18 +37,11 @@ module mesh_ops.connected_mask;
 //     boundary that matters for the seam is "does it write mesh DATA", not
 //     "is it callable through `const`".
 //
-// HOW THE CALL SITES REACH THESE. `source/mesh.d` carries
-// `public import mesh_ops.connected_mask;`, so every non-selective
-// `import mesh;` re-exports both names and `mesh.edgeCentroid(ei)` /
-// `mesh.connectedComponentMask(vi)` keep the spelling they always had. A
-// SELECTIVE `import mesh : …` does not pick up a re-export — such a site must
-// list the names (Stage C measured this). A POINTER receiver does not survive
-// either: UFCS does not auto-dereference, so a `Mesh* mesh` site spells
-// `(*mesh).connectedComponentMask(vi)`. MEASURED for D1: `xfrm_transform.d`
-// imports `mesh` non-selectively, so the re-export half costs nothing — but
-// `Tool.mesh` returns a `Mesh*`, so BOTH production call sites needed the
-// deref. Every family in track 1 will meet this seam; commands hold
-// `Mesh* mesh` too.
+// HOW THE CALL SITES REACH THESE. The import-boundary migration removed the re-export from
+// `source/mesh.d`; the transform owner imports this module directly and keeps
+// its existing `(*mesh).edgeCentroid(ei)` /
+// `(*mesh).connectedComponentMask(vi)` UFCS spellings. The dereference remains
+// explicit because UFCS does not auto-dereference `Mesh*`.
 // ---------------------------------------------------------------------------
 import mesh;
 import math;
