@@ -1,4 +1,5 @@
 module mesh_ops.bevel_vertex;
+// mesh-ops-import: explicit
 
 import mesh;
 import math;

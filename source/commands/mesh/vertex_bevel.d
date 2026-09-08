@@ -3,6 +3,7 @@ module commands.mesh.vertex_bevel;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import view;
 import editmode;
 import params : Param;

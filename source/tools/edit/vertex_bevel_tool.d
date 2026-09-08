@@ -7,6 +7,7 @@ import operator : VectorStack;
 
 import tool;
 import mesh;
+import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import math;
 import editmode : EditMode;
 import params : Param;

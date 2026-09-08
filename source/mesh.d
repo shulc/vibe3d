@@ -61,14 +61,9 @@ public import mesh_ops.bridge;
 // widening it to a `public import`.
 public import mesh_ops.loop_slice;
 public import mesh_ops.revolve;
-// Task 4600 closes the reverse dependency for the fin-bundle family: its
-// kernels import `mesh`, so every caller imports `mesh_ops.bevel_fin` directly
-// and this base module deliberately has no edge back to that operation module.
-// task 1903 Stage E4: the vertex chamfer is a module-level free function —
-// `bevelVerticesByMask` over `ref MeshEditBatch` — plus the module-scope corner
-// record `VertexBevelCorner` and the declared scope `kBevelVertexEditScope`,
-// not a mixin. PUBLIC for the same reason as the line above.
-public import mesh_ops.bevel_vertex;
+// Tasks 4600/4601 close one reverse dependency at a time: every migrated
+// family's callers import its `mesh_ops` module directly, so this base module
+// has no edge back to that operation family.
 // task 1903 Stage H: the extrude/extend family is FIVE module-level free
 // functions over `ref MeshEditBatch` — `extrudeEdgesByMask`,
 // `extrudeVerticesByMask`, `extendEdgesByMask`, `extrudeFacesByMask`,
@@ -14785,8 +14780,7 @@ struct Mesh {
     // LONGER mixins. Task 1903 Stage E4 converted both to module-level free
     // functions over `ref MeshEditBatch` in source/mesh_ops/bevel_fin.d and
     // source/mesh_ops/bevel_vertex.d, and `VertexBevelCorner` went to module
-    // scope with them. The two `public import`s at the top of this file are
-    // what keep every `import mesh;` resolving them; either family's mixin,
+    // scope with them. Callers import both families directly; either mixin,
     // reinstated HERE, would silently SHADOW them (a member beats a same-name
     // UFCS free function), so each file carries its own
     // `static assert(!__traits(hasMember, Mesh, n))` over every family name
