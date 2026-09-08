@@ -25,6 +25,7 @@ import http_command_helpers : commandBody;
 import std.conv : to;
 import std.math : abs, sin, cos, PI;
 import mesh;
+import mesh_ops.revolve : kRevolveEditScope, revolveProfileEx;
 import math : Vec3;
 import tools.alignment.radial_sweep_tool;
 
