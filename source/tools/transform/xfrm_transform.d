@@ -4994,8 +4994,8 @@ public:
         // fresh `dragBaseline` this call; we zero `run.t` ONLY then
         // (the first-active-frame — accumulation starts from zero). Zeroing on
         // every call would wipe the prior cumulative. The += sits between the
-        // capture and applyTRS, so we can't reuse replayTranslateFromBaseline()
-        // (which does capture-then-apply with nothing in between).
+        // capture and applyTRS, which is why this path stays hand-rolled: the
+        // batch fold (task 4691) captures and applies with nothing in between.
         bool freshBaseline = captureDragBaselineIfStale(DragBank.Move);
         if (freshBaseline)
             run.t = Vec3(0, 0, 0);
