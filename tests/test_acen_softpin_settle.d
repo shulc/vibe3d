@@ -294,6 +294,18 @@ unittest {
     assert(evalSoftPlaced(),
         "setup: Rotate gesture must leave a display soft pin");
 
+    auto cleared = postJson("/api/command", "tool.clearSoftPinForTest");
+    assert(cleared["status"].str == "ok",
+        "failed to clear the pre-existing Rotate soft pin: " ~ cleared.toString);
+    assert(!evalSoftPlaced(),
+        "setup: idle re-grade must begin without the gesture's prior soft pin");
+    Vec3 unpinnedPivot = evalPivot();
+    assert(fabs(unpinnedPivot.x - gesturePivot.x) > 1e-3 ||
+           fabs(unpinnedPivot.y - gesturePivot.y) > 1e-3 ||
+           fabs(unpinnedPivot.z - gesturePivot.z) > 1e-3,
+        "setup: the asymmetric stand must expose a different unpinned live "
+        ~ "pivot before re-grade");
+
     auto changed = postJson("/api/command",
         `tool.pipe.attr falloff size "4,4,4"`);
     assert(changed["status"].str == "ok",
@@ -302,11 +314,11 @@ unittest {
     Vec3 regradedPivot = evalPivot();
 
     assert(evalSoftPlaced(),
-        "idle Rotate re-grade must retain its display soft pin");
+        "idle Rotate re-grade must publish a display soft pin when none existed");
     assert(fabs(regradedPivot.x - gesturePivot.x) < 1e-3 &&
            fabs(regradedPivot.y - gesturePivot.y) < 1e-3 &&
            fabs(regradedPivot.z - gesturePivot.z) < 1e-3,
-        "idle Rotate radius re-grade must not jump the gizmo pivot; gesture=("
+        "idle Rotate radius re-grade must pin the newly sampled fold pivot; gesture=("
         ~ gesturePivot.x.to!string ~ "," ~ gesturePivot.y.to!string ~ ","
         ~ gesturePivot.z.to!string ~ ") regraded=("
         ~ regradedPivot.x.to!string ~ "," ~ regradedPivot.y.to!string ~ ","

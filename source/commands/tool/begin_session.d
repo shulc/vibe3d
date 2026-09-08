@@ -57,3 +57,34 @@ class ToolBeginSessionCommand : Command {
         return true;
     }
 }
+
+// Test-only companion used to make the missing-call shape of an idle Rotate
+// re-grade observable. It clears only the display pin; the held run, geometry,
+// action-centre mode, and explicit user pin remain untouched.
+class ToolClearSoftPinForTestCommand : Command {
+    private ToolHost toolHost;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
+        super(mesh, view, editMode);
+        this.toolHost = host;
+    }
+
+    override string name()  const { return "tool.clearSoftPinForTest"; }
+    override string label() const { return "Clear Transform Soft Pin (test)"; }
+
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    protected override bool applyImpl() {
+        if (!g_testMode)
+            throw new Exception(
+                "tool.clearSoftPinForTest: only available in --test mode");
+
+        auto xt = cast(XfrmTransformTool) toolHost.getActiveTool();
+        if (xt is null)
+            throw new Exception(
+                "tool.clearSoftPinForTest: active tool is not a transform tool");
+
+        xt.clearSoftPinForTest();
+        return true;
+    }
+}

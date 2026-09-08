@@ -233,7 +233,8 @@ import commands.layer.commands : LayerAttr;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
-import commands.tool.begin_session : ToolBeginSessionCommand;
+import commands.tool.begin_session : ToolBeginSessionCommand,
+    ToolClearSoftPinForTestCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand;
@@ -1118,10 +1119,12 @@ private void registerToolLifecycleCommands(EditorApp app) {
         new ToolResetCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
         new ToolPipeAttrCommand(&mesh(), cameraView, editMode, toolHost);
-    // Test-only headless hooks (re-eval plan D5, Phase 3). Both reject
-    // themselves unless g_testMode (set by --test); inert in a normal run.
+    // Test-only headless hooks. Each rejects itself unless g_testMode (set by
+    // --test), so the registrations are inert in a normal run.
     reg.commandFactories["tool.beginSession"] = () => cast(Command)
         new ToolBeginSessionCommand(&mesh(), cameraView, editMode, toolHost);
+    reg.commandFactories["tool.clearSoftPinForTest"] = () => cast(Command)
+        new ToolClearSoftPinForTestCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.panelEdit"] = () => cast(Command)
         new ToolPanelEditCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["ui.toolProperties"] = () => cast(Command)

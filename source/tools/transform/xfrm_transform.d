@@ -3403,14 +3403,15 @@ public:
         }
     }
 
-    // Idle replay preserves the three pre-cutover sampling rules. Move replay
-    // has always been revert-then-rerun. Rotate/Scale did that only for their
-    // pure presets; a composed preset keeps the live pipe sample so held
-    // neighbour banks retain their established frame/pin semantics.
+    // Idle replay preserves the pre-cutover sampling rules. Move samples the
+    // pipe against the current preview before the fold restores its baseline,
+    // while Rotate/Scale sample the baseline only for their pure presets. A
+    // composed preset keeps the live pipe sample so held neighbour banks retain
+    // their established frame/pin semantics.
     private bool samplePipeFromBaselineForRegrade(DragBank bank) const {
         final switch (bank) {
         case DragBank.None:   return false;
-        case DragBank.Move:   return true;
+        case DragBank.Move:   return false;
         case DragBank.Rotate: return flagR && !flagT && !flagS;
         case DragBank.Scale:  return flagS && !flagT && !flagR;
         }
@@ -5977,6 +5978,14 @@ public:
         else if (flagS) captureDragBaselineIfStale(DragBank.Scale);
         if (!wasOpen && editIsOpen()) editCauseProvisional = true;
         // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
+    }
+
+    // Test-only discriminator for idle Rotate re-grade. Gesture mouse-up
+    // normally leaves this pin populated, so a deletion of the re-grade settle
+    // call is observationally inert unless the test can remove that prior value
+    // without also closing the held run.
+    public void clearSoftPinForTest() {
+        clearAcenSoftPlaced();
     }
 
     // ----- Schema panel suppression (re-eval plan B2) -----------------------
