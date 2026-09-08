@@ -1,0 +1,649 @@
+{
+  "schema": 1,
+  "name": "mixed_bank_history_provenance",
+  "description": "What history a user gets from a MIXED pack of transform banks: a move drag with the tool left live, then a non-identity scale held in the numeric scale row, then a translate-row edit, then an off-handle boundary click. The reference draws NO bank-provenance distinction at all -- the row label cannot name a bank and the step boundary does not consult one -- so a port that labels such a row 'move' or 'scale' is making a product choice, not matching a reference law.",
+  "source": "The law was read statically off the reference editor's own shipped libraries and resource configuration -- zero boots. A live pointer-driven undo walk was then run as a falsifiable cross-check of what that read predicts.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "source_note": "`source` is the fixture-classification enum (live-capture | simulated | analytic | unknown), read by the provenance census as PARITY-against-the-reference. It does not claim a process ran for every cell. `method` names the primary instrument and says static-read; the cross_check block carries its own method for the cells a live run produced. The provenance schema holds ONE method per fixture, so the split is recorded per-cell here rather than by inventing a combined vocabulary value.",
+    "reference": "ref-editor@11.2v3",
+    "method": "static-read",
+    "captured_utc": "2026-09-08",
+    "harness": "Symbol-table disassembly and resource-config reads over the shipped install for the law; an isolated virtual display with a real pointer transport, one fresh process, for the cross-check walk.",
+    "notes": "The symbol inventory behind every clause of the law lives in the private toolcard, deliberately: naming those routines here would put reference symbols in a public tree."
+  },
+  "law": {
+    "statement": "The label on a history row and the boundary between undo steps carry NO transform-bank term. The label written when the tool pipe opens a history block is a per-site compile-time constant drawn from a shipped message table, and that table contains no bank word for it to select; the transform's own apply opens an unnamed block and never reaches the table. A row made by a command is named after that command. The undo command then has TWO arms and the boundary rule differs between them: on the ordinary arm the step boundary keys on a group name looked up per command in a shipped table that is EMPTY in the product, so every accepted invocation is its own step; but while a live tool's parameter region is open the undo command takes the OTHER arm, which never consults that lookup at all and unwinds the region's pending applies together. Neither arm reads a bank.",
+    "boundary_rule_is_per_arm": true,
+    "arms": [
+      {
+        "arm": "ordinary",
+        "boundary": "one step per accepted invocation",
+        "why": "the per-command group table is empty, so the grouping decision ends a step on every pop"
+      },
+      {
+        "arm": "live parameter region of an armed tool",
+        "boundary": "the region's pending applies unwind together",
+        "why": "this arm branches away before the grouping decision and never reaches it"
+      }
+    ],
+    "which_arm_the_mixed_pack_took": "live parameter region",
+    "row_label_carries_bank": false,
+    "row_label_is_per_site_constant": true,
+    "distinct_toolpipe_labels": 2,
+    "bank_words_in_label_table": 0,
+    "transform_apply_opens_named_block": false,
+    "boundary_keys_on": "the name of the command that made the entry",
+    "boundary_group_table_populated": false,
+    "consequence": "for a mixed pack of banks written into a live tool's parameter rows: ONE undo step removes the whole pack, regardless of how many banks it touched",
+    "what_the_cross_check_added_to_the_read": "The static read's headline -- one step per accepted invocation -- is true of the ordinary arm and NOT of a live parameter region. The walk located that exception by showing the two row edits collapse into one press, and the second arm was then read at its own branch to confirm it never reaches the per-command lookup. Two channels, and the disagreement between the read's headline and the behaviour is what found the boundary between the arms.",
+    "scale_row_and_translate_row_are_the_same_command": true,
+    "refuted_candidates": [
+      {
+        "candidate": "last-computed-bank",
+        "predicted": "two rows above the floor, the upper one labelled by the bank evaluated last",
+        "refuted_by": "no site on the path reads a bank, and no bank word exists in the label table to select"
+      },
+      {
+        "candidate": "operation-cause",
+        "predicted": "one consolidated row labelled by the bank whose gesture caused the change",
+        "refuted_by": "the same read: the boundary keys on a per-command config lookup, never on a cause, and the lookup table is empty so nothing consolidates"
+      }
+    ]
+  },
+  "cross_check": {
+    "method": "gui-gesture",
+    "what_the_law_predicts": "no undo boundary anywhere tracks a bank, so the pack's own scale-row-then-translate-row transition must draw no boundary and the held-scale state must never be returned by the walk",
+    "what_would_have_falsified_it": "the held-scale state appearing in the walk -- i.e. one press returning the mesh to its post-scale-row shape and a later one to its post-move shape. That is what a rule making a bank transition a distinct undo unit predicts, and the walk reads every press, so it could have shown it.",
+    "acts": [
+      {
+        "act": "build",
+        "primitive": "cube",
+        "segments": 1
+      },
+      {
+        "act": "select",
+        "elements": "all 8 corner vertices"
+      },
+      {
+        "act": "arm",
+        "tool": "transform, all three banks live",
+        "action_centre": "automatic"
+      },
+      {
+        "act": "move_drag",
+        "handle": "+x move arrow",
+        "channel_left_at": 2.755,
+        "tool_dropped_after": false
+      },
+      {
+        "act": "scale_row_edit",
+        "axis": "x",
+        "factor": 2.0
+      },
+      {
+        "act": "translate_row_edit",
+        "axis": "x",
+        "absolute_target": 3.755
+      },
+      {
+        "act": "boundary_click",
+        "kind": "off-handle viewport press",
+        "offset_px_perpendicular_to_move_arrow": 220
+      },
+      {
+        "act": "drop_tool"
+      },
+      {
+        "act": "undo_walk",
+        "presses": 13
+      }
+    ],
+    "states": [
+      {
+        "state": "floor",
+        "vertex_count": 8,
+        "extent_x": 1.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        ]
+      },
+      {
+        "state": "after_move_drag",
+        "vertex_count": 8,
+        "extent_x": 1.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            2.255,
+            -0.5,
+            -0.5
+          ],
+          [
+            3.255,
+            -0.5,
+            -0.5
+          ],
+          [
+            3.255,
+            -0.5,
+            0.5
+          ],
+          [
+            2.255,
+            -0.5,
+            0.5
+          ],
+          [
+            2.255,
+            0.5,
+            -0.5
+          ],
+          [
+            3.255,
+            0.5,
+            -0.5
+          ],
+          [
+            3.255,
+            0.5,
+            0.5
+          ],
+          [
+            2.255,
+            0.5,
+            0.5
+          ]
+        ]
+      },
+      {
+        "state": "after_scale_row",
+        "vertex_count": 8,
+        "extent_x": 2.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            7.265,
+            -0.5,
+            -0.5
+          ],
+          [
+            9.265,
+            -0.5,
+            -0.5
+          ],
+          [
+            9.265,
+            -0.5,
+            0.5
+          ],
+          [
+            7.265,
+            -0.5,
+            0.5
+          ],
+          [
+            7.265,
+            0.5,
+            -0.5
+          ],
+          [
+            9.265,
+            0.5,
+            -0.5
+          ],
+          [
+            9.265,
+            0.5,
+            0.5
+          ],
+          [
+            7.265,
+            0.5,
+            0.5
+          ]
+        ]
+      },
+      {
+        "state": "after_translate_row",
+        "vertex_count": 8,
+        "extent_x": 4.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            18.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            0.5
+          ]
+        ]
+      },
+      {
+        "state": "after_boundary_click",
+        "vertex_count": 8,
+        "extent_x": 4.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            18.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            0.5
+          ]
+        ]
+      },
+      {
+        "state": "after_tool_drop",
+        "vertex_count": 8,
+        "extent_x": 4.0,
+        "extent_y": 1.0,
+        "extent_z": 1.0,
+        "vertices": [
+          [
+            18.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            -0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            -0.5
+          ],
+          [
+            22.285,
+            0.5,
+            0.5
+          ],
+          [
+            18.285,
+            0.5,
+            0.5
+          ]
+        ]
+      }
+    ],
+    "walk": [
+      {
+        "press": 1,
+        "vertex_count": 8,
+        "geometry_equals": "after_translate_row",
+        "extent_x": 4.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 2,
+        "vertex_count": 8,
+        "geometry_equals": "after_translate_row",
+        "extent_x": 4.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 3,
+        "vertex_count": 8,
+        "geometry_equals": "after_translate_row",
+        "extent_x": 4.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 4,
+        "vertex_count": 8,
+        "geometry_equals": "after_translate_row",
+        "extent_x": 4.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 5,
+        "vertex_count": 8,
+        "geometry_equals": "after_move_drag",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 6,
+        "vertex_count": 8,
+        "geometry_equals": "after_move_drag",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 7,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 8,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 9,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 10,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 11,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      {
+        "press": 12,
+        "vertex_count": 8,
+        "geometry_equals": "floor",
+        "extent_x": 1.0,
+        "selection_vertices": []
+      },
+      {
+        "press": 13,
+        "vertex_count": 0,
+        "geometry_equals": null,
+        "extent_x": null,
+        "selection_vertices": []
+      }
+    ],
+    "reading": {
+      "stage_sequence": [
+        {
+          "stage": "after_translate_row",
+          "first_press": 1
+        },
+        {
+          "stage": "after_move_drag",
+          "first_press": 5
+        },
+        {
+          "stage": "floor",
+          "first_press": 7
+        },
+        {
+          "stage": "empty",
+          "first_press": 13
+        }
+      ],
+      "rows_above_floor": 2,
+      "held_scale_state_ever_returned": false,
+      "first_press_at_scale_row_state": null,
+      "first_press_at_move_state": 5,
+      "first_press_at_floor": 7,
+      "first_press_with_empty_mesh": 13,
+      "walk_reached_a_confirmed_empty_mesh": true,
+      "every_write_its_own_step": false,
+      "reading_note": "The reading is on the ORDER of distinct geometry stages, not on raw press indices: the engine inserts geometry-silent presses between the ones that move anything (undoing past a live tool's region re-arms it, the re-armed tool re-applies, and the next press is spent undoing exactly that). The raw indices are kept beside the sequence so a later reader can re-score either way.",
+      "verdict": "The boundary sits at the edge of the pointer gesture, NOT at the bank transition inside the pack. Two stages stand above the floor -- the first geometry-changing press returns the pre-mixed state, the next returns the original -- but the pack's own scale-row-then-translate-row transition drew NO boundary: the held-scale state never returns, one press removes both edits. So a rule that makes a bank transition a distinct undo unit over-predicts here, and the row label question the two candidates argued over is not a reference law at all."
+    },
+    "controls": {
+      "instrument_reads_the_same_state_twice": true,
+      "undo_channel_reverted_a_known_change": true,
+      "redo_channel_replayed_a_known_change": true,
+      "every_undo_press_logged_exactly_once": true
+    },
+    "population_floor": {
+      "note": "without these the walk would be a measurement over an empty pack and every candidate would agree",
+      "eight_vertices_selected": true,
+      "move_was_a_uniform_axis_translation": true,
+      "held_scale_doubled_the_x_extent": true,
+      "held_scale_left_y_extent": true,
+      "held_scale_left_z_extent": true,
+      "translate_row_changed_the_geometry": true,
+      "four_states_pairwise_distinct": true
+    },
+    "observations": {
+      "boundary_click_changed_geometry": false,
+      "boundary_click_changed_selection": false,
+      "tool_drop_changed_geometry": false,
+      "translate_row_moved_the_mesh_rigidly": false
+    }
+  },
+  "not_measured": [
+    "The numeric panel ROW itself. Six measured cells show that typing either write command applies nothing on its own -- with or without a live gesture window behind it -- and that an out-of-band apply after the write stacks onto the committed mesh instead of re-evaluating from the run baseline. The row's own absolute semantics are issued by the form layer and are not reachable through this transport, so the cross-check drives the write plus an explicit apply and says so. This changes the VALUES the walk passes through; it does not touch the step STRUCTURE the law predicts, which is what the reading scores.",
+    "Where the boundary click moved the action centre. Its delivery is witnessed by the history blocks it opened; the centre itself is not read on this channel.",
+    "Whether a populated group table would consolidate two steps. The shipped product has none, so the consolidating branch is decoded but never exercised."
+  ]
+}
