@@ -3,6 +3,7 @@ module commands.mesh.axis_slice;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.cut;
 import view;
 import editmode;
 import params : Param;

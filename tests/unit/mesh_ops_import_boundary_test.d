@@ -3,7 +3,7 @@
 // directly under source/mesh_ops, while module identity and public-import
 // reachability come from declarations rather than paths. A module marked
 // `mesh-ops-import: explicit` imports Mesh but must have no reverse import edge
-// from the base module, including through a publicly imported sibling (task 4600).
+// from the base module, including through a publicly imported sibling (tasks 4600/4601).
 // Known blind spot: string mixins can re-export modules but remain invisible
 // because `blankNonCode` intentionally blanks strings; the tree has 0 such
 // `public import` uses as of 2026-09-07.
@@ -232,8 +232,8 @@ D");
                    op.moduleName, pathsByModule.get(op.moduleName, [])));
         if (op.explicitImport) ++explicitCount;
     }
-    assert(explicitCount == 10,
-        format("R5 has migrated exactly ten operation families in tasks 4600/4601; "
+    assert(explicitCount == 11,
+        format("R5 has migrated exactly eleven operation families in tasks 4600/4601; "
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);
@@ -259,17 +259,17 @@ D");
                      ~ "module exactly once; found %d", op.moduleName, importsMesh));
             assert(meshEdges == 0,
                 format("mesh imports explicit family `%s` through %d edge(s); "
-                     ~ "task 4600 requires no base-module edge to that family",
+                     ~ "tasks 4600/4601 require no base-module edge to that family",
                        op.moduleName, meshEdges));
             assert(op.moduleName !in publicPaths,
                 format("mesh publicly exposes explicit family `%s` through `%s`; "
-                     ~ "task 4600 requires no public-import path to that family",
+                     ~ "tasks 4600/4601 require no public-import path to that family",
                        op.moduleName, publicPaths.get(op.moduleName, "")));
         }
     }
 
-    assert(publicOperationEdges == 3,
+    assert(publicOperationEdges == 2,
         format("mesh declares %d direct public import edge(s) to modules under "
-             ~ "source/mesh_ops/*.d; tasks 4600/4601 require exactly 3 after "
-             ~ "the loop-slice family migration", publicOperationEdges));
+             ~ "source/mesh_ops/*.d; tasks 4600/4601 require exactly 2 after "
+             ~ "the plane-cut family migration", publicOperationEdges));
 }

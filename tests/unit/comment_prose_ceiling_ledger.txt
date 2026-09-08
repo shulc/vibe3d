@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 518
-task-citation-lines 5118
+task-citation-lines 5117
 citing-files 392
 long-comment-runs 281
 files-with-long-runs 150
@@ -245,7 +245,7 @@ allow source/json_num.d 1
 allow source/layer_params.d 18
 allow source/log.d 1
 allow source/math.d 24
-allow source/mesh.d 502
+allow source/mesh.d 501
 allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18

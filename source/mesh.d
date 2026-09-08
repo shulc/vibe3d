@@ -12,15 +12,6 @@ import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
 import change_bus : SelDomain, changeBus;
-// task 1903 Stage E3: the plane-cut family is module-level free functions —
-// the six entry points plus `planeCutCore` / `splitAlongCutLoop` over
-// `ref MeshEditBatch`, `isConcaveFace` / `extractCutLoops` over
-// `ref const(Mesh)` — plus the module-scope result type `PlaneCutLoops` and
-// the family's declared scope `kCutEditScope`, not a mixin. PUBLIC so every
-// `import mesh;` re-exports them and `ed.cutByPlane(p, n)` resolves through
-// UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the
-// ops namespace; narrowing that is audit 0678 M9's job, not this task's.
-public import mesh_ops.cut;
 // task 1903 Stage D3: the Bridge family is module-level free functions — the
 // five entry points and `bridgeFanRows` over `ref MeshEditBatch`,
 // `facesBoundedByLoop` and the three pairing helpers over `ref const(Mesh)` —
@@ -14640,9 +14631,8 @@ struct Mesh {
     // cutByPlaneSplitGap / extractCutLoops / splitAlongCutLoop) — NO LONGER a
     // mixin. Task 1903 Stage E3 converted it to module-level free functions
     // over `ref MeshEditBatch` / `ref const(Mesh)` in source/mesh_ops/cut.d,
-    // and `struct PlaneCutLoops` went to module scope with it. The
-    // `public import mesh_ops.cut;` at the top of this file is what keeps every
-    // `import mesh;` resolving them; this family's mixin, reinstated HERE,
+    // and `struct PlaneCutLoops` went to module scope with it. Callers import
+    // the family directly; this family's mixin, reinstated HERE,
     // would silently SHADOW them (a member beats a same-name UFCS free
     // function), so cut.d carries its own `static assert(!__traits(hasMember,
     // Mesh, n))` for every family name AND for `PlaneCutLoops`

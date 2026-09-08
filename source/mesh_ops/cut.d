@@ -1,4 +1,5 @@
 module mesh_ops.cut;
+// mesh-ops-import: explicit
 
 import mesh;
 import mesh_ops.loop_slice : capShellCycles;

@@ -55,6 +55,7 @@ import std.math : cos, sin, PI;
 import std.format : format;
 import tests.unit.fixtures : makeTaggedGrid, findEdge;
 import mesh;
+import mesh_ops.cut;
 import mesh_ops.poly_bevel;
 
 // Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,

@@ -11,6 +11,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 import tool;
 import mesh;
+import mesh_ops.cut;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
