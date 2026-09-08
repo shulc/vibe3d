@@ -80,7 +80,6 @@ public:
     }
     version(unittest) bool payloadEmpty() const nothrow @nogc {
         return !move_.valid && !rotate_.valid && !scale_.valid &&
-            rotate_.origVertices.length == 0 &&
             scale_.activationVertices.length == 0;
     }
     version(unittest) static size_t abortCountForTest() nothrow @nogc {
@@ -123,18 +122,15 @@ version(unittest) unittest {
         moveContext.installTraceForTest() == [15,8] && !moveOwner.begin());
 
     rotate.seedPreparedProductActivationForTest();
-    auto rotateFirst = mesh.vertices[0];
-    auto rotateLivePtr = mesh.vertices.ptr;
     auto rotateOwner = PreparedTransformProductActivationOwner.prepare(rotate);
-    mesh.vertices[0].x += 12;
     auto rotateContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
     assert(rotateContext.prepareTransformProductActivation(rotateOwner) &&
         rotateContext.markNoHistoryInstall() && rotateContext.validate());
     rotateContext.install();
     rotateContext.install();
-    assert(rotate.preparedProductActivationForTest(mesh.vertices.length,
-        rotateFirst, rotateLivePtr) && rotateOwner.payloadEmpty() &&
+    assert(rotate.preparedProductActivationForTest() &&
+        rotateOwner.payloadEmpty() &&
         rotateContext.installTraceForTest() == [15,8]);
 
     scale.seedPreparedProductActivationForTest();
@@ -199,8 +195,6 @@ version(unittest) unittest {
         moveProducerContext.installTraceForTest() == [15,8]);
 
     rotate.seedPreparedProductActivationForTest();
-    auto producerRotateFirst = mesh.vertices[0];
-    auto producerRotatePtr = mesh.vertices.ptr;
     auto rotateProducerContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
     auto rotateEffect = rotate.prepareActivate(rotateProducerContext);
@@ -210,8 +204,7 @@ version(unittest) unittest {
         rotate.preparedProductActivationSeedForTest());
     assert(rotateProducerContext.validate());
     rotateProducerContext.install();
-    assert(rotate.preparedProductActivationForTest(mesh.vertices.length,
-        producerRotateFirst, producerRotatePtr) &&
+    assert(rotate.preparedProductActivationForTest() &&
         rotateProducerContext.installTraceForTest() == [15,8]);
 
     scale.seedPreparedProductActivationForTest();

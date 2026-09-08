@@ -550,7 +550,8 @@ struct PreparedXfrmUpdatePreProjection {
     bool slotBoundary;
     bool pivotMoved;
     bool editOpen;
-    bool moveHeld;
+    ubyte regradeBank;
+    bool bankHeld;
     bool packetChanged;
     bool panelRegrade;
     bool wrapperRegrade;
@@ -966,7 +967,6 @@ public:
         // One-time activation wiring (NOT part of resyncSession): bring the
         // composed sub-tools online and back-link them to this wrapper.
         foreach (sub; enabledSubs()) sub.activate();
-        rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
 
         // Record+consolidate: a fresh run opens for this tool session. Allocate a
@@ -1262,7 +1262,6 @@ public:
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
         bool accepted = prepareEditRecord(context, "Move");
-        if (flagR) accepted = rotateSub.prepareDeactivate(context).historyAccepted || accepted;
         if (flagS) accepted = scaleSub.prepareDeactivate(context).historyAccepted || accepted;
         // TASK 4053 measured what this line does NOT do, and left it alone.
         // The consolidate prepares INTO the history token, and the door below
@@ -1558,12 +1557,14 @@ public:
         //    open with a landed Move gesture): the NEW record path. The re-grade
         //    is baked as a tagged in-session entry in the current run so the
         //    in-session Ctrl+Z contract holds.
+        DragBank regradeBank = editIsOpen() ? editCauseBank : currentRunBank;
         if (activeDrag is null
             && dragBaseline.length == mesh.vertices.length
-            && (run.t.x != 0
-             || run.t.y != 0
-             || run.t.z != 0)) {
-            if (editIsOpen()) {
+            && (regradeBank == DragBank.Move ||
+                regradeBank == DragBank.Rotate)
+            && bankIsNonIdentity(regradeBank)) {
+            if (editIsOpen() && (editCauseBank == DragBank.Move ||
+                                 editCauseBank == DragBank.Rotate)) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: the trigger now spans the whole pipe config — falloff,
                 // snap AND symmetry. A mid-session toggle of any of the three
@@ -1599,7 +1600,8 @@ public:
                 }
             } else if (history !is null
                     && history.runOpen()
-                    && currentRunBank == DragBank.Move           // OBJ-2 single-winner
+                    && (currentRunBank == DragBank.Move ||
+                        currentRunBank == DragBank.Rotate)
                     && regradeStampCurrent()) {
                 // ARM 2 — committed gizmo gesture: re-grade + record.
                 // Staleness gate (OBJ-1) checked at the SITE before the recompute
@@ -1649,7 +1651,7 @@ public:
                     // is covered by the whole-mesh dragBaseline). The falloff
                     // support can be the whole mesh, so a full-range pass is the
                     // safe superset.
-                    recordPipeRefire(anchor, after, null, DragBank.Move,
+                    recordPipeRefire(anchor, after, null, currentRunBank,
                                      preF, postF, preSn, postSn, preSy, postSy);
                     needsGpuUpdate = true;
                 }
@@ -1674,7 +1676,8 @@ public:
         // see the same pipeline state so the three gizmos co-locate.
         if (flagT)
             moveSub.updateInput(queryActionCenter(vts), editIsOpen());
-        if (flagR) rotateSub.update(vts);
+        if (flagR)
+            rotateSub.updateInput(queryActionCenter(vts), editIsOpen());
         if (flagS) scaleSub.update(vts);
         if (activeDrag is moveSub)
             setSharedGizmoPose(moveSub.handler.center, vts);
@@ -1739,8 +1742,12 @@ public:
             p.slotSignature != lastSlotSig;
         p.pivotMoved = p.slotBoundary && p.acenEpoch != lastAcenEpoch;
         p.editOpen = editIsOpen();
-        p.moveHeld = dragBaseline.length == mesh.vertices.length &&
-            (run.t.x != 0 || run.t.y != 0 || run.t.z != 0);
+        auto regradeBank = p.editOpen ? editCauseBank : currentRunBank;
+        p.regradeBank = cast(ubyte)regradeBank;
+        p.bankHeld = dragBaseline.length == mesh.vertices.length &&
+            (regradeBank == DragBank.Move ||
+             regradeBank == DragBank.Rotate) &&
+            bankIsNonIdentity(regradeBank);
         p.liveFalloff = currentFalloff(vts).ownedDup();
         p.liveSnap = currentSnap(vts);
         p.liveSymmetry = currentSymmetry(vts).ownedDup();
@@ -1748,10 +1755,11 @@ public:
             !snapPacketsEqual(p.liveSnap, dragSnap) ||
             !symmetryPacketsEqual(p.liveSymmetry, dragSymmetry);
         if (!p.selectionBoundary && !p.slotBoundary && activeDrag is null &&
-            p.moveHeld && p.packetChanged) {
+            p.bankHeld && p.packetChanged) {
             p.panelRegrade = p.editOpen;
             p.wrapperRegrade = !p.editOpen && history !is null &&
-                history.runOpen() && currentRunBank == DragBank.Move &&
+                history.runOpen() &&
+                cast(ubyte)currentRunBank == p.regradeBank &&
                 regradeStampCurrent();
         }
         return p;
@@ -2001,7 +2009,7 @@ public:
         if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
             moveSub, editIsOpen(), queryActionCenter(vts));
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
-            rotateSub, layer, vts, context);
+            rotateSub, layer, editIsOpen(), queryActionCenter(vts));
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
             scaleSub, layer, vts, context);
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(this, vts);
@@ -2009,16 +2017,10 @@ public:
         bool ok = (!flagT || moveOwner !is null) &&
                   (!flagR || rotateOwner !is null) &&
                   (!flagS || scaleOwner !is null) && tailOwner !is null;
-        bool hasHistory = (rotateOwner !is null && rotateOwner.historyPrepared()) ||
-                          (scaleOwner !is null && scaleOwner.historyPrepared());
+        bool hasHistory = scaleOwner !is null && scaleOwner.historyPrepared();
         if (ok) ok = hasHistory ? context.markHistoryInstall()
                                 : context.markNoHistoryInstall();
         if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
-        if (ok && flagR && rotateOwner.meshPrepared()) {
-            ok = rotateOwner.deliveryFlags() != 0 &&
-                context.prepareStampedMeshImage(layer, rotateOwner.candidate(),
-                    rotateOwner.deliveryFlags(), rotateOwner.deliveryDomains());
-        }
         if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
         if (ok && flagS && scaleOwner.meshPrepared()) {
             ok = scaleOwner.deliveryFlags() != 0 &&
@@ -2073,7 +2075,7 @@ public:
         if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(
             moveSub, editIsOpen(), queryActionCenter(vts));
         if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
-            rotateSub, layer, vts, context);
+            rotateSub, layer, editIsOpen(), queryActionCenter(vts));
         if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
             scaleSub, layer, vts, context);
         auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(
@@ -2088,7 +2090,6 @@ public:
             (!flagS || scaleOwner !is null);
         bool hasHistory = (editClose !is null && editClose.historyPrepared()) ||
             (moveRegrade !is null && moveRegrade.historyPrepared()) ||
-            (rotateOwner !is null && rotateOwner.historyPrepared()) ||
             (scaleOwner !is null && scaleOwner.historyPrepared());
         if (ok && boundaryOwner !is null && boundaryOwner.closesRun()) {
             auto consolidated = context.consolidate(history.currentRunId);
@@ -2130,11 +2131,6 @@ public:
                 ok = context.prepareUpload(wrapperUpload, layer.meshRef());
         }
         if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
-        if (ok && flagR && rotateOwner.meshPrepared()) {
-            ok = rotateOwner.deliveryFlags() != 0 &&
-                context.prepareStampedMeshImage(layer, rotateOwner.candidate(),
-                    rotateOwner.deliveryFlags(), rotateOwner.deliveryDomains());
-        }
         if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
         if (ok && flagS && scaleOwner.meshPrepared()) {
             ok = scaleOwner.deliveryFlags() != 0 &&
@@ -2397,7 +2393,20 @@ public:
             }
             if (input.done) gpu.upload(*mesh);
         }
-        if (flagR) rotateSub.drawProperties();
+        if (flagR) {
+            auto input = rotateSub.drawInputProperties(publishedRotate());
+            if (input.active) {
+                import std.math : PI;
+                captureDragBaselineIfStale(DragBank.Rotate);
+                Vec3 radians = Vec3(
+                    input.degrees.x * cast(float)(PI / 180.0),
+                    input.degrees.y * cast(float)(PI / 180.0),
+                    input.degrees.z * cast(float)(PI / 180.0));
+                applyRotateAbsoluteFromRun(radians);
+                needsGpuUpdate = true;
+            }
+            if (input.done) gpu.upload(*mesh);
+        }
         if (flagS) {
             if (uniform) {
                 // Single "Scale" row seeded from wrapper truth each frame
@@ -2672,12 +2681,11 @@ public:
             rotateSub is rotate && scaleSub is scale;
     }
     final void installPreparedWrapperLinks() nothrow @nogc {
-        rotateSub.wrapperRef = this;
         scaleSub.wrapperRef = this;
     }
     version(unittest) final bool preparedWrapperLinksForTest() const
             nothrow @nogc {
-        return rotateSub.wrapperRef is this && scaleSub.wrapperRef is this;
+        return scaleSub.wrapperRef is this;
     }
     version(unittest) final void seedPreparedWrapperUploadForTest() {
         needsGpuUpdate = true;
@@ -5146,25 +5154,7 @@ public:
         fwd    = runFrameF;
     }
 
-    // Falloff in-session re-fire — PUBLIC R/S seam. The Rotate / Scale falloff
-    // re-grade sites live on the sub-tools, but the run, history, currentRunBank,
-    // and the recordFalloffRefire helper all live on the wrapper. These thin
-    // public forwarders let the sub-tools (siblings, reached via wrapperRef cast,
-    // same pattern as dragInFlight) run the §4.3 ARM-2 gate + record without
-    // naming the wrapper-private DragBank enum or the refire state fields.
-    //
-    // The bank gate (currentRunBank == this bank, OBJ-2 single-winner) and the
-    // staleness gate (mesh.mutationVersion == lastAppliedGestureMutationVersion,
-    // OBJ-1) are both bundled here so the site reads a single boolean. The bank
-    // is fixed by the typed entry point (refireRotateEligible / refireScaleEligible)
-    // so the sub-tool never references DragBank.
-    public bool refireRotateEligible() const {
-        return history !is null
-            && history.runOpen()
-            && currentRunBank == DragBank.Rotate
-            && regradeStampCurrent();
-    }
-
+    // Scale keeps a temporary explicit seam until its bank migration lands.
     public bool refireScaleEligible() const {
         return history !is null
             && history.runOpen()
@@ -5509,21 +5499,7 @@ public:
         image.clear();
     }
 
-    // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)
-    // geometry into `anchor`, ran its absolute recompute (mutating mesh.vertices),
-    // and dup'd the result into `after`. These route into the shared helper with
-    // the correct bank tag. The helper re-checks the staleness gate as
-    // defense-in-depth (§4.1 step 0) and re-stamps lastAppliedGestureMutationVersion
-    // after the record (a no-op today; defensive).
-    public void recordFalloffRefireRotate(Vec3[] anchor,
-                                          Vec3[] after, size_t[] idx,
-                                          FalloffPacket preF, FalloffPacket postF,
-                                          SnapPacket preSn,  SnapPacket postSn,
-                                          SymmetryPacket preSy, SymmetryPacket postSy) {
-        recordPipeRefire(anchor, after, idx, DragBank.Rotate,
-                         preF, postF, preSn, postSn, preSy, postSy);
-    }
-
+    // Scale keeps a temporary record seam until its bank migration lands.
     public void recordFalloffRefireScale(Vec3[] anchor,
                                          Vec3[] after, size_t[] idx,
                                          FalloffPacket preF, FalloffPacket postF,
@@ -5540,10 +5516,6 @@ public:
     private void commitSessionAtBankBoundaryIfOpen(DragBank incomingBank) {
         if (!editIsOpen()) return;
         commitEditAtBankBoundary(incomingBank);
-    }
-
-    public void commitSessionAtRotateBoundaryIfOpen() {
-        commitSessionAtBankBoundaryIfOpen(DragBank.Rotate);
     }
 
     public void commitSessionAtScaleBoundaryIfOpen() {

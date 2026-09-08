@@ -9,10 +9,10 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 520
-task-citation-lines 5102
+task-citation-lines 5099
 citing-files 394
-long-comment-runs 281
-files-with-long-runs 150
+long-comment-runs 280
+files-with-long-runs 149
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -382,7 +382,7 @@ allow source/tools/transform/item_xform_kernels.d 2
 allow source/tools/transform/morph_route.d 4
 allow source/tools/transform/move.d 6
 allow source/tools/transform/relocate_plane.d 2
-allow source/tools/transform/rotate.d 4
+allow source/tools/transform/rotate.d 1
 allow source/tools/transform/scale.d 9
 allow source/tools/transform/transform.d 34
 allow source/tools/transform/xform_kernels.d 7
@@ -545,7 +545,6 @@ allow-runs source/tools/slice/loop_slice_tool.d 1
 allow-runs source/tools/slice/slice_tool.d 1
 allow-runs source/tools/transform/morph_route.d 1
 allow-runs source/tools/transform/relocate_plane.d 1
-allow-runs source/tools/transform/rotate.d 1
 allow-runs source/tools/transform/scale.d 1
 allow-runs source/tools/transform/transform.d 3
 allow-runs source/tools/transform/xform_kernels.d 1

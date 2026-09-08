@@ -235,8 +235,8 @@ version(unittest) unittest {
             tool.preparedActivationResetPostForTest(true, true, true));
         if (tool.flagT) assert(tool.moveBank().preparedProductActivationForTest());
         else assert(tool.moveBank().preparedProductActivationSeedForTest());
-        if (tool.flagR) assert(tool.rotateBank().preparedProductActivationForTest(
-            mesh.vertices.length, first, livePtr));
+        if (tool.flagR)
+            assert(tool.rotateBank().preparedProductActivationForTest());
         else assert(tool.rotateBank().preparedProductActivationSeedForTest());
         if (tool.flagS) assert(tool.scaleBank().preparedProductActivationForTest(
             mesh.vertices.length, first, livePtr, Vec3(2,3,4)));

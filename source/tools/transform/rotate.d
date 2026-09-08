@@ -8,8 +8,7 @@ import tools.transform.transform;
 
 struct PreparedRotateActivationImage {
     PreparedTransformActivationImage base;
-    Vec3 angleAccum, propDeg, headlessRotate, pendingRotateViewAxis;
-    Vec3[] origVertices;
+    Vec3 pendingRotateViewAxis;
     int pendingRotateAxis;
     float pendingRotateAngle;
     bool valid;
@@ -44,7 +43,6 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
-import snapshot : MeshSnapshot;
 
 /// Closed observation of the branches owned by `RotateTool.update`.  This is
 /// deliberately pointer-free: the future prepared owner can retain the exact
@@ -55,19 +53,12 @@ enum PreparedRotateUpdateBranch : ubyte {
     IdleRefresh,
     SelectionRefresh,
     MutationRefresh,
-    PanelRegrade,
-    WrapperRegrade,
 }
 
 struct PreparedRotateUpdateProjection {
     PreparedRotateUpdateBranch branch;
     ulong selectionHash, mutationVersion;
-    bool selectionChanged, mutationChanged, editOpen, packetChanged;
-    bool panelRegrade, wrapperRegrade;
-    bool dragLive, heldNonIdentity, wrapperEligible;
-    FalloffPacket liveFalloff;
-    SnapPacket liveSnap;
-    SymmetryPacket liveSymmetry;
+    bool selectionChanged, mutationChanged, ownerEditOpen;
     Vec3 actionCenter;
     bool valid;
     void clear() nothrow @nogc { this = PreparedRotateUpdateProjection.init; }
@@ -75,27 +66,14 @@ struct PreparedRotateUpdateProjection {
 
 struct PreparedRotateUpdateImage {
     PreparedRotateUpdateProjection projection;
-    MeshSnapshot expectedLive;
     Mesh candidate;
-    Vec3 expectedAngle, expectedProp;
-    Vec3 nextAngle, nextProp;
-    Vec3[] expectedOrig, nextOrig;
-    int[] expectedIndices, nextIndices;
-    bool[] expectedMask, nextMask;
-    int expectedCount, nextCount;
     ulong expectedSelectionHash, expectedMutationVersion;
     ulong nextSelectionHash, nextMutationVersion;
     bool expectedCacheDirty, nextCacheDirty;
     bool expectedCenterManual, nextCenterManual;
-    bool expectedNeedsGpu, nextNeedsGpu;
     Vec3 expectedCachedCenter, expectedHandlerCenter;
     Vec3 nextCachedCenter, nextHandlerCenter;
-    FalloffPacket expectedFalloff, nextFalloff;
-    SnapPacket expectedSnap, nextSnap;
-    SymmetryPacket expectedSymmetry, nextSymmetry;
-    PreparedXfrmRefireStateImage wrapperRefire;
-    uint deliveryFlags, deliveryDomains;
-    bool meshPrepared, valid;
+    bool valid;
 
     void clear() nothrow @nogc {
         this = PreparedRotateUpdateImage.init;
@@ -137,7 +115,7 @@ private:
     Vec3     inputBasisY = Vec3(0, 1, 0);
     Vec3     inputBasisZ = Vec3(0, 0, 1);
 
-    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
+    // Owner-provided input-frame channel (gesture-frame unification, Phase 2).
     // The rotate freeze-ordering trap: the principal `dragAxisVec`/`dragRefDir`
     // are frozen at `onMouseButtonDown` (from `inputBasis*`), which runs BEFORE
     // the wrapper's `beginRotateDragSession`. So a bare channel write would be
@@ -149,40 +127,15 @@ private:
     // camera-axis/basis-free and
     // EXCLUDED: this never fires for it (principal rings 0/1/2 only), and the
     // view-ring mouse-up decompose keeps reading the LIVE `inputBasis*` (which is
-    // never overwritten now). The STANDALONE path (`wrapperRef is null`) never
-    // calls this and keeps deriving `dragAxisVec` from its own `inputBasis*`.
+    // never overwritten now). An unchained gesture keeps deriving
+    // `dragAxisVec` from its own `inputBasis*`.
     Vec3     wrapperInputFrameX = Vec3(1, 0, 0);
     Vec3     wrapperInputFrameY = Vec3(0, 1, 0);
     Vec3     wrapperInputFrameZ = Vec3(0, 0, 1);
     bool     wrapperInputFrameValid = false;
 
-    // Standalone-only (`wrapperRef is null`): in the wrapped role the truth is
-    // `run.r` / `headlessRotate` on the wrapper. Every wrapped read is re-pointed
-    // to `wrap.publishedRotate()` / the refire/commit-hook gate; these fields are
-    // kept so the `wrapperRef is null` branches compile and the legacy FORMS=0
-    // standalone panel continues to work.
-    Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
-    Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
-    Vec3[]   origVertices;                // snapshot of vertex positions at activate()
-
-    // Phase C.3: Tool Properties state at the START of the current edit
-    // session, captured by snapshotEditState() and restored on undo via
-    // hooks attached to the recorded MeshVertexEdit. Standalone-only: the
-    // wrapped commit-hook restore is gated on `wrapperRef is null`.
-    Vec3     preEditAngleAccum;
-    Vec3     preEditPropDeg;
-
-    // Numeric rotate attrs (`xfrm.transform RX/RY/RZ`).
-    // Driven via `tool.attr <toolId> RX <degrees>` — used by the
-    // headless apply path to rotate verts around the AXIS-stage basis,
-    // weighted by the active falloff stage. Three independent rotations
-    // applied in X→Y→Z order; for the soft-twist preset only one is
-    // typically set, so the order is moot in the common case.
-    Vec3     headlessRotate;
-
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
-    final Tool preparedWrapperForUpdate() nothrow @nogc { return wrapperRef; }
     final EditMode preparedEditModeForUpdate() const nothrow @nogc { return *editMode; }
 
     // ── rotate single-source plumbing (doc/rotate_single_source_plan.md) ──
@@ -217,18 +170,6 @@ public:
     // differs between the two.
     bool  lastClickWasRelocate = false;
     bool  lastClickWasOffGizmo = false;
-
-    // Back-pointer to the unified `XfrmTransformTool`, wired at the wrapper's
-    // `activate()`. Typed as the base class to avoid a field-level circular
-    // import (mirrors `MoveTool.wrapperRef`); cast to `XfrmTransformTool`
-    // locally where needed. Null for any standalone (unit-test) instance.
-    TransformTool wrapperRef;
-
-    // Embedded role: the composing wrapper owns the edit snapshot and history
-    // payload.  Standalone construction keeps the original local session.
-    private void beginStandaloneEdit() {
-        if (wrapperRef is null) beginEdit();
-    }
 
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
          SelType delegate() selTypeSrc = null) {
@@ -277,10 +218,6 @@ public:
 
     override void activate() {
         super.activate();
-        angleAccum = Vec3(0, 0, 0);
-        propDeg = Vec3(0, 0, 0);
-        origVertices = mesh.vertices.dup;
-        headlessRotate = Vec3(0, 0, 0);
         // Reset the gesture-producer scratch on (re)activation.
         pendingRotateAxis    = -1;
         pendingRotateAngle   = 0;
@@ -290,8 +227,6 @@ public:
         PreparedRotateActivationImage image;
         auto live = mesh; if (live is null) return image;
         image.base = buildPreparedActivationImage();
-        image.origVertices = live.vertices.dup;
-        image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);
         image.pendingRotateAxis = -1; image.pendingRotateAngle = 0;
         image.pendingRotateViewAxis = Vec3(0,0,0);
         image.valid = true; return image;
@@ -299,31 +234,23 @@ public:
     final void installPreparedProductActivation(ref PreparedRotateActivationImage image)
             nothrow @nogc {
         if (!image.valid) return;
-        installPreparedActivation(image.base); angleAccum = image.angleAccum;
-        propDeg = image.propDeg; origVertices = image.origVertices;
-        image.origVertices = null; headlessRotate = image.headlessRotate;
+        installPreparedActivation(image.base);
         pendingRotateAxis = image.pendingRotateAxis;
         pendingRotateAngle = image.pendingRotateAngle;
         pendingRotateViewAxis = image.pendingRotateViewAxis; image.clear();
     }
     version(unittest) void seedPreparedProductActivationForTest() {
-        seedPreparedActivationForTest(); angleAccum = propDeg = headlessRotate = Vec3(4,5,6);
-        origVertices = [Vec3(9,9,9)]; pendingRotateAxis = 2;
+        seedPreparedActivationForTest(); pendingRotateAxis = 2;
         pendingRotateAngle = 7; pendingRotateViewAxis = Vec3(8,8,8);
     }
-    version(unittest) bool preparedProductActivationForTest(size_t count,
-            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
-        return preparedActivationForTest() && angleAccum == Vec3(0,0,0) &&
-            propDeg == Vec3(0,0,0) && headlessRotate == Vec3(0,0,0) &&
-            origVertices.length == count && origVertices.length != 0 &&
-            origVertices[0] == first && origVertices.ptr !is livePtr &&
+    version(unittest) bool preparedProductActivationForTest() const
+            nothrow @nogc {
+        return preparedActivationForTest() &&
             pendingRotateAxis == -1 &&
             pendingRotateAngle == 0 && pendingRotateViewAxis == Vec3(0,0,0);
     }
     version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
-        return preparedActivationSeedForTest() && angleAccum == Vec3(4,5,6) &&
-            propDeg == Vec3(4,5,6) && headlessRotate == Vec3(4,5,6) &&
-            origVertices.length == 1 && origVertices[0] == Vec3(9,9,9) &&
+        return preparedActivationSeedForTest() &&
             pendingRotateAxis == 2 &&
             pendingRotateAngle == 7 && pendingRotateViewAxis == Vec3(8,8,8);
     }
@@ -341,38 +268,24 @@ public:
             PreparedTransformProductKind.Rotate, ok);
     }
 
-    final PreparedRotateUpdateEffect prepareUpdate(ref VectorStack vts,
-            PreparedRecordContext context, Layer layer) {
+    final PreparedRotateUpdateEffect prepareUpdate(bool ownerEditOpen,
+            Vec3 actionCenter, PreparedRecordContext context, Layer layer) {
         if (context is null) return PreparedRotateUpdateEffect(
             preparedToolStateOwner, PreparedRotateUpdateKind.None, false);
         scope(failure) context.discard();
-        auto projection = projectPreparedUpdate(vts);
-        bool selectionHistory = projection.valid && projection.selectionChanged &&
-            prepareEditRecord(context, "Rotate");
-        auto owner = PreparedRotateUpdateOwner.prepare(this, layer, vts, context);
-        bool ok = owner !is null;
-        if (ok) {
-            bool hasHistory = selectionHistory || owner.historyPrepared();
-            ok = hasHistory ? context.markHistoryInstall()
-                            : context.markNoHistoryInstall();
-            if (ok && owner.meshPrepared()) {
-                ok = owner.deliveryFlags() != 0 &&
-                    context.prepareStampedMeshImage(layer, owner.candidate(),
-                        owner.deliveryFlags(), owner.deliveryDomains());
-            }
-            if (ok) ok = context.prepareRotateUpdate(owner);
-        }
+        auto owner = PreparedRotateUpdateOwner.prepare(
+            this, layer, ownerEditOpen, actionCenter);
+        bool ok = owner !is null && context.markNoHistoryInstall();
+        if (ok) ok = context.prepareRotateUpdate(owner);
         if (!ok) context.discard();
         return PreparedRotateUpdateEffect(preparedToolStateOwner,
             owner is null ? PreparedRotateUpdateKind.None : owner.effectKind(), ok);
     }
 
-    /// Allocation-free branch projection for the exact update root.  It does
-    /// not retain `vts` or the wrapper; all packet values are copied.  Keeping
-    /// this resolver separate makes the mutually-exclusive history/mesh arms
-    /// explicit before their detached payloads are enlisted.
+    /// Allocation-free projection of the bank-owned refresh work. The wrapper
+    /// supplies its edit gate and the already-evaluated action-center pose.
     final PreparedRotateUpdateProjection projectPreparedUpdate(
-            ref VectorStack vts) {
+            bool ownerEditOpen, Vec3 actionCenter) {
         PreparedRotateUpdateProjection image;
         image.valid = true;
         if (!active) {
@@ -392,146 +305,42 @@ public:
         image.mutationVersion = mesh.mutationVersion;
         image.selectionChanged = image.selectionHash != lastSelectionHash;
         image.mutationChanged = image.mutationVersion != lastMutationVersion;
-        image.editOpen = editIsOpen();
-        image.liveFalloff = currentFalloff(vts);
-        image.liveSnap = currentSnap(vts);
-        image.liveSymmetry = currentSymmetry(vts);
-        image.packetChanged =
-            !falloffPacketsEqual(image.liveFalloff, dragFalloff) ||
-            !snapPacketsEqual(image.liveSnap, dragSnap) ||
-            !symmetryPacketsEqual(image.liveSymmetry, dragSymmetry);
-
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        XfrmTransformTool wrap;
-        if (wrapperRef !is null)
-            wrap = cast(XfrmTransformTool) wrapperRef;
-        image.dragLive = wrap !is null && wrap.dragInFlight();
-        image.heldNonIdentity = wrap !is null
-            ? wrap.publishedRotate() != Vec3(0, 0, 0)
-            : angleAccum != Vec3(0, 0, 0);
-        image.wrapperEligible = wrap !is null && wrap.preparedRefireEligible(true);
-
-        const bool effectiveEditOpen = image.editOpen && !image.selectionChanged;
-        image.panelRegrade = !image.dragLive && image.heldNonIdentity &&
-            image.packetChanged && effectiveEditOpen;
-        image.wrapperRegrade = !image.dragLive && image.heldNonIdentity &&
-            image.packetChanged && !effectiveEditOpen && image.wrapperEligible;
+        image.ownerEditOpen = ownerEditOpen;
 
         if (image.selectionChanged) {
             image.branch = PreparedRotateUpdateBranch.SelectionRefresh;
         } else if (image.mutationChanged) {
             image.branch = PreparedRotateUpdateBranch.MutationRefresh;
-        } else if (image.panelRegrade) {
-            image.branch = PreparedRotateUpdateBranch.PanelRegrade;
-        } else if (image.wrapperRegrade) {
-            image.branch = PreparedRotateUpdateBranch.WrapperRegrade;
         } else {
             image.branch = PreparedRotateUpdateBranch.IdleRefresh;
         }
-        if (!effectiveEditOpen)
-            image.actionCenter = queryActionCenter(vts);
+        if (!(ownerEditOpen && !image.selectionChanged))
+            image.actionCenter = actionCenter;
         return image;
     }
 
-    final PreparedRotateUpdateImage buildPreparedUpdate(ref VectorStack vts,
-            PreparedRecordContext context = null) {
+    final PreparedRotateUpdateImage buildPreparedUpdate(
+            bool ownerEditOpen, Vec3 actionCenter) {
         PreparedRotateUpdateImage image;
-        image.projection = projectPreparedUpdate(vts);
+        image.projection = projectPreparedUpdate(ownerEditOpen, actionCenter);
         if (!image.projection.valid) return image;
-
-        auto live = mesh;
-        if (live is null) return image;
-        image.expectedLive = MeshSnapshot.capture(*live);
-        image.expectedAngle = image.nextAngle = angleAccum;
-        image.expectedProp = image.nextProp = propDeg;
-        image.expectedOrig = origVertices.dup;
-        image.nextOrig = origVertices.dup;
-        image.expectedIndices = vertexIndicesToProcess.dup;
-        image.nextIndices = vertexIndicesToProcess.dup;
-        image.expectedMask = toProcess.dup;
-        image.nextMask = toProcess.dup;
-        image.expectedCount = image.nextCount = vertexProcessCount;
         image.expectedSelectionHash = image.nextSelectionHash = lastSelectionHash;
         image.expectedMutationVersion = image.nextMutationVersion = lastMutationVersion;
         image.expectedCacheDirty = image.nextCacheDirty = vertexCacheDirty;
         image.expectedCenterManual = image.nextCenterManual = centerManual;
-        image.expectedNeedsGpu = image.nextNeedsGpu = needsGpuUpdate;
         image.expectedCachedCenter = image.nextCachedCenter = cachedCenter;
         image.expectedHandlerCenter = image.nextHandlerCenter = handler.center;
-        image.expectedFalloff = dragFalloff.ownedDup();
-        image.nextFalloff = dragFalloff.ownedDup();
-        image.expectedSnap = dragSnap;
-        image.nextSnap = dragSnap;
-        image.expectedSymmetry = dragSymmetry.ownedDup();
-        image.nextSymmetry = dragSymmetry.ownedDup();
 
         if (image.projection.selectionChanged ||
             image.projection.mutationChanged) {
             image.nextSelectionHash = image.projection.selectionHash;
             image.nextMutationVersion = image.projection.mutationVersion;
             image.nextCacheDirty = true;
-            if (image.projection.selectionChanged) {
-                image.nextAngle = Vec3(0, 0, 0);
-                image.nextProp = Vec3(0, 0, 0);
-                image.nextOrig = live.vertices.dup;
+            if (image.projection.selectionChanged)
                 image.nextCenterManual = false;
-            }
         }
 
-        if (image.projection.panelRegrade || image.projection.wrapperRegrade) {
-            image.nextFalloff = image.projection.liveFalloff.ownedDup();
-            image.nextSnap = image.projection.liveSnap;
-            image.nextSymmetry = image.projection.liveSymmetry.ownedDup();
-            if (image.nextCacheDirty) {
-                if (*editMode == EditMode.Vertices)
-                    image.nextIndices = live.selectedVertexIndicesVertices();
-                else if (*editMode == EditMode.Edges)
-                    image.nextIndices = live.selectedVertexIndicesEdges();
-                else
-                    image.nextIndices = live.selectedVertexIndicesFaces();
-                image.nextCount = cast(int)image.nextIndices.length;
-                image.nextMask.length = live.vertices.length;
-                image.nextMask[] = false;
-                foreach (vi; image.nextIndices) image.nextMask[vi] = true;
-                image.nextCacheDirty = false;
-            }
-
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool)wrapperRef) {
-                auto prepared = wrap.buildPreparedRefireCandidate(
-                    image.nextFalloff, image.nextSnap, image.nextSymmetry);
-                image.candidate = prepared.mesh;
-                image.deliveryFlags = prepared.deliveryFlags;
-                image.deliveryDomains = prepared.deliveryDomains;
-                image.meshPrepared = prepared.applied;
-                if (image.projection.wrapperRegrade && image.meshPrepared) {
-                    image.wrapperRefire = wrap.buildPreparedRefireState(
-                        context, image.expectedLive.vertices,
-                        image.candidate.vertices,
-                        image.expectedFalloff, image.nextFalloff,
-                        image.expectedSnap, image.nextSnap,
-                        image.expectedSymmetry, image.nextSymmetry);
-                    if (!image.wrapperRefire.valid)
-                        return PreparedRotateUpdateImage.init;
-                }
-            } else {
-                image.expectedLive.restore(image.candidate);
-                import tools.transform.xform_kernels : applyRotateFromOrig;
-                auto delivery = beginPreparedShadow(image.candidate);
-                applyRotateFromOrig(&image.candidate, image.nextOrig,
-                    image.nextMask, handler.center,
-                    handler.axisX, handler.axisY, handler.axisZ,
-                    image.nextAngle, image.nextFalloff, dragAimSpace(),
-                    queryClusterPivots(vts), queryClusterAxes(vts),
-                    image.nextSymmetry, image.nextMask);
-                drainPreparedShadowDelivery(image.candidate,
-                    image.deliveryFlags, image.deliveryDomains);
-                image.meshPrepared = true;
-            }
-            image.nextNeedsGpu = true;
-        }
-
-        const bool effectiveEditOpen = image.projection.editOpen &&
+        const bool effectiveEditOpen = image.projection.ownerEditOpen &&
             !image.projection.selectionChanged;
         if (!effectiveEditOpen) {
             image.nextCachedCenter = image.projection.actionCenter;
@@ -543,75 +352,33 @@ public:
 
     final bool preparedUpdateMatches(ref const PreparedRotateUpdateImage image,
             in Mesh live) const nothrow @nogc {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        return image.valid && image.expectedLive.matches(live) &&
-            preparedVec3Equal(angleAccum, image.expectedAngle) &&
-            preparedVec3Equal(propDeg, image.expectedProp) &&
-            preparedVec3SliceEqual(origVertices, image.expectedOrig) &&
-            vertexIndicesToProcess == image.expectedIndices &&
-            toProcess == image.expectedMask &&
-            vertexProcessCount == image.expectedCount &&
-            lastSelectionHash == image.expectedSelectionHash &&
+        return image.valid && lastSelectionHash == image.expectedSelectionHash &&
             lastMutationVersion == image.expectedMutationVersion &&
             vertexCacheDirty == image.expectedCacheDirty &&
             centerManual == image.expectedCenterManual &&
-            needsGpuUpdate == image.expectedNeedsGpu &&
             preparedVec3Equal(cachedCenter, image.expectedCachedCenter) &&
-            preparedVec3Equal(handler.center, image.expectedHandlerCenter) &&
-            falloffPacketsEqual(dragFalloff, image.expectedFalloff) &&
-            snapPacketsEqual(dragSnap, image.expectedSnap) &&
-            symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) &&
-            (!image.wrapperRefire.valid ||
-                ((cast(XfrmTransformTool)wrapperRef) !is null &&
-                 (cast(XfrmTransformTool)wrapperRef)
-                    .preparedRefireStateMatches(image.wrapperRefire)));
+            preparedVec3Equal(handler.center, image.expectedHandlerCenter);
     }
 
     final void installPreparedUpdate(ref PreparedRotateUpdateImage image)
             nothrow @nogc {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
         if (!image.valid) return;
-        angleAccum = image.nextAngle;
-        propDeg = image.nextProp;
-        origVertices = image.nextOrig; image.nextOrig = null;
-        vertexIndicesToProcess = image.nextIndices; image.nextIndices = null;
-        toProcess = image.nextMask; image.nextMask = null;
-        vertexProcessCount = image.nextCount;
         lastSelectionHash = image.nextSelectionHash;
         lastMutationVersion = image.nextMutationVersion;
         vertexCacheDirty = image.nextCacheDirty;
         centerManual = image.nextCenterManual;
-        needsGpuUpdate = image.nextNeedsGpu;
         cachedCenter = image.nextCachedCenter;
         handler.center = image.nextHandlerCenter;
-        dragFalloff = image.nextFalloff; image.nextFalloff = FalloffPacket.init;
-        dragSnap = image.nextSnap;
-        dragSymmetry = image.nextSymmetry; image.nextSymmetry = SymmetryPacket.init;
-        if (image.wrapperRefire.valid)
-            if (auto wrap = cast(XfrmTransformTool)wrapperRef)
-                wrap.installPreparedRefireState(image.wrapperRefire);
         image.clear();
     }
 
     version(unittest) final void seedPreparedUpdateProjectionForTest(
-            bool isActive, int axis, ulong selectionHash, ulong mutationVersion,
-            Vec3 angles) nothrow @nogc {
+            bool isActive, int axis, ulong selectionHash,
+            ulong mutationVersion) nothrow @nogc {
         active = isActive;
         dragAxis = axis;
         lastSelectionHash = selectionHash;
         lastMutationVersion = mutationVersion;
-        angleAccum = angles;
-    }
-
-    // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`
-    // / `tool.doApply` headless flows. Each is degrees of rotation
-    // around the matching AXIS-stage basis vector (right / up / fwd).
-    override Param[] params() {
-        return [
-            Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f).angle(),
-            Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f).angle(),
-            Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f).angle(),
-        ];
     }
 
     // No `applyHeadless()` override — same reason MoveTool has none (see the
@@ -624,20 +391,11 @@ public:
     // entry point. This sub-tool's version could not run and has been removed
     // (audit №4, T3).
 
-    // Phase 7.5h: tool-session boundary — commit any pending edit
-    // before tool switch so the session lands as one undo entry.
-    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        return PreparedDeactivateEffect(preparedToolStateOwner,
-            PreparedDeactivateKind.Rotate, prepareEditRecord(context, "Rotate"));
-    }
-
     override void deactivate() {
-        if (editIsOpen())
-            commitEdit("Rotate");
         super.deactivate();
     }
 
-    override void update(ref VectorStack vts) {
+    void updateInput(Vec3 actionCenter, bool ownerEditOpen) {
         if (!active) return;
 
         // Selection / mesh cannot change during a drag — skip checks entirely.
@@ -656,155 +414,10 @@ public:
         bool mutChanged = (currentMutVer != lastMutationVersion);
 
         if (selChanged || mutChanged) {
-            // Phase 7.5h: close out any pending edit FIRST so this
-            // session's drags + falloff tweaks land as one history
-            // entry (matches deactivate()).
-            if (editIsOpen() && selChanged)
-                commitEdit("Rotate");
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
-
-            // Geometry-only change: the per-edit hook on the (un)applied
-            // MeshVertexEdit has already restored angleAccum / propDeg to
-            // the value they held at that edit's boundary. origVertices
-            // stays at its activate-time value — the (origVertices,
-            // angleAccum) contract is invariant: applying angleAccum to
-            // origVertices always reproduces the current mesh state,
-            // even across undo/redo.
-
-            // Selection change: zero the accumulators and refresh
-            // everything. The per-edit hooks for now-stale entries on
-            // the stack still reference the OLD (origVertices,
-            // angleAccum) tuple — they'll misfire if undone after re-
-            // selection, but that's an acceptable edge case (cross-
-            // selection undo rarely makes sense anyway).
-            if (selChanged) {
-                angleAccum   = Vec3(0, 0, 0);
-                propDeg      = Vec3(0, 0, 0);
-                origVertices = mesh.vertices.dup;
-                centerManual = false;
-            }
-        }
-
-        // Phase 7.5h: live falloff change → re-apply with new weights.
-        // Rotate's existing applyAbsoluteFromOrigCpuOnly already
-        // rebuilds verts from origVertices using the captured
-        // dragFalloff; just need to trigger it on packet change.
-        //
-        // Phase 2 (Q5 / brief item 5): gate on idle-time — never fire under an
-        // in-flight gizmo drag on ANY bank. This sub-tool's own dragAxis is
-        // already < 0 here (the update() early-return at the top bails while THIS
-        // ring is dragging), but in a composed preset a DIFFERENT bank (Move)
-        // could be mid-drag; the per-frame drag
-        // path re-captures falloff itself there (captureFalloffForDrag), so this
-        // update()-driven re-apply is redundant — and recording one underneath
-        // an in-flight gesture would create an entry below the live drag.
-        //
-        // Reachability note (Phase 2 as-implemented): the OBJ-4 plan asked to
-        // WRAP this re-apply in its own beginEdit/commitEdit so it records as a
-        // tagged in-session entry. Under wrapper-owned per-gesture commit the edit
-        // closes at every ring mouse-up, so for a GIZMO run editIsOpen() is false
-        // at idle and this site is DEAD — exactly as the Move falloff site is
-        // dead post-Phase-1. It is reachable ONLY for an OPEN PANEL rotate session
-        // (tool.attr RZ … keeps the session open at idle with angleAccum != 0).
-        // For that case the EXISTING in-place mutation is the correct
-        // coalesce-until-drop behavior (scenario C, OUT OF SCOPE per the plan):
-        // the open panel session's editBefore already anchors the session
-        // baseline, the re-apply mutates within it, and the single drop commit
-        // captures the final result as ONE entry. Wrapping it in a nested
-        // beginEdit/commitEdit would either no-op (beginEdit is idempotent while
-        // the session is open) or split the panel session into two entries,
-        // breaking the panel-coalescing contract. So the OBJ-4 wrap is NOT applied
-        // — the prescribed target (an idle gizmo-run re-apply) does not exist
-        // post-Phase-1/2. Only the idle-time gate below lands. (Flagged for the
-        // plan owner: OBJ-4's wrap premise is moot once gizmo sessions self-close.)
-        // Two-arm branch (Phase 2; mirrors the wrapper-Move site):
-        //  - ARM 1 (open panel session, editIsOpen() true): the OLD in-place
-        //    coalesce, UNCHANGED. A rotate panel session (tool.attr RZ … keeps a
-        //    session open at idle with angleAccum != 0) folds the re-apply into
-        //    its single drop commit and records nothing (scenario C, out of scope).
-        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the wrapper's
-        //    run is open with a landed Rotate gesture): the NEW record path. The
-        //    re-grade is baked as a tagged in-session entry in the current run so
-        //    the in-session Ctrl+Z contract holds. The wrapper owns the run /
-        //    history / currentRunBank / refire state, so the bank+staleness gate
-        //    and the record both route through its public R/S seam
-        //    (refireRotateEligible / recordFalloffRefireRotate), reached via the
-        //    same wrapperRef cast that backs dragLive.
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        bool dragLive = false;
-        XfrmTransformTool wrap = null;
-        if (wrapperRef !is null) {
-            if (auto w = cast(XfrmTransformTool) wrapperRef) {
-                dragLive = w.dragInFlight();
-                wrap = w;
-            }
-        }
-        // Refire gate: in the WRAPPED role read wrapper truth (`publishedRotate()`
-        // = headlessRotate in degrees, derived from run.r — never stale after
-        // undo) rather than the sub-tool accumulator. In the standalone role keep
-        // the accumulator gate (the only truth it has). Note A: this re-point
-        // ships in the SAME commit as the commit-hook restore gate below so that
-        // after a wrapped undo-to-identity the gate reads wrapper truth (identity
-        // = Vec3(0,0,0)) rather than the stale-nonzero `angleAccum`.
-        bool heldNonIdentity = (wrap !is null)
-            ? (wrap.publishedRotate() != Vec3(0, 0, 0))
-            : (angleAccum != Vec3(0, 0, 0));
-        if (!dragLive && heldNonIdentity) {
-            if (editIsOpen()) {
-                // ARM 1 — panel session: old in-place coalesce, no record.
-                // P-C: trigger spans falloff + snap + symmetry. The wrapper's
-                // applyAbsolute*/applyTRS path re-captures the live symmetry +
-                // falloff from a fresh vts, so a mid-session symmetry toggle
-                // re-grades the mirror set here; re-read the sub-tool's own
-                // captured packets so the next compare baseline is current.
-                FalloffPacket liveF  = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
-                SymmetryPacket liveSy = currentSymmetry(vts);
-                if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
-                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
-                    dragFalloff  = liveF;
-                    dragSnap     = liveSn;
-                    dragSymmetry = liveSy;
-                    buildVertexCacheIfNeeded();
-                    applyAbsoluteFromOrigCpuOnly(vts);
-                    needsGpuUpdate = true;
-                }
-            } else if (wrap !is null && wrap.refireRotateEligible()) {
-                // ARM 2 — committed gizmo gesture: re-grade + record. The
-                // bank (Rotate) + staleness gates live inside refireRotateEligible.
-                // P-C: trigger spans falloff + snap + symmetry.
-                FalloffPacket liveF  = currentFalloff(vts);
-                SnapPacket     liveSn = currentSnap(vts);
-                SymmetryPacket liveSy = currentSymmetry(vts);
-                if (!falloffPacketsEqual(liveF, dragFalloff)
-                 || !snapPacketsEqual(liveSn, dragSnap)
-                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
-                    // Capture the pre-recompute (post-gesture) geometry LIVE for
-                    // the once-per-window anchor (OBJ-3 W1: live, never frozen).
-                    Vec3[] anchor = mesh.vertices.dup;
-                    // P-A / P-C: PRE-tweak config = still-current captured packets;
-                    // POST = the live packets. Captured BEFORE the re-read below so
-                    // the re-grade entry's hooks restore the whole config (falloff +
-                    // snap + symmetry).
-                    FalloffPacket  preF  = dragFalloff,  postF  = liveF;
-                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
-                    SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
-                    dragFalloff  = liveF;
-                    dragSnap     = liveSn;
-                    dragSymmetry = liveSy;
-                    buildVertexCacheIfNeeded();
-                    applyAbsoluteFromOrigCpuOnly(vts);   // mutates mesh.vertices
-                    Vec3[] after = mesh.vertices.dup;
-                    // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireRotate(anchor, after, null,
-                                                   preF, postF, preSn, postSn,
-                                                   preSy, postSy);
-                    needsGpuUpdate = true;
-                }
-            }
+            if (selChanged) centerManual = false;
         }
 
         // Pull the gizmo center from the ACEN stage every frame: mode /
@@ -818,104 +431,10 @@ public:
         // where the user expects after a falloff-driven rotation
         // (selection bbox centroid drifts). Edit closes at deactivate
         // / selection change; the next update() then re-pulls cleanly.
-        if (!editIsOpen()) {
-            cachedCenter = queryActionCenter(vts);
+        if (!ownerEditOpen) {
+            cachedCenter = actionCenter;
             handler.setPosition(cachedCenter);
         }
-    }
-
-    // Snapshot Tool-Properties state at the start of an edit session, so
-    // the matching commitEdit can attach an undo-restore hook holding
-    // these values. Called from beginEdit-adjacent sites (mouseButtonDown,
-    // first slider-active frame).
-    private void snapshotEditState() {
-        preEditAngleAccum = angleAccum;
-        preEditPropDeg    = propDeg;
-    }
-
-    protected override void commitEdit(string label) {
-        if (suppressCommit) { cancelEdit(); return; }
-        // Task 1069 — a ROUTED gesture writes the map, not `mesh.vertices`, so
-        // `buildEditCmd` returns null and the drag would never reach undo.
-        // Both commands take the SAME hook pair, so the setter is captured as
-        // a delegate rather than duplicating the hook composition below.
-        import commands.mesh.morph_edit : MeshMorphEdit;
-        import command : Command;
-        Command cmd;
-        void delegate(void delegate(), void delegate()) setCmdHooks;
-        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(label)) {
-            cmd = mcmd;
-            setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
-        } else {
-            auto vcmd = buildEditCmd(label);
-            if (vcmd is null) return;
-            cmd = vcmd;
-            setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
-        }
-
-        // Closure-capture the before/after Tool-Properties state. After
-        // recording, history.undo() runs revert (vert positions revert,
-        // then angleAccum/propDeg snap back to the pre-edit values);
-        // history.redo() does the opposite.
-        Vec3 accBefore  = preEditAngleAccum;
-        Vec3 propBefore = preEditPropDeg;
-        Vec3 accAfter   = angleAccum;
-        Vec3 propAfter  = propDeg;
-
-        // P-A + P-C — UNIFORM hook family: compose the WHOLE transient pipe
-        // CONFIG restore (falloff + snap + symmetry) into this gesture's
-        // accumulator hooks. A transform run can be consolidated at DROP as
-        // [gesture, pipeRefire]; mergeRun keeps first.revert + last.apply. The
-        // refire entry carries the pipe-config hooks, but without config here the
-        // merged first.revert (this gesture) would NOT restore the run-start
-        // config — leaving the pipe handle stranded at its post-tweak value after
-        // a post-drop Ctrl+Z (geometry reverts, config does not). So snapshot the
-        // config AT THIS gesture's commit (= run-start config for the first
-        // gesture in the run, since a config tweak only happens AFTER a gesture
-        // commit) and have BOTH hooks restore it. The gesture itself never changes
-        // the pipe config, so before==after here; the snapshot exists purely so
-        // the merged first.revert carries it. ABSOLUTE (assign), never delta —
-        // splices through mergeRun like the accums. The accum assignment + the
-        // three config restores are INDEPENDENT mutations (local fields vs three
-        // disjoint stages); none reads another, so they compose without clobber.
-        // FALLOFF is now SET-aware: snapshot every active falloff instance's
-        // config (1-element = the prior single-stage behaviour, byte-identical),
-        // keyed by stage identity so restore targets the same instances. SNAP +
-        // SYMMETRY stay SINGLE (one stage each).
-        import toolpipe.stages.falloff : FalloffSetSnapshot, snapshotFalloffSet,
-                                         restoreFalloffSet;
-        FalloffSetSnapshot fSnap = snapshotFalloffSet(falloffStagesForHooks());
-        SnapPacket     snSnap; bool haveSn = false;
-        SymmetryPacket sySnap; bool haveSy = false;
-        if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
-        if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
-        // P-F Phase 3b (MAJOR-5) — capture the WRAPPER field-snapshot hooks (the
-        // run-absolute headlessRotate pre/post) into locals so the closures below
-        // compose them alongside the accumulator + pipe-config restores. Null when
-        // standalone (no wrapper) ⇒ inert. DISJOINT wrapper field — composes into
-        // the same closure without clobbering angleAccum/propDeg. Mirrors the Scale
-        // wiring (scale.d) exactly.
-        setCmdHooks(
-            () {
-                // Accumulator restore is standalone-only: the wrapped role's
-                // geometry is driven by wrapApply (run.r / headlessRotate
-                // restored by the wrapper hook). Gate on wrapperRef is null so
-                // a wrapped undo-to-identity leaves angleAccum at its stale
-                // pre-gesture value without corrupting the refire gate (which
-                // now reads wrapper truth, not this accumulator).
-                if (wrapperRef is null) { angleAccum = accAfter;  propDeg = propAfter; }
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-            },
-            () {
-                if (wrapperRef is null) { angleAccum = accBefore; propDeg = propBefore; }
-                restoreFalloffSet(fSnap);
-                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
-                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
-            }
-        );
-        recordCommit(cmd);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
@@ -924,16 +443,6 @@ public:
         // Task 0206: gate cachedVp on the interactive (owner-cell) draw —
         // see Tool.draw's doc comment.
         if (!visualOnly) cachedVp = vp;
-
-        // Wrapped: wrapper owns the Model-C renderBasis (= R_gesture·B0 for the
-        // ring during a drag), set every frame before draw. Standalone (no
-        // wrapper — unit tests) self-orients from the live basis. Re-deriving
-        // while wrapped would clobber the gesture-frozen rotated ring frame.
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
 
         // Flush pending partial-selection GPU upload once per frame.
         if (needsGpuUpdate) {
@@ -963,13 +472,6 @@ public:
     {
         if (!active) return;
         if (!visualOnly) cachedVp = vp;
-
-        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
-        if (wrapperRef is null) {
-            Vec3 bX, bY, bZ;
-            currentBasis(bX, bY, bZ, vts);
-            handler.setOrientation(bX, bY, bZ);
-        }
 
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -1045,31 +547,9 @@ public:
             if (relocates) {
             if (!computeClickRelocateHit(e.x, e.y, hit, vts))
                 return false;
-            // Phase 7.5h: relocating to a new pivot is a new logical
-            // tool session — bake the prior session's rotations into
-            // one undo entry first, then start fresh.
-            if (editIsOpen())
-                commitEdit("Rotate");
-            // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's
-            // Move session may also be open (a prior move drag). A relocate
-            // commits EVERY open session, so close the wrapper's Move run too
-            // (its own editIsOpen() is independent of this rotate session —
-            // committing both yields two distinct runs, which is correct).
-            // Reached via the base-typed wrapperRef cast to the wrapper, which
-            // owns the public bank-boundary close. Null / non-wrapper
-            // (standalone unit-test) instance → skipped.
-            if (wrapperRef !is null) {
-                import tools.transform.xfrm_transform : XfrmTransformTool;
-                if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                    wrap.commitSessionAtRotateBoundaryIfOpen();
-            }
             handler.setPosition(hit);
             centerManual = true;
             notifyAcenUserPlaced(hit);
-            origVertices = mesh.vertices.dup;
-            angleAccum = Vec3(0, 0, 0);
-            propDeg    = Vec3(0, 0, 0);
-            propsDragging = false;
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             lastClickWasRelocate = true;
             }
@@ -1101,29 +581,6 @@ public:
         // idle basis = the frozen rendered orientation today). The view-ring
         // mouse-up decomposition reads it instead of the rendered handler.
         currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
-
-        // Build vertex cache now so we know whether this is a whole-mesh drag.
-        buildVertexCacheIfNeeded();
-        // Phase 7.5: capture falloff packet — when active, force the
-        // per-vertex CPU path (gpuMatrix's single-rotation-uniform fast
-        // path is incompatible with per-vertex angle scaling).
-        bool falloffActive = captureFalloffForDrag(vts);
-        // Phase 7.6d: capture symmetry too; the per-vertex mirror pass
-        // breaks the single-uniform-rotation gpuMatrix fast path the
-        // same way falloff does.
-        bool symmActive    = captureSymmetryForDrag(vts);
-        wholeMeshDrag = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-        if (wholeMeshDrag || arcballDrag) {
-            // Snapshot current vertex positions — GPU is in sync with these.
-            // The arcball takes one unconditionally: its rotation is ABSOLUTE
-            // since the press and its axis moves with the cursor, so there is
-            // no incremental delta to fold and every frame must re-apply from a
-            // fixed baseline.
-            dragStartVertices = mesh.vertices.dup;
-        }
-        snapshotEditState();   // capture pre-drag Tool-Properties state.
-        beginStandaloneEdit(); // standalone snapshot; wrapper owns embedded undo
 
         // Cache the axis vector for the duration of this drag — basis-
         // aware (workplane axis1/normal/axis2 when non-auto).
@@ -1233,7 +690,7 @@ public:
     // triple, asserted on the wrapper side at population). Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
         import std.math : abs;
-        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        if (!wrapperInputFrameValid) return;
         enum float tol = 1e-3f;
         assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
                "rotate wrapperInputFrameX not unit length");
@@ -1263,42 +720,8 @@ public:
             screenFalloffLMBEnd();
         }
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
-        float effectiveAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
-        if (dragAxis == 0) angleAccum.x += effectiveAngle;
-        else if (dragAxis == 1) angleAccum.y += effectiveAngle;
-        else if (dragAxis == 2) angleAccum.z += effectiveAngle;
-        else if (dragAxis == 3) {
-            // angleAccum.{x,y,z} are rotations around the gizmo's basis.
-            // Decompose the view-aligned rotation onto those axes via dot
-            // products against the frozen INPUT basis (captured at drag
-            // start), not the rendered `handler.axis*` — identity basis
-            // collapses to the legacy world-XYZ behaviour.
-            angleAccum.x += effectiveAngle * dot(viewDragAxis, inputBasisX);
-            angleAccum.y += effectiveAngle * dot(viewDragAxis, inputBasisY);
-            angleAccum.z += effectiveAngle * dot(viewDragAxis, inputBasisZ);
-        }
-
-        // Geometry + GPU for EVERY ring (principal 0/1/2 AND view-ring 3) are
-        // owned by the wrapper now (XfrmTransformTool.onMouseButtonUp uploads
-        // and resets gpuMatrix; applyTRS already wrote the final CPU verts).
-        // The angleAccum fold above still runs for ALL axes so the panel
-        // display total stays correct (round-3 B-survivor-1).
-        //
-        // STANDALONE fallback only (no wrapper — unit-test construction): the
-        // view-ring's legacy onMouseMotion path mutated geometry directly, so
-        // here it must commit/upload the result itself.
-        if (dragAxis == 3 && wrapperRef is null) {
-            if (wholeMeshDrag) {
-                // Apply the final rotation to CPU vertices from the drag-start snapshot.
-                commitWholeMeshRotation(effectiveAngle, vts);
-                gpu.upload(*mesh);
-                gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            } else if (needsGpuUpdate) {
-                uploadToGpu();
-                needsGpuUpdate = false;
-            }
-        }
-        wholeMeshDrag = false;
+        // Geometry, cumulative matrix truth, display Euler and upload are all
+        // finalized by the owner after this input bank closes the gesture.
         arcballDrag   = false;
 
         dragAxis   = -1;
@@ -1307,14 +730,6 @@ public:
         // (No-op when the live-preview already cleared it.)
         lastSnap = SnapResult.init;
         clearLastSnap();
-        import std.math : PI;
-        propDeg = Vec3(angleAccum.x * 180.0f / PI,
-                       angleAccum.y * 180.0f / PI,
-                       angleAccum.z * 180.0f / PI);
-        // Phase 7.5h: don't commit at mouseUp — keep the edit open so
-        // mid-tool falloff changes / further drags re-apply onto the
-        // same origVertices baseline. Commit fires at deactivate /
-        // selection change / click-outside-relocate.
         return true;
     }
 
@@ -1360,26 +775,9 @@ public:
             version(unittest) immutable bool arcCtrl = false;
             else immutable bool arcCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
             immutable float arcAngle = arcCtrl ? lastSnappedAngle : totalAngle;
-            if (wrapperRef !is null) {
-                pendingRotateAxis     = 3;
-                pendingRotateAngle    = arcAngle;
-                pendingRotateViewAxis = axisW;
-            } else {
-                // STANDALONE (unit-test construction): no wrapper to drain the
-                // gesture scalar, so apply it here from the drag-start snapshot
-                // — absolute, like the published angle, not incremental.
-                if (wholeMeshDrag) {
-                    gpuMatrix = pivotRotationMatrix(center, axisW, arcAngle);
-                } else if (dragStartVertices.length == mesh.vertices.length) {
-                    auto cp = queryClusterPivots(vts);
-                    foreach (vi; vertexIndicesToProcess) {
-                        Vec3 pv = pivotFor(vi, cp, center);
-                        mesh.vertices[vi] =
-                            rotateAboutPivot(dragStartVertices[vi], pv, axisW, arcAngle);
-                    }
-                    needsGpuUpdate = true;
-                }
-            }
+            pendingRotateAxis     = 3;
+            pendingRotateAngle    = arcAngle;
+            pendingRotateViewAxis = axisW;
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -1447,308 +845,39 @@ public:
             // paths are owned by the wrapper now for these axes.)
             pendingRotateAxis  = dragAxis;
             pendingRotateAngle = effectiveAngle;
-        } else if (dragAxis == 3 && wrapperRef !is null) {
-            // view-aligned ring under the unified wrapper: GESTURE-SCALAR
-            // PRODUCER, same contract as the principal axes. Publish the
-            // ABSOLUTE accumulated angle AND the camera-forward axis; the
-            // wrapper folds them onto `gestureStart.r` to get `run.r` and runs
-            // applyTRS (the single geometry-apply entry point). NO geometry
-            // mutation here. Falloff is now correct (one weighted rotation
-            // about the view axis via the kernel's dragAxisIdx == -1 path).
+        } else if (dragAxis == 3) {
+            // View-aligned ring: publish the absolute accumulated angle and
+            // camera-forward axis. The owner folds them onto its gesture-start
+            // matrix and performs the geometry update.
             pendingRotateAxis     = 3;
             pendingRotateAngle    = effectiveAngle;
             pendingRotateViewAxis = dragAxisVec;
-        } else {
-            // view-aligned ring on a STANDALONE RotateTool (no wrapper — only
-            // unit-test construction): legacy incremental path. Whole-mesh uses
-            // the matrix bypass; partial selection mutates verts.
-            if (wholeMeshDrag) {
-                gpuMatrix = pivotRotationMatrix(center, dragAxisVec, effectiveAngle);
-            } else if (ctrlHeld) {
-                import std.math : round, PI;
-                enum float step2 = PI / 12.0f;
-                float prevSnapped = round((totalAngle - angle) / step2) * step2;
-                float delta = lastSnappedAngle - prevSnapped;
-                if (delta != 0.0f)
-                    applyRotationVec(dragAxisVec, delta, vts);
-            } else {
-                applyRotationVec(dragAxisVec, angle, vts);
-            }
         }
 
         lastMX = e.x; lastMY = e.y;
         return true;
     }
 
-    override void drawProperties() {
-        import std.math : PI;
-        if (wrapperRef !is null) {
-            // WRAPPED role (FORMS=0 kill-switch only — FORMS=1 suppresses this
-            // path entirely). Seed propDeg from the wrapper truth each frame;
-            // REPLACES the dragAxis>=0 recompute (Note B: publishedRotate()
-            // already reflects the in-progress gizmo angle in the wrapped path,
-            // so adding dispAngle on top would double-count it).
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                propDeg = wrap.publishedRotate();
-        } else if (dragAxis >= 0) {
-            // STANDALONE role: derive propDeg from the sub-tool accumulator +
-            // the in-progress gizmo angle, as before.
-            float dispAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
-            // For view-axis drag (==3) the in-progress angle is decomposed
-            // onto the frozen INPUT basis (captured at drag start), not the
-            // rendered `handler.axis*` — matching onMouseButtonUp's
-            // accumulation so the displayed degrees stay consistent once the
-            // rendered frame moves.
-            float vx = dragAxis == 3 ? dot(viewDragAxis, inputBasisX) : 0;
-            float vy = dragAxis == 3 ? dot(viewDragAxis, inputBasisY) : 0;
-            float vz = dragAxis == 3 ? dot(viewDragAxis, inputBasisZ) : 0;
-            propDeg.x = (angleAccum.x + (dragAxis == 0 ? dispAngle : dispAngle * vx)) * 180.0f / PI;
-            propDeg.y = (angleAccum.y + (dragAxis == 1 ? dispAngle : dispAngle * vy)) * 180.0f / PI;
-            propDeg.z = (angleAccum.z + (dragAxis == 2 ? dispAngle : dispAngle * vz)) * 180.0f / PI;
-        }
-        ImGui.DragFloat("X", &propDeg.x, 0.1f, 0, 0, "%.2f");
+    struct PanelInput {
+        Vec3 degrees;
+        bool active;
+        bool done;
+    }
+
+    PanelInput drawInputProperties(Vec3 publishedDegrees) {
+        Vec3 value = publishedDegrees;
+        ImGui.DragFloat("X", &value.x, 0.1f, 0, 0, "%.2f");
         bool xActive = ImGui.IsItemActive(), xDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Y", &propDeg.y, 0.1f, 0, 0, "%.2f");
+        ImGui.DragFloat("Y", &value.y, 0.1f, 0, 0, "%.2f");
         bool yActive = ImGui.IsItemActive(), yDone = ImGui.IsItemDeactivatedAfterEdit();
-        ImGui.DragFloat("Z", &propDeg.z, 0.1f, 0, 0, "%.2f");
+        ImGui.DragFloat("Z", &value.z, 0.1f, 0, 0, "%.2f");
         bool zActive = ImGui.IsItemActive(), zDone = ImGui.IsItemDeactivatedAfterEdit();
 
-        bool anyActive = xActive || yActive || zActive;
-        bool anyDone   = xDone   || yDone   || zDone;
-        if (!(anyActive || anyDone)) return;
-
-        angleAccum.x = propDeg.x * PI / 180.0f;
-        angleAccum.y = propDeg.y * PI / 180.0f;
-        angleAccum.z = propDeg.z * PI / 180.0f;
-        buildVertexCacheIfNeeded();
-        // Phase 7.5: re-capture falloff each active frame; gates the
-        // wholeMesh GPU bypass off when the per-vertex weight breaks
-        // the single-uniform fast path. drawProperties() is outside
-        // the input-dispatch path — build a local vts.
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket propSubj;
-        VectorStack propVts;
-        buildLocalVts(propSubj, propVts);
-        bool falloffActive = captureFalloffForDrag(propVts);
-        bool symmActive    = captureSymmetryForDrag(propVts);
-        bool wholeMesh = !falloffActive && !symmActive
-            && (vertexProcessCount == cast(int)mesh.vertices.length);
-
-        // Phase C.3: snapshot pre-drag positions on first active frame so
-        // commitEdit at slider release has a baseline. beginEdit is
-        // idempotent within an open edit; snapshotEditState too if we
-        // gate it on the same edit-not-yet-open check.
-        if (anyActive && !editIsOpen()) {
-            snapshotEditState();
-            beginStandaloneEdit();
-        } else if (anyActive) {
-            beginStandaloneEdit();   // idempotent
-        }
-
-        // Update CPU vertices (fast, no GPU) from THE VALUE THESE SLIDERS JUST
-        // SET, not from whatever the run truth held before them (task 0801).
-        // `angleAccum` carries all three axes here (the three writes above are
-        // unconditional), so it is the whole panel value in either role:
-        // standalone it is the accumulator the kernel reads anyway; WRAPPED it is
-        // the wrapper's run euler — re-seeded into `propDeg` at the top of this
-        // function — with this frame's edit folded in. Passing it is what makes
-        // the wrapped slider rotate anything: the truth-reading entry below would
-        // recompose the UNCHANGED wrapper euler and the edit would be inert (it
-        // was, 2026-06-11..2026-08-15).
-        applyRotateAbsoluteCpuOnly(propVts, angleAccum);
-
-        if (anyActive) {
-            if (wholeMesh && wrapperRef is null) {
-                // STANDALONE whole-mesh: GPU bypass — upload base once at drag
-                // start, then only update matrix (matrix is around origVertices,
-                // the correct base when there is no wrapper run baseline).
-                if (!propsDragging) {
-                    uploadPropsBase(origVertices);
-                    propsDragging = true;
-                }
-                gpuMatrix = computePropsRotationMatrix();
-            } else {
-                // WRAPPED path (Phase 1): GPU bypass would preview from the wrong
-                // base (origVertices), ignoring the baked cross-axis history in
-                // dragBaseline. applyTRS already wrote the correct CPU verts —
-                // defer the upload. Partial selection always defers too.
-                needsGpuUpdate = true;
-            }
-        } else {
-            // Drag ended: commit final CPU state to GPU. 7.5h: don't
-            // commit the edit here either — props sliders are part of
-            // the same tool session as gizmo drags.
-            if (propsDragging) {
-                gpu.upload(*mesh);
-                gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-                propsDragging = false;
-            } else {
-                needsGpuUpdate = true;
-            }
-        }
+        return PanelInput(value, xActive || yActive || zActive,
+                          xDone || yDone || zDone);
     }
 
 private:
-
-    // Phase 4 of the action-center parity plan: per-cluster pivot for
-    // vertex `vi`. Mirrors Scale's pivotFor.
-    Vec3 pivotFor(size_t vi, ClusterPivots cp, Vec3 fallback) {
-        if (!cp.active) return fallback;
-        if (vi >= cp.clusterOf.length) return fallback;
-        int cid = cp.clusterOf[vi];
-        if (cid < 0 || cid >= cast(int)cp.centers.length) return fallback;
-        return cp.centers[cid];
-    }
-
-    // Per-cluster axis for vertex `vi`. `axisIdx` ∈ {0,1,2} → right/up/fwd.
-    // Returns the gizmo's global axis (`fallback`) when no cluster basis
-    // is published or the vertex doesn't belong to any cluster.
-    Vec3 axisFor(size_t vi, int axisIdx,
-                 ClusterAxes ap, ClusterPivots cp, Vec3 fallback)
-    {
-        if (!ap.active) return fallback;
-        if (vi >= cp.clusterOf.length) return fallback;
-        int cid = cp.clusterOf[vi];
-        if (cid < 0 || cid >= cast(int)ap.right.length) return fallback;
-        if (axisIdx == 0) return ap.right[cid];
-        if (axisIdx == 1) return ap.up   [cid];
-        return ap.fwd[cid];
-    }
-
-    // Apply final rotation from dragStartVertices to mesh.vertices at mouseUp.
-    void commitWholeMeshRotation(float angle, ref VectorStack vts) {
-        if (dragStartVertices.length != mesh.vertices.length) return;
-        auto cp = queryClusterPivots(vts);
-        auto ap = queryClusterAxes(vts);
-        int axisIdx = (dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
-        foreach (i; 0 .. mesh.vertices.length) {
-            Vec3 pivot = pivotFor(i, cp, handler.center);
-            Vec3 ax    = (axisIdx >= 0)
-                       ? axisFor(i, axisIdx, ap, cp, dragAxisVec)
-                       : dragAxisVec;
-            mesh.vertices[i] = rotateAboutPivot(dragStartVertices[i], pivot, ax, angle);
-        }
-    }
-
-    // Apply X→Y→Z Euler rotation from origVertices to CPU vertices only (no GPU).
-    // angleAccum.x/.y/.z are interpreted around the gizmo's basis (workplane
-    // axis1/normal/axis2 when non-auto, world XYZ when auto). With per-cluster
-    // basis active, each cluster uses its own (right, up, fwd).
-    //
-    // The panel slider path and the kept-open-edit
-    // falloff-reapply both reach geometry through here. It now DELEGATES to the
-    // wrapper's `applyRotateAbsoluteFromRun` → `applyTRS(dragBaseline)` so the
-    // "ui" (panel) path shares the SAME single geometry-apply entry point AND the
-    // SAME run baseline as the "handle" (drag) and "headless" (numeric) paths.
-    // Phase 1 (R/S run-baseline): applying from the run baseline (not
-    // origVertices) preserves baked cross-axis gizmo history. The wrapper owns
-    // the edit session and undo hooks.
-    //
-    // Standalone fallback (a bare RotateTool with no wrapper — only unit-test
-    // construction): the original `applyRotateFromOrig` kernel call. For a
-    // single non-zero axis the two are numerically identical (weight at the
-    // baseline position; per-cluster via pivotFor/axisFor), so behaviour is
-    // preserved either way.
-    //
-    // TWO ENTRIES, because the callers disagree about ONE thing: which value is
-    // the truth at the moment of the call (task 0801, scale.d carries the twin).
-    //   - `applyRotateAbsoluteCpuOnly(vts, anglesRad)` — the caller HOLDS the new
-    //     absolute euler (the legacy slider arm). It recomposes `run.r` from
-    //     `anglesRad`, so the edit is what lands. Forms value batches bypass
-    //     this bank and recompose once in the wrapper.
-    //   - `applyAbsoluteFromOrigCpuOnly(vts)` — the caller holds NOTHING new (the
-    //     idle falloff-refire arms in update()); the value is whatever the run
-    //     currently holds, re-applied under fresh falloff weights. That reading
-    //     matters here: `angleAccum` is a gizmo-basis decomposition and DRIFTS
-    //     from the matrix-truth euler across a cross-axis run, so the refire must
-    //     read `publishedRotate()`.
-    // Phase 5a collapsed both onto the second reading, which is right for the
-    // refire and wrong for a panel edit: the FORMS=0 legacy slider — the one
-    // panel caller that does NOT write `headlessRotate` before calling — was
-    // silently inert from 2026-06-11 to 2026-08-15.
-    void applyRotateAbsoluteCpuOnly(ref VectorStack vts, Vec3 anglesRad) {
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            auto wrap = cast(XfrmTransformTool) wrapperRef;
-            if (wrap !is null) {
-                // Phase 1 (R/S run-baseline fix): apply from the WRAPPER's run
-                // baseline (`dragBaseline`), NOT origVertices. After a cross-axis
-                // gizmo gesture the prior axis is baked into dragBaseline + mesh,
-                // not into origVertices, so applying the full euler from
-                // origVertices would discard the baked axis. The run-baseline
-                // entry writes `headlessRotate` from `anglesRad`, recomposes
-                // `run.r` from it and applies that absolutely against
-                // dragBaseline-with-baked-history. The caller has already opened
-                // the wrapper edit with Rotate provenance.
-                wrap.applyRotateAbsoluteFromRun(anglesRad);
-                return;
-            }
-        }
-        import tools.transform.xform_kernels : applyRotateFromOrig;
-        applyRotateFromOrig(mesh, origVertices, toProcess,
-                            handler.center,
-                            handler.axisX, handler.axisY, handler.axisZ,
-                            anglesRad,
-                            dragFalloff, dragAimSpace(),
-                            queryClusterPivots(vts), queryClusterAxes(vts),
-                            dragSymmetry, toProcess);
-    }
-
-    // Re-apply THE CURRENT RUN ORIENTATION (no new value) — the idle
-    // falloff-refire arms in update(). In the WRAPPED role that orientation is
-    // the wrapper's `publishedRotate()` (= eulerZYXFromMatrix(run.r), the
-    // matrix truth), NOT this sub-tool's `angleAccum`, which is a gizmo-basis
-    // decomposition and drifts from it across a cross-axis run.
-    void applyAbsoluteFromOrigCpuOnly(ref VectorStack vts) {
-        applyRotateAbsoluteCpuOnly(vts, currentRunAnglesRad());
-    }
-
-    // The run-total euler as of now, in RADIANS: wrapper truth when wrapped, the
-    // sub-tool accumulator when standalone.
-    private Vec3 currentRunAnglesRad() {
-        if (wrapperRef !is null) {
-            import tools.transform.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
-                import std.math : PI;
-                Vec3 wrapDeg = wrap.publishedRotate();
-                return Vec3(wrapDeg.x * cast(float)(PI / 180.0),
-                            wrapDeg.y * cast(float)(PI / 180.0),
-                            wrapDeg.z * cast(float)(PI / 180.0));
-            }
-        }
-        return angleAccum;
-    }
-
-    // Compose the current angleAccum into a single 4x4 rotation matrix around the pivot.
-    float[16] computePropsRotationMatrix() {
-        Vec3 pivot = handler.center;
-        float[16] m = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-        if (angleAccum.x != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisX, angleAccum.x));
-        if (angleAccum.y != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisY, angleAccum.y));
-        if (angleAccum.z != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisZ, angleAccum.z));
-        return m;
-    }
-
-    // Apply incremental rotation to cached vertex indices — used for
-    // partial selection. When ACEN.Local + AXIS.Local publish per-cluster
-    // pivots/basis, each cluster rotates around ITS pivot using ITS axis
-    // (actr.local + axis.local).
-    //
-    // Phase 7.5: each vertex's rotation is scaled by the falloff weight.
-    // Soft-twist effect — verts near full-influence rotate by `angle`,
-    // verts in the falloff transition rotate by `angle * weight(vi)`.
-    void applyRotationVec(Vec3 axisVec, float angle, ref VectorStack vts) {
-        import tools.transform.xform_kernels : applyRotateIncremental;
-        int axisIdx = (dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
-        applyRotateIncremental(mesh, vertexIndicesToProcess,
-                               handler.center, axisVec, axisIdx, angle,
-                               dragFalloff, dragAimSpace(),
-                               queryClusterPivots(vts), queryClusterAxes(vts),
-                               dragSymmetry, toProcess);
-        needsGpuUpdate = true;
-    }
-
     void drawRotationSector(const ref Viewport vp) {
         import std.math : cos, sin, sqrt, abs, PI;
 
