@@ -42,7 +42,7 @@
 // Run via: ./run_test.d topopen_addloop_conformance
 
 import mesh;
-import mesh_ops.loop_slice : insertEdgeLoops;
+import mesh_ops.loop_slice : insertEdgeLoops, kLoopSliceEditScope;
 import math;
 import std.json;
 import std.format : format;
