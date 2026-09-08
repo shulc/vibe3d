@@ -1,4 +1,5 @@
 module mesh_ops.poly_bevel;
+// mesh-ops-import: explicit
 
 import mesh;
 import math;

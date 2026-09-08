@@ -3,6 +3,7 @@ module commands.mesh.poly_inset;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
+import mesh_ops.poly_bevel;
 import view;
 import editmode;
 import params : Param;

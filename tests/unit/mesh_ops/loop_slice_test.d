@@ -4,6 +4,7 @@
 module tests.unit.mesh_ops.loop_slice_test;
 
 import mesh;
+import mesh_ops.poly_bevel;
 import mesh_ops.extrude;
 import mesh_ops.edge_bevel;
 import math;

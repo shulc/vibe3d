@@ -70,22 +70,6 @@ public import mesh_ops.loop_slice;
 // unchanged (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for
 // the ops namespace; narrowing that is audit 0678 M9's job, not this task's.
 public import mesh_ops.connected_mask;
-// task 1903 Stage F2: the polygon bevel family (bevelFacesByMask /
-// insetFacesByMask / spikeFacesByMask, plus the corner, normal and
-// boundary-contour helpers) is module-level free functions over
-// `ref MeshEditBatch` and `ref const(Mesh)`, not a mixin. PUBLIC so every
-// `import mesh;` re-exports the three entries and the scope constant, keeping
-// mesh.d the door for the ops namespace exactly as the nine conversions before
-// it did (`doc/mesh_edit_seam_plan.md` §4.2); narrowing that is audit 0678
-// M9's job, not this task's. WHAT THE WIDENING ADDS, checked rather than
-// assumed (памятка 33): the line it replaces named ONE symbol, the template
-// itself, and mesh.d's own body mentions no other name of that module — so
-// unlike F1's `bandWalk`/`BandCell` case there is nothing here that the mixin
-// body was resolving in mesh.d's scope and that a blanket re-export would
-// newly publish. The seven helpers stay `private` at module scope in
-// poly_bevel.d, so this re-exports `insetFacesByMask`, `bevelFacesByMask`,
-// `spikeFacesByMask` and `kPolyBevelEditScope` and nothing else.
-public import mesh_ops.poly_bevel;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward, WireKeyPolicy;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource,
@@ -14751,9 +14735,8 @@ struct Mesh {
     // polygon bevel family to module-level free functions over
     // `ref MeshEditBatch` (the three entries) and `ref const(Mesh)` (the two
     // reading helpers) in source/mesh_ops/poly_bevel.d, and the six unittest
-    // blocks that lived inside that template moved out with them. The
-    // `public import` at the top of this file is what keeps
-    // `import mesh;` clients resolving the entries; a `static assert`
+    // blocks that lived inside that template moved out with them. Callers
+    // import the family directly; a `static assert`
     // tripwire at the foot of poly_bevel.d refuses a member — or an
     // in-struct alias — of any family name coming back.
 
