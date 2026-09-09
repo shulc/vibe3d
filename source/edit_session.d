@@ -416,7 +416,8 @@ final class EditSession {
         assert(parameterBatchProvider_ is provider,
             "one parameter batch cannot span providers");
         assert(parameterBatchSource_ == source,
-            "one parameter batch cannot span change sources");
+            "one parameter batch cannot span change sources: production panel "
+          ~ "schemas do not co-expose slot selectors and ordinary attributes");
         foreach (written; parameterBatchNames_)
             if (written == name) return;
         parameterBatchNames_ ~= name;

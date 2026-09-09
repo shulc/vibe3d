@@ -149,6 +149,93 @@ unittest { // frame-driven consumers are explicit and panel-independent
       ~ trace.value);
 }
 
+unittest { // production legacy schemas cannot produce a mixed-source batch
+    import property_panel : PropertyPanel;
+    import tests.unit.ui.headless_panel : openPanel;
+    import toolpipe.packets : FalloffType;
+    import toolpipe.stages.axis : AxisStage;
+    import toolpipe.stages.falloff : FalloffStage;
+
+    auto falloff = new FalloffStage();
+    falloff.type = FalloffType.Screen;
+    auto falloffRows = falloff.params();
+    assert(falloffRows.length == 4,
+        "production falloff reachability fixture expected four Screen rows");
+    foreach (ref row; falloffRows)
+        assert(row.name != "type" && !falloff.attrArmsSlot(row.name),
+            "production FalloffStage exposed a slot selector beside ordinary rows: "
+          ~ row.name);
+    assert(falloff.attrArmsSlot("type"),
+        "production falloff reachability fixture lost its slot selector classification");
+
+    auto trace = new Trace();
+    auto tool = new ProbeTool(trace);
+    tool.liveStage = true;
+    auto session = sessionFor(tool);
+    auto panel = new PropertyPanel();
+    auto falloffUi = openPanel(() { panel.drawProvider(falloff, session); });
+    falloffUi.frame();
+    falloffUi.editRow(0, "2.0");
+    falloffUi.close();
+
+    assert(falloff.screenCx == 2.0f,
+        "production FalloffStage float widget did not write screenCx");
+    assert(trace.value == "HR"
+        && tool.replaySource == ParameterChangeSource.StageAttribute
+        && tool.replayNames == ["screenCx"],
+        "production FalloffStage panel write must remain one ordinary-source "
+      ~ "batch; got trace " ~ trace.value);
+
+    trace.clear();
+    auto axis = new AxisStage();
+    assert(axis.attrArmsSlot("mode") && axis.knownAttrs() == ["mode"],
+        "production axis reachability fixture lost its selector-only attr universe");
+    assert(axis.params().length == 0,
+        "production AxisStage unexpectedly exposed its selector through the "
+      ~ "legacy PropertyPanel schema");
+    auto axisUi = openPanel(() { panel.drawProvider(axis, session); });
+    scope (exit) axisUi.close();
+    axisUi.frame();
+    assert(trace.value == "",
+        "an empty production AxisStage panel must not open a parameter batch; got "
+      ~ trace.value);
+}
+
+unittest { // a production activation-only widget still closes at the slot boundary
+    import params : Param;
+    import property_panel : PropertyPanel;
+    import tests.unit.ui.headless_panel : openPanel;
+    import toolpipe.stages.actcenter : ActionCenterStage;
+
+    auto stage = new ActionCenterStage(null, null);
+    stage.mode = ActionCenterStage.Mode.Auto;
+    auto rows = stage.params();
+    assert(rows.length == 1 && rows[0].name == "mode"
+        && rows[0].kind == Param.Kind.IntEnum && stage.attrArmsSlot("mode"),
+        "production activation fixture requires the Action Center mode selector");
+
+    auto trace = new Trace();
+    auto tool = new ProbeTool(trace);
+    tool.liveStage = true;
+    tool.consumeSlot = true;
+    auto session = sessionFor(tool);
+    auto panel = new PropertyPanel();
+    auto ui = openPanel(() { panel.drawProvider(stage, session); });
+    scope (exit) ui.close();
+
+    auto epochBefore = stage.slotEpoch;
+    ui.frame();
+    // The IntEnum widget draws its label, then one radio row per entry:
+    // visual row 3 is Select (after None and the already-active Auto).
+    ui.pressRow(3);
+    ui.release();
+    assert(stage.mode == ActionCenterStage.Mode.Select,
+        "production Action Center selector widget did not choose Select");
+    assert(stage.slotEpoch == epochBefore + 1 && trace.value == "H",
+        "production activation-only write must publish one epoch and end before "
+      ~ "re-grade; got trace " ~ trace.value);
+}
+
 unittest {
     immutable panelPath = buildPath(repoRoot, "source", "property_panel.d");
     immutable attrPath = buildPath(repoRoot, "source", "commands", "tool", "attr.d");
@@ -171,6 +258,9 @@ unittest {
         "parameter orchestration witness: PropertyPanel still owns the "
       ~ "Tool evaluate step instead of dispatching the widget batch to "
       ~ "EditSession");
+    assert(panelCode.indexOf("slotActivationInBatch") < 0,
+        "parameter batch owner: PropertyPanel restored its redundant slot "
+      ~ "completion decision");
     assert(attrCode.indexOf("t.evaluate();") < 0,
         "parameter orchestration witness: ToolAttrCommand still owns the "
       ~ "Tool evaluate step instead of dispatching the command batch to "
