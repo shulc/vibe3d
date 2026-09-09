@@ -20,8 +20,9 @@ struct VertexPositionResult {
     }
 }
 
-/// Capability used by CommandWrapperTool's R6 pilot. Smooth and Jitter keep
-/// their legacy path until their own deterministic-result migrations.
+/// Capability used by deterministic CommandWrapperTool deforms. Quantize and
+/// Smooth implement it; Jitter keeps the legacy path until its RNG-order-aware
+/// migration.
 ///
 /// The wrapper's packet-reuse arm reconstructs only Subject and an optional
 /// owned Falloff packet. An implementation may consume no other pipeline slot

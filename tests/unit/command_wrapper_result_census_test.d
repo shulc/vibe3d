@@ -1,5 +1,5 @@
-// The Quantize pilot owns one VertexPositionResultBuilder implementation, and
-// every non-pilot wrapper shares collectLegacyLiveResult. This source census
+// Quantize and Smooth own VertexPositionResultBuilder implementations, and
+// Jitter shares collectLegacyLiveResult. This source census
 // forces either roster to be reviewed before another builder or independent
 // live-mesh diff loop can appear in CommandWrapperTool.
 module tests.unit.command_wrapper_result_census_test;
@@ -24,10 +24,10 @@ private size_t countInSource(string needle) {
 
 unittest {
     const builderHits = countInSource("VertexPositionResultBuilder");
-    assert(builderHits == 6, format(
+    assert(builderHits == 8, format(
         "VertexPositionResultBuilder census changed: expected the interface, " ~
-        "its single Quantize implementation, and CommandWrapperTool's adapter " ~
-        "(6 code hits); found %d", builderHits));
+        "its Quantize/Smooth implementations, and CommandWrapperTool's " ~
+        "adapter (8 code hits); found %d", builderHits));
 
     const legacyHits = countInSource("collectLegacyLiveResult");
     assert(legacyHits == 3, format(

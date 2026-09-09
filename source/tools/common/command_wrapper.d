@@ -61,8 +61,9 @@ import ImGui = d_imgui;
 ///  - First LMB-down records the click point and resets the per-vert
 ///    BASELINE to the pre-drag mesh state.
 ///  - Motion restores baseline → `onDragDelta(dx, dy)` updates the
-///    inner Command's attrs → the wrapper installs a live preview. Quantize
-///    builds a sparse result first; legacy wrappers dispatch `inner.apply()`.
+///    inner Command's attrs → the wrapper installs a live preview. Smooth and
+///    Quantize build sparse results first; legacy wrappers dispatch
+///    `inner.apply()`.
 ///  - LMB-up ends the drag session; mesh stays at preview.
 ///  - Subsequent LMB-down on the same active tool resets the baseline
 ///    again so the new drag composes on top of the previous preview
@@ -77,7 +78,7 @@ import ImGui = d_imgui;
 ///    `MeshVertexEdit` pre-wired to the same gpu/caches the inner
 ///    Command mutates; it arrives typed as `Command delegate()` and is
 ///    cast back when wrapping a result for history.
-///  - `deactivate()` wraps Quantize's cached result (or the legacy live diff)
+///  - `deactivate()` wraps a cached deterministic result (or the legacy live diff)
 ///    in `MeshVertexEdit` and records it on history. Spacebar →
 ///    `dropActiveTool` → here. Tool switches and tab close hit
 ///    the same path.
@@ -116,8 +117,8 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     private Vec3[] baseline;
     private bool   dirty;
 
-    // R6 pilot: Quantize computes one sparse result. Preview installs it;
-    // commit/refire only wrap the same value in MeshVertexEdit.
+    // R6 deterministic builders: Quantize/Smooth compute one sparse result.
+    // Preview installs it; commit/refire only wrap the same value.
     private VertexPositionResult latestResult_;
     private bool                 latestResultValid_;
     private FalloffPacket        resultFalloff_;
@@ -467,10 +468,10 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         return history !is null && gestureFactory !is null;
     }
 
-    // Build the MeshVertexEdit representing the CURRENT param state. Quantize
-    // uses its pure sparse-result builder: this method neither edits/restores
-    // the live mesh nor refreshes display caches. The other wrappers keep the
-    // legacy apply/diff/restore path until their own R6 migrations.
+    // Build the MeshVertexEdit representing the CURRENT param state. Smooth
+    // and Quantize use their pure sparse-result builders: this method neither
+    // edits/restores the live mesh nor refreshes display caches. Jitter keeps
+    // the legacy apply/diff/restore path until its RNG-order-aware migration.
     public override Command buildRefireCommand() {
         if (meshPtr is null || history is null || gestureFactory is null)
             return null;
@@ -890,7 +891,8 @@ public:
         resultFalloffPresent_ = false;
     }
 
-    /// Build Quantize's result from the explicit session baseline. A fresh
+    /// Build a deterministic inner command's result from the explicit session
+    /// baseline. A fresh
     /// pipeline walk is done only while the live mesh is known to hold that
     /// baseline (preview restores it immediately above). Refire after a live
     /// preview reuses the owned cooked falloff packet, so command construction
@@ -1003,8 +1005,9 @@ public:
         // Restore baseline so apply runs against pre-drag state.
         meshPtr.vertices[] = baseline[];
 
-        // Quantize pilot: compute once from baseline, then install the sparse
-        // result for preview. The builder itself performs no scene mutation.
+        // Deterministic builder: compute once from baseline, then install the
+        // sparse result for preview. The builder itself performs no scene
+        // mutation.
         if (resultBuilder() !is null) {
             if (!buildPilotResult(true)) return false;
             installPilotPreview();
@@ -1228,10 +1231,15 @@ unittest {
     assert(!hist.canUndo(), "idle commit must leave nothing to undo");
 
     // Open a session by hand (same module => private access): baseline = the
-    // pre-edit geometry, then displace a vert and mark dirty — exactly the
-    // state a live wrapper drag leaves behind.
+    // pre-edit geometry, then build/install the deterministic Smooth result —
+    // exactly the state a live wrapper drag leaves behind.
     t.baseline = m.vertices.dup;
-    m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+    foreach (ref p; t.params()) {
+        if (p.name == "strn") *p.fptr = 0.8f;
+        if (p.name == "iter") *p.iptr = 2;
+    }
+    assert(t.buildPilotResult(true));
+    t.installPilotPreview();
     t.dirty = true;
 
     assert(t.commitUncommittedEdit(), "dirty wrapper session must commit in place");
@@ -1279,6 +1287,125 @@ unittest {
     assert(!t.commitUncommittedEdit(),
            "a commit that recorded nothing must not report success");
     assert(recorded == 0, "the latched path must not record an entry");
+}
+
+// Task 4560, Smooth slice — building a refire over an occupied preview is a
+// read-only operation.  The subscriber intentionally reads positions inside
+// synchronous delivery despite the production subscriber contract: this is a
+// test-only tripwire for mutate-then-restore, whose final mesh image alone is
+// indistinguishable from a pure build.
+unittest {
+    import change_bus : MeshEditScope, changeBus;
+    import command_history : CommandHistory;
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import display_sync : activeMeshResolver;
+    import mesh : makeCube;
+    import std.format : format;
+
+    Mesh target = makeCube();
+    target.buildLoops();
+    View view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory();
+    auto tool = new XfrmSmoothTool(
+        &target, view, EditMode.Vertices, null);
+    tool.setGestureBindings(history,
+        () => new MeshVertexEdit(&target, view, EditMode.Vertices));
+
+    auto savedResolver = activeMeshResolver;
+    Mesh offscreen = makeCube();
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+    const subscriberCheckpoint = changeBus.meshSubscriberCheckpointForTest();
+    scope(exit) changeBus.restoreMeshSubscribersForTest(subscriberCheckpoint);
+
+    size_t records;
+    history.onRecord = (string, uint) { ++records; };
+    tool.activate();
+    scope(exit) {
+        tool.cancelUncommittedEdit();
+        tool.deactivate();
+    }
+    foreach (ref p; tool.params()) {
+        if (p.name == "strn") *p.fptr = 0.35f;
+        if (p.name == "iter") *p.iptr = 3;
+    }
+    tool.onParamChanged("strn");
+    tool.evaluate();
+    const sessionBaseline = tool.baseline.dup;
+    const occupiedPreview = target.vertices.dup;
+    assert(occupiedPreview != sessionBaseline,
+        "control: Smooth refire purity needs a non-empty occupied preview");
+
+    // Refire a DIFFERENT parameter value without letting the ordinary preview
+    // tick run first.  A legacy apply/diff/restore path then publishes the new
+    // image inside the callback and restores the old preview afterward.
+    foreach (ref p; tool.params())
+        if (p.name == "strn") *p.fptr = 0.82f;
+
+    size_t targetCallbacks;
+    bool callbackSawDifferentPositions;
+    changeBus.onMeshChanged((size_t subjectAddr, uint flags) nothrow {
+        if (subjectAddr != cast(size_t)&target ||
+            !(flags & MeshEditScope.Position)) return;
+        ++targetCallbacks;
+        if (target.vertices.length != occupiedPreview.length) {
+            callbackSawDifferentPositions = true;
+            return;
+        }
+        foreach (i; 0 .. target.vertices.length)
+            if (target.vertices[i] != occupiedPreview[i]) {
+                callbackSawDifferentPositions = true;
+                return;
+            }
+    });
+
+    const deliveriesBefore = changeBus.deliveryCount;
+    const positionsBefore = changeBus.totalPosition;
+    const mutationBefore = target.mutationVersion;
+    const topologyBefore = target.topologyVersion;
+    const structureBefore = target.structVersion;
+    const marksBefore = target.marksVersion;
+    const recordsBefore = records;
+
+    auto refire = cast(MeshVertexEdit)tool.buildRefireCommand();
+    assert(refire !is null && !refire.isEmpty(),
+        "Smooth refire must build a populated deterministic carrier");
+    assert(targetCallbacks == 0, format(
+        "Smooth refire construction published %d Position callback(s); " ~
+        "callback observed different positions=%s",
+        targetCallbacks, callbackSawDifferentPositions));
+    assert(!callbackSawDifferentPositions,
+        "Smooth refire callback observed temporary live positions");
+    assert(target.vertices == occupiedPreview,
+        "Smooth refire construction changed the occupied preview");
+    assert(changeBus.deliveryCount == deliveriesBefore &&
+           changeBus.totalPosition == positionsBefore,
+        "Smooth refire construction changed bus delivery counters");
+    assert(target.mutationVersion == mutationBefore &&
+           target.topologyVersion == topologyBefore &&
+           target.structVersion == structureBefore &&
+           target.marksVersion == marksBefore,
+        "Smooth refire construction changed mesh counters");
+    assert(records == recordsBefore && !history.canUndo(),
+        "Smooth refire construction changed history");
+
+    auto expected = sessionBaseline.dup;
+    foreach (i, vi; refire.editIndices()) expected[vi] = refire.editAfter()[i];
+    history.refireBegin();
+    assert(history.fire(refire));
+    history.refireEnd();
+    tool.onRefireCommitted();
+    assert(target.vertices == expected,
+        "Smooth refire did not land its deterministic result");
+    assert(records == recordsBefore + 1,
+        "Smooth refire must commit exactly one history entry");
+    assert(history.undo() && target.vertices == sessionBaseline,
+        "Smooth refire undo did not restore the session baseline");
+    assert(history.redo() && target.vertices == expected,
+        "Smooth refire redo did not restore the deterministic result");
+    tool.deactivate();
+    assert(records == recordsBefore + 1,
+        "dropping a committed Smooth refire recorded a duplicate entry");
 }
 
 // task 1905 criterion 3 — the SAME drill over the other two wrapper tools
