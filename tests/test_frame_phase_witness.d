@@ -265,7 +265,7 @@ unittest { // panel draw: compare composed pixels with the panel hidden/shown
 }
 
 
-unittest { // foreground overlay is authored before ImGui.Render snapshots it
+unittest { // playback cursor reaches the composed default framebuffer
     resetKnownView();
     scope(exit) cleanupPanelWitness();
     cmd("ui.toolProperties hide");
@@ -310,7 +310,6 @@ unittest { // foreground overlay is authored before ImGui.Render snapshots it
     }
     assert(changed >= 30 && differsFromAway <= 4,
         format("FRAME OVERLAY SNAPSHOT: moving the real foreground cursor "
-               ~ "changed only %d/%d samples and left %d unlike the away baseline; "
-               ~ "ImGui.Render must run after overlay authorship",
+               ~ "changed only %d/%d samples and left %d unlike the away baseline",
                changed, atA.points.length, differsFromAway));
 }

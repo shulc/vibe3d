@@ -54,19 +54,77 @@ enum FrameFinishEvent {
 version (unittest) version = FrameFinishTraceEnabled;
 version (FrameFinishWitness) version = FrameFinishTraceEnabled;
 
+private alias FrameSwapFn = void function(SDL_Window*) nothrow @nogc;
+private alias FrameDelayFn = void function(uint) nothrow @nogc;
+
+private void callSdlSwap(SDL_Window* window) nothrow @nogc {
+    SDL_GL_SwapWindow(window);
+}
+
+private void callSdlDelay(uint milliseconds) nothrow @nogc {
+    SDL_Delay(milliseconds);
+}
+
+private struct FrameFinishSdlOps {
+    FrameSwapFn swap;
+    FrameDelayFn delay;
+}
+
+private __gshared FrameFinishSdlOps g_frameFinishSdlOps = {
+    &callSdlSwap,
+    &callSdlDelay,
+};
+
 version (FrameFinishTraceEnabled) {
+    /// SDL exposes wrappers over private loader pointers, so the finish
+    /// witness observes these two production-owned call points instead.
+    struct FrameFinishSdlTestOps {
+        FrameSwapFn swap;
+        FrameDelayFn delay;
+    }
+
+    FrameFinishSdlTestOps frameFinishSdlOpsForTest() nothrow @nogc {
+        return FrameFinishSdlTestOps(
+            g_frameFinishSdlOps.swap, g_frameFinishSdlOps.delay);
+    }
+
+    void installFrameFinishSdlOpsForTest(FrameFinishSdlTestOps ops)
+        nothrow @nogc
+    {
+        g_frameFinishSdlOps = FrameFinishSdlOps(ops.swap, ops.delay);
+    }
+
     struct FrameFinishTrace {
-        FrameFinishEvent[] events;
+        private FrameFinishEvent[16] events_;
+        private size_t eventCount_;
         int renderVertices;
         uint delayMs;
+        bool overflowed;
 
-        void reset() {
-            events.length = 0;
-            renderVertices = 0;
-            delayMs = 0;
+        @property const(FrameFinishEvent)[] events() const nothrow @nogc {
+            return events_[0 .. eventCount_];
         }
 
-        size_t count(FrameFinishEvent event) const {
+        void reset() nothrow @nogc {
+            eventCount_ = 0;
+            renderVertices = 0;
+            delayMs = 0;
+            overflowed = false;
+        }
+
+        void note(FrameFinishEvent event, int vertices = 0,
+                  uint milliseconds = 0) nothrow @nogc {
+            if (eventCount_ < events_.length)
+                events_[eventCount_++] = event;
+            else
+                overflowed = true;
+            if (event == FrameFinishEvent.render)
+                renderVertices = vertices;
+            if (event == FrameFinishEvent.delay)
+                delayMs = milliseconds;
+        }
+
+        size_t count(FrameFinishEvent event) const nothrow @nogc {
             size_t result;
             foreach (seen; events) if (seen == event) ++result;
             return result;
@@ -81,19 +139,13 @@ private pragma(inline, true) void noteFinishEvent(FrameFinishEvent event,
                                                   uint delayMs = 0)
 {
     version (FrameFinishTraceEnabled) {
-        g_frameFinishTrace.events ~= event;
-        if (event == FrameFinishEvent.render)
-            g_frameFinishTrace.renderVertices = renderVertices;
-        if (event == FrameFinishEvent.delay)
-            g_frameFinishTrace.delayMs = delayMs;
+        g_frameFinishTrace.note(event, renderVertices, delayMs);
     }
 }
 
 private void clearDefaultFramebuffer() {
     glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
-    noteFinishEvent(FrameFinishEvent.clearColor);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    noteFinishEvent(FrameFinishEvent.clear);
 }
 
 private void finishRenderImGui() {
@@ -117,7 +169,6 @@ private void finishRenderImGui() {
 
 private void finishFullViewport(int framebufferWidth, int framebufferHeight) {
     glViewport(0, 0, framebufferWidth, framebufferHeight);
-    noteFinishEvent(FrameFinishEvent.viewport);
 }
 
 private void finishSubmitImGui() {
@@ -136,18 +187,15 @@ private void finishWorkProbe() {
 }
 
 private void finishSwap(SDL_Window* window) {
-    SDL_GL_SwapWindow(window);
-    noteFinishEvent(FrameFinishEvent.swap);
+    g_frameFinishSdlOps.swap(window);
 }
 
 private void finishFlush() {
     glFlush();
-    noteFinishEvent(FrameFinishEvent.flush);
 }
 
 private void finishDelay(uint milliseconds) {
-    SDL_Delay(milliseconds);
-    noteFinishEvent(FrameFinishEvent.delay, 0, milliseconds);
+    g_frameFinishSdlOps.delay(milliseconds);
 }
 
 /// Hover gates consumed by the later scene phase of the same frame.

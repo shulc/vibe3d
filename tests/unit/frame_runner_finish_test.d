@@ -1,15 +1,16 @@
 // The real default-framebuffer tail on a real offscreen GL context (task 0782).
-// Each table row calls FrameRunner.finishFrame itself. The trace is emitted by
-// the same wrappers that perform the low-level calls; the foreground rectangle
-// and its readback keep the ordering checks from passing over an empty draw.
+// Each row calls FrameRunner.finishFrame itself. GL observers replace the real
+// pointers and delegate to them; SDL observers use the production-owned seam
+// and delegate to its real callbacks. The draw/readback floors stay non-empty.
 module tests.unit.frame_runner_finish_test;
 
 import bindbc.opengl;
 import bindbc.sdl;
-import core.time : MonoTime;
 import d_imgui.imgui_h : ImVec2, IM_COL32;
-import frame_runner : FrameFinishEvent, FramePresentMode, FrameRunner,
-    g_frameFinishTrace, resolveFramePresentMode;
+import frame_runner : FrameFinishEvent, FrameFinishSdlTestOps,
+    FramePresentMode, FrameRunner, frameFinishSdlOpsForTest,
+    g_frameFinishTrace, installFrameFinishSdlOpsForTest,
+    resolveFramePresentMode;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_Init,
     ImGui_ImplOpenGL3_NewFrame, ImGui_ImplOpenGL3_Shutdown;
 import imgui_impl_sdl2 : ImGui_ImplSDL2_Init, ImGui_ImplSDL2_NewFrame,
@@ -37,6 +38,51 @@ private ptrdiff_t eventIndex(const(FrameFinishEvent)[] events,
     foreach (i, event; events)
         if (event == sought) return cast(ptrdiff_t)i;
     return -1;
+}
+
+private struct FinishGlObserver {
+    static typeof(glClearColor) realClearColor;
+    static typeof(glClear) realClear;
+    static typeof(glViewport) realViewport;
+    static typeof(glFlush) realFlush;
+
+    static extern(System) void clearColor(GLclampf red, GLclampf green,
+                                          GLclampf blue, GLclampf alpha)
+        nothrow @nogc
+    {
+        g_frameFinishTrace.note(FrameFinishEvent.clearColor);
+        realClearColor(red, green, blue, alpha);
+    }
+
+    static extern(System) void clear(GLbitfield mask) nothrow @nogc {
+        g_frameFinishTrace.note(FrameFinishEvent.clear);
+        realClear(mask);
+    }
+
+    static extern(System) void viewport(GLint x, GLint y, GLsizei width,
+                                        GLsizei height) nothrow @nogc {
+        g_frameFinishTrace.note(FrameFinishEvent.viewport);
+        realViewport(x, y, width, height);
+    }
+
+    static extern(System) void flush() nothrow @nogc {
+        g_frameFinishTrace.note(FrameFinishEvent.flush);
+        realFlush();
+    }
+}
+
+private struct FinishSdlObserver {
+    static FrameFinishSdlTestOps original;
+
+    static void swap(SDL_Window* window) nothrow @nogc {
+        g_frameFinishTrace.note(FrameFinishEvent.swap);
+        original.swap(window);
+    }
+
+    static void delay(uint milliseconds) nothrow @nogc {
+        g_frameFinishTrace.note(FrameFinishEvent.delay, 0, milliseconds);
+        original.delay(milliseconds);
+    }
 }
 
 private int overlayPixelPopulation(int width, int height) {
@@ -99,6 +145,32 @@ void runFrameRunnerFinishWitness() {
         "frame finish rig could not initialize the ImGui GL backend");
     scope(exit) ImGui_ImplOpenGL3_Shutdown();
 
+    auto savedClearColor = glClearColor;
+    auto savedClear = glClear;
+    auto savedViewport = glViewport;
+    auto savedFlush = glFlush;
+    auto savedSdlOps = frameFinishSdlOpsForTest();
+    // Restore first: every later scope(exit), including backend/context
+    // teardown, must see the real GL pointers and production SDL seam.
+    scope(exit) {
+        glClearColor = savedClearColor;
+        glClear = savedClear;
+        glViewport = savedViewport;
+        glFlush = savedFlush;
+        installFrameFinishSdlOpsForTest(savedSdlOps);
+    }
+    FinishGlObserver.realClearColor = savedClearColor;
+    FinishGlObserver.realClear = savedClear;
+    FinishGlObserver.realViewport = savedViewport;
+    FinishGlObserver.realFlush = savedFlush;
+    FinishSdlObserver.original = savedSdlOps;
+    glClearColor = &FinishGlObserver.clearColor;
+    glClear = &FinishGlObserver.clear;
+    glViewport = &FinishGlObserver.viewport;
+    glFlush = &FinishGlObserver.flush;
+    installFrameFinishSdlOpsForTest(FrameFinishSdlTestOps(
+        &FinishSdlObserver.swap, &FinishSdlObserver.delay));
+
     auto runner = new FrameRunner(new InputFrameState);
     immutable ModeCase[] cases = [
         ModeCase("normal",       false, false, false, 1, 0, 0),
@@ -129,6 +201,8 @@ void runFrameRunnerFinishWitness() {
         runner.finishFrame(window, width, height, mode);
 
         const events = g_frameFinishTrace.events;
+        assert(!g_frameFinishTrace.overflowed,
+            "frame finish observer overflowed its fixed event buffer");
         size_t lowLevelCalls;
         foreach (event; events) {
             if (event == FrameFinishEvent.clearColor
