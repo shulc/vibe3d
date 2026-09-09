@@ -168,8 +168,7 @@ module mesh_dirty;
 // the HTTP thread must see the same object, not a zeroed copy of it.
 // ---------------------------------------------------------------------------
 
-import mesh_edit_delta : MeshEditScope;
-import display_sync    : DisplayRefreshMask;
+import mesh_edit_delta : MeshEditScope, DisplayRefreshMask;
 import change_bus      : changeBus;
 
 /// A watcher over ONE change-class group. Instances are module-level globals
@@ -336,7 +335,7 @@ enum uint GeomEpochMask    = MeshEditScope.Position
 enum uint TopoEpochMask    = MeshEditScope.Geometry;
 
 /// Display-relevant classes — what makes the GPU buffers wrong
-/// (`display_sync.DisplayRefreshMask`, single-sourced, NOT re-listed here).
+/// (`mesh_edit_delta.DisplayRefreshMask`, single-sourced, NOT re-listed here).
 __gshared MeshDirtyEpochs g_displayEpochs =
     MeshDirtyEpochs.forClasses(DisplayEpochMask);
 

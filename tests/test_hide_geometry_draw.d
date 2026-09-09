@@ -563,7 +563,7 @@ unittest {
     // was RED for two separate reasons while `/api/model` already reported the
     // hide correctly:
     //
-    //   1. the hide published `Marks`, which display_sync.DisplayRefreshMask
+    //   1. the hide published `Marks`, which mesh_edit_delta.DisplayRefreshMask
     //      deliberately excludes (it would re-upload on every selection
     //      click), so app.d's bus-driven upload never fired — measured: the
     //      face VBO sat at 36 verts with a face hidden;

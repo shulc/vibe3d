@@ -11239,7 +11239,7 @@ struct Mesh {
         //     above setFaceHidden.
         //   * noteChange(Visibility) — the DISPLAY-REFRESH class. The caller's
         //     commitChange(Marks) ORs into the same pending set, and Marks is
-        //     deliberately NOT in display_sync.DisplayRefreshMask (it would
+        //     deliberately NOT in mesh_edit_delta.DisplayRefreshMask (it would
         //     re-upload on every selection click), so a hide published as
         //     Marks alone never reaches app.d's bus-driven cage upload and
         //     never reaches the screen. MEASURED, not reasoned: with the

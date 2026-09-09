@@ -24,7 +24,7 @@
 //
 // WHAT NO CONSUMER DOES WITH IT, MEASURED (E3 review, 2026-08-26). Both live
 // readers of this class in this tree are OR-masks that `Points|Polygons`
-// already trips — `display_sync.DisplayRefreshMask` and
+// already trips — `mesh_edit_delta.DisplayRefreshMask` and
 // `change_bus.MeshChangeAll` — and the one construct that could subscribe to
 // Position ALONE, `MeshDirtyEpochs.forClasses(MeshEditScope.Position)`, has no
 // production caller (every occurrence is inside `mesh_dirty.d`'s own

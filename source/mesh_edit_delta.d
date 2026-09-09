@@ -84,8 +84,8 @@ enum MeshEditScope : uint {
     // display attribute whose change needs a re-upload without a topology
     // edit. Publishers OR it alongside `Marks` (never instead of), so
     // consumers that key on Marks — the subpatch-preview gate, the marks
-    // caches — are unaffected, and only the ones that opt in (see
-    // display_sync.DisplayRefreshMask) act on it.
+    // caches — are unaffected, and only the ones that opt in through
+    // DisplayRefreshMask act on it.
     Visibility = 1 << 5,
     // A per-element MAP value changed (task 1069). Its own class for the same
     // reason `Visibility` has one: a morph write moves no vertex and adds no
@@ -116,6 +116,21 @@ enum MeshEditScope : uint {
     MapsDisplay = 1 << 7,
     Geometry = Points | Polygons,
 }
+
+/// Change classes whose values are consumed while rebuilding display buffers
+/// (task 5110). Geometry classes alter buffer shape or coordinates; Material,
+/// Visibility, Maps and MapsDisplay alter upload-time attributes or routing.
+/// Marks stays excluded because selection/hover highlight reads marks at draw
+/// time. The fixed roster and its upload-visible effects are pinned by
+/// `tests/unit/display_refresh_mask_semantics_test.d` and the display suites.
+enum uint DisplayRefreshMask =
+      MeshEditScope.Position
+    | MeshEditScope.Points
+    | MeshEditScope.Polygons
+    | MeshEditScope.Material
+    | MeshEditScope.Visibility
+    | MeshEditScope.Maps
+    | MeshEditScope.MapsDisplay;
 
 // ---------------------------------------------------------------------------
 // One recorded mutation. The op-log is an ordered array of these; revert plays
@@ -1872,7 +1887,7 @@ private bool sameFloatBits(float a, float b) {
 // which the fast path therefore has to re-issue itself.
 //
 // `rebuildEdges` ends in its own `commitChange(MeshEditScope.Polygons)`, which
-// is inside `display_sync.DisplayRefreshMask`. `Marks` deliberately is NOT in
+// is inside `mesh_edit_delta.DisplayRefreshMask`. `Marks` deliberately is NOT in
 // that mask (it would re-upload the whole mesh on every selection click). So:
 //
 //   * `SetPos` (`Position`), `MaterialDelta` (`Material`) and `HideDelta`
@@ -4198,8 +4213,8 @@ private void patchSelection(ref Mesh m, MeshOpEntry.SelDomain dom,
     // now, noted no selection domain at all: on the slow path the incidental
     // full `Polygons` re-upload that `rebuildEdges` publishes repainted the
     // highlight by brute force, so nobody noticed. The carve-out drops that
-    // publish, and `Marks` is deliberately outside `display_sync`'s
-    // DisplayRefreshMask, so the domain note is what a selection consumer has
+    // publish, and `Marks` is deliberately outside the local
+    // `DisplayRefreshMask`, so the domain note is what a selection consumer has
     // left to key on.
     //
     // Placed HERE rather than in the fast branch so the two paths cannot
@@ -4534,7 +4549,6 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
                       in MeshOpEntry[] log = null,
                       bool fast = false,
                       StableEntry e0 = StableEntry.init) {
-    import display_sync : DisplayRefreshMask;
     // TASK 1903 L0.P1 — THE CARVE-OUT.
     //
     // `fast` says the log is index-space stable AND (if it restores an edge

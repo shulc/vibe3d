@@ -615,7 +615,7 @@ unittest {
              ~ "  The CAGE is back — `/api/model` says so and cannot get it "
              ~ "wrong. What is on screen is the limit surface, and it is still "
              ~ "the POST-op one: `finalize`'s fast branch republished a class "
-             ~ "outside `display_sync.DisplayRefreshMask`, or did not "
+             ~ "outside `mesh_edit_delta.DisplayRefreshMask`, or did not "
              ~ "republish at all, so the uploader never re-read the positions.\n"
              ~ "  No counter in the tree sees this: mutationVersion +1, "
              ~ "topologyVersion +0, one Position delivery, identical draw "

@@ -14,7 +14,7 @@
 // incidentally — and re-issues it per kind through `displayTermFor`. Under a
 // bug that drops it for `SubpatchDelta`, every version counter, every geometry
 // plane and every draw-call census is BYTE-IDENTICAL; the only difference is
-// that `Marks` alone is outside `display_sync.DisplayRefreshMask`, so the cage
+// that `Marks` alone is outside `mesh_edit_delta.DisplayRefreshMask`, so the cage
 // never refreshes. The same failure is already measured at `mesh.d`'s
 // `setFaceHiddenFrom`, where a Marks-only hide left `/api/gpu/face-vbo`'s
 // faceVertCount at 36.
@@ -148,7 +148,7 @@ unittest // W12 — one delivery per fast-path revert, and the EXACT class set
           ~ "For SubpatchDelta the missing class is `Polygons`, which "
           ~ "`displayTermFor` re-issues in place of the rebuild's own publish: "
           ~ "the surviving scope_ is `Marks` alone, `Marks` is deliberately "
-          ~ "outside display_sync.DisplayRefreshMask, and undoing a subpatch "
+          ~ "outside mesh_edit_delta.DisplayRefreshMask, and undoing a subpatch "
           ~ "toggle would therefore leave the cage on screen at the old "
           ~ "geometry. Every counter and every geometry plane is identical "
           ~ "under that bug.",

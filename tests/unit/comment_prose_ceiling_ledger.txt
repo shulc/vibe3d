@@ -9,10 +9,10 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 520
-task-citation-lines 5075
+task-citation-lines 5073
 citing-files 394
-long-comment-runs 280
-files-with-long-runs 149
+long-comment-runs 279
+files-with-long-runs 148
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -193,7 +193,7 @@ allow source/copilot_overlay.d 2
 allow source/copilot_panel.d 2
 allow source/deform_magnet.d 1
 allow source/display_state.d 12
-allow source/display_sync.d 8
+allow source/display_sync.d 5
 allow source/document.d 37
 allow source/document_selection.d 62
 allow source/drag.d 11
@@ -251,7 +251,7 @@ allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
 allow source/mesh_edge_slice.d 28
-allow source/mesh_edit_delta.d 140
+allow source/mesh_edit_delta.d 141
 allow source/mesh_gpu.d 35
 allow source/mesh_morph.d 1
 allow source/mesh_ops/bevel_curves.d 7
@@ -458,7 +458,6 @@ allow-runs source/commands/select/fill.d 1
 allow-runs source/commands/select/sets.d 2
 allow-runs source/constraint.d 2
 allow-runs source/display_state.d 1
-allow-runs source/display_sync.d 1
 allow-runs source/document.d 2
 allow-runs source/document_selection.d 4
 allow-runs source/drag.d 3

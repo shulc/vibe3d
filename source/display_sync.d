@@ -2,57 +2,7 @@ module display_sync;
 
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import mesh_edit_delta : MeshEditScope;
 import perf_probe : g_perf, Cat;
-
-/// Change classes that require a DISPLAY refresh (the GPU upload) of the
-/// active mesh — the mask the bus-driven refresh
-/// engine (campaign 0407 §D4-в) keys on, both at the frame's flush site
-/// (capture-and-upload in app.d's main loop) and in the mid-batch pull guard
-/// `ensureDisplayCurrent` in front of every VBO reader that can run BEFORE
-/// the flush (pickers, HTTP providers).
-///
-/// Deliberately excludes:
-///   • Marks — selection/hover highlight is drawn each frame straight from
-///     the mesh marks arrays (gpu.drawVertices/drawEdges), never baked into
-///     the VBO; the subpatch-preview Tab gate keys on Marks separately.
-/// Includes Material even though it is not geometry: per-face material ids
-/// ARE baked into the VBO (GpuMesh.upload reads faceMaterial into matIdVbo).
-/// SECOND REASON, task 1090 — and it is worth stating because the first one
-/// on its own invites a narrowing: `MeshEditScope.Material` is also the class
-/// a MESH-MAP VALUE WRITE publishes (`Mesh.setMeshMapValue`, hence
-/// `setVertexWeight` and `mesh.weightmap.set`). The weight display style bakes
-/// those values into a per-corner colour buffer, and it is `upload()` that
-/// invalidates it — so dropping Material from this mask would freeze the
-/// weight colours at whatever they were when the map was created, with the
-/// edit visible in `/api/model` and nowhere on screen. `tests/test_weightmap_display.d`
-/// case A2 is that mutation's red.
-/// Includes Visibility for exactly the same reason (task 0613 S3): the Hide
-/// bit is consumed at UPLOAD time — hidden verts / edges leave the buffers
-/// and hidden faces drop to zero triangles — so unlike its Marks siblings it
-/// cannot be honoured by a per-frame draw-time read. Note this is why
-/// Visibility is a class of its own and not merely part of Marks: adding
-/// Marks to this mask would re-upload the whole mesh on every selection
-/// click.
-/// Includes Maps (task 1069) for the same reason as Visibility, and it is a
-/// MEASURED reason rather than a symmetry argument: Phase 0 measured the
-/// reference's viewport drawing base+delta with a morph selected, so a morph
-/// write changes what is on screen while moving no vertex and adding no face.
-/// Like the Hide bit it is consumed at UPLOAD time (`GpuMesh.upload` reads the
-/// drawn positions through `morph_target.displayVertices`), so it cannot be
-/// honoured by a per-frame draw-time read either.
-/// Includes MapsDisplay for the SAME display reason and for no other reason:
-/// binding or unbinding the morph routing target changes the drawn surface
-/// while changing no saveable datum, so it must refresh the display and must
-/// NOT reach `ChangeBus.docRevision` (see mesh_edit_delta.MapsDisplay).
-enum uint DisplayRefreshMask =
-      MeshEditScope.Position
-    | MeshEditScope.Points
-    | MeshEditScope.Polygons
-    | MeshEditScope.Material
-    | MeshEditScope.Visibility
-    | MeshEditScope.Maps
-    | MeshEditScope.MapsDisplay;
 
 // The display-refresh gate (seam 2b) — since task 0427 a TOOL-side seam.
 //
@@ -60,7 +10,7 @@ enum uint DisplayRefreshMask =
 // publish change-bus flags (noteChange/commitChange, mostly via the mesh
 // kernels), and app.d's main loop drives the refresh — the flush-site
 // capture-and-upload plus the mid-batch `ensureDisplayCurrent` pull guards,
-// both keyed on `DisplayRefreshMask` below (campaign 0407 §D4-в).
+// both keyed on `mesh_edit_delta.DisplayRefreshMask` (campaign 0407 §D4-в).
 //
 // `refreshDisplay` remains the shared primitive for the INTERACTIVE paths
 // that own their display mid-gesture (tool drag fills / previews), and for
