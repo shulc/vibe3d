@@ -47,6 +47,7 @@ import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
 import operator : VectorStack;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import seltype : SelType;
 import math : Vec3, Viewport, AimViewport, aimSpace;

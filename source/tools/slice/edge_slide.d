@@ -1,6 +1,7 @@
 module tools.slice.edge_slide;
 
-import mesh    : Mesh, GpuMesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import view    : View;
 import editmode : EditMode;
 import tools.common.command_wrapper : CommandWrapperTool;

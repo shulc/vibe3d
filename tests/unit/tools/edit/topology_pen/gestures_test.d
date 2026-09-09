@@ -33,7 +33,7 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-import mesh                : Mesh, GpuMesh, MeshCacheKey;
+import mesh                : Mesh, MeshCacheKey;
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,

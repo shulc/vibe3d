@@ -22,7 +22,8 @@ module tests.unit.ui.transform_panel_widget_test;
 
 import std.math : fabs;
 
-import mesh : Mesh, GpuMesh, makeCube;
+import mesh : Mesh, makeCube;
+import mesh_gpu : GpuMesh;
 import editmode : EditMode;
 import seltype : SelType;
 import tools.transform.xfrm_transform : XfrmTransformTool;

@@ -8,6 +8,7 @@ import std.json : JSONValue;
 import operator : VectorStack;
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import change_bus : MeshEditScope;
 import params : Param;
@@ -22,7 +23,7 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tack_activation : PreparedTackActivationOwner;
-import mesh_gpu : GpuCreateOwner;
+import mesh_gpu : GpuCreateOwner, GpuResourceOwner;
 
 struct PreparedTackActivationImage {
     MeshSnapshot baseline;

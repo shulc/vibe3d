@@ -15,6 +15,7 @@ struct PreparedMoveActivationImage {
 import handler;
 import viewport_scheme : schemeColor, SchemeColor;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import seltype : SelType;
 import math;

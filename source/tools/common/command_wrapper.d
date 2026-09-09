@@ -25,7 +25,8 @@ struct PreparedCommandWrapperActivationImage {
 import bindbc.sdl;
 
 import command : Command;
-import mesh    : Mesh, GpuMesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import view    : View;
 import editmode : EditMode;
 import seltype  : SelType;

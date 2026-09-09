@@ -11,6 +11,7 @@ import operator : VectorStack;
 import tool;
 import edit_session : KeepAliveOnCancel, SessionStepUndo;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;

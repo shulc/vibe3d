@@ -104,6 +104,7 @@ import math : Vec3, Pin, Viewport, translationMatrix,
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;
+import mesh_gpu : GpuMesh;
 import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles;
 import eventlog : queryMouse;

@@ -12,7 +12,8 @@ import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
 import editmode : EditMode;
 import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
-import mesh : GpuMesh, Mesh, makeCube;
+import mesh : Mesh, makeCube;
+import mesh_gpu : GpuMesh;
 import operator : VectorStack;
 import tools.transform.xfrm_transform : XfrmTransformTool,
     xfrmCompactScaleHeadFallbackForTest, xfrmLatchedHandlePartForTest;

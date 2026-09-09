@@ -12,6 +12,7 @@ import prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import mesh_gpu : GpuMesh;
 import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 import mesh : detachedPreparedMesh;

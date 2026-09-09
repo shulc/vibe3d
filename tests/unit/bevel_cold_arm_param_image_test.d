@@ -32,7 +32,8 @@ module unit.bevel_cold_arm_param_image_test;
 
 import document : Layer;
 import editmode : EditMode;
-import mesh : Mesh, GpuMesh, makeCube;
+import mesh : Mesh, makeCube;
+import mesh_gpu : GpuMesh;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedPolyBevelParamKind, PreparedEdgeBevelParamKind,
                               PreparedPolyExtrudeParamKind;

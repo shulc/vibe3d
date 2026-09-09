@@ -6,6 +6,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import mesh_ops.bridge : bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
                          kBridgeEditScope;
 import math;

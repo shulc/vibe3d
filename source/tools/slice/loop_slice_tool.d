@@ -8,6 +8,7 @@ import operator : VectorStack;
 import tool;
 import edit_session : KeepAliveOnCancel;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 // Task 1054 Phase 4: the band-aware ring preview (`selectionRingPreviewMask`)
 // and the fallback-case scrub rail (`bandFirstRail`) both need to run the

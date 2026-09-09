@@ -16,7 +16,7 @@ import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
 import mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
                              loopSliceRingEdges, kLoopSliceEditScope;
-import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
+import mesh                : Mesh, MeshCacheKey, MeshEditBatch,
                              // task 3240 (plan 2910 step 3) — the edge-slice
                              // family is free functions now, same reason
                              // again: `splitFaceByVertices` is reached
@@ -26,6 +26,7 @@ import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
                              // `public import`'s free names unless it
                              // names them.
                              splitFaceByVertices;
+import mesh_gpu            : GpuMesh;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,

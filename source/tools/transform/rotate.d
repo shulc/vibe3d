@@ -16,6 +16,7 @@ struct PreparedRotateActivationImage {
 }
 import handler;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import document : Layer;
 import seltype : SelType;

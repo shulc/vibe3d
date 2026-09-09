@@ -39,6 +39,7 @@
 module tests.unit.tools.edit.preview_topology_churn_test;
 
 import mesh;
+import mesh_gpu : GpuMesh;
 import math : Vec3;
 import editmode : EditMode;
 import params : Param;
