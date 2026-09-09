@@ -6,7 +6,8 @@ import std.string : toStringz;
 
 import view;
 import math;
-import mesh : Surface, GpuMesh, MarkView;
+import mesh : Surface, MarkView;
+import mesh_gpu : GpuMesh;
 import gl_thread_guard : glThreadGuard;
 import display_state : kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral

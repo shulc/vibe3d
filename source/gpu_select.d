@@ -4,7 +4,8 @@ import bindbc.opengl;
 import std.string : toStringz;
 
 import math   : Viewport, ModelSpace, matMul4;
-import mesh   : GpuMesh, Mesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import shader : compileShader;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 import camera_stamp : CameraStamp;

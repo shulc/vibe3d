@@ -1,6 +1,7 @@
 module registry;
 
 import mesh;
+import mesh_gpu : GpuMesh;
 import view;
 import editmode;
 import shader;

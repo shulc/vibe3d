@@ -7,7 +7,7 @@ import std.math : isNaN, sqrt;
 import std.json : JSONValue, JSONType;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh    : Mesh, GpuMesh;
+import mesh    : Mesh;
 import view;
 import editmode : EditMode;
 import math     : Vec3, dot, cross, normalize;

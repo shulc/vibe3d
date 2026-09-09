@@ -2,7 +2,8 @@ module bvh_pick;
 
 import bvh.c;
 import math : Vec3, Viewport, screenRay, screenPointToRay, cross, ModelSpace;
-import mesh : Mesh, GpuMesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import perf_probe : g_perf, Cat, g_fc;
 // Task 1906 stage 2b — the SURFACE tree's freshness key. See `pickSurfaceRay`.
 import mesh_dirty : MeshDirtyKey, g_geomEpochs;

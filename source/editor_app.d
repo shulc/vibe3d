@@ -32,6 +32,7 @@ import imgui_impl_opengl3;
 import nfde;
 import math;
 import mesh;
+import mesh_gpu : GpuMesh;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;

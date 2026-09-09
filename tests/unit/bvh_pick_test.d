@@ -5,7 +5,8 @@ module tests.unit.bvh_pick_test;
 
 import bvh.c;
 import math : Vec3, Viewport, screenRay, screenPointToRay, cross, ModelSpace;
-import mesh : Mesh, GpuMesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import perf_probe : g_perf, Cat, g_fc;
 import bvh_pick;
 
@@ -109,7 +110,7 @@ unittest {
     // calls with the delivered (address, flags), and it is public for exactly
     // this use — the same arrangement `snap.invalidateSnapGrids()` has.
     import std.math      : fabs;
-    import mesh_dirty    : noteMeshChange;
+    import mesh_dirty : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
 
     Mesh src;

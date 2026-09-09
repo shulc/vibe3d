@@ -4,10 +4,8 @@
 // Extracted verbatim from mesh.d (task 0425, campaign 0407 — last mesh.d
 // structural split). One-way dependency mesh_gpu → mesh: GpuMesh consumes
 // the `const Mesh` PUBLIC API only (vertices/edges/faces/faceMaterial/
-// mutationVersion), so no visibility widening was needed. mesh.d re-exports
-// GpuMesh via `public import` so every existing `import mesh;` /
-// `import mesh : GpuMesh;` call site resolves unchanged — same facade
-// pattern as source/handler.d (task 0423).
+// mutationVersion), so no visibility widening was needed. Since task 4071,
+// consumers name this module directly instead of reaching it through mesh.d.
 module mesh_gpu;
 
 import bindbc.opengl;

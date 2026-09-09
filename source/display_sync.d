@@ -1,6 +1,7 @@
 module display_sync;
 
-import mesh : Mesh, GpuMesh;
+import mesh : Mesh;
+import mesh_gpu : GpuMesh;
 import mesh_edit_delta : MeshEditScope;
 import perf_probe : g_perf, Cat;
 

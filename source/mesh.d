@@ -15775,13 +15775,6 @@ version (unittest) Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
 
 
 
-// ---------------------------------------------------------------------------
-// GpuMesh  →  extracted to source/mesh_gpu.d (task 0425). Re-exported here so
-// every `import mesh;` / `import mesh : GpuMesh;` call site resolves unchanged.
-// ---------------------------------------------------------------------------
-public import mesh_gpu;
-
-
 // computation (naive O(V²) all-pairs scan). Kept ONLY so the two blocks next
 
 // Helper: convert size_t to string for assert messages.

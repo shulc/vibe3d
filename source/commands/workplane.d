@@ -5,7 +5,7 @@ import std.json : JSONValue, JSONType;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh    : Mesh, GpuMesh;
+import mesh    : Mesh;
 import view;
 import editmode : EditMode;
 import params : Param, wireArgs;

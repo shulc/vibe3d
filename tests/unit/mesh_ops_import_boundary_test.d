@@ -237,6 +237,13 @@ D");
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);
+    size_t meshGpuEdges;
+    foreach (hit; meshImports) if (hit.target == "mesh_gpu") ++meshGpuEdges;
+    assert(meshGpuEdges == 0,
+        format("mesh imports mesh_gpu through %d direct edge(s); task 4071 "
+             ~ "requires no public, private, static, or function-local edge",
+               meshGpuEdges));
+
     const publicPaths = publicImportPaths("mesh", codeByModule);
     size_t publicOperationEdges;
     foreach (hit; meshImports) if (hit.isPublic && hit.target.startsWith("mesh_ops.")) {
