@@ -194,6 +194,8 @@ import input_router : InputRouter;
 // source/input_frame_state.d's module doc comment.
 import input_frame_state : InputFrameState, DragMode;
 import frame_runner : FrameRunner;
+import ui.viewport_render : SceneInputs, SceneViewInputs,
+    SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -2266,47 +2268,6 @@ void main(string[] args) {
     // beside `app.hoveredVertexPtr`). Same storage, one owner.
     mesh.resetSelection();
 
-    // Cache: face→edge mask for Polygons mode edge highlighting.
-    // Rebuilt when the face selection changes, when the mesh's connectivity
-    // does, or when the primary layer is switched — see the trigger in
-    // `ui/viewport_render.d` for why all three terms are needed.
-    //
-    // Both arrays are MARKS-shaped (`uint`, `Mesh.Marks` bits), not `bool[]`
-    // (task 0585). The cache is handed to `drawEdges` as a `MarkView` over
-    // itself, so it uses the one mask representation the draw path has rather
-    // than a second one that could drift from it; and the snapshot is a copy
-    // of `mesh.faceMarks` itself, so detecting a change needs no materialized
-    // `bool[]` of the current selection to compare against — that comparison
-    // used to allocate a `bool[F]` on the RIGHT-HAND SIDE of its own cache
-    // check, every frame, which cost more than the cache saved.
-    uint[] faceSelEdgesCache;    // per EDGE:  0 or Mesh.Marks.Select
-    uint[] faceSelEdgesPrevSel;  // per FACE:  copy of faceMarks at last rebuild
-    // WHICH MESH the two arrays above were built from, and at what topology.
-    // The cache is a function of the face SELECTION *and* of `faces`/`edges`,
-    // but the detector beside it can only see the selection — so without this
-    // key a primary-layer switch between two layers whose face marks happen to
-    // agree (same face count, same faces selected) leaves the previous layer's
-    // edge mask painting the new layer's edges. That is exactly the hazard
-    // `MeshCacheKey`'s doc comment describes, and this is the same
-    // address-keyed convention `snap.d` / `bvh_pick.d` already use.
-    //
-    // `MeshStructKey`, NOT `MeshCacheKey`: the mask depends on connectivity
-    // only, and `mutationVersion` moves once per vertex per motion event, so
-    // the `MeshCacheKey` spelling would rebuild this on every frame of a drag
-    // — putting a selection-sized allocation back on the per-frame path, which
-    // is what task 0585 exists to take off it.
-    MeshStructKey faceSelEdgesKey;
-
-    // Cache: edge-loop hover mask for ElementMove + falloff EdgeLoops.
-    // Hovering an edge pre-highlights the whole loop ring (mirrors the apply,
-    // which expands a picked edge to its loop). The loop WALK (edgeLoopRing +
-    // the ring→edge-index map) is expensive, so recompute ONLY when the hovered
-    // edge or the mesh topology changes — never per frame.
-    bool[] loopHoverEdgesCache;
-    int    loopHoverPrevEdge = -2;        // hoveredEdge at last rebuild (-2 = never)
-    ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
-    bool   loopHoverPrevSlice = false;    // ring KIND at last rebuild (slice vs edge-loop)
-
     // Task 1040: state relocated to InputFrameState.dragMode, behind a
     // same-name forwarder that kept all ~46 bare read/write sites
     // untouched. The mouse handlers and the pick* family left main() in
@@ -2416,101 +2377,6 @@ void main(string[] args) {
                 if (fo.pipeEnabled && fo.isActive())   // type != None; alloc-free
                     return true;
         return false;
-    }
-
-    // ElementMove + falloff EdgeLoops: build the cage-edge mask for the whole
-    // loop ring through the hovered edge, so the renderer can pre-highlight the
-    // loop in the hover colour (matching the apply, which expands a picked edge
-    // to its loop). CACHED: the loop walk (edgeLoopRing + ring→edge lookup)
-    // only re-runs when `hoveredEdge` or the mesh topology changes — never per
-    // frame. Returns a cage-indexed bool[] (length == mesh.edges.length); on a
-    // valence-3 / boundary / non-quad edge `edgeLoopRing` falls back to the
-    // seed edge, so the mask just lights the single hovered edge.
-    const(bool)[] rebuildLoopHoverMask(int hovEdge) {
-        // Settled-mesh precondition (debug-only, stripped from release builds
-        // — task 0724 / audit-4 M6). Both arms below read structVersion-
-        // derived state off the LIVE mesh: `loopSliceRingEdges` /
-        // `edgeLoopRing` walk the loops family, and the ring→edge-index
-        // mapping goes through edgeIndexMap. This runs once per frame at
-        // hover, i.e. AFTER whatever command last touched topology has
-        // returned, so every mutator's terminal buildLoops() has landed.
-        //
-        // TASK 0833 — NOT demonstrable HERE, by construction: this function is
-        // nested inside `main()` (it is handed to `EditorApp` as a delegate),
-        // so no unit test can call it and no amount of fixture work would
-        // change that. What is demonstrated instead is the SAME pair over the
-        // SAME reads at the deliberate copy of this code,
-        // `LoopSliceTool.toolStateJson` — a stale-loops mesh makes it throw,
-        // and deleting its `assertLoopsValid()` turns
-        // tests/unit/tools/slice/loop_slice_tool_test.d red. The precondition
-        // travels with the copy precisely so the two spellings cannot disagree
-        // about when it is legal to run; that is also what makes the copy a
-        // fair stand-in for this one.
-        //
-        // The `assertEdgeMapValid()` below cannot be the sole failure on this
-        // tree, and since task 0790 deleted `buildLoops`'s
-        // `rebuildEdgeIndexMap` parameter (the one arm that could produce
-        // "loops valid, map stale") that is now true BY CONSTRUCTION, not
-        // just unobserved — see the note at commands/select/loop.d and case 7
-        // of the stamp trace table in tests/unit/mesh_test.d. Kept anyway as
-        // the guard that starts discriminating the day some future primitive
-        // reintroduces a producer.
-        mesh.assertLoopsValid();
-        mesh.assertEdgeMapValid();
-        // `sliceRing`: highlight the ring the loop-SLICE lands on (seed +
-        // quad-ring exit rails) instead of the classic edge LOOP. Those run
-        // perpendicular, so the Loop Slice tool needs this or the highlighted
-        // ring won't match the cut (task 0231). Part of the cache key: two
-        // tools can share hovEdge + topology yet want different rings.
-        bool sliceRing = activeTool !is null && activeTool.edgeLoopHoverSliceRing();
-
-        // recorded remainder (1906 §3.6): `topologyVersion` owns this compare
-        // and keeps it — the ring walk is a function of connectivity alone, and
-        // that counter is exactly `Points|Polygons`. Nothing here is
-        // position-dependent, so the 0401 class this task is about cannot
-        // reach it. Plan §3.4 row 20.
-        if (loopHoverPrevEdge == hovEdge
-            && loopHoverPrevTopo == mesh.topologyVersion
-            && loopHoverPrevSlice == sliceRing
-            && loopHoverEdgesCache.length == mesh.edges.length)
-            return loopHoverEdgesCache;   // cache hit — no walk
-
-        loopHoverPrevEdge = hovEdge;
-        loopHoverPrevTopo = mesh.topologyVersion;
-        loopHoverPrevSlice = sliceRing;
-        if (loopHoverEdgesCache.length != mesh.edges.length)
-            loopHoverEdgesCache = new bool[](mesh.edges.length);
-        loopHoverEdgesCache[] = false;
-
-        if (hovEdge < 0 || hovEdge >= cast(int)mesh.edges.length)
-            return loopHoverEdgesCache;
-
-        if (sliceRing) {
-            // The exact set of cage edges the cut splits — directly indexed.
-            foreach (ei; mesh.loopSliceRingEdges(cast(uint)hovEdge))
-                if (ei >= 0 && ei < cast(int)loopHoverEdgesCache.length)
-                    loopHoverEdgesCache[ei] = true;
-            return loopHoverEdgesCache;
-        }
-
-        auto seed = mesh.edges[hovEdge];
-        uint[] ring = edgeLoopRing(mesh, seed[0], seed[1]);
-        if (ring.length < 2) return loopHoverEdgesCache;
-
-        // Map each consecutive ring vert pair (CLOSED: last→first too) back to
-        // its cage edge index via the mesh's edgeIndexMap (keyed by edgeKey).
-        // A 2-vert fallback ring closes onto itself → only the single edge.
-        foreach (i; 0 .. ring.length) {
-            uint a = ring[i];
-            uint b = ring[(i + 1) % ring.length];
-            if (a == b) continue;
-            if (auto p = edgeKey(a, b) in mesh.edgeIndexMap) {
-                uint ei = *p;
-                if (ei < loopHoverEdgesCache.length)
-                    loopHoverEdgesCache[ei] = true;
-            }
-        }
-        return loopHoverEdgesCache;
     }
 
     // Reset every pipe stage that opts into "clear on tool switch unless
@@ -4700,9 +4566,6 @@ void main(string[] args) {
     app.activeToolIdPtr        = &activeToolId;
     app.layerRenameIndexPtr    = &layerRenameIndex;
     app.layerRenameBufPtr      = &layerRenameBuf;
-    app.faceSelEdgesCachePtr   = &faceSelEdgesCache;
-    app.faceSelEdgesPrevSelPtr = &faceSelEdgesPrevSel;
-    app.faceSelEdgesKeyPtr     = &faceSelEdgesKey;
     app.layoutPtr              = &layout;
     app.panelsPtr              = &panels;
     app.statusLineGroupsPtr    = &statusLineGroups;
@@ -4772,7 +4635,6 @@ void main(string[] args) {
     // below) for the same reason every other field in these blocks is: the
     // moved provider closures read `app` through the `ref` parameter.
     app.viewportInputAllowedDg = &ifs.viewportInputAllowed;
-    app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
     // Phase-B ctx wiring (source/http_providers.d): pointer-backed selection
     // order, by-value class refs, and app-owned hook delegates.
@@ -7711,6 +7573,8 @@ void main(string[] args) {
                 }
 
                 if (needRender) {
+                    import hover_state : g_hoveredItem;
+                    import weightmap_view : currentWeightMapName;
                     bool _hovK = (k == vpm.hoveredId);
                     // Perf: draw is a TOP-LEVEL, DISJOINT phase — it runs
                     // sequentially BEFORE the ImGui section (a blit block
@@ -7719,10 +7583,56 @@ void main(string[] args) {
                     // this frame. No-op in the default build.
                     auto zFramesDraw = g_frames.phase(Phase.draw);
                     g_fc.bumpCellRendered();
-                    frameRunner.drawScene(app, _cv, vpk, _ovMode,
-                        showVertHover && _hovK,
-                        showEdgeHover && _hovK,
-                        showFaceHover && _hovK);
+
+                    SceneInputs _sceneInputs;
+                    _sceneInputs.document = &document;
+                    _sceneInputs.mesh = &mesh();
+                    _sceneInputs.pipeContext = g_pipeCtx;
+                    version (WithAI) static if (kCopilotEnabled) {
+                        _sceneInputs.aiState = aiState;
+                        _sceneInputs.copilotPanel = copilotPanel;
+                    }
+
+                    SceneViewInputs _viewInputs;
+                    _viewInputs.cell = _cv;
+                    _viewInputs.viewport = &vpk;
+
+                    SceneDisplayInputs _displayInputs;
+                    _displayInputs.activePlan = resolveDrawPlan(_cv.display, false);
+                    _displayInputs.backdropPlan = resolveDrawPlan(_cv.display, true);
+                    _displayInputs.grid = g_viewGrid;
+                    _displayInputs.weightMapName = currentWeightMapName();
+                    _displayInputs.feedbackType = viewportPickType(selTypeOrder);
+                    _displayInputs.currentType = currentSelType(selTypeOrder);
+                    _displayInputs.hoveredVertex = ifs.hoveredVertex;
+                    _displayInputs.hoveredEdge = ifs.hoveredEdge;
+                    _displayInputs.hoveredFace = ifs.hoveredFace;
+                    _displayInputs.hoveredItem = g_hoveredItem;
+                    _displayInputs.showVertexHover = showVertHover && _hovK;
+                    _displayInputs.showEdgeHover = showEdgeHover && _hovK;
+                    _displayInputs.showFaceHover = showFaceHover && _hovK;
+                    version (WithAI) static if (kCopilotEnabled) {
+                        _displayInputs.testMode = testMode;
+                        _displayInputs.copilotPanelShown = g_copilotPanelShown;
+                    }
+
+                    SceneGpuInputs _gpuInputs;
+                    _gpuInputs.primary = &gpu;
+                    _gpuInputs.shader = shader;
+                    _gpuInputs.litShader = litShader;
+                    _gpuInputs.checkerShader = checkerShader;
+                    _gpuInputs.gridShader = gridShader;
+                    _gpuInputs.gridVao = gridVao;
+                    _gpuInputs.gridOnlyVertCount = gridOnlyVertCount;
+
+                    ToolOverlayInputs _overlayInputs;
+                    _overlayInputs.activeTool = activeTool;
+                    _overlayInputs.gizmoHost = pipeGizmoHost;
+                    _overlayInputs.buildSubject = app.buildToolVts;
+                    _overlayInputs.falloffActive = anyFalloffActive();
+
+                    frameRunner.drawScene(_sceneInputs, _viewInputs,
+                        _displayInputs, _gpuInputs, _overlayInputs, _ovMode);
                 }
             }
 

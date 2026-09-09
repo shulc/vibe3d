@@ -726,10 +726,9 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
     // element-for-element while their edge lists do not: switch the primary
     // between them and the previous layer's edge mask paints this one's edges.
     //
-    //   layer A — the reset cube: 6 faces, 12 edges. Face 5 is [0,1,5,4] and
-    //             its edges are the SCATTERED {3,4,8,11}.
-    //   layer B — six DISJOINT quads: 6 faces, 24 edges. Face 5's edges are
-    //             the CONTIGUOUS {20,21,22,23}.
+    //   layer A — an imported cube: 6 faces, 12 edges. Every face is a quad.
+    //   layer B — an imported open octahedral shell: 6 faces, 12 edges. Face
+    //             indices name triangles and the connectivity is different.
     //
     // Both carry a 6-long `faceMarks` with exactly face 5 set, so the marks
     // compare is false across the switch and cannot be what saves this. The
@@ -738,60 +737,63 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
     // file can see (the assertion below states that requirement rather than
     // trusting the fixture).
     //
-    // MEASURED against a binary with the mesh-identity term removed from the
-    // rebuild trigger: this block reads 1 submission where layer A implies 6.
-    // Not a crash and not a wrong-looking number — B's 24-entry mask over A's
-    // 12 edges reports false at every one of A's indices (a `MarkView` answers
-    // false past its end), so the highlight silently disappears.
+    // Equal edge counts are load-bearing: the cache-length repair cannot save
+    // a key whose mesh-identity term is missing. Both meshes are loaded by the
+    // same command and have the same face/edge cardinalities, so address is
+    // the sole discriminator when their structural counters coincide.
     resetApp();
+
+    enum string cubeBody = `{
+      "vertices":[[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
+                  [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+      "faces":[[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]
+    }`;
+    auto loadA = parseJSON(httpPost("/api/command",
+        commandBody("scene.loadMesh", cubeBody)));
+    assert(loadA["status"].str == "ok", "load cube A failed: " ~ loadA.toString);
+    settle();
 
     auto modelA = gj("/api/model");
     assert(modelA["faces"].array.length == 6, "fixture premise: 6 cube faces");
     assert(modelEdgeCount(modelA) == 12, "fixture premise: 12 cube edges");
-    selectPolys([5L]);
-    settle();
-    assert(selTypeNow() == "polygon", "layer A is not in the polygon feedback type");
-    immutable long wantA = expectedEdgeCalls(edgeMaskForFaces(modelA, [5L]));
-    immutable long gotA  = passCalls(lastScene(), "edges");
-    assert(gotA == wantA,
-           format("layer A, face 5 selected: expected %d edge-pass submissions, got %d",
-                  wantA, gotA));
 
-    // ---- Layer B: same face count, same selected face, twice the edges ----
+    // ---- Layer B: same face/edge counts and same selected face marks ----
     cmd("layer.add name:B");
-    string bVerts = "[", bFaces = "[";
-    foreach (f; 0 .. 6) {
-        immutable double ox = f * 3.0;
-        immutable long base = f * 4;
-        if (f) { bVerts ~= ","; bFaces ~= ","; }
-        bVerts ~= format("[%.1f,0,0],[%.1f,0,0],[%.1f,0,1],[%.1f,0,1]",
-                         ox, ox + 1.0, ox + 1.0, ox);
-        bFaces ~= format("[%d,%d,%d,%d]", base, base + 1, base + 2, base + 3);
-    }
-    bVerts ~= "]"; bFaces ~= "]";
-    auto lm = parseJSON(httpPost("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, bVerts, bFaces))));
+    enum string shellBody = `{
+      "vertices":[[0,1,0],[0,-1,0],[1,0,0],[0,0,1],[-1,0,0],[0,0,-1]],
+      "faces":[[0,3,4],[0,4,5],[0,5,2],[1,3,2],[1,4,3],[1,2,5]]
+    }`;
+    auto lm = parseJSON(httpPost("/api/command",
+        commandBody("scene.loadMesh", shellBody)));
     assert(lm["status"].str == "ok", "load-mesh into layer B failed: " ~ lm.toString);
     settle();
 
     auto modelB = gj("/api/model");
-    assert(modelB["faces"].array.length == 6 && modelEdgeCount(modelB) == 24,
-           format("fixture premise: layer B is 6 faces / 24 edges, got %d / %d",
+    assert(modelB["faces"].array.length == 6 && modelEdgeCount(modelB) == 12,
+           format("fixture premise: layer B is 6 faces / 12 edges, got %d / %d",
                   modelB["faces"].array.length, modelEdgeCount(modelB)));
 
-    selectPolys([5L]);
+    long selectedFace = -1;
+    long wantA, wantB;
+    foreach (fi; 0L .. 6L) {
+        immutable long a = expectedEdgeCalls(edgeMaskForFaces(modelA, [fi]));
+        immutable long b = expectedEdgeCalls(edgeMaskForFaces(modelB, [fi]));
+        if (a != b) { selectedFace = fi; wantA = a; wantB = b; break; }
+    }
+    assert(selectedFace >= 0,
+           "fixture is inert: no same-index face gives different real edge draws");
+
+    selectPolys([selectedFace]);
     settle();
     assert(selTypeNow() == "polygon", "layer B is not in the polygon feedback type");
-    immutable long wantB = expectedEdgeCalls(edgeMaskForFaces(modelB, [5L]));
     immutable long gotB  = passCalls(lastScene(), "edges");
     assert(gotB == wantB,
-           format("layer B, face 5 selected: expected %d edge-pass submissions, got %d",
-                  wantB, gotB));
+           format("layer B, face %d selected: expected %d edge-pass submissions, got %d",
+                  selectedFace, wantB, gotB));
 
     // Non-vacuity: a stale cache is only observable if the two layers imply
     // different readings in the first place.
-    assert(wantA != wantB,
-           format("fixture is inert: both layers imply %d edge-pass submissions, "
-                  ~ "so a stale mask reads exactly like a fresh one", wantA));
+    assert(wantA != wantB);
 
     // ---- The switch ----
     // `layer.select` is an ITEM selection, so it moves the front of the
@@ -803,13 +805,14 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
     // user to do (click another layer, press 3).
     cmd("layer.select index:0");
     settle();
-    selectPolys([5L]);
+    selectPolys([selectedFace]);
     settle();
     assert(selTypeNow() == "polygon",
            "back on layer A but not in the polygon feedback type");
 
     auto modelBack = gj("/api/model");
-    assert(modelEdgeCount(modelBack) == 12,
+    assert(modelEdgeCount(modelBack) == 12
+           && modelBack["vertices"].array.length == 8,
            format("the primary is not layer A again (it reports %d edges) — the "
                   ~ "assertion below would be measuring the wrong mesh",
                   modelEdgeCount(modelBack)));
@@ -817,11 +820,12 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
     immutable long gotBack = passCalls(lastScene(), "edges");
     assert(gotBack == wantA,
            format("after switching the primary back to layer A the edge pass "
-                  ~ "submitted %d batches; layer A's own face-5 mask implies %d "
+                  ~ "submitted %d batches; layer A's own face mask implies %d "
                   ~ "(layer B's implies %d). The face->edge highlight cache is "
                   ~ "still the one built for layer B: its rebuild trigger is "
                   ~ "reading the face selection alone, and the two layers' face "
-                  ~ "marks are identical.", gotBack, wantA, wantB));
+                  ~ "marks are identical (same selected face %d).",
+                    gotBack, wantA, wantB, selectedFace));
 
     resetApp();   // back to one layer for whatever runs next in this process
 }

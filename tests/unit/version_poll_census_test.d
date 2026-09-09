@@ -607,8 +607,6 @@ unittest {
 /// confined-publisher and mesh-planes censuses, instead of three copies of the
 /// same arithmetic.
 private static immutable LedgerRow[] kRemainder = [
-    LedgerRow("main.rebuildLoopHoverMask", 1,
-        "row 20 — the loop-hover mask's topology stamp"),
     LedgerRow("main", 2,
         "the frame flush block: the missedPublishers shadow check, and the "
       ~ "cage/preview upload fast path (row 3). Both are in `main` itself"),
@@ -623,7 +621,10 @@ private static immutable LedgerRow[] kRemainder = [
     // to the TERM that owns the counter. The count is unchanged (3), and that
     // is the whole point of the move: a new cache that keys on an existing
     // term instantiates `MeshKey!(...)` and adds NO row here, because the
-    // argument for reading that counter was made once, at the term. A new
+    // argument for reading that counter was made once, at the term. Task 0782
+    // moved row 20's scratch to ViewportSceneRenderer and replaced its
+    // hand-carried topology counter with MeshTopoKey, so the old
+    // `main.rebuildLoopHoverMask` row leaves without adding a compare. A new
     // TERM is still a new row and still has to be argued.
     LedgerRow("MeshTermMutation.same", 1,
         "the `mutationVersion` term's own compare"),

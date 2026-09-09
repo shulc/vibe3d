@@ -1,6 +1,6 @@
 module ui.viewport_render;
 
-// Task 0722 (audit §2C A3). `renderViewportSceneToFbo` is not a panel: 871
+// Task 0722 (audit §2C A3). The scene renderer is not a panel: 871
 // lines, 22 gl* calls, and NOT ONE reference to ImGui. It ended up inside
 // `ui/panels.d` as a side effect of 0419, which moved every remaining
 // draw-something entry point out of app.d's main() in one sweep and did not
@@ -21,43 +21,101 @@ module ui.viewport_render;
 
 import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import bg_gpu_cache          : BgGpuDrawCache;
-import mesh;                 // Mesh
-import weightmap_view       : currentWeightMapName;  // task 1090
+import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
+import mesh_ops.loop_slice   : loopSliceRingEdges;
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
 import mesh_gpu              : BaseWire, GpuMesh, OccludedPass;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
-import document              : Layer, kindInfo;
+import document              : Document, Layer, kindInfo;
 import viewport              : Viewport3D;
-import editor_app            : EditorApp, OverlayMode;
+import editor_app            : OverlayMode;
+import display_state         : DrawPlan, SurfaceShading;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
-import toolpipe.pipeline     : g_pipeCtx;
+import tool                  : Tool;
+import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
 import toolpipe.packets      : SubjectPacket;
 import toolpipe.stages.workplane : WorkplaneStage;
 import operator              : VectorStack;
-import viewgrid              : g_viewGrid, viewGridSizeFor, viewGridFadeRadius;
+import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius;
+import shader                : Shader, LitShader, CheckerShader, GridShader;
+import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
 import tools.transform.transform   : TransformTool;
 
 // The copilot ghost overlay at the tail of the scene pass; compiled out of
 // `modeling-noai` exactly as it is in ui/panels.d, whose block this mirrors.
-version (WithAI) import commands.ui.copilot_panel : g_copilotPanelShown;
 version (WithAI) {
     import ai.copilot_gate : kCopilotEnabled;
+    import ai.state : EditorAiState;
+    import copilot_panel : CopilotPanel;
     import copilot_overlay : drawCopilotFindingOverlay;
 }
 
 // =============================================================================
-// Phase 6 -- renderViewportSceneToFbo, the last panel entry point. Reads
-// shader/checkerShader/gridShader/gridVao/gridOnlyVertCount/hover x3/
-// faceSelEdgesCache+PrevSel/rebuildLoopHoverMask/litShader/gpu/mesh plus
-// `edgeKey` (from mesh_topo.d since task 4066) -- all
-// relocated to editor_app.d in Phase 1 and imported at this module's header;
-// this phase is a verbatim body move. EditorApp remains the broad scene
-// context; the background cache arrives separately through its draw-only view.
+// Task 0782 / plan §9: the scene pass consumes role-specific inputs. None of
+// these structs is a renamed application context: the document and mesh stay
+// borrowed from their owners, display policy is already resolved by the frame
+// loop, GPU handles are grouped separately, and renderer scratch lives on the
+// renderer instance below. BgGpuDrawCache stays a separate draw-only view so
+// its GL lifetime remains owned by FrameRunner.
 // =============================================================================
+
+alias BuildToolSubject = void delegate(out SubjectPacket, ref VectorStack);
+
+struct SceneInputs {
+    Document* document;
+    Mesh* mesh;
+    ToolPipeContext pipeContext;
+    version (WithAI) {
+        EditorAiState aiState;
+        CopilotPanel copilotPanel;
+    }
+}
+
+struct SceneViewInputs {
+    Viewport3D cell;
+    Viewport* viewport;
+}
+
+struct SceneDisplayInputs {
+    DrawPlan activePlan;
+    DrawPlan backdropPlan;
+    ViewGridPrefs grid;
+    string weightMapName;
+    SelType feedbackType;
+    SelType currentType;
+    int hoveredVertex = -1;
+    int hoveredEdge = -1;
+    int hoveredFace = -1;
+    int hoveredItem = -1;
+    bool showVertexHover;
+    bool showEdgeHover;
+    bool showFaceHover;
+    version (WithAI) {
+        bool testMode;
+        bool copilotPanelShown;
+    }
+}
+
+struct SceneGpuInputs {
+    GpuMesh* primary;
+    Shader shader;
+    LitShader litShader;
+    CheckerShader checkerShader;
+    GridShader gridShader;
+    uint gridVao;
+    int gridOnlyVertCount;
+}
+
+struct ToolOverlayInputs {
+    Tool activeTool;
+    PipeGizmoHost gizmoHost;
+    BuildToolSubject buildSubject;
+    bool falloffActive;
+}
 
 // -------------------------------------------------------------------------
 // Phase 2 — FBO scene render
@@ -68,18 +126,109 @@ version (WithAI) {
 // recorded inside the "Viewport" window samples the freshly-filled texture
 // at RenderDrawData → same-frame content, zero latency).
 //
-// Captured from the outer scope: gpu, shader, litShader, checkerShader,
-// gridShader, cameraView, mesh, document, activeTool, pipeGizmoHost,
-// hoveredVertex/Edge/Face, faceSelEdgesCache/PrevSel, editMode,
-// gridVao, gridOnlyVertCount, g_pipeCtx, etc.
-void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
-                               Viewport3D v, ref Viewport vp,
-                               OverlayMode overlayMode,
-                               bool showVertHover, bool showEdgeHover,
-                               bool showFaceHover) {
-    with (app) {
+// Inputs are named above by role; the only mutable render scratch is owned by
+// the ViewportSceneRenderer instance.
+final class ViewportSceneRenderer {
+private:
+    uint[] faceSelEdgesCache_;
+    uint[] faceSelEdgesPrevSel_;
+    MeshStructKey faceSelEdgesKey_;
+    bool[] loopHoverEdgesCache_;
+    int loopHoverPrevEdge_ = -2;
+    MeshTopoKey loopHoverKey_;
+    bool loopHoverPrevSlice_;
+
+    const(bool)[] rebuildLoopHoverMask(ref Mesh mesh, int hovEdge,
+                                       bool sliceRing) {
+        mesh.assertLoopsValid();
+        mesh.assertEdgeMapValid();
+        if (loopHoverPrevEdge_ == hovEdge
+            && loopHoverKey_.matches(mesh)
+            && loopHoverPrevSlice_ == sliceRing
+            && loopHoverEdgesCache_.length == mesh.edges.length)
+            return loopHoverEdgesCache_;
+
+        loopHoverPrevEdge_ = hovEdge;
+        loopHoverKey_.stamp(mesh);
+        loopHoverPrevSlice_ = sliceRing;
+        if (loopHoverEdgesCache_.length != mesh.edges.length)
+            loopHoverEdgesCache_ = new bool[](mesh.edges.length);
+        loopHoverEdgesCache_[] = false;
+
+        if (hovEdge < 0 || hovEdge >= cast(int)mesh.edges.length)
+            return loopHoverEdgesCache_;
+        if (sliceRing) {
+            foreach (ei; mesh.loopSliceRingEdges(cast(uint)hovEdge))
+                if (ei >= 0 && ei < cast(int)loopHoverEdgesCache_.length)
+                    loopHoverEdgesCache_[ei] = true;
+            return loopHoverEdgesCache_;
+        }
+
+        auto seed = mesh.edges[hovEdge];
+        uint[] ring = edgeLoopRing(mesh, seed[0], seed[1]);
+        if (ring.length < 2) return loopHoverEdgesCache_;
+        foreach (i; 0 .. ring.length) {
+            uint a = ring[i];
+            uint b = ring[(i + 1) % ring.length];
+            if (a == b) continue;
+            if (auto p = edgeKey(a, b) in mesh.edgeIndexMap) {
+                uint ei = *p;
+                if (ei < loopHoverEdgesCache_.length)
+                    loopHoverEdgesCache_[ei] = true;
+            }
+        }
+        return loopHoverEdgesCache_;
+    }
+
+    void drawToolOverlays(ToolOverlayInputs inputs, OverlayMode mode,
+                          ref Viewport viewport, Shader shader) {
+        if (mode == OverlayMode.None) return;
+        auto zOv = g_perf.scope_(Cat.drawOverlays);
+        bool visualOnly = (mode == OverlayMode.Visual);
+        if (inputs.activeTool) {
+            SubjectPacket subj; VectorStack vts;
+            inputs.buildSubject(subj, vts);
+            inputs.activeTool.draw(shader, viewport, vts, visualOnly);
+        } else if (inputs.falloffActive) {
+            import toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts;
+            inputs.buildSubject(subj, vts);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            if (fp.enabled)
+                inputs.gizmoHost.draw(shader, viewport, fp,
+                                      inputs.gizmoHost.ownPool(), visualOnly);
+        }
+    }
+
+public:
+    void draw(SceneInputs scene, SceneViewInputs view,
+              SceneDisplayInputs display, SceneGpuInputs gpuInputs,
+              BgGpuDrawCache bgGpuCache, ToolOverlayInputs overlays,
+              OverlayMode overlayMode) {
+    assert(scene.document !is null && scene.mesh !is null
+           && scene.pipeContext !is null);
+    assert(view.cell !is null && view.viewport !is null);
+    assert(gpuInputs.primary !is null);
+    ref Document document = *scene.document;
+    ref Mesh mesh = *scene.mesh;
+    Viewport3D v = view.cell;
+    ref Viewport vp = *view.viewport;
+    ref GpuMesh gpu = *gpuInputs.primary;
+    auto shader = gpuInputs.shader;
+    auto litShader = gpuInputs.litShader;
+    auto checkerShader = gpuInputs.checkerShader;
+    auto gridShader = gpuInputs.gridShader;
+    immutable uint gridVao = gpuInputs.gridVao;
+    immutable int gridOnlyVertCount = gpuInputs.gridOnlyVertCount;
+    auto activeTool = overlays.activeTool;
+    immutable int hoveredVertex = display.hoveredVertex;
+    immutable int hoveredEdge = display.hoveredEdge;
+    immutable int hoveredFace = display.hoveredFace;
+    immutable bool showVertHover = display.showVertexHover;
+    immutable bool showEdgeHover = display.showEdgeHover;
+    immutable bool showFaceHover = display.showFaceHover;
     import bindbc.opengl;
-    import display_state : DrawPlan, resolveDrawPlan, SurfaceShading;
 
     // The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
     // it (rather than to whichever plan just drew) keeps the program in the
@@ -110,8 +259,8 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     // passes that ran before — faces lit, wireframe on, no forced vertex
     // dots, backdrop dimmed by the same factor that used to be a local
     // constant here.
-    immutable DrawPlan activePlan   = resolveDrawPlan(v.display, false);
-    immutable DrawPlan backdropPlan = resolveDrawPlan(v.display, true);
+    immutable DrawPlan activePlan   = display.activePlan;
+    immutable DrawPlan backdropPlan = display.backdropPlan;
 
     // Bind FBO — scene draws go here instead of the default framebuffer.
     // Viewport covers the entire FBO (offsets zeroed: FBO origin IS the
@@ -234,7 +383,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     // A zero step means the view has no usable scale (a degenerate camera);
     // fall back to the unit lattice rather than collapsing the grid to a
     // point.
-    float gridStep = viewGridSizeFor(vp, g_viewGrid);
+    float gridStep = viewGridSizeFor(vp, display.grid);
     if (!(gridStep > 0)) gridStep = 1.0f;
 
     float[16] gridModel = [
@@ -243,7 +392,8 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
         0, 0, gridStep, 0,
         0, 0, 0,        1,
     ];
-    if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+    if (auto wp = cast(WorkplaneStage)
+                  scene.pipeContext.pipeline.findByTask(TaskCode.Work)) {
         if (!wp.isAuto) {
             Vec3 n, a1, a2;
             wp.currentBasis(n, a1, a2);
@@ -307,13 +457,13 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     {
         import toolpipe.stages.symmetry : SymmetryStage;
         auto sym = cast(SymmetryStage)
-                   g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+                   scene.pipeContext.pipeline.findByTask(TaskCode.Symm);
         if (sym !is null && sym.enabled) {
             Vec3 n, a1, a2;
             Vec3 c;
             if (sym.useWorkplane) {
                 if (auto wpst = cast(WorkplaneStage)
-                                g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+                                scene.pipeContext.pipeline.findByTask(TaskCode.Work)) {
                     wpst.currentBasis(n, a1, a2);
                     c = wpst.center;
                 } else {
@@ -409,7 +559,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
                 // that does not takes the disable path and reads the neutral,
                 // dimmed, which is the same rule the active pass follows.
                 if (backdropPlan.shading == SurfaceShading.Weight)
-                    (*bg).uploadWeightColors(lyr.meshRef(), currentWeightMapName());
+                    (*bg).uploadWeightColors(lyr.meshRef(), display.weightMapName);
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.meshRef().surfaces);
                 litShader.setDim(backdropPlan.dim);
@@ -465,7 +615,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     // the ordering, the item-inclusive resolve IS the front — and it is left
     // spelled its own way because it is asking a different question ("is the
     // item type current"), not gating an element pass.
-    immutable SelType selFeedbackType = viewportPickType(selTypeOrder);
+    immutable SelType selFeedbackType = display.feedbackType;
 
     // ---- Faces (Blinn-Phong, or a flat fill) ----
     // Gated on the plan's SHADING group. `drawFaces == false` means no face
@@ -501,7 +651,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
             // makes the other three cells of a Quad layout free, so "once per
             // cell" costs the same as "once per frame" would.
             if (activePlan.shading == SurfaceShading.Weight)
-                gpu.uploadWeightColors(mesh, currentWeightMapName());
+                gpu.uploadWeightColors(mesh, display.weightMapName);
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
             litShader.setShading(activePlan.shading);
@@ -607,7 +757,9 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
                     hovForDraw = -1;
                 else if (activeTool.wantsEdgeLoopHover()
                          && showEdgeHover && hoveredEdge >= 0)
-                    loopMask = rebuildLoopHoverMask(hoveredEdge);
+                    loopMask = rebuildLoopHoverMask(
+                        mesh, hoveredEdge,
+                        activeTool.edgeLoopHoverSliceRing());
             }
             gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
                           loopMask, baseWire, occluded);
@@ -661,17 +813,17 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
             // rewrites `faceMarks`. That term is a CONTENT compare, not a
             // version poll, and a bus class would be strictly coarser than the
             // bit-level answer it already gets. Plan §3.4 row 16.
-            bool selChanged = !faceSelEdgesKey.matches(mesh)
-                           || faceSelEdgesCache.length != mesh.edges.length
-                           || marksBitDiffer(faceSelEdgesPrevSel, mesh.faceMarks,
+            bool selChanged = !faceSelEdgesKey_.matches(mesh)
+                           || faceSelEdgesCache_.length != mesh.edges.length
+                           || marksBitDiffer(faceSelEdgesPrevSel_, mesh.faceMarks,
                                              Mesh.Marks.Select);
             if (selChanged) {
-                faceSelEdgesKey.stamp(mesh);
-                faceSelEdgesPrevSel.length = mesh.faceMarks.length; // no-op when equal
-                faceSelEdgesPrevSel[]      = mesh.faceMarks[];      // memcpy, no `new`
-                if (faceSelEdgesCache.length != mesh.edges.length)
-                    faceSelEdgesCache = new uint[](mesh.edges.length);
-                faceSelEdgesCache[] = 0;
+                faceSelEdgesKey_.stamp(mesh);
+                faceSelEdgesPrevSel_.length = mesh.faceMarks.length; // no-op when equal
+                faceSelEdgesPrevSel_[]      = mesh.faceMarks[];      // memcpy, no `new`
+                if (faceSelEdgesCache_.length != mesh.edges.length)
+                    faceSelEdgesCache_ = new uint[](mesh.edges.length);
+                faceSelEdgesCache_[] = 0;
 
                 // Right-hand operand is the MARKS length, not `faces.length`:
                 // that is what the materialized view this replaced reported,
@@ -698,7 +850,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
                 // task is an allocation change with a proven-identical output.
                 bool allSel = (mesh.countSelectedFaces() == cast(int)mesh.faceMarks.length);
                 if (allSel) {
-                    faceSelEdgesCache[] = Mesh.Marks.Select;
+                    faceSelEdgesCache_[] = Mesh.Marks.Select;
                 } else {
                     if (mesh.hasAnySelectedFaces()) {
                         bool[ulong] edgeSet;
@@ -709,13 +861,13 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
                         }
                         foreach (ei, edge; mesh.edges) {
                             if (edgeKey(edge[0], edge[1]) in edgeSet)
-                                faceSelEdgesCache[ei] |= Mesh.Marks.Select;
+                                faceSelEdgesCache_[ei] |= Mesh.Marks.Select;
                         }
                     }
                 }
             }
             gpu.drawEdges(shader.locColor, -1,
-                          MarkView(faceSelEdgesCache, Mesh.Marks.Select), [],
+                          MarkView(faceSelEdgesCache_, Mesh.Marks.Select), [],
                           baseWire, occluded);
 
             // Task 0399: Loop Slice ring-preview in Polygons mode. The
@@ -752,7 +904,9 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
         } else if (showEdgeHover && hoveredEdge >= 0) {
             const bool[] loopMask =
                 (activeTool !is null && activeTool.wantsEdgeLoopHover())
-                    ? rebuildLoopHoverMask(hoveredEdge)
+                    ? rebuildLoopHoverMask(
+                        mesh, hoveredEdge,
+                        activeTool.edgeLoopHoverSliceRing())
                     : (bool[]).init;
             gpu.drawEdges(shader.locColor, hoveredEdge, MarkView.init, loopMask,
                           baseWire, occluded);
@@ -797,15 +951,14 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     // whatever geometry type was last used (that is what makes 1/2/3 restore
     // it), so an implementation gated on it would light items in Vertices mode.
     {
-        import seltype          : currentSelType, SelType;
+        import seltype          : SelType;
         import document         : kindInfo;
         import viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
-        import hover_state      : g_hoveredItem;
         import image_plane      : resolvePlacementFor;
         import handles.gl_util  : drawWorldSegment;
         import view             : ProjKind;
 
-        if (currentSelType(selTypeOrder) == SelType.Item) {
+        if (display.currentType == SelType.Item) {
             auto zItem = g_perf.scope_(Cat.drawOverlays);
             foreach (li, lyr; document.layers) {
                 if (lyr is null || !lyr.visible) continue;
@@ -813,7 +966,8 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
                 // One colour law for every kind of item — computed before the
                 // kind branch precisely so the two cannot drift into two rules.
                 immutable ItemHighlight state =
-                    itemHighlight(lyr.selected, cast(int)li == g_hoveredItem);
+                    itemHighlight(lyr.selected,
+                                  cast(int)li == display.hoveredItem);
                 if (state == ItemHighlight.none) continue;
 
                 // An IMAGE PLANE is highlighted by its BORDER, because it has
@@ -925,24 +1079,7 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     // (against the origin snapshot) before this function is called for
     // any cell this frame, so handle-hover state is current for all of
     // them.
-    if (overlayMode != OverlayMode.None) {
-        // Cat.drawOverlays (enum) — distinct from the OverlayMode param
-        // gating this block; the `Cat.` qualifier disambiguates for the
-        // human reader (compiler never confuses them).
-        auto zOv = g_perf.scope_(Cat.drawOverlays);
-        bool visualOnly = (overlayMode == OverlayMode.Visual);
-        if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-            activeTool.draw(shader, vp, vts, visualOnly);
-        } else if (anyFalloffActive()) {
-            import toolpipe.packets : FalloffPacket;
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
-            FalloffPacket fp;
-            if (auto p = vts.get!FalloffPacket()) fp = *p;
-            if (fp.enabled)
-                pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool(), visualOnly);
-        }
-    }
+    drawToolOverlays(overlays, overlayMode, vp, shader);
 
     // ---- AI Modeling Copilot: ghost highlight of the active finding
     // (task 0402 Phase 3, doc/ai_copilot_plan.md) ----
@@ -964,12 +1101,14 @@ void renderViewportSceneToFbo(EditorApp app, BgGpuDrawCache bgGpuCache,
     version (WithAI)
     static if (kCopilotEnabled)
     {
-        immutable bool panelShown = !command.g_testMode || g_copilotPanelShown;
-        if (aiState.enabled && panelShown) {
-            immutable int activeIdx = copilotPanel.active();
-            const findings = copilotPanel.findings();
+        immutable bool panelShown = !display.testMode
+                                 || display.copilotPanelShown;
+        if (scene.aiState.enabled && panelShown) {
+            immutable int activeIdx = scene.copilotPanel.active();
+            const findings = scene.copilotPanel.findings();
             if (activeIdx >= 0 && activeIdx < cast(int) findings.length)
-                drawCopilotFindingOverlay(mesh(), findings[activeIdx], vp, shader.program);
+                drawCopilotFindingOverlay(mesh, findings[activeIdx], vp,
+                                          shader.program);
         }
     }
 

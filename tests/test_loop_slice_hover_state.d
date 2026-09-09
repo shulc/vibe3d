@@ -24,8 +24,9 @@ import std.json;
 import std.conv : to;
 import std.math : abs, sqrt;
 import std.string : format;
-import std.algorithm : sort, uniq;
+import std.algorithm : sort, uniq, count;
 import std.array : array;
+import std.stdio : writefln;
 
 import drag_helpers;
 
@@ -52,6 +53,55 @@ void settle() {
     import core.thread : Thread;
     import core.time   : msecs;
     Thread.sleep(150.msecs);
+}
+
+JSONValue lastScene() {
+    return parseJSON(cast(string)get(baseUrl ~ "/api/frames/counts"))["lastScene"];
+}
+
+long edgeCalls() { return lastScene()["pass"]["edges"]["calls"].integer; }
+
+long faceVertsFor(JSONValue model) {
+    long result;
+    foreach (face; model["faces"].array)
+        if (face.array.length >= 3)
+            result += (cast(long)face.array.length - 2) * 3;
+    return result;
+}
+
+string fboHash() {
+    auto j = parseJSON(cast(string)get(
+        baseUrl ~ "/api/viewport/probe?cell=0&hash=1"));
+    assert(j["renders"].type == JSONType.true_,
+        "preview pixel oracle has no rendered FBO");
+    return j["hash"].str;
+}
+
+long expectedHoverCalls(const bool[] mask) {
+    long baseRuns = 0;
+    long hovered = 0;
+    bool inBaseRun = false;
+    foreach (v; mask) {
+        if (v) {
+            hovered++;
+            inBaseRun = false;
+        } else if (!inBaseRun) {
+            baseRuns++;
+            inBaseRun = true;
+        }
+    }
+    // One gray submission per unhovered run, then one submission per hovered
+    // edge in each of the visible + occluded highlight passes.
+    return baseRuns + 2 * hovered;
+}
+
+void restoreSharedApp() {
+    try cmd("tool.set move off"); catch (Exception) {}
+    try cmd("tool.set mesh.loopSliceTool off"); catch (Exception) {}
+    try cmd("tool.pipe.attr falloff type none"); catch (Exception) {}
+    try cmd("tool.pipe.attr actionCenter mode auto"); catch (Exception) {}
+    try cmd("viewport.layout Single"); catch (Exception) {}
+    settle();
 }
 
 // --- geometry helpers (mirror tests/test_loop_slice_tool.d) ---------------
@@ -98,6 +148,74 @@ int[] dedupSorted(JSONValue arr) {
     int[] xs;
     foreach (v; arr.array) xs ~= cast(int)v.integer;
     return xs.sort().uniq().array;
+}
+
+unittest { // task 0782: separate classic-loop -> slice-ring REAL DRAW witness
+    resetCube();
+    scope(exit) restoreSharedApp();
+
+    auto model = getModel();
+    int va = vertAt(model, V3(0.5, -0.5, 0.5));
+    int vb = vertAt(model, V3(0.5,  0.5, 0.5));
+    int ei = edgeIndex(model, va, vb);
+    assert(ei == 5, "fixture premise: the discriminating cube edge is 5");
+
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    float sx, sy;
+    assert(projectToWindow(Vec3(0.5f, 0.0f, 0.5f), vp, sx, sy),
+        "edge midpoint should be on-camera");
+    immutable string hover = hoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                      cast(int)sx, cast(int)sy);
+
+    // Classic edge-loop mode: Move + Element falloff + edgeLoops. On this
+    // cube the classic walk is the non-empty singleton {5}.
+    cmd("select.typeFrom edge");
+    cmd("tool.set move on");
+    cmd("tool.pipe.attr falloff type element");
+    cmd("tool.pipe.attr falloff connect edgeLoops");
+    playAndWait(hover);
+    settle();
+    auto classicState = parseJSON(cast(string)get(baseUrl ~ "/api/toolpipe/eval"));
+    assert(classicState["hover"]["edge"].integer == ei,
+        "classic arm did not keep the requested hovered edge");
+    bool[] classicMask = new bool[](model["edges"].array.length);
+    classicMask[ei] = true;
+    assert(classicMask.count!(v => v) == 1,
+        "classic mask must be non-empty");
+    immutable long classicCalls = edgeCalls();
+    assert(classicCalls == expectedHoverCalls(classicMask),
+        format("CLASSIC DRAW: expected %d edge submissions for non-empty mask "
+             ~ "%s, got %d", expectedHoverCalls(classicMask), classicMask,
+               classicCalls));
+
+    // Same mesh/topology and same hovered edge; only the tool's ring kind
+    // changes. The renderer scratch must rebuild to the perpendicular belt.
+    cmd("tool.set mesh.loopSliceTool on");
+    playAndWait(hover);
+    settle();
+    auto sliceState = getToolState();
+    assert(sliceState["hoveredEdge"].integer == ei,
+        "slice arm did not keep the same hovered edge");
+    int[] sliceRing = dedupSorted(sliceState["sliceRing"]);
+    assert(sliceRing == [0, 2, 5, 7],
+        "slice fixture changed: expected non-empty {0,2,5,7}, got "
+        ~ sliceRing.to!string);
+    bool[] sliceMask = new bool[](model["edges"].array.length);
+    foreach (edge; sliceRing) sliceMask[edge] = true;
+    assert(sliceMask.count!(v => v) == 4,
+        "slice-ring mask must be non-empty");
+    assert(classicMask != sliceMask,
+        "classic and slice masks must differ or the cache-key cell is inert");
+    immutable long sliceCalls = edgeCalls();
+    assert(sliceCalls == expectedHoverCalls(sliceMask),
+        format("SLICE-RING DRAW: expected %d edge submissions after same-mesh "
+             ~ "classic->slice switch (both masks non-empty), got %d; stale "
+             ~ "classic draw was %d", expectedHoverCalls(sliceMask),
+               sliceCalls, classicCalls));
+    writefln("[scene-loop-hover] edge=%d classicMask={5} calls=%d "
+           ~ "sliceMask={0,2,5,7} calls=%d (both non-empty)",
+             ei, classicCalls, sliceCalls);
 }
 
 unittest { // hover parity: sliceRing == perpendicular cut ring, != parallel edgeLoopRing
@@ -168,6 +286,7 @@ unittest { // hover-vs-active-drag: the ring highlight is a PRE-ARM affordance
     // hover -> armed==false (ring shown); a click-drag on the seed edge ->
     // armed==true (ring suppressed, live cut + slider shown instead).
     resetCube();
+    scope(exit) restoreSharedApp();
     auto model = getModel();
     int va = vertAt(model, V3(0.5, -0.5, 0.5));
     int vb = vertAt(model, V3(0.5,  0.5, 0.5));
@@ -199,6 +318,9 @@ unittest { // hover-vs-active-drag: the ring highlight is a PRE-ARM affordance
     int[] hoverRing = dedupSorted(hov["sliceRing"]);
     assert(hoverRing == [0, 2, 5, 7],
         "hover ring should be the perpendicular belt, got " ~ hoverRing.to!string);
+    auto beforeModel = getModel();
+    auto beforeDraw = lastScene();
+    immutable string beforePixels = fboHash();
 
     // (2) ARMED state: a click-drag on the seed edge arms the standing preview.
     // Model B mouse-up keeps it armed (no commit), so armed stays true after.
@@ -216,6 +338,31 @@ unittest { // hover-vs-active-drag: the ring highlight is a PRE-ARM affordance
         ", got " ~ arm["seedEdge"].integer.to!string);
     assert(arm["built"].type == JSONType.true_,
         "arming materialises the default-position cut (built==true)");
+
+    // Preview and its following scene submission are observed together. The
+    // model is the live standing preview; the draw oracle is the independently
+    // triangulated face-vertex count plus the actual FBO digest. A copied
+    // pre-preview mesh input can satisfy the tool-state assertions above and
+    // cannot satisfy these two draw assertions.
+    auto previewModel = getModel();
+    auto previewDraw = lastScene();
+    immutable string previewPixels = fboHash();
+    assert(previewModel["vertices"].array.length
+           > beforeModel["vertices"].array.length,
+        "standing preview did not change the live mesh");
+    assert(previewDraw["seq"].integer > beforeDraw["seq"].integer,
+        "no following scene frame consumed the standing preview");
+    assert(previewDraw["pass"]["faces"]["verts"].integer
+           == faceVertsFor(previewModel),
+        format("PREVIEW DRAW: following scene submission used %d face verts, "
+             ~ "but the live preview independently implies %d",
+               previewDraw["pass"]["faces"]["verts"].integer,
+               faceVertsFor(previewModel)));
+    assert(previewPixels != beforePixels,
+        "PREVIEW PIXELS: the standing preview left the FBO byte-identical");
+    writefln("[scene-preview] seq %d->%d, faceVerts=%d, FBO %s->%s",
+             beforeDraw["seq"].integer, previewDraw["seq"].integer,
+             faceVertsFor(previewModel), beforePixels, previewPixels);
 
     cmd("tool.set mesh.loopSliceTool off");
     settle();

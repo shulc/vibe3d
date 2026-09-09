@@ -5,7 +5,7 @@ import bg_gpu_cache : BgGpuCache;
 import document : Document;
 import edit_session : EditSession;
 import editmode : EditMode;
-import editor_app : EditorApp, OverlayMode;
+import editor_app : OverlayMode;
 import eventlog : queryMouse;
 import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import input_frame_state : InputFrameState;
@@ -13,8 +13,8 @@ import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
 import math : Viewport;
 import tool : Tool;
-import ui.viewport_render : renderViewportSceneToFbo;
-import viewport : Viewport3D;
+import ui.viewport_render : ViewportSceneRenderer, SceneInputs,
+    SceneViewInputs, SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;
 
 /// Hover gates consumed by the later scene phase of the same frame.
 struct HoverDrawState {
@@ -29,11 +29,13 @@ struct HoverDrawState {
 final class FrameRunner {
     private InputFrameState ifs_;
     private BgGpuCache bgGpuCache_;
+    private ViewportSceneRenderer sceneRenderer_;
 
     this(InputFrameState ifs) {
         assert(ifs !is null);
         ifs_ = ifs;
         bgGpuCache_ = new BgGpuCache;
+        sceneRenderer_ = new ViewportSceneRenderer;
     }
 
     /// Reconcile frame-owned GL residency before any dirty-gated cell draw.
@@ -100,13 +102,11 @@ final class FrameRunner {
         return result;
     }
 
-    void drawScene(EditorApp app, Viewport3D cell, ref Viewport vp,
-                   OverlayMode overlayMode, bool showVertexHover,
-                   bool showEdgeHover, bool showFaceHover) {
-        renderViewportSceneToFbo(app, bgGpuCache_.drawCache(),
-                                 cell, vp, overlayMode,
-                                 showVertexHover, showEdgeHover,
-                                 showFaceHover);
+    void drawScene(SceneInputs scene, SceneViewInputs view,
+                   SceneDisplayInputs display, SceneGpuInputs gpu,
+                   ToolOverlayInputs overlays, OverlayMode overlayMode) {
+        sceneRenderer_.draw(scene, view, display, gpu,
+                            bgGpuCache_.drawCache(), overlays, overlayMode);
     }
 
     void renderImGui() {

@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 520
-task-citation-lines 5086
+task-citation-lines 5078
 citing-files 394
 long-comment-runs 280
 files-with-long-runs 149
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 292
+allow source/app.d 286
 allow source/app_version.d 1
 allow source/application_command_binding.d 2
 allow source/args_dialog.d 1
@@ -199,7 +199,7 @@ allow source/document_selection.d 62
 allow source/drag.d 11
 allow source/drag_identity.d 1
 allow source/edit_session.d 17
-allow source/editor_app.d 46
+allow source/editor_app.d 45
 allow source/eventlog.d 1
 allow source/falloff.d 7
 allow source/falloff_handles.d 3
@@ -402,7 +402,7 @@ allow source/ui/panels.d 70
 allow source/ui/pie_render.d 1
 allow source/ui/stat_record.d 1
 allow source/ui/stat_rows.d 1
-allow source/ui/viewport_render.d 34
+allow source/ui/viewport_render.d 33
 allow source/uv_relax.d 1
 allow source/uv_unwrap.d 2
 allow source/view.d 8

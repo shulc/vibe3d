@@ -959,13 +959,6 @@ struct EditorApp {
     @property ref int layerRenameIndex() { return *layerRenameIndexPtr; }
     char[256]* layerRenameBufPtr;
     @property ref char[256] layerRenameBuf() { return *layerRenameBufPtr; }
-    // Marks-shaped (task 0585) — see the declarations in app.d.
-    uint[]* faceSelEdgesCachePtr;
-    @property ref uint[] faceSelEdgesCache() { return *faceSelEdgesCachePtr; }
-    uint[]* faceSelEdgesPrevSelPtr;
-    @property ref uint[] faceSelEdgesPrevSel() { return *faceSelEdgesPrevSelPtr; }
-    MeshStructKey* faceSelEdgesKeyPtr;
-    @property ref MeshStructKey faceSelEdgesKey() { return *faceSelEdgesKeyPtr; }
     Layout* layoutPtr;
     @property ref Layout layout() { return *layoutPtr; }
     // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --
@@ -1025,8 +1018,6 @@ struct EditorApp {
     /// a dump that recomputes a call-site decision keeps answering after the
     /// call site has stopped asking, and the test then asserts about the dump.
     bool delegate()              viewportInputAllowedDg;
-    const(bool)[] delegate(int) rebuildLoopHoverMask;
-
     // =========================================================================
     // app.d decomp phase B (source/http_providers.d): members backing
     // wireHttpProviders's moved /api endpoint-wiring block. Same ROOT RULE
