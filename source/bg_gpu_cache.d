@@ -5,6 +5,12 @@ import mesh       : Mesh;
 import mesh_dirty : MeshDirtyKey, g_bgGpuUploads, g_displayEpochs;
 import mesh_gpu   : GpuMesh;
 
+version (unittest) {
+    import bindbc.opengl : GLboolean, GLsizei, GLuint, GL_FALSE, GL_TRUE,
+        glDeleteBuffers, glDeleteVertexArrays, glGenBuffers,
+        glGenVertexArrays, glIsBuffer, glIsVertexArray;
+}
+
 /// Draw-only access to an already reconciled background GPU cache.
 /// It can create or refresh an entry needed by the renderer, but exposes
 /// neither document reconciliation nor shutdown. Task 4680's ownership and
@@ -36,8 +42,7 @@ final class BgGpuCache {
     private Entry[Layer] entries_;
 
     version (unittest) {
-        private bool fakeGpuForTest_;
-        private uint nextFakeNameForTest_ = 1;
+        private bool fakeUploadForTest_;
         private ulong fakeUploadsForTest_;
     }
 
@@ -107,26 +112,12 @@ final class BgGpuCache {
     }
 
     private void initGpu(ref GpuMesh gpu) {
-        version (unittest) {
-            if (fakeGpuForTest_) {
-                gpu.faceVao = nextFakeNameForTest_++;
-                gpu.faceVbo = nextFakeNameForTest_++;
-                gpu.edgeVao = nextFakeNameForTest_++;
-                gpu.edgeVbo = nextFakeNameForTest_++;
-                gpu.vertVao = nextFakeNameForTest_++;
-                gpu.vertVbo = nextFakeNameForTest_++;
-                gpu.faceIdVbo = nextFakeNameForTest_++;
-                gpu.matIdVbo = nextFakeNameForTest_++;
-                gpu.weightColorVbo = nextFakeNameForTest_++;
-                return;
-            }
-        }
         gpu.init();
     }
 
     private void uploadGpu(ref GpuMesh gpu, ref const Mesh mesh) {
         version (unittest) {
-            if (fakeGpuForTest_) {
+            if (fakeUploadForTest_) {
                 ++fakeUploadsForTest_;
                 ++gpu.uploadVersion;
                 return;
@@ -137,22 +128,149 @@ final class BgGpuCache {
 
     private void release(Entry entry) {
         if (entry is null) return;
-        version (unittest) {
-            if (fakeGpuForTest_) {
-                entry.gpu = GpuMesh();
-                return;
-            }
-        }
         entry.gpu.destroy();
         // `GpuMesh.destroy` releases GL names but does not clear the struct.
-        // Clearing the owned object makes repeated release impossible and lets
-        // an observer of this very resource distinguish live from released.
+        // Clear the owner header so cache idempotence does not depend on stale
+        // names; release itself is witnessed at the GL delete boundary.
         entry.gpu = GpuMesh();
     }
 }
 
-unittest {
+version (unittest) private struct TestGlNames {
+    enum size_t capacity = 64;
+    static GLuint nextVao;
+    static GLuint nextVbo;
+    static bool[capacity] liveVaos;
+    static bool[capacity] liveVbos;
+    static size_t deletedVaos;
+    static size_t deletedVbos;
+    static size_t doubleDeletes;
+
+    static void reset() nothrow @nogc {
+        nextVao = 1;
+        nextVbo = 1;
+        liveVaos[] = false;
+        liveVbos[] = false;
+        deletedVaos = 0;
+        deletedVbos = 0;
+        doubleDeletes = 0;
+    }
+
+    static extern(System) void genVaos(GLsizei count, GLuint* names)
+            nothrow @nogc {
+        foreach (i; 0 .. count) {
+            const name = nextVao++;
+            names[i] = name;
+            if (name < capacity) liveVaos[name] = true;
+        }
+    }
+
+    static extern(System) void genVbos(GLsizei count, GLuint* names)
+            nothrow @nogc {
+        foreach (i; 0 .. count) {
+            const name = nextVbo++;
+            names[i] = name;
+            if (name < capacity) liveVbos[name] = true;
+        }
+    }
+
+    static extern(System) void deleteVaos(GLsizei count, const(GLuint)* names)
+            nothrow @nogc {
+        foreach (i; 0 .. count) {
+            const name = names[i];
+            if (name == 0) continue;
+            if (name >= capacity || !liveVaos[name]) {
+                ++doubleDeletes;
+                continue;
+            }
+            liveVaos[name] = false;
+            ++deletedVaos;
+        }
+    }
+
+    static extern(System) void deleteVbos(GLsizei count, const(GLuint)* names)
+            nothrow @nogc {
+        foreach (i; 0 .. count) {
+            const name = names[i];
+            if (name == 0) continue;
+            if (name >= capacity || !liveVbos[name]) {
+                ++doubleDeletes;
+                continue;
+            }
+            liveVbos[name] = false;
+            ++deletedVbos;
+        }
+    }
+
+    static extern(System) GLboolean isVao(GLuint name) nothrow @nogc {
+        return cast(GLboolean)(name < capacity && liveVaos[name]
+            ? GL_TRUE : GL_FALSE);
+    }
+
+    static extern(System) GLboolean isVbo(GLuint name) nothrow @nogc {
+        return cast(GLboolean)(name < capacity && liveVbos[name]
+            ? GL_TRUE : GL_FALSE);
+    }
+}
+
+version (unittest) private struct TestGpuNames {
+    GLuint[3] vaos;
+    GLuint[6] vbos;
+}
+
+version (unittest) private TestGpuNames gpuNames(ref const GpuMesh gpu) {
+    return TestGpuNames(
+        [gpu.faceVao, gpu.edgeVao, gpu.vertVao],
+        [gpu.faceVbo, gpu.edgeVbo, gpu.vertVbo, gpu.faceIdVbo,
+         gpu.matIdVbo, gpu.weightColorVbo]);
+}
+
+version (unittest) private bool namesAreNonZero(TestGpuNames names) {
+    foreach (name; names.vaos) if (name == 0) return false;
+    foreach (name; names.vbos) if (name == 0) return false;
+    return true;
+}
+
+version (unittest) private bool namesAreLive(TestGpuNames names) {
+    foreach (name; names.vaos)
+        if (glIsVertexArray(name) != GL_TRUE) return false;
+    foreach (name; names.vbos)
+        if (glIsBuffer(name) != GL_TRUE) return false;
+    return true;
+}
+
+version (unittest) private bool namesAreDead(TestGpuNames names) {
+    foreach (name; names.vaos)
+        if (glIsVertexArray(name) != GL_FALSE) return false;
+    foreach (name; names.vbos)
+        if (glIsBuffer(name) != GL_FALSE) return false;
+    return true;
+}
+
+unittest { // reconcile releases only the evicted entry
     import std.format : format;
+
+    auto savedGenVaos = glGenVertexArrays;
+    auto savedGenVbos = glGenBuffers;
+    auto savedDeleteVaos = glDeleteVertexArrays;
+    auto savedDeleteVbos = glDeleteBuffers;
+    auto savedIsVao = glIsVertexArray;
+    auto savedIsVbo = glIsBuffer;
+    scope (exit) {
+        glGenVertexArrays = savedGenVaos;
+        glGenBuffers = savedGenVbos;
+        glDeleteVertexArrays = savedDeleteVaos;
+        glDeleteBuffers = savedDeleteVbos;
+        glIsVertexArray = savedIsVao;
+        glIsBuffer = savedIsVbo;
+    }
+    TestGlNames.reset();
+    glGenVertexArrays = &TestGlNames.genVaos;
+    glGenBuffers = &TestGlNames.genVbos;
+    glDeleteVertexArrays = &TestGlNames.deleteVaos;
+    glDeleteBuffers = &TestGlNames.deleteVbos;
+    glIsVertexArray = &TestGlNames.isVao;
+    glIsBuffer = &TestGlNames.isVbo;
 
     auto primary = new Layer;
     auto backgroundA = new Layer;
@@ -162,11 +280,12 @@ unittest {
     document.setActive(0);
 
     auto cache = new BgGpuCache;
-    cache.fakeGpuForTest_ = true;
+    scope (exit) cache.shutdown();
+    cache.fakeUploadForTest_ = true;
     auto draw = cache.drawCache();
 
-    // Population floor: exercise the same create/upload verb the renderer
-    // uses, then pin both entries and all nine names owned by each GpuMesh.
+    // Population floor: use the renderer's draw capability to create two
+    // distinct entries through GpuMesh.init and its glGen* calls.
     draw.gpuFor(backgroundA);
     draw.gpuFor(backgroundB);
     immutable size_t populated = cache.entries_.length;
@@ -176,40 +295,95 @@ unittest {
     assert(cache.fakeUploadsForTest_ == 2,
         "population floor: both background entries must pass through upload");
 
-    size_t resourceNames(const GpuMesh* gpu) {
-        immutable uint[9] names = [
-            gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
-            gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
-            gpu.weightColorVbo,
-        ];
-        size_t count;
-        foreach (name; names) if (name != 0) ++count;
-        return count;
-    }
-    // Hold the owner's entry objects themselves. These are the exact GpuMesh
-    // fields that release mutates, rather than a separate release counter.
     auto entryA = cache.entries_[backgroundA];
     auto entryB = cache.entries_[backgroundB];
-    assert(resourceNames(&entryA.gpu) == 9 && resourceNames(&entryB.gpu) == 9,
-        "population floor: each of the 2 owner entries must hold 9 GPU names");
+    auto namesA = gpuNames(entryA.gpu);
+    auto namesB = gpuNames(entryB.gpu);
+    assert(entryA !is entryB && draw.find(backgroundA) is &entryA.gpu
+        && draw.find(backgroundB) is &entryB.gpu,
+        "mesh identity: draw lookup must retain two distinct owner entries");
+    assert(namesAreNonZero(namesA) && namesAreNonZero(namesB)
+        && namesAreLive(namesA) && namesAreLive(namesB),
+        "population floor: each entry needs 3 live VAO and 6 live VBO names");
+    assert(namesA.vaos[0] == namesA.vbos[0],
+        "namespace control: fixture must reuse one integer across VAO and VBO");
 
-    // A separate frame starts after the document has only its primary layer.
-    // No draw-cache method is called in this phase: reconcile alone must free
-    // the resources and evict both stale Layer keys.
-    document.layers = document.layers[0 .. 1];
+    // No draw-cache method runs in this phase. Reconcile drops A while B
+    // remains live, before any name can be allocated again.
+    document.layers = [primary, backgroundB];
     cache.reconcile(document);
-    assert(resourceNames(&entryA.gpu) == 0 && resourceNames(&entryB.gpu) == 0,
-        "no-draw frame reconcile left GPU names live on an evicted owner entry");
-    assert(cache.entries_.length == 0,
-        "no-draw frame reconcile retained stale background Layer entries");
+    assert(namesAreDead(namesA),
+        "reconcile: evicted entry still has live GL names");
+    assert(namesAreLive(namesB),
+        "reconcile: surviving entry lost its GL names");
+    assert(cache.entries_.length == 1 && draw.find(backgroundA) is null
+        && draw.find(backgroundB) is &entryB.gpu,
+        "reconcile retained the evicted key or lost the surviving mesh identity");
+}
 
-    // Shutdown owns the same release operation for still-live entries.
-    document.layers = [primary, backgroundA];
+unittest { // shutdown releases all entries once
+    import std.format : format;
+
+    auto savedGenVaos = glGenVertexArrays;
+    auto savedGenVbos = glGenBuffers;
+    auto savedDeleteVaos = glDeleteVertexArrays;
+    auto savedDeleteVbos = glDeleteBuffers;
+    auto savedIsVao = glIsVertexArray;
+    auto savedIsVbo = glIsBuffer;
+    scope (exit) {
+        glGenVertexArrays = savedGenVaos;
+        glGenBuffers = savedGenVbos;
+        glDeleteVertexArrays = savedDeleteVaos;
+        glDeleteBuffers = savedDeleteVbos;
+        glIsVertexArray = savedIsVao;
+        glIsBuffer = savedIsVbo;
+    }
+    TestGlNames.reset();
+    glGenVertexArrays = &TestGlNames.genVaos;
+    glGenBuffers = &TestGlNames.genVbos;
+    glDeleteVertexArrays = &TestGlNames.deleteVaos;
+    glDeleteBuffers = &TestGlNames.deleteVbos;
+    glIsVertexArray = &TestGlNames.isVao;
+    glIsBuffer = &TestGlNames.isVbo;
+
+    auto primary = new Layer;
+    auto backgroundA = new Layer;
+    auto backgroundB = new Layer;
+    Document document;
+    document.layers = [primary, backgroundA, backgroundB];
+    document.setActive(0);
+
+    auto cache = new BgGpuCache;
+    scope (exit) cache.shutdown();
+    cache.fakeUploadForTest_ = true;
+    auto draw = cache.drawCache();
     draw.gpuFor(backgroundA);
-    entryA = cache.entries_[backgroundA];
-    assert(cache.entries_.length == 1 && resourceNames(&entryA.gpu) == 9,
-        "shutdown control did not repopulate one owned GPU entry");
+    draw.gpuFor(backgroundB);
+
+    immutable size_t populated = cache.entries_.length;
+    assert(populated == 2, format(
+        "population floor: expected exactly 2 entries before shutdown, got %d",
+        populated));
+    assert(cache.fakeUploadsForTest_ == 2,
+        "population floor: shutdown entries must pass through upload");
+    auto entryA = cache.entries_[backgroundA];
+    auto entryB = cache.entries_[backgroundB];
+    auto namesA = gpuNames(entryA.gpu);
+    auto namesB = gpuNames(entryB.gpu);
+    assert(entryA !is entryB && namesAreNonZero(namesA)
+        && namesAreNonZero(namesB) && namesAreLive(namesA)
+        && namesAreLive(namesB),
+        "population floor: shutdown needs 2 entries with 3 live VAO and 6 live VBO names each");
+
     cache.shutdown();
-    assert(resourceNames(&entryA.gpu) == 0 && cache.entries_.length == 0,
-        "shutdown did not release the actual owned GPU entry");
+    assert(namesAreDead(namesA) && namesAreDead(namesB),
+        "shutdown: owned entries still have live GL names");
+    assert(cache.entries_.length == 0 && TestGlNames.deletedVaos == 6
+        && TestGlNames.deletedVbos == 12 && TestGlNames.doubleDeletes == 0,
+        "shutdown must delete 6 VAO and 12 VBO names exactly once");
+
+    cache.shutdown();
+    assert(TestGlNames.deletedVaos == 6 && TestGlNames.deletedVbos == 12
+        && TestGlNames.doubleDeletes == 0,
+        "repeated shutdown attempted to delete a GL name twice");
 }
