@@ -10,17 +10,22 @@ import std.format : format;
 import std.math : acos, fabs, PI;
 
 import commands.mesh.smooth : MeshSmooth;
+import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult;
+import command_history : CommandHistory;
+import change_bus : MeshEditScope, changeBus;
+import display_sync : activeMeshResolver;
 import document : primaryModelSpaceResolver;
 import editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : AimViewport, ModelSpace, Vec3, aimSpace, cross, dot,
               projectToWindowFull;
-import mesh : Mesh;
+import mesh : Mesh, makeCube;
 import operator : VectorStack;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
                           SubjectPacket;
 import view : View;
+import tools.common.command_wrapper : XfrmSmoothTool;
 
 private Mesh openAsymmetricStand() {
     Mesh m;
@@ -280,4 +285,95 @@ unittest { // bound subject identity and script no-op success
     putSubject(wrongVts, wrong, &decoy, view);
     assert(!cmd.buildVertexPositionResult(bound.vertices, wrongVts, empty),
         "a same-sized new primary must not replace Smooth's bound subject");
+}
+
+unittest { // occupied-preview refire construction is observationally pure
+    Mesh target = makeCube();
+    target.buildLoops();
+    const sessionBaseline = target.vertices.dup;
+    View view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory();
+    auto tool = new XfrmSmoothTool(&target, view, EditMode.Vertices, null);
+    tool.setGestureBindings(history,
+        () => new MeshVertexEdit(&target, view, EditMode.Vertices));
+
+    auto savedResolver = activeMeshResolver;
+    Mesh offscreen = makeCube();
+    activeMeshResolver = () => &offscreen;
+    scope(exit) activeMeshResolver = savedResolver;
+    const subscriberCheckpoint = changeBus.meshSubscriberCheckpointForTest();
+    scope(exit) changeBus.restoreMeshSubscribersForTest(subscriberCheckpoint);
+
+    size_t records;
+    history.onRecord = (string, uint) { ++records; };
+    tool.activate();
+    scope(exit) {
+        tool.cancelUncommittedEdit();
+        tool.deactivate();
+    }
+    foreach (ref p; tool.params()) {
+        if (p.name == "strn") *p.fptr = 0.35f;
+        if (p.name == "iter") *p.iptr = 3;
+    }
+    tool.onParamChanged("strn");
+    tool.evaluate();
+    const occupiedPreview = target.vertices.dup;
+    assert(occupiedPreview != sessionBaseline,
+        "control: Smooth refire purity needs a non-empty occupied preview");
+
+    // Refire a DIFFERENT parameter value without an ordinary preview tick.
+    // A legacy apply/diff/restore path publishes that new image inside the
+    // callback even if it later restores an identical final image.
+    foreach (ref p; tool.params())
+        if (p.name == "strn") *p.fptr = 0.82f;
+
+    size_t targetCallbacks;
+    bool callbackSawDifferentPositions;
+    // Explicit test-only exception to the production subscriber contract:
+    // observing positions synchronously is the tripwire for hidden temporary
+    // writes and never mutates or re-enters the bus.
+    changeBus.onMeshChanged((size_t subjectAddr, uint flags) nothrow {
+        if (subjectAddr != cast(size_t)&target ||
+            !(flags & MeshEditScope.Position)) return;
+        ++targetCallbacks;
+        if (target.vertices.length != occupiedPreview.length) {
+            callbackSawDifferentPositions = true;
+            return;
+        }
+        foreach (i; 0 .. target.vertices.length)
+            if (target.vertices[i] != occupiedPreview[i]) {
+                callbackSawDifferentPositions = true;
+                return;
+            }
+    });
+
+    const deliveriesBefore = changeBus.deliveryCount;
+    const positionsBefore = changeBus.totalPosition;
+    const mutationBefore = target.mutationVersion;
+    const topologyBefore = target.topologyVersion;
+    const structureBefore = target.structVersion;
+    const marksBefore = target.marksVersion;
+    const recordsBefore = records;
+
+    auto refire = cast(MeshVertexEdit)tool.buildRefireCommand();
+    assert(refire !is null && !refire.isEmpty(),
+        "Smooth refire must build a populated deterministic carrier");
+    assert(targetCallbacks == 0, format(
+        "Smooth refire construction published %d Position callback(s); " ~
+        "callback observed different positions=%s",
+        targetCallbacks, callbackSawDifferentPositions));
+    assert(!callbackSawDifferentPositions,
+        "Smooth refire callback observed temporary live positions");
+    assert(target.vertices == occupiedPreview,
+        "Smooth refire construction changed the occupied preview");
+    assert(changeBus.deliveryCount == deliveriesBefore &&
+           changeBus.totalPosition == positionsBefore,
+        "Smooth refire construction changed bus delivery counters");
+    assert(target.mutationVersion == mutationBefore &&
+           target.topologyVersion == topologyBefore &&
+           target.structVersion == structureBefore &&
+           target.marksVersion == marksBefore,
+        "Smooth refire construction changed mesh counters");
+    assert(records == recordsBefore && !history.canUndo(),
+        "Smooth refire construction changed history");
 }
