@@ -90,6 +90,16 @@ void cleanupPanelWitness() {
     try cmd("tool.set move off"); catch (Exception) {}
 }
 
+string mouseMoveLog(int x, int y) {
+    auto cam = fetchCamera();
+    return format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        cam.vpX, cam.vpY, cam.width, cam.height)
+      ~ format(
+        `{"t":1,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+        x, y);
+}
+
 unittest { // event delivery: observe the shortcut's camera-state effect
     resetKnownView();
     auto before = getJson("/api/camera?viewport=0");
@@ -252,4 +262,55 @@ unittest { // panel draw: compare composed pixels with the panel hidden/shown
         format("frame panel phase changed only %d/%d Tool Properties pixels "
                ~ "between hidden and shown states",
                changed, hidden.points.length));
+}
+
+
+unittest { // foreground overlay is authored before ImGui.Render snapshots it
+    resetKnownView();
+    scope(exit) cleanupPanelWitness();
+    cmd("ui.toolProperties hide");
+    cmd("tool.set move off");
+
+    enum ax = 84;
+    enum ay = 84;
+    enum bx = 700;
+    enum by = 500;
+    immutable string aroundA = lattice(ax - 15, ay - 15,
+                                       ax + 15, ay + 15, 2);
+
+    playAndWait(mouseMoveLog(bx, by));
+    settle();
+    auto away = probe("target=frame&points=" ~ aroundA);
+
+    playAndWait(mouseMoveLog(ax, ay));
+    settle();
+    auto atA = probe("target=frame&points=" ~ aroundA);
+    assert(away.points.length == atA.points.length,
+        "frame overlay population comparison lost its pixel lattice");
+    int overlayAtA;
+    foreach (i; 0 .. atA.points.length)
+        if (!sameRgb(away.points[i], atA.points[i])) ++overlayAtA;
+    // The real playback-cursor draw is the population floor. Without it an
+    // early ImGui.Render and no overlay at either position compare equal.
+    assert(atA.points.length >= 200 && overlayAtA >= 30,
+        format("FRAME OVERLAY DRAW FLOOR: only %d/%d samples near cursor A "
+               ~ "changed when the real cursor moved onto them",
+               overlayAtA, atA.points.length));
+
+    playAndWait(mouseMoveLog(bx, by));
+    settle();
+    auto afterMove = probe("target=frame&points=" ~ aroundA);
+    assert(afterMove.points.length == atA.points.length,
+        "frame overlay comparison lost its pixel lattice");
+    int changed;
+    int differsFromAway;
+    foreach (i; 0 .. atA.points.length) {
+        if (!sameRgb(atA.points[i], afterMove.points[i])) ++changed;
+        if (!sameRgb(away.points[i], afterMove.points[i])) ++differsFromAway;
+    }
+    assert(changed >= 30 && differsFromAway <= 4,
+        format("FRAME OVERLAY SNAPSHOT: moving the real foreground cursor "
+               ~ "changed only %d/%d samples and left %d unlike the away baseline; "
+               ~ "ImGui.Render must run after overlay authorship",
+               changed, atA.points.length, differsFromAway));
 }
