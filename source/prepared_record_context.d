@@ -2252,7 +2252,8 @@ unittest {
 }
 
 version (unittest) unittest {
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import handler : ClickPointHandler, ClickPointResourceOwner;
     import change_bus : changeBus;
     auto history = new CommandHistory();

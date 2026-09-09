@@ -84,7 +84,8 @@ private:
 
 version(unittest) unittest {
     import command_history : CommandHistory;
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import record_observer_hub : RecordObserverHub;
 
     auto layer = new Layer; layer.meshRef() = makeCube();

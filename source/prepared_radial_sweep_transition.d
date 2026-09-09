@@ -145,7 +145,7 @@ version(unittest) unittest {
     // upload borrows the pre-create empty GL header and therefore cannot
     // honestly follow a prepared create without a combined create+upload owner.
     import document : Layer;
-    import mesh : GpuMesh;
+    import mesh_gpu : GpuMesh;
     auto layer = new Layer; layer.meshRef() = makeCube(); layer.meshRef().syncSelection();
     layer.meshRef().selectFace(0);
     GpuMesh mainGpu;

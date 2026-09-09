@@ -76,7 +76,8 @@ private:
 
 version(unittest) unittest {
     import editmode : EditMode;
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner;
     import prepared_record_context : PreparedRecordContext;
     import prepared_tool_effect : PreparedActivateKind;

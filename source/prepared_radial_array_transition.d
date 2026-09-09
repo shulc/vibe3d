@@ -113,7 +113,8 @@ private:
 }
 
 version(unittest) unittest {
-    import mesh : makeCube, GpuMesh;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import editmode : EditMode;
     import shader : LitShader;
     Mesh source = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;

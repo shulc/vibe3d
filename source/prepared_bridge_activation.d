@@ -149,7 +149,7 @@ version(unittest) unittest {
     import document : Layer;
     import editmode : EditMode;
     import math : Vec3;
-    import mesh : GpuMesh;
+    import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
         GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;

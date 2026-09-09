@@ -139,7 +139,8 @@ version(unittest) unittest {
     import command_history : CommandHistory;
     import document : Layer;
     import math : Vec3;
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
         GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;

@@ -69,7 +69,8 @@ private:
 }
 
 version(unittest) unittest {
-    import mesh : Mesh, GpuMesh, makeCube;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
     import editmode : EditMode;
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;

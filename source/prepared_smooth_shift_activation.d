@@ -13,7 +13,8 @@ version(unittest) unittest {
     import command_history : CommandHistory;
     import editmode : EditMode;
     import math : Vec3, cross;
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;

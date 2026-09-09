@@ -210,7 +210,8 @@ private:
 
 version(unittest) unittest {
     import command_history : CommandHistory;
-    import mesh : Mesh, GpuMesh;
+    import mesh : Mesh;
+    import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;

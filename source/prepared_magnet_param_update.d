@@ -91,7 +91,8 @@ private:
 version(unittest) unittest {
     import command_history : CommandHistory;
     import editmode : EditMode;
-    import mesh : GpuMesh, makeCube;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner;
     import prepared_record_context : PreparedRecordContext;
     import record_observer_hub : RecordObserverHub;

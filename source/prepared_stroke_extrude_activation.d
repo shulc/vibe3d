@@ -94,7 +94,8 @@ private:
 
 version(unittest) unittest {
     import command_history : CommandHistory;
-    import mesh : Mesh, GpuMesh, makeCube;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;

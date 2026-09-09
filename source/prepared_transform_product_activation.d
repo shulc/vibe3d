@@ -97,7 +97,8 @@ private:
 }
 
 version(unittest) unittest {
-    import mesh : Mesh, GpuMesh, makeCube;
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
     import editmode : EditMode;
     import math : Vec3;
     import prepared_record_context : PreparedRecordContext;
