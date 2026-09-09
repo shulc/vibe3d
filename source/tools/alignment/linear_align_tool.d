@@ -5,6 +5,7 @@ import operator : VectorStack;
 import tools.transform.transform;
 import tools.alignment.align_kernels : extractAlignChain, linearAlignTargets, lerp3;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import math : Vec3, Viewport;
 import shader;

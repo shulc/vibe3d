@@ -12,6 +12,7 @@ import operator : VectorStack;
 
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import drag : planeDragDelta;

@@ -64,6 +64,7 @@ import bindbc.sdl;
 import tool;
 import edit_session : KeepAliveOnCancel;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : axisColor;

@@ -6,6 +6,7 @@ private struct SpherePreparedParamHandle {
 }
 
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import params : Param;
 import shader : LitShader;

@@ -4,6 +4,7 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import params : Param;
 import shader : LitShader;

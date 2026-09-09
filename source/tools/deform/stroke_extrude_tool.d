@@ -11,6 +11,7 @@ import operator : VectorStack;
 
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import mesh_ops.revolve;
 import math;
 import editmode : EditMode;

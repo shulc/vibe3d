@@ -1,6 +1,7 @@
 module tools.create.cylinder;
 
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import params : Param;
 import shader : LitShader;

@@ -7,6 +7,7 @@ import std.math : PI;
 
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import params : Param, IntEnumEntry;
 import command : Command, CmdFlags;

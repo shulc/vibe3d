@@ -6,6 +6,7 @@ import bindbc.sdl;
 
 import tool;
 import mesh;
+import mesh_gpu : GpuMesh;
 import math;
 import params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;

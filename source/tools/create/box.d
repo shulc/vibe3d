@@ -6,6 +6,7 @@ import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEff
     PreparedActivateKind, PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_private_state : PreparedPrivateStateOwner;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
+import mesh_gpu : GpuMesh;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import snap_render : SnapOverlayOwner;

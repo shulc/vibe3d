@@ -5,6 +5,7 @@ import operator : VectorStack;
 
 import tools.transform.transform;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import math : Vec3, Viewport, dot;
 import shader;

@@ -6,6 +6,7 @@ import tools.transform.transform;
 import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, lerp3,
                               MAX_ALIGN_SIDES;
 import mesh;
+import mesh_gpu : GpuMesh;
 import editmode;
 import math : Vec3, Viewport;
 import shader;
