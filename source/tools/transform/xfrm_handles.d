@@ -185,19 +185,23 @@ mixin template XfrmHandlesImpl() {
         if (flagT && allowMoveDispatch) {
             int resolvedMoveAxis = latchedPart.bank == LatchedHandleBank.Move
                                  ? latchedPart.localPart : -1;
+            void commitBeforeMoveRelocate() {
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Move);
+            }
             if (!moveSub.onMouseButtonDownWithResolvedAxis(e, vts,
-                                                           resolvedMoveAxis))
+                                                           resolvedMoveAxis,
+                                                           &commitBeforeMoveRelocate))
                 goto tryRotateBank;
             // An off-gizmo click-relocate during a live session is a new
-            // logical run: commit the prior run, then re-stage the
-            // relocated pin so the fresh session freezes IT (not the stale
-            // pre-relocate pin) as its in-session-cancel baseline. The
-            // move edit session lives on the wrapper, so the commit must
-            // run here, not on moveSub. Ordering is load-bearing:
-            // setUserPlaced (in moveSub.onMouseButtonDown, no stage while
-            // frozen) → commitEdit (discards snapshot, clears freeze) →
-            // restageRelocatePin (stages relocated pin) →
-            // beginMoveDragSession → beginEdit (re-freezes relocated pin).
+            // logical run: commit the prior run before the bank publishes
+            // the relocated pin, allowing setUserPlaced to stage the old pin
+            // as the fresh session's cancel baseline. The wrapper owns
+            // the edit while moveSub alone owns the exact pre-publication
+            // instant, so the narrow callback joins those owners. Ordering is
+            // load-bearing: commitEdit (discards snapshot, clears freeze) →
+            // setUserPlaced (in moveSub.onMouseButtonDown) →
+            // beginMoveDragSession → beginEdit (freezes the old pin).
             bool wasRelocate = moveSub.lastClickWasRelocate;
             moveSub.lastClickWasRelocate = false;   // consume
             // An off-gizmo press in a PINNED action-centre mode: the bank now
@@ -209,34 +213,13 @@ mixin template XfrmHandlesImpl() {
             // here, with the pin re-staged VERBATIM (nothing relocated).
             bool wasPinnedOffGizmo = moveSub.lastClickWasOffGizmo && !wasRelocate;
             moveSub.lastClickWasOffGizmo = false;   // consume
-            // Phase 1 addendum A1 — split session-close vs run-close at the
-            // Move-arm relocate boundary. The three landed `if (wasRelocate ...)`
-            // blocks merge into one, with each action gated on what it actually
-            // depends on:
-            //   - the wrapper edit close stays editIsOpen()-gated. Under
-            //     per-gesture commit it is normally already closed here.
-            //   - restageRelocatePin() is RUN-close work that must fire on the
-            //     RELOCATE itself, UNCONDITIONAL on wasRelocate (NOT session-
-            //     open): the pin was just moved by this relocate and the next
-            //     gesture's beginEdit freezes it. Lifting it out of the
-            //     editIsOpen() guard is the load-bearing addendum fix — after a
-            //     per-gesture commit editIsOpen() is false, so the old gate
-            //     never re-staged the relocated pin.
-            //   - consolidate + nextRun is RUN-close work gated on
-            //     history.runOpen() (the single source of truth) so the run
-            //     splits even when the gesture already self-committed.
-            // Ordering is load-bearing: commitEdit (discards the prior session's
-            // snapshot, clears freeze) → restageRelocatePin (stages the relocated
-            // pin) → beginMoveDragSession → beginEdit (re-freezes the relocated
-            // pin). A-RISK-2: when wasRelocate fires as the very first
-            // interaction (no session, no run), restageRelocatePin only stages
-            // the ACEN pin from the already-staged userPlaced state — a safe,
-            // idempotent stage that does not require a session — and runOpen() is
-            // false so the consolidate/nextRun is skipped.
+            // The pre-relocate callback already closed any prior edit. The
+            // bank's setUserPlaced call then stages the pre-relocate pin while
+            // the snapshot is unfrozen; beginEdit below freezes that old pin as
+            // the fresh gesture's cancel baseline. Re-staging the relocated pin
+            // here would overwrite the very baseline Ctrl+Z must restore.
+            // consolidate + nextRun remains RUN-close work gated on runOpen().
             if (wasRelocate) {
-                if (editIsOpen())
-                    commitEditAtBankBoundary(DragBank.Move);
-                moveSub.restageRelocatePin();           // run-close: UNCONDITIONAL on relocate
                 // Hard run boundary: collapse the open run's tagged in-session
                 // entries into ONE surviving entry, then open a fresh run id so
                 // the next gesture is tagged distinctly.
@@ -312,12 +295,12 @@ tryRotateBank:
                 // off-gizmo press moves no pin, so it closes here instead.
                 if (rotWasPinnedOffGizmo && editIsOpen())
                     commitEditAtBankBoundary(DragBank.Rotate);
-                // Run-close: re-stage the pin the fresh gesture's beginEdit will
-                // freeze as its in-session-cancel baseline. A relocate moved the
-                // pin, so it is staged from the (already-pushed) userPlaced
-                // state; a pinned mode moved nothing, so it is staged verbatim.
-                if (rotWasRelocate) rotateSub.restageActionCenterPin();
-                else                rotateSub.stageCurrentActionCenterPin();
+                // A relocate's setUserPlaced call already staged the old pin
+                // after the callback cleared the freeze. Re-staging the new pin
+                // would destroy that cancel baseline. A pinned press moves no
+                // pin, so it still stages the current state verbatim.
+                if (rotWasPinnedOffGizmo)
+                    rotateSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
                     consolidateRunAndAdvance();
                 }

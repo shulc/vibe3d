@@ -706,7 +706,8 @@ public:
 
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
-                                           int resolvedAxis) {
+                                           int resolvedAxis,
+                                           scope void delegate() beforeRelocate = null) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         // Don't interfere with pan/rotate/zoom modifier combos.
         version(unittest) SDL_Keymod mods = 0;
@@ -801,8 +802,9 @@ public:
         if (relocates) {
             if (!computeClickRelocateHit(e.x, e.y, anchor, vts))
                 return false;
-            // Off-gizmo relocate: mark so the wrapper commits the prior run
-            // and re-stages this relocated pin before the new session opens.
+            if (beforeRelocate !is null) beforeRelocate();
+            // Off-gizmo relocate: mark so the wrapper closes the prior run
+            // before the new session opens.
             // A pinned-mode drag moves NO pin, so it is not a run boundary
             // and this stays false there.
             lastClickWasRelocate = true;
@@ -917,21 +919,6 @@ public:
         auto acen = vts.get!ActionCenterPacket();
         return acen !is null
             && acen.type == cast(int)ActionCenterStage.Mode.Screen;
-    }
-
-    // Re-push the (relocated) gizmo pivot into the ACEN stage after the
-    // wrapper has committed the prior run. At an in-session relocate the
-    // relocate's own `notifyAcenUserPlaced` (fired from
-    // `beginScreenPlaneDragAt`) ran while the prior session's snapshot was
-    // still frozen, so it did NOT stage the new pin as a cancel baseline.
-    // `commitEdit` then clears the freeze WITHOUT restoring (a committed
-    // relocate is permanent). Re-firing the notification now — after the
-    // freeze is cleared and before the new session's `beginEdit` re-freezes
-    // — makes the relocated pin the fresh run's in-session-cancel baseline.
-    // `handler.center` holds the relocated pivot (set by
-    // `beginScreenPlaneDragAt`'s `handler.setPosition(hit)`).
-    public void restageRelocatePin() {
-        notifyAcenUserPlaced(handler.center);
     }
 
     // Phase 7.3a/c: route the would-be gizmo position through

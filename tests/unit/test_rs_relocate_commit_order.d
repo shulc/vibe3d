@@ -42,9 +42,10 @@ unittest // test_rs_relocate_commit_order
     assertPreNotifyOrder("scale", "center");
 
     const wrapper = sourceOf("xfrm_handles.d");
-    assert(wrapper.indexOf("&commitBeforeRotateRelocate") >= 0 &&
+    assert(wrapper.indexOf("&commitBeforeMoveRelocate") >= 0 &&
+           wrapper.indexOf("&commitBeforeRotateRelocate") >= 0 &&
            wrapper.indexOf("&commitBeforeScaleRelocate") >= 0,
-        "Xfrm wrapper must supply both pre-relocate commit callbacks");
+        "Xfrm wrapper must supply all three pre-relocate commit callbacks");
     assert(wrapper.indexOf("rotWasPinnedOffGizmo && editIsOpen()") >= 0,
         "Rotate's post-bank commit must be limited to the non-relocating "
         ~ "pinned off-gizmo path");

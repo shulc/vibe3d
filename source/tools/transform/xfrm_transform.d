@@ -6518,8 +6518,16 @@ private:
         root["activeBank"] = JSONValue(bankName);
         root["dragAxis"]   = JSONValue(dragAxis);
         root["dragging"]   = JSONValue(activeDrag !is null);
+        root["editOpen"]   = JSONValue(editIsOpen());
         Vec3 pivot = moveGizmoCenter();
         root["pivot"] = JSONValue([JSONValue(pivot.x), JSONValue(pivot.y), JSONValue(pivot.z)]);
+        // The relocate-order witness must read the handler that consumed the
+        // press; `pivot` is the Move bank's idle pose, not an R/S witness.
+        Vec3 handlerPivot = pivot;
+        if (activeDrag is rotateSub)      handlerPivot = rotateSub.handler.center;
+        else if (activeDrag is scaleSub) handlerPivot = scaleSub.handler.center;
+        root["handlerPivot"] = JSONValue([
+            JSONValue(handlerPivot.x), JSONValue(handlerPivot.y), JSONValue(handlerPivot.z)]);
         // Task 0614 Phase 3 — expose which subject the apply path is
         // targeting, so a test can assert the item branch engaged rather
         // than inferring it indirectly from a byte-identical vertex diff.
