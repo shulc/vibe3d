@@ -63,6 +63,7 @@ import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
 import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate,
                                setpgid, getpgrp, getppid;
 import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT, O_WRONLY, O_APPEND;
+import core.sys.posix.sys.stat : fstat, stat, stat_t;
 import core.sys.posix.sys.types : ssize_t;
 
 // flock(2) is not surfaced by this druntime's posix bindings; declare it.
@@ -429,24 +430,32 @@ ulong treeSize(string path) {
 // run that made it whenever that run is killed, and a lock held by nobody
 // protects nothing.
 //
-// The lock is the canonical /tmp file, deliberately NOT under tempDir():
-// tempDir() follows TMPDIR, so a capacity-isolated lane would otherwise bypass
-// the nightly perf wrapper that takes this same lock (task 4870). The price is
+// The production default is the canonical /tmp file, deliberately NOT under
+// tempDir(): tempDir() follows TMPDIR, so a capacity-isolated lane would
+// otherwise bypass the nightly perf wrapper that takes this same lock (task
+// 4870). The env override is the same TEST seam as with_perf_lock.sh and is
+// never set by a workflow; it lets the module lane exercise real flock
+// contention without taking the production lock. The price in production is
 // intentional: a test lane can wait behind a nightly measurement and, if it
 // cannot acquire within the default 600 s, exits as `lock_timeout` with NO
-// TESTS RAN. That is a throughput loss, not a broken runner; it buys perf
-// numbers uncontaminated by concurrent test workers. flock is released when
-// the fd closes, so a crashed holder never leaks the lock.
-string runLockPath() { return "/tmp/vibe3d-run-test.lock"; }
+// TESTS RAN. That throughput loss buys uncontaminated perf numbers. flock is
+// released when the fd closes, so a crashed holder never leaks the lock.
+enum runLockPathEnv = "VIBE3D_PERF_RUNTEST_LOCK_PATH";
+string runLockPath() {
+    const configuredPath = environment.get(runLockPathEnv, "");
+    return configuredPath.length ? configuredPath : "/tmp/vibe3d-run-test.lock";
+}
 
 // A test of the runner can legitimately invoke a nested run_test.d while the
 // outer runner owns the host lock (tests/test_harness_load_log.d does this to
-// force a post-lock worker-preparation failure). Pass the owner's PID to test
-// processes, not a boolean bypass: a nested runner may reuse the lease only
-// when the canonical lock still names that PID AND Linux /proc proves the PID
-// is its live ancestor. An unrelated process under another TMPDIR satisfies
-// neither fact and must still queue.
+// force a post-lock worker-preparation failure). Pass the owner's PID AND the
+// inherited lock descriptor to test processes, not a boolean bypass: a nested
+// runner may reuse the lease only when Linux /proc proves the PID is its live
+// ancestor and fstat(fd) identifies the same device+inode as runLockPath().
+// The descriptor identity is stable while a waiter opens the path; lock-file
+// text is not. An unrelated process must still queue.
 enum inheritedRunLockPidEnv = "VIBE3D_INHERITED_RUN_LOCK_PID";
+enum inheritedRunLockFdEnv  = "VIBE3D_INHERITED_RUN_LOCK_FD";
 
 bool processHasAncestor(int ancestor) {
     int current = getppid();
@@ -470,20 +479,29 @@ bool processHasAncestor(int ancestor) {
 }
 
 bool borrowInheritedRunLock() {
+    import std.string : toStringz;
+
     const raw = environment.get(inheritedRunLockPidEnv, "");
     if (!raw.length) return false;
 
     int holder;
     try { holder = raw.to!int; } catch (Exception) { return false; }
     if (holder <= 1 || !processHasAncestor(holder)) return false;
-    try {
-        const stamp = readText(runLockPath()).strip;
-        if (stamp != format("pid %d", holder)) return false;
-    } catch (Exception) {
-        return false;
-    }
 
-    runLockFd = -1;
+    const rawFd = environment.get(inheritedRunLockFdEnv, "");
+    if (!rawFd.length) return false;
+    int inheritedFd;
+    try { inheritedFd = rawFd.to!int; } catch (Exception) { return false; }
+    if (inheritedFd < 0) return false;
+
+    stat_t inheritedIdentity, pathIdentity;
+    if (fstat(inheritedFd, &inheritedIdentity) != 0
+     || stat(runLockPath().toStringz, &pathIdentity) != 0
+     || inheritedIdentity.st_dev != pathIdentity.st_dev
+     || inheritedIdentity.st_ino != pathIdentity.st_ino)
+        return false;
+
+    runLockFd = inheritedFd;
     runLockBorrowed = true;
     g_harness.lockWaitSeconds = 0;
     g_lockAcquiredMs = nowUnixMs();
@@ -500,8 +518,9 @@ bool acquireRunLock(int timeoutSec) {
     runLockFd = open(runLockPath().toStringz, O_RDWR | O_CREAT, octal!"644");
     if (runLockFd < 0) {
         // Can't create the lockfile — degrade to no-lock rather than block CI.
-        stderr.writeln(yellow("warning: could not open run lock; "
-            ~ "running without cross-run serialisation"));
+        stderr.writeln(yellow("warning: could not open run lock; running "
+            ~ "without cross-run serialisation, so a concurrent nightly "
+            ~ "perf measurement may be contaminated by this test run"));
         return true;
     }
     // Fast path: grab it immediately if free.
@@ -571,6 +590,7 @@ void releaseRunLock() {
     // The outer ancestor still owns the canonical fd for a borrowed lease.
     if (runLockBorrowed) {
         runLockBorrowed = false;
+        runLockFd = -1;
         return;
     }
     if (runLockFd >= 0) {
@@ -1846,8 +1866,14 @@ TestResult runOne(string bin, bool verbose, ushort port) {
     cfg.preExecFunction = &ownProcessGroup;
     string[string] childEnv = environment.toAA();
     childEnv["VIBE3D_TEST_PORT"] = port.to!string;
-    if (runLockFd >= 0)
+    if (runLockFd >= 0 && r.name == "test_harness_load_log") {
+        // std.process closes non-stdio descriptors by default. The verified
+        // nested-run lease needs the actual open-file description, so retain
+        // it across this exec and tell descendants which fd to fstat.
+        cfg.flags |= Config.Flags.inheritFDs;
         childEnv[inheritedRunLockPidEnv] = getpid().to!string;
+        childEnv[inheritedRunLockFdEnv] = runLockFd.to!string;
+    }
 
     string outPath = bin ~ ".out";
     File   out_;

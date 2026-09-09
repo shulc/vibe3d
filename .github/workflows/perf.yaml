@@ -26,12 +26,13 @@ name: nightly-perf
 #      a pin that stays paid for three consecutive runs is red too, with
 #      "delete this entry" — a ledger that cannot expire is a ledger that
 #      rots.
-#   1b. lane health — GATING (task 1373). The composition of the ops run:
-#      every row OK, every declared case present, every geometry command
-#      either covered by a case or explicitly excluded with a reason. It gates
-#      what (1) cannot: this is a set of machine-stable composition facts, not
-#      a comparison of timing numbers. A perf case that stops working
-#      used to redden nothing at all; now it reddens here.
+#   1b. lane health + contamination — GATING (tasks 1373, 4870). The
+#      composition of the ops run: every row OK, every declared case present,
+#      every geometry command either covered by a case or explicitly excluded
+#      with a reason; and the run was not contaminated by a foreign vibe3d.
+#      It gates what (1) cannot: these are machine-stable facts, not timing
+#      comparisons. A vanished case or contaminated measurement is red even
+#      when the absolute medians happen to clear their baselines.
 #   2. --vs-last day-over-day comparison — DIAGNOSTIC. It still reports any
 #      per-case move beyond its adaptive band, but no longer fails the job.
 #      On 2026-09-05 it reported 3 regressed AND 3 improved, while every later
@@ -182,7 +183,7 @@ jobs:
         set -o pipefail
         rdmd tools/perf/run.d --vs-last 2>&1 | tee vslast.log
 
-    - name: 'Lane health (ops rows + declared coverage)'
+    - name: 'Lane health + contamination'
       id: lanehealth
       # GATING, and gating is the whole point of it (task 1373).
       #
@@ -197,11 +198,13 @@ jobs:
       #   1. some row in results.json is not OK;
       #   2. some case this binary DECLARES produced no row at all;
       #   3. some geometry command is in neither the case table nor the
-      #      exclusion table (invariant L2's finding, carried in the file).
+      #      exclusion table (invariant L2's finding, carried in the file);
+      #   4. `ops` stamped the artifact contaminated after runWasContaminated
+      #      saw a foreign live instance (task 4870 review fix).
       #
-      # All three are machine-stable facts about the COMPOSITION of the run —
-      # a status string, a set of names, a list of command ids. None is a
-      # hardware-bound budget and none has a two-month-stale baseline to be
+      # All four are machine-stable facts about the run — a status string, a
+      # set of names, a list of command ids, and a contamination boolean. None
+      # is a hardware-bound budget and none has a two-month-stale baseline to be
       # wrongly red against, which is exactly the argument the `tools` step
       # below makes for gating on its first night. Bringing `ops` back into
       # the gate and dealing with the Jun-07 baseline were the other two
@@ -287,7 +290,7 @@ jobs:
           echo "| signal | outcome |"
           echo "|---|---|"
           echo "| ops absolute vs baseline + debt ledger (gating) | ${{ steps.ops.outcome }} |"
-          echo "| lane health: rows + declared coverage (gating) | ${{ steps.lanehealth.outcome }} |"
+          echo "| lane health: rows + coverage + contamination (gating) | ${{ steps.lanehealth.outcome }} |"
           echo "| day-over-day --vs-last (diagnostic) | ${{ steps.vslast.outcome }} |"
           echo "| tools preview invariants (gating) | ${{ steps.tools.outcome }} |"
           echo "| frames --ci counters (gating) | ${{ steps.frames.outcome }} |"

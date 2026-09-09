@@ -662,10 +662,13 @@ Two-night confirmation was not adopted: it adds a day of detection latency and
 a third verdict state without evidence that repeatability, rather than the
 fixed baseline, is the missing discriminator.
 
-**Contaminated runs never gate, in either direction (task 1840).** A run that
-measured while a foreign vibe3d was alive on the host writes its history entry
-stamped `"contaminated":true` (the entry is still written — it is the record
-of what that night's host did). `--vs-last` then:
+**Contaminated timings never gate; contamination itself does (tasks 1840,
+4870).** A run that measured while a foreign vibe3d was alive on the host
+writes both its result artifact and history entry stamped
+`"contaminated":true` (the entry is still written — it is the record of what
+that night's host did). The separate `--lane-health` workflow step fails on
+that machine-stable fact even when `ops` cleared every numeric baseline, while
+`--vs-last` remains diagnostic and:
 
 * refuses to gate FROM such an entry — it prints `NO VERDICT (FAIL)` with the
   offending pids and exits nonzero, because a green here would mean "did not
@@ -686,8 +689,9 @@ where the absolute comparison is valid. The runner is a systemd **user**
 service (`~/.config/systemd/user/github-runner-perf.service`) bound to
 `graphical-session.target`, so jobs render through the real display/GPU; it
 is online only while the owner's session is. **Four signals gate** — `ops`
-(absolute vs baseline + debt ledger), `lane-health`, `tools` and `frames --ci`;
-`--vs-last` is diagnostic since task 4870 for the reason above. Every step after `ops` carries
+(absolute vs baseline + debt ledger), `lane-health` (rows, declared coverage,
+and the contamination verdict), `tools` and `frames --ci`; `--vs-last` is
+diagnostic since task 4870 for the reason above. Every step after `ops` carries
 `if: always()` so an ops-red still prints the rest of the lane's diagnosis;
 `vslast` acquired that guard in the same commit that made `ops` gating, and
 without it the day-over-day comparison would go missing on exactly the nights

@@ -5117,10 +5117,18 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
 // That is the same argument the `tools` lane's step
 // comment makes for itself.
 //
+// Task 4870 adds the fourth, separately gating fact: the artifact must not be
+// contaminated. Unlike --vs-last's timing comparison, that boolean is stable
+// and a green absolute median cannot cancel it.
+//
 // It is a PURE FILE READ. No build, no instance, no port — so it cannot kill
 // a sibling lane's vibe3d and it costs milliseconds.
 int runLaneHealth() {
-    string path = buildPath(g_repoRoot, "tools", "perf", "results.json");
+    // Test seam only: a module witness must not overwrite the live perf
+    // artifact in this checkout. No workflow sets this variable; the default
+    // remains the results file written from runWasContaminated() below.
+    string path = environment.get("VIBE3D_PERF_RESULTS_PATH",
+        buildPath(g_repoRoot, "tools", "perf", "results.json"));
     writeln("=== lane health (", path, ") ===");
     if (!exists(path)) {
         writeln("  [FAIL] results.json is absent — the ops run did not finish.");
@@ -5139,6 +5147,22 @@ int runLaneHealth() {
     }
 
     int failures = 0;
+
+    // Contamination is a machine-stable fact, unlike the day-over-day timing
+    // noise that made --vs-last diagnostic in task 4870. Keep it in this
+    // separate gating step: a foreign live instance must redden the job even
+    // when every median happens to clear the absolute baseline.
+    if (!("contaminated" in j)) {
+        writeln("  [FAIL] results.json carries no `contaminated` verdict — it "
+              ~ "was written by a run.d older than task 1840");
+        failures++;
+    } else if (j["contaminated"].boolean) {
+        writefln("  [FAIL] CONTAMINATED: ops measured while a foreign vibe3d "
+               ~ "was alive (%s)",
+                 ("contaminatedBy" in j) ? j["contaminatedBy"].str
+                                          : "details unavailable");
+        failures++;
+    }
 
     // The run's own filter. "Every declared case is present" is only a fair
     // question of a run that was asked for all of them.
@@ -5272,8 +5296,8 @@ int main(string[] args) {
         "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance,
         "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline,
         "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
-        "lane-health", "read tools/perf/results.json and exit nonzero if any case is not OK, if a case this binary declares is missing from it, or if a geometry command is neither covered nor excluded", &laneHealth,
-        "vs-last",   "compare the latest history entry against the previous comparable run and exit nonzero on any regression (the day-over-day gate for scheduled runs)", &vsLast,
+        "lane-health", "read tools/perf/results.json and exit nonzero if the run is contaminated, if any case is not OK, if a declared case is missing, or if a geometry command is neither covered nor excluded", &laneHealth,
+        "vs-last",   "compare the latest history entry against the previous comparable run and exit nonzero on any regression (diagnostic in scheduled runs)", &vsLast,
         "vs-last-threshold", "`--vs-last` regression threshold as a fraction (default 0.20 = +20%)", &vsLastThreshold,
         "vs-last-snap-threshold", "`--vs-last` threshold for the `#snapQuery` keys, which are measurably noisier (default 0.60 = +60%; lowering --vs-last-threshold below it lowers this too)", &vsLastSnapThreshold,
         "vs-last-floor",     "`--vs-last` ignores cases where both medians sit under this many µs (default 200)", &vsLastFloorUs,

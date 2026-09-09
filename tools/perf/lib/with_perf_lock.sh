@@ -167,7 +167,9 @@ if [ "${VIBE3D_PERF_SKIP_RUNTEST_LOCK:-0}" = "1" ]; then
          "numbers produced under it." >&2
 else
     echo "with_perf_lock: acquiring $runtest_lock_path (timeout ${timeout_s}s)..." >&2
-    exec 8>"$runtest_lock_path"
+    # Read/write WITHOUT truncation: this open happens before flock waits, so
+    # `>` would erase the live runner's diagnostic stamp for the whole queue.
+    exec 8<>"$runtest_lock_path"
     if ! flock -w "$timeout_s" 8; then
         holder=$(cat "$runtest_lock_path" 2>/dev/null | tr -d '\n')
         echo "with_perf_lock: REFUSED — $runtest_lock_path is still held after" \
@@ -182,6 +184,11 @@ else
              "set VIBE3D_PERF_SKIP_RUNTEST_LOCK to get past it." >&2
         exit 1
     fi
+    # We own the lock now; replace any prior holder's diagnostic stamp. The
+    # truncate is safe only here, after flock, and the inherited fd remains
+    # the lock authority across the exec below.
+    : > "$runtest_lock_path"
+    printf 'pid %s\n' "$$" >&8
     echo "with_perf_lock: acquired $runtest_lock_path" >&2
 fi
 
