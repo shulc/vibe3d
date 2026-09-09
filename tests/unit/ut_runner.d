@@ -16,7 +16,7 @@ import std.process : environment;
 import std.stdio : File, stderr, writefln, writeln;
 import std.string : splitLines, strip;
 
-private enum expectedModuleCount = 522;
+private enum expectedModuleCount = 523;
 private enum timingEnvironment = "VIBE3D_UT_TIMINGS";
 
 extern (C) void _d_print_throwable(Throwable throwable);
@@ -52,13 +52,15 @@ private void verifyPopulationAndRoster(string[] actual, size_t executed)
     }
 
     assert(expected.length == expectedModuleCount,
-        "unit-test roster must contain exactly 522 modules; found "
+        "unit-test roster must contain exactly "
+        ~ expectedModuleCount.to!string ~ " modules; found "
         ~ expected.length.to!string);
     assert(isSorted(expected),
         "unit-test module roster must remain sorted");
     assert(executed == expectedModuleCount,
         "unit-test module population changed: executed "
-        ~ executed.to!string ~ ", expected 522");
+        ~ executed.to!string ~ ", expected "
+        ~ expectedModuleCount.to!string);
     assert(actual == expected,
         "unit-test module roster changed; update only after reviewing the full diff");
 }
