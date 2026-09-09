@@ -8,9 +8,9 @@ module subpatch_preview;
 // staleness keys and a two-slot cage snapshot pool, none of which touches a
 // private of `Mesh` and none of whose own privates anything outside it reads.
 // mesh.d re-exports this module (`public import subpatch_preview;`), the same
-// way it re-exports mesh_topo / mesh_gpu / mesh_edge_slice, so `import mesh`,
+// way it re-exports mesh_topo / mesh_edge_slice, so `import mesh`,
 // `import mesh : SubpatchPreview` and `mesh.SubpatchPreview` all resolve
-// unchanged and no call site moved.
+// unchanged and no call site moved. mesh_gpu is imported directly by consumers.
 //
 // EVERY import here is PLAIN, deliberately. mesh.d `public import`s this
 // module, and a SELECTIVE import makes a module-scope alias that the public

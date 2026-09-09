@@ -15574,8 +15574,8 @@ struct SubpatchTrace {
 // ---------------------------------------------------------------------------
 // SubpatchPreview  ->  extracted to source/subpatch_preview.d (task 4066).
 // Re-exported here so every `import mesh;` / `import mesh : SubpatchPreview;`
-// call site resolves unchanged -- same facade as mesh_topo / mesh_gpu /
-// mesh_edge_slice above.
+// call site resolves unchanged -- same facade as mesh_topo / mesh_edge_slice
+// above. mesh_gpu is imported directly by its consumers.
 // ---------------------------------------------------------------------------
 public import subpatch_preview;
 

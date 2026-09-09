@@ -13,9 +13,9 @@ module mesh_topo;
 // holds nothing but a `const(Loop)[]` slice, and moving the type is what lets
 // this module stand alone instead of importing mesh.d back.
 //
-// mesh.d re-exports this module (`public import mesh_topo;`), the same way it
-// re-exports mesh_gpu, so `import mesh : Loop;` / `mesh.VertexEdgeRange` and
-// every other existing spelling resolves unchanged.
+// mesh.d re-exports this module (`public import mesh_topo;`), so
+// `import mesh : Loop;` / `mesh.VertexEdgeRange` and every other existing
+// spelling resolves unchanged. mesh_gpu is imported directly by its consumers.
 //
 // The only import back into mesh.d is `version (unittest)`: the two blocks at
 // the bottom (EdgeFaceRange's other-endpoint retry on a corrupted fan) build

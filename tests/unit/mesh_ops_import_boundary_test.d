@@ -237,6 +237,9 @@ D");
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);
+    assert(meshImports.length >= 40,
+        format("mesh import-boundary scan found only %d import edges in module `mesh`",
+               meshImports.length));
     size_t meshGpuEdges;
     foreach (hit; meshImports) if (hit.target == "mesh_gpu") ++meshGpuEdges;
     assert(meshGpuEdges == 0,
@@ -245,6 +248,9 @@ D");
                meshGpuEdges));
 
     const publicPaths = publicImportPaths("mesh", codeByModule);
+    assert("mesh_gpu" !in publicPaths,
+        format("mesh publicly exposes mesh_gpu through `%s`",
+               publicPaths.get("mesh_gpu", "")));
     size_t publicOperationEdges;
     foreach (hit; meshImports) if (hit.isPublic && hit.target.startsWith("mesh_ops.")) {
         assert(hit.target in operationNames,
