@@ -200,3 +200,10 @@ drop 0 1 4360 the boundary cell's 12v/7f divergence pin, superseded by the same 
 # write into one sequential witness. No assertion was removed: the merged cell
 # still requires the idle trace to be empty before the write produces IER.
 drop 1 0 4590 the idle and writing PropertyPanel cells became one sequential witness so a stubbed draw fails inside that same cell
+
+# Task 4560 moved the occupied-preview callback observer from the production
+# command_wrapper module into tests/unit so it no longer changes the source
+# history-call census. Its refire-construction assertions remain there; the
+# six command/drop/undo/redo tail assertions are covered by the new application
+# test_command_wrapper_smooth_result lifecycle cell instead.
+drop 0 6 4560 the Smooth observer keeps its callback-time purity assertions in tests/unit while command/drop/undo/redo convergence moved to the application lifecycle cell
