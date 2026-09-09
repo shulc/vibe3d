@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 520
-task-citation-lines 5087
+task-citation-lines 5086
 citing-files 394
 long-comment-runs 280
 files-with-long-runs 149
@@ -108,7 +108,7 @@ allow source/commands/mesh/selection_undo.d 3
 allow source/commands/mesh/session_edit.d 10
 allow source/commands/mesh/set_material.d 2
 allow source/commands/mesh/set_part.d 2
-allow source/commands/mesh/smooth.d 13
+allow source/commands/mesh/smooth.d 12
 allow source/commands/mesh/smooth_shift.d 3
 allow source/commands/mesh/spikey.d 3
 allow source/commands/mesh/spin_edge.d 7
