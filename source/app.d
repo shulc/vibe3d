@@ -194,7 +194,7 @@ import input_router : InputRouter;
 // rmbPath/anySpinning/buildToolVts/viewportInputAllowed). See
 // source/input_frame_state.d's module doc comment.
 import input_frame_state : InputFrameState, DragMode;
-import frame_runner : FrameRunner;
+import frame_runner : FrameRunner, resolveFramePresentMode;
 import ui.viewport_render : SceneInputs, SceneViewInputs,
     SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;
 import registration : registerTools, registerCommands;
@@ -7669,68 +7669,8 @@ void main(string[] args) {
             }
         }
 
-        // ---- ImGui draw ----
-        // Render() must happen AFTER activeTool.draw() so any commands the
-        // tool adds to the foreground draw list (snap overlay, falloff
-        // overlay, etc.) are picked up by AddDrawListToDrawData — that
-        // helper early-returns on an empty CmdBuffer, so adding commands
-        // post-Render leaves them out of the ImDrawData snapshot.
-        //
-        // Phase 2: clear the default framebuffer here.  The scene glClear
-        // moved into renderViewportSceneToFbo() (FBO path), so the default
-        // FB is otherwise untouched this frame and would show stale pixels
-        // behind the transparent DockSpace host window.
-        glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        {
-            // Perf: ui phase — ImGui's own GPU submission (window-*build*
-            // time earlier in the frame is unattributed "other"). No-op in
-            // the default build.
-            auto zFramesUi = g_frames.phase(Phase.ui);
-            frameRunner.renderImGui();
-            // Restore full viewport for ImGui rendering.
-            glViewport(0, 0, ifs.fbW, ifs.fbH);
-            frameRunner.submitImGui();
-        }
-
-        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): endFrame MUST
-        // be placed BEFORE the present/flush conditional below. In the
-        // harness's `--test --perf` mode the conditional is TRUE (perfMode
-        // makes `!perfMode` false) so SDL_GL_SwapWindow (present) runs; in
-        // plain `--test` it is FALSE so glFlush + SDL_Delay(4) run instead.
-        // Placing endFrame here excludes present/vsync/the test delay from
-        // `totalNs` in BOTH run modes, keeping it pure CPU submission cost.
-        // No-op in the default build.
-        g_frames.endFrame();
-        g_fc.endFrame();
-
-        // In --test mode the window is HIDDEN and nothing reads back a
-        // presented frame (picking / ViewCache are projection-matrix math;
-        // ImGui still renders into the GL backbuffer for any test that probes
-        // draw state — it just never reaches the compositor). SwapWindow is the
-        // LAST entry point into the Mesa/EGL/compositor swap path, and under
-        // -j8 that path's process-/driver-global locks occasionally park one
-        // instance's main thread forever in futex_do_wait (HTTP thread alive,
-        // main loop dead ⇒ the worker hangs; the race-free /api/model read
-        // spins on a completedEpoch the dead loop never bumps). HIDDEN +
-        // vsync-off only REDUCED the rate — a hidden Wayland surface still
-        // drives Mesa's swap/buffer-management locks. Skipping the swap removes
-        // the contention point entirely. --perf still presents (it benchmarks
-        // the real frame path on a single, non-contended instance).
-        if (!(testMode && !perfMode && !visibleTest))
-            SDL_GL_SwapWindow(window);
-        else
-            // No present, but still flush this frame's GL commands to the
-            // driver so the command buffer doesn't grow unbounded across the
-            // uncapped test loop. glFlush is a local driver call — it does NOT
-            // touch the compositor/swap locks that SwapWindow does.
-            glFlush();
-
-        // --test runs with vsync off and no swap, so the main loop would
-        // otherwise spin at uncapped FPS and burn a full core. Under -j8 that is
-        // 8 cores pinned on busy-render. A 4ms floor caps the test loop at
-        // ~250 FPS — far faster than any event-replay or HTTP poll needs, while
-        // leaving the CPU free for the sibling workers. --perf stays uncapped.
-        if (testMode && !perfMode && !visibleTest) SDL_Delay(4);
+        const presentMode = resolveFramePresentMode(
+            testMode, perfMode, visibleTest);
+        frameRunner.finishFrame(window, ifs.fbW, ifs.fbH, presentMode);
     }
 }

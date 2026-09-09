@@ -270,11 +270,4 @@ final class FrameRunner {
         }
     }
 
-    void renderImGui() {
-        ImGui.Render();
-    }
-
-    void submitImGui() {
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
-    }
 }
