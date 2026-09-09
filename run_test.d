@@ -9,8 +9,10 @@
  *   ./run_test.d --no-build          # skip `dub build`
  *   ./run_test.d -j N                # override the worker count (each worker
  *                                      gets its own vibe3d on a private port)
+ *   VIBE3D_TEST_DISPLAY=:1 ./run_test.d # explicitly give workers one X display
  *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
  *   ./run_test.d --print-run-lock    # name the host-wide run lock, exit
+ *   ./run_test.d --probe-worker-display # report an owned worker's /proc env
  *   ./run_test.d --check-protocol    # prepared-protocol census alone, exit 0/2
  *   ./run_test.d --timeout N         # per-test wall-clock cap in seconds
  *                                      (default 600; 0 = no cap)
@@ -54,7 +56,7 @@ import std.process   : spawnProcess, spawnShell, wait, tryWait, executeShell,
                        Config, Pid, ProcessException, environment;
 import std.range     : empty;
 import std.stdio     : writeln, writefln, write, stdin, stdout, stderr, File;
-import std.string    : startsWith, endsWith, indexOf, splitLines, strip;
+import std.string    : startsWith, endsWith, indexOf, split, splitLines, strip;
 
 import core.thread        : Thread;
 import core.time          : msecs, seconds, dur, Duration;
@@ -96,6 +98,8 @@ __gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
                                     // it no longer gets the terminal's SIGINT —
                                     // the handler below has to deliver it.
 __gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" when mold unusable
+
+enum workerDisplayEnv = "VIBE3D_TEST_DISPLAY";
 
 // Machine-aware default worker count. See the call site in main() for the
 // rationale; kept as a free function so run_all.d can mirror the same formula.
@@ -1571,13 +1575,15 @@ Pid startVibe(ushort port, string logPath) {
     auto logFile = File(logPath, "wb");
     string[] argv = ["./vibe3d", "--test", "--http-port", port.to!string];
     // A runner-owned worker must not inherit one caller-owned X socket (task
-    // 4660). Only DISPLAY is removed here; WAYLAND_DISPLAY intentionally
-    // remains because removing a second display variable would be a separate
-    // behavior change, not part of moving the caller's established practice
-    // into the runner. --attach never reaches startVibe, so external visual
-    // endpoints retain the display environment chosen by their owner.
+    // 4660). Task 5010 adds one narrow exception: a NON-EMPTY
+    // VIBE3D_TEST_DISPLAY becomes the worker's DISPLAY. Missing or empty keeps
+    // DISPLAY absent. No other display variable is rewritten, and --attach
+    // never reaches startVibe, so external endpoints remain caller-owned.
     auto childEnv = environment.toAA();
     childEnv.remove("DISPLAY");
+    const requestedDisplay = environment.get(workerDisplayEnv, "");
+    if (requestedDisplay.length)
+        childEnv["DISPLAY"] = requestedDisplay;
     Pid pid;
     try {
         pid = spawnProcess(argv, stdin, logFile, logFile,
@@ -1590,6 +1596,60 @@ Pid startVibe(ushort port, string logPath) {
         vibePids ~= pid.processID;
     }
     return pid;
+}
+
+// Linux-only behavioural probe for the runner's own spawn boundary (task
+// 5010). It launches through startVibe, waits until exec has installed the
+// worker argv, then reports DISPLAY from the ACTUAL /proc environment. Tests
+// run it beside a harmless fake ./vibe3d so no X server is required.
+int probeWorkerDisplay(ushort port) {
+    version (linux) {
+        const logPath = buildPath(getcwd(), "worker-display-probe.log");
+        auto pid = startVibe(port, logPath);
+        if (pid is null) return 2;
+        scope(exit) cleanup();
+
+        const procRoot = format("/proc/%d", pid.processID);
+        bool execReady;
+        foreach (_; 0 .. 200) {
+            try {
+                if (readText(buildPath(procRoot, "cmdline")).canFind("--http-port")) {
+                    execReady = true;
+                    break;
+                }
+            } catch (Exception) {}
+            Thread.sleep(10.msecs);
+        }
+        if (!execReady) {
+            stderr.writefln(red("worker-display probe: pid %d did not reach exec"),
+                            pid.processID);
+            return 2;
+        }
+
+        string display;
+        bool present;
+        try {
+            const raw = readText(buildPath(procRoot, "environ"));
+            foreach (entry; raw.split('\0')) {
+                enum prefix = "DISPLAY=";
+                if (!entry.startsWith(prefix)) continue;
+                present = true;
+                display = entry[prefix.length .. $];
+                break;
+            }
+        } catch (Exception e) {
+            stderr.writefln(red("worker-display probe: could not read pid %d environment: %s"),
+                            pid.processID, e.msg);
+            return 2;
+        }
+
+        if (present) writeln("WORKER DISPLAY PRESENT=", display);
+        else         writeln("WORKER DISPLAY ABSENT");
+        return 0;
+    } else {
+        stderr.writeln("worker-display probe requires Linux /proc");
+        return 2;
+    }
 }
 
 bool waitForHttpReady(string logPath, ushort port) {
@@ -2354,6 +2414,7 @@ void printSummary(TestResult[] results) {
 
 int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, printRunLock, checkGate;
+    bool probeDisplay;
     bool checkProtocol;
     // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
     // above for what each of these drives.
@@ -2387,6 +2448,9 @@ int main(string[] args) {
                     ~ "and exit, creating nothing",                             &printScratch,
         "print-run-lock","print the host-wide run-lock path and exit, "
                     ~ "creating nothing",                                      &printRunLock,
+        "probe-worker-display","launch runner-owned ./vibe3d, read DISPLAY "
+                    ~ "from its Linux /proc environment, print it and exit; "
+                    ~ "test diagnostic, no build or host lock",                &probeDisplay,
         "probe-run-lock","diagnostic: acquire the real host-wide run lock, "
                     ~ "hold it for N seconds, then exit without building or "
                     ~ "running tests",                                         &runLockProbeSeconds,
@@ -2473,6 +2537,8 @@ int main(string[] args) {
         writeln(runLockPath());
         return 0;
     }
+    if (probeDisplay)
+        return probeWorkerDisplay(port);
     if (runLockProbeSeconds >= 0) {
         if (!acquireRunLock(lockTimeoutSec)) return 1;
         scope(exit) releaseRunLock();
