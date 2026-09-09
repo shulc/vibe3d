@@ -62,7 +62,7 @@
 module tests.unit.run_test_scratch_test;
 
 import std.exception : collectException, enforce;
-import std.file      : exists, mkdirRecurse, rmdirRecurse, tempDir;
+import std.file      : exists, mkdirRecurse, remove, rmdirRecurse, tempDir;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.process   : Config, execute, environment, thisProcessID;
@@ -70,6 +70,12 @@ import std.string    : startsWith, strip;
 
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
+
+private string runnerLockPath()
+{
+    return buildPath(tempDir(), format(
+        "vibe3d-run-test-scratch-test-%d.lock", thisProcessID));
+}
 
 // Ask the shipped runner what scratch directory it would use when run from
 // `cwd`, with `extraEnv` added to its environment.
@@ -81,10 +87,11 @@ private string askScratch(string cwd, string[string] extraEnv = null)
     // A runner spawned BY A TEST is not this host's load: without this the
     // record would land in ~/.local/state/vibe3d/harness.jsonl and be counted
     // by tools/local/harness-report.py as a real invocation (task 3260). It
-    // is set here rather than at each call site so a new case cannot forget;
-    // tests/unit/harness_log_isolation_census_test.d refuses a spawn that has
-    // no such neutralisation at all.
+    // Both isolation seams are set here rather than at each call site so a new
+    // case cannot forget; tests/unit/harness_log_isolation_census_test.d
+    // refuses a runner spawn that leaves either host-owned channel live.
     env["VIBE3D_HARNESS_LOG"] = "off";
+    env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runnerLockPath();
 
     auto r = execute(["rdmd", runnerPath, "--print-scratch"],
                      env, Config.none, size_t.max, cwd);
@@ -102,6 +109,8 @@ private string askScratch(string cwd, string[string] extraEnv = null)
 unittest
 {
     enforce(exists(runnerPath), runnerPath ~ " not found — repo root misderived");
+    if (exists(runnerLockPath())) remove(runnerLockPath());
+    scope(exit) if (exists(runnerLockPath())) remove(runnerLockPath());
 
     // Two synthetic checkouts, plus a third whose last two path components are
     // deliberately identical to the second's.

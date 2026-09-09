@@ -228,18 +228,20 @@ unittest
     // for the wrong reason — see the mutation note in the task card).
     const script = format(
         "mount -t tmpfs -o size=16m tmpfs %s || exit 99\n"
-      // VIBE3D_HARNESS_LOG=off, not a flag: the assertion below is that the
-      // runner is invoked "exactly as a caller would ... no diagnostic flags",
-      // and an env var does not change the path under test. Without it this
-      // synthetic refusal is appended to the HOST's load log on every gate run
-      // and read back as a real one (task 3260).
-      ~ "TMPDIR=%s VIBE3D_HARNESS_LOG=off rdmd %s selection 2>&1; echo RUNNER_EXIT=$?\n"
+      // These are environment seams, not diagnostic flags: the assertion below
+      // remains that the runner is invoked exactly as an ordinary caller would.
+      // The log seam keeps the synthetic refusal out of the host load record
+      // (task 3260); the lock-path seam keeps this nested module-test runner on
+      // the mounted filesystem instead of the production host lock (task 4920).
+      ~ "TMPDIR=%s VIBE3D_HARNESS_LOG=off VIBE3D_PERF_RUNTEST_LOCK_PATH=%s "
+      ~ "rdmd %s selection 2>&1; echo RUNNER_EXIT=$?\n"
       ~ "TMPDIR=%s DISPLAY= rdmd %s preflight 2>&1; echo LANE_EXIT=$?\n"
       ~ "umount %s || exit 98\n"
       ~ "mount -t tmpfs -o size=512m tmpfs %s || exit 97\n"
       ~ "rdmd %s --check-space %s --space-floor-mib 256 -j 8 2>&1; "
       ~ "echo WARNING_EXIT=$?\n",
-        mp, mp, runnerPath, mp, lanePath, mp, mp, runnerPath, mp);
+        mp, mp, buildPath(mp, "vibe3d-run-test.lock"), runnerPath,
+        mp, lanePath, mp, mp, runnerPath, mp);
     auto r = execute(["unshare", "--mount", "--map-root-user", "bash", "-c", script]);
 
     enforce(r.status != 99, "could not mount a 16 MiB tmpfs inside the unprivileged "

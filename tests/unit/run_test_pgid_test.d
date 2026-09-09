@@ -70,7 +70,10 @@ unittest
     // pid-suffixed so two lanes running `dub test` at once do not clobber
     // each other's binary.
     const outBin = buildPath(tempDir(), format("run_test_pgid_ut_%d", thisProcessID));
+    const runLock = buildPath(tempDir(), format(
+        "vibe3d-run-test-pgid-test-%d.lock", thisProcessID));
     scope(exit) cast(void) collectException(remove(outBin));
+    scope(exit) if (exists(runLock)) cast(void) collectException(remove(runLock));
 
     auto build = execute(["dmd", "-unittest", runnerPath, "-of=" ~ outBin]);
     enforce(build.status == 0, format(
@@ -78,13 +81,13 @@ unittest
         runnerPath, build.status, build.output));
 
     // See tests/unit/harness_log_isolation_census_test.d: a runner spawned by a
-    // test must not append to this host's load log (task 3260). Harmless here
-    // today — druntime runs run_test.d's own unittests and skips main, so no
-    // record is written — but "which exits log" is a property of run_test.d,
-    // not of this test, and it is not this test's business to depend on it.
+    // test must isolate both host-owned channels. Both are harmless today —
+    // druntime runs run_test.d's own unittests and skips main — but which exits
+    // reach them is a property of the runner, not of this test.
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
     env["VIBE3D_HARNESS_LOG"] = "off";
+    env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runLock;
     auto run = execute([outBin], env);
     enforce(run.status == 0, format(
         "%s's own unittest block failed (status %d):\n%s\n" ~

@@ -1,4 +1,4 @@
-// A test that spawns the runner must not write to this host's load log (3260).
+// A test that spawns the runner must isolate both host-owned channels (4920).
 //
 // THE DEFECT THIS CLOSES, found by the log itself on the day it was added.
 // `run_test_space_preflight_test.d` mounts a 16 MiB tmpfs and invokes
@@ -11,27 +11,26 @@
 // is one of the report's headline numbers. An instrument measuring its own
 // test suite reports a defect that does not exist.
 //
-// WHY A CENSUS AND NOT THREE FIXES. Three of the four spawn sites are harmless
-// TODAY because they pass only meta flags (`--print-scratch`, `--check-space`,
-// `--sweep-plan`), which return before the log is armed. But "which exits
-// log" is a property of run_test.d, not of these tests: moving the arm point
-// one block earlier — an ordinary refactor — would silently re-poison the
-// record with no test anywhere going red. So the rule is the blunt one, and
-// it is enumerated rather than merely stated: a test file that both names the
-// runner and spawns a process must neutralise the log.
+// WHY A CENSUS AND NOT POINT FIXES. Several spawn sites are harmless TODAY
+// because they pass only meta flags (`--print-scratch`, `--check-space`,
+// `--sweep-plan`), which return before the log or lock is reached. But which
+// exits reach those channels is a property of run_test.d, not of these tests:
+// moving either point one block earlier — an ordinary refactor — would silently
+// poison the host record or contend on the production lock. So the rule is the
+// blunt one, enumerated rather than merely stated: a test file that both names
+// the runner and spawns a process must neutralise both channels.
 //
 // SATISFYING IT: set VIBE3D_HARNESS_LOG in the spawn's environment, either to
-// "off" or to a scratch path the test owns. tests/test_harness_load_log.d does
-// the latter, because it exists to read back what a run writes.
+// "off" or to a scratch path the test owns, and set
+// VIBE3D_PERF_RUNTEST_LOCK_PATH to a test-owned path. The load-log test owns
+// both files because it exists to read the record and exercise real flock.
 //
-// MUTATION: drop `env["VIBE3D_HARNESS_LOG"] = "off";` from any of the three
-// helpers, or the `VIBE3D_HARNESS_LOG=off` from the preflight test's witness
-// script, and this test names that file.
+// MUTATION: drop either environment seam from a runner-spawning file and this
+// test names that file. Empty the detected spawn-site list and only the
+// population floor keeps the two universal checks from passing vacuously.
 module tests.unit.harness_log_isolation_census_test;
 
-import std.algorithm : canFind, sort;
-import std.array     : array;
-import std.exception : enforce;
+import std.algorithm : sort;
 import std.file      : dirEntries, SpanMode, exists, readText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
@@ -97,8 +96,9 @@ unittest
     const testDirs = [buildPath(repoRoot, "tests"),
                       buildPath(repoRoot, "tests", "unit")];
 
-    string[] offenders;
-    string[] covered;
+    string[] spawnSites;
+    string[] logOffenders;
+    string[] lockOffenders;
 
     foreach (dir; testDirs)
     {
@@ -113,15 +113,19 @@ unittest
 
             if (!runsRunner(txt)) continue;
 
-            if (txt.indexOf("VIBE3D_HARNESS_LOG") >= 0) covered ~= name;
-            else                                        offenders ~= name;
+            spawnSites ~= name;
+            if (txt.indexOf("VIBE3D_HARNESS_LOG") < 0)
+                logOffenders ~= name;
+            if (txt.indexOf("VIBE3D_PERF_RUNTEST_LOCK_PATH") < 0)
+                lockOffenders ~= name;
         }
     }
 
-    sort(offenders);
-    sort(covered);
+    sort(spawnSites);
+    sort(logOffenders);
+    sort(lockOffenders);
 
-    assert(offenders.length == 0, format(
+    assert(logOffenders.length == 0, format(
         "these test files spawn run_test.d without neutralising the host's load "
       ~ "log: %s\n"
       ~ "A runner spawned by a test is not this host's load. Its record lands in "
@@ -129,14 +133,25 @@ unittest
       ~ "counts it as a real invocation — see this file's header for the case "
       ~ "that actually happened. Fix: put VIBE3D_HARNESS_LOG in the spawn's "
       ~ "environment, either \"off\" or a scratch path the test owns.",
-        offenders));
+        logOffenders));
+
+    assert(lockOffenders.length == 0, format(
+        "these test files spawn run_test.d without neutralising the production "
+      ~ "run lock: %s\n"
+      ~ "A runner spawned by a test must use a lock path owned by that test; "
+      ~ "otherwise `dub test --config=tests` can wait up to 600 seconds behind "
+      ~ "the real suite/perf lock before reaching the condition its witness "
+      ~ "exists to test. Fix: put VIBE3D_PERF_RUNTEST_LOCK_PATH in the spawn's "
+      ~ "environment and point it at test-owned storage.",
+        lockOffenders));
 
     // The census must not pass by finding nothing to census. If the detection
     // above ever stops matching — a renamed helper, a new spawn idiom — this
-    // assert is what says so, instead of a green run over an empty set.
-    enforce(covered.length >= 4, format(
+    // population floor says so beside the two universal assertions, instead of
+    // letting both pass green over an empty set.
+    assert(spawnSites.length >= 4, format(
         "expected at least 4 test files that spawn the runner, found %d (%s). "
       ~ "Either the spawn sites moved or the detection above no longer matches "
       ~ "them — an empty census passes for the wrong reason.",
-        covered.length, covered));
+        spawnSites.length, spawnSites));
 }

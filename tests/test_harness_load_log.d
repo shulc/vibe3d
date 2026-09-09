@@ -29,15 +29,14 @@
 //   C. a worker preparation that starts after the lock but cannot write its
 //      object file. It must be `run_incomplete`, never `ran`: selected tests
 //      are not measured tests, and there is no verdict without `Total:`.
-//      Because this test itself runs below the outer runner's canonical lock,
-//      that nested invocation reuses only the PID+fd lease which run_test.d
-//      placed in this test's environment and verifies through /proc ancestry
-//      plus descriptor/path device+inode identity.
+//      The nested invocation reuses only a PID+fd lease for this test's private
+//      lock, verified through /proc ancestry plus descriptor/path device+inode
+//      identity. The outer runner's canonical lock remains untouched.
 //
-// Cell B is deterministic for a structural reason: this test runs UNDER a
-// run_test.d that holds the host-wide lock, so a child runner cannot get it.
-// That is also why the child needs `--lock-timeout`: otherwise it would sit
-// for the full 600 s.
+// Cell B is deterministic for a structural reason: this process holds the
+// private lock named in every child's environment, so an independent child
+// cannot get it. That is also why the child needs `--lock-timeout`: otherwise
+// it would sit for the full 600 s.
 //
 // MUTATIONS THIS CATCHES — each reddens a named assert, and they are in two
 // different cells, so run them one at a time (druntime stops a module at its
@@ -64,6 +63,11 @@ import core.sys.posix.unistd : close;
 
 string g_logPath;
 
+private enum LOCK_EX = 2;
+private enum LOCK_NB = 4;
+private enum LOCK_UN = 8;
+extern(C) int flock(int fd, int operation) nothrow @nogc;
+
 JSONValue[] records() {
     if (!exists(g_logPath)) return [];
     JSONValue[] out_;
@@ -78,18 +82,51 @@ void main() {
     assert(exists("run_test.d"),
         "this test must run from the repo root, but the cwd has no run_test.d");
 
+    // Preserve task 4870's positive witness before this test moves its other
+    // children to private storage: the outer runner must supply a descriptor
+    // whose identity lets a real nested runner borrow the already-held lease.
+    auto inheritedEnv = environment.toAA;
+    inheritedEnv["VIBE3D_HARNESS_LOG"] = "off";
+    assert(inheritedEnv.get("VIBE3D_INHERITED_RUN_LOCK_PID", "").length > 0
+        && inheritedEnv.get("VIBE3D_INHERITED_RUN_LOCK_FD", "").length > 0,
+        "the outer runner did not provide its PID+fd lock lease");
+    auto inheritedProbe = execute(
+        ["./run_test.d", "--probe-run-lock", "0", "--lock-timeout", "1"],
+        inheritedEnv, Config.inheritFDs);
+    assert(inheritedProbe.status == 0
+        && inheritedProbe.output.indexOf("RUN LOCK ACQUIRED:") >= 0,
+        "the nested runner could not borrow the outer runner's verified lease:\n"
+      ~ inheritedProbe.output);
+
     g_logPath = buildPath(tempDir(),
         format("vibe3d-harness-log-test-%d.jsonl", thisProcessID));
     if (exists(g_logPath)) remove(g_logPath);
     scope(exit) if (exists(g_logPath)) remove(g_logPath);
 
+    const lockFile = buildPath(tempDir(),
+        format("vibe3d-harness-lock-test-%d", thisProcessID));
+    if (exists(lockFile)) remove(lockFile);
+    scope(exit) if (exists(lockFile)) remove(lockFile);
+    import std.string : toStringz;
+    const lockFd = open(lockFile.toStringz, O_RDWR | O_CREAT, octal!"644");
+    assert(lockFd >= 0, "could not open the private runner lock " ~ lockFile);
+    scope(exit) {
+        cast(void) flock(lockFd, LOCK_UN);
+        close(lockFd);
+    }
+    assert(flock(lockFd, LOCK_EX | LOCK_NB) == 0,
+        "could not establish the private runner-lock precondition");
+    static import std.file;
+    std.file.write(lockFile, format("pid %d\n", thisProcessID));
+
     // Redirect the child's log to our own file: the point is to read what a
     // run writes, not to add rows to this host's real record. This deliberately
     // starts from an empty environment rather than environment.toAA(): cell B
-    // must NOT inherit the outer runner's verified lock lease, because it is
-    // the witness for a genuinely independent runner timing out on that lock.
+    // must NOT inherit a verified lock lease, because it is the witness for a
+    // genuinely independent runner timing out on this test's private lock.
     string[string] env = [
         "VIBE3D_HARNESS_LOG": g_logPath,
+        "VIBE3D_PERF_RUNTEST_LOCK_PATH": lockFile,
         "VIBE3D_INHERITED_RUN_LOCK_PID": "",
         "VIBE3D_INHERITED_RUN_LOCK_FD": "",
     ];
@@ -119,24 +156,24 @@ void main() {
     assert(rA["root"].str.length > 0, "A: the lane's root was not recorded");
 
     // ---------------------------------------------------------------- cell B
-    scenario("B: a run that gave up waiting for the host lock records the wait");
-    // Whoever holds the host lock right now is the run_test.d running THIS
-    // test. The child must name that pid, or "who were we queued behind" is
-    // not actually being captured.
+    scenario("B: a run that gave up waiting for the runner lock records the wait");
+    // This process holds the private lock. The child must report this PID, or
+    // "who were we queued behind" is not actually being captured.
     auto lockQuery = execute(["./run_test.d", "--print-run-lock"], env);
     assert(lockQuery.status == 0,
-        "B: run_test.d could not report its production lock:\n" ~ lockQuery.output);
-    auto lockFile = lockQuery.output.strip;
+        "B: run_test.d could not report its configured lock:\n" ~ lockQuery.output);
+    const queriedLock = lockQuery.output.strip;
+    assert(queriedLock == lockFile, format(
+        "B: run_test.d ignored the private lock seam: expected %s, got %s",
+        lockFile, queriedLock));
     int holder = 0;
     if (exists(lockFile)) {
         auto t = readText(lockFile).strip;
         if (t.startsWith("pid ")) holder = t["pid ".length .. $].strip.to!int;
     }
     assert(holder > 0, format(
-        "B: this cell needs a run_test.d holding the host lock (it is normally "
-      ~ "the runner executing this very test), but %s names no pid. Running "
-      ~ "this test binary by hand instead of through ./run_test.d cannot "
-      ~ "exercise the give-up path.", lockFile));
+        "B: this process should hold the private runner lock, but %s names no pid.",
+        lockFile));
 
     // --stale-ok so the binary-freshness guard, which sits BEFORE the lock,
     // cannot decide this cell's outcome instead of the lock doing it.
@@ -166,12 +203,9 @@ void main() {
 
     // ------------------------------------------------------- lease ancestry
     scenario("lease ancestry: an orphaned session cannot borrow the lock");
-    auto inheritedEnv = environment.toAA;
-    inheritedEnv["VIBE3D_HARNESS_LOG"] = "off";
-    assert(inheritedEnv.get("VIBE3D_INHERITED_RUN_LOCK_PID", "").length > 0
-        && inheritedEnv.get("VIBE3D_INHERITED_RUN_LOCK_FD", "").length > 0,
-        "lease ancestry: the outer runner did not provide the PID+fd lease; "
-        ~ "this cell would only test ordinary flock contention");
+    inheritedEnv["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = lockFile;
+    inheritedEnv["VIBE3D_INHERITED_RUN_LOCK_PID"] = thisProcessID.to!string;
+    inheritedEnv["VIBE3D_INHERITED_RUN_LOCK_FD"] = lockFd.to!string;
     auto orphaned = execute(
         ["setsid", "--fork", "./run_test.d", "--probe-run-lock", "0",
          "--lock-timeout", "1"],
@@ -183,14 +217,10 @@ void main() {
 
     // ------------------------------------------------------ lease identity
     scenario("lease identity: ancestry alone cannot borrow a different fd");
-    assert(holder != thisProcessID,
-        "lease identity: the live ancestor chosen for the negative cell is "
-        ~ "unexpectedly the PID stamped into the lock");
     const decoyPath = buildPath(tempDir(),
         format("vibe3d-run-lock-decoy-%d", thisProcessID));
     if (exists(decoyPath)) remove(decoyPath);
     scope(exit) if (exists(decoyPath)) remove(decoyPath);
-    import std.string : toStringz;
     const decoyFd = open(decoyPath.toStringz, O_RDWR | O_CREAT, octal!"644");
     assert(decoyFd >= 0, "lease identity: could not open the decoy descriptor");
     scope(exit) close(decoyFd);
@@ -209,9 +239,9 @@ void main() {
 
     // ---------------------------------------------------------------- cell C
     scenario("C: a run that loses worker output before Total is incomplete");
-    // Unlike cells A/B, execute() here inherits this test's environment. That
-    // retains the outer runner's verified lease while its fd stays owned by
-    // the outer process; the host remains excluded for the entire nested run.
+    // Unlike cells A/B, execute() here receives this test's verified private
+    // lease while its fd stays owned by this process. The host lock remains
+    // excluded for the entire nested run.
     auto mountPoint = buildPath(tempDir(),
         format("vibe3d-harness-incomplete-%d", thisProcessID));
     mkdirRecurse(mountPoint);
@@ -243,7 +273,7 @@ void main() {
           ~ "exit 0\n";
         auto c = execute(["unshare", "--mount", "--map-root-user", "bash", "-c",
                           script, "_", mountPoint, g_logPath, getcwd(),
-                          childPort.to!string], null, Config.inheritFDs);
+                          childPort.to!string], inheritedEnv, Config.inheritFDs);
         assert(c.status == 0, format(
             "C: constrained child failed outside the expected runner refusal (%d):\n%s",
             c.status, c.output));
