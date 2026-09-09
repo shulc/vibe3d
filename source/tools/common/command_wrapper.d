@@ -468,10 +468,10 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         return history !is null && gestureFactory !is null;
     }
 
-    // Build the MeshVertexEdit representing the CURRENT param state. Smooth
-    // and Quantize use their pure sparse-result builders: this method neither
-    // edits/restores the live mesh nor refreshes display caches. Jitter keeps
-    // the legacy apply/diff/restore path until its RNG-order-aware migration.
+    // Build the MeshVertexEdit representing the CURRENT param state. Smooth,
+    // Jitter and Quantize use pure sparse-result builders: this method neither
+    // edits/restores the live mesh nor refreshes display caches. EdgeSlide is
+    // the exact remaining legacy apply/diff/restore client.
     public override Command buildRefireCommand() {
         if (meshPtr is null || history is null || gestureFactory is null)
             return null;
@@ -1330,8 +1330,8 @@ unittest {
         assert(recorded == 0,
             TWrap.stringof ~ ": idle commit must not record");
 
-        // A live wrapper drag's leftovers. Quantize must enter through its
-        // single result builder; Jitter remains on the legacy live-diff path.
+        // A live wrapper drag's leftovers. Both commands enter through their
+        // result builders; EdgeSlide is the remaining legacy client.
         t.baseline = m.vertices.dup;
         static if (is(TWrap == XfrmQuantizeTool)) {
             foreach (ref p; t.params())
@@ -1340,7 +1340,12 @@ unittest {
             assert(t.buildPilotResult(true));
             t.installPilotPreview();
         } else {
-            m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+            foreach (ref p; t.params()) {
+                if (p.name == "rangeX") *p.fptr = 0.25f;
+                if (p.name == "rangeY" || p.name == "rangeZ") *p.fptr = 0.0f;
+            }
+            assert(t.buildPilotResult(true));
+            t.installPilotPreview();
         }
         t.dirty = true;
 

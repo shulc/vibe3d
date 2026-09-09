@@ -20,9 +20,8 @@ struct VertexPositionResult {
     }
 }
 
-/// Capability used by deterministic CommandWrapperTool deforms. Quantize and
-/// Smooth implement it; Jitter keeps the legacy path until its RNG-order-aware
-/// migration.
+/// Capability used by deterministic CommandWrapperTool deforms. Quantize,
+/// Smooth and Jitter implement it; EdgeSlide remains on the legacy path.
 ///
 /// The wrapper's packet-reuse arm reconstructs only Subject and an optional
 /// owned Falloff packet. An implementation may consume no other pipeline slot

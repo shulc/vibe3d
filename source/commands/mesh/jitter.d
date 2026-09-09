@@ -1,6 +1,5 @@
 module commands.mesh.jitter;
 
-import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -10,6 +9,8 @@ import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
+import commands.mesh.vertex_position_result : VertexPositionResult,
+    VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -26,7 +27,8 @@ import std.math   : sqrt, cos, sin, PI;
 /// indices are stable across `scene.reset` + selection edits (no
 /// reorder happens until topology mutates), the same script twice
 /// gives the same output. This is a vibe3d-original deformer.
-class MeshJitter : Command, Operator, IFalloffAware {
+class MeshJitter : Command, Operator, IFalloffAware,
+                   VertexPositionResultBuilder {
     // Per-axis jitter amplitude (`rangeX/Y/Z`).
     private float            rangeX_ = 0.1f;
     private float            rangeY_ = 0.1f;
@@ -45,9 +47,6 @@ class MeshJitter : Command, Operator, IFalloffAware {
     // toggling falloff doesn't desync the seed sequence (same reasoning
     // as the enableX/Y/Z gates).
     private FalloffPacket    falloff_;
-    // Snapshot for revert.
-    private uint[] touchedIdx;
-    private Vec3[] touchedPrev;
     // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
     private PositionUndo undo_;
     version (unittest) {
@@ -102,27 +101,32 @@ class MeshJitter : Command, Operator, IFalloffAware {
     bool evaluate(ref VectorStack vts) {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (auto fp = vts.get!FalloffPacket())
+        if (auto fp = vts.get!FalloffPacket()) {
             this.falloff_ = *fp;
-        // Task 0619: the real viewport is right here on the subject
-        // packet. This command can be handed the LIVE falloff packet
-        // below, which may be a Screen/Lasso type, so it needs a real
-        // aim space — it used to declare an empty `Viewport` instead.
-        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-        // §2.4 — jitter's only guards are the two `return false`s above, both
-        // already resolved before this point, so the batch opens clean.
+        } else {
+            // Command.apply() carries HTTP-injected falloff in the command
+            // field. Publish it as an explicit builder input; a direct builder
+            // call never falls back to state retained by an earlier evaluate.
+            vts.put(&falloff_);
+        }
+
+        VertexPositionResult result;
+        if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
+        // Accepted identity edits must stay representable on the command
+        // surface (task 2110): CommandHistory records this successful command
+        // even though its PositionUndo intentionally remains unarmed.
+        if (result.empty) return true;
 
         // REDO: re-run the kernel UNRECORDED and keep the first delta.
         if (undo_.armed()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, aim);
+            applyResult(ed, result);
             ed.close();
-            return ok;
+            return true;
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-        const ok = applyKernel(ed, aim);
+        applyResult(ed, result);
         undo_.arm(this, ed.close());
-        if (!ok) { undo_.disarm(this); return false; }
         return true;
     }
 
@@ -133,7 +137,21 @@ class MeshJitter : Command, Operator, IFalloffAware {
         return true;
     }
 
-    private bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
+    override bool buildVertexPositionResult(const(Vec3)[] source,
+                                            ref VectorStack vts,
+                                            out VertexPositionResult result) {
+        result.clear();
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null || subj.mesh is null || subj.mesh !is mesh ||
+            source.length != subj.mesh.vertices.length) return false;
+        Mesh* subject = subj.mesh;
+        FalloffPacket resultFalloff;
+        if (auto fp = vts.get!FalloffPacket()) resultFalloff = *fp;
+
+        // Task 0619: Screen/Lasso consume the real subject viewport. Position
+        // sampling below still comes exclusively from the explicit baseline.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+
         // Build affected-vertex mask the same way MeshTransform / MeshQuantize do.
         //
         // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
@@ -142,7 +160,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
         // non-allocating `isXSelected(i)` scalar accessor instead.
         // L1 funnel (task 0613, S5): the modal fan-in this used to open-code,
         // with the whole-mesh fallback narrowed to the VISIBLE vertices.
-        bool[] vmask = mesh.operandVertexMask(editMode);
+        bool[] vmask = subject.operandVertexMask(editMode);
 
         // Mt19937 with a fixed seed gives identical sequences across
         // runs and platforms — the test relies on this. uniform01
@@ -150,29 +168,16 @@ class MeshJitter : Command, Operator, IFalloffAware {
         Mt19937 rng;
         rng.seed(cast(uint)seed_);
 
-        touchedIdx.length  = 0;
-        touchedPrev.length = 0;
-        // Task 1903 L0-d4 — the per-component `mesh.vertices[i].x += …` writes
-        // became a local accumulate plus ONE `ed.setVertexPositions` after the
-        // loop. Byte-identical: every read this loop makes of vertex `i` (the
-        // `touchedPrev` capture, and the falloff evaluation) already happened
-        // BEFORE the write to `i`, and no vertex is visited twice.
-        // PRE-SIZED, NOT APPEND-GROWN (task 2160). `~=` is a runtime call per
-        // element that looks the block's used-length up in the GC; over a
-        // hundred thousand vertices that is ~0.85 ms of pure bookkeeping, and
-        // this array exists only to be handed to `setVertexPositions` and
-        // dropped. The ceiling is exact — the loop writes at most one entry per
-        // visited vertex — and `Vec3` holds no pointer, so the unwritten tail
-        // is nothing the collector can misread; it is sliced off at the call.
-        auto newPos = uninitializedArray!(Vec3[])(mesh.vertices.length);
-        size_t nNew = 0;
+        result.indices.reserve(source.length);
+        result.before.reserve(source.length);
+        result.after.reserve(source.length);
         // Task 0619: the empty `Viewport vp;` that used to sit here is gone.
         // It was NOT harmless-because-unreachable: `parseFalloffJson` rejects
         // the two pixel-based types, but this command is also an `Operator`,
         // and `evaluate(vts)` above copies the LIVE packet — which can be
         // Screen or Lasso — over `falloff_`. The aim space now arrives as a
         // parameter, built once from the subject packet's real viewport.
-        foreach (i; 0 .. mesh.vertices.length) {
+        foreach (i; 0 .. source.length) {
             // Drain THREE rolls per vert regardless of mask so the seed
             // sequence stays stable when the user changes selection
             // between runs (otherwise selecting vert 5 vs vert 3 would
@@ -182,26 +187,31 @@ class MeshJitter : Command, Operator, IFalloffAware {
             float v = uniform01!float(rng) * 2.0f - 1.0f;
             float w = uniform01!float(rng) * 2.0f - 1.0f;
             if (!vmask[i]) continue;
-            touchedIdx  ~= cast(uint)i;
-            touchedPrev ~= mesh.vertices[i];
             // Falloff scales the displacement uniformly — evaluated at
             // the PRE-jitter position so the weight is deterministic
             // across runs (post-jitter pos would drift the weight
             // each call). enableX/Y/Z gates the per-axis write; RNG
             // rolls stay unconditional.
-            float fw = falloff_.enabled
-                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, aim)
+            float fw = resultFalloff.enabled
+                ? evaluateFalloff(resultFalloff, source[i], cast(int)i, aim)
                 : 1.0f;
-            Vec3 nv = mesh.vertices[i];
+            Vec3 orig = source[i];
+            Vec3 nv = orig;
             if (enableX_) nv.x += u * rangeX_ * fw;
             if (enableY_) nv.y += v * rangeY_ * fw;
             if (enableZ_) nv.z += w * rangeZ_ * fw;
-            newPos[nNew++] = nv;
+            if (nv == orig) continue;
+            result.indices ~= cast(uint)i;
+            result.before ~= orig;
+            result.after ~= nv;
         }
-
-        ed.setVertexPositions(touchedIdx, newPos[0 .. nNew]);
-        ed.commitChange(MeshEditScope.Position);
         return true;
+    }
+
+    private static void applyResult(ref MeshEditBatch ed,
+                                    ref const VertexPositionResult result) {
+        ed.setVertexPositions(result.indices, result.after);
+        ed.commitChange(MeshEditScope.Position);
     }
 
     protected override void revertImpl() {

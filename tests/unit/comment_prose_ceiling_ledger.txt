@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 520
-task-citation-lines 5078
+task-citation-lines 5077
 citing-files 394
 long-comment-runs 280
 files-with-long-runs 149
@@ -79,7 +79,7 @@ allow source/commands/mesh/fix_orientation.d 4
 allow source/commands/mesh/flip.d 2
 allow source/commands/mesh/gesture_payload.d 1
 allow source/commands/mesh/hide.d 10
-allow source/commands/mesh/jitter.d 10
+allow source/commands/mesh/jitter.d 9
 allow source/commands/mesh/linear_align.d 6
 allow source/commands/mesh/loop_slice.d 11
 allow source/commands/mesh/magnet.d 13
