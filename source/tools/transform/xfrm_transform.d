@@ -6524,8 +6524,8 @@ private:
         // The relocate-order witness must read the handler that consumed the
         // press; `pivot` is the Move bank's idle pose, not an R/S witness.
         Vec3 handlerPivot = pivot;
-        if (activeDrag is rotateSub)      handlerPivot = rotateSub.handler.center;
-        else if (activeDrag is scaleSub) handlerPivot = scaleSub.handler.center;
+        if (activeDrag is rotateSub)       handlerPivot = rotateSub.handler.center;
+        else if (activeDrag is scaleSub)  handlerPivot = scaleSub.handler.center;
         root["handlerPivot"] = JSONValue([
             JSONValue(handlerPivot.x), JSONValue(handlerPivot.y), JSONValue(handlerPivot.z)]);
         // Task 0614 Phase 3 — expose which subject the apply path is

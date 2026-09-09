@@ -38,6 +38,19 @@ private void assertPreNotifyOrder(string bank, string hitExpr) {
 
 unittest // test_rs_relocate_commit_order
 {
+    const move = sourceOf("move.d");
+    const moveAnchor = move.indexOf(
+        "computeClickRelocateHit(e.x, e.y, anchor, vts)");
+    assert(moveAnchor >= 0,
+        "move relocate-order witness lost its hit-test landmark");
+    const moveTail = move[moveAnchor .. $];
+    const moveCallback = moveTail.indexOf("beforeRelocate();");
+    const moveDragArm = moveTail.indexOf("beginScreenPlaneDragAt(");
+    assert(moveCallback >= 0 && moveDragArm >= 0,
+        "move relocate-order witness lost its callback or drag landmark");
+    assert(moveCallback < moveDragArm,
+        "move relocate must commit the wrapper edit before arming its drag");
+
     assertPreNotifyOrder("rotate", "hit");
     assertPreNotifyOrder("scale", "center");
 

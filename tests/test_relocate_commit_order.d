@@ -227,4 +227,8 @@ unittest {
             bank.name ~ ": Ctrl+Z must preserve committed numeric history above floor; floor="
             ~ floor.to!string ~ " depth=" ~ modelDepth().to!string);
     }
+
+    foreach (tool; ["move", "rotate", "scale"])
+        postJson("/api/script", "tool.set " ~ tool ~ " off");
+    cmd("tool.pipe.attr actionCenter mode auto");
 }

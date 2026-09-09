@@ -231,16 +231,12 @@ mixin template XfrmHandlesImpl() {
                 // baseline at the relocated mesh on the fresh Move gesture below.
                 resetRun();   // + P-F: relocate freezes a NEW run-frame (G8)
             }
-            // The pinned-mode twin of the block above. Identical set of actions
-            // in an identical order — session-close for every open bank, pin
-            // re-stage, consolidate + nextRun, resetRun — with ONE difference:
-            // `stageCurrentActionCenterPin` (verbatim, no pin mutation) instead
-            // of `restageRelocatePin` (which re-fires notifyAcenUserPlaced and
-            // would force-place a pivot these modes must own themselves). It is
-            // the same pin call the off-gizmo boundary at the bottom of this
-            // method makes, for the same reason: the commit cleared the freeze,
-            // so the drag opening below must freeze the CURRENT pin, not a
-            // stale one.
+            // The two off-gizmo paths share the run close below, but their
+            // session and pin setup differ. A relocate already committed in
+            // the pre-publication callback, and setUserPlaced staged the old
+            // pin. A pinned press publishes nothing, so it closes any open edit
+            // here and stages the live pin verbatim before beginEdit freezes it.
+            // Both paths then consolidate an open run and reset its frame.
             if (wasPinnedOffGizmo) {
                 if (editIsOpen())
                     commitEditAtBankBoundary(DragBank.Move);

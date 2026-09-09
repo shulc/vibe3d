@@ -1314,8 +1314,8 @@ protected:
     // PUBLIC (not protected like its `notifyAcenUserPlaced` neighbour):
     // the wrapper (`XfrmTransformTool`) calls it on its `moveSub` —
     // a SIBLING instance, which D `protected` does not grant
-    // cross-instance access to. Mirrors `MoveTool.restageRelocatePin`'s
-    // public visibility for the same wrapper→sub-tool reason.
+    // cross-instance access to. `stageCurrentActionCenterPin` below has the
+    // same wrapper→sub-tool visibility requirement.
     public void restageActionCenterPin() {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
