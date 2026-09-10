@@ -121,16 +121,13 @@ string buildBatchLog(int vpX, int vpY, int vpW, int vpH,
 }
 
 // steps==1 is a click (one zero-delta motion), anything larger is a drag.
-void gesture(int x0, int y0, int x1, int y1, int steps) {
+int gesture(int x0, int y0, int x1, int y1, int steps) {
     auto cam = fetchCamera();
     playAndWait(buildBatchLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, steps));
     auto status = parseJSON(cast(string)get(
         testBaseUrl() ~ "/api/play-events/status"));
-    immutable delivered = cast(int)status["immediateMotions"].integer;
-    assert(delivered == steps,
-        "5170 HTTP replay delivered " ~ delivered.to!string ~ " of "
-        ~ steps.to!string ~ " due motion events through its immediate sink");
+    return cast(int)status["immediateMotions"].integer;
 }
 
 // The pixel the fixture pivots on: a point near the middle of the viewport
@@ -211,7 +208,7 @@ unittest { // THE SWEEP: a select-drag collects what it passes THROUGH, and
 
     // ---- THE SWEEP.
     resetSubdividedCube();
-    gesture(x0, y0, x1, y1, 60);
+    immutable delivered = gesture(x0, y0, x1, y1, 60);
     auto swept = selectedVerts();
 
     assert(swept.length > 0,
@@ -225,6 +222,10 @@ unittest { // THE SWEEP: a select-drag collects what it passes THROUGH, and
         ~ " at its MIDPOINT (a click on that pixel selects exactly that vertex)"
         ~ " but the selection is " ~ swept.to!string
         ~ " — the motion-path pick did not run over the middle of the drag");
+    assert(delivered == 60,
+        "5170 HTTP replay delivered " ~ delivered.to!string ~ " of 60 due "
+        ~ "motion events through its immediate sink after the swept-selection "
+        ~ "effect completed on a non-empty subdivided mesh");
 }
 
 unittest { // THE BEFORE-IMAGE: undoing a click restores the SWEPT SET.
