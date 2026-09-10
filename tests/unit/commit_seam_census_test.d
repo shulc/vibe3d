@@ -18,7 +18,7 @@
 // today's tree, which is a check that cannot come out differently.
 module tests.unit.commit_seam_census_test;
 
-import std.file   : dirEntries, readText, exists, SpanMode;
+import std.file   : dirEntries, readTextOnce = readText, exists, SpanMode;
 import std.format : format;
 import std.path   : buildPath, dirName;
 import std.string : endsWith, splitLines, startsWith, strip;
@@ -34,6 +34,17 @@ import tests.unit.census_symbols : blankNonCode, LedgerRow, LedgerHit,
     enclosingSymbols, symbolAt, reconcile, symbolTokenHits;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+// All blocks inspect one source snapshot, so repeated paths share raw text.
+private string[string] sourceTextMemo;
+
+private string readText(string path)
+{
+    if (auto cached = path in sourceTextMemo) return *cached;
+    const text = readTextOnce(path);
+    sourceTextMemo[path] = text;
+    return text;
+}
 
 // ---------------------------------------------------------------------------
 // A comment stripper, because the count is the whole point.

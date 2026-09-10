@@ -50,7 +50,7 @@ import std.array : appender, join;
 import std.file : dirEntries, exists, isDir, readText, SpanMode;
 import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName, relativePath;
-import std.regex : ctRegex, matchAll, matchFirst, regex;
+import std.regex : ctRegex, matchAll, matchFirst, regex, Regex;
 import std.string : endsWith, replace, splitLines, strip;
 
 import tests.unit.census_symbols : blankNonCode;
@@ -79,10 +79,10 @@ private string toScanPath(string path)
 
 /// Word-boundary occurrences of `name` in `code`, which must already have had
 /// its comments and string literals blanked.
-private size_t occurrences(string code, string name)
+private size_t occurrences(string code, string name, Regex!char pattern)
 {
-    return matchAll(code, regex(`(^|[^A-Za-z0-9_])` ~ name ~ `($|[^A-Za-z0-9_])`))
-        .save.count;
+    if (!code.canFind(name)) return 0;
+    return matchAll(code, pattern).save.count;
 }
 
 private size_t count(R)(R range)
@@ -247,11 +247,15 @@ unittest
     // ---- (2) the POPULATION FLOOR. Every reader is actually reached, so the
     //          caller-set assertion below cannot be true over an empty set.
     const callerCode = blankNonCode(readText(callerPath));
+    Regex!char[] readerPatterns;
+    readerPatterns.reserve(seamReaders.length);
+    foreach (name; seamReaders)
+        readerPatterns ~= regex(`(^|[^A-Za-z0-9_])` ~ name ~ `($|[^A-Za-z0-9_])`);
     size_t callTotal;
     string[] unused;
-    foreach (name; seamReaders)
+    foreach (i, name; seamReaders)
     {
-        const n = occurrences(callerCode, name);
+        const n = occurrences(callerCode, name, readerPatterns[i]);
         callTotal += n;
         if (n == 0) unused ~= name;
     }
@@ -277,8 +281,8 @@ unittest
             const rel = toScanPath(relativePath(entry.name, repoRoot));
             if (rel == seamDecl || rel == seamCaller) continue;
             const code = blankNonCode(readText(entry.name));
-            foreach (name; seamReaders)
-                if (occurrences(code, name) > 0)
+            foreach (i, name; seamReaders)
+                if (occurrences(code, name, readerPatterns[i]) > 0)
                     strays ~= rel ~ " names " ~ name;
         }
     }
