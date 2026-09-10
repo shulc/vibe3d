@@ -33,7 +33,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
-                              primitivePlacementFrame, screenToConstructionPlane,
+                              primitivePlacementFrame, ConstructionPlaneMode,
+                              screenToConstructionPlane,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
@@ -619,7 +620,8 @@ public:
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
             // the SnapStage's innerRange; lastSnap drives the overlay.
@@ -766,7 +768,8 @@ public:
         if (state == BoxState.Idle) {
             auto f = primitivePlacementFrame();
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);

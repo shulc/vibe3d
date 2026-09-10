@@ -436,3 +436,46 @@ unittest { // the click that used to be dropped in silence, at its own call site
     postJson("/api/command", commandBody("scene.reset", "{}"));
     writeln("test_create_click_workplane PASS");
 }
+
+unittest { // radial-array click retains the pre-5430 pinned-plane branch
+    postJson("/api/command", commandBody("scene.reset", "{}"));
+    cmd("viewport.view Front");
+    cmd("workplane.edit cenX:2 cenY:-1 cenZ:0.5 rotX:30 rotY:40 rotZ:0");
+    cmd("select.typeFrom polygon");
+    cmd("select.polygon");
+    cmd("tool.set mesh.radialArrayTool");
+
+    auto c = readCamera("Front");
+    immutable V3 focusPlaneAim = V3(0.9, -0.8, c.focus.z);
+    int px, py;
+    pixelOf(c, focusPlaneAim, px, py);
+
+    string log =
+        format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`,
+               c.vpX, c.vpY, c.width, c.height) ~ "\n" ~
+        format(`{"t":10.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+               px, py) ~ "\n" ~
+        format(`{"t":20.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+               px, py) ~ "\n";
+    auto pr = postJson("/api/play-events", log);
+    assert(pr["status"].str == "success", "play-events failed: " ~ pr.toString);
+    waitPlayback();
+
+    auto r = postJson("/api/command", "tool.attr mesh.radialArrayTool center ?");
+    assert(r["status"].str == "ok", "centre query failed: " ~ r.toString);
+    auto val = r["value"].array;
+    V3 got = V3(num(val[0]), num(val[1]), num(val[2]));
+    // Frozen from the pre-5430 active-workplane branch on this exact pixel.
+    // The focus-plane rival is (0.900000870,-0.799493074,0.000000000), so the
+    // 0.969656 m depth gap makes this cell discriminate the caller routing.
+    immutable V3 expected = V3(0.900000870, -0.799493074, 0.969656467);
+    assert((got - expected).len < 1e-5,
+        format("radial pinned-plane centre: expected (%.9f,%.9f,%.9f), "
+             ~ "actual (%.9f,%.9f,%.9f)",
+               expected.x, expected.y, expected.z, got.x, got.y, got.z));
+
+    cmd("tool.set mesh.radialArrayTool off");
+    cmd("workplane.reset");
+    cmd("viewport.view Perspective");
+    postJson("/api/command", commandBody("scene.reset", "{}"));
+}

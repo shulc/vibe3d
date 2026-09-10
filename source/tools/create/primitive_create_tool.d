@@ -85,7 +85,8 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
-                              primitivePlacementFrame, screenToConstructionPlane,
+                              primitivePlacementFrame, ConstructionPlaneMode,
+                              screenToConstructionPlane,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -726,7 +727,8 @@ protected:
     void updateIdleSnap(int mx, int my) {
         auto f = primitivePlacementFrame();
         Vec3 hit = screenToConstructionPlane(
-            cast(float)mx, cast(float)my, cachedVp);
+            cast(float)mx, cast(float)my, cachedVp,
+            ConstructionPlaneMode.primitivePlacement);
         lastSnap = snapLocalHit(hit, f, mx, my, cachedVp,
                                 *mesh, EditMode.Vertices);
         publishLastSnap(lastSnap);
@@ -1047,7 +1049,8 @@ public:
         if (state == RadialState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             // Snap the click anchor to the closest pipeline-enabled target.
             lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
@@ -1134,7 +1137,8 @@ public:
 
         if (state == RadialState.DrawingBase) {
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             {
                 lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

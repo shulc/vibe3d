@@ -9,7 +9,8 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : PrimitiveCreateTool;
-import tools.create.create_common : screenToConstructionPlane, snapLocalHit;
+import tools.create.create_common : ConstructionPlaneMode,
+                                    screenToConstructionPlane, snapLocalHit;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -257,7 +258,8 @@ public:
         if (state == TubeState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
@@ -331,7 +333,8 @@ public:
 
         if (state == TubeState.DrawingOuter) {
             Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp);
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.primitivePlacement);
             {
                 lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);

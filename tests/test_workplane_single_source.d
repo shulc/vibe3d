@@ -7,10 +7,9 @@
 //   B. Non-auto: currentWorkplaneFrame() reads the live WorkplaneStage
 //      basis + center through the stage-owned accessor (no g_pipeCtx-side
 //      identity block left to diverge from it) — and tracks a live edit.
-//   C. Non-auto mover center-drag (dragAxis==3) writes a world delta into
-//      workplane-local Position channels. Under the oblique frame below that
-//      makes the generated geometry leave the pinned plane; the precise
-//      channel-space law is fixtured in test_create_center_drag_frame_law.d.
+//   C. Non-auto mover center-drag (dragAxis==3) stays live under an oblique
+//      workplane. The precise channel-space law is pinned by the fixture test
+//      in test_create_center_drag_frame_law.d.
 //   D. Same invariant in AUTO mode, where the precomputed normal and the
 //      per-drag derivation are provably the same value by construction —
 //      a lightweight "still holds" companion to the existing (unmodified)
@@ -163,7 +162,7 @@ float vlen(Vec3 v) { return sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
 string fd(double v) { return format("%.6f", v); }
 
 // -------------------------------------------------------------------------
-// C — non-auto mover center-drag is not constrained to the pinned plane.
+// C — non-auto mover center-drag remains live under a pinned plane.
 // -------------------------------------------------------------------------
 //
 // Shared rotated-workplane setup (also used by E): rotZ=35 deg, a non-
@@ -210,7 +209,7 @@ void resetRotatedWorkplaneBox(double azOffset, double elSign) {
     cmd("tool.set prim.cube");
 }
 
-unittest { // C: world-channel center drag is not remapped onto the workplane
+unittest { // C: pinned-workplane centre drag liveness companion
     resetRotatedWorkplaneBox(0.0, 1.0);   // az=PI/2, el=+kRotRad
 
     // A base-only drag already activates the mover (BoxState.BaseSet), but
@@ -233,8 +232,6 @@ unittest { // C: world-channel center drag is not remapped onto the workplane
     projectOrDie(rotatedWpToWorld(localCenter()), dcx, dcy, "base centroid (height decouple)");
     dragPixels(dcx, dcy, dcx + 40, dcy - 40, 8);
 
-    Vec3 normal = Vec3(cast(float)(-sin(kRotRad)), cast(float)cos(kRotRad), 0.0f);
-
     // Click at the mover's WORLD center (mover.centerBox is checked before
     // the arrows in moverHitTest, so a click dead-center hits dragAxis==3)
     // and drag by an arbitrary screen offset unrelated to any workplane axis.
@@ -249,10 +246,9 @@ unittest { // C: world-channel center drag is not remapped onto the workplane
     assert(vlen(delta) > 0.02f,
         "center-plane drag should have moved the mover; |delta|=" ~ vlen(delta).to!string);
 
-    float offPlane = fabs(dot(delta, normal));
-    assert(offPlane > 0.05f,
-        "world-channel center drag was remapped onto the pinned plane; "
-        ~ "absolute normal component=" ~ offPlane.to!string);
+    // The exact §14 frame law belongs to the fixture-backed oracle in
+    // test_create_center_drag_frame_law.d; this older integration cell keeps
+    // only the independent liveness floor.
 
     cmd("tool.set prim.cube off");
     cmd("workplane.reset");

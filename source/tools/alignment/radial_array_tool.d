@@ -23,7 +23,8 @@ import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import tools.create.create_common : screenToConstructionPlane;
+import tools.create.create_common : ConstructionPlaneMode,
+                                    screenToConstructionPlane;
 
 import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
@@ -537,8 +538,9 @@ public:
         // Off-handle click: reposition the rotation center (reference
         // gesture "reposition-center" — see the class doc comment).
         //
-        // The plane FOLLOWS THE VIEW and the projection cannot refuse (task
-        // 0661). This was `if (screenToWorkPlane(...)) { center_ = hit; }`
+        // The automatic plane follows the view and the projection cannot
+        // refuse. A pinned plane retains its active frame. This was
+        // `if (screenToWorkPlane(...)) { center_ = hit; }`
         // against the fixed world floor: in Front / Back / Left / Right the
         // ray is parallel to that floor, so the call returned false and the
         // missing `else` turned it into "the centre stayed put" — a click the
@@ -554,7 +556,8 @@ public:
         // copies turn about are one point.
         center_ = OverlaySpace.ofPrimary().toLocalPos(
                       screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
-                                                cachedVp));
+                                                cachedVp,
+                                                ConstructionPlaneMode.activeWorkplane));
         rebuildPreview();
         return true;
     }

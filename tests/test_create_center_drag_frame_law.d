@@ -95,6 +95,9 @@ unittest {
 
     auto identity = runCell(cells[0], positionBefore, sizeBefore,
                             dragX, dragY, vertexFloor);
+    assert(close(identity.sizeBefore, sizeBefore, 1e-5),
+        format("%s: expected fixture Size %s before centre drag, actual %s",
+               identity.name, sizeBefore.toString(), identity.sizeBefore.toString()));
     assert(close(identity.sizeAfter, identity.sizeBefore, 1e-5),
         format("%s: centre handle changed Size from %s to %s", identity.name,
                identity.sizeBefore.toString(), identity.sizeAfter.toString()));
@@ -104,6 +107,9 @@ unittest {
 
     auto oblique = runCell(cells[1], positionBefore, sizeBefore,
                            dragX, dragY, vertexFloor);
+    assert(close(oblique.sizeBefore, sizeBefore, 1e-5),
+        format("%s: expected fixture Size %s before centre drag, actual %s",
+               oblique.name, sizeBefore.toString(), oblique.sizeBefore.toString()));
     assert(close(oblique.sizeAfter, oblique.sizeBefore, 1e-5),
         format("%s: centre handle changed Size from %s to %s", oblique.name,
                oblique.sizeBefore.toString(), oblique.sizeAfter.toString()));

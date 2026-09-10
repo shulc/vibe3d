@@ -16,7 +16,7 @@ double placeAtFocus(double focus, bool pinned, V3 planeOrigin,
     auto camera = fetchCamera(testBaseUrl);
     immutable int cx = camera.vpX + camera.width / 2;
     immutable int cy = camera.vpY + camera.height / 2;
-    dragPixels(cx, cy, cx + 64, cy - 64);
+    dragPixels(cx + 64, cy - 64, cx + 128, cy - 128);
     immutable double depth = attribute("cenZ");
     auto vertices = commitAndVertexCount();
     assert(vertices >= vertexFloor,

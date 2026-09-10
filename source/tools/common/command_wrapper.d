@@ -36,7 +36,8 @@ import tool   : Tool, GestureRecordMode;
 import edit_session : FrameParameterEvalClient, RefireClient;
 import params : Param;
 import math   : Vec3, Viewport;
-import tools.create.create_common : screenToConstructionPlane;
+import tools.create.create_common : ConstructionPlaneMode,
+                                    screenToConstructionPlane;
 import shader : Shader;
 import handler : ClickPointHandler;
 import command_history : CommandHistory;
@@ -565,11 +566,12 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         // click ray is exactly parallel to it and there is no intersection;
         // and the refusal had no `else`, so "could not" became "kept the
         // previous position" — the click looked registered and was not.
-        // `screenToConstructionPlane` is TOTAL and the plane follows the view,
-        // so there is no boolean left to drop.
+        // `screenToConstructionPlane` is TOTAL. Its automatic plane follows
+        // the view; a pinned plane retains the active construction frame.
         if (viewRef !is null && clickHandle !is null)
             clickHandle.setPos(screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp));
+                cast(float)e.x, cast(float)e.y, cachedVp,
+                ConstructionPlaneMode.activeWorkplane));
         return true;
     }
 

@@ -323,8 +323,12 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
     return rayPlaneIntersect(o, d, planeOrigin, planeNormal, hitLocal);
 }
 
-/// Where a placement click lands on the camera-facing focus plane, in WORLD
-/// space.
+enum ConstructionPlaneMode {
+    activeWorkplane,
+    primitivePlacement,
+}
+
+/// Where a placement click lands, in WORLD space.
 ///
 /// TOTAL — there is no "could not", and that is the point. The call sites this
 /// replaces were written `if (screenToWorkPlane(...)) handle.setPos(hit);`
@@ -338,19 +342,18 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
 /// normal (0,1,0)), which a horizontal view's ray is exactly parallel to — so
 /// all four horizontal axis presets refused, every time, in silence.
 ///
-/// Primitive placement uses the camera-most-facing principal world axis as
-/// the normal and anchors it at the camera focus in both automatic and pinned
-/// workplane modes. The pinned origin and basis belong to generation, after
-/// the gesture has written its world-coordinate channels (task 5430,
-/// `doc/measured_laws.md` §13).
-///
-/// Lives beside the other placement helpers because non-create callers (the
-/// command-wrapper click handle and radial-array centre) want the same
-/// camera-facing focus-plane answer as Create tools.
-Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp)
+/// Primitive placement uses the camera-facing focus plane in both automatic
+/// and pinned modes; the pinned frame belongs to generation (task 5430,
+/// `doc/measured_laws.md` §13). Other tools retain the active construction
+/// plane law that predates and lies outside that create-only measurement.
+Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp,
+                               ConstructionPlaneMode mode)
 {
-    Vec3 planeOrigin = vp.focus;
-    Vec3 planeNormal = pickMostFacingPlane(vp).normal;
+    WorkplaneFrame wf = currentWorkplaneFrame();
+    bool primitive = mode == ConstructionPlaneMode.primitivePlacement;
+    Vec3 planeOrigin = primitive || wf.isAuto ? vp.focus : wf.origin;
+    Vec3 planeNormal = primitive || wf.isAuto
+        ? pickMostFacingPlane(vp).normal : wf.normal;
 
     Vec3 o, d;
     screenPointToRay(sx, sy, vp, o, d);
@@ -359,8 +362,8 @@ Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp)
     if (rayPlaneIntersect(o, d, planeOrigin, planeNormal, hit))
         return hit;
 
-    // Numerical fallback: the camera-perpendicular plane through the same
-    // focus is guaranteed to meet the cursor ray.
+    // A pinned plane can be edge-on. The camera-perpendicular fallback through
+    // the selected origin is guaranteed to meet the cursor ray.
     Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     if (rayPlaneIntersect(o, d, planeOrigin, camBack, hit))
         return hit;
@@ -684,7 +687,8 @@ unittest { // screenToConstructionPlane is TOTAL where the old floor plane refus
 
     // No `g_pipeCtx` in a unittest, so `currentWorkplaneFrame` returns the
     // auto identity and the auto branch runs — the one this defect lived in.
-    Vec3 got = screenToConstructionPlane(500.0f, 120.0f, vp);
+    Vec3 got = screenToConstructionPlane(
+        500.0f, 120.0f, vp, ConstructionPlaneMode.primitivePlacement);
     assert(abs(got.z - focus.z) < 1e-5f,
            "the plane follows the view AND is anchored at the camera focus: "
            ~ "a Front view lands on Z = focus.z, not Z = 0");
