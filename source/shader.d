@@ -9,7 +9,7 @@ import math;
 import mesh : Surface, MarkView;
 import mesh_gpu : GpuMesh;
 import gl_thread_guard : glThreadGuard;
-import display_state : kSchemeSolidFill, SurfaceShading;
+import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 // ---------------------------------------------------------------------------
 // Shaders
@@ -923,34 +923,39 @@ class LitShader {
 // 0407 §A.D6). `previewGpu` is `ref` (not `const`) because
 // GpuMesh.drawFaces/drawEdges are not const-qualified.
 void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
-                     const ref Viewport vp, ref GpuMesh previewGpu) {
+                     const ref Viewport vp, ref GpuMesh previewGpu,
+                     const ref DrawPlan plan) {
     immutable float[16] identity = identityMatrix;
     Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
 
-    // Solid faces.
-    glUseProgram(litShader.program);
-    glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
-    glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
-    glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
-    glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
-    glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
-    glUniform1f(litShader.locAmbient,  0.20f);
-    glUniform1f(litShader.locSpecStr,  0.25f);
-    glUniform1f(litShader.locSpecPow,  32.0f);
-    // Task 0589: this site seeds every uniform it depends on BY HAND rather
-    // than going through `LitShader.useProgram`, so a uniform that the scene
-    // pass may have switched off has to be seeded here too — otherwise a
-    // create-tool preview drawn after an unlit scene pass would inherit the
-    // flat fill. The scene pass does restore it, so this is belt-and-braces;
-    // the alternative is a cross-file invariant nobody can see from here.
-    // (`u_dim` has the same shape and the same restore discipline.)
-    //
-    // Task 1090 widened this from a bool to `SurfaceShading`. The NEUTRAL PARK
-    // that `useProgram` also performs is deliberately NOT repeated here: it is
-    // context state, not program state, so seeding the shading arm to
-    // `Material` is enough — this path never reads `vWeightColor` at all.
-    glUniform1i(litShader.locShading, cast(int)SurfaceShading.Material);
-    previewGpu.drawFaces(litShader);
+    // The preview's surface pass obeys the cell plan. Its shading remains the
+    // existing material preview whenever the plan permits faces; the plan is
+    // a pass gate here, not a source of preview material state (task 5260).
+    if (plan.drawFaces) {
+        glUseProgram(litShader.program);
+        glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
+        glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
+        glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
+        glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
+        glUniform1f(litShader.locAmbient,  0.20f);
+        glUniform1f(litShader.locSpecStr,  0.25f);
+        glUniform1f(litShader.locSpecPow,  32.0f);
+        // Task 0589: this site seeds every uniform it depends on BY HAND rather
+        // than going through `LitShader.useProgram`, so a uniform that the scene
+        // pass may have switched off has to be seeded here too — otherwise a
+        // create-tool preview drawn after an unlit scene pass would inherit the
+        // flat fill. The scene pass does restore it, so this is belt-and-braces;
+        // the alternative is a cross-file invariant nobody can see from here.
+        // (`u_dim` has the same shape and the same restore discipline.)
+        //
+        // Task 1090 widened this from a bool to `SurfaceShading`. The NEUTRAL PARK
+        // that `useProgram` also performs is deliberately NOT repeated here: it is
+        // context state, not program state, so seeding the shading arm to
+        // `Material` is enough — this path never reads `vWeightColor` at all.
+        glUniform1i(litShader.locShading, cast(int)SurfaceShading.Material);
+        previewGpu.drawFaces(litShader);
+    }
 
     // Wireframe edges.
     glUseProgram(shader.program);

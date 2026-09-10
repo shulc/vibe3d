@@ -746,7 +746,7 @@ public:
                        const ref DrawPlan plan, bool visualOnly = false) {
         if (!valid_ || !havePreviewCache) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu_);
+        drawLitPreview(litShader, shader, vp, previewGpu_, plan);
     }
 
     // ----- Segments drag (no handle — any LMB click+drag adjusts it) ------

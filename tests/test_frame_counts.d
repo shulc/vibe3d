@@ -72,6 +72,52 @@ void settle() { Thread.sleep(400.msecs); }
 
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }
 
+void playAndSettle(string log) {
+    auto response = parseJSON(httpPost("/api/play-events", log));
+    assert(response["status"].str == "success",
+           "play-events failed: " ~ response.toString);
+    foreach (_; 0 .. 200) {
+        if (gj("/api/play-events/status")["finished"].type == JSONType.TRUE) {
+            settle();
+            return;
+        }
+        Thread.sleep(50.msecs);
+    }
+    assert(false, "preview gesture playback did not finish within 10 seconds");
+}
+
+string cubePreviewLog() {
+    auto camera = gj("/api/camera");
+    immutable int x = cast(int)camera["vpX"].integer;
+    immutable int y = cast(int)camera["vpY"].integer;
+    immutable int w = cast(int)camera["width"].integer;
+    immutable int h = cast(int)camera["height"].integer;
+    immutable int x0 = x + 7 * w / 16;
+    immutable int y0 = y + 5 * h / 12;
+    immutable int x1 = x + 11 * w / 16;
+    immutable int y1 = y + 2 * h / 3;
+    return format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":10,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":20,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n" ~
+        `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y, w, h, x0, y0, x1, y1, x1 - x0, y1 - y0, x1, y1);
+}
+
+string penPreviewLog() {
+    enum header =
+        `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n";
+    string click(double t, int x, int y) {
+        return format(
+            `{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+            `{"t":%g,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+            `{"t":%g,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            t, x, y, t + 5, x, y, t + 10, x, y);
+    }
+    return header ~ click(100, 425, 250) ~ click(200, 525, 250)
+                  ~ click(300, 475, 350);
+}
+
 /// The last frame that actually rendered a viewport cell. Always read this,
 /// never `last` — see the endpoint comment in http_server.d.
 JSONValue lastScene() { return gj("/api/frames/counts")["lastScene"]; }
@@ -201,6 +247,74 @@ unittest { // a display style that drops the face pass is VISIBLE in the counts
     auto back = lastScene();
     assert(passVerts(back, "faces") == faceVerts);
     assert(back["drawVerts"].integer == totalVerts);
+}
+
+unittest { // live create previews obey the cell's face-pass plan
+    resetApp();
+    cmd(`{"id":"viewport.displayStyle","params":"shaded"}`);
+    cmd("tool.set prim.cube");
+    playAndSettle(cubePreviewLog());
+
+    auto shaded = lastScene();
+    auto shadedModel = gj("/api/model");
+    assert(shaded["cellsRendered"].integer == 1,
+           "shaded preview must come from one rendered cell");
+    assert(passCalls(shaded, "handles") == 18,
+           "shaded cube preview must be live: expected 18 handle draws");
+    assert(shadedModel["vertices"].array.length == 8,
+           "shaded cube preview committed into the model before measurement");
+    assert(passCalls(shaded, "faces") == 2 &&
+           passVerts(shaded, "faces") == 42,
+           format("shaded live cube preview changed: got %d calls / %d verts, "
+                  ~ "expected scene+preview 2 / 42",
+                  passCalls(shaded, "faces"), passVerts(shaded, "faces")));
+    assert(passCalls(shaded, "edges") == 2 &&
+           passVerts(shaded, "edges") == 32,
+           "shaded live cube preview must retain its wire overlay");
+
+    cmd("tool.set prim.cube off");
+    resetApp();
+    cmd(`{"id":"viewport.displayStyle","params":"wireframe"}`);
+    cmd("tool.set prim.cube");
+    playAndSettle(cubePreviewLog());
+
+    auto wire = lastScene();
+    auto wireModel = gj("/api/model");
+    assert(wire["cellsRendered"].integer == 1,
+           "wireframe preview must come from one rendered cell");
+    assert(passCalls(wire, "handles") == 18,
+           "wireframe cube preview must be live: expected 18 handle draws");
+    assert(wireModel["vertices"].array.length == 8,
+           "wireframe cube preview committed into the model before measurement");
+    assert(passCalls(wire, "edges") == 2 &&
+           passVerts(wire, "edges") == 32,
+           "wireframe live cube preview lost its edge pass");
+    assert(passCalls(wire, "faces") == 0 && passVerts(wire, "faces") == 0,
+           format("wireframe live cube preview must not submit faces; got %d "
+                  ~ "calls / %d verts",
+                  passCalls(wire, "faces"), passVerts(wire, "faces")));
+
+    cmd("tool.set prim.cube off");
+    httpPost("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    settle();
+    cmd(`{"id":"viewport.displayStyle","params":"wireframe"}`);
+    cmd(`tool.set "pen" on 0`);
+    playAndSettle(penPreviewLog());
+
+    auto pen = lastScene();
+    assert(pen["cellsRendered"].integer == 1,
+           "wireframe pen preview must come from one rendered cell");
+    assert(passCalls(pen, "handles") > 0,
+           "wireframe pen preview must be live: vertex handles are absent");
+    assert(passCalls(pen, "edges") > 0 && passVerts(pen, "edges") > 0,
+           "wireframe pen preview lost its edge pass");
+    assert(gj("/api/model")["vertices"].array.length == 0,
+           "pen preview committed into the model before measurement");
+    assert(passCalls(pen, "faces") == 0 && passVerts(pen, "faces") == 0,
+           format("wireframe live pen preview must not submit faces; got %d "
+                  ~ "calls / %d verts",
+                  passCalls(pen, "faces"), passVerts(pen, "faces")));
+    cmd(`tool.set "pen" off 0`);
 }
 
 unittest { // background-layer draws are attributed to the BACKDROP slots

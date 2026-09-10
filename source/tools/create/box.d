@@ -968,7 +968,7 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == BoxState.Idle) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu);
+        drawLitPreview(litShader, shader, vp, previewGpu, plan);
 
         // Handles + move gizmo (BaseSet and above). Geometry is positioned
         // first; hover/capture is then resolved by the single-source

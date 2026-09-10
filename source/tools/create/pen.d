@@ -1044,7 +1044,7 @@ public:
         // sequence has enough vertices to form at least one face — ≥3 in
         // default polygon mode, ≥4 for the first quad in Make Quads. Faces
         // are rebuilt into previewMesh by uploadPreview.
-        if (vertices_.length >= minCommitVerts()) {
+        if (plan.drawFaces && vertices_.length >= minCommitVerts()) {
             Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
             glUseProgram(litShader.program);
             glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);

@@ -668,7 +668,7 @@ public:
         // BoxTool's draw() (box.d:2438).
         if (!visualOnly) cachedVp = vp;
 
-        drawLitPreview(litShader, shader, vp, previewGpu);
+        drawLitPreview(litShader, shader, vp, previewGpu, plan);
 
         mover.setPosition(params_.center);
         mover.setOrientation(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));

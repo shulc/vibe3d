@@ -479,7 +479,7 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
         if (isIdle()) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu);
+        drawLitPreview(litShader, shader, vp, previewGpu, plan);
 
         if (showHandles()) drawToolHandles(shader, vp);
     }

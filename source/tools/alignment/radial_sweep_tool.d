@@ -891,7 +891,7 @@ public:
         if (!visualOnly) cachedVp = vp;
 
         if (validProfile_) {
-            drawLitPreview(litShader, shader, vp, previewGpu);
+            drawLitPreview(litShader, shader, vp, previewGpu, plan);
         }
 
         // --- Handle positions, derived fresh every frame from params_ ---

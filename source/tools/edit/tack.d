@@ -523,7 +523,7 @@ public:
 
         if (!previewActive_) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu_);
+        drawLitPreview(litShader, shader, vp, previewGpu_, plan);
     }
 
     // ----- Commit (LEFT click, no modifiers — mirrors Mirror/VertexTool) --
