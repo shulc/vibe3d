@@ -36,7 +36,7 @@ module mesh_visibility;
 
 import mesh : Mesh;
 import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
-              frontFacingLocal, pointInPolygon2D, closestOnSegment2DSquared;
+              frontFacingLocal, pointInPolygon2D;
 import perf_probe : g_perf, Cat;
 import screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
                         OCCL_CELL_PX, MAX_OCCL_BUCKET_INTS;
@@ -155,8 +155,7 @@ struct VisibilityProbe {
         float[]  scratchX_, scratchY_;
         // Memo: `computed_` says an answer exists, `answer_` is it. Two
         // bitsets rather than a tri-state byte array so a 100 K mesh costs
-        // 25 KB, and because `edgeVisible` asks about both endpoints and
-        // `faceVisible` about every corner — one index arrives many times.
+        // 25 KB, and because edges/faces ask about shared vertices repeatedly.
         ulong[]  computed_, answer_;
         // THE BROAD PHASE (task 1351 Ф3). Buckets the front list's screen
         // boxes over the viewport-plus-pad rectangle, so a candidate walks
@@ -167,7 +166,7 @@ struct VisibilityProbe {
         // only the count of pairs tested moves.
         ScreenBuckets buckets_;
         float    domPad_;
-        bool     openOccluderBoundary_;
+        bool     exemptCoincidentSurfaces_;
         version (unittest) float vpX_, vpY_, vpW_, vpH_;
     }
 
@@ -318,28 +317,59 @@ struct VisibilityProbe {
                 scratchX_[i] = vsx_[vk];
                 scratchY_[i] = vsy_[vk];
             }
-            // A region candidate on a projected polygon boundary is not
-            // behind that polygon. `pointInPolygon2D` deliberately has the
-            // usual asymmetric ray-crossing boundary result, so make this
-            // region-only rule explicit before asking about the interior.
-            if (openOccluderBoundary_) {
-                bool onBoundary = false;
+            // The frozen region fixture overlays two complete face rings. A
+            // corner on that coincident surface is not hidden by its twin;
+            // an unrelated candidate merely landing on one boundary corner
+            // is still tested normally against the drawn surface.
+            bool coincidentCorner = false;
+            if (exemptCoincidentSurfaces_) {
                 foreach (i; 0 .. face.length) {
-                    immutable size_t k = (i + 1) % face.length;
-                    float segmentT;
-                    if (closestOnSegment2DSquared(
-                            vsxi, vsyi,
-                            scratchX_[i], scratchY_[i],
-                            scratchX_[k], scratchY_[k], segmentT) <= 1.0e-6f) {
-                        onBoundary = true;
+                    immutable float dx = vsxi - scratchX_[i];
+                    immutable float dy = vsyi - scratchY_[i];
+                    if (dx * dx + dy * dy <= 1.0e-6f) {
+                        coincidentCorner = true;
                         break;
                     }
                 }
-                if (onBoundary) continue;
             }
-            if (!pointInPolygon2D(vsxi, vsyi,
-                                  scratchX_[0 .. face.length],
-                                  scratchY_[0 .. face.length])) continue;
+            bool coincidentSurface = false;
+            if (coincidentCorner) {
+                foreach (candidateFi; mesh_.facesAroundVertex(cast(uint)vi)) {
+                    if (candidateFi == frontIdx_[j]
+                        || mesh_.isFaceHidden(candidateFi)) continue;
+                    const(uint)[] candidateFace = mesh_.faces[candidateFi];
+                    if (candidateFace.length != face.length) continue;
+                    bool ringsMatch = true;
+                    foreach (candidateVi; candidateFace) {
+                        if (candidateVi >= vsValid_.length
+                            || !vsValid_[candidateVi]) {
+                            ringsMatch = false;
+                            break;
+                        }
+                        bool pointMatches = false;
+                        foreach (occluderVi; face) {
+                            immutable float dx = vsx_[candidateVi] - vsx_[occluderVi];
+                            immutable float dy = vsy_[candidateVi] - vsy_[occluderVi];
+                            if (dx * dx + dy * dy <= 1.0e-6f) {
+                                pointMatches = true;
+                                break;
+                            }
+                        }
+                        if (!pointMatches) {
+                            ringsMatch = false;
+                            break;
+                        }
+                    }
+                    if (ringsMatch) {
+                        coincidentSurface = true;
+                        break;
+                    }
+                }
+            }
+            if (!coincidentSurface
+                && !pointInPolygon2D(vsxi, vsyi,
+                                     scratchX_[0 .. face.length],
+                                     scratchY_[0 .. face.length])) continue;
 
             immutable size_t no = j * 3;
             const double denom = frontN_[no] * dirX + frontN_[no + 1] * dirY
@@ -363,6 +393,7 @@ struct VisibilityProbe {
             // |H - C| = |t - 1| * |C - O|, since H = O + t*(C - O).
             if (abs(tm1) * lenDir <= tol) continue;   // clause 1
             if (tm1 >= 0.0) continue;                 // clauses 2 + 3
+            if (coincidentSurface) continue;
 
             version (unittest) ++g_visCounters.occluded;
             return false;
@@ -389,7 +420,7 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
                                               const ModelSpace ms,
                                               float queryPadPx,
                                               bool seedEveryCandidate,
-                                              bool openOccluderBoundary) {
+                                              bool exemptCoincidentSurfaces) {
     import math : projectToWindowFull, projectionSpace, ModelSpace,
                   frontFacingLocal;
     import std.math : isFinite;
@@ -446,7 +477,7 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
     p.vsy_     = new float[](m.vertices.length);
     p.vsValid_ = new bool [](m.vertices.length);
     p.seed_    = new bool [](m.vertices.length);
-    p.openOccluderBoundary_ = openOccluderBoundary;
+    p.exemptCoincidentSurfaces_ = exemptCoincidentSurfaces;
     // Snap asks only about vertices owned by a drawn, front-facing surface,
     // while a region gesture asks about EVERY independently projected
     // candidate, including loose and back-side vertices.  The latter must not
