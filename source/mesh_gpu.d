@@ -404,12 +404,8 @@ struct GpuMesh {
     }
 
     void destroy() {
-        glDeleteVertexArrays(1, &faceVao); glDeleteBuffers(1, &faceVbo);
-        glDeleteVertexArrays(1, &edgeVao); glDeleteBuffers(1, &edgeVbo);
-        glDeleteVertexArrays(1, &vertVao); glDeleteBuffers(1, &vertVbo);
-        glDeleteBuffers(1, &faceIdVbo);
-        glDeleteBuffers(1, &matIdVbo);
-        glDeleteBuffers(1, &weightColorVbo);   // task 1090
+        auto names = peekGpuMeshNames(this);
+        deleteGpuMeshNames(names);
     }
 
     // When `edgeOrigin`/`vertOrigin` are provided (same length as the mesh's
@@ -2759,7 +2755,8 @@ version (unittest) unittest {
     ValidatedGpuResourceToken recoveredReady;
     assert(owner.validatePrepared(recovered, 7, 11, recoveredReady));
     owner.installPrepared(recoveredReady);
-    assert(gpu.faceVao == 0 && gpu.faceVbo == 0);
+    assert(gpu == GpuMesh(),
+        "prepared destroy must clear the complete GpuMesh header");
     assert(owner.fakeDeleteCount == 18);
     assert(owner.fakeDeleted[9 .. 18] == [21,22,23,24,25,26,27,28,29]);
 }

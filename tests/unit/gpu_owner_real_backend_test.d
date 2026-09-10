@@ -6,10 +6,15 @@ module tests.unit.gpu_owner_real_backend_test;
 import bindbc.opengl : GLboolean, GLsizei, GLuint, GL_FALSE, GL_TRUE,
     glDeleteBuffers, glDeleteVertexArrays, glGenBuffers, glGenVertexArrays,
     glIsBuffer, glIsVertexArray;
-import mesh : makeCube;
+import mesh : Mesh, makeCube;
 import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuMesh,
     GpuResourceOwner, PreparedGpuResourceToken, ValidatedGpuResourceToken;
+import std.file : readText;
 import std.format : format;
+import std.path : buildPath, dirName;
+import std.string : count;
+
+private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private enum string[3] vaoLabels = ["faceVao", "edgeVao", "vertVao"];
 private enum string[6] vboLabels = ["faceVbo", "edgeVbo", "vertVbo",
@@ -201,6 +206,36 @@ private void assertNamesDead(OwnerNames names, string cell)
             cell, vboLabels[i], name));
 }
 
+private void setRelatedHeaderState(ref GpuMesh gpu, const(Mesh)* stamp)
+{
+    gpu.faceVertCount = 31;
+    gpu.edgeVertCount = 32;
+    gpu.vertCount = 33;
+    gpu.faceTriStart = [34];
+    gpu.faceTriCount = [35];
+    gpu.suppressCageUpload = true;
+    gpu.edgeOriginGpu = [36];
+    gpu.faceOriginGpu = [37];
+    gpu.vertOriginGpu = [38];
+    gpu.faceCornerVert = [39];
+    gpu.weightStampMesh = stamp;
+    gpu.weightStampName = "gpu-header-sentinel";
+    gpu.weightStampValid = true;
+    gpu.uploadVersion = 40;
+}
+
+private void assertRelatedHeaderCleared(ref const GpuMesh gpu, string cell)
+{
+    assert(gpu.faceVertCount == 0 && gpu.edgeVertCount == 0
+        && gpu.vertCount == 0 && gpu.faceTriStart.length == 0
+        && gpu.faceTriCount.length == 0 && !gpu.suppressCageUpload
+        && gpu.edgeOriginGpu.length == 0 && gpu.faceOriginGpu.length == 0
+        && gpu.vertOriginGpu.length == 0 && gpu.faceCornerVert.length == 0
+        && gpu.weightStampMesh is null && gpu.weightStampName.length == 0
+        && !gpu.weightStampValid && gpu.uploadVersion == 0,
+        cell ~ " did not clear the related GpuMesh header state");
+}
+
 unittest // GpuCreateOwner.abortEnlisted reaches the real deleter.
 {
     withGlBoundary({
@@ -228,9 +263,11 @@ unittest // GpuResourceOwner.installPrepared reaches the real deleter.
 {
     withGlBoundary({
         enum cell = "GpuResourceOwner.installPrepared";
+        auto stamp = makeCube();
         GpuMesh gpuA;
         GpuMesh gpuB;
         gpuA.init();
+        setRelatedHeaderState(gpuA, &stamp);
         scope (exit) gpuA.destroy();
         gpuB.init();
         scope (exit) gpuB.destroy();
@@ -259,6 +296,7 @@ unittest // GpuResourceOwner.installPrepared reaches the real deleter.
             && gpuA.faceIdVbo == 0 && gpuA.matIdVbo == 0
             && gpuA.weightColorVbo == 0,
             cell ~ " did not clear the consumed GpuMesh header");
+        assertRelatedHeaderCleared(gpuA, cell);
     });
 }
 
@@ -284,4 +322,43 @@ unittest // GpuCreateUploadOwner.abortEnlisted reaches cleanupPrepared.
         assertNamesLive(namesB, cell);
         assertNamesDead(namesA, cell);
     });
+}
+
+unittest // Legacy destroy releases names but retains its header policy.
+{
+    withGlBoundary({
+        enum cell = "GpuMesh.destroy";
+        auto stamp = makeCube();
+        GpuMesh gpu;
+        gpu.init();
+        setRelatedHeaderState(gpu, &stamp);
+        const names = gpuNames(gpu);
+
+        gpu.destroy();
+        assertNamesDead(names, cell);
+        assert(gpuNames(gpu) == names,
+            cell ~ " changed the retained GPU-name header");
+        assert(gpu.faceVertCount == 31 && gpu.edgeVertCount == 32
+            && gpu.vertCount == 33 && gpu.faceTriStart == [34]
+            && gpu.faceTriCount == [35] && gpu.suppressCageUpload
+            && gpu.edgeOriginGpu == [36] && gpu.faceOriginGpu == [37]
+            && gpu.vertOriginGpu == [38] && gpu.faceCornerVert == [39]
+            && gpu.weightStampMesh is &stamp
+            && gpu.weightStampName == "gpu-header-sentinel"
+            && gpu.weightStampValid && gpu.uploadVersion == 40,
+            cell ~ " changed related retained header state");
+    });
+}
+
+unittest // The module contains one typed low-level GPU-name delete sequence.
+{
+    const source = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    const vaoDeletes = source.count("glDeleteVertexArrays(");
+    const vboDeletes = source.count("glDeleteBuffers(");
+    assert(vaoDeletes == 3, format(
+        "GPU-name deleter census: expected 3 VAO calls in one sequence, got %s",
+        vaoDeletes));
+    assert(vboDeletes == 6, format(
+        "GPU-name deleter census: expected 6 VBO calls in one sequence, got %s",
+        vboDeletes));
 }
