@@ -261,6 +261,12 @@ unittest { // live create previews obey the cell's face-pass plan
            "shaded preview must come from one rendered cell");
     // Task 5350 hides the create rig's three unregistered plane handles. Each
     // CircleHandler submitted a fill and an outline, so 18 - 3 * 2 = 12.
+    //
+    // Why 18 was WRONG rather than merely old: the owner checked the reference
+    // on 2026-09-10 and found no xy/yz/xz rings on a cylinder primitive OR a
+    // cube one. So 18 pinned our own surplus, and this assert was green on the
+    // behaviour it existed to describe and would have reddened on the repair.
+    // Do not restore it as a "regression" without re-checking that.
     enum expectedCreateHandleDraws = 12;
     assert(passCalls(shaded, "handles") == expectedCreateHandleDraws,
            format("shaded cube preview must be live: expected %d handle draws, got %d",
