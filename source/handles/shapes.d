@@ -831,6 +831,14 @@ class MoveHandler : Handler {
     // it drops from BOTH draw and hit-test.
     bool arrowsVisible = true;
 
+    // Master gate for the three plane handles. Create tools set this false:
+    // their mover registries contain only the centre and axes, so the rings
+    // are decorative but unpickable. Keep the gate per instance because the
+    // transform tools register and use these same members. Like the arrow
+    // gate, it is applied inside updateGeometry so the view cull below cannot
+    // re-enable a constructor-hidden ring on the next frame (task 5350).
+    bool planesVisible = true;
+
     this(Vec3 center) {
         this.center = center;
         arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), axisColor(0));
@@ -883,6 +891,15 @@ class MoveHandler : Handler {
 
     void setPosition(Vec3 pos) nothrow @nogc {
         center = pos;
+    }
+
+    // Read-only test seam: draw() calls all three plane handlers, whose own
+    // visible guard decides whether they submit anything. Counting that state
+    // after updateGeometry therefore reports the rings this instance draws.
+    int planeRingsDrawn() const {
+        return cast(int)circleXY.isVisible()
+             + cast(int)circleYZ.isVisible()
+             + cast(int)circleXZ.isVisible();
     }
 
     // Task 0212 (rotate/scale hover-highlight flicker): CPU-only, idempotent
@@ -978,9 +995,12 @@ class MoveHandler : Handler {
         arrowX.setVisible(arrowsVisible && !axisFacesViewer(axisX, center, vp));
         arrowY.setVisible(arrowsVisible && !axisFacesViewer(axisY, center, vp));
         arrowZ.setVisible(arrowsVisible && !axisFacesViewer(axisZ, center, vp));
-        circleXY.setVisible(!planeHandleHidden(axisX, axisY, center, vp));
-        circleYZ.setVisible(!planeHandleHidden(axisY, axisZ, center, vp));
-        circleXZ.setVisible(!planeHandleHidden(axisX, axisZ, center, vp));
+        circleXY.setVisible(planesVisible &&
+            !planeHandleHidden(axisX, axisY, center, vp));
+        circleYZ.setVisible(planesVisible &&
+            !planeHandleHidden(axisY, axisZ, center, vp));
+        circleXZ.setVisible(planesVisible &&
+            !planeHandleHidden(axisX, axisZ, center, vp));
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)

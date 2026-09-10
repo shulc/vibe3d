@@ -67,7 +67,7 @@ import edit_session : KeepAliveOnCancel;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
+import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
@@ -92,6 +92,7 @@ import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, SnapOverlayOwner;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 struct PreparedPrimitiveDeactivateImage {
     bool valid, expectedWillCommit, expectedCommitValid;
@@ -171,10 +172,14 @@ public:
         this.gpu       = gpu;
         this.litShader = litShader;
         mover = new MoveHandler(Vec3(0, 0, 0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
+        mover.planesVisible = false;
         toolHandles = new ToolHandles();
+    }
+
+    override JSONValue toolHandlesJson() const {
+        auto result = toolHandles.toJson(cachedVp);
+        result["planeRingsDrawn"] = JSONValue(mover.planeRingsDrawn());
+        return result;
     }
 
     void destroy() {
@@ -794,8 +799,16 @@ public:
 
     protected override void drawToolHandles(const ref Shader shader, const ref Viewport vp) {
         updateSizeHandlers(vp);
-        mover.setPosition(toWorldP(center()));
+        immutable Vec3 centerWorld = toWorldP(center());
+        mover.setPosition(centerWorld);
         mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
+        // Apply the shared screen-collapse law to the create rig too. A size
+        // handle aligned with the eye ray projects onto the mover centre and
+        // has no usable drag direction; keeping it live would let a false
+        // handle win the size-first priority below (task 5350 / law 0602).
+        foreach (i; 0 .. 6)
+            sizeH[i].setVisible(!axisFacesViewer(
+                toWorldD(SIZE_AXES[i]), centerWorld, vp));
         // Single-source hover/capture: size handles (priority) then the
         // mover (centerBox, arrows) — same order tryGrabHandles/click use,
         // so the highlighted handle is the one a click grabs. The dragged
@@ -819,6 +832,7 @@ public:
 protected:
     bool tryGrabHandles(int mx, int my) {
         foreach (i; 0 .. 6) {
+            if (!sizeH[i].isVisible()) continue;
             if (sizeH[i].hitTest(mx, my, cachedVp)) {
                 sizeDragIdx = cast(int)i;
                 sizeLastMX  = mx;

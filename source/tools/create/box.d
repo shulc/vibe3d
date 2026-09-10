@@ -21,7 +21,8 @@ import tool;
 import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
-import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles;
+import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
+                 axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import eventlog : queryMouse;
 import drag;
@@ -47,6 +48,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math : abs, sqrt, sin, cos, PI;
+import std.json : JSONValue;
 
 // Task 0719 (T8) — the mesh GENERATORS (`BoxParams` plus the cuboid /
 // rounded-cube / rounded-plane builders) moved to `mesh_ops/box_geom.d`;
@@ -254,9 +256,7 @@ public:
         this.gpu       = gpu;
         this.litShader = litShader;
         mover = new MoveHandler(Vec3(0,0,0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
+        mover.planesVisible = false;
         // Seed colours only — both sets are re-coloured per frame from the
         // world axis they end up aligned with (updateEdgeHandlers /
         // updateHeightHandlers, via axisColorFor).
@@ -271,6 +271,12 @@ public:
         mover.destroy();
         foreach (h; edgeH) h.destroy();
         foreach (h; heightH) h.destroy();
+    }
+
+    override JSONValue toolHandlesJson() const {
+        auto result = toolHandles.toJson(cachedVp);
+        result["planeRingsDrawn"] = JSONValue(mover.planeRingsDrawn());
+        return result;
     }
 
     override string name() const { return "Box"; }
@@ -558,6 +564,7 @@ public:
         // Edge handle hit-test (BaseSet / HeightSet)
         if (state == BoxState.BaseSet || state == BoxState.HeightSet) {
             foreach (i, h; edgeH) {
+                if (!h.isVisible()) continue;
                 if (h.hitTest(e.x, e.y, cachedVp)) {
                     edgeDragIdx = cast(int)i;
                     edgeLastMX  = e.x;
@@ -571,9 +578,10 @@ public:
         // Height handles (BaseSet / HeightSet) — priority over mover centerBox
         // BaseSet: only bottom [0]; HeightSet: both [0] and [1]
         int heightHHitIdx = -1;
-        if (heightH[0].hitTest(e.x, e.y, cachedVp))
+        if (heightH[0].isVisible() && heightH[0].hitTest(e.x, e.y, cachedVp))
             heightHHitIdx = 0;
-        else if (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp))
+        else if (state == BoxState.HeightSet && heightH[1].isVisible()
+                 && heightH[1].hitTest(e.x, e.y, cachedVp))
             heightHHitIdx = 1;
         if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHHitIdx >= 0) {
             heightHDragIdx = heightHHitIdx;
@@ -1467,10 +1475,12 @@ private:
         Vec3 topW = toWorldP(topL);
         Vec3[2] pts = [botW, topW];
         Vec3 colorAxis = toWorldD(planeNormal);
+        immutable Vec3 centerWorld = toWorldP(boxCenter());
         foreach (i; 0 .. 2) {
             heightH[i].pos   = pts[i];
             heightH[i].size  = gizmoSize(pts[i], vp, 0.04f);
             heightH[i].color = axisColorFor(colorAxis);
+            heightH[i].setVisible(!axisFacesViewer(colorAxis, centerWorld, vp));
         }
     }
 
@@ -1492,11 +1502,14 @@ private:
         Vec3 c2 = toWorldD(planeAxis2);
         Vec3[4] colors = [axisColorFor(c2), axisColorFor(c1),
                           axisColorFor(c2), axisColorFor(c1)];
+        Vec3[4] moveAxes = [c2, c1, c2, c1];
+        immutable Vec3 centerWorld = toWorldP(boxCenter());
 
         foreach (i; 0 .. 4) {
             edgeH[i].pos   = mids[i];
             edgeH[i].size  = gizmoSize(mids[i], vp, 0.04f);
             edgeH[i].color = colors[i];
+            edgeH[i].setVisible(!axisFacesViewer(moveAxes[i], centerWorld, vp));
         }
     }
 

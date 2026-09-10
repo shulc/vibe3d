@@ -258,9 +258,7 @@ public:
         this.gpu       = gpu;
         this.litShader = litShader;
         mover = new MoveHandler(Vec3(0, 0, 0));
-        mover.circleXY.setVisible(false);
-        mover.circleYZ.setVisible(false);
-        mover.circleXZ.setVisible(false);
+        mover.planesVisible = false;
         // Task 0233: drop the X/Y/Z axis arrows entirely — the reference
         // Mirror gizmo is 2 boxes + a plane, no arrows. Center MOVE stays on
         // the (enlarged) center box drag (planeDragDelta). arrowsVisible=false
