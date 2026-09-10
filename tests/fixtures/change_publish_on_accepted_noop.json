@@ -1,0 +1,411 @@
+{
+ "fixture": "change_publish_on_accepted_noop",
+ "version": 1,
+ "measured": "2026-09-10",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-09-10",
+  "task": "5200",
+  "notes": "46 headless command-lane boots -- 5 bring-up, 29 in the measured matrix and 12 in a second-subscriber cross-check, 4 of those discarded on a rig fault the positive control caught -- one FRESH process per cell, no display and no graphical session. The observable is a CHANGE LISTENER registered through the reference's own public listener interface on the mesh's listener port; every notification it receives is appended to a file the instant it arrives, so the count never depends on interpreter state surviving between script calls. Each measured command sits at the TOP of the input stream, never inside a script, because an undo issued from inside a script is inert and a state-changing command inside one collapses into the script's own undo entry. Every cell has a control twin that is the same input stream with the measured line(s) deleted and every read-only probe left in place, so the pair differs by the command under test and by nothing else. Acceptance is certified WITHOUT the listener, by the undo-entry delta against that twin plus the console's own answer; geometry is compared as EXACT float text, so 'did not move' cannot be confused with 'moved by less than the rounding'. Cross-checked against a static read of the shipped binaries at the notification's own dispatch site."
+ },
+ "question": "Does an ACCEPTED command that changed no geometry deliver a mesh-change notification to a registered listener?",
+ "law": "A change notification is delivered IF AND ONLY IF the operation WROTE to the mesh. The engine keys the notification on the WRITE -- not on the command having been accepted, and not on the written values differing from the values already stored. So an accepted command whose write set was empty delivers NOTHING, and an accepted command that wrote values identical to the ones already there delivers ONE notification carrying the class it wrote.",
+ "the_question_conflated_two_states": "'Accepted but changed nothing' is not one state in the reference, it is TWO, and they answer OPPOSITELY. Both are accepted, both record an undo entry, and both leave every coordinate byte-identical. They differ only in whether the operation had anything to write. A capture that samples only one of them reads a clean, wrong, universal answer.",
+ "three_states": {
+  "refused": {
+   "undo_entries": 0,
+   "deliveries": 0
+  },
+  "accepted_write_set_empty": {
+   "undo_entries": 1,
+   "deliveries": 0
+  },
+  "accepted_wrote_identical_values": {
+   "undo_entries": 1,
+   "deliveries": 1
+  }
+ },
+ "rate": "at most ONE delivery per accepted command invocation, never more; 13/13 accepted cells.",
+ "undo": "Undo mirrors the forward exactly, 14/14 commanded cells: undoing an entry whose command wrote nothing delivers nothing; undoing an entry whose command wrote -- whether or not the values differed -- delivers exactly one notification.",
+ "class_is_carried": "The notification carries the class that was written, not a bare 'something changed' ping: position edits deliver `position`, a weld delivers `vertices`+`faces`+`vertex-map-continuity`, a duplicate-face elimination delivers `faces` alone.",
+ "sharpest_discriminating_pair": {
+  "cells": [
+   "jitter_emptysel",
+   "jitter_zerorange"
+  ],
+  "why": "The SAME operator, the SAME apply, both accepted, both recording one undo entry, and the geometry byte-identical in BOTH. The pair differs in exactly one thing -- whether the operand set was empty -- and the delivery appears on exactly that side. No other pair in this corpus isolates the term; the topological no-ops all happen to be empty-write-set cells, so a corpus built from those alone IS the rival's own partition and would stay green under 'publishing is keyed on acceptance'."
+ },
+ "a_test_over_this_fixture_must": [
+  "assert a POPULATION FLOOR first: 15 cells, of which 13 are accepted; 8 of those 13 leave the geometry byte-identical, and BOTH delivery values occur among those 8 (3 deliver, 5 do not) -- without that, 'every row agrees' is satisfied by an empty or one-sided set",
+  "assert `deliveries == (operation_wrote_elements ? 1 : 0)` over every cell",
+  "assert that `geometry_byte_identical` does NOT predict `deliveries`: among the byte-identical cells both values occur",
+  "assert the refused cell is the ONLY cell with `undo_entries_recorded == 0`, so 'no delivery' is never read as 'the command was refused'",
+  "assert `deliveries_on_the_undo_of_this_command == deliveries` for every cell that HAS a command (14 of the 15; the null control has none and its field is null)"
+ ],
+ "mutation_that_must_redden_it": "Make the publisher fire on acceptance rather than on the write (or drop the write-keyed publish): the first assertion reddens on the five empty-write-set cells under the former and on the three identical-value cells under the latter. A mutation that only changes WHEN the publish happens within an accepted, writing command moves nothing here -- that is a different law and this fixture does not claim it.",
+ "not_measured": [
+  "whether the decision to publish is taken before or after the operation runs (observationally identical)",
+  "what a SUBSCRIBER does with the notification, and whether any consumer treats 'no delivery' as 'nothing happened'",
+  "the interactive-gesture rate (a drag), which is a different question already settled elsewhere",
+  "whether an operation that writes only SOME of its operand delivers a narrower class"
+ ],
+ "cells": [
+  {
+   "cell": "merge_noop",
+   "role": "noop",
+   "operator": "weld_coincident_vertices",
+   "operator_family": "topology",
+   "route": "operand-already-satisfied",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "the stand has no two coincident vertices, so the operator found no pair to weld and touched nothing",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "unify_noop",
+   "role": "noop",
+   "operator": "unify_duplicate_faces",
+   "operator_family": "topology",
+   "route": "operand-already-satisfied",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "the stand has no duplicate face, so the operator found nothing to eliminate and touched nothing",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "unhide_noop",
+   "role": "noop",
+   "operator": "unhide_all",
+   "operator_family": "mark",
+   "route": "operand-empty",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "nothing on the stand is hidden, so the operator had no hidden element to clear",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "jitter_emptysel",
+   "role": "noop",
+   "operator": "jitter_vertices",
+   "operator_family": "position",
+   "route": "operand-empty",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "this operator acts only on the component selection and the selection is EMPTY, so it wrote no vertex",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "smooth_attronly",
+   "role": "noop",
+   "operator": "relax_vertices",
+   "operator_family": "position",
+   "route": "parameter-write-only",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "only the operator's parameter was written; the operator itself was never applied",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "jitter_zerorange",
+   "role": "noop",
+   "operator": "jitter_vertices",
+   "operator_family": "position",
+   "route": "identity-parameter",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "every vertex is selected and the operator RAN over all of them with an identity parameter (range 0), writing each vertex the value it already held",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "position"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "smooth_noop",
+   "role": "noop",
+   "operator": "relax_vertices",
+   "operator_family": "position",
+   "route": "identity-parameter",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "the operator RAN over the whole layer with strength 0, writing each vertex the value it already held",
+   "accepted": true,
+   "undo_entries_recorded": 2,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "position"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "quant_sat",
+   "role": "noop",
+   "operator": "quantize_vertices",
+   "operator_family": "position",
+   "route": "operand-already-satisfied",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "a first, real apply put every vertex on the step; the measured second apply RAN over all of them and wrote each the value it already held",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "position"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "merge_pos",
+   "role": "control-real",
+   "operator": "weld_coincident_vertices",
+   "operator_family": "topology",
+   "route": "real-edit",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": false,
+   "vertex_count_before_after": [
+    17,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "vertices",
+    "faces",
+    "vertex-map-continuity"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "unify_pos",
+   "role": "control-real",
+   "operator": "unify_duplicate_faces",
+   "operator_family": "topology",
+   "route": "real-edit",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": false,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "faces"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "unhide_pos",
+   "role": "control-real",
+   "operator": "unhide_all",
+   "operator_family": "mark",
+   "route": "real-edit",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": false,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "vertices",
+    "faces"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "jitter_pos",
+   "role": "control-real",
+   "operator": "jitter_vertices",
+   "operator_family": "position",
+   "route": "real-edit",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "",
+   "accepted": true,
+   "undo_entries_recorded": 1,
+   "geometry_byte_identical": false,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "position"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "smooth_pos",
+   "role": "control-real",
+   "operator": "relax_vertices",
+   "operator_family": "position",
+   "route": "real-edit",
+   "operation_wrote_elements": true,
+   "why_the_write_set_is_what_it_is": "",
+   "accepted": true,
+   "undo_entries_recorded": 2,
+   "geometry_byte_identical": false,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 1,
+   "delivered_classes": [
+    "position"
+   ],
+   "deliveries_on_the_undo_of_this_command": 1,
+   "first_undo_deliveries_raw": 1
+  },
+  {
+   "cell": "refused",
+   "role": "control-refused",
+   "operator": "relax_vertices",
+   "operator_family": "position",
+   "route": "refused",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "arming this operator on a layer that holds no geometry is REFUSED outright: the console answers a disabled-command error and no undo entry is recorded",
+   "accepted": false,
+   "undo_entries_recorded": 0,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    0,
+    0
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": 0,
+   "first_undo_deliveries_raw": 0
+  },
+  {
+   "cell": "null",
+   "role": "control-null",
+   "operator": null,
+   "operator_family": null,
+   "route": "no-command",
+   "operation_wrote_elements": false,
+   "why_the_write_set_is_what_it_is": "no command at all sits between the two reads: the bracket itself must read zero",
+   "accepted": null,
+   "undo_entries_recorded": null,
+   "geometry_byte_identical": true,
+   "vertex_count_before_after": [
+    16,
+    16
+   ],
+   "deliveries": 0,
+   "delivered_classes": [],
+   "deliveries_on_the_undo_of_this_command": null,
+   "first_undo_deliveries_raw": 1
+  }
+ ],
+ "second_subscriber_cross_check": {
+  "why": "A zero on one subscriber is only an answer if no OTHER subscriber saw the notification. Four cells were re-run with a SECOND listener armed on the layer's base mesh alongside the first.",
+  "result": {
+   "control_real_edit": {
+    "vertex_count": [
+     17,
+     16
+    ],
+    "subscribers_that_saw_it": 2
+   },
+   "accepted_write_set_empty_a": {
+    "vertex_count": [
+     16,
+     16
+    ],
+    "subscribers_that_saw_it": 0
+   },
+   "accepted_write_set_empty_b": {
+    "vertex_count": [
+     16,
+     16
+    ],
+    "subscribers_that_saw_it": 0
+   },
+   "accepted_wrote_identical": {
+    "vertex_count": [
+     16,
+     16
+    ],
+    "subscribers_that_saw_it": 2
+   }
+  },
+  "conclusion": "Both subscribers agree on every cell, so the zeros are silence, not a missed subscriber. The static read says the same thing by construction: the empty-mask gate sits ABOVE every subscriber port, so a zero mask reaches none of them.",
+  "rig_trap_paid_for_here": "The first attempt at this cross-check armed the second listener through a WRITE-mode layer scan that was never applied. That CRIPPLES every later editing command in the same process -- the positive control reported 'no vertices merged' on a stand that has a coincident pair, and the whole run's zeros meant nothing. Only the positive control caught it. A read-only scan is what this needs."
+ }
+}

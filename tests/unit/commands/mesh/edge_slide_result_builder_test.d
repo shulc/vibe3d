@@ -8,8 +8,11 @@ import commands.mesh.vertex_position_result : VertexPositionResult;
 import display_sync : activeMeshResolver;
 import editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, edgeSlidePositions;
+import mesh : Mesh, edgeSlidePositions, g_isDocumentMesh;
 import operator : VectorStack;
+import std.file : readText;
+import std.format : format;
+import std.json : JSONType, parseJSON;
 import toolpipe.packets : FalloffPacket, FalloffType, SubjectPacket;
 import tools.slice.edge_slide : EdgeSlideTool;
 import view : View;
@@ -67,6 +70,79 @@ private bool approx(Vec3 a, Vec3 b, float eps = 1.0e-5f) {
     import std.math : abs;
     return abs(a.x - b.x) <= eps && abs(a.y - b.y) <= eps &&
            abs(a.z - b.z) <= eps;
+}
+
+private void operandPopulation(ref const Mesh mesh, const bool[] edgeMask,
+                               out size_t edgeCount, out size_t vertexCount) {
+    bool[] moving = new bool[](mesh.vertices.length);
+    const n = edgeMask.length < mesh.edges.length
+        ? edgeMask.length : mesh.edges.length;
+    foreach (ei; 0 .. n) {
+        if (!edgeMask[ei]) continue;
+        ++edgeCount;
+        moving[mesh.edges[ei][0]] = true;
+        moving[mesh.edges[ei][1]] = true;
+    }
+    foreach (isMoving; moving) if (isMoving) ++vertexCount;
+}
+
+unittest { // the frozen notification law has the full discriminating population
+    const fixture = parseJSON(readText(
+        "tests/fixtures/change_publish_on_accepted_noop.json"));
+    const cells = fixture["cells"].array;
+    assert(cells.length == 15,
+        format("notification-law fixture has %d cells, expected 15", cells.length));
+
+    size_t acceptedCount;
+    size_t acceptedIdenticalCount;
+    size_t identicalDeliveredCount;
+    size_t identicalSilentCount;
+    size_t refusedCount;
+    size_t commandCount;
+    foreach (cell; cells) {
+        const acceptedType = cell["accepted"].type;
+        const accepted = acceptedType == JSONType.true_;
+        const hasCommand = cell["operator"].type != JSONType.null_;
+        const wrote = cell["operation_wrote_elements"].type == JSONType.true_;
+        const identical = cell["geometry_byte_identical"].type == JSONType.true_;
+        const deliveries = cell["deliveries"].integer;
+        const name = cell["cell"].str;
+
+        assert(deliveries == (wrote ? 1 : 0), format(
+            "%s: frozen delivery=%d, but operation_wrote_elements=%s",
+            name, deliveries, wrote));
+        if (accepted) {
+            ++acceptedCount;
+            if (identical) {
+                ++acceptedIdenticalCount;
+                if (deliveries == 1) ++identicalDeliveredCount;
+                else ++identicalSilentCount;
+            }
+        }
+        if (hasCommand) {
+            ++commandCount;
+            assert(cell["deliveries_on_the_undo_of_this_command"].integer
+                       == deliveries,
+                name ~ ": frozen undo delivery must mirror the forward delivery");
+            if (cell["undo_entries_recorded"].integer == 0) ++refusedCount;
+        }
+    }
+
+    assert(acceptedCount == 13,
+        format("notification-law fixture has %d accepted cells, expected 13",
+               acceptedCount));
+    assert(acceptedIdenticalCount == 8 && identicalDeliveredCount == 3 &&
+           identicalSilentCount == 5,
+        format("byte-identical population is %d cells split %d delivered/%d silent; "
+             ~ "expected 8 split 3/5",
+               acceptedIdenticalCount, identicalDeliveredCount,
+               identicalSilentCount));
+    assert(refusedCount == 1,
+        format("notification-law fixture has %d zero-history commands, expected 1",
+               refusedCount));
+    assert(commandCount == 14,
+        format("notification-law fixture has %d commanded cells, expected 14",
+               commandCount));
 }
 
 unittest { // preview, cancel, drop, undo and redo preserve the wrapper lifecycle
@@ -269,6 +345,109 @@ unittest { // accepted t=0 no-op remains a populated, traversable history row
     assert(model == 1, "t=0 undo removed the earlier real EdgeSlide row");
     assert(history.undo() && target.vertices == baseline,
         "earlier real EdgeSlide was lost below the accepted no-op");
+}
+
+unittest { // publication is gated by the operand, never by the sparse value diff
+    auto savedSubjectFilter = g_isDocumentMesh;
+    g_isDocumentMesh = null;
+    scope(exit) g_isDocumentMesh = savedSubjectFilter;
+
+    // Positive control first: an ordinary write must exercise every observed
+    // channel before either no-op cell is allowed to report zero.
+    bool[] realSelection;
+    Mesh realMesh = asymmetricOpenStrip(realSelection);
+    size_t realEdges, realVertices;
+    operandPopulation(realMesh, realSelection, realEdges, realVertices);
+    assert(realEdges == 1 && realVertices == 2,
+        format("positive-control population is %d edge(s)/%d moving vertex(es); "
+             ~ "expected 1/2", realEdges, realVertices));
+    const realBefore = realMesh.vertices.dup;
+    const realDeliveries0 = changeBus.deliveryCount;
+    const realPositions0 = changeBus.totalPosition;
+    const realMutation0 = realMesh.mutationVersion;
+    auto realHistory = new CommandHistory;
+    View realView = new View(0, 0, 800, 600);
+    auto realCommand = new MeshEdgeSlide(&realMesh, realView, EditMode.Edges);
+    realCommand.setT(0.4f);
+    const realAccepted = realHistory.fire(realCommand);
+    size_t realModel, realUi;
+    realHistory.undoDepthCounts(realModel, realUi);
+    assert(realAccepted && changedCount(realBefore, realMesh.vertices) == 2 &&
+           changeBus.deliveryCount - realDeliveries0 == 1 &&
+           changeBus.totalPosition - realPositions0 == 1 &&
+           realMesh.mutationVersion - realMutation0 == 1 &&
+           realModel == 1 && realUi == 0,
+        format("POSITIVE CONTROL: accepted=%s changed=%d deliveries=%d "
+             ~ "Position=%d mutationVersion=%d history=%d/%d; expected "
+             ~ "true/2/1/1/1/1/0",
+               realAccepted, changedCount(realBefore, realMesh.vertices),
+               changeBus.deliveryCount - realDeliveries0,
+               changeBus.totalPosition - realPositions0,
+               realMesh.mutationVersion - realMutation0, realModel, realUi));
+
+    // The kernel owns a populated 1-edge/2-vertex operand at t=0; only the
+    // value-diff result is empty. The write route still publishes and stamps.
+    bool[] zeroSelection;
+    Mesh zero = asymmetricOpenStrip(zeroSelection);
+    size_t zeroEdges, zeroVertices;
+    operandPopulation(zero, zeroSelection, zeroEdges, zeroVertices);
+    assert(zeroEdges == 1 && zeroVertices == 2,
+        format("t=0 population is %d edge(s)/%d moving vertex(es); expected 1/2",
+               zeroEdges, zeroVertices));
+    const zeroBefore = zero.vertices.dup;
+    const zeroDeliveries0 = changeBus.deliveryCount;
+    const zeroPositions0 = changeBus.totalPosition;
+    const zeroMutation0 = zero.mutationVersion;
+    auto zeroHistory = new CommandHistory;
+    View zeroView = new View(0, 0, 800, 600);
+    auto zeroCommand = new MeshEdgeSlide(&zero, zeroView, EditMode.Edges);
+    zeroCommand.setT(0.0f);
+    const zeroAccepted = zeroHistory.fire(zeroCommand);
+    size_t zeroModel, zeroUi;
+    zeroHistory.undoDepthCounts(zeroModel, zeroUi);
+    assert(zeroAccepted && zero.vertices == zeroBefore &&
+           changeBus.deliveryCount - zeroDeliveries0 == 1 &&
+           changeBus.totalPosition - zeroPositions0 == 1 &&
+           zero.mutationVersion - zeroMutation0 == 1 &&
+           zeroModel == 1 && zeroUi == 0,
+        format("T=0 NON-EMPTY OPERAND: accepted=%s deliveries=%d Position=%d "
+             ~ "mutationVersion=%d history=%d/%d; expected true/1/1/1/1/0",
+               zeroAccepted, changeBus.deliveryCount - zeroDeliveries0,
+               changeBus.totalPosition - zeroPositions0,
+               zero.mutationVersion - zeroMutation0, zeroModel, zeroUi));
+
+    // Empty means no selected edge and therefore no moving vertex. The
+    // history oracle, not the silent bus, classifies this cell as a refusal.
+    bool[] emptySelection;
+    Mesh empty = asymmetricOpenStrip(emptySelection);
+    emptySelection[] = false;
+    empty.selectEdgesFrom(emptySelection);
+    size_t emptyEdges, emptyVertices;
+    operandPopulation(empty, emptySelection, emptyEdges, emptyVertices);
+    assert(emptyEdges == 0 && emptyVertices == 0,
+        format("empty population is %d edge(s)/%d moving vertex(es); expected 0/0",
+               emptyEdges, emptyVertices));
+    const emptyDeliveries0 = changeBus.deliveryCount;
+    const emptyPositions0 = changeBus.totalPosition;
+    const emptyMutation0 = empty.mutationVersion;
+    auto emptyHistory = new CommandHistory;
+    View emptyView = new View(0, 0, 800, 600);
+    auto emptyCommand = new MeshEdgeSlide(&empty, emptyView, EditMode.Edges);
+    emptyCommand.setT(0.0f);
+    const emptyAccepted = emptyHistory.fire(emptyCommand);
+    size_t emptyModel, emptyUi;
+    emptyHistory.undoDepthCounts(emptyModel, emptyUi);
+    assert(!emptyAccepted &&
+           changeBus.deliveryCount - emptyDeliveries0 == 0 &&
+           changeBus.totalPosition - emptyPositions0 == 0 &&
+           empty.mutationVersion - emptyMutation0 == 0 &&
+           emptyModel == 0 && emptyUi == 0,
+        format("EMPTY OPERAND: accepted=%s deliveries=%d Position=%d "
+             ~ "mutationVersion=%d history=%d/%d; expected false/0/0/0/0/0 "
+             ~ "(history depth is the refusal oracle)",
+               emptyAccepted, changeBus.deliveryCount - emptyDeliveries0,
+               changeBus.totalPosition - emptyPositions0,
+               empty.mutationVersion - emptyMutation0, emptyModel, emptyUi));
 }
 
 private uint floatBits(float value) @trusted {
