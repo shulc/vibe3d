@@ -11,7 +11,7 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
-import tools.create.create_common : currentWorkplaneFrame;
+import tools.create.create_common : primitiveParameterFrame;
 import prepared_record_context : PreparedRecordContext, PreparedToolParamDoorClient;
 import document : Layer;
 
@@ -682,7 +682,7 @@ public:
 
     // Headless FULL override — see the class doc and task 0414 plan sec 1a.
     override bool applyHeadless() {
-        frame = currentWorkplaneFrame();
+        frame = primitiveParameterFrame();
         size_t firstNewVert = mesh.vertices.length;
         size_t firstNewFace = mesh.faces.length;
         if (!buildByMethod(mesh)) return false;

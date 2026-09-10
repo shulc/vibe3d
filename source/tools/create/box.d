@@ -34,7 +34,7 @@ import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
-                              currentWorkplaneFrame, mostFacingAxis,
+                              primitiveParameterFrame, mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -208,6 +208,7 @@ private:
     /// transforms vertices through `frame.toWorld` immediately before
     /// uploading to GPU.
     WorkplaneFrame frame;
+    Vec3 placementPlaneOrigin;
 
     Viewport cachedVp;
 
@@ -628,7 +629,7 @@ public:
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, Vec3(0,0,0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
                 return false;
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
@@ -810,15 +811,16 @@ public:
         }
 
         if (moverDragAxis >= 0) {
-            bool skip;
-            Vec3 delta = moverDragAxis <= 2
-                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover, cachedVp, skip)
-                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip,
-                                 frame.axis1, frame.normal, frame.axis2,
-                                 frame.normal);
-            if (!skip) applyMoverDelta(delta);
+            bool skip = false;
+            if (moverDragAxis <= 2) {
+                Vec3 delta = axisDragDelta(e.x, e.y, moverLastMX, moverLastMY,
+                                           moverDragAxis, mover, cachedVp, skip);
+                if (!skip) applyMoverDelta(delta);
+            } else {
+                Vec3 delta = primitiveCenterDragDelta(e.x, e.y, moverLastMX,
+                                                       moverLastMY, cenVec(), cachedVp);
+                applyMoverParameterDelta(delta);
+            }
             lastSnap = snapMover(moverDragAxis, e.x, e.y);
             publishLastSnap(lastSnap);
             moverLastMX = e.x;
@@ -1163,7 +1165,7 @@ public:
         // survives — matches the interactive Append convention), so the
         // workplane transform must apply ONLY to the newly-emitted
         // vertices, not the pre-existing ones.
-        frame = currentWorkplaneFrame();
+        frame = primitiveParameterFrame();
         size_t firstNewVert = mesh.vertices.length;
         size_t firstNewFace = mesh.faces.length;
         buildCuboidParametric(mesh, params_);
@@ -1395,6 +1397,14 @@ private:
         uploadPreview();
     }
 
+    // The centre-box conversion already returns parameter-space motion.
+    void applyMoverParameterDelta(Vec3 d) {
+        params_.cenX += d.x;
+        params_.cenY += d.y;
+        params_.cenZ += d.z;
+        uploadPreview();
+    }
+
     // Snap the moved box center onto the nearest snap target on the mover's
     // free axes (free-axis projection). Arrows 0/1/2 free a single axis;
     // the centerBox (3) frees the two axes spanning the most-camera-facing
@@ -1583,7 +1593,9 @@ private:
         // canonical local triple. The previous behaviour — caching world-
         // space (axis1, normal, axis2) from pickWorkplane — implied an
         // axis-aligned workplane and broke after alignToSelection.
-        frame = pickWorkplaneFrame(vp);
+        WorkplaneFrame placementFrame = pickWorkplaneFrame(vp);
+        frame = primitiveParameterFrame();
+        placementPlaneOrigin = transformPoint(frame.toLocal, placementFrame.origin);
         // Pick the construction plane by camera, just like the corner
         // gizmo's most-facing-quad: in the workplane basis (a1, n, a2),
         // the basis axis most aligned with the camera-back vector is the

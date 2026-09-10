@@ -12,8 +12,8 @@ import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 // "Where does a screen pixel become a world offset?" has exactly one answer:
 // this module. Every interactive drag in the editor — transform gizmos,
 // primitive movers, the alignment tools, every parameter haul — routes its
-// pixels through one of the three laws below. Nothing outside this module may
-// grow a fourth.
+// pixels through one of the laws below. Nothing outside this module may grow
+// another.
 //
 //   LAW A — axis projection, and it is TWO conversions, because the reference
 //     has two. `axisArmDelta` is the ported one (task 0562); it runs for the
@@ -44,6 +44,11 @@ import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 //     world length of a pixel at an anchor, frozen by the caller at the press.
 //     For hauls that have no axis to project: the tool multiplies raw pixels
 //     by it.
+//
+//   LAW D — primitive centre translation. `primitiveCenterDragDelta` asks an
+//     orthographic view for its locked world axis, or chooses the dominant
+//     eye-vector axis in perspective, and intersects each cursor ray with the
+//     corresponding principal plane through the parameter-space centre.
 //
 // LAW-CHANGE POINT — CONSUMED for LAW B (task 0520) and now for LAW A (0562).
 //
@@ -1490,6 +1495,56 @@ Vec3 planeDragDelta(int mx,     int my,
     if (!j.valid) { skip = true; return Vec3(0,0,0); }
 
     return j.apply(cast(float)(mx - lastMX), cast(float)(my - lastMY));
+}
+
+// ===========================================================================
+// LAW D — primitive centre translation
+// ===========================================================================
+
+private float component(Vec3 v, int axis) {
+    final switch (axis) {
+        case 0: return v.x;
+        case 1: return v.y;
+        case 2: return v.z;
+    }
+}
+
+private Vec3 withComponent(Vec3 v, int axis, float value) {
+    final switch (axis) {
+        case 0: v.x = value; break;
+        case 1: v.y = value; break;
+        case 2: v.z = value; break;
+    }
+    return v;
+}
+
+/// Convert a primitive centre-box drag directly into parameter-space motion.
+/// Orthographic views overwrite their locked world component. Perspective
+/// views use the principal plane whose normal is the dominant eye-vector
+/// component. The selected denominator is therefore bounded away from zero;
+/// this route has no singular-matrix or determinant failure state.
+Vec3 primitiveCenterDragDelta(int mx, int my, int lastMX, int lastMY,
+                              Vec3 reference, const ref Viewport vp)
+{
+    Vec3 currPos, currEye, prevPos, prevEye;
+    screenPointToRay(cast(float)mx,     cast(float)my,     vp, currPos, currEye);
+    screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, prevPos, prevEye);
+
+    int axis = lockedViewAxis(vp);
+    if (axis >= 0) {
+        currPos = withComponent(currPos, axis, component(reference, axis));
+        prevPos = withComponent(prevPos, axis, component(reference, axis));
+        return currPos - prevPos;
+    }
+
+    Vec3 eye = eyeVectorAt(vp, reference);
+    float ax = abs(eye.x), ay = abs(eye.y), az = abs(eye.z);
+    axis = ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
+    currPos += currEye * ((component(reference, axis) - component(currPos, axis)) /
+                           component(currEye, axis));
+    prevPos += prevEye * ((component(reference, axis) - component(prevPos, axis)) /
+                           component(prevEye, axis));
+    return currPos - prevPos;
 }
 
 // ===========================================================================

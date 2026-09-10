@@ -230,7 +230,7 @@ public:
         if (state == TorusState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
                 return false;
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
@@ -293,7 +293,7 @@ public:
 
         if (state == TorusState.DrawingMajor) {
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

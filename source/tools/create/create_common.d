@@ -221,6 +221,16 @@ WorkplaneFrame currentWorkplaneFrame() {
     return worldXZFrame();
 }
 
+/// The frame in which primitive parameters are interpreted. The automatic
+/// workplane is the unit world frame for numeric parameters; a pinned
+/// workplane keeps the stage's stored frame. This is intentionally separate
+/// from `pickWorkplaneFrame`: cursor placement still uses its camera-facing
+/// plane and focus origin.
+WorkplaneFrame primitiveParameterFrame() {
+    WorkplaneFrame f = currentWorkplaneFrame();
+    return f.isAuto ? worldXZFrame() : f;
+}
+
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
 /// handles / etc.) — same basis the construction-plane pickers use, so the
 /// gizmo always agrees with where primitives actually drop:

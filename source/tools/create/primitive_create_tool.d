@@ -70,7 +70,8 @@ import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
-import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
+import drag : axisDragDelta, planeDragDelta, primitiveCenterDragDelta,
+              screenAxisDelta;
 import shader : Shader, LitShader, drawLitPreview;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -83,7 +84,7 @@ import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
-import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
+import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, primitiveParameterFrame,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -140,6 +141,7 @@ protected:
     Vec3 planeAxis1;
     Vec3 planeAxis2;
     WorkplaneFrame frame;
+    Vec3 placementPlaneOrigin;
 
     // Last snap query — drives the Idle-state cyan/yellow overlay.
     SnapResult lastSnap;
@@ -480,7 +482,7 @@ public:
     /// STATE-aware and would silently emit a flat ellipse fan headlessly
     /// (state == Idle at headless-call time) if routed through here.
     override bool applyHeadless() {
-        frame = currentWorkplaneFrame();
+        frame = primitiveParameterFrame();
         appendBuildInto();
         return true;
     }
@@ -545,7 +547,9 @@ protected:
     void choosePlane(const ref Viewport vp) {
         // Capture workplane as a local<->world transform; tool-internal
         // coords are in local-space (workplane = identity XZ plane).
-        frame = pickWorkplaneFrame(vp);
+        WorkplaneFrame placementFrame = pickWorkplaneFrame(vp);
+        frame = primitiveParameterFrame();
+        placementPlaneOrigin = transformPoint(frame.toLocal, placementFrame.origin);
         // Pick the construction plane by camera (most-facing-axis in
         // workplane basis), matching every Create-tool / the corner gizmo.
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
@@ -699,18 +703,19 @@ protected:
 
     bool handleMoverDrag(int mx, int my) {
         if (moverDragAxis < 0) return false;
-        bool skip;
-        Vec3 delta = moverDragAxis <= 2
-            ? axisDragDelta (mx, my, moverLastMX, moverLastMY,
-                             moverDragAxis, mover, cachedVp, skip)
-            : planeDragDelta(mx, my, moverLastMX, moverLastMY,
-                             moverDragAxis, mover.center, cachedVp, skip,
-                             mover.axisX, mover.axisY, mover.axisZ,
-                             frame.normal);
+        bool skip = false;
+        Vec3 delta;
+        if (moverDragAxis <= 2) {
+            delta = axisDragDelta(mx, my, moverLastMX, moverLastMY,
+                                  moverDragAxis, mover, cachedVp, skip);
+            if (!skip) delta = toLocalD(delta);
+        } else {
+            delta = primitiveCenterDragDelta(mx, my, moverLastMX, moverLastMY,
+                                             center(), cachedVp);
+        }
         if (!skip) {
-            Vec3 dl = toLocalD(delta);
             Vec3 c  = center();
-            c.x += dl.x; c.y += dl.y; c.z += dl.z;
+            c.x += delta.x; c.y += delta.y; c.z += delta.z;
             setCenter(c);
             rebuildPreview();
         }
@@ -1048,7 +1053,7 @@ public:
         if (state == RadialState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
                 return false;
             // Snap the click anchor to the closest pipeline-enabled target.
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
@@ -1136,7 +1141,7 @@ public:
 
         if (state == RadialState.DrawingBase) {
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
