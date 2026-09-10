@@ -39,7 +39,7 @@ import std.array     : appender, array;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.regex     : regex, matchAll;
+import std.regex     : ctRegex, regex, Regex, matchAll;
 import std.string    : splitLines, strip;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
@@ -59,6 +59,9 @@ struct ClassDecl {
     size_t line;       /// 1-based
 }
 
+private enum classDeclRe = ctRegex!(
+    `((?:\w+[ \t]+)*)(?<!\w)class[ \t]+(\w+)(?:\([^)]*\))?[ \t]*:[ \t]*(\w+)`);
+
 /// Every `class X : Y` declaration in `src` (a file's raw text).
 ClassDecl[] scanClassDecls(string src, string file) {
     const code = blankUnittestBodies(blankNonCode(src));
@@ -67,10 +70,12 @@ ClassDecl[] scanClassDecls(string src, string file) {
     // the name (an optional template parameter list is tolerated), then the
     // base. Interfaces after the base are not captured — the base is what the
     // census keys on.
-    static immutable re = `((?:\w+[ \t]+)*)(?<!\w)class[ \t]+(\w+)(?:\([^)]*\))?[ \t]*:[ \t]*(\w+)`;
-    foreach (m; matchAll(code, regex(re))) {
-        size_t line = 1;
-        foreach (k; 0 .. m.pre.length) if (code[k] == '\n') line++;
+    size_t line = 1;
+    size_t scanned;
+    foreach (m; matchAll(code, classDeclRe)) {
+        foreach (ch; code[scanned .. m.pre.length])
+            if (ch == '\n') line++;
+        scanned = m.pre.length;
         hits.put(ClassDecl(m[2].idup, m[3].idup,
                            m[1].canFind("abstract"), file, line));
     }
@@ -92,8 +97,16 @@ ClassDecl[] commandDerived(const ClassDecl[] decls) {
 }
 
 /// `new X` at an identifier boundary in already-blanked code.
+Regex!char instantiationRegex(string name) {
+    return regex(`(?<!\w)new[ \t]+` ~ name ~ `(?!\w)`);
+}
+
+bool instantiates(string code, Regex!char compiled) {
+    return !matchAll(code, compiled).empty;
+}
+
 bool instantiates(string code, string name) {
-    return !matchAll(code, regex(`(?<!\w)new[ \t]+` ~ name ~ `(?!\w)`)).empty;
+    return instantiates(code, instantiationRegex(name));
 }
 
 private ClassDecl[] scanCommandsTree(string root) {
@@ -111,12 +124,15 @@ private ClassDecl[] scanCommandsTree(string root) {
 // (a) The scanner discriminates — positive and negative controls on samples.
 // ---------------------------------------------------------------------------
 
-unittest { // a plain subclass is found with its base and line
-    enum sample = "module x;\n\nclass Foo : Command {\n}\n";
+unittest { // multiple subclasses keep their absolute 1-based lines
+    enum sample = "module x;\n\nclass Foo : Command {\n}\n\n"
+                ~ "final class Bar : Foo {}\n";
     const d = scanClassDecls(sample, "x.d");
-    assert(d.length == 1 && d[0].name == "Foo" && d[0].base == "Command"
-        && !d[0].isAbstract && d[0].line == 3,
-        format("expected Foo : Command at line 3, concrete; got %s", d));
+    assert(d.length == 2 && d[0].name == "Foo" && d[0].base == "Command"
+        && !d[0].isAbstract && d[0].line == 3
+        && d[1].name == "Bar" && d[1].base == "Foo"
+        && !d[1].isAbstract && d[1].line == 6,
+        format("expected Foo at line 3 and Bar at line 6, both concrete; got %s", d));
 }
 
 unittest { // `private abstract class` is abstract; `final class` is not
@@ -239,12 +255,16 @@ unittest {
         LedgerRow("InputRouter.commitInteractiveSelEdit|MeshSelectionEdit", 1, "selection gesture"),
         LedgerRow("prepareArm|ToolActivationCommand", 1, "prepared transition"),
     ];
+    Regex!char[] builderRegexes;
+    builderRegexes.reserve(kBuiltElsewhere.length);
+    foreach (ref row; kBuiltElsewhere)
+        builderRegexes ~= instantiationRegex(row.name);
     LedgerHit[] builderHits;
     foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         const code = blankUnittestBodies(blankNonCode(readText(de.name)));
         const symbols = enclosingSymbols(code);
-        foreach (li, line; code.splitLines) foreach (ref row; kBuiltElsewhere) {
-            if (!instantiates(line, row.name)) continue;
+        foreach (li, line; code.splitLines) foreach (ri, ref row; kBuiltElsewhere) {
+            if (!instantiates(line, builderRegexes[ri])) continue;
             const symbol = symbolAt(symbols, li);
             builderHits ~= LedgerHit(symbol ~ "|" ~ row.name,
                 de.name[repoRoot.length + 1 .. $], li + 1, line.strip);
