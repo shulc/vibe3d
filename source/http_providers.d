@@ -1124,6 +1124,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 immutable svTerms = vpm.visibilityFor(k);
                 buf.put(format(
                     `{"id":%d,"renders":%s,"overlayMode":"%s","selEpoch":%d,` ~
+                    `"toolPreviewKey":%d,` ~
                     `"ortho":%s,"userSet":%s,` ~
                     `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
@@ -1136,6 +1137,10 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     // reasoning as `overlayMode` just above: a suite test has
                     // no other way to see `fboSelEpoch` move.
                     cv.lastSelEpoch,
+                    // Task 5340 — the render loop's pre-skip stamp, not a
+                    // re-derived call into the active tool. This remains
+                    // observable in --test where the key compare is bypassed.
+                    cv.lastToolPreviewKey,
                     // Task 0594. `ortho` is what the shipped display default
                     // is a function of, and `userSet` is what outranks it —
                     // reporting both is what lets a test assert the DEFAULT

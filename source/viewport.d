@@ -341,6 +341,29 @@ struct DirtyKey {
     // `= 0` is CTFE-constant and inert in --test — the same neutrality
     // argument as every term above.
     ulong     weightMapKey = 0;
+
+    // Task 5340 — the active tool's private preview-GPU term.
+    //
+    // WHY NOTHING ABOVE CARRIES IT. `gpuUploadVer` belongs to the document
+    // mesh, while seven tool families draw a separate `GpuMesh`; rebuilding
+    // that preview changes the pass input without changing the document mesh,
+    // its VBO generation, the selection, the camera, or the overlay packet.
+    // Without this term only the overlay-owner cell (forced every frame)
+    // updates and every other Quad/Split cell re-blits stale colour — the
+    // eighth instance of the omission class documented by the fields above.
+    //
+    // A DIGEST, not an enumerated tool-state table: the render loop folds the
+    // active tool's instance identity with the generation of the private GPU
+    // mesh the pass actually reads. It is SHARED, not per-cell, because the
+    // preview resource is shared; each cell only reprojects it through `cam`.
+    // `tests/unit/dirty_key_stamp_census_test.d` now requires every field on
+    // this struct to have a matching stamp, closing the next omission at the
+    // declaration/stamp boundary rather than after another visible freeze.
+    //
+    // `= 0` is CTFE-constant and inert in --test, where the dirty-key compare
+    // is skipped. The suite observes the pre-skip stamp; the live rig observes
+    // the comparison itself.
+    ulong     toolPreviewKey = 0;
 }
 
 
@@ -449,6 +472,12 @@ final class Viewport3D {
     /// loop CONSIDERS, before the dirty-key skip, so `--test` sees it too, and
     /// reported by `/api/viewport/display` beside `overlayMode`.
     ulong lastSelEpoch = 0;
+
+    /// Task 5340 — per-cell copy of the shared private-preview digest. Like
+    /// `lastOverlayMode` and `lastSelEpoch`, this is stamped before the
+    /// dirty-key skip so `/api/viewport/display` can witness it even though
+    /// `--test` deliberately bypasses the comparison itself.
+    ulong lastToolPreviewKey = 0;
 
     // Task 0559 — this cell's display state (surface style, wireframe
     // overlay, backdrop representation), for BOTH activity states.

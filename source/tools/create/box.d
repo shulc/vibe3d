@@ -275,6 +275,9 @@ public:
 
     override string name() const { return "Box"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
     override void activate() {
         state           = BoxState.Idle;
         moverDragAxis   = -1;

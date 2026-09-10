@@ -424,6 +424,9 @@ public:
 
     override string name() const { return "Pen"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
     override Param[] params() {
         import params : IntEnumEntry;
         return [

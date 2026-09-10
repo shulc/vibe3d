@@ -300,6 +300,10 @@ public:
 
     override string name() const { return "Tack"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu_.uploadVersion;
+    }
+
     // Wants the standard face-hover pipeline (app.d's pickFaces loop) so
     // `g_hoveredFace` tracks the cursor while this tool is active — the
     // same mechanism XfrmTransformTool's element-falloff hover relies on.

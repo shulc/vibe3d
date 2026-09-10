@@ -7343,6 +7343,19 @@ void main(string[] args) {
             // doc above. Computed unconditionally (cheap int field read); the
             // testMode guard below only gates the packet-evaluating stamps.
             int _ovlHot = currentHotPart();
+            // Task 5340: shared private-preview stamp. The generation alone
+            // can restart for a fresh tool instance, so fold both inputs the
+            // preview pass depends on. Zero means no active tool.
+            ulong _toolPreviewKey = 0;
+            if (activeTool !is null) {
+                enum ulong FNV_OFFSET = 0xcbf2_9ce4_8422_2325UL;
+                enum ulong FNV_PRIME  = 0x0000_0100_0000_01b3UL;
+                _toolPreviewKey = FNV_OFFSET;
+                _toolPreviewKey = (_toolPreviewKey
+                    ^ cast(ulong)cast(size_t)cast(void*)activeTool) * FNV_PRIME;
+                _toolPreviewKey = (_toolPreviewKey
+                    ^ activeTool.previewUploadVersion()) * FNV_PRIME;
+            }
             if (!testMode && (activeTool !is null || anyFalloffActive())) {
                 import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
                 SubjectPacket _osubj; VectorStack _ovts; ifs.buildToolVts(_osubj, _ovts);
@@ -7432,6 +7445,9 @@ void main(string[] args) {
                 // Task 1931 — same reasoning, same placement, for the
                 // selection-channel epoch: see Viewport3D.lastSelEpoch.
                 _cv.lastSelEpoch = fboSelEpoch;
+                // Task 5340 — same pre-skip stamp placement for the private
+                // tool-preview generation; the suite reads this witness.
+                _cv.lastToolPreviewKey = _toolPreviewKey;
 
                 // Per-cell camera snapshot.  x/y is the actual screen
                 // position so tool overlay math (cachedVp screen→world) uses
@@ -7538,6 +7554,10 @@ void main(string[] args) {
                         // re-render when `hot` flips even though its own
                         // view/proj/mesh are unchanged (see DirtyKey.overlayHot doc).
                         _newKey.overlayHot = _ovlHot;
+                        // Task 5340: the private preview-GPU generation. This
+                        // is the same frame-local digest stamped above, so the
+                        // diagnostic witness and comparison cannot diverge.
+                        _newKey.toolPreviewKey = _toolPreviewKey;
                         // Task 0559: the display term. Note it is stamped
                         // from `_cv` — THIS cell — not from a frame-level
                         // value like every other term above. Display style is

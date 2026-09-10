@@ -362,6 +362,9 @@ public:
 
     override string name() const { return "Radial Sweep"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
     final bool ownsPreviewUpload(GpuUploadOwner owner) nothrow @nogc {
         return owner !is null && owner.owns(&previewGpu);
     }

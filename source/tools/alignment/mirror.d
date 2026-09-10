@@ -288,6 +288,9 @@ public:
 
     override string name() const { return "Mirror"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
     override void activate() {
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();

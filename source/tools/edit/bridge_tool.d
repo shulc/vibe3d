@@ -348,6 +348,10 @@ public:
 
     override string name() const { return "Bridge"; }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu_.uploadVersion;
+    }
+
     override EditMode[] supportedModes() const {
         return [EditMode.Edges, EditMode.Polygons];
     }

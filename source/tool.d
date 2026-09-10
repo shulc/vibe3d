@@ -391,6 +391,12 @@ public:
         if (validateBaseParam(prepared, handle)) installLegacyPreparedParam(handle);
     }
 
+    /// Generation of the private GPU mesh drawn by this tool's preview pass.
+    /// Zero means the tool has no private preview resource. The viewport folds
+    /// this value with the tool instance identity so a newly activated tool
+    /// cannot alias the previous tool's generation (task 5340).
+    ulong previewUploadVersion() const nothrow @nogc { return 0; }
+
 private:
     PreparedParamDelta prepareBaseParam(string) const nothrow @nogc {
         return PreparedParamDelta.none(preparedToolStateOwner);
@@ -899,6 +905,8 @@ private enum string[] kToolVirtualWhitelist = [
     // Middling — 4 to 8 overriders. Fine on the base; listed so the next
     // reader can see where the line currently sits.
     "flags", "isDragging", "onKeyDown",
+    // Task 5340: seven private-preview owners expose the VBO generation.
+    "previewUploadVersion",
     // NARROW, and each one is a standing question rather than a settled
     // answer. They are on the base today because moving them costs call-site
     // churn that task 0705 judged not worth spending in a hygiene wave:

@@ -196,6 +196,8 @@ tests.unit.deform_magnet_test
 tests.unit.delete_remove_fork_census_test
 tests.unit.delivery_after_hide_derive_test
 tests.unit.dirty_key_camera_stamp_test
+tests.unit.dirty_key_stamp_census_test
+tests.unit.dirty_key_tool_preview_test
 tests.unit.dirty_key_weightmap_test
 tests.unit.display_refresh_mask_boundary_test
 tests.unit.display_refresh_mask_semantics_test

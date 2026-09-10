@@ -181,6 +181,9 @@ public:
         mover.destroy();
     }
 
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
     // ----- Points of extension (hook table, task 0414 plan sec 1) ----------
 
     /// The primitive's center, in workplane-local space. Every leaf-group's
