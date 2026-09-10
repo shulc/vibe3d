@@ -81,6 +81,7 @@ private string toScanPath(string path)
 /// its comments and string literals blanked.
 private size_t occurrences(string code, string name, Regex!char pattern)
 {
+    // `name` is identifier-only via declared == listed; regex metacharacters would evade this literal prefilter.
     if (!code.canFind(name)) return 0;
     return matchAll(code, pattern).save.count;
 }
@@ -225,6 +226,23 @@ private string[] declaredSeamReaders(string rawText)
     auto result = names.data;
     result.sort();
     return result;
+}
+
+unittest
+{
+    enum name = "testSyntheticReader";
+    enum code = "auto first = &testSyntheticReader;\n"
+              ~ "auto second = testSyntheticReader;\n"
+              ~ "auto decoy = &testSyntheticReaderSuffix;\n";
+    auto pattern = regex(`(^|[^A-Za-z0-9_])` ~ name ~ `($|[^A-Za-z0-9_])`);
+    const regexHits = matchAll(code, pattern).save.count;
+    assert(regexHits == 2,
+        format("self-test: the synthetic corpus must contain exactly 2 "
+             ~ "word-boundary occurrences, found %d", regexHits));
+    assert(occurrences(code, name, pattern) == 2,
+        "self-test: occurrences must preserve both non-call references; a "
+        ~ "prefilter narrower than the word-boundary regex makes the stray "
+        ~ "caller census below pass over references it never inspected");
 }
 
 unittest
