@@ -73,6 +73,16 @@ unittest {
     auto c = new Ai3dJobController();
     assert(c.start("/nonexistent.png", "http://127.0.0.1:" ~ port.to!string, 500));
 
+    // Accept the real health-check connection before timing join. Keeping
+    // this peer open makes the worker provably in flight; closing it after
+    // the timeout contract is observed releases cleanup immediately.
+    auto peer = listener.accept();
+    bool peerClosed;
+    void closePeer() { if (!peerClosed) { peerClosed = true; peer.close(); } }
+    scope(exit) closePeer();
+    assert(c.busy(),
+        "join precondition: the worker must remain in flight after the local peer accepts it");
+
     auto sw = StopWatch(AutoStart.yes);
     const joined = c.join(50); // budget far shorter than the 10s operation timeout
     sw.stop();
@@ -80,7 +90,10 @@ unittest {
     assert(sw.peek.total!"msecs" < 500,
            "join() must return promptly at its OWN budget, not block until the worker finishes");
 
-    // Clean up: let the real operation timeout resolve so no thread leaks
-    // past this test (comfortably inside Ai3dClientJoinTimeoutMs=35s).
-    assert(c.join(15_000), "worker should finish once its own operation timeout fires");
+    const cleanupStart = MonoTime.currTime;
+    closePeer();
+    assert(c.join(15_000),
+        "worker should finish after the controlled local peer closes");
+    assert((MonoTime.currTime - cleanupStart).total!"msecs" < 500,
+        "worker cleanup must follow the controlled peer close promptly, not wait for the operation timeout");
 }

@@ -2415,6 +2415,7 @@ void printSummary(TestResult[] results) {
 int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, printRunLock, checkGate;
     bool probeDisplay;
+    bool probeRunLockUntilEof;
     bool checkProtocol;
     // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
     // above for what each of these drives.
@@ -2454,6 +2455,9 @@ int main(string[] args) {
         "probe-run-lock","diagnostic: acquire the real host-wide run lock, "
                     ~ "hold it for N seconds, then exit without building or "
                     ~ "running tests",                                         &runLockProbeSeconds,
+        "probe-run-lock-until-eof","diagnostic: acquire the real host-wide "
+                    ~ "run lock and hold it until stdin closes; test-only "
+                    ~ "controlled-release companion to --probe-run-lock",     &probeRunLockUntilEof,
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
                     ~ "starting no vibe3d",                                     &checkGate,
@@ -2539,12 +2543,15 @@ int main(string[] args) {
     }
     if (probeDisplay)
         return probeWorkerDisplay(port);
-    if (runLockProbeSeconds >= 0) {
+    if (runLockProbeSeconds >= 0 || probeRunLockUntilEof) {
         if (!acquireRunLock(lockTimeoutSec)) return 1;
         scope(exit) releaseRunLock();
         writeln("RUN LOCK ACQUIRED: ", runLockPath());
         stdout.flush();
-        Thread.sleep(runLockProbeSeconds.seconds);
+        if (probeRunLockUntilEof)
+            stdin.readln();
+        else
+            Thread.sleep(runLockProbeSeconds.seconds);
         return 0;
     }
 

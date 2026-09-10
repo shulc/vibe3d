@@ -39,8 +39,8 @@ import std.exception : enforce;
 import std.file      : exists, readText, tempDir, remove, mkdir, rmdirRecurse;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.process   : execute, spawnProcess, wait, thisProcessID, environment;
-import std.stdio     : File, stdin;
+import std.process   : execute, spawnProcess, wait, thisProcessID, environment, pipe;
+import std.stdio     : File;
 import std.string    : startsWith, strip;
 import core.thread   : Thread;
 import core.time     : msecs;
@@ -150,13 +150,17 @@ private void proveTmpdirContention()
     holderEnv["TMPDIR"] = tmpA;
     holderEnv["VIBE3D_HARNESS_LOG"] = "off";
     holderEnv["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = lock;
+    auto releasePipe = pipe();
     auto holderOut = File(holderLog, "w");
     auto holder = spawnProcess(
-        [runTestPath, "--probe-run-lock", "5", "--lock-timeout", "600"],
-        stdin, holderOut, holderOut, holderEnv);
+        [runTestPath, "--probe-run-lock-until-eof", "--lock-timeout", "600"],
+        releasePipe.readEnd, holderOut, holderOut, holderEnv);
     holderOut.close();
     bool holderReaped;
-    scope(exit) if (!holderReaped) wait(holder);
+    scope(exit) {
+        if (releasePipe.writeEnd.isOpen) releasePipe.writeEnd.close();
+        if (!holderReaped) wait(holder);
+    }
 
     bool holderReady;
     // The holder uses the production 600 s budget. After task 4870 it may be
@@ -195,6 +199,10 @@ private void proveTmpdirContention()
         && blocked.output.canFind("host-contention exit"),
         "the contender did not report the real lock-timeout protocol:\n"
         ~ blocked.output);
+
+    // Release only after both refusal facts above are fixed in this process.
+    // EOF is a peer-owned handshake, not a signal sent to the holder.
+    releasePipe.writeEnd.close();
 
     const holderStatus = wait(holder);
     holderReaped = true;
