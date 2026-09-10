@@ -195,6 +195,8 @@ tests.unit.delete_remove_fork_census_test
 tests.unit.delivery_after_hide_derive_test
 tests.unit.dirty_key_camera_stamp_test
 tests.unit.dirty_key_weightmap_test
+tests.unit.display_refresh_mask_boundary_test
+tests.unit.display_refresh_mask_semantics_test
 tests.unit.display_state_test
 tests.unit.document_replace_disarm_census_test
 tests.unit.document_seam_census_test

@@ -16,7 +16,7 @@ import std.process : environment;
 import std.stdio : File, stderr, writefln, writeln;
 import std.string : splitLines, strip;
 
-private enum expectedModuleCount = 523;
+private enum expectedModuleCount = 525;
 private enum timingEnvironment = "VIBE3D_UT_TIMINGS";
 
 extern (C) void _d_print_throwable(Throwable throwable);
