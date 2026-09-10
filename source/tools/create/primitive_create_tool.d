@@ -184,6 +184,10 @@ public:
     override ulong previewUploadVersion() const nothrow @nogc {
         return previewGpu.uploadVersion;
     }
+    override int previewHotPart() const nothrow @nogc {
+        return toolHandles.hot;
+    }
+
     // ----- Points of extension (hook table, task 0414 plan sec 1) ----------
 
     /// The primitive's center, in workplane-local space. Every leaf-group's

@@ -7297,7 +7297,16 @@ void main(string[] args) {
                 if (auto xf = cast(XfrmTransformTool) activeTool) return xf.hotPart();
                 if (auto cw = cast(CommandWrapperTool) activeTool) return pipeGizmoHost.ownPool().hot;
                 if (activeTool is null && anyFalloffActive())      return pipeGizmoHost.ownPool().hot;
-                return -1;
+                return activeTool !is null ? activeTool.previewHotPart() : -1;
+            }
+
+            ulong currentToolPreviewKey() nothrow @nogc {
+                if (activeTool is null) return 0;
+                enum ulong FNV_OFFSET = 0xcbf2_9ce4_8422_2325UL;
+                enum ulong FNV_PRIME  = 0x0000_0100_0000_01b3UL;
+                ulong key = FNV_OFFSET;
+                key = (key ^ cast(ulong)cast(size_t)cast(void*)activeTool) * FNV_PRIME;
+                return (key ^ activeTool.previewUploadVersion()) * FNV_PRIME;
             }
 
             auto _dsz = io.DisplaySize;
@@ -7346,16 +7355,7 @@ void main(string[] args) {
             // Task 5340: shared private-preview stamp. The generation alone
             // can restart for a fresh tool instance, so fold both inputs the
             // preview pass depends on. Zero means no active tool.
-            ulong _toolPreviewKey = 0;
-            if (activeTool !is null) {
-                enum ulong FNV_OFFSET = 0xcbf2_9ce4_8422_2325UL;
-                enum ulong FNV_PRIME  = 0x0000_0100_0000_01b3UL;
-                _toolPreviewKey = FNV_OFFSET;
-                _toolPreviewKey = (_toolPreviewKey
-                    ^ cast(ulong)cast(size_t)cast(void*)activeTool) * FNV_PRIME;
-                _toolPreviewKey = (_toolPreviewKey
-                    ^ activeTool.previewUploadVersion()) * FNV_PRIME;
-            }
+            immutable ulong _toolPreviewKey = currentToolPreviewKey();
             if (!testMode && (activeTool !is null || anyFalloffActive())) {
                 import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
                 SubjectPacket _osubj; VectorStack _ovts; ifs.buildToolVts(_osubj, _ovts);

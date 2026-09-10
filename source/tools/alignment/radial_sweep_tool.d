@@ -365,6 +365,10 @@ public:
     override ulong previewUploadVersion() const nothrow @nogc {
         return previewGpu.uploadVersion;
     }
+    override int previewHotPart() const nothrow @nogc {
+        return toolHandles.hot;
+    }
+
     final bool ownsPreviewUpload(GpuUploadOwner owner) nothrow @nogc {
         return owner !is null && owner.owns(&previewGpu);
     }

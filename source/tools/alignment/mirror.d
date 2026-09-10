@@ -291,6 +291,10 @@ public:
     override ulong previewUploadVersion() const nothrow @nogc {
         return previewGpu.uploadVersion;
     }
+    override int previewHotPart() const nothrow @nogc {
+        return toolHandles.hot;
+    }
+
     override void activate() {
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();

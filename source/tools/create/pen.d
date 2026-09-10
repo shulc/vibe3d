@@ -427,6 +427,10 @@ public:
     override ulong previewUploadVersion() const nothrow @nogc {
         return previewGpu.uploadVersion;
     }
+    override int previewHotPart() const nothrow @nogc {
+        return toolHandles.hot;
+    }
+
     override Param[] params() {
         import params : IntEnumEntry;
         return [
