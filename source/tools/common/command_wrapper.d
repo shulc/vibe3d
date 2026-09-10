@@ -869,8 +869,14 @@ public:
     /// never needs a temporary live-mesh rollback.
     private bool buildPilotResult(bool freshPipeline) {
         auto builder = resultBuilder();
+        // Both halves, and they are not redundant: the assert names the guilty
+        // subclass in debug, the `if` is the only one of the two that survives
+        // a release build (`--build=release --d-version=ReleaseBuild` in CI cuts
+        // asserts, and `builder` is dereferenced below). The language guarantees
+        // the override is DECLARED, never that it returns non-null.
         assert(builder !is null,
             "CommandWrapperTool subclass returned no result builder");
+        if (builder is null) return false;
         if (meshPtr is null || baseline.length != meshPtr.vertices.length)
             return false;
 
