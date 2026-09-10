@@ -21,6 +21,7 @@ module tests.unit.commit_seam_census_test;
 import std.file   : dirEntries, readTextOnce = readText, exists, SpanMode;
 import std.format : format;
 import std.path   : buildPath, dirName;
+import std.algorithm : canFind;
 import std.string : endsWith, splitLines, startsWith, strip;
 
 // Task 3280 — the attribute-chain predicate lives in ONE place now. See
@@ -35,8 +36,10 @@ import tests.unit.census_symbols : blankNonCode, LedgerRow, LedgerHit,
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-// All blocks inspect one source snapshot, so repeated paths share raw text.
+// All blocks inspect one immutable source snapshot. Raw-only predicates keep
+// their own memo; code predicates share exactly one blankNonCode projection.
 private string[string] sourceTextMemo;
+private string[string] sourceCodeMemo;
 
 private string readText(string path)
 {
@@ -44,6 +47,28 @@ private string readText(string path)
     const text = readTextOnce(path);
     sourceTextMemo[path] = text;
     return text;
+}
+
+private string readCode(string path)
+{
+    if (auto cached = path in sourceCodeMemo) return *cached;
+    const code = stripCommentsAndStrings(readText(path));
+    sourceCodeMemo[path] = code;
+    return code;
+}
+
+unittest
+{
+    const meshPath = buildPath(repoRoot, "source", "mesh.d");
+    const commandPath = buildPath(repoRoot, "source", "command.d");
+    const meshCode = readCode(meshPath);
+    const commandCode = readCode(commandPath);
+    assert(meshCode.canFind("struct Mesh {")
+        && !meshCode.canFind("class Command {"),
+        "readCode memo returned empty or foreign code for source/mesh.d");
+    assert(commandCode.canFind("class Command {")
+        && !commandCode.canFind("struct Mesh {"),
+        "readCode memo returned empty or foreign code for source/command.d");
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +291,7 @@ unittest // commitStamps has exactly one definition and three named callers
 {
     immutable path = buildPath(repoRoot, "source", "mesh.d");
     assert(exists(path), "cannot find source/mesh.d at " ~ path);
-    immutable src = stripCommentsAndStrings(readText(path));
+    immutable src = readCode(path);
 
     // Non-vacuity floor: if the stripper ever regressed to eating everything,
     // every count below would be 0 and this file would pass by saying nothing.
@@ -319,7 +344,7 @@ unittest // commitStamps has exactly one definition and three named callers
 unittest // no batch state on struct Mesh
 {
     immutable path = buildPath(repoRoot, "source", "mesh.d");
-    immutable src  = stripCommentsAndStrings(readText(path));
+    immutable src  = readCode(path);
 
     assert(countOccurrences(src, "private EditBatchFrame[] g_editBatchStack;") == 1,
         "source/mesh.d no longer declares the module-level `g_editBatchStack`. "
@@ -403,7 +428,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     string[] callers;
     foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
-        immutable src = stripCommentsAndStrings(readText(e.name));
+        immutable src = readCode(e.name);
         const size_t opens = countOccurrences(src, "beginEditBatch(");
         if (opens == 0) continue;
         callers ~= e.name;
@@ -554,7 +579,7 @@ unittest // the mixin count is falling, and the converted families stay converte
     import std.regex     : ctRegex, matchAll;
 
     immutable path = buildPath(repoRoot, "source", "mesh.d");
-    immutable src  = stripCommentsAndStrings(readText(path));
+    immutable src  = readCode(path);
 
     // Non-vacuity floor. The stripper eating the file, or a bad path, would
     // otherwise read as "every family is converted" — the strongest possible
@@ -623,7 +648,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // nothing instantiates — dead code that reads as the live implementation.
     immutable opsPath = buildPath(repoRoot, "source", "mesh_ops", "select_loop.d");
     assert(exists(opsPath), "cannot find source/mesh_ops/select_loop.d at " ~ opsPath);
-    immutable ops = stripCommentsAndStrings(readText(opsPath));
+    immutable ops = readCode(opsPath);
     assert(countOccurrences(ops, "mixin template MeshSelectLoopOps") == 0,
         "source/mesh_ops/select_loop.d still declares `mixin template "
       ~ "MeshSelectLoopOps` — Stage C converted this family to free functions "
@@ -647,7 +672,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // family-specific and its message is the whole point of having it.
     immutable cmPath = buildPath(repoRoot, "source", "mesh_ops", "connected_mask.d");
     assert(exists(cmPath), "cannot find source/mesh_ops/connected_mask.d at " ~ cmPath);
-    immutable cm = stripCommentsAndStrings(readText(cmPath));
+    immutable cm = readCode(cmPath);
     assert(countOccurrences(cm, "mixin template MeshConnectedMaskOps") == 0,
         "source/mesh_ops/connected_mask.d still declares `mixin template "
       ~ "MeshConnectedMaskOps` — Stage D1 converted this family to free "
@@ -691,7 +716,7 @@ unittest // Stage D2 — the decimation family, the first mutating receiver
     // itself, so these three lines are the ones D3…H are measured against.
     immutable dcPath = buildPath(repoRoot, "source", "mesh_ops", "decimate.d");
     assert(exists(dcPath), "cannot find source/mesh_ops/decimate.d at " ~ dcPath);
-    immutable dc = stripCommentsAndStrings(readText(dcPath));
+    immutable dc = readCode(dcPath);
     assert(countOccurrences(dc, "mixin template MeshDecimateOps") == 0,
         "source/mesh_ops/decimate.d still declares `mixin template "
       ~ "MeshDecimateOps` — Stage D2 converted this family to a free function; "
@@ -776,7 +801,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     // publish a change for a lookup that changes nothing).
     immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
     assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
-    immutable br = stripCommentsAndStrings(readText(brPath));
+    immutable br = readCode(brPath);
     assert(countOccurrences(br, "mixin template MeshBridgeOps") == 0,
         "source/mesh_ops/bridge.d still declares `mixin template MeshBridgeOps` "
       ~ "— Stage D3 converted this family to free functions; a surviving "
@@ -918,7 +943,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     // `source/**`, so it still would.)
     immutable clPath = buildPath(repoRoot, "source", "mesh_ops", "cleanup.d");
     assert(exists(clPath), "cannot find source/mesh_ops/cleanup.d at " ~ clPath);
-    immutable cl = stripCommentsAndStrings(readText(clPath));
+    immutable cl = readCode(clPath);
     assert(countOccurrences(cl, "mixin template MeshCleanupOps") == 0,
         "source/mesh_ops/cleanup.d still declares `mixin template "
       ~ "MeshCleanupOps` — Stage E1 converted this family to free functions; "
@@ -1057,7 +1082,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // at the foot of revolve.d catches, not this roster).
     immutable rvPath = buildPath(repoRoot, "source", "mesh_ops", "revolve.d");
     assert(exists(rvPath), "cannot find source/mesh_ops/revolve.d at " ~ rvPath);
-    immutable rv = stripCommentsAndStrings(readText(rvPath));
+    immutable rv = readCode(rvPath);
     assert(countOccurrences(rv, "mixin template MeshRevolveOps") == 0,
         "source/mesh_ops/revolve.d still declares `mixin template "
       ~ "MeshRevolveOps` — Stage E2 converted this family to free functions; a "
@@ -1218,7 +1243,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // two writes §5.7's own predicate could not see until this stage widened it.
     immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
     assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
-    immutable ct = stripCommentsAndStrings(readText(ctPath));
+    immutable ct = readCode(ctPath);
     assert(countOccurrences(ct, "mixin template MeshCutOps") == 0,
         "source/mesh_ops/cut.d still declares `mixin template MeshCutOps` — "
       ~ "Stage E3 converted this family to free functions; a surviving template "
@@ -1393,7 +1418,7 @@ unittest // Stage E4 — the two bevel families, one commit
     // ---------------------------------------------------------------------
     immutable bfPath = buildPath(repoRoot, "source", "mesh_ops", "bevel_fin.d");
     assert(exists(bfPath), "cannot find source/mesh_ops/bevel_fin.d at " ~ bfPath);
-    immutable bf = stripCommentsAndStrings(readText(bfPath));
+    immutable bf = readCode(bfPath);
     assert(countOccurrences(bf, "mixin template MeshBevelFinOps") == 0,
         "source/mesh_ops/bevel_fin.d still declares `mixin template "
       ~ "MeshBevelFinOps` — Stage E4 converted this family to free functions; a "
@@ -1402,7 +1427,7 @@ unittest // Stage E4 — the two bevel families, one commit
 
     immutable bvPath = buildPath(repoRoot, "source", "mesh_ops", "bevel_vertex.d");
     assert(exists(bvPath), "cannot find source/mesh_ops/bevel_vertex.d at " ~ bvPath);
-    immutable bv = stripCommentsAndStrings(readText(bvPath));
+    immutable bv = readCode(bvPath);
     assert(countOccurrences(bv, "mixin template MeshBevelVertexOps") == 0,
         "source/mesh_ops/bevel_vertex.d still declares `mixin template "
       ~ "MeshBevelVertexOps` — Stage E4 converted this family to free "
@@ -1604,7 +1629,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // ---------------------------------------------------------------------
     immutable lsPath = buildPath(repoRoot, "source", "mesh_ops", "loop_slice.d");
     assert(exists(lsPath), "cannot find source/mesh_ops/loop_slice.d at " ~ lsPath);
-    immutable ls = stripCommentsAndStrings(readText(lsPath));
+    immutable ls = readCode(lsPath);
     assert(countOccurrences(ls, "mixin template MeshLoopSliceOps") == 0,
         "source/mesh_ops/loop_slice.d still declares `mixin template "
       ~ "MeshLoopSliceOps` — Stage F1 converted this family to free functions; "
@@ -1837,7 +1862,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         size_t scanned2 = 0;
         foreach (e; dirEntries(srcRoot2, "*.d", SpanMode.depth)) {
             ++scanned2;
-            immutable src2 = stripCommentsAndStrings(readText(e.name));
+            immutable src2 = readCode(e.name);
             if (countOccurrences(src2, "Mesh.capShellCycles(") >= 1)
                 qualified ~= relativePath(e.name, repoRoot).replace("\\", "/");
         }
@@ -1855,8 +1880,8 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
                  ~ "loop_slice.d's own tripwire also refuse. cut.d's two cap "
                  ~ "calls are BARE (%d file(s) scanned) "
                  ~ "(task 1903 Stage F1, §2.7).", qualified, scanned2));
-        immutable ct2 = stripCommentsAndStrings(readText(buildPath(repoRoot,
-                            "source", "mesh_ops", "cut.d")));
+        immutable ct2 = readCode(buildPath(repoRoot,
+                            "source", "mesh_ops", "cut.d"));
         assert(countOccurrences(ct2, "capShellCycles(ed.faces,") == 2,
             "source/mesh_ops/cut.d no longer makes its two BARE "
           ~ "`capShellCycles(ed.faces, …)` calls. Those two sites are the "
@@ -1918,7 +1943,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // ---------------------------------------------------------------------
     immutable pbPath = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
     assert(exists(pbPath), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath);
-    immutable pb = stripCommentsAndStrings(readText(pbPath));
+    immutable pb = readCode(pbPath);
     assert(countOccurrences(pb, "mixin template MeshPolyBevelOps") == 0,
         "source/mesh_ops/poly_bevel.d still declares `mixin template "
       ~ "MeshPolyBevelOps` — Stage F2 converted this family to free functions; "
@@ -2176,7 +2201,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         size_t scannedF2 = 0;
         foreach (e; dirEntries(srcRootF2, "*.d", SpanMode.depth)) {
             ++scannedF2;
-            immutable srcF2 = stripCommentsAndStrings(readText(e.name));
+            immutable srcF2 = readCode(e.name);
             if (countOccurrences(srcF2, "Mesh.boundaryContourInset(") >= 1)
                 qualifiedF2 ~= relativePath(e.name, repoRoot).replace("\\", "/");
         }
@@ -2276,7 +2301,7 @@ unittest // Stage G — the manifold edge bevel family
 {
     immutable ebPath = buildPath(repoRoot, "source", "mesh_ops", "edge_bevel.d");
     assert(exists(ebPath), "cannot find source/mesh_ops/edge_bevel.d at " ~ ebPath);
-    immutable eb = stripCommentsAndStrings(readText(ebPath));
+    immutable eb = readCode(ebPath);
     assert(countOccurrences(eb, "mixin template MeshEdgeBevelOps") == 0,
         "source/mesh_ops/edge_bevel.d still declares `mixin template "
       ~ "MeshEdgeBevelOps` — Stage G converted this family to a free function "
@@ -2511,7 +2536,7 @@ unittest // Stage G — the manifold edge bevel family
     // of edge_bevel.d deliberately does NOT list them, because for these three
     // `__traits(hasMember, Mesh, …)` answers `true` and always will.
     immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
-    immutable meshSrc  = stripCommentsAndStrings(readText(meshPath));
+    immutable meshSrc  = readCode(meshPath);
     static immutable string[3] kParityDecls = ["uint[] bevelPinnedOrphans_;",
                                                "Vec3[] bevelCapCoincidentPos_;",
                                                "Vec3[] bevelCapOrphanPos_;"];
@@ -2541,7 +2566,7 @@ unittest // Stage G — the manifold edge bevel family
         foreach (rel; kReaders) {
             immutable rp = buildPath(repoRoot, rel);
             assert(exists(rp), "cannot find " ~ rel ~ " at " ~ rp);
-            immutable txt = stripCommentsAndStrings(readText(rp));
+            immutable txt = readCode(rp);
             assert(countOccurrences(txt, "bevelCapCoincidentPos_") >= 1
                 && countOccurrences(txt, "bevelCapOrphanPos_") >= 1,
                 rel ~ " no longer reads `bevelCapCoincidentPos_` / "
@@ -2566,7 +2591,7 @@ unittest // Stage G — the manifold edge bevel family
     // is also simply outside `dub build`'s source paths.
     immutable mbcPath = buildPath(repoRoot, "tests", "unit", "mesh_bevel_census_test.d");
     assert(exists(mbcPath), "cannot find tests/unit/mesh_bevel_census_test.d at " ~ mbcPath);
-    immutable mbc = stripCommentsAndStrings(readText(mbcPath));
+    immutable mbc = readCode(mbcPath);
     assert(countOccurrences(mbc, "\nversion (unittest):") == 1,
         "tests/unit/mesh_bevel_census_test.d no longer gates its whole body behind a "
       ~ "module-level `version (unittest):`. That gate was why a signature "
@@ -2612,7 +2637,7 @@ unittest // Stage G — the manifold edge bevel family
         string[] offenders;
         foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
             ++scanned;
-            immutable t = stripCommentsAndStrings(readText(de.name));
+            immutable t = readCode(de.name);
             if (countOccurrences(t, "Mesh.bevelEdgesByMask(") > 0)
                 offenders ~= de.name;
         }
@@ -2633,7 +2658,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 {
     immutable exPath = buildPath(repoRoot, "source", "mesh_ops", "extrude.d");
     assert(exists(exPath), "cannot find source/mesh_ops/extrude.d at " ~ exPath);
-    immutable ex = stripCommentsAndStrings(readText(exPath));
+    immutable ex = readCode(exPath);
     assert(countOccurrences(ex, "mixin template MeshExtrudeOps") == 0,
         "source/mesh_ops/extrude.d still declares `mixin template "
       ~ "MeshExtrudeOps` — Stage H converted this family to five free "
@@ -2871,7 +2896,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         string[][string] offenders;
         foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
             ++scanned;
-            immutable t = stripCommentsAndStrings(readText(de.name));
+            immutable t = readCode(de.name);
             foreach (n; kFamily)
                 if (countOccurrences(t, "Mesh." ~ n ~ "(") > 0)
                     offenders[n] ~= de.name;
@@ -2944,22 +2969,22 @@ unittest // every §2.6 widening this stage made still has the caller it names
 {
     immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
     assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
-    immutable br = stripCommentsAndStrings(readText(brPath));
+    immutable br = readCode(brPath);
     immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
     assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
-    immutable ct = stripCommentsAndStrings(readText(ctPath));
+    immutable ct = readCode(ctPath);
     immutable bfPath2 = buildPath(repoRoot, "source", "mesh_ops", "bevel_fin.d");
     assert(exists(bfPath2), "cannot find source/mesh_ops/bevel_fin.d at " ~ bfPath2);
-    immutable bf2 = stripCommentsAndStrings(readText(bfPath2));
+    immutable bf2 = readCode(bfPath2);
     immutable bvPath2 = buildPath(repoRoot, "source", "mesh_ops", "bevel_vertex.d");
     assert(exists(bvPath2), "cannot find source/mesh_ops/bevel_vertex.d at " ~ bvPath2);
-    immutable bv2 = stripCommentsAndStrings(readText(bvPath2));
+    immutable bv2 = readCode(bvPath2);
     immutable lsPath2 = buildPath(repoRoot, "source", "mesh_ops", "loop_slice.d");
     assert(exists(lsPath2), "cannot find source/mesh_ops/loop_slice.d at " ~ lsPath2);
-    immutable ls2 = stripCommentsAndStrings(readText(lsPath2));
+    immutable ls2 = readCode(lsPath2);
     immutable pbPath2 = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
     assert(exists(pbPath2), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath2);
-    immutable pb2 = stripCommentsAndStrings(readText(pbPath2));
+    immutable pb2 = readCode(pbPath2);
 
     // The file each row's `callSite` is looked for in. D3's three rows are all
     // bridge.d's; E3 added three that are cut.d's, so the row carries its own
@@ -3253,7 +3278,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++declFilesScanned;
-            immutable src = stripCommentsAndStrings(readText(e.name));
+            immutable src = readCode(e.name);
             foreach (w; kWidenings)
                 if (countOccurrences(src, w.publicDecl) >= 1) {
                     declSeenIn[w.name] ~= rel;
@@ -3382,7 +3407,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++filesScanned;
-            immutable src = stripCommentsAndStrings(readText(e.name));
+            immutable src = readCode(e.name);
             foreach (w; kWidenings)
                 // Skip the row's OWN declaring file: its internal calls are
                 // not what §2.6 asks about. For the three rows task 3240
@@ -3460,7 +3485,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
 // ---------------------------------------------------------------------------
 unittest {
     import std.algorithm : countUntil;
-    immutable st = stripCommentsAndStrings(readText(buildPath(repoRoot, "source/tools/slice/slice_tool.d")));
+    immutable st = readCode(buildPath(repoRoot, "source/tools/slice/slice_tool.d"));
     assert(countOccurrences(st, "if (gap != 0.0f && restrictFaces.length == 0)") == 1,
         "slice_tool.d: the interactive split+gap guard changed its spelling — the "
       ~ "two guards must stay in lockstep and this pin is the only thing that "
@@ -3469,7 +3494,7 @@ unittest {
         "slice_tool.d: the applyHeadless split+gap guard changed its spelling — "
       ~ "keep it in lockstep with the interactive guard above");
 
-    immutable ax = stripCommentsAndStrings(readText(buildPath(repoRoot, "source/commands/mesh/axis_slice.d")));
+    immutable ax = readCode(buildPath(repoRoot, "source/commands/mesh/axis_slice.d"));
 
     // (b1) `MeshAxisSlice` — the RECORDING open precedes its ladder `foreach`.
     // Two ladders exist in the class now (the first run and the redo re-run),
@@ -3593,7 +3618,7 @@ unittest // L0-d — the nine files hold no raw position write
             "cannot find source/commands/mesh/" ~ name ~ " at " ~ path
           ~ " — the L0-d roster names a file that is not in the tree, so its "
           ~ "`== 0` row below would be measuring nothing.");
-        immutable src = stripCommentsAndStrings(readText(path));
+        immutable src = readCode(path);
 
         // Non-vacuity floor for the stripper, per file: every one of the nine
         // is a Command with an `evaluate` and a `revertImpl`. A stripper that ate
@@ -3645,7 +3670,7 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     string[] offenders;
     foreach (e; dirEntries(zone, "*.d", SpanMode.shallow)) {
         ++scanned;
-        immutable src = stripCommentsAndStrings(readText(e.name));
+        immutable src = readCode(e.name);
         string hit;
         immutable size_t n = countRawPositionWrites(src, hit);
         zoneTotal += n;
@@ -3729,7 +3754,7 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
     // So L0-d does not touch it; it brings it INTO the census instead.
     immutable path = buildPath(repoRoot, "source", "deform_magnet.d");
     assert(exists(path), "cannot find source/deform_magnet.d at " ~ path);
-    immutable dm = stripCommentsAndStrings(readText(path));
+    immutable dm = readCode(path);
 
     assert(countOccurrences(dm, "bool applyMagnet(") == 1,
         "source/deform_magnet.d no longer declares `applyMagnet` — the comment "
@@ -3765,8 +3790,8 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
     // `== 0` row above is still green, `deform_magnet.d`'s two rows are still
     // green — and magnet's undo silently falls back to the legacy revert with
     // an empty delta. This is the ONLY text half that reddens for it.
-    immutable mg = stripCommentsAndStrings(readText(
-        buildPath(repoRoot, "source", "commands", "mesh", "magnet.d")));
+    immutable mg = readCode(
+        buildPath(repoRoot, "source", "commands", "mesh", "magnet.d"));
     // The pin is on the NAME, not on one spelling of the call. Task 2160
     // moved this site from `recordSetPos(` to `recordSetPosOwned(` — the
     // copying publisher to the ownership-taking one — and a pin that named the
@@ -3844,7 +3869,7 @@ unittest // L0-b — the two files hold no raw position write
             "cannot find source/commands/mesh/" ~ name ~ " at " ~ path
           ~ " — the L0-b roster names a file that is not in the tree, so its "
           ~ "`== 0` row below would be measuring nothing.");
-        immutable src = stripCommentsAndStrings(readText(path));
+        immutable src = readCode(path);
 
         // Non-vacuity floor for the stripper: a stripper that ate the file
         // would report 0 raw writes and pass by saying nothing.
@@ -3881,7 +3906,7 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     // commands depending on them.
     immutable path = buildPath(repoRoot, "source", "symmetry.d");
     assert(exists(path), "cannot find source/symmetry.d at " ~ path);
-    immutable sy = stripCommentsAndStrings(readText(path));
+    immutable sy = readCode(path);
 
     assert(countOccurrences(sy, "void applySymmetryMirror(Mesh* mesh,") == 1
         && countOccurrences(sy, "void applySymmetryMirrorDelta(Mesh* mesh,") == 1,
@@ -3970,7 +3995,7 @@ unittest // L0-b — the recorder pins, one per command
     size_t filesRead;
     foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
-        const src = stripCommentsAndStrings(readText(e.name));
+        const src = readCode(e.name);
         foreach (h; symbolTokenHits(src, rel, "recordPositionDiff(", "record"))
             if (h.key.startsWith("MeshTransform.applyKernel|")
                     || h.key.startsWith("MeshSymmetrize.applyKernel|")) hits ~= h;
@@ -4009,7 +4034,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     string[] sites;
     foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
         ++scanned;
-        immutable src = stripCommentsAndStrings(readText(e.name));
+        immutable src = readCode(e.name);
         immutable size_t n = countOccurrences(src, "recordPositionDiff(");
         if (n > 0)
             sites ~= format("%s:%d", relativePath(e.name, srcRoot), n);
@@ -4086,7 +4111,7 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
 
     immutable path = buildPath(repoRoot, "source", "mesh.d");
     assert(exists(path), "cannot find source/mesh.d at " ~ path);
-    immutable src = stripCommentsAndStrings(readText(path));
+    immutable src = readCode(path);
 
     // Non-vacuity floor, per the `deform_magnet.d` row: a stripper that ate the
     // file reports 0 raw writes and passes by saying nothing.
@@ -4173,7 +4198,7 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
 {
     immutable path = buildPath(repoRoot, "source", "commands", "mesh", "edge_join.d");
     assert(exists(path), "cannot find source/commands/mesh/edge_join.d at " ~ path);
-    immutable src = stripCommentsAndStrings(readText(path));
+    immutable src = readCode(path);
 
     assert(countOccurrences(src, "protected override void revertImpl()") == 1,
         "source/commands/mesh/edge_join.d: the comment stripper ate the file (or "
@@ -4263,7 +4288,7 @@ unittest // Stage M - the PreviewRebuild population and batch modes are closed
                            SpanMode.depth)) {
         ++filesRead;
         const file = e.name[repoRoot.length + 1 .. $];
-        const code = stripCommentsAndStrings(readText(e.name));
+        const code = readCode(e.name);
         hits ~= symbolTokenHits(code, file, "PreviewRebuild preview_", "field");
         hits ~= symbolTokenHits(code, file, "preview_.run(", "run");
         batchCandidates ~= symbolTokenHits(code, file,
@@ -4358,7 +4383,7 @@ unittest // Stage M - the closing MeshSnapshot declaration census
                            SpanMode.depth)) {
         ++filesRead;
         const file = e.name[repoRoot.length + 1 .. $];
-        const code = stripCommentsAndStrings(readText(e.name));
+        const code = readCode(e.name);
         const symbols = enclosingSymbols(code);
         foreach (li, line; code.splitLines) {
             if (hasUnknownDeclPrefix(line, "MeshSnapshot"))
