@@ -16,7 +16,13 @@ import std.process : environment;
 import std.stdio : File, stderr, writefln, writeln;
 import std.string : splitLines, strip;
 
-private enum expectedModuleCount = 528;
+// The roster is an IDENTITY, not a ratchet: `actual == expected` already
+// implies equal cardinality, so a separate count literal buys nothing and
+// costs a hand edit in a SECOND file on every lane that adds a module. Five
+// lanes in one day were forced into that edit; git merged the sorted set
+// correctly each time and took one lane's number for the literal, leaving the
+// file right and the number false. The floor below does not drift (task 5220).
+private enum minimumModuleCount = 500;
 private enum timingEnvironment = "VIBE3D_UT_TIMINGS";
 
 extern (C) void _d_print_throwable(Throwable throwable);
@@ -51,16 +57,17 @@ private void verifyPopulationAndRoster(string[] actual, size_t executed)
             stderr.writefln("UT-ROSTER-ACTUAL %s", name);
     }
 
-    assert(expected.length == expectedModuleCount,
-        "unit-test roster must contain exactly "
-        ~ expectedModuleCount.to!string ~ " modules; found "
-        ~ expected.length.to!string);
+    assert(expected.length >= minimumModuleCount,
+        "unit-test roster collapsed: lists only "
+        ~ expected.length.to!string ~ " modules, floor is "
+        ~ minimumModuleCount.to!string
+        ~ " -- the roster file is truncated or was not read");
     assert(isSorted(expected),
         "unit-test module roster must remain sorted");
-    assert(executed == expectedModuleCount,
+    assert(executed == expected.length,
         "unit-test module population changed: executed "
-        ~ executed.to!string ~ ", expected "
-        ~ expectedModuleCount.to!string);
+        ~ executed.to!string ~ ", roster lists "
+        ~ expected.length.to!string);
     assert(actual == expected,
         "unit-test module roster changed; update only after reviewing the full diff");
 }
