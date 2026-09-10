@@ -276,6 +276,11 @@ private MoveOutcome moveCentre(string tool, string view) {
                   tool, view, outp.before[0], outp.before[1], outp.before[2],
                   outp.after[0], outp.after[1], outp.after[2],
                   outp.changedComponents, outp.captured));
+    // WHICH axis, not HOW MANY: the count assert above is satisfied by the old
+    // law too -- measured, the frozen component moved Y->Z under the new one
+    // and this block stayed green. Top is Y because the viewport hands back its
+    // principal axis; Perspective is Z because THIS camera's eye vector is
+    // Z-dominant, so a change to setObliquePerspective's angles moves it.
     immutable int frozenAxis = view == "Perspective" ? 2 : 1;
     assert(abs(outp.after[frozenAxis] - outp.before[frozenAxis]) <= 1e-4,
            format("%s %s centre froze the wrong axis: expected axis %d "
