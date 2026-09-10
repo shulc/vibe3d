@@ -2811,7 +2811,12 @@ int main(string[] args) {
         }
         if (why.length) {
             stderr.writeln(red("--no-build refused: " ~ why));
-            stderr.writeln(dim("    rebuild (`dub build`), or pass --stale-ok to measure it anyway"));
+            stderr.writeln(dim("    drop --no-build and let the runner build (simplest: no"));
+            stderr.writeln(dim("    window opens between building and measuring), or run"));
+            stderr.writeln(dim("    `dub build` with no edits after it."));
+            stderr.writeln(dim("    --stale-ok exists for harness tests that must reach past"));
+            stderr.writeln(dim("    this guard; it reports a full green Total: for a binary"));
+            stderr.writeln(dim("    that does not contain your change."));
             if (!staleOk) {
                 g_harness.stage = HarnessStage.staleRefused;
                 g_harness.rc = 1;
