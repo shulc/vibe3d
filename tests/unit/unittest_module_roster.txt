@@ -166,6 +166,7 @@ tests.unit.command_hide_derive_test
 tests.unit.command_history_test
 tests.unit.command_record_class_census_test
 tests.unit.command_registration_census_test
+tests.unit.command_surface_census_test
 tests.unit.command_tail_publisher_census_test
 tests.unit.command_winding_write_census_test
 tests.unit.command_wrapper_result_census_test

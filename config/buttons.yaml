@@ -238,6 +238,7 @@ panels:
           - { label: Merge,        action: { kind: tool, id: vert.merge } }
           - { label: "Add Vertex", action: { kind: command, id: mesh.addVertex } }
           - { label: Center,       action: { kind: command, id: mesh.centerVertices } }
+          - { label: "Set Position", action: { kind: command, id: mesh.setPosition } }
           - { label: Collapse,     action: { kind: command, id: mesh.collapse } }
           - { label: Split,        action: { kind: command, id: mesh.vertexSplit } }
   - title: Edge
