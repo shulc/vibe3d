@@ -259,8 +259,12 @@ unittest { // live create previews obey the cell's face-pass plan
     auto shadedModel = gj("/api/model");
     assert(shaded["cellsRendered"].integer == 1,
            "shaded preview must come from one rendered cell");
-    assert(passCalls(shaded, "handles") == 18,
-           "shaded cube preview must be live: expected 18 handle draws");
+    // Task 5350 hides the create rig's three unregistered plane handles. Each
+    // CircleHandler submitted a fill and an outline, so 18 - 3 * 2 = 12.
+    enum expectedCreateHandleDraws = 12;
+    assert(passCalls(shaded, "handles") == expectedCreateHandleDraws,
+           format("shaded cube preview must be live: expected %d handle draws, got %d",
+                  expectedCreateHandleDraws, passCalls(shaded, "handles")));
     assert(shadedModel["vertices"].array.length == 8,
            "shaded cube preview committed into the model before measurement");
     assert(passCalls(shaded, "faces") == 2 &&
@@ -282,8 +286,9 @@ unittest { // live create previews obey the cell's face-pass plan
     auto wireModel = gj("/api/model");
     assert(wire["cellsRendered"].integer == 1,
            "wireframe preview must come from one rendered cell");
-    assert(passCalls(wire, "handles") == 18,
-           "wireframe cube preview must be live: expected 18 handle draws");
+    assert(passCalls(wire, "handles") == expectedCreateHandleDraws,
+           format("wireframe cube preview must be live: expected %d handle draws, got %d",
+                  expectedCreateHandleDraws, passCalls(wire, "handles")));
     assert(wireModel["vertices"].array.length == 8,
            "wireframe cube preview committed into the model before measurement");
     assert(passCalls(wire, "edges") == 2 &&
