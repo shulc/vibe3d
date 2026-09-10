@@ -43,7 +43,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
-import operator        : Operator, Task, VectorStack, PacketKind;
+import operator        : VectorStack;
 import pipe_gizmo_host : PipeGizmoHost;
 import document : Layer;
 
@@ -62,9 +62,8 @@ import ImGui = d_imgui;
 ///  - First LMB-down records the click point and resets the per-vert
 ///    BASELINE to the pre-drag mesh state.
 ///  - Motion restores baseline → `onDragDelta(dx, dy)` updates the
-///    inner Command's attrs → the wrapper installs a live preview. Smooth and
-///    Quantize build sparse results first; legacy wrappers dispatch
-///    `inner.apply()`.
+///    inner Command's attrs → the wrapper builds and installs a sparse live
+///    preview result.
 ///  - LMB-up ends the drag session; mesh stays at preview.
 ///  - Subsequent LMB-down on the same active tool resets the baseline
 ///    again so the new drag composes on top of the previous preview
@@ -79,7 +78,7 @@ import ImGui = d_imgui;
 ///    `MeshVertexEdit` pre-wired to the same gpu/caches the inner
 ///    Command mutates; it arrives typed as `Command delegate()` and is
 ///    cast back when wrapping a result for history.
-///  - `deactivate()` wraps a cached deterministic result (or the legacy live diff)
+///  - `deactivate()` wraps the cached deterministic result
 ///    in `MeshVertexEdit` and records it on history. Spacebar →
 ///    `dropActiveTool` → here. Tool switches and tab close hit
 ///    the same path.
@@ -228,6 +227,11 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     /// the rings visually scale with the active effect. Returns 0 ⇒
     /// handle collapses to a point (still drawn but invisible).
     protected abstract float handleSize() const;
+
+    /// Every member of this closed wrapper family supplies an explicit result
+    /// builder. Keeping this abstract makes the capability a subclass compile-
+    /// time obligation instead of a dynamic fallback decision.
+    protected abstract VertexPositionResultBuilder resultBuilder();
 
     /// Whether to draw the click-point handle during a drag. Defaults
     /// to true; subclasses whose haul has no meaningful world-space
@@ -464,15 +468,14 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     //
     // Opt in iff the undo plumbing is wired (history + vertex-edit factory).
     // Tests / older callers that skip setGestureBindings() leave history null
-    // and fall back to the legacy preview-then-commit path.
+    // and stay on the ordinary preview-then-commit path.
     public override bool wantsRefire() const {
         return history !is null && gestureFactory !is null;
     }
 
-    // Build the MeshVertexEdit representing the CURRENT param state. Smooth,
-    // Jitter and Quantize use pure sparse-result builders: this method neither
-    // edits/restores the live mesh nor refreshes display caches. EdgeSlide is
-    // the exact remaining legacy apply/diff/restore client.
+    // Build the MeshVertexEdit representing the CURRENT param state. All four
+    // wrapper products use pure sparse-result builders: this method neither
+    // edits/restores the live mesh nor refreshes display caches.
     public override Command buildRefireCommand() {
         if (meshPtr is null || history is null || gestureFactory is null)
             return null;
@@ -482,30 +485,8 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         // preview stays inert while the fired command owns mutation.
         refireDriving_ = true;
 
-        if (resultBuilder() !is null) {
-            if (!buildPilotResult(false)) return null;
-            return cast(Command)carrierFromResult(latestResult_, name());
-        }
-
-        // Run the deform from the clean baseline using the inner Command's
-        // current attrs (same dispatch the drag/preview path uses). This leaves
-        // the mesh holding the post-deform positions; we snapshot the diff, then
-        // restore the baseline so fire()'s own apply() lays it down cleanly.
-        if (!applyWithLivePipeline()) {
-            meshPtr.vertices[] = baseline[];
-            refreshCaches();
-            return null;
-        }
-
-        VertexPositionResult result;
-        immutable hasResult = collectLegacyLiveResult(result);
-
-        // Restore baseline — fire() applies the returned command itself.
-        meshPtr.vertices[] = baseline[];
-        refreshCaches();
-
-        if (!hasResult) return null;
-        return cast(Command)carrierFromResult(result, name());
+        if (!buildPilotResult(false)) return null;
+        return cast(Command)carrierFromResult(latestResult_, name());
     }
 
     // Driver sets this around a param injection so the per-frame preview stays
@@ -603,8 +584,7 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         int dx = e.x - dragStartX;
         int dy = e.y - dragStartY;
         // Update inner Command's drag-modulated attrs first, then
-        // dispatch through the Operator path (baseline-restore +
-        // toolpipe walk + evaluate are folded into one call).
+        // rebuild the sparse result from the restored baseline.
         onDragDelta(dx, dy);
         if (applyWithLivePipeline()) dirty = true;
         return true;
@@ -643,7 +623,7 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         // While a refire session is driving this tool the fired
         // buildRefireCommand() owns the mutation — don't queue an internal
         // preview (it would double-apply against the same baseline in the same
-        // tick). Outside refire this is the legacy preview path.
+        // tick). Outside refire this is the ordinary preview path.
         auto prepared = prepareParamChange(name);
         WrapperPreparedParamHandle handle;
         if (validatePreparedParam(prepared, handle)) installLegacyPreparedParam(handle);
@@ -816,7 +796,7 @@ public:
             dirty = false;
             return false;
         }
-        debug assert(resultBuilder() is null || liveHoldsResult(result),
+        debug assert(liveHoldsResult(result),
             "CommandWrapperTool.commitNow: cached result does not match live preview");
         auto cmd = carrierFromResult(result,
             label.length > 0 ? label : name());
@@ -842,15 +822,6 @@ public:
         return true;
     }
 
-    /// Build a VectorStack from the live toolpipe + mesh subject and
-    /// dispatch `inner.evaluate(vts)` (Operator path). Replaces the
-    /// previous cast-chain pushFalloffToInner approach — the Operator
-    /// pulls its own packets from vts, so no per-Command knowledge
-    /// stays here. Phase 3 of doc/operator_refactor_plan.md.
-    ///
-    /// Falls back to the legacy `inner.apply()` if the inner Command
-    /// doesn't implement Operator (defensive — every convolve command
-    /// post-Phase-2 implements it).
     // Per-stage falloff CONFIG snapshot for the live-change trigger — one
     // FalloffPacket per ACTIVE falloff stage, in pipe order. Mirrors the R/S
     // sub-tools' set-aware view: a change to ANY stacked instance (or an
@@ -880,10 +851,6 @@ public:
         return true;
     }
 
-    private VertexPositionResultBuilder resultBuilder() {
-        return cast(VertexPositionResultBuilder)inner;
-    }
-
     private void clearResultState() nothrow @nogc {
         latestResult_.clear();
         latestResultValid_ = false;
@@ -900,8 +867,10 @@ public:
     /// never needs a temporary live-mesh rollback.
     private bool buildPilotResult(bool freshPipeline) {
         auto builder = resultBuilder();
-        if (builder is null || meshPtr is null ||
-            baseline.length != meshPtr.vertices.length) return false;
+        assert(builder !is null,
+            "CommandWrapperTool subclass returned no result builder");
+        if (meshPtr is null || baseline.length != meshPtr.vertices.length)
+            return false;
 
         SubjectPacket subj;
         VectorStack vts;
@@ -937,20 +906,6 @@ public:
         return true;
     }
 
-    private bool collectLegacyLiveResult(out VertexPositionResult result) {
-        result.clear();
-        if (meshPtr is null || baseline.length != meshPtr.vertices.length)
-            return false;
-        foreach (i; 0 .. meshPtr.vertices.length) {
-            auto a = baseline[i], b = meshPtr.vertices[i];
-            if (a == b) continue;
-            result.indices ~= cast(uint)i;
-            result.before ~= a;
-            result.after ~= b;
-        }
-        return !result.empty;
-    }
-
     private bool liveHoldsResult(ref const VertexPositionResult result) const {
         if (meshPtr is null || baseline.length != meshPtr.vertices.length ||
             result.indices.length != result.before.length ||
@@ -970,12 +925,9 @@ public:
     }
 
     private bool commitResult(out VertexPositionResult result) {
-        if (resultBuilder() !is null) {
-            if (!latestResultValid_ || latestResult_.empty) return false;
-            result = latestResult_;
-            return true;
-        }
-        return collectLegacyLiveResult(result);
+        if (!latestResultValid_ || latestResult_.empty) return false;
+        result = latestResult_;
+        return true;
     }
 
     private MeshVertexEdit carrierFromResult(ref VertexPositionResult result,
@@ -1006,49 +958,12 @@ public:
         // Restore baseline so apply runs against pre-drag state.
         meshPtr.vertices[] = baseline[];
 
-        // Deterministic builder: compute once from baseline, then install the
-        // sparse result for preview. The builder itself performs no scene
-        // mutation.
-        if (resultBuilder() !is null) {
-            if (!buildPilotResult(true)) return false;
-            installPilotPreview();
-            refreshCaches();
-            return true;
-        }
-
-        // Task 1904 Stage 5: `editMode` stays the hardcoded literal
-        // `EditMode.Vertices` (plan §12 Q3 default: freeze, pending owner).
-        // `selType` was never set either (one of plan §1.3's seven sites),
-        // so it is now frozen at `SelType.Vertex` explicitly. Populates
-        // upstream packets (falloff, symmetry, …) when a pipe is
-        // registered; `evaluateSubject`'s own `g_pipeCtx is null` gate is
-        // the same no-op the direct call used to be.
-        import toolpipe.subject : evaluateSubject, SubjectSource;
-        SubjectPacket subj;
-        VectorStack   vts;
-        evaluateSubject(subj, vts,
-            SubjectSource(meshPtr, EditMode.Vertices, SelType.Vertex, cachedVp));
-
-        // Snapshot the applied falloff SET for the change-detection branch
-        // in evaluate(). Per-stage config copies (by value) keep the
-        // comparison meaningful — the pipe rewrites the same _publishedPacket
-        // every walk, so a value snapshot of each stage's config is what makes
-        // the frame-to-frame compare detect a real change.
-        lastAppliedFalloffs = currentFalloffConfigs();
-
-        // Dispatch through the Operator interface. evaluate(vts) returns
-        // bool — true on a meaningful effect, false on a no-op rejection.
-        // The inner Command is guaranteed to be Operator post-Phase-2 for
-        // the three convolve wrappers; the cast keeps the door open for
-        // future wrappers that may carry a non-Operator command.
-        bool ok;
-        if (auto op = cast(Operator)inner)
-            ok = op.evaluate(vts);
-        else
-            ok = inner.apply();
-
+        // Build once from the explicit baseline, then install the sparse
+        // preview. The builder itself performs no scene mutation.
+        if (!buildPilotResult(true)) return false;
+        installPilotPreview();
         refreshCaches();
-        return ok;
+        return true;
     }
 
     private void refreshCaches() {
@@ -1075,6 +990,8 @@ final class XfrmSmoothTool : CommandWrapperTool {
     }
 
     override string name() const { return "xfrm.smooth"; }
+
+    protected override VertexPositionResultBuilder resultBuilder() { return inner_; }
 
     protected override void onDragDelta(int dx, int dy) {
         import std.algorithm : clamp;
@@ -1108,6 +1025,8 @@ final class XfrmJitterTool : CommandWrapperTool {
 
     override string name() const { return "xfrm.jitter"; }
 
+    protected override VertexPositionResultBuilder resultBuilder() { return inner_; }
+
     protected override void onDragDelta(int dx, int dy) {
         // jitter haul is 1-D along the horizontal axis — only
         // X-mouse-motion changes Range. Drag right (dx > 0) grows
@@ -1139,6 +1058,8 @@ final class XfrmQuantizeTool : CommandWrapperTool {
     }
 
     override string name() const { return "xfrm.quantize"; }
+
+    protected override VertexPositionResultBuilder resultBuilder() { return inner_; }
 
     protected override void onDragDelta(int dx, int dy) {
         import std.algorithm : max;
@@ -1332,7 +1253,7 @@ unittest {
             TWrap.stringof ~ ": idle commit must not record");
 
         // A live wrapper drag's leftovers. Both commands enter through their
-        // result builders; EdgeSlide is the remaining legacy client.
+        // result builders, including EdgeSlide.
         t.baseline = m.vertices.dup;
         static if (is(TWrap == XfrmQuantizeTool)) {
             foreach (ref p; t.params())

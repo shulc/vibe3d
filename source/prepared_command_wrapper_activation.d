@@ -83,6 +83,7 @@ private:
 }
 
 version(unittest) unittest {
+    import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
     import command_history : CommandHistory;
     import editmode : EditMode;
     import mesh : makeCube;
@@ -132,6 +133,7 @@ version(unittest) unittest {
         this(Mesh* source, GpuMesh* target) { meshPtr = source; gpu = target; }
         protected override void onDragDelta(int, int) {}
         protected override float handleSize() const { return 0; }
+        protected override VertexPositionResultBuilder resultBuilder() { return null; }
     }
     auto foreign = new ForeignWrapper(&mesh, &gpu);
     auto refused = new PreparedRecordContext(new CommandHistory(),

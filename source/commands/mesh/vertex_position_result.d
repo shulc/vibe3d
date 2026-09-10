@@ -20,8 +20,8 @@ struct VertexPositionResult {
     }
 }
 
-/// Capability used by deterministic CommandWrapperTool deforms. Quantize,
-/// Smooth and Jitter implement it; EdgeSlide remains on the legacy path.
+/// Capability required by the deterministic CommandWrapperTool deform family.
+/// Quantize, Smooth, Jitter and EdgeSlide implement it.
 ///
 /// The wrapper's packet-reuse arm reconstructs only Subject and an optional
 /// owned Falloff packet. An implementation may consume no other pipeline slot

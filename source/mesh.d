@@ -15857,7 +15857,18 @@ private int[] colorFacesForSlide(const ref Mesh m, const bool[] edgeMask)
 /// Precondition: m.buildLoops() has been called.
 Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
 {
-    Vec3[] out_ = m.vertices.dup;
+    return edgeSlidePositions(m, m.vertices, edgeMask, t);
+}
+
+/// Explicit-position form used by preview result builders. Topology and rail
+/// selection come from `m`; every positional read comes from `positions`.
+/// Precondition: positions.length == m.vertices.length.
+Vec3[] edgeSlidePositions(const ref Mesh m, const(Vec3)[] positions,
+                          const bool[] edgeMask, float t)
+{
+    assert(positions.length == m.vertices.length,
+        "edgeSlidePositions position image must match mesh topology");
+    Vec3[] out_ = positions.dup;
 
     if (t < -1.0f) t = -1.0f;
     if (t >  1.0f) t =  1.0f;
@@ -15926,8 +15937,8 @@ Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
         uint rail = wantPos ? railPos : railNeg;
         if (rail == ~0u) continue;   // no rail on this side → unchanged
 
-        Vec3 orig = m.vertices[vi];
-        Vec3 dest = m.vertices[rail];
+        Vec3 orig = positions[vi];
+        Vec3 dest = positions[rail];
         out_[vi]  = orig + absT * (dest - orig);
     }
     return out_;

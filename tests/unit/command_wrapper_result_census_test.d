@@ -1,6 +1,6 @@
-// Quantize, Smooth and Jitter own VertexPositionResultBuilder implementations;
-// EdgeSlide is the exact remaining legacy client. This source census forces
-// the subclass, factory, capability and collector rosters to move together.
+// Every CommandWrapperTool product owns a VertexPositionResultBuilder
+// implementation. This source census forces the subclass, factory, capability
+// and retired-collector rosters to move together.
 module tests.unit.command_wrapper_result_census_test;
 
 import std.algorithm : count;
@@ -30,15 +30,17 @@ private size_t countInSource(string needle) {
 
 unittest {
     const builderHits = countInSource("VertexPositionResultBuilder");
-    assert(builderHits == 10, format(
+    assert(builderHits == 16, format(
         "VertexPositionResultBuilder census changed: expected the interface, " ~
-        "its Quantize/Smooth/Jitter implementations, and CommandWrapperTool's " ~
-        "adapter (10 code hits); found %d", builderHits));
+        "its Quantize/Smooth/Jitter/EdgeSlide implementations, and " ~
+        "CommandWrapperTool's mandatory adapters (16 code hits); found %d",
+        builderHits));
 
     const legacyHits = countInSource("collectLegacyLiveResult");
-    assert(legacyHits == 3, format(
-        "collectLegacyLiveResult census changed: expected one collector and its " ~
-        "two shared callers, retained only for EdgeSlide; found %d", legacyHits));
+    assert(legacyHits == 0, format(
+        "collectLegacyLiveResult returned to source: expected the retired " ~
+        "collector roster to stay empty beside the populated builder census; " ~
+        "found %d", legacyHits));
 
     const wrapper = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot,
         "source", "tools", "common", "command_wrapper.d"))));
@@ -47,11 +49,11 @@ unittest {
     const indexAppends = wrapper.count("result.indices ~= cast(uint)i;");
     const beforeAppends = wrapper.count("result.before ~= a;");
     const afterAppends = wrapper.count("result.after ~= b;");
-    assert(diffReads == 1 && indexAppends == 1 && beforeAppends == 1 &&
-           afterAppends == 1, format(
-        "independent wrapper live-mesh diff collector appeared: expected the " ~
-        "single collectLegacyLiveResult loop (reads/indices/before/after " ~
-        "1/1/1/1), found %d/%d/%d/%d", diffReads, indexAppends,
+    assert(diffReads == 0 && indexAppends == 0 && beforeAppends == 0 &&
+           afterAppends == 0, format(
+        "wrapper live-mesh diff collector appeared: expected no " ~
+        "reads/indices/before/after collector fragments, found %d/%d/%d/%d",
+        diffReads, indexAppends,
         beforeAppends, afterAppends));
 
     const wrapperSubclassDecls = wrapper.count(": CommandWrapperTool");
@@ -96,5 +98,5 @@ static assert(is(XfrmQuantizeTool : CommandWrapperTool));
 static assert(is(EdgeSlideTool : CommandWrapperTool));
 static assert(is(MeshJitter : VertexPositionResultBuilder),
     "Jitter fell back to the legacy live-result client");
-static assert(!is(MeshEdgeSlide : VertexPositionResultBuilder),
-    "EdgeSlide unexpectedly left the exact remaining legacy roster");
+static assert(is(MeshEdgeSlide : VertexPositionResultBuilder),
+    "EdgeSlide lost the mandatory wrapper result-builder capability");

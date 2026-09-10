@@ -6,6 +6,7 @@ import view    : View;
 import editmode : EditMode;
 import tools.common.command_wrapper : CommandWrapperTool;
 import commands.mesh.edge_slide : MeshEdgeSlide;
+import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
 
 import std.algorithm : clamp;
 import std.json : JSONValue;
@@ -38,6 +39,8 @@ final class EdgeSlideTool : CommandWrapperTool {
     }
 
     override string name() const { return "edge.slide"; }
+
+    protected override VertexPositionResultBuilder resultBuilder() { return inner_; }
 
     /// Map the cumulative drag offset (pixels from LMB-down) to t ∈ [-1,1].
     /// ±200 px saturates; finer control by dragging slowly.

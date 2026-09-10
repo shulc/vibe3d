@@ -1,6 +1,5 @@
 module commands.mesh.edge_slide;
 
-import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -9,6 +8,8 @@ import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
+import commands.mesh.vertex_position_result : VertexPositionResult,
+    VertexPositionResultBuilder;
 import toolpipe.packets : SubjectPacket;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 
@@ -22,11 +23,8 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 ///   • Any selected edge    → true, even when no rail exists on the
 ///     requested side (graceful degradation: touchedIdx is empty, the
 ///     recorded undo entry's revert() is a no-op, caller gets "ok").
-class MeshEdgeSlide : Command, Operator {
+class MeshEdgeSlide : Command, Operator, VertexPositionResultBuilder {
     private float            t_ = 0.0f;
-    // Positional snapshot for revert (jitter.d pattern).
-    private uint[] touchedIdx;
-    private Vec3[] touchedPrev;
     // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
     private PositionUndo undo_;
     version (unittest) {
@@ -74,34 +72,46 @@ class MeshEdgeSlide : Command, Operator {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
-        // §2.4 — the empty-selection refusal is resolved BEFORE the batch is
-        // opened. Snapshot selectedEdges ONCE — avoid O(n²) @property access.
-        bool[] edgeMask = mesh.selectedEdges.dup;
-
-        // Empty selection → cannot run; no history entry.
-        bool any = false;
-        foreach (s; edgeMask) if (s) { any = true; break; }
-        if (!any) return false;
+        // Build before opening the batch: empty edge selection is a refusal,
+        // while t=0 and missing rails are accepted empty results.
+        VertexPositionResult result;
+        if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
+        if (result.empty) return true;
 
         // REDO: re-run the kernel UNRECORDED and keep the first delta.
         if (undo_.armed()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, edgeMask);
+            applyResult(ed, result);
             ed.close();
-            return ok;
+            return true;
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-        const ok = applyKernel(ed, edgeMask);
+        applyResult(ed, result);
         undo_.arm(this, ed.close());
-        if (!ok) { undo_.disarm(this); return false; }
         return true;
     }
 
-    private bool applyKernel(ref MeshEditBatch ed, in bool[] edgeMask) {
-        // Compute new positions (pure — no mutation of mesh).
-        Vec3[] newPos = edgeSlidePositions(*mesh, edgeMask, t_);
+    override bool buildVertexPositionResult(const(Vec3)[] source,
+                                            ref VectorStack vts,
+                                            out VertexPositionResult result) {
+        result.clear();
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null || subj.mesh is null || subj.mesh !is mesh ||
+            source.length != subj.mesh.vertices.length) return false;
+        Mesh* subject = subj.mesh;
 
-        // Snapshot only changed vertices (diff kernel output vs current).
+        // Snapshot selectedEdges ONCE: it is a materialising property, and the
+        // command refuses an empty edge selection before any edit batch opens.
+        bool[] edgeMask = subject.selectedEdges.dup;
+        size_t selectedEdgeCount;
+        foreach (s; edgeMask) if (s) ++selectedEdgeCount;
+        if (selectedEdgeCount == 0) return false;
+
+        // Topology and selection belong to the bound Subject. Both endpoint
+        // and stationary rail coordinates belong to the explicit baseline.
+        Vec3[] newPos = edgeSlidePositions(*subject, source, edgeMask, t_);
+
+        // Build only changed vertices (diff kernel output vs explicit source).
         // TASK 1903 L0-d4 — THE `==` FILTER STAYS, and that is a ruling (§2.3).
         // `ed.setVertexPositions` filters on `sameBits`, which is STRICTER than
         // `==`: `==` says `-0.0 == +0.0` and `sameBits` does not. Handing the
@@ -112,29 +122,26 @@ class MeshEdgeSlide : Command, Operator {
         // `sameBits` is false for all of them and every write happens: the
         // recorded path ≡ the retired raw loop, byte for byte, with the
         // predicate spelled ONCE rather than exported twice.
-        touchedIdx.length  = 0;
-        touchedPrev.length = 0;
-        // PRE-SIZED, NOT APPEND-GROWN (task 2160) — see the note in
-        // `MeshEditBatch.setVertexPositions`: `~=` is a runtime call per
-        // element, and this array exists only to be handed to that setter and
-        // dropped. The ceiling is exact (at most one entry per visited
-        // vertex) and the unwritten tail is sliced off at the call.
-        auto moved = uninitializedArray!(Vec3[])(mesh.vertices.length);
-        size_t nMoved = 0;
-        foreach (i; 0 .. mesh.vertices.length) {
+        const resultCapacity = selectedEdgeCount <= source.length / 2
+            ? selectedEdgeCount * 2 : source.length;
+        result.indices.reserve(resultCapacity);
+        result.before.reserve(resultCapacity);
+        result.after.reserve(resultCapacity);
+        foreach (i; 0 .. source.length) {
             Vec3 np = newPos[i];
-            Vec3 op = mesh.vertices[i];
+            Vec3 op = source[i];
             if (np.x == op.x && np.y == op.y && np.z == op.z) continue;
-            touchedIdx  ~= cast(uint)i;
-            touchedPrev ~= op;
-            moved[nMoved++] = np;
+            result.indices ~= cast(uint)i;
+            result.before ~= op;
+            result.after ~= np;
         }
-
-        ed.setVertexPositions(touchedIdx, moved[0 .. nMoved]);
-        ed.commitChange(MeshEditScope.Position);
-        // Always true for a non-empty edge selection — even if no rail existed
-        // on the requested side (touchedIdx is empty, undo is a no-op).
         return true;
+    }
+
+    private static void applyResult(ref MeshEditBatch ed,
+                                    ref const VertexPositionResult result) {
+        ed.setVertexPositions(result.indices, result.after);
+        ed.commitChange(MeshEditScope.Position);
     }
 
     protected override void revertImpl() {
