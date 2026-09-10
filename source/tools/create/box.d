@@ -1406,33 +1406,36 @@ private:
     }
 
     // Snap the moved box center onto the nearest snap target on the mover's
-    // free axes (free-axis projection). Arrows 0/1/2 free a single axis;
-    // the centerBox (3) frees the two axes spanning the most-camera-facing
-    // plane (its locked axis matches planeDragDelta's most-facing pick).
+    // free axes (free-axis projection). Arrows 0/1/2 keep their oriented
+    // workplane axes. The centerBox (3) instead uses LAW D's world-component
+    // index and writes snapped world components directly into Position, just
+    // as the centre drag writes its world-indexed delta without toLocalD.
     SnapResult snapMover(int axisIdx, int sx, int sy) {
         bool f1, fn, f2;
+        int centerLock = -1;
         if      (axisIdx == 0) f1 = true;
         else if (axisIdx == 1) fn = true;
         else if (axisIdx == 2) f2 = true;
         else {
-            Vec3 cb = Vec3(cachedVp.view[2], cachedVp.view[6], cachedVp.view[10]);
-            float a1 = abs(dot(cb, frame.axis1));
-            float an = abs(dot(cb, frame.normal));
-            float a2 = abs(dot(cb, frame.axis2));
-            int lock = (a1 >= an && a1 >= a2) ? 0 : (an >= a1 && an >= a2) ? 1 : 2;
-            f1 = lock != 0; fn = lock != 1; f2 = lock != 2;
+            centerLock = primitiveCenterPlaneAxis(cenVec(), cachedVp);
         }
         Vec3 hitLocal = toLocalP(mover.center);
         auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
                                 *mesh, EditMode.Vertices);
         if (sr.snapped) {
             Vec3 cen = cenVec();
-            if (f1) cen = cen - planeAxis1 * dot(cen, planeAxis1)
-                              + planeAxis1 * dot(hitLocal, planeAxis1);
-            if (fn) cen = cen - planeNormal * dot(cen, planeNormal)
-                              + planeNormal * dot(hitLocal, planeNormal);
-            if (f2) cen = cen - planeAxis2 * dot(cen, planeAxis2)
-                              + planeAxis2 * dot(hitLocal, planeAxis2);
+            if (centerLock >= 0) {
+                if (centerLock != 0) cen.x = sr.worldPos.x;
+                if (centerLock != 1) cen.y = sr.worldPos.y;
+                if (centerLock != 2) cen.z = sr.worldPos.z;
+            } else {
+                if (f1) cen = cen - planeAxis1 * dot(cen, planeAxis1)
+                                  + planeAxis1 * dot(hitLocal, planeAxis1);
+                if (fn) cen = cen - planeNormal * dot(cen, planeNormal)
+                                  + planeNormal * dot(hitLocal, planeNormal);
+                if (f2) cen = cen - planeAxis2 * dot(cen, planeAxis2)
+                                  + planeAxis2 * dot(hitLocal, planeAxis2);
+            }
             params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
             uploadPreview();
         }

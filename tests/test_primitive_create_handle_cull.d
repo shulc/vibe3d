@@ -276,6 +276,12 @@ private MoveOutcome moveCentre(string tool, string view) {
                   tool, view, outp.before[0], outp.before[1], outp.before[2],
                   outp.after[0], outp.after[1], outp.after[2],
                   outp.changedComponents, outp.captured));
+    immutable int frozenAxis = view == "Perspective" ? 2 : 1;
+    assert(abs(outp.after[frozenAxis] - outp.before[frozenAxis]) <= 1e-4,
+           format("%s %s centre froze the wrong axis: expected axis %d "
+                ~ "unchanged at %.6f, actual %.6f",
+                  tool, view, frozenAxis, outp.before[frozenAxis],
+                  outp.after[frozenAxis]));
     assert(outp.captured == centrePart,
            format("%s %s centre press captured part %d, expected %d",
                   tool, view, outp.captured, centrePart));

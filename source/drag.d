@@ -45,7 +45,8 @@ import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 //     For hauls that have no axis to project: the tool multiplies raw pixels
 //     by it.
 //
-//   LAW D — primitive centre translation. `primitiveCenterDragDelta` asks an
+//   LAW D — primitive centre translation (task 5360).
+//     `primitiveCenterDragDelta` asks an
 //     orthographic view for its locked world axis, or chooses the dominant
 //     eye-vector axis in perspective, and intersects each cursor ray with the
 //     corresponding principal plane through the parameter-space centre.
@@ -1518,6 +1519,18 @@ private Vec3 withComponent(Vec3 v, int axis, float value) {
     return v;
 }
 
+/// Principal world-component index used by the primitive centre conversion.
+/// Orthographic views supply it directly; perspective uses the dominant
+/// component of the eye vector at the current Position-channel triple.
+int primitiveCenterPlaneAxis(Vec3 reference, const ref Viewport vp) {
+    int axis = lockedViewAxis(vp);
+    if (axis >= 0) return axis;
+
+    Vec3 eye = eyeVectorAt(vp, reference);
+    float ax = abs(eye.x), ay = abs(eye.y), az = abs(eye.z);
+    return ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
+}
+
 /// Convert a primitive centre-box drag directly into parameter-space motion.
 /// Orthographic views overwrite their locked world component. Perspective
 /// views use the principal plane whose normal is the dominant eye-vector
@@ -1530,16 +1543,14 @@ Vec3 primitiveCenterDragDelta(int mx, int my, int lastMX, int lastMY,
     screenPointToRay(cast(float)mx,     cast(float)my,     vp, currPos, currEye);
     screenPointToRay(cast(float)lastMX, cast(float)lastMY, vp, prevPos, prevEye);
 
-    int axis = lockedViewAxis(vp);
-    if (axis >= 0) {
+    int locked = lockedViewAxis(vp);
+    int axis = primitiveCenterPlaneAxis(reference, vp);
+    if (locked >= 0) {
         currPos = withComponent(currPos, axis, component(reference, axis));
         prevPos = withComponent(prevPos, axis, component(reference, axis));
         return currPos - prevPos;
     }
 
-    Vec3 eye = eyeVectorAt(vp, reference);
-    float ax = abs(eye.x), ay = abs(eye.y), az = abs(eye.z);
-    axis = ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
     currPos += currEye * ((component(reference, axis) - component(currPos, axis)) /
                            component(currEye, axis));
     prevPos += prevEye * ((component(reference, axis) - component(prevPos, axis)) /
