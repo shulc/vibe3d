@@ -338,9 +338,9 @@ bool falloffTypeFromName(string name, out FalloffType type) {
 /// Wire keys (used by `tool.pipe.attr falloff mix <key>`): multiply / add
 /// / subtract / max / min.
 ///
-/// Int-backed so the FalloffStage Tool-Properties dropdown can bind it via
-/// `Param.intEnum_(&mix, ...)`, whose compile-time contract requires
-/// int-sized storage.
+/// Int-backed because the IntEnum Param / dropdown storage is four bytes;
+/// typed callers are protected by `Param.intEnum_`'s compile-time width
+/// contract.
 enum FalloffMix : int {
     Multiply = 0,   // accum * w   (default)
     Add      = 1,   // accum + w
@@ -799,8 +799,8 @@ struct SymmetryPacket {
 ///             assumptions: nearest-foot vs camera-ray, and per-vertex vs
 ///             per-delta application).
 ///
-/// Int-backed so an IntEnum Param / dropdown can bind directly to `&geom`,
-/// matching FalloffMix's int-sized storage contract.
+/// Int-backed because an IntEnum Param / dropdown uses four-byte storage,
+/// matching FalloffMix's storage contract.
 enum ConstrainGeom : int {
     Off    = 0,
     Screen = 1,
