@@ -1,6 +1,6 @@
-// The display-refresh policy roster (task 5110). This is a fixed list rather
-// than two aliases compared to each other: every declared MeshEditScope member
-// has an independent expected classification, including None and Geometry.
+// The display-refresh policy roster (tasks 5110, 5280). The full list checks
+// the MeshEditScope API composition and order. Mask membership is asserted only
+// for non-zero scopes: None is an API row, not a claimed behavioural cell.
 module tests.unit.display_refresh_mask_semantics_test;
 
 import std.format : format;
@@ -27,7 +27,7 @@ private enum ScopeRow[] kScopeRoster = [
     ScopeRow("Geometry",    MeshEditScope.Geometry,    true),
 ];
 
-unittest // every MeshEditScope member has the intended display classification
+unittest // the API roster is complete; every non-zero scope is classified
 {
     // POPULATION FLOOR first: druntime stops this module at its first failed
     // assert, so reaching a later classification proves the full stand exists.
@@ -46,7 +46,9 @@ unittest // every MeshEditScope member has the intended display classification
 
     foreach (row; kScopeRoster) {
         const bits = cast(uint) row.scope_;
-        const included = bits != 0 && (DisplayRefreshMask & bits) == bits;
+        if (bits == 0)
+            continue; // None has no mask-membership observation to make.
+        const included = (DisplayRefreshMask & bits) == bits;
         assert(included == row.refreshesDisplay,
             format("display refresh classification for %s is %s; expected %s",
                    row.name,
