@@ -1,4 +1,5 @@
 module tools.alignment.radial_sweep_tool;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedRadialSweepParamDoorClient;
 
@@ -885,7 +886,8 @@ public:
 
     // ----- Draw -------------------------------------------------------------
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         if (!visualOnly) cachedVp = vp;
 
         if (validProfile_) {

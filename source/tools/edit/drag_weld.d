@@ -1,4 +1,5 @@
 module tools.edit.drag_weld;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 
@@ -85,7 +86,8 @@ public:
 
     // Cache the viewport each frame so pick helpers have current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
-                       ref VectorStack vts, bool visualOnly = false)
+                       ref VectorStack vts, const ref DrawPlan plan,
+                       bool visualOnly = false)
     {
         vpWorld_ = vp;
     }

@@ -16,6 +16,7 @@ import std.json : JSONValue;
 import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
                     ResetScope, InputBinding, resolveToolAction, resolveResetScope;
 import prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
+import display_state : DrawPlan;
 import core.atomic : atomicOp;
 
 private shared ulong nextPreparedToolOwnerId_;
@@ -370,7 +371,9 @@ public:
     // `update`) cycle. See XfrmTransformTool.draw + the Move/Rotate/Scale
     // sub-tool draw()s for the gated sites. Default false ⇒ every existing
     // call site (single-cell / `--test`) is byte-identical.
-    void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {}
+    void draw(const ref Shader shader, const ref Viewport vp,
+              ref VectorStack vts, const ref DrawPlan plan,
+              bool visualOnly = false) {}
 
     // Called inside the floating "Tool Properties" ImGui window.
     // Override to show/edit tool-specific properties.

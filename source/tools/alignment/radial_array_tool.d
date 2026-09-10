@@ -1,4 +1,5 @@
 module tools.alignment.radial_array_tool;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 
@@ -661,7 +662,8 @@ public:
         return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         if (!active || mesh is null) return;
 

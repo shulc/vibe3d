@@ -1,4 +1,5 @@
 module tools.alignment.radial_align_tool;
+import display_state : DrawPlan;
 
 import operator : VectorStack;
 
@@ -112,7 +113,8 @@ public:
     }
 
     // No gizmo — see class doc comment.
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
     }
 

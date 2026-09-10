@@ -1,4 +1,5 @@
 module tools.create.box;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient;
 import prepared_box_param : PreparedBoxParamOwner;
@@ -959,7 +960,8 @@ public:
         return false;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // Snap overlay renders even in Idle so the user sees the cyan
         // target before the first click anchors the box.

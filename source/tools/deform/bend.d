@@ -1,4 +1,5 @@
 module tools.deform.bend;
+import display_state : DrawPlan;
 
 import document : primaryModelSpace;
 import bindbc.opengl;
@@ -84,7 +85,8 @@ public:
         ];
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // No gizmo for now. The falloff ring/sphere overlay is emitted
         // once per cell from the app.d `Viewport##k` window loop (task

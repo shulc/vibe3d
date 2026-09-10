@@ -10,6 +10,7 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
+import display_state : DrawPlan;
 // `render.d`'s mixin body resolves in THIS scope, so this direct import also
 // covers its two `selectLoopEdges` call sites.
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;

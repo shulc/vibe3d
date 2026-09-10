@@ -1,4 +1,5 @@
 module tools.deform.smooth_shift_tool;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -482,7 +483,8 @@ public:
         return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Polygons) != gizmoSelHash)
             computeGizmoFrame();

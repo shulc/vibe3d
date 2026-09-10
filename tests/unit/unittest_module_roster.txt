@@ -523,6 +523,7 @@ ui.availability
 ui.image_rows
 ui.item_rows
 ui.panels
+ui.viewport_render_plan_test
 unit.bevel_cold_arm_param_image_test
 unit.prepared_tool_transition_test
 view

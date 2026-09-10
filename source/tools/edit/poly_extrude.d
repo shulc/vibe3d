@@ -1,4 +1,5 @@
 module tools.edit.poly_extrude;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 
@@ -409,7 +410,8 @@ public:
         return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // Recompute gizmo frame when selection changes while idle (not mid-drag,
         // not after built preview — that would double-count the distance offset).

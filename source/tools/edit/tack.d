@@ -1,4 +1,5 @@
 module tools.edit.tack;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -486,7 +487,8 @@ public:
 
     // ----- Live preview (hover) --------------------------------------------
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         if (!visualOnly) vpWorld_ = vp;
 
         hoveredTargetFace_ = g_hoveredFace;

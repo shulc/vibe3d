@@ -1,4 +1,5 @@
 module tools.deform.magnet;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
@@ -416,7 +417,8 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         vpWorld_ = vp;
         // No gizmo in v1 — hover sphere drawing deferred to later.
     }

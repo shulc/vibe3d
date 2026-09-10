@@ -1,4 +1,5 @@
 module tools.deform.push;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import operator : VectorStack;
@@ -74,7 +75,8 @@ public:
     // through `tool.attr xfrm.push dist <v>; tool.doApply` (the
     // headless / scripted path). Interactive Y-drag-to-distance can
     // land later if a use case surfaces.
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // No gizmo for now. The falloff ring/sphere overlay is emitted
         // once per cell from the app.d `Viewport##k` window loop (task

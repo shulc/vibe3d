@@ -1,4 +1,5 @@
 module tools.create.vertex_place;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 
@@ -167,7 +168,8 @@ public:
 
     // Cache the viewport each frame so onMouseButtonDown has current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
-                       ref VectorStack vts, bool visualOnly = false)
+                       ref VectorStack vts, const ref DrawPlan plan,
+                       bool visualOnly = false)
     {
         cachedVp_ = vp;
         drawSnapOverlay(lastSnap_, vp, *mesh);

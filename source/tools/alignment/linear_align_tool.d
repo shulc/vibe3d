@@ -1,4 +1,5 @@
 module tools.alignment.linear_align_tool;
+import display_state : DrawPlan;
 
 import operator : VectorStack;
 
@@ -95,7 +96,8 @@ public:
     // No gizmo — see class doc comment. draw() only refreshes cachedVp so
     // the falloff overlay (rendered separately by app.d's per-viewport
     // loop) reads the correct projection.
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
     }
 

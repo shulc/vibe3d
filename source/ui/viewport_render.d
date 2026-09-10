@@ -114,6 +114,7 @@ struct ToolOverlayInputs {
     Tool activeTool;
     PipeGizmoHost gizmoHost;
     BuildToolSubject buildSubject;
+    DrawPlan plan;
     bool falloffActive;
 }
 
@@ -180,15 +181,15 @@ private:
         return loopHoverEdgesCache_;
     }
 
-    void drawToolOverlays(ToolOverlayInputs inputs, OverlayMode mode,
-                          ref Viewport viewport, Shader shader) {
+    package void drawToolOverlays(ToolOverlayInputs inputs, OverlayMode mode,
+                                  ref Viewport viewport, Shader shader) {
         if (mode == OverlayMode.None) return;
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         bool visualOnly = (mode == OverlayMode.Visual);
         if (inputs.activeTool) {
             SubjectPacket subj; VectorStack vts;
             inputs.buildSubject(subj, vts);
-            inputs.activeTool.draw(shader, viewport, vts, visualOnly);
+            inputs.activeTool.draw(shader, viewport, vts, inputs.plan, visualOnly);
         } else if (inputs.falloffActive) {
             import toolpipe.packets : FalloffPacket;
             SubjectPacket subj; VectorStack vts;

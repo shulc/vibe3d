@@ -1,4 +1,5 @@
 module tools.edit.bridge_tool;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -741,7 +742,8 @@ public:
         havePreviewCache = true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         if (!valid_ || !havePreviewCache) return;
 
         drawLitPreview(litShader, shader, vp, previewGpu_);

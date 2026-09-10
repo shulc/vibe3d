@@ -1,4 +1,5 @@
 module tools.common.command_wrapper;
+import display_state : DrawPlan;
 import prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -717,7 +718,8 @@ public:
     // the local import alias below. The earlier in-class duplicate was
     // missing lasso fields (would freeze the preview on Lasso edits).
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         // Cache the live viewport so pushFalloffToInner has projection
         // matrices ready (Screen / Lasso falloff types need them; the
         // others ignore vp). Task 0206: gate on the interactive (owner-cell)

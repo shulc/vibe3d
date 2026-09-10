@@ -1,4 +1,5 @@
 module tools.edit.poly_inset_tool;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 
@@ -410,7 +411,8 @@ public:
 
     // No drawn gizmo/handle (task 0359 toolcard: confirmed absent at idle/
     // hover/drag in every captured screenshot) — intentionally empty.
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
     }
 

@@ -1,4 +1,5 @@
 module tools.alignment.array_tool;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
@@ -467,7 +468,8 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // No gizmo overlay — the live grid preview on the real mesh is the
         // visual feedback (same choice as CloneTool).

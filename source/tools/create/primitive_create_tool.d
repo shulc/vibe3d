@@ -1,4 +1,5 @@
 module tools.create.primitive_create_tool;
+import display_state : DrawPlan;
 
 // ---------------------------------------------------------------------------
 // PrimitiveCreateTool / HandledCreateTool / SizedRadialCreateTool(P) — the
@@ -472,7 +473,8 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         drawSnapOverlay(lastSnap, vp, *mesh);
         if (isIdle()) return;

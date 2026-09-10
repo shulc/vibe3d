@@ -1,4 +1,5 @@
 module tools.transform.xfrm_transform;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmActivationEffect,
@@ -2204,7 +2205,8 @@ public:
             PreparedXfrmUpdateKind.Active, ok);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         if (!active) return;
         // Task 0206: `cachedVp` is read by every event handler (screen→world
         // drag math, hit-test) for THIS tool. Only the interactive (owner)
@@ -2299,15 +2301,15 @@ public:
 
         if (flagT) {
             if (compactPresentation()) moveSub.drawCompact (shader, vp, vts, visualOnly);
-            else                       moveSub.draw        (shader, vp, vts, visualOnly);
+            else                       moveSub.draw        (shader, vp, vts, plan, visualOnly);
         }
         if (flagR) {
             if (compactPresentation()) rotateSub.drawPrincipalOnly(shader, vp, vts, visualOnly);
-            else                       rotateSub.draw             (shader, vp, vts, visualOnly);
+            else                       rotateSub.draw             (shader, vp, vts, plan, visualOnly);
         }
         if (flagS) {
             if (compactPresentation()) scaleSub.drawAxisBoxesOnly(shader, vp, vts, visualOnly);
-            else                       scaleSub.draw             (shader, vp, vts, visualOnly);
+            else                       scaleSub.draw             (shader, vp, vts, plan, visualOnly);
         }
 
         // GL falloff handles drawn ONCE, on top of the gizmo banks.

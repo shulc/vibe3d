@@ -1,4 +1,5 @@
 module tools.deform.stroke_extrude_tool;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
@@ -328,7 +329,8 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         vpWorld_ = vp;
         // The extruded bands ARE the live preview (mutated directly onto
         // the mesh by applyPath, same law RadialArrayTool uses) — no

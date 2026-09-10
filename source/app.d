@@ -7631,6 +7631,7 @@ void main(string[] args) {
                     _overlayInputs.activeTool = activeTool;
                     _overlayInputs.gizmoHost = pipeGizmoHost;
                     _overlayInputs.buildSubject = app.buildToolVts;
+                    _overlayInputs.plan = _displayInputs.activePlan;
                     _overlayInputs.falloffActive = anyFalloffActive();
 
                     frameRunner.drawScene(_sceneInputs, _viewInputs,

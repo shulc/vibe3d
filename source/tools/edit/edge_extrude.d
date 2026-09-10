@@ -1,4 +1,5 @@
 module tools.edit.edge_extrude;
+import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
@@ -598,7 +599,8 @@ public:
         return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         // Selection may have changed since activate() (e.g. the user picked a
         // different edge in the viewport before grabbing a handle). Recompute

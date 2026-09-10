@@ -1,4 +1,5 @@
 module tools.slice.slice_tool;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 import bindbc.opengl;
@@ -1852,7 +1853,8 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         // Cache the viewport for the endpoint ray casts / handle picks in the
         // event handlers.
         if (!visualOnly) vpWorld_ = vp;

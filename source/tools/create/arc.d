@@ -1,4 +1,5 @@
 module tools.create.arc;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import operator : VectorStack;
@@ -273,7 +274,8 @@ public:
         return false;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {}
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {}
 
     override void drawProperties() {
         import ImGui = d_imgui;

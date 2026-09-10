@@ -1,4 +1,5 @@
 module tools.slice.edge_slice_tool;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 import std.json : JSONValue;
@@ -936,7 +937,8 @@ public:
         }
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         if (!visualOnly) vpWorld_ = vp;
         if (!active || latchedPoints_.length == 0) return;
 

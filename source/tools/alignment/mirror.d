@@ -1,4 +1,5 @@
 module tools.alignment.mirror;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -658,7 +659,8 @@ public:
 
     // ----- Center handle (M2) + preview draw (M3) ---------------------------
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         // `visualOnly` is the non-interactive replica draw in an inactive
         // Quad cell (tool.d:132 contract) — skip the cachedVp write and the
         // ToolHandles register/hit cycle there, but still draw the preview +

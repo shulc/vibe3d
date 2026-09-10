@@ -1,4 +1,5 @@
 module tools.edit.edge_extend;
+import display_state : DrawPlan;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -1017,13 +1018,14 @@ public:
         return true;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         if (!active) return;
         // The embedded wrapper renders the gizmo banks + runs the shared arbiter
         // (hover highlight). The Move bank co-locates at the selection/action
         // center the kernel re-selected (the new ridge edges).
-        xfrm.draw(shader, vp, vts);
+        xfrm.draw(shader, vp, vts, plan);
     }
 
 private:

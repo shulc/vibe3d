@@ -1,4 +1,5 @@
 module tools.slice.loop_slice_tool;
+import display_state : DrawPlan;
 
 import bindbc.sdl;
 import std.json : JSONValue;
@@ -1526,7 +1527,8 @@ public:
         }
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
         // No gizmo/ghost overlay in the revised (mutate/revert) model — the
         // real mesh already shows the live cut. Only the viewport needs
         // caching, for the seed-edge ray cast in onMouseMotion.

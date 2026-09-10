@@ -133,7 +133,8 @@ mixin template PenRenderOps() {
     // own header for why); then the unarmed hover/fill affordances; then
     // the CONS-hit marker and the two ghosts keyed off it.
     override void draw(const ref Shader shader, const ref Viewport vp,
-                       ref VectorStack vts, bool visualOnly = false) {
+                       ref VectorStack vts, const ref DrawPlan plan,
+                       bool visualOnly = false) {
         auto dl = ImGui.GetForegroundDrawList();
 
         drawAddLoopGhost(dl, vp);
