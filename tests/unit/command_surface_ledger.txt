@@ -1,119 +1,125 @@
-# Registered commands intentionally lacking every configured surface scanned by
-# command_surface_census_test.d. Keep rows sorted as `id | reason`.
-ai.disable | no-ui-yet
-ai.enable | no-ui-yet
-ai3d.generate | no-ui-yet
-ai3d.generate.cancel | no-ui-yet
-ai3d.generate.start | no-ui-yet
-ai3d.importResult | no-ui-yet
-constrain.toggle | no-ui-yet
-copilot.analyze | no-ui-yet
-copilot.cycleFinding | no-ui-yet
-copilot.selectFinding | no-ui-yet
-falloff.cylinder | no-ui-yet
-falloff.lasso | no-ui-yet
-falloff.linear | no-ui-yet
-falloff.radial | no-ui-yet
-falloff.remove | no-ui-yet
-falloff.screen | no-ui-yet
-falloff.vertexMap | no-ui-yet
-file.load | no-ui-yet
-history.clear | no-ui-yet
-history.saveAsScript | no-ui-yet
-image.load | no-ui-yet
-image.reload | no-ui-yet
-image.remove | no-ui-yet
-image.replace | no-ui-yet
-imagePlane.add | no-ui-yet
-imagePlane.setImage | no-ui-yet
-layer.parent | no-ui-yet
-layer.reorder | no-ui-yet
-layer.select | no-ui-yet
-layer.setVisible | no-ui-yet
-macro.record | no-ui-yet
-macro.saveRecorded | no-ui-yet
-mesh.align | no-ui-yet
-mesh.array | no-ui-yet
-mesh.bevel | no-ui-yet
-mesh.bevel_edit | no-ui-yet
-mesh.clone | no-ui-yet
-mesh.edgeCrease.clear | no-ui-yet
-mesh.edgeSlice | no-ui-yet
-mesh.edge_extend | no-ui-yet
-mesh.edge_extrude | no-ui-yet
-mesh.edge_slide | no-ui-yet
-mesh.jitter | no-ui-yet
-mesh.linear_align | no-ui-yet
-mesh.loopSlice | no-ui-yet
-mesh.magnet | no-ui-yet
-mesh.morph.clear | no-ui-yet
-mesh.morph.remove | no-ui-yet
-mesh.morph.rename | no-ui-yet
-mesh.morph.select | no-ui-yet
-mesh.morph.set | no-ui-yet
-mesh.move_vertex | no-ui-yet
-mesh.poly_inset | no-ui-yet
-mesh.quantize | no-ui-yet
-mesh.radial_align | no-ui-yet
-mesh.remesh | no-ui-yet
-mesh.remesh.start | no-ui-yet
-mesh.select | no-ui-yet
-mesh.smooth | no-ui-yet
-mesh.smooth_shift | no-ui-yet
-mesh.strokeExtrude | no-ui-yet
-mesh.symmetrize | no-ui-yet
-mesh.tack | no-ui-yet
-mesh.thicken | no-ui-yet
-mesh.transform | no-ui-yet
-mesh.vertex_edit | no-ui-yet
-mesh.weightmap.create | no-ui-yet
-mesh.weightmap.remove | no-ui-yet
-mesh.weightmap.rename | no-ui-yet
-mesh.weightmap.select | no-ui-yet
-mesh.weightmap.set | no-ui-yet
-mesh.weldVertexPair | no-ui-yet
-path.define | no-ui-yet
-pref.trackball | no-ui-yet
-scene.loadMesh | no-ui-yet
-scene.reset | no-ui-yet
-select.boundary | no-ui-yet
-select.byStat.edge | no-ui-yet
-select.byStat.polygon | no-ui-yet
-select.byStat.vertex | no-ui-yet
-select.byTag | no-ui-yet
-select.delete | no-ui-yet
-select.element | no-ui-yet
-select.remove | no-ui-yet
-select.typeFrom | no-ui-yet
-selftest.fault | no-ui-yet
-snap.mode | no-ui-yet
-tool.beginSession | no-ui-yet
-tool.clearSoftPinForTest | no-ui-yet
-tool.doApply | no-ui-yet
-tool.panelEdit | no-ui-yet
-tool.set | no-ui-yet
-ui.channels | no-ui-yet
-ui.copilotPanel | no-ui-yet
-ui.imageList | no-ui-yet
-ui.layerList | no-ui-yet
-ui.statistics | no-ui-yet
-ui.statistics.expand | no-ui-yet
-ui.toolProperties | no-ui-yet
-ui.viewportProps | no-ui-yet
-undo.lockout.off | no-ui-yet
-undo.lockout.on | no-ui-yet
-undo.test.force | no-ui-yet
-undo.test.suppress | no-ui-yet
-uv.unwrap | no-ui-yet
-viewport.displayStyle | no-ui-yet
-viewport.gridSteps | no-ui-yet
-viewport.indCenter | no-ui-yet
-viewport.indRotate | no-ui-yet
-viewport.indScale | no-ui-yet
-viewport.layout | no-ui-yet
-viewport.master | no-ui-yet
-viewport.wireAlpha | no-ui-yet
-viewport.wireOverlay | no-ui-yet
-workplane.edit | no-ui-yet
-workplane.offset | no-ui-yet
-workplane.rotate | no-ui-yet
+# Registered commands lacking every YAML surface scanned by
+# command_surface_census_test.d. Keep rows sorted as `id | category: reason`.
+#
+# api-only    — automation, test, internal, alias, or headless command door;
+# code-ui     — a user-facing D widget dispatches the command outside YAML;
+# no-ui-yet   — a user operation with no configured or code-built surface;
+# unclassified — the current code does not settle whether the missing command
+#                surface is intentional.
+ai.disable | api-only: explicit automation setter; the UI uses ai.toggle
+ai.enable | api-only: explicit automation setter; the UI uses ai.toggle
+ai3d.generate | api-only: synchronous scripted generation path; the UI uses the async modal
+ai3d.generate.cancel | api-only: test-mode async-controller hook rejected in normal runs
+ai3d.generate.start | api-only: test-mode async-controller hook rejected in normal runs
+ai3d.importResult | api-only: internal async-result landing command dispatched by the app
+constrain.toggle | no-ui-yet: user constraint toggle has no configured or code-built action
+copilot.analyze | code-ui: AI findings panel dispatches Analyze directly
+copilot.cycleFinding | code-ui: AI findings panel dispatches finding navigation directly
+copilot.selectFinding | code-ui: AI findings panel dispatches row selection directly
+falloff.cylinder | no-ui-yet: named primary-falloff preset has a human label but no action
+falloff.lasso | no-ui-yet: named primary-falloff preset has a human label but no action
+falloff.linear | no-ui-yet: named primary-falloff preset has a human label but no action
+falloff.radial | no-ui-yet: named primary-falloff preset has a human label but no action
+falloff.remove | code-ui: dynamic falloff-stack rows dispatch removal directly
+falloff.screen | no-ui-yet: named primary-falloff preset has a human label but no action
+falloff.vertexMap | no-ui-yet: named primary-falloff preset has a human label but no action
+file.load | api-only: compatibility load id; the configured user action is file.open
+history.clear | unclassified: history panel exposes clear but bypasses this registered command
+history.saveAsScript | code-ui: history context menu opens this command's argument dialog
+image.load | code-ui: Images panel Load button dispatches the command directly
+image.reload | no-ui-yet: image row model names reload but the panel has no reload action
+image.remove | code-ui: Images panel Remove flow dispatches the command directly
+image.replace | no-ui-yet: image command supports replacement but the panel has no action
+imagePlane.add | code-ui: Layers panel Add Item menu dispatches the command directly
+imagePlane.setImage | code-ui: image-plane chooser dispatches the command directly
+layer.parent | no-ui-yet: hierarchy supports parented items but exposes no parenting action
+layer.reorder | code-ui: Layers panel drag-and-drop dispatches the command directly
+layer.select | code-ui: item rows and viewport picking dispatch the command directly
+layer.setVisible | code-ui: Layers panel eye cells dispatch the command directly
+macro.record | code-ui: History panel Rec and Stop buttons dispatch the command directly
+macro.saveRecorded | code-ui: History panel Save button opens this command's argument dialog
+mesh.align | no-ui-yet: user-facing polygon alignment operation has no action
+mesh.array | api-only: headless counterpart of the configured mesh.arrayTool
+mesh.bevel | unclassified: generic bevel command coexists with specialized bevel tools
+mesh.bevel_edit | api-only: replay carrier for an interactive tool session, not a fresh action
+mesh.clone | no-ui-yet: clone tool and one-shot command are both absent from configured UI
+mesh.edgeCrease.clear | no-ui-yet: crease assignment is surfaced but clearing it is not
+mesh.edgeSlice | api-only: headless counterpart of the configured mesh.edgeSliceTool
+mesh.edge_extend | api-only: headless counterpart of the configured edge.extend tool
+mesh.edge_extrude | api-only: headless counterpart of the configured edge.extrude tool
+mesh.edge_slide | api-only: headless counterpart of the configured edge.slide tool
+mesh.jitter | api-only: headless counterpart of the configured xfrm.jitter tool
+mesh.linear_align | api-only: headless counterpart of the configured xfrm.linearAlignTool
+mesh.loopSlice | api-only: headless counterpart of the configured mesh.loopSliceTool
+mesh.magnet | no-ui-yet: magnet tool and one-shot command are both absent from configured UI
+mesh.morph.clear | no-ui-yet: morph target list is visible but clearing values has no action
+mesh.morph.remove | no-ui-yet: morph target list is visible but removal has no action
+mesh.morph.rename | no-ui-yet: morph target list is visible but rename has no action
+mesh.morph.select | no-ui-yet: morph target list is visible but target selection has no action
+mesh.morph.set | no-ui-yet: morph target list is visible but value assignment has no action
+mesh.move_vertex | api-only: coordinate-addressed geometry helper documented for test scenarios
+mesh.poly_inset | api-only: headless counterpart of the configured mesh.polyInsetTool
+mesh.quantize | api-only: headless counterpart of the configured xfrm.quantize tool
+mesh.radial_align | api-only: headless counterpart of the configured xfrm.radialAlignTool
+mesh.remesh | api-only: internal landing command for a completed remesh job
+mesh.remesh.start | api-only: headless job starter; the configured UI opens mesh.remesh.open
+mesh.select | api-only: index-addressed selection door used by automation and findings
+mesh.smooth | api-only: headless counterpart of the configured xfrm.smooth tool
+mesh.smooth_shift | api-only: headless counterpart of the configured mesh.smoothShiftTool
+mesh.strokeExtrude | api-only: headless counterpart of the configured tool.strokeExtrude
+mesh.symmetrize | no-ui-yet: user-facing symmetry operation has no action
+mesh.tack | no-ui-yet: tack tool and headless command are both absent from configured UI
+mesh.thicken | api-only: headless counterpart of the configured mesh.thickenTool
+mesh.transform | api-only: parameterized geometry transform door for scripts and tests
+mesh.vertex_edit | api-only: replay carrier for an interactive vertex-edit session
+mesh.weightmap.create | no-ui-yet: user-facing weight-map creation has no action
+mesh.weightmap.remove | no-ui-yet: user-facing weight-map removal has no action
+mesh.weightmap.rename | no-ui-yet: user-facing weight-map rename has no action
+mesh.weightmap.select | no-ui-yet: user-facing weight-map selection has no action
+mesh.weightmap.set | no-ui-yet: user-facing weight-map assignment has no action
+mesh.weldVertexPair | api-only: index-pair weld door documented for command JSON injection
+path.define | api-only: CSV vertex-index pipeline setup door for scripts
+pref.trackball | no-ui-yet: persisted user navigation setting has no menu or panel action
+scene.loadMesh | api-only: raw-geometry test and generic-command endpoint door
+scene.reset | api-only: reset endpoint and compatibility door; the UI uses file.new
+select.boundary | no-ui-yet: user-facing boundary selection operation has no action
+select.byStat.edge | code-ui: Statistics edge rows dispatch the command directly
+select.byStat.polygon | code-ui: Statistics polygon rows dispatch the command directly
+select.byStat.vertex | code-ui: Statistics vertex rows dispatch the command directly
+select.byTag | code-ui: Statistics part and material rows dispatch the command directly
+select.delete | api-only: compatibility alias of the configured mesh.delete command
+select.element | no-ui-yet: user-facing element selection operation has no action
+select.remove | api-only: compatibility alias of the configured mesh.remove command
+select.typeFrom | code-ui: selection-conversion popup dispatches the command directly
+selftest.fault | api-only: deliberate fault injector compiled only in instrumented builds
+snap.mode | no-ui-yet: user-facing snap scope setter has no action
+tool.beginSession | api-only: test-mode interactive-session hook rejected in normal runs
+tool.clearSoftPinForTest | api-only: explicitly named test-state cleanup hook
+tool.doApply | api-only: headless commit door for an already configured tool
+tool.panelEdit | api-only: test-mode panel-edit hook rejected in normal runs
+tool.set | api-only: command-language tool activator; widgets use tool actions directly
+ui.channels | api-only: test-mode panel visibility hook rejected in normal runs
+ui.copilotPanel | api-only: test-mode panel visibility hook rejected in normal runs
+ui.imageList | api-only: test-mode panel visibility hook rejected in normal runs
+ui.layerList | api-only: test-mode panel visibility hook rejected in normal runs
+ui.statistics | api-only: test-mode panel visibility hook rejected in normal runs
+ui.statistics.expand | api-only: test-mode disclosure-state hook rejected in normal runs
+ui.toolProperties | api-only: test-mode panel visibility hook rejected in normal runs
+ui.viewportProps | api-only: test-mode panel visibility hook rejected in normal runs
+undo.lockout.off | api-only: test-automation history lockout release
+undo.lockout.on | api-only: test-automation history lockout engagement
+undo.test.force | api-only: test-automation undoability override probe
+undo.test.suppress | api-only: test-automation undoability override probe
+uv.unwrap | no-ui-yet: user-facing UV unwrap operation has no action
+viewport.displayStyle | code-ui: Viewport Properties style chooser dispatches directly
+viewport.gridSteps | code-ui: Viewport Properties grid chooser dispatches directly
+viewport.indCenter | code-ui: Viewport Properties Center checkbox dispatches directly
+viewport.indRotate | code-ui: Viewport Properties Rotate checkbox dispatches directly
+viewport.indScale | code-ui: Viewport Properties Scale checkbox dispatches directly
+viewport.layout | code-ui: Viewport Properties layout buttons dispatch directly
+viewport.master | code-ui: Viewport Properties master chooser dispatches directly
+viewport.wireAlpha | code-ui: Viewport Properties wire slider dispatches directly
+viewport.wireOverlay | code-ui: Viewport Properties wire chooser dispatches directly
+workplane.edit | no-ui-yet: command documents an Edit Work Plane panel that is absent
+workplane.offset | no-ui-yet: command documents an Offset Work Plane panel that is absent
+workplane.rotate | no-ui-yet: command documents a Rotate Work Plane panel that is absent

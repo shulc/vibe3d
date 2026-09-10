@@ -207,6 +207,15 @@ private string[string] loadRemainderLedger()
         assert(id.length != 0 && reason.length != 0,
             format("command_surface_ledger.txt:%d needs both id and reason",
                    lineNo + 1));
+        immutable categories = ["api-only: ", "code-ui: ", "no-ui-yet: ",
+                                "unclassified: "];
+        bool knownCategory;
+        foreach (category; categories)
+            if (reason.startsWith(category) && reason.length > category.length)
+                knownCategory = true;
+        assert(knownCategory,
+            format("command_surface_ledger.txt:%d needs a known category and "
+                 ~ "an individual reason: %s", lineNo + 1, id));
         assert(previous.length == 0 || previous < id,
             format("command_surface_ledger.txt:%d is not strictly sorted: %s after %s",
                    lineNo + 1, id, previous));
