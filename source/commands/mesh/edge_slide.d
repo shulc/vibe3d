@@ -72,11 +72,13 @@ class MeshEdgeSlide : Command, Operator, VertexPositionResultBuilder {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
-        // Build before opening the batch: empty edge selection is a refusal,
-        // while t=0 and missing rails are accepted empty results.
+        // Build before opening the batch only to resolve the operand gate:
+        // empty edge selection is a refusal. A non-empty operand must still
+        // open/commit the Position batch when its sparse value diff is empty;
+        // task 5290 pins that write-keyed notification law against
+        // tests/fixtures/change_publish_on_accepted_noop.json.
         VertexPositionResult result;
         if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
-        if (result.empty) return true;
 
         // REDO: re-run the kernel UNRECORDED and keep the first delta.
         if (undo_.armed()) {

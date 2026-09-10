@@ -73,7 +73,7 @@ allow source/commands/mesh/edge_extend.d 5
 allow source/commands/mesh/edge_extrude.d 5
 allow source/commands/mesh/edge_join.d 4
 allow source/commands/mesh/edge_slice.d 2
-allow source/commands/mesh/edge_slide.d 5
+allow source/commands/mesh/edge_slide.d 6
 allow source/commands/mesh/face_extrude.d 2
 allow source/commands/mesh/fix_orientation.d 4
 allow source/commands/mesh/flip.d 2
