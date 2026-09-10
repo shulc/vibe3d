@@ -84,7 +84,8 @@ import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
-import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, primitiveParameterFrame,
+import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
+                              primitivePlacementFrame, screenToConstructionPlane,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -133,15 +134,14 @@ protected:
     GpuMesh previewGpu;
     bool    meshChanged;
 
-    // Construction-plane frame chosen at first click and locked for the
-    // whole interaction. Internal coords (params_.cen*, center(), the
-    // various drag anchors, handle positions) live in this frame's LOCAL
-    // space; mesh upload / commit transforms vertices through frame.toWorld.
+    // Placement writes world-coordinate channel values through the identity
+    // placementFrame. Preview and commit then map them through the generator
+    // workplane in `frame`.
     Vec3 planeNormal;
     Vec3 planeAxis1;
     Vec3 planeAxis2;
     WorkplaneFrame frame;
-    Vec3 placementPlaneOrigin;
+    WorkplaneFrame placementFrame;
 
     // Last snap query — drives the Idle-state cyan/yellow overlay.
     SnapResult lastSnap;
@@ -545,15 +545,13 @@ public:
     // -----  inherited event handlers) --------------------------------------
 protected:
     void choosePlane(const ref Viewport vp) {
-        // Capture workplane as a local<->world transform; tool-internal
-        // coords are in local-space (workplane = identity XZ plane).
-        WorkplaneFrame placementFrame = pickWorkplaneFrame(vp);
+        // Placement writes world-coordinate channels; generation alone owns
+        // the pinned workplane frame.
+        placementFrame = primitivePlacementFrame();
         frame = primitiveParameterFrame();
-        placementPlaneOrigin = transformPoint(frame.toLocal, placementFrame.origin);
-        // Pick the construction plane by camera (most-facing-axis in
-        // workplane basis), matching every Create-tool / the corner gizmo.
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
+        final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
+                                     Vec3(0, 1, 0), Vec3(0, 0, 1))) {
             case 0:
                 planeNormal = Vec3(1, 0, 0);
                 planeAxis1  = Vec3(0, 1, 0);
@@ -726,16 +724,12 @@ protected:
     // Idle-state live snap preview — the cyan/yellow overlay showing where
     // the next click would anchor the primitive.
     void updateIdleSnap(int mx, int my) {
-        WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-        Vec3 hit;
-        if (workplaneCursorPlaneHit(f, cachedVp, cast(float)mx, cast(float)my,
-                                    Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
-            lastSnap = snapLocalHit(hit, f, mx, my, cachedVp, *mesh, EditMode.Vertices);
-            publishLastSnap(lastSnap);
-        } else {
-            lastSnap = SnapResult.init;
-            clearLastSnap();
-        }
+        auto f = primitivePlacementFrame();
+        Vec3 hit = screenToConstructionPlane(
+            cast(float)mx, cast(float)my, cachedVp);
+        lastSnap = snapLocalHit(hit, f, mx, my, cachedVp,
+                                *mesh, EditMode.Vertices);
+        publishLastSnap(lastSnap);
     }
 }
 
@@ -1052,11 +1046,10 @@ public:
 
         if (state == RadialState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
-                return false;
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
             // Snap the click anchor to the closest pipeline-enabled target.
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
             startPoint   = hit;
@@ -1140,10 +1133,10 @@ public:
         if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == RadialState.DrawingBase) {
-            Vec3 hit;
-            if (localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
             {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
                 publishLastSnap(lastSnap);
                 currentPoint = hit;

@@ -385,7 +385,7 @@ unittest { // Box base-only commit creates one camera-facing polygon
     assertBaseOnlyCommitCreatesOneCameraFacingPolygon(-1.1);
 }
 
-unittest { // Box base-only commit follows a rotated workplane
+unittest { // Box base-only commit maps placement channels through a rotated workplane
     resetForRotatedWorkplaneBox();
 
     enum double deg = 35.0;
@@ -407,9 +407,9 @@ unittest { // Box base-only commit follows a rotated workplane
     foreach (i; 0 .. 4) {
         Vec3 v = vertexAt(m, i);
         double dist = dotD(v - wpCenter, expectedNormal);
-        assert(approx(dist, 0.0, 1e-3),
+        assert(approx(dist, wpCenter.x, 1e-3),
             "vertex " ~ i.to!string ~
-            " is off the rotated construction plane: signed dist=" ~ dist.to!string);
+            " has wrong generator-mapped plane offset: signed dist=" ~ dist.to!string);
     }
 
     Vec3 n = normalize(committedFaceNormal(0));

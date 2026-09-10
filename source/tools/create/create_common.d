@@ -231,6 +231,13 @@ WorkplaneFrame primitiveParameterFrame() {
     return f.isAuto ? worldXZFrame() : f;
 }
 
+/// Primitive placement channels are world coordinates even when generation
+/// later maps them through a pinned workplane. Keep the gesture frame at the
+/// world identity so snapping does not apply the generator transform twice.
+WorkplaneFrame primitivePlacementFrame() {
+    return worldXZFrame();
+}
+
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
 /// handles / etc.) — same basis the construction-plane pickers use, so the
 /// gizmo always agrees with where primitives actually drop:
@@ -316,7 +323,8 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
     return rayPlaneIntersect(o, d, planeOrigin, planeNormal, hitLocal);
 }
 
-/// Where a click lands on the ACTIVE construction plane, in WORLD space.
+/// Where a placement click lands on the camera-facing focus plane, in WORLD
+/// space.
 ///
 /// TOTAL — there is no "could not", and that is the point. The call sites this
 /// replaces were written `if (screenToWorkPlane(...)) handle.setPos(hit);`
@@ -330,28 +338,19 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
 /// normal (0,1,0)), which a horizontal view's ray is exactly parallel to — so
 /// all four horizontal axis presets refused, every time, in silence.
 ///
-/// The law is `XfrmTransformTool.computeClickRelocateHitRaw`'s Auto/None
-/// branch, read from there rather than re-derived:
-///   * auto     -> the camera-most-facing principal world axis as the normal,
-///                 anchored at the camera FOCUS;
-///   * pinned   -> the stage's full frame (rotation and origin both), because
-///                 collapsing it onto a principal axis would discard the
-///                 user's rotation without telling them.
-/// `currentWorkplaneFrame` is deliberately the accessor used (not
-/// `pickWorkplaneFrame`): it reads the stage directly and never calls
-/// `pipeline.evaluate`, so this stays safe to call from a mouse handler that
-/// is itself inside a pipeline walk.
+/// Primitive placement uses the camera-most-facing principal world axis as
+/// the normal and anchors it at the camera focus in both automatic and pinned
+/// workplane modes. The pinned origin and basis belong to generation, after
+/// the gesture has written its world-coordinate channels (task 5430,
+/// `doc/measured_laws.md` §13).
 ///
-/// Lives beside the other workplane accessors rather than in a create-only
-/// module by accident: the construction plane is global state
-/// (`WorkplaneStage`), and non-create callers (the command-wrapper click
-/// handle, the radial-array centre) want exactly the same answer the
-/// Create-tools drop geometry on.
+/// Lives beside the other placement helpers because non-create callers (the
+/// command-wrapper click handle and radial-array centre) want the same
+/// camera-facing focus-plane answer as Create tools.
 Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp)
 {
-    WorkplaneFrame wf = currentWorkplaneFrame();
-    Vec3 planeOrigin = wf.isAuto ? vp.focus : wf.origin;
-    Vec3 planeNormal = wf.isAuto ? pickMostFacingPlane(vp).normal : wf.normal;
+    Vec3 planeOrigin = vp.focus;
+    Vec3 planeNormal = pickMostFacingPlane(vp).normal;
 
     Vec3 o, d;
     screenPointToRay(sx, sy, vp, o, d);
@@ -360,12 +359,8 @@ Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp)
     if (rayPlaneIntersect(o, d, planeOrigin, planeNormal, hit))
         return hit;
 
-    // The only reachable refusal: a user-PINNED plane seen edge-on. Swap in
-    // the camera-perpendicular plane through the same origin — task 0226's
-    // fix, the same swap `computeClickRelocateHitRaw` makes for the same
-    // configuration. The cursor ray meets that plane at |dot| >= cos(halfFov)
-    // (== 1 under ortho), so this second test cannot refuse and the function
-    // is total.
+    // Numerical fallback: the camera-perpendicular plane through the same
+    // focus is guaranteed to meet the cursor ray.
     Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     if (rayPlaneIntersect(o, d, planeOrigin, camBack, hit))
         return hit;

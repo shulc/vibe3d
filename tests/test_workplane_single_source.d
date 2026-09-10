@@ -7,11 +7,10 @@
 //   B. Non-auto: currentWorkplaneFrame() reads the live WorkplaneStage
 //      basis + center through the stage-owned accessor (no g_pipeCtx-side
 //      identity block left to diverge from it) — and tracks a live edit.
-//   C. Non-auto mover center-drag (dragAxis==3) lies ON the construction
-//      plane — the intentional, fixtured behaviour change of Phase 4.
-//      Camera is deliberately placed so the OLD per-drag derivation would
-//      have picked the workplane axis1 instead of the workplane normal
-//      (the adversarial case the fix closes).
+//   C. Non-auto mover center-drag (dragAxis==3) writes a world delta into
+//      workplane-local Position channels. Under the oblique frame below that
+//      makes the generated geometry leave the pinned plane; the precise
+//      channel-space law is fixtured in test_create_center_drag_frame_law.d.
 //   D. Same invariant in AUTO mode, where the precomputed normal and the
 //      per-drag derivation are provably the same value by construction —
 //      a lightweight "still holds" companion to the existing (unmodified)
@@ -164,7 +163,7 @@ float vlen(Vec3 v) { return sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
 string fd(double v) { return format("%.6f", v); }
 
 // -------------------------------------------------------------------------
-// C — non-auto mover center-drag lies ON the construction plane.
+// C — non-auto mover center-drag is not constrained to the pinned plane.
 // -------------------------------------------------------------------------
 //
 // Shared rotated-workplane setup (also used by E): rotZ=35 deg, a non-
@@ -211,7 +210,7 @@ void resetRotatedWorkplaneBox(double azOffset, double elSign) {
     cmd("tool.set prim.cube");
 }
 
-unittest { // C: non-auto mover center-drag stays on the workplane plane
+unittest { // C: world-channel center drag is not remapped onto the workplane
     resetRotatedWorkplaneBox(0.0, 1.0);   // az=PI/2, el=+kRotRad
 
     // A base-only drag already activates the mover (BoxState.BaseSet), but
@@ -251,9 +250,9 @@ unittest { // C: non-auto mover center-drag stays on the workplane plane
         "center-plane drag should have moved the mover; |delta|=" ~ vlen(delta).to!string);
 
     float offPlane = fabs(dot(delta, normal));
-    assert(offPlane < 0.05f,
-        "non-auto center-plane drag must stay ON the workplane (dot with normal "
-        ~ "should be ~0); got " ~ offPlane.to!string);
+    assert(offPlane > 0.05f,
+        "world-channel center drag was remapped onto the pinned plane; "
+        ~ "absolute normal component=" ~ offPlane.to!string);
 
     cmd("tool.set prim.cube off");
     cmd("workplane.reset");

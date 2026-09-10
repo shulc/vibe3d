@@ -553,7 +553,7 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
         dragStartY = e.y;
         dragging = true;
 
-        // Project the click pixel onto the ACTIVE construction plane and put
+        // Project the click pixel onto the camera-facing focus plane and put
         // the handle there. Clicking in the 3D viewport sets the tool into
         // interactive mode and draws its handle at the click point. Handle
         // visibility is gated on `dragging`, so it appears here and

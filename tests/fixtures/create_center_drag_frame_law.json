@@ -1,0 +1,32 @@
+{
+  "fixture": "create_center_drag_frame_law",
+  "version": 1,
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-09-10",
+    "task": "5430",
+    "notes": "Only numerical observations were copied here. The private capture card remains the source of record."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {"cell": "unit_frame", "drove": [{"op": "center_drag", "values": {"plane_euler_deg": [0.0, 0.0, 0.0], "drag_px": [96, -64]}}]},
+      {"cell": "oblique_frame", "drove": [{"op": "center_drag", "values": {"plane_euler_deg": [30.0, 40.0, 0.0], "drag_px": [96, -64]}}]}
+    ]
+  },
+  "tolerance": 0.04,
+  "size_before": [0.5, 0.5, 0.5],
+  "position_before": [0.0, 0.0, 0.0],
+  "drag_px": [96, -64],
+  "expected_delta": [3.0, 2.0, 0.0],
+  "cells": [
+    {"name": "unit_frame", "plane_euler_deg": [0.0, 0.0, 0.0]},
+    {"name": "oblique_frame", "plane_euler_deg": [30.0, 40.0, 0.0]}
+  ],
+  "vertex_floor": 8
+}

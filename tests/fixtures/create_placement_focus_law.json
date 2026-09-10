@@ -1,0 +1,39 @@
+{
+  "fixture": "create_placement_focus_law",
+  "version": 1,
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-09-10",
+    "task": "5430",
+    "notes": "Only numerical observations were copied here. The private capture card remains the source of record."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {"cell": "focus_sweep", "drove": [{"op": "create_drag", "values": {"focus": [0.0, 4.0, 7.0, 20.0, 23.0]}}]},
+      {"cell": "pinned_focus_zero", "drove": [{"op": "create_drag", "values": {"focus": 0.0, "plane_z": 3.0}}]},
+      {"cell": "pinned_focus_twenty", "drove": [{"op": "create_drag", "values": {"focus": 20.0, "plane_z": 3.0}}]},
+      {"cell": "oblique_origin_zero_focus_twenty", "drove": [{"op": "create_drag", "values": {"focus": 20.0, "plane_origin": [0.0, 0.0, 0.0], "plane_euler_deg": [30.0, 40.0, 0.0]}}]},
+      {"cell": "oblique_origin_zero_focus_zero", "drove": [{"op": "create_drag", "values": {"focus": 0.0, "plane_origin": [0.0, 0.0, 0.0], "plane_euler_deg": [30.0, 40.0, 0.0]}}]},
+      {"cell": "oblique_shifted_origin_focus_twenty", "drove": [{"op": "create_drag", "values": {"focus": 20.0, "plane_origin": [1.5, 0.25, -0.5], "plane_euler_deg": [30.0, 40.0, 0.0]}}]}
+    ]
+  },
+  "tolerance": 0.051,
+  "focus_depths": [0.0, 4.0, 7.0, 20.0, 23.0],
+  "pinned_plane_z": 3.0,
+  "pinned_controls": [
+    {"focus": 0.0, "depth": 0.0},
+    {"focus": 20.0, "depth": 20.0}
+  ],
+  "oblique_pinned_controls": [
+    {"focus": 20.0, "plane_origin": [0.0, 0.0, 0.0], "plane_euler_deg": [30.0, 40.0, 0.0], "depth": 20.0},
+    {"focus": 0.0, "plane_origin": [0.0, 0.0, 0.0], "plane_euler_deg": [30.0, 40.0, 0.0], "depth": 0.0},
+    {"focus": 20.0, "plane_origin": [1.5, 0.25, -0.5], "plane_euler_deg": [30.0, 40.0, 0.0], "depth": 20.0}
+  ],
+  "vertex_floor": 4
+}

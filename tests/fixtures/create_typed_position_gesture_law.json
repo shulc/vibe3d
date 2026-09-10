@@ -1,0 +1,53 @@
+{
+  "fixture": "create_typed_position_gesture_law",
+  "version": 1,
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-09-10",
+    "task": "5430",
+    "notes": "Only numerical observations were copied here. The private capture card remains the source of record."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "no_gesture",
+        "drove": [
+          {"op": "create", "values": {"position": [0.777, 0.555, 0.333], "size": [0.5, 0.5, 0.5]}}
+        ]
+      },
+      {
+        "cell": "gesture_default_size",
+        "drove": [
+          {"op": "create_drag", "values": {"position": [0.777, 0.555, 0.333], "size": [1.0, 1.0, 1.0]}}
+        ]
+      },
+      {
+        "cell": "gesture_zero_size",
+        "drove": [
+          {"op": "create_drag", "values": {"position": [0.777, 0.555, 0.333], "size": [0.0, 0.0, 0.0]}}
+        ]
+      }
+    ]
+  },
+  "tolerance": 0.025,
+  "typed_position": [0.777, 0.555, 0.333],
+  "no_gesture": {
+    "size": [0.5, 0.5, 0.5],
+    "center": [0.777, 0.555, 0.333],
+    "extent": [0.5, 0.5, 0.5],
+    "vertex_floor": 8
+  },
+  "gesture_cells": [
+    {"size_before": [1.0, 1.0, 1.0]},
+    {"size_before": [0.0, 0.0, 0.0]}
+  ],
+  "position_after_gesture": [-0.55, 0.5, 0.0],
+  "size_after_gesture": [3.0, 3.0, 0.0],
+  "vertex_floor": 4
+}

@@ -9,7 +9,7 @@ import math;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : PrimitiveCreateTool;
-import tools.create.create_common : snapLocalHit;
+import tools.create.create_common : screenToConstructionPlane, snapLocalHit;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -256,10 +256,9 @@ public:
 
         if (state == TubeState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
-                return false;
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
+            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
             startPoint          = hit;
@@ -331,10 +330,10 @@ public:
         if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == TubeState.DrawingOuter) {
-            Vec3 hit;
-            if (localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
             {
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);
                 publishLastSnap(lastSnap);
                 currentPoint = hit;

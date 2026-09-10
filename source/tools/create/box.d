@@ -32,9 +32,9 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
-import tools.create.create_common : pickWorkplane, BuildPlane,
-                              pickWorkplaneFrame, WorkplaneFrame,
-                              primitiveParameterFrame, mostFacingAxis,
+import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
+                              primitivePlacementFrame, screenToConstructionPlane,
+                              mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -190,25 +190,15 @@ private:
     // and only the uniform extent updates.
     bool    dragUniform;
 
-    // Plane frame chosen at first click — persistent through the whole
-    // interaction. After the workplane refactor (step 2), tool internals
-    // operate in the LOCAL workplane space — so planeNormal / Axis1 /
-    // Axis2 are always the local-frame identity (Y / X / Z). They stay
-    // here as fields so the existing writeSizeParam / sizeAlong /
-    // axisColor helpers (which look at axis component magnitudes) keep
-    // working unchanged. Conversion to world for rendering / hit-test
-    // happens via `frame`.
+    // Placement writes world-coordinate channel values. Generation maps
+    // those channels through `frame`; snapping uses the identity
+    // `placementFrame` so the generator transform is not applied early.
     Vec3  planeNormal;
     Vec3  planeAxis1;
     Vec3  planeAxis2;
-    /// Workplane local↔world transform captured at choosePlane(). All
-    /// tool-internal Vec3 fields (startPoint, currentPoint, baseAnchor,
-    /// hpOrigin, heightDragStart, params_.cen*) and previewMesh / commit
-    /// mesh vertices live in this frame's local space; mesh upload
-    /// transforms vertices through `frame.toWorld` immediately before
-    /// uploading to GPU.
+    /// Generator workplane transform captured at choosePlane().
     WorkplaneFrame frame;
-    Vec3 placementPlaneOrigin;
+    WorkplaneFrame placementFrame;
 
     Viewport cachedVp;
 
@@ -628,13 +618,12 @@ public:
 
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit;
-            if (!localCursorPlane(e.x, e.y, placementPlaneOrigin, planeNormal, hit))
-                return false;
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
             // the SnapStage's innerRange; lastSnap drives the overlay.
-            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+            lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
             startPoint   = hit;
@@ -772,23 +761,15 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         // Idle-state live snap preview. Before any clicks, show the
         // cyan target where the first click would anchor the box.
-        // Frame isn't captured until the first click — use the live
-        // workplane frame, same one choosePlane() will lock onto.
+        // The generator frame is not captured until the first click. Preview
+        // the world-channel placement independently of that frame.
         if (state == BoxState.Idle) {
-            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
-            // Plane normal in local frame is +Y by construction (the
-            // workplane lies in local XZ).
-            Vec3 hit;
-            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
-                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
-                                         *mesh, EditMode.Vertices);
-                publishLastSnap(lastSnap);
-            } else {
-                lastSnap = SnapResult.init;
-                clearLastSnap();
-            }
+            auto f = primitivePlacementFrame();
+            Vec3 hit = screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp);
+            lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
         }
         if (edgeDragIdx >= 0) {
             // The handle pos lives in world (rendered via cachedVp); pass
@@ -895,12 +876,14 @@ public:
 
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
-            if (localCursorPlane(e.x, e.y, basePlaneOrigin, planeNormal, hit))
+            if (workplaneCursorPlaneHit(placementFrame, cachedVp,
+                    cast(float)e.x, cast(float)e.y,
+                    basePlaneOrigin, planeNormal, hit))
             {
                 // Snap the dragged base-corner to the closest snap
                 // target. Falls through to raw `hit` when no snap fires.
                 Vec3 hitRaw = hit;
-                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
                 publishLastSnap(lastSnap);
                 // Free-axis projection: the base corner has 2 DOF (the two
@@ -1590,42 +1573,29 @@ private:
     }
 
     void choosePlane(const ref Viewport vp) {
-        // Capture the active workplane as a local↔world transform. From
-        // here on, all tool-internal coords are in local-space (where the
-        // workplane is the identity XZ plane), so plane axes are the
-        // canonical local triple. The previous behaviour — caching world-
-        // space (axis1, normal, axis2) from pickWorkplane — implied an
-        // axis-aligned workplane and broke after alignToSelection.
-        WorkplaneFrame placementFrame = pickWorkplaneFrame(vp);
+        // Placement writes world-coordinate channels; generation alone owns
+        // the pinned workplane frame.
+        placementFrame = primitivePlacementFrame();
         frame = primitiveParameterFrame();
-        placementPlaneOrigin = transformPoint(frame.toLocal, placementFrame.origin);
-        // Pick the construction plane by camera, just like the corner
-        // gizmo's most-facing-quad: in the workplane basis (a1, n, a2),
-        // the basis axis most aligned with the camera-back vector is the
-        // plane normal; the other two span the construction plane. With
-        // auto-mode the basis is already pickMostFacingPlane → normal
-        // wins by definition → planeNormal=local Y, falls back to the
-        // XZ-base behaviour. With non-auto + camera looking from the
-        // side, the construction plane swaps to the right local plane
-        // so it agrees with what the corner gizmo highlights.
         Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-        final switch (mostFacingAxis(camBack, frame.axis1, frame.normal, frame.axis2)) {
+        final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
+                                     Vec3(0, 1, 0), Vec3(0, 0, 1))) {
         case 0: {
-            float s = dot(camBack, frame.axis1) >= 0.0f ? 1.0f : -1.0f;
+            float s = camBack.x >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(s, 0, 0);
             planeAxis1  = Vec3(0, 1, 0);
             planeAxis2  = Vec3(0, 0, 1);
             break;
         }
         case 1: {
-            float s = dot(camBack, frame.normal) >= 0.0f ? 1.0f : -1.0f;
+            float s = camBack.y >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(0, s, 0);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 0, 1);
             break;
         }
         case 2: {
-            float s = dot(camBack, frame.axis2) >= 0.0f ? 1.0f : -1.0f;
+            float s = camBack.z >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(0, 0, s);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 1, 0);
