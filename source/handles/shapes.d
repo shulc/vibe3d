@@ -93,7 +93,26 @@ private:
 
 public:
     // Called once per frame to render the overlay into the 3-D view.
-    void draw(const ref Shader shader, const ref Viewport vp) {}
+    final void draw(const ref Shader shader, const ref Viewport vp) {
+        auto handleDrawScope = g_fc.handleDraw(drawIdentity());
+        drawImpl(shader, vp);
+    }
+
+    /// Opaque per-process identity used to join registration to submission.
+    size_t drawIdentity() const {
+        ulong z = cast(ulong)cast(size_t)cast(const(void)*)this;
+        z += 0x9e3779b97f4a7c15UL;
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9UL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebUL;
+        z ^= z >> 31;
+        const size_t mixed = cast(size_t)z;
+        return mixed != 0 ? mixed : 1;
+    }
+
+protected:
+    void drawImpl(const ref Shader shader, const ref Viewport vp) {}
+
+public:
 
     // Mouse events — return true to consume (stops further processing).
     bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
@@ -321,7 +340,7 @@ class Arrow : ShaftedArrow {
         headVao = buildVao3f(coneData, headVbo);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = end - start;
@@ -441,7 +460,7 @@ class CubicArrow : ShaftedArrow {
         headVao = buildVao3f(cubeData, headVbo);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = end - start;
@@ -495,6 +514,7 @@ class CubicArrow : ShaftedArrow {
 
     void drawHeadOnly(const ref Shader shader, const ref Viewport vp)
     {
+        auto handleDrawScope = g_fc.handleDraw(drawIdentity());
         if (!visible) return;
         Vec3 dir = end - start;
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
@@ -625,7 +645,7 @@ public:
         glDeleteBuffers(1, &arcVbo);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
@@ -749,7 +769,7 @@ public:
         glDeleteBuffers(1, &arcVbo);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
@@ -1007,7 +1027,7 @@ class MoveHandler : Handler {
             !planeHandleHidden(axisX, axisZ, center, vp));
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         updateGeometry(vp);
         circleXY.draw(shader, vp);
@@ -1215,7 +1235,7 @@ class RotateHandler : Handler {
         arcZ.setVisible(!rotateRingHidden(axisZ, center, vp));
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         updateGeometry(vp);
         bgCircle.draw(shader, vp);
@@ -1269,7 +1289,7 @@ public:
         glDeleteBuffers(1, &vbo);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         // `selected` marks a handle the owning tool has made CURRENT (the only
@@ -1492,7 +1512,7 @@ public:
         return projectToWindowFull(center, vp, sx, sy, ndcZ);
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
@@ -1590,7 +1610,7 @@ class CenterDiskGizmo : Handler {
     Vec3  normal;  // camera forward, updated each frame
     float radius;
 
-    override void draw(const ref Shader shader, const ref Viewport vp) {
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp) {
         if (!visible) return;
 
         enum SEGS = 32;
@@ -1634,6 +1654,10 @@ class CenterDiskGizmo : Handler {
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
         dl.AddPolyline(pts.ptr, SEGS, outlineCol, ImDrawFlags.Closed, 1.5f);
+        // This ImGui path has no GL call, so it writes the per-pass receipt
+        // explicitly without touching `lastScene.pass.handles.calls`. task
+        // 5480 asserts the intended 1 receipt / 0 GL-call disagreement.
+        g_fc.noteHandleSubmission();
     }
 
     override bool hitTest(int mx, int my, const ref Viewport vp) {
@@ -1885,7 +1909,7 @@ class ScaleHandler : Handler {
         circleXZ.setVisible(!planeHandleHidden(axisX, axisZ, center, vp));
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         updateGeometry(vp);
         if (!uniformMode) {
@@ -1964,7 +1988,7 @@ public:
     void setColor(Vec3 c)      { color = c; }
     void setWorldSize(float s) { worldSize = s; }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    protected override void drawImpl(const ref Shader shader, const ref Viewport vp)
     {
         if (!built) buildVao();
 

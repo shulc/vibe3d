@@ -1456,12 +1456,27 @@ struct PassCount {
     long verts;
 }
 
+/// Fixed receipt capacity for one completed handle pass. Overflow is counted,
+/// never silently truncated.
+enum size_t kMaxHandleReceipts = 64;
+
+/// Last completed handle pass. `writes` counts raw submissions; `submitted`
+/// counts distinct opaque handle identities stored in `ids`.
+struct HandlePassRecord {
+    long generation;
+    long writes;
+    long submitted;
+    long receiptsDropped;
+    size_t[kMaxHandleReceipts] ids;
+}
+
 /// One frame's deterministic work record. Every field is a COUNT. There is
 /// deliberately no time field — see the header.
 struct FrameWork {
     long seq;                 /// frame ordinal since the last reset (1-based)
     long cellsConsidered;     /// viewport cells the N-cell render loop looked at
     long cellsRendered;       /// cells whose dirty key actually fired a scene render
+    long handlePasses;        /// completed tool-overlay handle passes
     long uploadCalls;         /// GpuMesh buffer (re)uploads issued this frame
     long uploadVerts;         /// mesh vertices those uploads covered
     long hoverPicks;          /// pick operations run (GPU ID-buffer pass
@@ -1494,6 +1509,22 @@ struct BackdropScope {
     ~this() { if (owner_ !is null) owner_.popBackdrop(); }
 }
 
+/// RAII boundary for one cell's handle-overlay pass.
+struct HandlePassScope {
+    private FrameWorkProbe* owner_;
+    @disable this(this);
+    ~this() { if (owner_ !is null) owner_.popHandlePass(); }
+}
+
+/// RAII identity for one leaf handle renderer. Restores the enclosing identity
+/// so non-Handler overlay primitives cannot inherit a receipt accidentally.
+struct HandleDrawScope {
+    private FrameWorkProbe* owner_;
+    private size_t priorId_;
+    @disable this(this);
+    ~this() { if (owner_ !is null) owner_.restoreHandleDraw(priorId_); }
+}
+
 /// Always-compiled per-frame work counters. Single-writer (main thread);
 /// read from the HTTP thread with the same benign, lock-free diagnostic
 /// contract as `g_perf`/`g_frames`.
@@ -1518,6 +1549,11 @@ struct FrameWorkProbe {
     private FrameWork last_;       // last committed frame, whatever it did
     private FrameWork lastScene_;  // last committed frame that rendered >=1 cell
     private FrameWork total_;      // cumulative since reset (seq = frame count)
+    private HandlePassRecord lastHandlePass_;
+    private HandlePassRecord inFlightHandlePass_;
+    private size_t curHandleId_;
+    private long handlePassSeq_;
+    private int handlePassDepth_;
 
     // ---- frame lifecycle -------------------------------------------------
 
@@ -1548,6 +1584,7 @@ struct FrameWorkProbe {
 
         total_.cellsConsidered   += cur_.cellsConsidered;
         total_.cellsRendered     += cur_.cellsRendered;
+        total_.handlePasses      += cur_.handlePasses;
         total_.uploadCalls       += cur_.uploadCalls;
         total_.uploadVerts       += cur_.uploadVerts;
         total_.hoverPicks        += cur_.hoverPicks;
@@ -1571,6 +1608,11 @@ struct FrameWorkProbe {
     /// Record one GL draw submission covering `verts` vertices.
     /// `verts` is the count argument handed to glDrawArrays/glDrawElements —
     /// vertices SUBMITTED, not triangles and not pixels.
+    ///
+    /// `lastScene.pass.handles.calls` is the GL-only per-frame authority.
+    /// `handlePass` is the per-pass identity receipt authority and additionally
+    /// sees the ImGui centre disc through its explicit writer; their deliberate
+    /// disagreement is asserted by task 5480's uniform and Move cells.
     void draw(DrawPass p, long verts) {
         if (backdropDepth_ > 0) {
             if (p == DrawPass.faces) p = DrawPass.bgFaces;
@@ -1578,7 +1620,57 @@ struct FrameWorkProbe {
         }
         cur_.pass[p].calls++;
         cur_.pass[p].verts += verts;
+        if (p == DrawPass.handles && verts > 0)
+            noteHandleSubmission();
     }
+
+    /// Open one completed-pass record. The in-flight buffer is cleared here,
+    /// not at the frame boundary, so two cells never accumulate receipts.
+    HandlePassScope handlePass() return {
+        ++handlePassSeq_;
+        ++handlePassDepth_;
+        inFlightHandlePass_ = HandlePassRecord.init;
+        inFlightHandlePass_.generation = handlePassSeq_;
+        ++cur_.handlePasses;
+        HandlePassScope s;
+        s.owner_ = &this;
+        return s;
+    }
+
+    /// Open one leaf identity. The identity is opaque outside this process.
+    HandleDrawScope handleDraw(size_t id) return {
+        HandleDrawScope s;
+        s.owner_ = &this;
+        s.priorId_ = curHandleId_;
+        curHandleId_ = id;
+        return s;
+    }
+
+    /// Record a non-GL handle submission (the ImGui centre disc).
+    void noteHandleSubmission() {
+        if (handlePassDepth_ <= 0 || curHandleId_ == 0) return;
+        ++inFlightHandlePass_.writes;
+        foreach (id; inFlightHandlePass_.ids[0 ..
+                 cast(size_t)inFlightHandlePass_.submitted])
+            if (id == curHandleId_) return;
+        if (inFlightHandlePass_.submitted < kMaxHandleReceipts) {
+            inFlightHandlePass_.ids[
+                cast(size_t)inFlightHandlePass_.submitted++] = curHandleId_;
+        } else {
+            ++inFlightHandlePass_.receiptsDropped;
+        }
+    }
+
+    /// Internal: close one handle pass. An HTTP reset can zero the depth while
+    /// this scope is alive, so the decrement has the same mandatory floor as
+    /// `popBackdrop`; without it the next pass can silently lose all receipts.
+    void popHandlePass() {
+        if (handlePassDepth_ > 0) --handlePassDepth_;
+        lastHandlePass_ = inFlightHandlePass_;
+    }
+
+    /// Internal: restore the enclosing leaf identity.
+    void restoreHandleDraw(size_t priorId) { curHandleId_ = priorId; }
 
     /// Open a backdrop redirect for the enclosing scope.
     BackdropScope backdrop() return {
@@ -1620,6 +1712,11 @@ struct FrameWorkProbe {
         lastScene_ = FrameWork.init;
         total_ = FrameWork.init;
         backdropDepth_ = 0;
+        lastHandlePass_ = HandlePassRecord.init;
+        inFlightHandlePass_ = HandlePassRecord.init;
+        curHandleId_ = 0;
+        handlePassSeq_ = 0;
+        handlePassDepth_ = 0;
         allocBase_ = allocatedNow();
     }
 
@@ -1636,6 +1733,14 @@ struct FrameWorkProbe {
 
     /// By-value cumulative totals since reset (`seq` = frames committed).
     FrameWork totals() const { return total_; }
+
+    /// By-value copy of the last completed handle pass.
+    HandlePassRecord lastHandlePass() const { return lastHandlePass_; }
+
+    /// Registration stamps are meaningful only while their pass is open.
+    long currentHandlePassGeneration() const {
+        return handlePassDepth_ > 0 ? handlePassSeq_ : 0;
+    }
 
     /// JSON: `{"frames":N,"lastScene":{...},"last":{...},"totals":{...}}`.
     /// Live in EVERY build — this endpoint is not a "{}" stub.
@@ -1660,12 +1765,14 @@ struct FrameWorkProbe {
         const scene = lastScene_;
         const lastF = last_;
         const tot   = total_;
+        const hp    = lastHandlePass_;
         auto app = appender!string();
         app.put(`{"frames":`);
         putLong(app, tot.seq);
         app.put(`,"lastScene":`); putWork(app, scene);
         app.put(`,"last":`);      putWork(app, lastF);
         app.put(`,"totals":`);    putWork(app, tot);
+        app.put(`,"handlePass":`); putHandlePass(app, hp);
         app.put("}");
         return app.data;
     }
@@ -1679,6 +1786,7 @@ struct FrameWorkProbe {
         app.put(`{"seq":`);              putLong(app, w.seq);
         app.put(`,"cellsConsidered":`);  putLong(app, w.cellsConsidered);
         app.put(`,"cellsRendered":`);    putLong(app, w.cellsRendered);
+        app.put(`,"handlePasses":`);     putLong(app, w.handlePasses);
         app.put(`,"drawCalls":`);        putLong(app, w.drawCalls);
         app.put(`,"drawVerts":`);        putLong(app, w.drawVerts);
         app.put(`,"uploadCalls":`);      putLong(app, w.uploadCalls);
@@ -1698,6 +1806,23 @@ struct FrameWorkProbe {
             app.put("}");
         }}
         app.put("}}");
+    }
+
+    private static void putHandlePass(A)(ref A app,
+                                         const ref HandlePassRecord r) {
+        import std.format : formattedWrite;
+        app.put(`{"generation":`);       putLong(app, r.generation);
+        app.put(`,"writes":`);           putLong(app, r.writes);
+        app.put(`,"submitted":`);        putLong(app, r.submitted);
+        app.put(`,"receiptsDropped":`);  putLong(app, r.receiptsDropped);
+        app.put(`,"ids":[`);
+        foreach (i, id; r.ids[0 .. cast(size_t)r.submitted]) {
+            if (i > 0) app.put(",");
+            app.put(`"`);
+            formattedWrite(app, "%016x", id);
+            app.put(`"`);
+        }
+        app.put("]}");
     }
 }
 

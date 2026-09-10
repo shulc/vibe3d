@@ -3,6 +3,9 @@ module handles.arbiter;
 import handles.shapes;
 
 import std.conv : to;
+import std.format : format;
+
+import perf_probe : g_fc;
 
 import ai.advisor : AiAdvisor;
 import ai.debug_trace : publishHandleDebugTrace;
@@ -95,6 +98,7 @@ class ToolHandles {
     private int lastDefaultPart = -1;
     private bool aiHoverPreviewEnabled;
     private AiHoverPreviewPredicate aiHoverPreviewPredicate;
+    private long drawGeneration_;
 
     // ε-exploration silent-hover flag (task 0033, Phase 3).  When true,
     // update() still calls test() (so aiCandidates / handleCandidates() fill
@@ -116,6 +120,7 @@ class ToolHandles {
         secondaryDefault = -1;
         lastDefaultPart = -1;
         suppressed = false;
+        drawGeneration_ = g_fc.currentHandlePassGeneration();
     }
 
     // Force every registered handle to Normal for this frame, ignoring hover
@@ -249,8 +254,9 @@ class ToolHandles {
     // Keep this on the main thread. The rule to carry away: marshal a read
     // whose backing state is REBUILT PER FRAME, not merely one that mutates.
     //
-    // Shape: {"parts":[{part,state,visible,screen:[sx,sy]|null}, ...],
-    //         "hot":N, "captured":N, "secondaryDefault":N}
+    // Shape: {"parts":[{part,state,visible,drawId,screen:[sx,sy]|null}, ...],
+    //         "hot":N, "captured":N, "secondaryDefault":N,
+    //         "drawGeneration":N}
     // `screen` is null when the handle has no `screenAnchor` override or its
     // anchor point is off-camera. Draw-only (unregistered) handles never
     // appear here — matches the arbiter's own contract (only `add()`-ed
@@ -262,6 +268,7 @@ class ToolHandles {
             obj["part"]    = JSONValue(e.part);
             obj["state"]   = JSONValue(handleStateToString(e.h.getState()));
             obj["visible"] = JSONValue(e.h.isVisible());
+            obj["drawId"]  = JSONValue(format("%016x", e.h.drawIdentity()));
             float sx, sy;
             obj["screen"] = e.h.screenAnchor(vp, sx, sy)
                 ? JSONValue([JSONValue(sx), JSONValue(sy)])
@@ -273,6 +280,7 @@ class ToolHandles {
         root["hot"]              = JSONValue(hot);
         root["captured"]         = JSONValue(captured);
         root["secondaryDefault"] = JSONValue(secondaryDefault);
+        root["drawGeneration"]    = JSONValue(drawGeneration_);
         return root;
     }
 

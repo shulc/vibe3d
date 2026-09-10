@@ -97,6 +97,10 @@ private class ScaleHeadHandle : Handler {
         target.setState(s);
     }
 
+    override size_t drawIdentity() const {
+        return target.drawIdentity();
+    }
+
     override protected bool hitTest(int mx, int my, const ref Viewport vp) {
         return aiScreenDistance(mx, my, vp) < GIZMO_PICK_SCALE_HEAD_PX;
     }

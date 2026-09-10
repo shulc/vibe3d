@@ -184,6 +184,7 @@ private:
     package void drawToolOverlays(ToolOverlayInputs inputs, OverlayMode mode,
                                   ref Viewport viewport, Shader shader) {
         if (mode == OverlayMode.None) return;
+        auto handlePassScope = g_fc.handlePass();
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         bool visualOnly = (mode == OverlayMode.Visual);
         if (inputs.activeTool) {
