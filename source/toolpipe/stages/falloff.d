@@ -735,7 +735,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             && g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght).length > 1;
         if (stacked)
             ps ~= Param.intEnum_("mix", "Mix",
-                                 cast(int*)&config.mix, mixEntries,
+                                 &config.mix, mixEntries,
                                  cast(int)FalloffMix.Multiply);
 
         // Shape preset — the weight-curve shape (Linear / Ease-In / Ease-Out /
@@ -753,7 +753,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         // per-type field.
         if (type != FalloffType.Screen && type != FalloffType.Selection) {
             ps ~= Param.intEnum_("shape", "Shape Preset",
-                                 cast(int*)&config.shape, shapeEntries,
+                                 &config.shape, shapeEntries,
                                  cast(int)FalloffShape.Linear);
 
             // In/Out tangent params are Custom-shape-only.
@@ -784,7 +784,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
                 break;
             case FalloffType.Lasso:
                 ps ~= Param.intEnum_("lassoStyle", "Lasso Style",
-                                     cast(int*)&config.lassoStyle, lassoEntries,
+                                     &config.lassoStyle, lassoEntries,
                                      cast(int)LassoStyle.Freehand);
                 ps ~= Param.float_("softBorder", "Soft Border", &config.softBorderPx, 16.0f);
                 break;
@@ -798,11 +798,11 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
                 // pick type (auto / vertex / edge / polygon).
                 // The `falloff.element` `mode` UI dropdown.
                 ps ~= Param.intEnum_("mode", "Element Mode",
-                                     cast(int*)&config.elementMode, elementModeEntries,
+                                     &config.elementMode, elementModeEntries,
                                      cast(int)ElementMode.Auto);
                 ps ~= Param.float_("dist", "Range", &config.pickedRadius, 1.0f).min(1e-6f);
                 ps ~= Param.intEnum_("connect", "Connected Elements",
-                                     cast(int*)&config.connect, elementConnectEntries,
+                                     &config.connect, elementConnectEntries,
                                      cast(int)ElementConnect.Ignore);
                 break;
             case FalloffType.Selection:

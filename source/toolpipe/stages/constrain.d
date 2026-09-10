@@ -523,7 +523,7 @@ public:
     override Param[] fullParams() {
         return [
             Param.bool_("enabled", "Enabled", &enabled, false),
-            Param.intEnum_("geometry", "Mode", cast(int*)&geom,
+            Param.intEnum_("geometry", "Mode", &geom,
                 constrainGeomEntries, cast(int)ConstrainGeom.Point),
             Param.float_("offset",   "Offset",    &offset,   0.0f),
             Param.bool_("handle",    "Handle",    &handle,    true),

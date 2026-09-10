@@ -298,7 +298,7 @@ public:
             Param.bool_("split", "Split Polygons", &split_, true),
             Param.bool_("middle", "Split at Middle", &middle_, false),
             Param.float_("snap", "Snap Value", &snap_, 0.5f).min(0.0f),
-            Param.intEnum_("show", "Show", cast(int*)&show_, showTable, cast(int)Show.Position),
+            Param.intEnum_("show", "Show", &show_, showTable, cast(int)Show.Position),
         ];
     }
 

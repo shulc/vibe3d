@@ -408,17 +408,18 @@ struct Param {
         return p;
     }
 
-    // Int-backed enum: the D enum is stored as int in *storage; wire format
-    // and UI use the wireTag / userLabel from each IntEnumEntry.
-    // Cast: `cast(int*)&myEnumField` works for any int-backed D enum.
-    static Param intEnum_(string name, string label, int* storage,
-                          const(IntEnumEntry)[] values, int default_)
+    // Int-backed enum: keep the original storage type until the width check;
+    // wire format and UI use each IntEnumEntry's wireTag / userLabel.
+    static Param intEnum_(T)(string name, string label, T* storage,
+                             const(IntEnumEntry)[] values, int default_)
     {
+        static assert(T.sizeof == int.sizeof,
+            "Param.intEnum_ storage must be int-sized");
         Param p;
         p.name           = name;
         p.label          = label;
         p.kind           = Kind.IntEnum;
-        p.iePtr          = storage;
+        p.iePtr          = cast(int*) storage;
         p.intEnumValues  = values;
         p.default_.i     = default_;
         return p;

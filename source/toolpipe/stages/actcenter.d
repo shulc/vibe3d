@@ -690,7 +690,7 @@ public:
         if (mode == Mode.None) return [];
         Param[] ps;
         ps ~= Param.intEnum_("mode", "Action Center",
-                             cast(int*)&mode, modeEntries,
+                             &mode, modeEntries,
                              cast(int)Mode.None);
         return ps;
     }

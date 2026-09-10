@@ -338,9 +338,9 @@ bool falloffTypeFromName(string name, out FalloffType type) {
 /// Wire keys (used by `tool.pipe.attr falloff mix <key>`): multiply / add
 /// / subtract / max / min.
 ///
-/// Int-backed (NOT ubyte) so the FalloffStage Tool-Properties dropdown can
-/// bind it via `Param.intEnum_(cast(int*)&mix, ...)` — that helper takes an
-/// `int*` and writes 4 bytes through it, so the field must be int-sized.
+/// Int-backed so the FalloffStage Tool-Properties dropdown can bind it via
+/// `Param.intEnum_(&mix, ...)`, whose compile-time contract requires
+/// int-sized storage.
 enum FalloffMix : int {
     Multiply = 0,   // accum * w   (default)
     Add      = 1,   // accum + w
@@ -371,7 +371,7 @@ enum FalloffMix : int {
 /// All three implemented modes use the same BFS over `mesh.edges` to
 /// build the connected-component mask; they differ only in how the gate
 /// shapes the weight (UseConnectivity attenuates, Rigid forces 1).
-enum ElementConnect : ubyte {
+enum ElementConnect : int {
     Ignore          = 0,
     UseConnectivity = 1,
     Rigid           = 2,
@@ -391,7 +391,7 @@ enum ElementConnect : ubyte {
 /// element's geometric centre (vertex position, edge midpoint, face
 /// centroid). Values kept non-contiguous for byte-stability with
 /// serialised data (integers 1, 4, 6 are retired and must not be reused).
-enum ElementMode : ubyte {
+enum ElementMode : int {
     Auto    = 0,
     Vertex  = 2,
     Edge    = 3,
@@ -407,7 +407,7 @@ enum ElementMode : ubyte {
 ///   EaseOut → (1 - t)²                 stronger near zero-influence
 ///   Smooth  → 1 - smoothstep(t)        S-curve
 ///   Custom  → cubic Bézier via in_/out_ control coords
-enum FalloffShape : ubyte {
+enum FalloffShape : int {
     Linear  = 0,
     EaseIn  = 1,
     EaseOut = 2,
@@ -418,7 +418,7 @@ enum FalloffShape : ubyte {
 /// Lasso shape — the "Style" property in the lasso falloff panel.
 /// Freehand stores an arbitrary polygon in `lassoPolyX/Y`; the other
 /// three styles are 2-corner shapes computed on the fly.
-enum LassoStyle : ubyte {
+enum LassoStyle : int {
     Freehand  = 0,
     Rectangle = 1,
     Circle    = 2,
@@ -799,8 +799,8 @@ struct SymmetryPacket {
 ///             assumptions: nearest-foot vs camera-ray, and per-vertex vs
 ///             per-delta application).
 ///
-/// Int-backed so an IntEnum Param / dropdown can bind it the same way
-/// FalloffMix is (cast(int*)&geom).
+/// Int-backed so an IntEnum Param / dropdown can bind directly to `&geom`,
+/// matching FalloffMix's int-sized storage contract.
 enum ConstrainGeom : int {
     Off    = 0,
     Screen = 1,

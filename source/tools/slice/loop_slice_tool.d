@@ -635,8 +635,8 @@ public:
             // `MAX_LOOP_SLICE_COUNT` apply-time cap.
             Param.int_("count", "Count", &count_, 1).min(1).max(256).enforceBounds(),
             Param.int_("current", "Current", &current_, 0).min(0).transient(),
-            Param.intEnum_("edit", "Edit", cast(int*)&edit_, editTable, cast(int)Edit.Move),
-            Param.intEnum_("mode", "Mode", cast(int*)&mode_, modeTable, cast(int)Mode.Uniform),
+            Param.intEnum_("edit", "Edit", &edit_, editTable, cast(int)Edit.Move),
+            Param.intEnum_("mode", "Mode", &mode_, modeTable, cast(int)Mode.Uniform),
             Param.float_("insertAt", "Insert At", &insertAt_, 0.5f)
                  .min(0.001f).max(0.999f).transient(),
             Param.bool_("removeCurrent", "Remove Current", &removeTrigger_, false).transient(),
@@ -657,7 +657,7 @@ public:
             // curve (Flat = default, byte-for-byte the flat cut); `depth` is the
             // reference "Inset" (default 0 per spec.json — a non-flat profile still
             // lands flat until Inset is raised). See the field + registry comments.
-            Param.intEnum_("profile", "Profile", cast(int*)&profile_,
+            Param.intEnum_("profile", "Profile", &profile_,
                            loopProfileTable, cast(int)LoopProfile.Flat),
             Param.float_("depth", "Inset", &depth_, 0.0f),
             // Reverse Direction (task 0257): mirror the 1D profile along the cut

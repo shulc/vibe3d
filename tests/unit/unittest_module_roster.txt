@@ -337,6 +337,7 @@ tests.unit.operator_test
 tests.unit.overlay_space_test
 tests.unit.param_cast_overflow_test
 tests.unit.param_change_orchestration_test
+tests.unit.param_int_enum_width_test
 tests.unit.params_test
 tests.unit.parity_capture_key_census_test
 tests.unit.path_test
