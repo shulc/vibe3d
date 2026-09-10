@@ -407,10 +407,9 @@ public:
     /// `mode`. `out[k] == true` iff the k-th VBO entry (vertex /
     /// edge segment / face) has at least one non-zero pixel in the
     /// FBO — i.e. it survives the depth pre-pass and is rasterised
-    /// somewhere in the viewport. Used by the lasso path in
-    /// `app.d` to gate per-element CPU work on visibility WITHOUT
-    /// triggering the O(V × F\_front) CPU occlusion test that
-    /// `Mesh.visibleVertices` does. Costs one full-viewport
+    /// somewhere in the viewport. Retained as an ID-buffer query utility;
+    /// region selection deliberately cannot use it because a pixel stores
+    /// only one element ID. Costs one full-viewport
     /// `glReadPixels` plus an O(viewport-pixels) scan — typically a
     /// few ms regardless of mesh size.
     ///

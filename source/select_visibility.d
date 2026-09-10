@@ -25,10 +25,10 @@ import display_state : DrawPlan;
 // that is not on screen. `drawFaces` is that fact, resolved once, on the
 // rendering side.
 //
-// CONSUMED TODAY — `occlusionTerm` only, by the ID-buffer picker
+// CONSUMED TODAY — `occlusionTerm` by the ID-buffer picker
 // (`gpu_select.renderMode` runs its face depth pre-pass only when the term is
-// set) and therefore by hover, click, paint and the lasso's vertex/edge half.
-// See `facingTerm`'s own comment below for the rest.
+// set) for hover, click and paint, and by the lasso's independent geometric
+// occlusion probe. See `facingTerm`'s own comment below for the rest.
 // ---------------------------------------------------------------------------
 
 /// The five values of the selection-visibility rule.
@@ -72,7 +72,8 @@ struct SelectVisibilityTerms {
     /// `DrawPlan.wireColor` documents.
     bool facingTerm;
     /// Let the drawn surface hide what is behind it. Consumed by the
-    /// ID-buffer picker's face depth pre-pass.
+    /// ID-buffer picker's face depth pre-pass and the region gesture's
+    /// geometric occlusion probe.
     bool occlusionTerm;
 }
 

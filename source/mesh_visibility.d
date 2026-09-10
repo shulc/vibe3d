@@ -36,7 +36,7 @@ module mesh_visibility;
 
 import mesh : Mesh;
 import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
-              frontFacingLocal, pointInPolygon2D;
+              frontFacingLocal, pointInPolygon2D, closestOnSegment2DSquared;
 import perf_probe : g_perf, Cat;
 import screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
                         OCCL_CELL_PX, MAX_OCCL_BUCKET_INTS;
@@ -167,6 +167,7 @@ struct VisibilityProbe {
         // only the count of pairs tested moves.
         ScreenBuckets buckets_;
         float    domPad_;
+        bool     openOccluderBoundary_;
         version (unittest) float vpX_, vpY_, vpW_, vpH_;
     }
 
@@ -317,6 +318,25 @@ struct VisibilityProbe {
                 scratchX_[i] = vsx_[vk];
                 scratchY_[i] = vsy_[vk];
             }
+            // A region candidate on a projected polygon boundary is not
+            // behind that polygon. `pointInPolygon2D` deliberately has the
+            // usual asymmetric ray-crossing boundary result, so make this
+            // region-only rule explicit before asking about the interior.
+            if (openOccluderBoundary_) {
+                bool onBoundary = false;
+                foreach (i; 0 .. face.length) {
+                    immutable size_t k = (i + 1) % face.length;
+                    float segmentT;
+                    if (closestOnSegment2DSquared(
+                            vsxi, vsyi,
+                            scratchX_[i], scratchY_[i],
+                            scratchX_[k], scratchY_[k], segmentT) <= 1.0e-6f) {
+                        onBoundary = true;
+                        break;
+                    }
+                }
+                if (onBoundary) continue;
+            }
             if (!pointInPolygon2D(vsxi, vsyi,
                                   scratchX_[0 .. face.length],
                                   scratchY_[0 .. face.length])) continue;
@@ -351,7 +371,7 @@ struct VisibilityProbe {
     }
 }
 
-/// Build the visibility probe: passes 0 and 1 of the old
+/// Build the visibility probe core: passes 0 and 1 of the old
 /// `visibleVertices`, with pass 2 left to `VisibilityProbe.visible`.
 ///
 /// `queryPadPx` widens the pixel domain the probe expects to be asked
@@ -364,9 +384,12 @@ struct VisibilityProbe {
 ///
 /// FORMER `Mesh` member, `const`-qualified; `m` is that `this`, made
 /// explicit for the free-function move (task 3230, plan 2910 step 2).
-VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye, const ref Viewport vp,
-                                const ModelSpace ms,
-                                float queryPadPx = 80.0f) {
+private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
+                                              const ref Viewport vp,
+                                              const ModelSpace ms,
+                                              float queryPadPx,
+                                              bool seedEveryCandidate,
+                                              bool openOccluderBoundary) {
     import math : projectToWindowFull, projectionSpace, ModelSpace,
                   frontFacingLocal;
     import std.math : isFinite;
@@ -423,6 +446,13 @@ VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye, const ref Viewport v
     p.vsy_     = new float[](m.vertices.length);
     p.vsValid_ = new bool [](m.vertices.length);
     p.seed_    = new bool [](m.vertices.length);
+    p.openOccluderBoundary_ = openOccluderBoundary;
+    // Snap asks only about vertices owned by a drawn, front-facing surface,
+    // while a region gesture asks about EVERY independently projected
+    // candidate, including loose and back-side vertices.  The latter must not
+    // be rejected merely because no face seeded it: that would be a second,
+    // unmeasured facing/ownership term before the actual occlusion predicate.
+    if (seedEveryCandidate) p.seed_[] = true;
     foreach (vi, q; m.vertices) {
         float sx, sy, ndcZ;
         if (projectToWindowFull(q, vpLocal, sx, sy, ndcZ)) {
@@ -555,6 +585,25 @@ VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye, const ref Viewport v
         OCCL_CELL_PX, MAX_OCCL_BUCKET_INTS);
     if (!p.buckets_.built) g_perf.count(Cat.snapVisGridBail, 1);
     return p;
+}
+
+/// Snap visibility: only vertices owned by a front-facing drawn face enter
+/// the candidate set.  The default query pad is part of the existing snap
+/// broad-phase contract.
+VisibilityProbe visibilityProbe(const ref Mesh m, Vec3 eye,
+                                const ref Viewport vp, const ModelSpace ms,
+                                float queryPadPx = 80.0f) {
+    return buildVisibilityProbe(m, eye, vp, ms, queryPadPx, false, false);
+}
+
+/// Region-gesture occlusion (task 5270): every vertex is an independent
+/// candidate; faces only decide whether another surface hides it.  This keeps
+/// lasso membership separate from per-pixel ID ownership.  Evidence:
+/// `toolcards/lasso_coincident_pixel/fixture_lasso_coincident_pixel.json`.
+VisibilityProbe regionVisibilityProbe(const ref Mesh m, Vec3 eye,
+                                      const ref Viewport vp,
+                                      const ModelSpace ms) {
+    return buildVisibilityProbe(m, eye, vp, ms, 80.0f, true, true);
 }
 
 // Task 0617 Stage 4: `ms` is the caller's `ModelSpace` for THIS mesh

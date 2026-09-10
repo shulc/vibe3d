@@ -140,6 +140,7 @@ import ai.interaction_log   : makeAiInteractionLogRecord;
 // bodies' publish). None of them imports this module back.
 import imgui_event_gate     : feedImGui, keyBelongsToEditor;
 import item_pick            : ItemHit;
+import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
 
 /// The input-router cluster (task 0781). Constructed once in main() after
 /// EditorApp's own wiring, and threaded the same way ToolHost/vpm/etc.
@@ -1146,14 +1147,13 @@ struct InputRouter {
                 // ---------------------------------------------------------
                 // Task 0617 Stage 3 (doc/picking_item_transform_plan.md):
                 // this block used to project RAW LOCAL vertices while Stage 1
-                // made the GPU occlusion probes below (`elementVisibility`,
-                // `endpointVisibleEdgeFbo`) render at the layer's DRAWN pose
-                // — a split-brain that made edge/vertex/face lasso select
-                // NOTHING on a primary with a non-identity `ItemXform` (the
-                // two tests agreed only at identity). Fixed by composing the
-                // item transform into exactly ONE local-space viewport
+                // made the occlusion probe below evaluate at the layer's
+                // DRAWN pose — a split-brain that made edge/vertex/face lasso
+                // select NOTHING on a primary with a non-identity `ItemXform`
+                // (the two tests agreed only at identity). Fixed by composing
+                // the item transform into exactly ONE local-space viewport
                 // (`vpLocal`, below) and routing every geometry test in this
-                // block through it. The occlusion probes and the
+                // block through it. The occlusion probe and the
                 // `symmetricSelect*` calls keep seeing the WORLD viewport
                 // (`vpWorld`) unmodified: they compose `ms` internally, or
                 // anchor on local mesh coordinates themselves, so handing
@@ -1247,37 +1247,11 @@ struct InputRouter {
                     // on top flipped a right answer wrong under a mirror.
                     return frontFacingLocal(vertsLocal, ring, vpLocal.eye);
                 }
-                // GPU-pick-buffer-driven visibility for the lasso.
-                // doc/lasso_gpu_pick_buffer_fix.md — replaces the old
-                // CPU `Mesh.visibleVertices` occlusion test that was
-                // O(V × F\_front) (multi-minute hang on heavy imports;
-                // mitigated by a 4 K-vert threshold that disabled
-                // occlusion entirely). The per-mode ID FBO that
-                // `gpuSelect.pick(...)` already maintains for hover
-                // selection bakes occlusion via its depth pre-pass;
-                // reading it back gives per-VBO-entry visibility in
-                // ~ms regardless of mesh size. We keep the strict
-                // "all face verts inside polygon" / "both edge ends
-                // inside" CPU lasso semantic (preserves the existing
-                // test_lasso_select.d behaviour) — only the visibility
-                // source changes.
-                import gpu_select : SelectMode;
-                SelectMode vbMode;
-                final switch (app.editMode) {
-                    case EditMode.Vertices: vbMode = SelectMode.Vertex; break;
-                    case EditMode.Edges:    vbMode = SelectMode.Edge;   break;
-                    case EditMode.Polygons: vbMode = SelectMode.Face;   break;
-                }
-                app.ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
-
                 // Task 1730 — the fourth `*OriginGpu` reader, and the one the
-                // M-INV comment below already describes the danger of. While a
-                // rebuild is in flight the VBOs hold a limit surface built
-                // against the PREVIOUS cage, so `gpuVisible` — keyed by
-                // preview face index — would be read as a cage index by the
-                // `preview == false` branch. That is the "answers with the
-                // WRONG element rather than crashing" case, stated three
-                // paragraphs down, arrived at from the other side.
+                // M-INV comment below already describes the danger of. While
+                // a rebuild is in flight the trace and preview mesh describe
+                // the previous cage, so walking them would answer with the
+                // WRONG element rather than crashing.
                 //
                 // The gate itself is on this block's own `if` above, NOT a
                 // `return` from here: `rmbPath = null` runs further down in
@@ -1296,11 +1270,9 @@ struct InputRouter {
 
                 // Selection visibility, resolved ONCE for this gesture
                 // (`select_visibility.d`). Under a display style that draws no
-                // faces the ID buffer carries no depth pre-pass, so
-                // `gpuVisible` marks everything that rasterised and the STRICT
-                // endpoint probes below stop rejecting far edges: the lasso
-                // picks vertices and edges THROUGH the model, exactly as click
-                // and paint now do.
+                // faces the geometric occlusion probe stays in its admits-all
+                // state, so the lasso picks vertices and edges THROUGH the
+                // model, exactly as click and paint now do.
                 //
                 // The polygon half of the lasso is deliberately UNCHANGED:
                 // `SelectMode.Face` never ran the pre-pass (the face pass is
@@ -1312,34 +1284,8 @@ struct InputRouter {
                 // resolve, and per-edge calls would put it inside the probe
                 // loop for no gain.
                 immutable bool occlTerm = app.vpm.pickVisibility().occlusionTerm;
-                // vpWorld + ms — gpuSelect composes `ms` internally (R10).
-                bool[] gpuVisible = app.gpuSelect.elementVisibility(
-                    vbMode, app.mesh, app.gpu, vpWorld, ms, occlTerm);
 
                 bool preview = app.subpatchPreview.active;
-                // ---- M-INV (task 1500), CONSUMER 1 of 2 ----------------
-                // ONE-SIDED, on purpose. `active` says the CPU side is in
-                // preview index space; `gpuUploadedPreview` says the VBOs —
-                // and `gpuVisible` below, which is keyed by PREVIEW face
-                // index — are too. The dangerous direction is exactly this
-                // one: a live trace against cage buffers reads someone
-                // else's visibility, or skips the check entirely past the
-                // mask's end, and answers with the WRONG element rather
-                // than crashing.
-                //
-                // The converse (`uploaded && !active`) is reachable TODAY
-                // and is legitimate: `deactivate()` runs from command hooks
-                // inside `tickAll`, i.e. mid events phase, and until the
-                // upload block runs the pair is split the SAFE way — the
-                // pick then goes through the cage, where `*OriginGpu` maps
-                // into the cage anyway. A two-sided assert would fire on
-                // every `/api/reset`.
-                //
-                // A plain `assert`, not `debug { }`: `-unittest` does not
-                // imply `-debug`, so a debug block would not even be
-                // compiled in the lane that is supposed to witness this.
-                if (preview) assert(app.gpuUploadedPreview,
-                    "lasso: preview trace is live but the VBOs still hold the cage");
                 // Phase 3c — preview.mesh.vertices may be stale after
                 // a fan-out-only drag; lasso needs fresh positions.
                 if (preview && app.subpatchPreview.lastRefreshSkipNonFace) {
@@ -1349,15 +1295,33 @@ struct InputRouter {
                 }
                 const pv = preview ? &app.subpatchPreview.mesh : null;
 
+                // Task 5270 — region candidates do not own pixels.  The lasso
+                // already decides membership geometrically (`insideLasso` /
+                // `projLocal` above), so visibility here answers ONLY whether
+                // a drawn face lies between the eye and each candidate.  The
+                // probe's screen buckets keep the exact per-candidate test
+                // sub-quadratic without collapsing coincident elements into a
+                // single ID.  Click/hover deliberately remain on gpuSelect's
+                // one-winner path.  Frozen evidence:
+                // `toolcards/lasso_coincident_pixel/fixture_lasso_coincident_pixel.json`.
+                VisibilityProbe regionVisible;
+                if (occlTerm) {
+                    if (preview)
+                        regionVisible = regionVisibilityProbe(
+                            *pv, vpWorld.eye, vpWorld, ms);
+                    else
+                        regionVisible = regionVisibilityProbe(
+                            app.mesh, vpWorld.eye, vpWorld, ms);
+                }
+
                 if (app.editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
                         app.mesh.clearFaceSelection();
                     if (preview) {
                         // Per cage face: every preview child that is
-                        // BOTH front-facing AND has at least one
-                        // visible pixel (per GPU FBO) must have all
-                        // its verts inside the lasso for the cage
-                        // face to be selected.
+                        // BOTH front-facing AND has at least one visible
+                        // vertex must have all its verts inside the lasso for
+                        // the cage face to be selected.
                         bool[] cageAllInside = new bool[](app.mesh.faces.length);
                         bool[] cageVisited   = new bool[](app.mesh.faces.length);
                         cageAllInside[] = true;
@@ -1370,19 +1334,18 @@ struct InputRouter {
                             // (`insideLasso`, `projLocal`) or a bare vertex
                             // RING (`frontFacing`, task 0832), never a face
                             // INDEX, so none of them can know what is hidden.
-                            // FACES keep their VBO slot (faceTriCount == 0,
-                            // R3), so `gpuVisible[fi]` below stays correctly
-                            // keyed and only this guard is needed.
                             if (app.mesh.isFaceHidden(cage)) continue;
                             auto face = pv.faces[fi];
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
                             if (!frontFacing(pv.vertices, face)) continue;
-                            // GPU visibility per PREVIEW face index.
-                            // faceIdVbo writes preview-face indices,
-                            // so `gpuVisible[fi]` is the right key.
-                            if (gpuVisible !is null
-                                && fi < gpuVisible.length
-                                && !gpuVisible[fi]) continue;
+                            bool anyVisible = false;
+                            foreach (vi; face) {
+                                if (regionVisible.visible(vi)) {
+                                    anyVisible = true;
+                                    break;
+                                }
+                            }
+                            if (!anyVisible) continue;
                             cageVisited[cage] = true;
                             foreach (vi; face) {
                                 if (!insideLasso(pv.vertices[vi])) {
@@ -1397,21 +1360,21 @@ struct InputRouter {
                                                 cast(int)fi, /*deselect=*/ctrl);
                         }
                     } else {
-                        // Cage mode — VBO entry IS cage face. faceIdVbo
-                        // writes cage face indices; `gpuVisible[fi]`
-                        // is direct.
                         foreach (fi; 0 .. app.mesh.faces.length) {
                             uint[] face = app.mesh.faces[fi];
                             if (face.length < 3) continue;
                             // Hide, branch 2/6. Same reasoning as the preview
-                            // branch above, and the same key: a hidden face
-                            // keeps its slot, so `fi` still indexes
-                            // `gpuVisible` correctly here.
+                            // branch above.
                             if (app.mesh.isFaceHidden(fi)) continue;
                             if (!frontFacing(app.mesh.vertices, face)) continue;
-                            if (gpuVisible !is null
-                                && fi < gpuVisible.length
-                                && !gpuVisible[fi]) continue;
+                            bool anyVisible = false;
+                            foreach (vi; face) {
+                                if (regionVisible.visible(vi)) {
+                                    anyVisible = true;
+                                    break;
+                                }
+                            }
+                            if (!anyVisible) continue;
                             bool allInside = true;
                             foreach (vi; face) {
                                 if (!insideLasso(app.mesh.vertices[vi])) {
@@ -1428,57 +1391,25 @@ struct InputRouter {
                 } else if (app.editMode == EditMode.Vertices) {
                     if (!shift && !ctrl)
                         app.mesh.clearVertexSelection();
-                    // gpuVisible is indexed by VBO entry — in cage
-                    // mode k == vertex idx; in subpatch mode k is
-                    // the kept-preview-vert position. Walk pv (or
-                    // mesh) vertices, count k as we go, gate on
-                    // gpuVisible[k].
                     if (preview) {
-                        size_t k = 0;
                         foreach (pi; 0 .. pv.vertices.length) {
                             uint cage = app.subpatchPreview.trace.vertOrigin[pi];
                             if (cage == uint.max) continue;
-                            // Hide, branch 3/6 — and note it sits BEFORE the
-                            // `++k`, not after. `k` is a VBO-slot counter and
-                            // `GpuMesh.upload` skips hidden vertices when it
-                            // fills that buffer (S3), so a guard placed after
-                            // the increment would leave `k` counting slots
-                            // that do not exist and shift every `gpuVisible`
-                            // lookup past the first hidden vertex. The
-                            // predicate is the PREVIEW mesh's, byte-for-byte
-                            // the one `upload` used (subpatch_osd stamps the
-                            // preview's Hide planes from the cage), because
-                            // matching the buffer is what keeps `k` honest.
+                            // Hide, branch 3/6. The predicate is the PREVIEW
+                            // mesh's: subpatch_osd stamps its Hide planes from
+                            // the cage.
                             if (pv.isVertexHidden(pi)) continue;
-                            scope(exit) ++k;
-                            if (gpuVisible !is null
-                                && k < gpuVisible.length
-                                && !gpuVisible[k]) continue;
+                            if (!regionVisible.visible(pi)) continue;
                             if (insideLasso(pv.vertices[pi])) {
                                 symmetricSelectVertex(&app.mesh(), vpWorld, app.editMode,
                                                       cast(int)cage, /*deselect=*/ctrl);
                             }
                         }
                     } else {
-                        // Hide, branch 4/6, and it is NOT just a `continue`:
-                        // this branch used to key `gpuVisible` by CAGE index,
-                        // which was right only while VBO slot == cage vertex.
-                        // S3 broke that identity — `upload` skips hidden
-                        // vertices — so the mask needs a SLOT key. `k` counts
-                        // kept vertices in the same order and by the same
-                        // predicate `upload` uses, which is exactly the shape
-                        // the preview branch above already had (R11 part 2).
-                        // Hiding vertex 0 is what tells the two apart: with the
-                        // cage key every later lookup reads its neighbour's
-                        // visibility, which selects a set of the RIGHT SIZE and
-                        // the WRONG MEMBERS.
-                        size_t k = 0;
+                        // Hide, branch 4/6.
                         foreach (vi; 0 .. app.mesh.vertices.length) {
                             if (app.mesh.isVertexHidden(vi)) continue;
-                            scope(exit) ++k;
-                            if (gpuVisible !is null
-                                && k < gpuVisible.length
-                                && !gpuVisible[k]) continue;
+                            if (!regionVisible.visible(vi)) continue;
                             if (insideLasso(app.mesh.vertices[vi])) {
                                 symmetricSelectVertex(&app.mesh(), vpWorld, app.editMode,
                                                       cast(int)vi, /*deselect=*/ctrl);
@@ -1490,50 +1421,31 @@ struct InputRouter {
                         app.mesh.clearEdgeSelection();
                     if (preview) {
                         // Per cage edge: every preview segment that
-                        // is visible (GPU FBO) must have both
-                        // endpoints inside lasso. VBO-segment-index
-                        // matches `pei` after kept-edge filtering;
-                        // walk pv.edges, count k as we go.
+                        // has both endpoints visible must have both endpoints
+                        // inside lasso.
                         bool[] cageAllInside = new bool[](app.mesh.edges.length);
                         bool[] cageVisited   = new bool[](app.mesh.edges.length);
                         cageAllInside[] = true;
-                        size_t k = 0;
                         foreach (pei; 0 .. pv.edges.length) {
                             uint cage = app.subpatchPreview.trace.edgeOrigin[pei];
                             if (cage == uint.max || cage >= app.mesh.edges.length) continue;
-                            // Hide, branch 5/6 — before the `++k`, for the
-                            // reason spelled out in the vertex/preview branch
-                            // above: `k` is a VBO segment index and `upload`
-                            // skips hidden edges when it fills that buffer.
+                            // Hide, branch 5/6.
                             if (pv.isEdgeHidden(pei)) continue;
-                            scope(exit) ++k;
-                            if (gpuVisible !is null
-                                && k < gpuVisible.length
-                                && !gpuVisible[k]) continue;
                             uint a = pv.edges[pei][0], b = pv.edges[pei][1];
+                            immutable bool aVisible = regionVisible.visible(a);
+                            immutable bool bVisible = regionVisible.visible(b);
+                            if (!aVisible && !bVisible) continue;
                             cageVisited[cage] = true;
+                            if (!aVisible || !bVisible) {
+                                cageAllInside[cage] = false;
+                                continue;
+                            }
                             float sxa, sya, sxb, syb;
                             if (!projLocal(pv.vertices[a], sxa, sya) ||
                                 !projLocal(pv.vertices[b], sxb, syb) ||
                                 !pointInPolygon2D(sxa, sya, pxs, pys) ||
                                 !pointInPolygon2D(sxb, syb, pxs, pys)) {
                                 cageAllInside[cage] = false;
-                            } else {
-                                // STRICT: both preview-segment endpoints must be
-                                // un-occluded in the Edge ID-FBO. The probe is
-                                // window-space / key-agnostic so no preview-to-cage
-                                // vertex mapping is needed (we are asking "any
-                                // surviving edge pixel near this window point").
-                                import std.math : lround;
-                                // vpWorld + ms — see the elementVisibility call above (R10).
-                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
-                                        cast(int)lround(sxa), cast(int)lround(sya),
-                                        app.gpu, vpWorld, ms, occlTerm) ||
-                                    !app.gpuSelect.endpointVisibleEdgeFbo(
-                                        cast(int)lround(sxb), cast(int)lround(syb),
-                                        app.gpu, vpWorld, ms, occlTerm)) {
-                                    cageAllInside[cage] = false;
-                                }
                             }
                         }
                         foreach (ei; 0 .. app.mesh.edges.length) {
@@ -1542,38 +1454,18 @@ struct InputRouter {
                                                 cast(int)ei, /*deselect=*/ctrl);
                         }
                     } else {
-                        // Hide, branch 6/6 — the edge twin of branch 4: skip
-                        // hidden edges AND re-key `gpuVisible` from the cage
-                        // index to the VBO segment index, which stopped being
-                        // the same number when `upload` started dropping
-                        // hidden edges (R11 part 2).
-                        size_t k = 0;
+                        // Hide, branch 6/6.
                         foreach (ei; 0 .. app.mesh.edges.length) {
                             if (app.mesh.isEdgeHidden(ei)) continue;
-                            scope(exit) ++k;
-                            if (gpuVisible !is null
-                                && k < gpuVisible.length
-                                && !gpuVisible[k]) continue;
                             uint a = app.mesh.edges[ei][0], b = app.mesh.edges[ei][1];
+                            immutable bool aVisible = regionVisible.visible(a);
+                            immutable bool bVisible = regionVisible.visible(b);
+                            if (!aVisible || !bVisible) continue;
                             float sxa, sya, sxb, syb;
                             if (!projLocal(app.mesh.vertices[a], sxa, sya)) continue;
                             if (!projLocal(app.mesh.vertices[b], sxb, syb)) continue;
                             if (pointInPolygon2D(sxa, sya, pxs, pys) &&
                                 pointInPolygon2D(sxb, syb, pxs, pys)) {
-                                // STRICT: both endpoints must be un-occluded in the
-                                // Edge ID-FBO (depth-pre-pass baked). Probe a small
-                                // window around each projected endpoint; reject the
-                                // edge if either window has no surviving edge pixel.
-                                // This is intentionally stricter than click (which
-                                // only requires a surviving pixel near the cursor).
-                                import std.math : lround;
-                                // vpWorld + ms — see the elementVisibility call above (R10).
-                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
-                                        cast(int)lround(sxa), cast(int)lround(sya),
-                                        app.gpu, vpWorld, ms, occlTerm)) continue;
-                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
-                                        cast(int)lround(sxb), cast(int)lround(syb),
-                                        app.gpu, vpWorld, ms, occlTerm)) continue;
                                 symmetricSelectEdge(&app.mesh(), vpWorld, app.editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }
