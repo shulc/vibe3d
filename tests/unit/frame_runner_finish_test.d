@@ -1,4 +1,4 @@
-// The real default-framebuffer tail on a real offscreen GL context (task 0782).
+// The real default-framebuffer tail on a real SDL/GL context (task 0782).
 // Each row calls FrameRunner.finishFrame itself. GL observers replace the real
 // pointers and delegate to them; SDL observers use the production-owned seam
 // and delegate to its real callbacks. The draw/readback floors stay non-empty.
@@ -103,7 +103,8 @@ void runFrameRunnerFinishWitness() {
 
     const hadDriver = "SDL_VIDEODRIVER" in environment;
     const oldDriver = environment.get("SDL_VIDEODRIVER", "");
-    environment["SDL_VIDEODRIVER"] = "offscreen";
+    environment["SDL_VIDEODRIVER"] =
+        environment.get("DISPLAY", "").length != 0 ? "x11" : "offscreen";
     scope(exit) {
         if (hadDriver) environment["SDL_VIDEODRIVER"] = oldDriver;
         else environment.remove("SDL_VIDEODRIVER");
@@ -122,7 +123,7 @@ void runFrameRunnerFinishWitness() {
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height,
         SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     assert(window !is null,
-        "frame finish rig could not create an offscreen window: "
+        "frame finish rig could not create a hidden SDL window: "
         ~ SDL_GetError().to!string);
     scope(exit) SDL_DestroyWindow(window);
 
