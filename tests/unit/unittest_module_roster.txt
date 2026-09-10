@@ -229,6 +229,7 @@ tests.unit.gang_mixed_test
 tests.unit.gc_instrument_test
 tests.unit.gesture_carrier_interface_test
 tests.unit.gesture_record_belt_test
+tests.unit.gpu_owner_real_backend_test
 tests.unit.handles.gl_util_test
 tests.unit.harness_log_isolation_census_test
 tests.unit.image_cache_test
