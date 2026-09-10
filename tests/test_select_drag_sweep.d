@@ -125,6 +125,12 @@ void gesture(int x0, int y0, int x1, int y1, int steps) {
     auto cam = fetchCamera();
     playAndWait(buildBatchLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, steps));
+    auto status = parseJSON(cast(string)get(
+        testBaseUrl() ~ "/api/play-events/status"));
+    immutable delivered = cast(int)status["immediateMotions"].integer;
+    assert(delivered == steps,
+        "5170 HTTP replay delivered " ~ delivered.to!string ~ " of "
+        ~ steps.to!string ~ " due motion events through its immediate sink");
 }
 
 // The pixel the fixture pivots on: a point near the middle of the viewport

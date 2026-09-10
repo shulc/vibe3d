@@ -3206,12 +3206,15 @@ class HttpServer {
         const bool   active  = eventPlayer.active;
         const size_t total   = eventPlayer.entries.length;
         const size_t idx     = eventPlayer.idx;
+        const size_t immediateMotions = eventPlayer.immediateMotionDeliveries();
         const bool   done    = !active;
         response.statusCode = 200;
-        response.body = format(`{"finished":%s,"total":%d,"remaining":%d}`,
+        response.body = format(
+            `{"finished":%s,"total":%d,"remaining":%d,"immediateMotions":%d}`,
             done ? "true" : "false",
             total,
-            done ? 0 : total - idx);
+            done ? 0 : total - idx,
+            immediateMotions);
         response.headers["Content-Type"] = "application/json";
     }
 
@@ -3785,6 +3788,16 @@ class HttpServer {
      */
     public bool tickEventPlayer() {
         return eventPlayer.tick();
+    }
+
+    /**
+     * Give the HTTP replay producer its main-thread immediate-delivery sink.
+     * The server owns the player but not editor input, so the composition root
+     * supplies this capability after both objects exist. Without a sink the
+     * player's ordinary SDL-queue fallback remains active.
+     */
+    public void setEventPlayerSink(ImmediateEventSink sink) {
+        eventPlayer.setImmediateSink(sink);
     }
 
     /**

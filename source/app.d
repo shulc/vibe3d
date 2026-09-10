@@ -4917,8 +4917,7 @@ void main(string[] args) {
     // (source/input_router.d). That closes step 2: all seven handlers plus the
     // dispatcher are one object's, and main() reaches the input path through
     // exactly two call sites, both spelled `router.processEvent(...)` -- the
-    // direct-dispatch delegate just below and the SDL_PollEvent body in the
-    // frame loop.
+    // replay sink just below and the SDL_PollEvent body in the frame loop.
     //
     // `evLog` and `recLog` did NOT move with it. They are the plan's
     // `winW`/`winH` exception class, not new router state: main() opens them
@@ -4928,12 +4927,14 @@ void main(string[] args) {
     // teardown chain instead of after it. The router reads them through
     // `evLogPtr`/`recLogPtr`; the reasoning is written out at those fields.
 
-    // Register direct-dispatch delegate so EventPlayer.tick can deliver
-    // events to the same code path without going through SDL's queue.
-    setDirectEventDispatch((SDL_Event* ev) {
+    // Both replay producers borrow the same immediate-delivery capability from
+    // the composition root. Their EventPlayer instances own the references;
+    // callers that install no sink keep EventPlayer's SDL-queue fallback.
+    ImmediateEventSink replaySink = (SDL_Event* ev) {
         if (!router.processEvent(ev)) running = false;
-    });
-    scope(exit) clearDirectEventDispatch();
+    };
+    evPlay.setImmediateSink(replaySink);
+    httpServer.setEventPlayerSink(replaySink);
 
     while (running) {
         // Perf (doc/frame_probe_scenarios_plan.md, task 0195): beginFrame is

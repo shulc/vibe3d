@@ -41,25 +41,21 @@ private int _pushEvent(SDL_Event* e) {
     return SDL_PushEvent(e);
 }
 
-// Direct event dispatch delegate — bypasses SDL_PushEvent during replay.
+// Immediate event sink — bypasses SDL_PushEvent during replay.
 //
 // SDL's X11 backend coalesces consecutive SDL_MOUSEMOTION events that
 // land in the same SDL_PollEvent batch (summing their xrel/yrel into
 // one merged event). For event playback this means most motion events
 // never reach the application's onMouseMotion handler; only the last
 // one in a batch survives. The cross-engine drag test relies on per-
-// motion granularity, so we let the app register a direct dispatcher
-// that EventPlayer.tick calls in lieu of SDL_PushEvent.
+// motion granularity, so each EventPlayer may receive an explicit sink
+// that tick calls in lieu of SDL_PushEvent.
 //
-// When set, EventPlayer.tick passes each due event to this delegate
+// When set, EventPlayer.tick passes each due event to its sink
 // instead of pushing to SDL's queue. The delegate should perform the
 // equivalent of one SDL_PollEvent iteration (ImGui filter + switch
 // case + handler dispatch).
-alias DirectEventDispatch = void delegate(SDL_Event*);
-private __gshared DirectEventDispatch g_directDispatch;
-
-void setDirectEventDispatch(DirectEventDispatch d) { g_directDispatch = d; }
-void clearDirectEventDispatch() { g_directDispatch = null; }
+alias ImmediateEventSink = void delegate(SDL_Event*);
 
 // Mouse position source — overridden during event playback so that
 // SDL_GetMouseState()-based picking uses replayed coordinates.
@@ -255,6 +251,23 @@ struct EventPlayer {
     int     mouseX, mouseY;   // current replayed cursor position
     bool    mouseDown;        // left button state (for visual feedback)
 
+    // Delivery is a capability of this player, never process state. A caller
+    // that owns the editor-input consumer installs it explicitly; callers
+    // without one retain the SDL_PushEvent fallback below. `immediateMotions_`
+    // counts completed sink calls for the current log, so the HTTP witness can
+    // distinguish direct per-motion delivery from a queue fallback whose
+    // final state happens to settle to the same value.
+    private ImmediateEventSink immediateSink_;
+    private size_t immediateMotions_;
+
+    void setImmediateSink(ImmediateEventSink sink) {
+        immediateSink_ = sink;
+    }
+
+    size_t immediateMotionDeliveries() const {
+        return immediateMotions_;
+    }
+
     // Fast-forward replay (set by app.d's --perf mode). When true, tick()
     // ignores the recorded wall-clock timestamps and drains EVERY pending
     // event each call — the perf harness measures CPU work inside the tool
@@ -441,6 +454,7 @@ struct EventPlayer {
         freq         = _perfFreq();
         active       = entries.length > 0;
         idx          = 0;
+        immediateMotions_ = 0;
         {
             import log : logInfo;
             import std.format : format;
@@ -485,8 +499,8 @@ struct EventPlayer {
     // Call once per frame. Pushes all events whose timestamp has elapsed.
     // Returns false when playback is finished.
     //
-    // If `setDirectEventDispatch` has registered a delegate, each due
-    // event is delivered DIRECTLY via that delegate (bypassing SDL's
+    // If this player has an immediate sink, each due event is delivered
+    // DIRECTLY via that delegate (bypassing SDL's
     // event queue, which coalesces consecutive SDL_MOUSEMOTION events).
     // Otherwise, events go through SDL_PushEvent (legacy path; the X11
     // backend may merge motions on PollEvent — space them ≥16 ms apart
@@ -538,10 +552,13 @@ struct EventPlayer {
                 if (e.button.button == SDL_BUTTON_LEFT)
                     mouseDown = (e.type == SDL_MOUSEBUTTONDOWN);
             }
-            if (g_directDispatch !is null)
-                g_directDispatch(&e);
-            else
+            if (immediateSink_ !is null) {
+                immutable bool isMotion = e.type == SDL_MOUSEMOTION;
+                immediateSink_(&e);
+                if (isMotion) ++immediateMotions_;
+            } else {
                 _pushEvent(&e);
+            }
             ++idx;
         }
         if (idx >= entries.length) {
@@ -758,6 +775,64 @@ unittest { // EventPlayer.tick: fires only elapsed events, stays active while mo
     assert(p.tick() == true);
     assert(g_testPushCount == 2);
     assert(p.idx == 2);
+}
+
+unittest { // EventPlayer.tick: its sink receives every due motion with current state
+    _mock_PerfCounter = function() { return 10_000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_GetModState = function() { return g_testModState; };
+    _mock_SetModState = function(SDL_Keymod m) { g_testModState = m; };
+    _mock_PushEvent   = function(SDL_Event* e) { ++g_testPushCount; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq   = null;
+        _mock_GetModState = null; _mock_SetModState = null;
+        _mock_PushEvent   = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+
+    foreach (i; 0 .. 3) {
+        SDL_Event e;
+        e.type = SDL_MOUSEMOTION;
+        e.motion.x = 100 + cast(int)i;
+        e.motion.y = 200 + cast(int)i;
+        p.entries ~= EventPlayer.Entry(1.0, e,
+            cast(SDL_Keymod)(i == 0 ? KMOD_SHIFT
+                                    : (i == 1 ? KMOD_CTRL : KMOD_ALT)));
+    }
+
+    int sinkCalls;
+    int[] seenX;
+    SDL_Keymod[] seenMods;
+    p.setImmediateSink((SDL_Event* delivered) {
+        int mx, my;
+        queryMouse(mx, my);
+        assert(mx == delivered.motion.x && my == delivered.motion.y,
+            "5170 replay sink observed stale mouse state");
+        ++sinkCalls;
+        seenX ~= delivered.motion.x;
+        seenMods ~= _getModState();
+    });
+
+    g_testModState = KMOD_NONE;
+    g_testPushCount = 0;
+    assert(!p.tick(), "all due events should drain in one tick");
+    assert(sinkCalls == 3,
+        "5170 immediate replay sink did not receive every due motion event");
+    assert(seenX == [100, 101, 102],
+        "5170 immediate replay sink changed due-motion order");
+    assert(seenMods == [KMOD_SHIFT, KMOD_CTRL, KMOD_ALT],
+        "5170 replay sink observed stale modifier state");
+    assert(p.immediateMotionDeliveries() == 3,
+        "5170 immediate-motion delivery witness did not count each sink call");
+    assert(g_testPushCount == 0,
+        "5170 configured replay sink also used the SDL queue fallback");
+    assert(g_testModState == KMOD_NONE,
+        "5170 replay did not return the borrowed modifier state");
 }
 
 unittest { // EventPlayer.tick: deactivates when all events are consumed
