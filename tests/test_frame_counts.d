@@ -954,3 +954,43 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
 
     resetApp();   // back to one layer for whatever runs next in this process
 }
+
+unittest { // the mirror rig draws no plane rings, and nothing else witnesses it
+    // WHY THIS BLOCK EXISTS, since the fix it pins was not the point of the
+    // change that shipped it. The mirror tool had ALWAYS asked for these rings
+    // to be hidden -- three setVisible(false) calls in its constructor -- and
+    // had always been overruled, because MoveHandler.draw runs updateGeometry
+    // first and that re-derived visibility from the view cull on every frame.
+    // The request was silently cancelled before the first rendered frame, so
+    // the rings were drawn by a tool whose own author had switched them off.
+    //
+    // The gate that fixed the create tools fixed this one too, which makes it
+    // a REAL behaviour change riding along with a change about something else,
+    // and it had no witness at all: the mirror tool does not override
+    // toolHandlesJson, so /api/tool/handles answers null for it and its parts
+    // are invisible over HTTP. This counter is the only instrument that can
+    // see the rig at all.
+    //
+    // 10 -> 4 is three rings at a fill and an outline each, the same arithmetic
+    // as the create-preview constant above. Restoring the constructor form puts
+    // it back to 10.
+    resetApp();
+    cmd("tool.set mesh.mirrorTool");
+    settle();
+    scope(exit) {
+        httpPost("/api/command", "tool.set mesh.mirrorTool off");
+        resetApp();
+    }
+
+    immutable long mirrorHandles = passCalls(lastScene(), "handles");
+    assert(mirrorHandles > 0,
+           "the mirror rig submitted no handle draws at all -- the tool did not "
+           ~ "arm, so the count below would be vacuously small");
+    assert(mirrorHandles == 4,
+           format("armed mirror rig submitted %d handle draws, expected 4. "
+                  ~ "10 means the three plane rings are being drawn again: the "
+                  ~ "constructor's setVisible(false) is overruled by "
+                  ~ "updateGeometry, so hiding them must go through the "
+                  ~ "planesVisible gate, which is applied inside it.",
+                  mirrorHandles));
+}

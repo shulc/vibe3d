@@ -895,7 +895,11 @@ class MoveHandler : Handler {
 
     // Read-only test seam: draw() calls all three plane handlers, whose own
     // visible guard decides whether they submit anything. Counting that state
-    // after updateGeometry therefore reports the rings this instance draws.
+    // reports the rings this instance draws ONLY once updateGeometry has run on
+    // it at least once -- before that it returns the constructor default, and a
+    // rig whose state gates its own draw (an idle box tool, say) answers 3 while
+    // submitting nothing. That direction is a false RED, never a false green, so
+    // it is a sharp edge rather than a hole; read it after a rendered frame.
     int planeRingsDrawn() const {
         return cast(int)circleXY.isVisible()
              + cast(int)circleYZ.isVisible()

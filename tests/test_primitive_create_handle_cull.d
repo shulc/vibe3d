@@ -206,7 +206,9 @@ unittest { // Plane-ring gate: populated create rigs draw no unpickable rings.
            format("handled create rig drew %d unpickable plane rings",
                   handled.planeRingsDrawn));
 
-    foreach (part; [13, 10, 11, 12])
+    static immutable int[] handledSurvivors = [13, 10, 11, 12];
+    static assert(handledSurvivors.length == 4, "handled survivor list shrank");
+    foreach (part; handledSurvivors)
         assertPartGrabs(part, "handled create mover survivor");
 
     script("tool.set prim.cylinder off");
@@ -218,7 +220,9 @@ unittest { // Plane-ring gate: populated create rigs draw no unpickable rings.
     assert(moverOnly.planeRingsDrawn == 0,
            format("mover-only create rig drew %d unpickable plane rings",
                   moverOnly.planeRingsDrawn));
-    foreach (part; [10, 0, 1, 2])
+    static immutable int[] moverOnlySurvivors = [10, 0, 1, 2];
+    static assert(moverOnlySurvivors.length == 4, "mover-only survivor list shrank");
+    foreach (part; moverOnlySurvivors)
         assertPartGrabs(part, "mover-only create survivor");
     script("tool.set prim.tube off");
 }
@@ -228,6 +232,7 @@ private struct MoveOutcome {
     int collapsed;
     int captured;
     int changedComponents;
+    int planeRings;
     double[3] before;
     double[3] after;
 }
@@ -247,6 +252,15 @@ private MoveOutcome moveCentre(string tool, string view) {
     MoveOutcome outp;
     outp.registered = cast(int)r.ids.length;
     outp.collapsed = r.collapsed;
+    outp.planeRings = r.planeRingsDrawn;
+    // The ring gate is assigned in THREE classes, and the block above reaches
+    // only two of them: prim.cylinder and prim.tube share one, and prim.cube is
+    // the third. Without this line, flipping the cube's gate back on leaves the
+    // whole file green -- measured, that mutation passed. Asserted here because
+    // this sweep is the only place every tool is driven.
+    assert(r.planeRingsDrawn == 0,
+           format("%s %s drew %d unpickable plane rings",
+                  tool, view, r.planeRingsDrawn));
     outp.before = center(tool);
     pressAt(p[0], p[1]);
     outp.captured = registry().captured;
@@ -285,8 +299,15 @@ unittest { // Axial ortho culls size handles; perspective remains unchanged.
         "prim.tube", "prim.cylinder", "prim.cube", "prim.cone",
         "prim.sphere", "prim.torus", "prim.capsule", "prim.ellipsoid",
     ];
-    foreach (tool; tools) moveCentre(tool, "Top");
-    foreach (tool; tools) moveCentre(tool, "Perspective");
+    // Population floor. Every assert in this block lives inside moveCentre, so
+    // an empty or shortened list leaves the block green while testing nothing:
+    // measured, emptying `tools` returned EXIT=0 in well under a second. The
+    // count of driven cells is pinned beside the list for the same reason.
+    static assert(tools.length == 8, "the eight-primitive sweep lost a tool");
+    size_t cells;
+    foreach (tool; tools) { moveCentre(tool, "Top"); ++cells; }
+    foreach (tool; tools) { moveCentre(tool, "Perspective"); ++cells; }
+    assert(cells == 16, format("drove %d cells, expected 16", cells));
 }
 
 unittest { // Transform instances retain all three registered plane handles.
@@ -300,7 +321,13 @@ unittest { // Transform instances retain all three registered plane handles.
     int[] ids;
     foreach (p; h["parts"].array) ids ~= cast(int)p["part"].integer;
     ids.sort();
-    foreach (part; [4, 5, 6]) {
+    // Without this floor, emptying the list guts the whole block: `scene.reset`
+    // and `tool.set move on` would be all that remains, and the half this
+    // unittest exists to prove -- that transform rigs KEEP their plane handles
+    // -- would vanish with nothing red. Measured green when emptied.
+    static immutable int[] transformPlanes = [4, 5, 6];
+    static assert(transformPlanes.length == 3, "transform plane list shrank");
+    foreach (part; transformPlanes) {
         assert(ids.canFind(part),
                format("transform control: plane part %d is not registered", part));
         auto p = anchor(h, part, "transform plane survivor");
