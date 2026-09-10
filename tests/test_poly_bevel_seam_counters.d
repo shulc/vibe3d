@@ -103,7 +103,7 @@ void play(string log) {
         if (getJson("/api/play-events/status")["finished"].type == JSONType.true_) break;
         Thread.sleep(50.msecs);
     }
-    settle();   // EventPlayer reports POSTED, not processed — let the queue drain.
+    settle();   // Let frame-driven tool/preview updates observe the delivered input.
 }
 string motion(int x, int y, int state = 0) {
     return format(`{"t":0.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":0}`,

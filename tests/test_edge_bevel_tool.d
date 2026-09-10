@@ -35,7 +35,7 @@ void settle() { Thread.sleep(130.msecs); }
 
 void play(string log) {
     playAndWait(log, BASE);
-    settle(); // EventPlayer reports posted events; let the SDL queue drain.
+    settle(); // Let frame-driven tool/preview updates observe the delivered input.
 }
 
 string motion(double t, int x, int y, int state = 1) {

@@ -19,11 +19,8 @@ void waitPlayerIdle() {
         auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
         auto f = "finished" in s;
         if (f is null || f.type != JSONType.FALSE) {
-            // The player reports finished once events are DISPATCHED, but
-            // /api/play-events pushes them onto the SDL queue — the last few
-            // drain over the next 1–2 frames. Settle so a prior test's queued
-            // events land before our reset rather than clobbering our own play.
-            Thread.sleep(dur!"msecs"(120));
+            // A finished HTTP player has returned from every immediate sink
+            // call, so no replay event remains queued behind the next reset.
             return;
         }
         Thread.sleep(dur!"msecs"(10));
@@ -77,14 +74,8 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -139,14 +130,8 @@ unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selecti
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -176,14 +161,8 @@ unittest { // REMOVE SELECTION: Ctrl+click removes one vertex from a 3-vertex se
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -212,14 +191,8 @@ unittest { // DESELECT: clicking empty space after selecting vertices clears sel
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -243,14 +216,8 @@ unittest { // SELECTION EDGES: Test selected edges after playing events (edges 5
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -279,14 +246,8 @@ unittest { // ADD EDGE SELECTION: Shift+click adds a third edge to existing sele
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -316,14 +277,8 @@ unittest { // REMOVE EDGE SELECTION: Ctrl+click removes one edge from a 3-edge s
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -352,14 +307,8 @@ unittest { // DESELECT EDGES: clicking empty space after selecting edges clears 
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -383,14 +332,8 @@ unittest { // SELECTION POLYGONS: Test selected faces after playing events (face
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -419,14 +362,8 @@ unittest { // ADD POLYGON SELECTION: Shift+click adds a third face to existing s
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -456,14 +393,8 @@ unittest { // REMOVE POLYGON SELECTION: Ctrl+click removes one face from a 3-fac
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 
@@ -492,14 +423,8 @@ unittest { // DESELECT POLYGONS: clicking empty space after selecting faces clea
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
-    // The player reports "finished" once its events are DISPATCHED, but the HTTP
-    // play-events path pushes them onto the SDL queue (g_directDispatch is null)
-    // — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed, when the
-    // player goes idle, and drains over the next 1–2 main-loop frames. Reading
-    // the selection before it drains sees only the prior gesture's verts (the
-    // "expected 3 selected vertices, got 2" flake on selection_add.log). Settle
-    // so the trailing click is processed before we read.
-    Thread.sleep(dur!"msecs"(120));
+    // A finished HTTP player has returned from every immediate sink call, so
+    // selection is complete here; there is no synthetic SDL queue to settle.
 
     auto json = parseJSON(get(testBaseUrl() ~ "/api/selection"));
 

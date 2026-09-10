@@ -45,7 +45,7 @@ void play(string log) {
         if (getJson("/api/play-events/status")["finished"].type == JSONType.true_) break;
         Thread.sleep(50.msecs);
     }
-    settle(); // EventPlayer reports posted, not processed — let the queue drain.
+    settle(); // Let frame-driven tool/preview updates observe the delivered input.
 }
 
 string motion(int x, int y, int state = 0, uint mod = 0) {

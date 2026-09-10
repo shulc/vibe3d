@@ -88,12 +88,10 @@ void establishCubeBaseline() {
             if (playerIdle()) break;
             Thread.sleep(10.msecs);
         }
-        // The player reports "finished" once events are DISPATCHED, but
-        // /api/play-events pushes them onto the SDL queue — the last few are
-        // still queued (unprocessed) when the player goes idle, and drain over
-        // the next 1–2 frames. Settle so they land BEFORE our reset (which then
-        // wipes them) instead of bleeding into our drag's begin-snapshot (the
-        // "got (-1,0,1)" flake — a prior drag's queued mouse-up moving v6).
+        // Delivery is synchronous, but frame-driven tool/preview work may still
+        // be finishing when the HTTP thread first observes an idle player.
+        // Settle before reset so that work cannot overlap the next drag's
+        // begin-snapshot.
         Thread.sleep(120.msecs);
         // Drain BEFORE the reset: /api/reset (SceneReset) is itself recorded
         // on the undo stack, so a drain placed AFTER it pops the reset and

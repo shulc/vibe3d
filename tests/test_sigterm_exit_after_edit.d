@@ -193,12 +193,99 @@ Run driveOne(string tag, string method, string path, string reqBody) {
 __gshared Run g_control;   // no edit — every candidate rule agrees it exits
 __gshared Run g_edited;    // one mesh.select — the cell that separates them
 
+struct QuitFrameRun {
+    bool ready;
+    Reply arm;
+    Reply play;
+    Reply save;
+    bool savedNonEmpty;
+    bool exited;
+    string logTail;
+}
+
+QuitFrameRun driveQuitFrame() {
+    QuitFrameRun r;
+    const port = pickFreePort();
+    const scratch = buildPath("/tmp", "vibe3d_quit_frame_"
+                                    ~ thisProcessID().to!string ~ "_"
+                                    ~ port.to!string);
+    mkdirRecurse(scratch);
+    const logPath = buildPath(scratch, "vibe3d.log");
+    const savePath = buildPath(scratch, "after-quit.v3d");
+
+    string[string] env;
+    env["VIBE3D_CONFIG_DIR"] = scratch;
+    env["VIBE3D_STALL_PRE_TOOL_TICK_MS"] = "5000";
+
+    auto logFile = File(logPath, "wb");
+    auto pid = spawnProcess(["./vibe3d", "--test", "--http-port", port.to!string],
+                            stdin, logFile, logFile, env);
+
+    {
+        auto sw = StopWatch(AutoStart.yes);
+        while (sw.peek.total!"msecs" < 60_000) {
+            auto probe = once(port, "GET", "/api/registry", "");
+            if (probe.code == "200" && probe.body_.canFind(`"file.save"`)) {
+                r.ready = true;
+                break;
+            }
+            Thread.sleep(20.msecs);
+        }
+    }
+
+    if (r.ready) {
+        // tool.set arms the existing bounded pre-tool seam stall. Its reply is
+        // sent before that stall begins, giving the HTTP thread five seconds to
+        // load a due quit and queue file.save for the NEXT frame. Production
+        // order then has to run HTTP replay first, continue through tickAll,
+        // and execute file.save despite the accepted quit setting running=false.
+        r.arm = once(port, "POST", "/api/script", "tool.set move");
+        r.play = once(port, "POST", "/api/play-events",
+            `{"t":0,"type":"SDL_QUIT"}` ~ "\n");
+        r.save = once(port, "POST", "/api/command",
+            `{"id":"file.save","params":{"path":"` ~ savePath ~ `"}}`);
+    }
+
+    if (exists(savePath)) {
+        auto saved = readText(savePath);
+        r.savedNonEmpty = saved.length > 100
+                       && saved.canFind(`"vertices"`)
+                       && saved.canFind(`"faces"`);
+    }
+
+    {
+        auto sw = StopWatch(AutoStart.yes);
+        while (sw.peek.total!"msecs" < kExitBudgetMs) {
+            auto st = tryWait(pid);
+            if (st.terminated) {
+                r.exited = true;
+                break;
+            }
+            Thread.sleep(25.msecs);
+        }
+    }
+    if (!r.exited) {
+        try { kill(pid.processID, SIGKILL); } catch (Exception) {}
+        try { wait(pid); } catch (Exception) {}
+    }
+
+    try {
+        auto txt = readText(logPath);
+        r.logTail = txt.length > 2000 ? txt[$ - 2000 .. $] : txt;
+    } catch (Exception e) { r.logTail = "(log unreadable: " ~ e.msg ~ ")"; }
+    if (exists(scratch)) try { rmdirRecurse(scratch); } catch (Exception) {}
+    return r;
+}
+
+__gshared QuitFrameRun g_quitFrame;
+
 // `shared static this`, NOT `static this`: the per-thread form re-runs in every
 // thread the process makes and would boot an editor per thread.
 shared static this() {
     g_control = driveOne("control", "GET",  "/api/model",   "");
     g_edited  = driveOne("edited",  "POST", "/api/command",
         `{"id":"mesh.select","params":{"mode":"edges","indices":[0]}}`);
+    g_quitFrame = driveQuitFrame();
 }
 
 string render(ref Run r) {
@@ -208,6 +295,14 @@ string render(ref Run r) {
                   r.requestCode.length ? r.requestCode : "(no request)",
                   r.requestBody, r.exited, r.exitMs,
                   r.policy.length ? r.policy : "(none — it exited)", r.logTail);
+}
+
+string render(ref QuitFrameRun r) {
+    return format("ready=%s arm=%s %s play=%s %s save=%s %s "
+                ~ "savedNonEmpty=%s exited=%s\n--- log tail ---\n%s",
+                  r.ready, r.arm.code, r.arm.body_, r.play.code, r.play.body_,
+                  r.save.code, r.save.body_, r.savedNonEmpty, r.exited,
+                  r.logTail);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +327,48 @@ unittest {
         "4380 floor: mesh.select was not applied, so this instance recorded no "
         ~ "edit and the cell below would pass for the wrong reason: code "
         ~ g_edited.requestCode ~ ", body " ~ g_edited.requestBody);
+}
+
+// An accepted quit ends the loop only after its current frame. The non-empty
+// saved document is the effect: it is produced by a real main-thread command
+// queued behind the due HTTP replay quit, not by a trace written by this test.
+unittest {
+    assert(g_quitFrame.ready,
+        "5170 quit-frame floor: the owned instance never exposed a populated "
+        ~ "command registry.\n" ~ render(g_quitFrame));
+    assert(g_quitFrame.arm.code == "200"
+        && g_quitFrame.arm.body_.canFind(`"status":"ok"`),
+        "5170 quit-frame floor: tool.set did not arm the pre-tool stall.\n"
+        ~ render(g_quitFrame));
+    assert(g_quitFrame.play.code == "200"
+        && g_quitFrame.play.body_.canFind(`"status": "success"`),
+        "5170 quit-frame floor: HTTP replay did not accept the due quit.\n"
+        ~ render(g_quitFrame));
+    assert(g_quitFrame.savedNonEmpty,
+        "5170 accepted-quit frame witness: file.save queued after the due quit "
+        ~ "did not execute on the same frame with a non-empty document.\n"
+        ~ render(g_quitFrame));
+    assert(g_quitFrame.save.code == "200"
+        && g_quitFrame.save.body_.canFind(`"status":"ok"`),
+        "5170 accepted-quit frame witness: the post-quit operation wrote an "
+        ~ "artifact but did not complete its HTTP bridge reply.\n"
+        ~ render(g_quitFrame));
+    assert(g_quitFrame.exited,
+        "5170 accepted-quit frame witness: the frame completed its queued "
+        ~ "operation but the accepted quit did not end the process.\n"
+        ~ render(g_quitFrame));
+}
+
+// ---------------------------------------------------------------------------
+// Native acquisition witness (task 5170). SDL's installed signal handler turns
+// SIGTERM into SDL_QUIT on the real process queue; unlike HTTP replay this does
+// not call EventPlayer or its immediate sink. A ready control process that
+// remains alive therefore means the main loop lost its native SDL poll.
+// ---------------------------------------------------------------------------
+unittest {
+    assert(g_control.exited,
+        "5170 native SDL queue witness: SIGTERM's SDL_QUIT was not acquired "
+        ~ "by the main-loop poll within the exit budget.\n" ~ render(g_control));
 }
 
 // ---------------------------------------------------------------------------

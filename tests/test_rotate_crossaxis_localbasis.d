@@ -127,11 +127,9 @@ bool hasTransformBlock() {
     return ("transform" in j.object) !is null;
 }
 void publishedAxisAngle(out int axis, out double deg, out string attr) {
-    // The eval transform block can be transiently absent immediately after a
-    // gesture if a post-playback event drain is still settling (the known runner
-    // drain race: /api/play-events/status reports finished once events are POSTED,
-    // not PROCESSED). Settle-and-retry until the active transform tool republishes
-    // its block.
+    // The eval transform block can be transiently absent while the frame-driven
+    // active-tool update following synchronous replay delivery has not yet
+    // republished it. Retry until that update publishes the block.
     foreach (_; 0 .. 20) {
         if (hasTransformBlock()) break;
         settle();
