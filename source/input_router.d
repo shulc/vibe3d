@@ -1286,6 +1286,10 @@ struct InputRouter {
                 immutable bool occlTerm = app.vpm.pickVisibility().occlusionTerm;
 
                 bool preview = app.subpatchPreview.active;
+                // Preserve the existing publication invariant even though
+                // the region predicate no longer reads the preview VBO itself.
+                if (preview) assert(app.gpuUploadedPreview,
+                    "lasso: preview trace is live but the VBOs still hold the cage");
                 // Phase 3c — preview.mesh.vertices may be stale after
                 // a fan-out-only drag; lasso needs fresh positions.
                 if (preview && app.subpatchPreview.lastRefreshSkipNonFace) {
