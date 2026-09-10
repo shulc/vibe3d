@@ -34,7 +34,7 @@
 // below is what says the scanner found the tree it was pointed at.
 module tests.unit.command_registration_census_test;
 
-import std.algorithm : canFind, sort;
+import std.algorithm : canFind, sort, splitter;
 import std.array     : appender, array;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
@@ -59,8 +59,38 @@ struct ClassDecl {
     size_t line;       /// 1-based
 }
 
+// NO capture of the modifier run before `class`, and that omission is the
+// point. The shape it replaced -- `((?:\w+[ \t]+)*)` -- is a repetition
+// nested inside a repetition, so on any line whose leading words are NOT
+// followed by `class` the backtracking matcher walks every partition of that
+// word run. Measured 2026-09-10 by the AddressSanitizer lane of task 5230:
+// this module ALONE aborts compiler-rt with
+// `sanitizer_allocator_secondary.h:42 "((n)) < ((kMaxNumChunks))"
+// (0x100000, 0x100000)` -- one million live large allocations, all of them
+// std.regex backtracking state under pureMalloc. Ordinary runs free them as
+// the matcher unwinds, so the cost shows up only as time: this module carried
+// the worst rate in the census family, 198.8 ms/MiB against a 101.7 mean.
+// The modifiers are recovered from the text instead, below, which is exact and
+// linear. Do not reintroduce a quantified group here.
 private enum classDeclRe = ctRegex!(
-    `((?:\w+[ \t]+)*)(?<!\w)class[ \t]+(\w+)(?:\([^)]*\))?[ \t]*:[ \t]*(\w+)`);
+    `(?<!\w)class[ \t]+(\w+)(?:\([^)]*\))?[ \t]*:[ \t]*(\w+)`);
+
+/// Does the modifier run immediately before a `class` keyword contain the
+/// word `abstract`? Walks back over word characters and blanks only, so it
+/// reproduces what the old `((?:\w+[ \t]+)*)` capture matched -- and does it
+/// in one linear pass instead of a backtracking search.
+private bool precedingRunHasAbstract(const(char)[] pre) {
+    import std.ascii : isAlphaNum;
+    size_t b = pre.length;
+    while (b > 0) {
+        const ch = pre[b - 1];
+        if (ch == ' ' || ch == '\t' || ch == '_' || isAlphaNum(ch)) --b;
+        else break;
+    }
+    foreach (word; pre[b .. $].splitter!(c => c == ' ' || c == '\t'))
+        if (word == "abstract") return true;
+    return false;
+}
 
 /// Every `class X : Y` declaration in `src` (a file's raw text).
 ClassDecl[] scanClassDecls(string src, string file) {
@@ -76,8 +106,8 @@ ClassDecl[] scanClassDecls(string src, string file) {
         foreach (ch; code[scanned .. m.pre.length])
             if (ch == '\n') line++;
         scanned = m.pre.length;
-        hits.put(ClassDecl(m[2].idup, m[3].idup,
-                           m[1].canFind("abstract"), file, line));
+        hits.put(ClassDecl(m[1].idup, m[2].idup,
+                           precedingRunHasAbstract(m.pre), file, line));
     }
     return hits.data;
 }

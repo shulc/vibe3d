@@ -25,6 +25,20 @@ import std.string : splitLines, strip;
 private enum minimumModuleCount = 500;
 private enum timingEnvironment = "VIBE3D_UT_TIMINGS";
 
+// A SLICE of the roster, for instrumented lanes only: "i/n" runs the modules
+// whose position is congruent to i modulo n. It exists because AddressSanitizer
+// cannot carry this gate in one process -- measured 2026-09-10, the run aborts
+// in compiler-rt itself with `sanitizer_allocator_secondary.h:42 "((n)) <
+// ((kMaxNumChunks))" (0x100000, 0x100000)`, an internal ceiling of one million
+// live large mappings, not a finding about our code.
+//
+// The roster IDENTITY asserts are skipped while a slice is active, and that is
+// the dangerous half of this switch: a run that checks nothing must not be able
+// to look like a run that checked everything. So the slice announces itself on
+// stderr on EVERY run, the skip is announced too, and both carry the word
+// PARTIAL. Never read a sliced run as a green gate.
+private enum sliceEnvironment = "VIBE3D_UT_SLICE";
+
 extern (C) void _d_print_throwable(Throwable throwable);
 
 shared static this()
@@ -57,6 +71,14 @@ private void verifyPopulationAndRoster(string[] actual, size_t executed)
             stderr.writefln("UT-ROSTER-ACTUAL %s", name);
     }
 
+    if (environment.get(sliceEnvironment, "").length)
+    {
+        stderr.writeln("UT-PARTIAL roster identity NOT checked: a slice was "
+                     ~ "requested via " ~ sliceEnvironment
+                     ~ ". This run is not a gate.");
+        return;
+    }
+
     assert(expected.length >= minimumModuleCount,
         "unit-test roster collapsed: lists only "
         ~ expected.length.to!string ~ " modules, floor is "
@@ -83,12 +105,35 @@ private UnitTestResult runModuleUnitTestsWithTimings()
     if (timingEnabled)
         timingOutput = File(timingPath, "w");
 
+    // Slice parsing is deliberately strict: a malformed value is a hard error,
+    // not a silent full run. A typo that quietly ran everything would defeat
+    // the only reason the switch exists.
+    size_t sliceIndex, sliceCount;
+    const sliceSpec = environment.get(sliceEnvironment, "");
+    if (sliceSpec.length)
+    {
+        import std.string : indexOf;
+        const sep = sliceSpec.indexOf('/');
+        if (sep <= 0 || sep + 1 >= sliceSpec.length)
+            assert(false, sliceEnvironment ~ " must read i/n, got: " ~ sliceSpec);
+        sliceIndex = to!size_t(sliceSpec[0 .. sep]);
+        sliceCount = to!size_t(sliceSpec[sep + 1 .. $]);
+        if (sliceCount == 0 || sliceIndex >= sliceCount)
+            assert(false, sliceEnvironment ~ " needs 0 <= i < n, got: " ~ sliceSpec);
+        stderr.writefln("UT-PARTIAL slice %d of %d -- this run is NOT a gate",
+                        sliceIndex, sliceCount);
+    }
+
+    size_t seen;
     foreach (m; ModuleInfo)
     {
         if (!m)
             continue;
         auto fp = m.unitTest;
         if (!fp)
+            continue;
+
+        if (sliceCount != 0 && (seen++ % sliceCount) != sliceIndex)
             continue;
 
         actualRoster ~= m.name;
