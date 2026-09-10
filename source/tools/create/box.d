@@ -1053,7 +1053,7 @@ public:
             // at choosePlane() time; hidden from the Property Panel but
             // retained in the schema for headless prim.cube parity tests
             // that set axis explicitly via JSON.
-            Param.intEnum_("axis", "Axis", &params_.axis,
+            Param.intEnum_("axis", "Axis", cast(int*)&params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),
                  IntEnumEntry(2, "z", "Z")],

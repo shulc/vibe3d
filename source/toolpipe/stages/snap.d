@@ -531,7 +531,7 @@ class SnapStage : Stage, Operator {
         // label stays "Enable Snapping" because it reads better under a title
         // that already says "Snapping", not because anything would break.
         ps ~= Param.bool_("enabled", "Enable Snapping", &enabled, false);
-        ps ~= Param.intEnum_("snapMode", "Mode", &snapScope,
+        ps ~= Param.intEnum_("snapMode", "Mode", cast(int*)&snapScope,
                              snapModeEntries, cast(int)SnapMode.Global);
         foreach (i, ref row; snapTypeRows)
             ps ~= Param.bool_(row.attr, row.label, &_typeMirror[i],

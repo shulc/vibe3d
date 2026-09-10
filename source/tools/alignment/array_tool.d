@@ -240,7 +240,7 @@ public:
             Param.bool_("flip", "Invert Polygons", &flip_, false),
             Param.bool_("merge", "Merge Vertices", &merge_, false),
             Param.float_("dist", "Distance", &dist_, 0.0f).min(0.0f),
-            Param.intEnum_("source", "Source", &source_,
+            Param.intEnum_("source", "Source", cast(int*)&source_,
                            sourceTable, cast(int)SourceMode.Active),
             Param.string_("item", "Mesh Item", &item_, ""),
         ];

@@ -735,7 +735,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             && g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght).length > 1;
         if (stacked)
             ps ~= Param.intEnum_("mix", "Mix",
-                                 &config.mix, mixEntries,
+                                 cast(int*)&config.mix, mixEntries,
                                  cast(int)FalloffMix.Multiply);
 
         // Shape preset — the weight-curve shape (Linear / Ease-In / Ease-Out /

@@ -1420,7 +1420,7 @@ public:
     override Param[] params() {
         return [
             Param.bool_("middle", "Split at the Middle", &addLoopMiddle_, false),
-            Param.intEnum_("mode", "Mode", &penMode_, penModeTable,
+            Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
                            cast(int)PenMode.Move),
             Param.bool_("loop",  "Edge Loop",  &edgeLoop_,  false),
             Param.bool_("slide", "Edge Slide", &edgeSlide_, false),

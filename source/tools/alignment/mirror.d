@@ -545,7 +545,7 @@ public:
 
     override Param[] params() {
         return [
-            Param.intEnum_("axis", "Axis", &params_.axis,
+            Param.intEnum_("axis", "Axis", cast(int*)&params_.axis,
                 [IntEnumEntry(0, "X", "X"),
                  IntEnumEntry(1, "Y", "Y"),
                  IntEnumEntry(2, "Z", "Z")],
@@ -557,7 +557,7 @@ public:
             // --- live as of v2 (task 0230): angle drives the rotate box + toolNormal ---
             Param.float_("angle", "Angle", &params_.angle, 180.0f).angle(),
             // Mode stays greyed to Axis — Free-Rotation/Three-Points deferred.
-            Param.intEnum_("mode", "Mode", &params_.mode,
+            Param.intEnum_("mode", "Mode", cast(int*)&params_.mode,
                 [IntEnumEntry(0, "axis", "Axis")], 0),
             // Left/Up are DERIVED readouts (written in evaluate()) — read-only
             // in v2 (owner decision (d)): editing them would need a 3rd rotate

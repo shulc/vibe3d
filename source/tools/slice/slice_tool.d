@@ -1040,7 +1040,7 @@ public:
             Param.float_("gap",    "Gap", &gap_, 0.0f),
             // Offset Side (S9): where the Gap band sits vs the plane
             // (center/positive/negative). Applies with Split on or off (task 0288).
-            Param.intEnum_("gapSide", "Offset Side", &gapSide_,
+            Param.intEnum_("gapSide", "Offset Side", cast(int*)&gapSide_,
                            sliceGapSideTable[], cast(int)SliceGapSide.Center),
             // Angle Snap (S5): OFF (goldens-green factory default — see field
             // doc) draws the raw line; ON quantizes the line's work-plane angle
@@ -1053,7 +1053,7 @@ public:
             // Custom (vector normal) OVERRIDE. No Free value — the default plane
             // is the frozen drag plane (axisLocked_ false); writing this attr
             // engages the override. Default VALUE X (ignored until locked).
-            Param.intEnum_("axis", "Axis", &axis_, sliceAxisTable[],
+            Param.intEnum_("axis", "Axis", cast(int*)&axis_, sliceAxisTable[],
                            cast(int)SliceAxis.X),
             // Custom normal — greyed unless Axis == Custom (paramEnabled).
             Param.float_("vectorX", "Vector X", &vector_.x, 0.0f),
