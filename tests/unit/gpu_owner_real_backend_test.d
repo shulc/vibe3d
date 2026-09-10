@@ -12,6 +12,7 @@ import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuMesh,
 import std.file : readText;
 import std.format : format;
 import std.path : buildPath, dirName;
+import std.stdio : stderr;
 import std.string : count;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -236,7 +237,7 @@ private void assertRelatedHeaderCleared(ref const GpuMesh gpu, string cell)
         cell ~ " did not clear the related GpuMesh header state");
 }
 
-unittest // GpuCreateOwner.abortEnlisted reaches the real deleter.
+private void gpuCreateOwnerCell()
 {
     withGlBoundary({
         enum cell = "GpuCreateOwner.abortEnlisted";
@@ -259,7 +260,7 @@ unittest // GpuCreateOwner.abortEnlisted reaches the real deleter.
     });
 }
 
-unittest // GpuResourceOwner.installPrepared reaches the real deleter.
+private void gpuResourceOwnerCell()
 {
     withGlBoundary({
         enum cell = "GpuResourceOwner.installPrepared";
@@ -300,7 +301,7 @@ unittest // GpuResourceOwner.installPrepared reaches the real deleter.
     });
 }
 
-unittest // GpuCreateUploadOwner.abortEnlisted reaches cleanupPrepared.
+private void gpuCreateUploadOwnerCell()
 {
     withGlBoundary({
         enum cell = "GpuCreateUploadOwner.cleanupPrepared";
@@ -322,6 +323,54 @@ unittest // GpuCreateUploadOwner.abortEnlisted reaches cleanupPrepared.
         assertNamesLive(namesB, cell);
         assertNamesDead(namesA, cell);
     });
+}
+
+unittest // Every real owner cell runs even when a sibling fails.
+{
+    enum string[3] labels = ["GpuCreateOwner.abortEnlisted",
+        "GpuResourceOwner.installPrepared",
+        "GpuCreateUploadOwner.cleanupPrepared"];
+    void function()[3] cells = [&gpuCreateOwnerCell, &gpuResourceOwnerCell,
+        &gpuCreateUploadOwnerCell];
+    string[3] states;
+    Throwable firstFailure;
+
+    foreach (i, cell; cells)
+    {
+        try
+        {
+            cell();
+            states[i] = "PASS";
+        }
+        catch (Throwable failure)
+        {
+            states[i] = "FAIL";
+            if (firstFailure is null)
+                firstFailure = failure;
+        }
+    }
+
+    if (firstFailure !is null)
+    {
+        foreach (i, state; states)
+            stderr.writefln("GPU-OWNER-CELL %s %s", labels[i], state);
+        throw firstFailure;
+    }
+}
+
+unittest // GpuCreateOwner.abortEnlisted reaches the real deleter.
+{
+    gpuCreateOwnerCell();
+}
+
+unittest // GpuResourceOwner.installPrepared reaches the real deleter.
+{
+    gpuResourceOwnerCell();
+}
+
+unittest // GpuCreateUploadOwner.abortEnlisted reaches cleanupPrepared.
+{
+    gpuCreateUploadOwnerCell();
 }
 
 unittest // Legacy destroy releases names but retains its header policy.
