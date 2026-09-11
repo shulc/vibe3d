@@ -209,6 +209,16 @@ void ok(string msg) { writeln("lane.d: ok: ", msg); }
 // a threshold derived from anything this lane measures.
 // ---------------------------------------------------------------------------
 enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
+enum kDefaultScratchRoot = "/var/tmp";
+enum kScratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
+enum kQuotaAvailableTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
+
+string scratchRoot() {
+    const configured = environment.get("TMPDIR", "");
+    if (configured.length) return configured;
+    const testDefault = environment.get(kScratchRootTestEnv, "");
+    return testDefault.length ? testDefault : kDefaultScratchRoot;
+}
 
 ulong freeBytes(string path) {
     import core.sys.posix.sys.statvfs : statvfs, statvfs_t;
@@ -224,6 +234,58 @@ ulong freeBytes(string path) {
     return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
 }
 
+ulong quotaAvailableBytes(string path) {
+    const injected = environment.get(kQuotaAvailableTestEnv, "");
+    if (injected.length) return injected.to!ulong;
+
+    string p = path;
+    while (p.length && !exists(p)) {
+        const parent = dirName(p);
+        if (parent == p) break;
+        p = parent;
+    }
+    if (!p.length || !exists(p)) return ulong.max;
+
+    try {
+        string[string] env;
+        foreach (k, v; environment.toAA) env[k] = v;
+        env["LC_ALL"] = "C";
+        auto result = execute(["quota", "-w", "-v", "-p",
+            "--show-mntpoint", "--hide-device", "-f", p], env);
+        if (result.status != 0) return ulong.max;
+
+        import std.regex : matchFirst, regex;
+        auto row = result.output.matchFirst(regex(
+            r"(?m)^\s*(.*?)\s+([0-9]+)\*?\s+([0-9]+)\s+([0-9]+)(?:\s|$)"));
+        if (row.empty) return ulong.max;
+        const used = row[2].to!ulong;
+        const soft = row[3].to!ulong;
+        const hard = row[4].to!ulong;
+        ulong limit;
+        if (soft && hard) limit = soft < hard ? soft : hard;
+        else              limit = soft ? soft : hard;
+        if (!limit) return ulong.max;
+        const remainingKiB = used < limit ? limit - used : 0;
+        if (remainingKiB > ulong.max / 1024) return ulong.max;
+        return remainingKiB * 1024;
+    } catch (Exception) {
+        return ulong.max;
+    }
+}
+
+struct SpaceAvailability {
+    ulong filesystemFree;
+    ulong quotaRemaining;
+
+    @property ulong available() const {
+        return filesystemFree < quotaRemaining ? filesystemFree : quotaRemaining;
+    }
+}
+
+SpaceAvailability spaceAvailability(string path) {
+    return SpaceAvailability(freeBytes(path), quotaAvailableBytes(path));
+}
+
 string humanBytes(ulong b) {
     enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
     if (b == ulong.max)     return "unknown";
@@ -234,12 +296,22 @@ string humanBytes(ulong b) {
 }
 
 /// `null` => proceed; else the refusal message, always containing "space".
-string spacePreflightMessage(ulong free, ulong floor, string path) {
-    if (free == ulong.max || free >= floor) return null;
+string availabilityDetails(SpaceAvailability space) {
+    if (space.quotaRemaining == ulong.max)
+        return format("%s filesystem free, quota unlimited or unavailable",
+                      humanBytes(space.filesystemFree));
+    return format("%s filesystem free, %s quota remaining",
+                  humanBytes(space.filesystemFree),
+                  humanBytes(space.quotaRemaining));
+}
+
+string spacePreflightMessage(SpaceAvailability space, ulong floor, string path) {
+    if (space.available == ulong.max || space.available >= floor) return null;
     return format(
-        "no space left: %s has %s free, below the %s floor -- refusing to "
+        "no space left: %s has %s available (%s), below the %s floor -- refusing to "
         ~ "start rather than fail mid-run and disguise it as red tests "
-        ~ "(task 2080)", path, humanBytes(free), humanBytes(floor));
+        ~ "(tasks 2080/5502)", path, humanBytes(space.available),
+        availabilityDetails(space), humanBytes(floor));
 }
 
 /// `check-space <path> [floorMiB]` — the same real, un-mocked surface
@@ -251,9 +323,10 @@ void cmdCheckSpace(string[] args) {
     const floor = args.length > 1
         ? cast(ulong) args[1].to!ulong * 1024 * 1024
         : kMinPreflightFreeBytes;
-    const free = freeBytes(path);
-    if (auto msg = spacePreflightMessage(free, floor, path)) fail(msg);
-    ok(format("%s free at %s (floor %s)", humanBytes(free), path, humanBytes(floor)));
+    const space = spaceAvailability(path);
+    if (auto msg = spacePreflightMessage(space, floor, path)) fail(msg);
+    ok(format("%s available at %s (%s; floor %s)", humanBytes(space.available),
+              path, availabilityDetails(space), humanBytes(floor)));
 }
 
 string run(string[] argv, string[string] env = null, bool mustSucceed = true) {
@@ -337,18 +410,20 @@ void cmdPreflight(string[] args = null) {
     // flag has to be passed EXPLICITLY by a caller that has no fuzz step; it
     // is not a default.
     const skipFuzzer = args.canFind("--no-fuzzer");
-    // (0) Disk space, tempDir() (task 2080). This is `run_test.d`'s own
+    // (0) Disk space, scratchRoot() (tasks 2080/5502). This is `run_test.d`'s own
     // scratch tree — the incident this guards was a sanitizer night that
     // died mid-link writing INTO it (`worker_N/<test>.o`, ENOSPC), with six
     // unrelated fixture tests failing identically in the same run. Checked
     // first, before any LDC build, so a starved host says so in one line
     // instead of forty minutes into the "full test suite" step below.
     {
-        const root = tempDir();
-        if (auto msg = spacePreflightMessage(freeBytes(root), kMinPreflightFreeBytes, root))
+        const root = scratchRoot();
+        const space = spaceAvailability(root);
+        if (auto msg = spacePreflightMessage(space, kMinPreflightFreeBytes, root))
             fail(msg);
-        ok(format("%s free at %s (tempDir, floor %s)",
-                  humanBytes(freeBytes(root)), root, humanBytes(kMinPreflightFreeBytes)));
+        ok(format("%s available at %s (scratch root; %s; floor %s)",
+                  humanBytes(space.available), root, availabilityDetails(space),
+                  humanBytes(kMinPreflightFreeBytes)));
     }
     // (1) The compiler exists and is new enough.
     auto ldc = ldcPath();
@@ -411,14 +486,16 @@ void cmdPreflight(string[] args = null) {
     // Disk space, VIBE3D_SAN_DUB_HOME (task 2080) — every `dub build`/`dub
     // test` this lane runs below writes here (laneEnv() above already
     // refused to proceed if it were unset), so it is checked alongside
-    // tempDir() rather than left to surface as a build failure later.
+    // the suite scratch root rather than left to surface as a build failure later.
     {
         const dubHome = environment.get("VIBE3D_SAN_DUB_HOME", "");
         if (dubHome.length) {
-            if (auto msg = spacePreflightMessage(freeBytes(dubHome), kMinPreflightFreeBytes, dubHome))
+            const space = spaceAvailability(dubHome);
+            if (auto msg = spacePreflightMessage(space, kMinPreflightFreeBytes, dubHome))
                 fail(msg);
-            ok(format("%s free at VIBE3D_SAN_DUB_HOME=%s (floor %s)",
-                      humanBytes(freeBytes(dubHome)), dubHome, humanBytes(kMinPreflightFreeBytes)));
+            ok(format("%s available at VIBE3D_SAN_DUB_HOME=%s (%s; floor %s)",
+                      humanBytes(space.available), dubHome,
+                      availabilityDetails(space), humanBytes(kMinPreflightFreeBytes)));
         }
     }
     auto desc = runStdout([ "dub", "describe", "--build=release",

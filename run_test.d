@@ -53,7 +53,7 @@ import std.getopt    : getopt, config;
 import std.parallelism : parallel, totalCPUs;
 import std.path      : baseName, buildPath, stripExtension, dirName;
 import std.process   : spawnProcess, spawnShell, wait, tryWait, executeShell,
-                       Config, Pid, ProcessException, environment;
+                       execute, Config, Pid, ProcessException, environment;
 import std.range     : empty;
 import std.stdio     : writeln, writefln, write, stdin, stdout, stderr, File;
 import std.string    : startsWith, endsWith, indexOf, split, splitLines, strip;
@@ -176,6 +176,20 @@ string bold  (string s) { return col("1",  s); }
 // /tmp` names the lane, plus a hash of the full absolute path so two lanes that
 // end in the same two components still differ.
 enum kScratchPrefix = "vibe3d-tests-";
+enum kDefaultScratchRoot = "/var/tmp";
+enum kScratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
+
+// TMPDIR is an explicit caller contract and stays the first choice. With no
+// override, runner scratch belongs on the root filesystem: this host's /tmp is
+// a quota-limited tmpfs and moving 9.59 GB of -j 6 scratch to /var/tmp cost
+// 0.5% in the paired 2026-09-11 measurement (task 5502/5520). The test seam
+// substitutes only the default arm and is never set by a workflow.
+string scratchRoot() {
+    const configured = environment.get("TMPDIR", "");
+    if (configured.length) return configured;
+    const testDefault = environment.get(kScratchRootTestEnv, "");
+    return testDefault.length ? testDefault : kDefaultScratchRoot;
+}
 
 private string slugOf(string s) {
     import std.ascii : isAlphaNum;
@@ -206,7 +220,7 @@ string scratchDirFor(string root) {
     else if (parts.length == 1) slug = slugOf(parts[0]);
     else                        slug = "root";
 
-    return buildPath(tempDir(), kScratchPrefix ~ slug ~ "-" ~ hash);
+    return buildPath(scratchRoot(), kScratchPrefix ~ slug ~ "-" ~ hash);
 }
 
 // Best-effort recursive delete. Returns false instead of throwing: a tree with
@@ -260,7 +274,7 @@ string prepareScratchDir(string path) {
 
     // Sweep any parked trees of THIS lane that are now quiet. Best effort:
     // one that is still busy simply survives to the next run.
-    const dir  = tempDir();
+    const dir  = dirName(path);
     const stem = baseName(path) ~ ".stale-";
     try {
         foreach (e; dirEntries(dir, SpanMode.shallow))
@@ -282,12 +296,11 @@ string prepareScratchDir(string path) {
 //
 // `worker_N/<test>.o` is exactly this runner's own per-worker scratch
 // (`w.scratch = buildPath(scratchDir, "worker_%d")`, written by
-// `compileTests` below) — under `tempDir()`, which on the affected host is a
-// 32 GiB tmpfs, i.e. RAM. SIX unrelated fixture tests failed identically in
-// the same run, which reads as a code regression and is one exhausted
-// filesystem. This check does not move the scratch root or make lanes clean
-// up after themselves (see `orphanScratchDirs` / `--sweep-scratch` below for
-// the second half) — it removes the DISGUISE: a run that starts against an
+// `compileTests` below). On the affected host the former /tmp default is a
+// quota-limited tmpfs. SIX unrelated fixture tests failed identically in the
+// same run, which reads as a code regression and is one exhausted filesystem.
+// Task 5502 moved that default to /var/tmp; this check still removes the
+// DISGUISE for explicit TMPDIR and any future quota-limited root: a run against an
 // exhausted filesystem says so, once, with the word "space" in it, before a
 // single test compiles, instead of failing 40 minutes in as red tests.
 //
@@ -306,13 +319,12 @@ string prepareScratchDir(string path) {
 // (deliberately) was not decided here.
 enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
 
-// Advisory only (task 4660): task 4640's 151-row `-j 8` sample observed a
-// 1,144,953,653-byte largest worker and a 114,904,668-byte shared test library.
-// The estimate deliberately uses the largest worker as its coefficient:
-// shared + jobs * max-worker. It must never replace or raise the flat refusal
-// floor above; its job is to make a likely mid-run exhaustion visible while
-// preserving the caller's decision to continue.
-enum ulong kObservedWorkerScratchBytes = 1_144_953_653UL;
+// Advisory only (tasks 4660/5502): measured 2026-09-11 on main@3b42e336 at
+// `-j 6` with `du -sb <scratch>/worker_*` while the run was live: 9.59 GB / 6
+// workers, rounded to 1.60 GB/worker. The shared 114,904,668-byte library was
+// remeasured by the same command and remains accurate. Estimate = shared +
+// jobs * worker; it does not raise the flat refusal floor.
+enum ulong kObservedWorkerScratchBytes = 1_600_000_000UL;
 enum ulong kObservedSharedTestLibraryBytes = 114_904_668UL;
 
 ulong estimatedScratchBytes(int jobs) {
@@ -321,7 +333,7 @@ ulong estimatedScratchBytes(int jobs) {
          + cast(ulong) jobs * kObservedWorkerScratchBytes;
 }
 
-/// Free bytes on the filesystem containing `path`. `path` need not exist —
+/// Free blocks on the filesystem containing `path`. `path` need not exist —
 /// this climbs to the nearest existing ancestor first, so it works against a
 /// cold checkout's not-yet-created scratch dir. Returns `ulong.max` (never
 /// blocks a run) when the query itself cannot be answered — a permission
@@ -344,6 +356,66 @@ ulong freeBytes(string path) {
     return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
 }
 
+enum kQuotaAvailableTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
+
+/// Remaining user block quota for the filesystem containing `path`, or
+/// ulong.max when the filesystem has no quota or the optional host query is
+/// unavailable. `quota` reports its block columns in KiB. The smaller nonzero
+/// soft/hard limit is deliberately conservative; on the incident host they
+/// are equal. The environment seam substitutes only the returned number so a
+/// black-box test can prove the real decision without depending on host quota.
+ulong quotaAvailableBytes(string path) {
+    const injected = environment.get(kQuotaAvailableTestEnv, "");
+    if (injected.length) return injected.to!ulong;
+
+    string p = path;
+    while (p.length && !exists(p)) {
+        const parent = dirName(p);
+        if (parent == p) break;
+        p = parent;
+    }
+    if (!p.length || !exists(p)) return ulong.max;
+
+    try {
+        string[string] env;
+        foreach (k, v; environment.toAA) env[k] = v;
+        env["LC_ALL"] = "C";
+        auto result = execute(["quota", "-w", "-v", "-p",
+            "--show-mntpoint", "--hide-device", "-f", p], env);
+        if (result.status != 0) return ulong.max;
+
+        import std.regex : matchFirst, regex;
+        auto row = result.output.matchFirst(regex(
+            r"(?m)^\s*(.*?)\s+([0-9]+)\*?\s+([0-9]+)\s+([0-9]+)(?:\s|$)"));
+        if (row.empty) return ulong.max;
+        const used = row[2].to!ulong;
+        const soft = row[3].to!ulong;
+        const hard = row[4].to!ulong;
+        ulong limit;
+        if (soft && hard) limit = soft < hard ? soft : hard;
+        else              limit = soft ? soft : hard;
+        if (!limit) return ulong.max;
+        const remainingKiB = used < limit ? limit - used : 0;
+        if (remainingKiB > ulong.max / 1024) return ulong.max;
+        return remainingKiB * 1024;
+    } catch (Exception) {
+        return ulong.max;
+    }
+}
+
+struct SpaceAvailability {
+    ulong filesystemFree;
+    ulong quotaRemaining;
+
+    @property ulong available() const {
+        return filesystemFree < quotaRemaining ? filesystemFree : quotaRemaining;
+    }
+}
+
+SpaceAvailability spaceAvailability(string path) {
+    return SpaceAvailability(freeBytes(path), quotaAvailableBytes(path));
+}
+
 string humanBytes(ulong b) {
     enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
     if (b == ulong.max)   return "unknown";
@@ -359,22 +431,33 @@ string humanBytes(ulong b) {
 /// prints free space is green when there is none). `free == ulong.max` (the
 /// query could not be answered) never refuses: this check must not turn an
 /// unrelated errno into a false "no space" report.
-string spacePreflightMessage(ulong free, ulong floor, string path) {
-    if (free == ulong.max || free >= floor) return null;
-    return format(
-        "no space left: %s has %s free, below the %s floor -- refusing to "
-        ~ "start rather than fail mid-run and disguise it as red tests "
-        ~ "(task 2080)", path, humanBytes(free), humanBytes(floor));
+string availabilityDetails(SpaceAvailability space) {
+    if (space.quotaRemaining == ulong.max)
+        return format("%s filesystem free, quota unlimited or unavailable",
+                      humanBytes(space.filesystemFree));
+    return format("%s filesystem free, %s quota remaining",
+                  humanBytes(space.filesystemFree),
+                  humanBytes(space.quotaRemaining));
 }
 
-string spaceEstimateWarning(ulong free, int jobs, string path) {
-    const estimated = estimatedScratchBytes(jobs);
-    if (free == ulong.max || free >= estimated) return null;
+string spacePreflightMessage(SpaceAvailability space, ulong floor, string path) {
+    if (space.available == ulong.max || space.available >= floor) return null;
     return format(
-        "space warning: %s has %s free; estimated need for -j %d is %s "
-        ~ "(%s/worker coefficient = largest worker scratch observed in task "
-        ~ "4640's -j 8 measurement, plus %s shared test library); continuing",
-        path, humanBytes(free), jobs, humanBytes(estimated),
+        "no space left: %s has %s available (%s), below the %s floor -- refusing to "
+        ~ "start rather than fail mid-run and disguise it as red tests "
+        ~ "(tasks 2080/5502)", path, humanBytes(space.available),
+        availabilityDetails(space), humanBytes(floor));
+}
+
+string spaceEstimateWarning(SpaceAvailability space, int jobs, string path) {
+    const estimated = estimatedScratchBytes(jobs);
+    if (space.available == ulong.max || space.available >= estimated) return null;
+    return format(
+        "space warning: %s has %s available (%s); estimated need for -j %d is %s "
+        ~ "(%s/worker coefficient measured 2026-09-11 at -j 6, plus %s "
+        ~ "shared test library); continuing",
+        path, humanBytes(space.available), availabilityDetails(space), jobs,
+        humanBytes(estimated),
         humanBytes(kObservedWorkerScratchBytes),
         humanBytes(kObservedSharedTestLibraryBytes));
 }
@@ -2470,14 +2553,14 @@ int main(string[] args) {
                     ~ "--check-space against a real constrained mount "
                     ~ "(default: 256)",                                        &spaceFloorMiB,
         "sweep-scratch", "(task 2080) delete this host's orphaned "
-                    ~ "`vibe3d-tests-*` scratch trees under tempDir() -- "
+                    ~ "`vibe3d-tests-*` scratch trees under scratchRoot() -- "
                     ~ "positional args are the LIVE worktree roots (e.g. from "
                     ~ "`git worktree list`); a tree matching one is refused",   &sweepScratch,
         "sweep-plan", "(task 2080, diagnostic) print, one per line, which of "
                     ~ "the given --sweep-entry values --sweep-scratch would "
                     ~ "remove given --sweep-live -- pure, touches no "
                     ~ "filesystem", &sweepPlan,
-        "sweep-entry","(task 2080, diagnostic) one simulated tempDir() entry "
+        "sweep-entry","(task 2080, diagnostic) one simulated scratch-root entry "
                     ~ "for --sweep-plan (repeatable)",                         &sweepEntry,
         "sweep-live", "(task 2080, diagnostic) one simulated live worktree "
                     ~ "root for --sweep-plan (repeatable)",                    &sweepLive,
@@ -2582,7 +2665,7 @@ int main(string[] args) {
     if (checkProtocol)
         return protocolCensus() ? 0 : 2;
 
-    // --check-space: the real freeBytes()/statvfs query against a real path,
+    // --check-space: the real filesystem/quota query against a real path,
     // with an overridable floor — the surface a constrained-mount witness
     // drives (see tests/unit/run_test_space_preflight_test.d). Not the
     // preflight gate itself (below); a standalone diagnostic.
@@ -2590,15 +2673,16 @@ int main(string[] args) {
         const floor = spaceFloorMiB >= 0
             ? cast(ulong) spaceFloorMiB * 1024 * 1024
             : kMinPreflightFreeBytes;
-        const free = freeBytes(checkSpacePath);
-        if (auto msg = spacePreflightMessage(free, floor, checkSpacePath)) {
+        const space = spaceAvailability(checkSpacePath);
+        if (auto msg = spacePreflightMessage(space, floor, checkSpacePath)) {
             stderr.writeln(red(msg));
             return 1;
         }
-        if (auto msg = spaceEstimateWarning(free, j, checkSpacePath))
+        if (auto msg = spaceEstimateWarning(space, j, checkSpacePath))
             stderr.writeln(yellow(msg));
-        writefln("--check-space: %s has %s free (floor %s) -- ok",
-                 checkSpacePath, humanBytes(free), humanBytes(floor));
+        writefln("--check-space: %s has %s available (%s; floor %s) -- ok",
+                 checkSpacePath, humanBytes(space.available),
+                 availabilityDetails(space), humanBytes(floor));
         return 0;
     }
 
@@ -2614,7 +2698,7 @@ int main(string[] args) {
     // removes a lane's worktree pair. Positional args are the live roots.
     if (sweepScratch) {
         string[] liveRoots = args[1 .. $];
-        const root = tempDir();
+        const root = scratchRoot();
         string[] entries;
         try {
             foreach (e; dirEntries(root, SpanMode.shallow))
@@ -2672,12 +2756,12 @@ int main(string[] args) {
     // Disk-space preflight (task 2080), MANDATORY on every real run — before
     // the build, before the run lock, before anything expensive. See the
     // "Disk-space preflight" section above for the incident this guards
-    // against: this is the same tempDir() that `prepareScratchDir` and every
+    // against: this is the same scratchRoot() that `prepareScratchDir` and every
     // worker's `dmd` compile below write into.
     {
-        const root = tempDir();
-        const free = freeBytes(root);
-        if (auto msg = spacePreflightMessage(free, kMinPreflightFreeBytes, root)) {
+        const root = scratchRoot();
+        const space = spaceAvailability(root);
+        if (auto msg = spacePreflightMessage(space, kMinPreflightFreeBytes, root)) {
             stderr.writeln(red(msg));
             g_harness.stage = HarnessStage.spaceRefused;
             g_harness.rc = 1;
@@ -2721,9 +2805,9 @@ int main(string[] args) {
     // actually create while there is still time for the caller to intervene.
     if (j > cast(int)tests.length) j = cast(int)tests.length;
     {
-        const root = tempDir();
-        const free = freeBytes(root);
-        if (auto msg = spaceEstimateWarning(free, j, root))
+        const root = scratchRoot();
+        const space = spaceAvailability(root);
+        if (auto msg = spaceEstimateWarning(space, j, root))
             stderr.writeln(yellow(msg));
     }
 

@@ -61,8 +61,9 @@
 //     of run_test.d away from this file's reach.
 module tests.unit.run_test_scratch_test;
 
+import std.algorithm : canFind;
 import std.exception : collectException, enforce;
-import std.file      : exists, mkdirRecurse, remove, rmdirRecurse, tempDir;
+import std.file      : exists, mkdirRecurse, readText, remove, rmdirRecurse, tempDir;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.process   : Config, execute, environment, thisProcessID;
@@ -70,6 +71,7 @@ import std.string    : startsWith, strip;
 
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
+private enum scratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
 
 private string runnerLockPath()
 {
@@ -79,10 +81,14 @@ private string runnerLockPath()
 
 // Ask the shipped runner what scratch directory it would use when run from
 // `cwd`, with `extraEnv` added to its environment.
-private string askScratch(string cwd, string[string] extraEnv = null)
+private string askRunner(string cwd, string flag,
+                         string[string] extraEnv = null,
+                         bool clearTmpDir = false)
 {
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
+    if (clearTmpDir) env.remove("TMPDIR");
+    env.remove(scratchRootTestEnv);
     foreach (k, v; extraEnv)          env[k] = v;
     // A runner spawned BY A TEST is not this host's load: without this the
     // record would land in ~/.local/state/vibe3d/harness.jsonl and be counted
@@ -92,18 +98,26 @@ private string askScratch(string cwd, string[string] extraEnv = null)
     // refuses a runner spawn that leaves either host-owned channel live.
     env["VIBE3D_HARNESS_LOG"] = "off";
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runnerLockPath();
+    if (flag == "--print-run-lock")
+        env.remove("VIBE3D_PERF_RUNTEST_LOCK_PATH");
 
-    auto r = execute(["rdmd", runnerPath, "--print-scratch"],
+    auto r = execute(["rdmd", runnerPath, flag],
                      env, Config.none, size_t.max, cwd);
     enforce(r.status == 0, format(
-        "`rdmd %s --print-scratch` (cwd %s) exited %d:\n%s\n" ~
+        "`rdmd %s %s` (cwd %s) exited %d:\n%s\n" ~
         "rdmd drives the whole HTTP suite (run_test.d's own shebang), so it " ~
         "being unusable is a broken toolchain, not a reason to skip this check.",
-        runnerPath, cwd, r.status, r.output));
+        runnerPath, flag, cwd, r.status, r.output));
 
     auto path = r.output.strip;
     enforce(path.length, "--print-scratch printed nothing");
     return path;
+}
+
+private string askScratch(string cwd, string[string] extraEnv = null,
+                          bool clearTmpDir = false)
+{
+    return askRunner(cwd, "--print-scratch", extraEnv, clearTmpDir);
 }
 
 unittest
@@ -124,10 +138,10 @@ unittest
     //  same swallow written where the compiler accepts it)
     scope(exit) cast(void) collectException(rmdirRecurse(stem));
 
-    const a  = askScratch(laneA);
-    const b  = askScratch(laneB);
-    const a2 = askScratch(laneA);
-    const tb = askScratch(twinB);
+    const a  = askScratch(laneA, null, true);
+    const b  = askScratch(laneB, null, true);
+    const a2 = askScratch(laneA, null, true);
+    const tb = askScratch(twinB, null, true);
 
     // 1. Two checkouts, two trees. This is the whole defect: before task 1282
     //    both of these were `/tmp/vibe3d-tests-0`.
@@ -151,21 +165,76 @@ unittest
     // 4. Nothing from the environment decides this. Both halves fail for any
     //    implementation that reads PPID (or any other exported shell variable)
     //    the way the pre-1282 one meant to.
-    const aPpid1 = askScratch(laneA, ["PPID": "111111"]);
-    const aPpid2 = askScratch(laneA, ["PPID": "222222"]);
+    const aPpid1 = askScratch(laneA, ["PPID": "111111"], true);
+    const aPpid2 = askScratch(laneA, ["PPID": "222222"], true);
     assert(a == aPpid1 && a == aPpid2, format(
         "an exported PPID changed the scratch tree (%s / %s / %s) — the runner " ~
         "is keyed on the invoking shell, so one lane re-running gets a new tree " ~
         "and a leftover one is never adopted", a, aPpid1, aPpid2));
 
-    const bSamePpid = askScratch(laneB, ["PPID": "111111"]);
+    const bSamePpid = askScratch(laneB, ["PPID": "111111"], true);
     assert(aPpid1 != bSamePpid, format(
         "two checkouts under one exported PPID share a scratch tree (%s) — " ~
         "exactly the pre-1282 collision, with the variable actually set", aPpid1));
 
-    // Shape: under the system temp dir, and recognisable at a glance in `ls`.
+    // Shape: the root-filesystem default, and recognisable at a glance in `ls`.
     foreach (p; [a, b, tb])
-        assert(p.startsWith(buildPath(tempDir(), "vibe3d-tests-")), format(
-            "scratch path %s is not a `vibe3d-tests-*` directory under %s",
-            p, tempDir()));
+        assert(p.startsWith(buildPath("/var/tmp", "vibe3d-tests-")), format(
+            "scratch path %s is not a `vibe3d-tests-*` directory under the " ~
+            "root-filesystem default /var/tmp", p));
+
+    // An explicitly-set TMPDIR remains the caller's isolation mechanism.
+    const explicitRoot = buildPath(stem, "explicit-root");
+    mkdirRecurse(explicitRoot);
+    const explicitScratch = askScratch(laneA, ["TMPDIR": explicitRoot]);
+    assert(explicitScratch.startsWith(buildPath(explicitRoot, "vibe3d-tests-")),
+        format("explicit TMPDIR=%s was ignored; --print-scratch returned %s",
+               explicitRoot, explicitScratch));
+
+    // Capacity isolation must never split the host-wide lock.
+    const defaultLock = askRunner(laneA, "--print-run-lock", null, true);
+    const explicitLock = askRunner(laneA, "--print-run-lock",
+                                   ["TMPDIR": explicitRoot]);
+    const canonicalLock = buildPath("/tmp", "vibe3d-run-test.lock");
+    assert(defaultLock == canonicalLock
+        && explicitLock == defaultLock, format(
+        "--print-run-lock moved with TMPDIR: default=%s explicit=%s",
+        defaultLock, explicitLock));
+
+    const workflow = readText(buildPath(repoRoot, ".github", "workflows",
+                                        "sanitizer.yaml"));
+    assert(!workflow.canFind("TMPDIR:"),
+        "sanitizer.yaml sets TMPDIR, so its suite would not exercise the " ~
+        "root-filesystem scratch default");
+    assert(!workflow.canFind(scratchRootTestEnv),
+        "sanitizer.yaml sets the scratch-root test seam");
+}
+
+unittest
+{
+    // Exercise the real --sweep-scratch filesystem walk without exposing any
+    // host or sibling-lane tree: only the default root is substituted, while
+    // TMPDIR stays unset exactly as it is in the nightly workflow.
+    const root = buildPath(tempDir(), format(
+        "vibe3d-sweep-root-test-%d", thisProcessID));
+    const orphan = buildPath(root, "vibe3d-tests-injected-orphan");
+    mkdirRecurse(orphan);
+    scope(exit) if (exists(root)) cast(void) collectException(rmdirRecurse(root));
+
+    string[string] env;
+    foreach (k, v; environment.toAA) env[k] = v;
+    env.remove("TMPDIR");
+    env[scratchRootTestEnv] = root;
+    env["VIBE3D_HARNESS_LOG"] = "off";
+    env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runnerLockPath();
+
+    auto r = execute(["rdmd", runnerPath, "--sweep-scratch"],
+                     env, Config.none, size_t.max, repoRoot);
+    assert(r.status == 0, "--sweep-scratch failed:\n" ~ r.output);
+    assert(r.output.canFind(orphan), format(
+        "--sweep-scratch did not report the injected orphan %s:\n%s",
+        orphan, r.output));
+    assert(!exists(orphan), format(
+        "--sweep-scratch left the injected orphan under its own root: %s\n%s",
+        orphan, r.output));
 }

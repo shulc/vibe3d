@@ -142,7 +142,8 @@ jobs:
         ls -ld tools/local || true
 
     - name: 'Preflight (fails the job, by design)'
-      # As of task 2080 this ALSO checks free space on tempDir() and on
+      # As of tasks 2080/5502 this ALSO checks filesystem and quota availability
+      # on run_test.d's scratch root (/var/tmp here because TMPDIR is unset) and on
       # VIBE3D_SAN_DUB_HOME, first, before the LDC/DISPLAY/fuzzer checks: an
       # exhausted `/tmp` (32 GiB tmpfs = RAM on the host this was measured on)
       # is what turned into six unrelated red fixture tests instead of an

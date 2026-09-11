@@ -7,16 +7,16 @@
 //
 // and SIX unrelated fixture tests failed identically in the same run — which
 // reads as a code regression and is one exhausted filesystem. `worker_N` is
-// `run_test.d`'s own per-worker scratch directory, written by `compileTests`
-// under `tempDir()`; on the affected host `/tmp` is a 32 GiB tmpfs, i.e. RAM.
+// `run_test.d`'s own per-worker scratch directory, written by `compileTests`.
+// It used to default under `/tmp`, a quota-limited tmpfs on the affected host.
 //
 // WHAT IS GATED HERE, following the same black-box discipline as
 // `run_test_scratch_test.d` (this project runs run_test.d/lane.d as
 // standalone rdmd scripts, never imported as modules — see that file's own
 // header for why):
 //
-//   1. `--check-space` — the real `freeBytes()`/statvfs query against a real
-//      path, on BOTH run_test.d and tools/sanitizer/lane.d, at the exact
+//   1. `--check-space` — the real filesystem/quota query against a real path,
+//      on BOTH run_test.d and tools/sanitizer/lane.d, at the exact
 //      boundary and past it. This is an EXACT term (`free < floor`), proven
 //      on the real filesystem this test runs on rather than an injected
 //      number, by supplying `--space-floor-mib` and letting the real query
@@ -51,7 +51,7 @@ module tests.unit.run_test_space_preflight_test;
 import std.algorithm  : canFind;
 import std.conv       : to;
 import std.exception  : collectException, enforce;
-import std.file       : exists, mkdirRecurse, rmdirRecurse, tempDir;
+import std.file       : exists, mkdirRecurse, readText, rmdirRecurse, tempDir;
 import std.format     : format;
 import std.path       : buildPath, dirName;
 import std.process    : Config, execute, environment, thisProcessID;
@@ -61,6 +61,7 @@ import std.string     : startsWith, strip, indexOf, splitLines;
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
 private enum lanePath   = buildPath(repoRoot, "tools", "sanitizer", "lane.d");
+private enum quotaTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
 
 private struct Run { int status; string output; }
 
@@ -88,6 +89,56 @@ private string askScratch(string cwd)
     const path = r.output.strip;
     enforce(path.length, "--print-scratch printed nothing");
     return path;
+}
+
+// A quota below the floor must win over abundant filesystem blocks, and the
+// refusal must name the quota number that made the decision.
+unittest
+{
+    auto r = rdmd(runnerPath,
+        ["--check-space", repoRoot, "--space-floor-mib", "256"],
+        [quotaTestEnv: "1048576"]);
+    assert(r.status == 1,
+        "run_test.d ignored a 1 MiB quota remainder on a filesystem with free blocks:\n"
+        ~ r.output);
+    assert(r.output.canFind("1.0 MiB quota remaining"),
+        "run_test.d quota refusal did not name the injected 1.0 MiB remainder:\n"
+        ~ r.output);
+}
+
+unittest
+{
+    auto r = rdmd(lanePath, ["check-space", repoRoot, "256"],
+                  [quotaTestEnv: "1048576"]);
+    assert(r.status == 1,
+        "lane.d ignored a 1 MiB quota remainder on a filesystem with free blocks:\n"
+        ~ r.output);
+    assert(r.output.canFind("1.0 MiB quota remaining"),
+        "lane.d quota refusal did not name the injected 1.0 MiB remainder:\n"
+        ~ r.output);
+}
+
+unittest
+{
+    const sourceText = readText(runnerPath);
+    assert(sourceText.canFind("2026-09-11")
+        && sourceText.canFind("`-j 6`")
+        && sourceText.canFind("`du -sb <scratch>/worker_*`"),
+        "worker-scratch coefficient lost its date, -j, or measuring command");
+
+    // Keep the fatal floor at zero and inject 512 MiB of quota headroom: the
+    // same diagnostic must continue, but its warning deterministically exposes
+    // the current worker coefficient without depending on this host's disk.
+    auto r = rdmd(runnerPath,
+        ["--check-space", repoRoot, "--space-floor-mib", "0", "-j", "8"],
+        [quotaTestEnv: (512UL * 1024 * 1024).to!string]);
+    assert(r.status == 0,
+        "advisory coefficient probe unexpectedly refused:\n" ~ r.output);
+    assert(r.output.canFind("estimated need for -j 8 is 12.0 GiB"),
+        "space warning does not name the updated -j 8 estimate:\n" ~ r.output);
+    assert(r.output.canFind("1.5 GiB/worker coefficient measured 2026-09-11 at -j 6"),
+        "space warning does not name the updated worker coefficient and provenance:\n"
+        ~ r.output);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,13 +342,13 @@ unittest
     assert(warningSection.indexOf("space warning") >= 0,
         "run_test.d did not warn above the fatal floor but below the measured "
       ~ "-j 8 estimate:\n" ~ warningSection);
-    assert(warningSection.indexOf("512.0 MiB free") >= 0,
-        "space warning does not name the real free-space reading:\n" ~ warningSection);
-    assert(warningSection.indexOf("estimated need for -j 8 is 8.6 GiB") >= 0,
-        "space warning does not name the current-j estimate:\n" ~ warningSection);
-    assert(warningSection.indexOf("1.1 GiB/worker") >= 0
-        && warningSection.indexOf("task 4640") >= 0,
-        "space warning does not name the per-worker coefficient and its source:\n"
+    assert(warningSection.indexOf("512.0 MiB available") >= 0,
+        "space warning does not name the real available-space reading:\n" ~ warningSection);
+    assert(warningSection.indexOf("estimated need for -j 8 is 12.0 GiB") >= 0,
+        "space warning does not name the updated -j 8 estimate:\n" ~ warningSection);
+    assert(warningSection.indexOf("1.5 GiB/worker") >= 0
+        && warningSection.indexOf("2026-09-11") >= 0,
+        "space warning does not name the updated per-worker coefficient and its date:\n"
       ~ warningSection);
     assert(warningSection.indexOf("continuing") >= 0,
         "space warning does not state that the run continues:\n" ~ warningSection);
