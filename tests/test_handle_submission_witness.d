@@ -9,7 +9,7 @@ import http_command_helpers : commandBody;
 import drag_helpers;
 
 import core.thread : Thread;
-import core.time : msecs;
+import core.time : MonoTime, msecs, seconds;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
@@ -92,6 +92,25 @@ private JSONValue frameAdvance(long n, string what) {
     assert(false, format("%s: lastScene.seq did not advance by %d after 200 "
                          ~ "polls (from %d to %d)", what, n, first,
                          number(current["lastScene"]["seq"], "lastScene.seq")));
+}
+
+private void waitForNoHandles(string what) {
+    enum int waitBudgetSeconds = 3;
+    enum size_t maxPolls = 2000;
+    const deadline = MonoTime.currTime + waitBudgetSeconds.seconds;
+    string last = "<not polled>";
+    size_t polls;
+    while (polls < maxPolls && MonoTime.currTime < deadline) {
+        auto handles = getJson("/api/tool/handles")["handles"];
+        last = handles.toString();
+        ++polls;
+        if (handles.type == JSONType.null_) return;
+        Thread.sleep(2.msecs);
+    }
+    assert(false, format("%s: /api/tool/handles did not become null within "
+                         ~ "the %d-second wait budget (cap %d polls, observed "
+                         ~ "%d; last=%s)", what, waitBudgetSeconds, maxPolls,
+                         polls, last));
 }
 
 private struct Part {
@@ -458,15 +477,17 @@ unittest {
            "cell 2(g): quiet Move passes changed their receipt content");
 
     command("tool.set move off");
+    waitForNoHandles("cell 2(h)");
+    auto offBaseline = snap();
     auto c = frameAdvance(3, "cell 2 tool off");
     auto handles = getJson("/api/tool/handles")["handles"];
     assert(handles.type == JSONType.null_,
            "cell 2(h): tool.set move off left a handle registry");
     assert(generation(c) != 0,
            "cell 2(i): beginFrame cleared the sticky handle-pass generation");
-    assert(generation(c) == generation(b),
+    assert(generation(c) == generation(offBaseline),
            format("cell 2(j): pass opened after tool off (%d -> %d)",
-                  generation(b), generation(c)));
+                  generation(offBaseline), generation(c)));
     assert(number(c["lastScene"]["handlePasses"],
                   "lastScene.handlePasses") == 0
            && number(c["lastScene"]["cellsRendered"],
