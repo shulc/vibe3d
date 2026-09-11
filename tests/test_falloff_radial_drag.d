@@ -111,39 +111,19 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
     }
 }
 
-// ---------------------------------------------------------------------------
-// Radial-falloff RMB anchor stays at the work-plane ORIGIN under a panned
-// camera (task 0066 Phase 2a insulation guard).
-//
-// Task 0066 makes pickWorkplaneFrame(vp)'s auto branch return vp.focus as
-// the plane origin. falloff_handles.d:radialFalloffRMBDown immediately
-// overrides frame.origin = Vec3(0,0,0) when frame.isAuto, keeping the
-// radial anchor at the world origin (byte-identical to pre-0066). This test
-// pins that insulation: with the camera panned (focus.y = 0.6), an RMB-down
-// at the screen pixel that projects to the ORIGIN plane must land the radial
-// center near origin-plane-hit, NOT near focus-plane-hit.
-//
-// Mechanism: inject SDL_MOUSEBUTTONDOWN btn:3 (RMB) + SDL_MOUSEBUTTONUP btn:3
-// via /api/play-events. radialFalloffRMBDown fires at btn:3 DOWN and calls
-// pushRadialFalloff(hit, Vec3(0,0,0)) which sets the falloff stage's `center`
-// attr. Read it back via tool.pipe.attr after the gesture.
-// ---------------------------------------------------------------------------
-unittest { // Radial-falloff RMB anchor stays at origin plane under panned camera (task 0066 guard)
+// Task 0066's origin-plane expectation is deliberately superseded, not silently
+// removed. Capture cell F1 in toolcards/falloff_rmb_gesture/ §18 moved the
+// camera focus 2 m across the plane: the origin-plane prediction missed by
+// 2.0000 while the focus-plane prediction missed by 0.0000. This replacement
+// guard checks the measured relation directly: the anchor's normal displacement
+// must equal the focus's normal displacement (task 5514).
+unittest { // radial RMB anchor follows normal camera-focus displacement
     import std.format : format;
     import core.thread : Thread;
     import core.time : dur;
 
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
-    // Panned camera: focus.y = 0.6 (discriminating pan on Y). High elevation
-    // (1.3 rad ≈ 75°) keeps view forward Y-dominant so the auto workplane
-    // normal = Y and focus.y is the out-of-plane discriminator. The /api/camera
-    // handler takes azimuth/elevation/distance/focus — the eye key is ignored.
-    post(testBaseUrl() ~ "/api/camera",
-         `{"azimuth":0.4,"elevation":1.3,"distance":3.0,"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
-    Thread.sleep(dur!"msecs"(80));
-
-    // Activate move tool with radial falloff.
     string script =
         "tool.set move\n" ~
         "tool.pipe.attr falloff type radial\n";
@@ -152,80 +132,64 @@ unittest { // Radial-falloff RMB anchor stays at origin plane under panned camer
         "tool.set + radial falloff failed: " ~ cast(string)setResp);
     Thread.sleep(dur!"msecs"(80));
 
-    // Fetch camera and build the viewport to compute pixel coordinates.
-    auto camJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/camera"));
-    auto eye   = Vec3(cast(float)camJ["eye"]["x"].floating,
-                      cast(float)camJ["eye"]["y"].floating,
-                      cast(float)camJ["eye"]["z"].floating);
-    auto focus = Vec3(cast(float)camJ["focus"]["x"].floating,
-                      cast(float)camJ["focus"]["y"].floating,
-                      cast(float)camJ["focus"]["z"].floating);
-    int vpW = cast(int)camJ["width"].integer;
-    int vpH = cast(int)camJ["height"].integer;
-    int vpX = cast(int)camJ["vpX"].integer;
-    int vpY = cast(int)camJ["vpY"].integer;
+    float anchorYAt(float focusY) {
+        post(testBaseUrl() ~ "/api/camera", format(
+            `{"azimuth":0.4,"elevation":1.3,"distance":3.0,`
+            ~ `"focus":{"x":0.0,"y":%.4f,"z":0.0}}`, focusY));
+        Thread.sleep(dur!"msecs"(80));
 
-    assert(fabs(focus.y - 0.6f) < 1e-3f,
-        format("camera focus.y not applied: got %.4f", focus.y));
+        auto camJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/camera"));
+        float actualFocusY = cast(float)camJ["focus"]["y"].floating;
+        assert(approx(actualFocusY, focusY), format(
+            "camera focus.y not applied: expected %.4f, got %.4f",
+            focusY, actualFocusY));
 
-    // Choose a screen pixel near the viewport center — it will project to
-    // both the origin plane (Y=0) and the focus plane (Y=0.6) at different
-    // world points. The insulation asserts the anchor lands on the ORIGIN
-    // plane (Y≈0), not the focus plane (Y≈0.6).
-    int px = vpX + vpW / 2;
-    int py = vpY + vpH / 2;
+        int vpW = cast(int)camJ["width"].integer;
+        int vpH = cast(int)camJ["height"].integer;
+        int vpX = cast(int)camJ["vpX"].integer;
+        int vpY = cast(int)camJ["vpY"].integer;
+        int px = vpX + vpW / 2;
+        int py = vpY + vpH / 2;
+        string rmbLog = format(
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+            `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+            `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+            vpX, vpY, vpW, vpH, px, py, px, py);
 
-    // Build an RMB-only event log: DOWN at (px,py) then UP at the same spot.
-    // No motion events — we only need the anchor set at DOWN time.
-    string rmbLog = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
-        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
-        `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`,
-        vpX, vpY, vpW, vpH, px, py, px, py);
-
-    auto playResp = post(testBaseUrl() ~ "/api/play-events", rmbLog);
-    assert(parseJSON(cast(string)playResp)["status"].str == "success",
-        "play-events failed: " ~ cast(string)playResp);
-    // Wait for playback to finish.
-    foreach (i; 0 .. 60) {
-        auto s = parseJSON(cast(string)get(testBaseUrl() ~ "/api/play-events/status"));
-        if (s["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(50));
-    }
-    Thread.sleep(dur!"msecs"(120)); // settle
-
-    // Read the falloff center attr back from the pipe.
-    auto pipeJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe"));
-    float[3] falloffCenter = [0, 0, 0];
-    bool foundFalloff = false;
-    foreach (st; pipeJ["stages"].array) {
-        // The falloff stage is task "WGHT" (weight), id "falloff".
-        if (st["task"].str == "WGHT") {
-            auto cv = st["attrs"]["center"].str;
-            // Parse "x,y,z" string.
-            import std.string : split;
-            import std.conv : to;
-            auto parts = cv.split(",");
-            assert(parts.length == 3,
-                "falloff center attr not a 3-component string: " ~ cv);
-            falloffCenter[0] = parts[0].to!float;
-            falloffCenter[1] = parts[1].to!float;
-            falloffCenter[2] = parts[2].to!float;
-            foundFalloff = true;
-            break;
+        auto playResp = post(testBaseUrl() ~ "/api/play-events", rmbLog);
+        assert(parseJSON(cast(string)playResp)["status"].str == "success",
+            "play-events failed: " ~ cast(string)playResp);
+        bool finished = false;
+        foreach (i; 0 .. 60) {
+            auto s = parseJSON(cast(string)get(
+                testBaseUrl() ~ "/api/play-events/status"));
+            if (s["finished"].type == JSONType.TRUE) {
+                finished = true;
+                break;
+            }
+            Thread.sleep(dur!"msecs"(50));
         }
-    }
-    assert(foundFalloff, "FALLOFF stage not found in /api/toolpipe after RMB gesture");
+        assert(finished, "RMB anchor playback did not finish");
+        Thread.sleep(dur!"msecs"(120));
 
-    // The anchor Y must be near ORIGIN (Y≈0), NOT near FOCUS (Y≈0.6).
-    // This asserts the Phase 2a insulation in falloff_handles.d held.
-    float anchorY = falloffCenter[1];
-    assert(fabs(anchorY) < 0.15f,
-        format("Radial anchor Y=%.4f: expected near ORIGIN (Y≈0), not focus (Y=0.6). "
-               ~ "Phase 2a insulation in falloff_handles.d may be broken.",
-               anchorY));
-    assert(fabs(anchorY - 0.6f) > 0.3f,
-        format("Radial anchor Y=%.4f is near the FOCUS plane (Y=0.6). "
-               ~ "The anchor must stay at the work-plane ORIGIN per 0066 design.",
-               anchorY));
+        auto pipeJ = parseJSON(cast(string)get(testBaseUrl() ~ "/api/toolpipe"));
+        foreach (st; pipeJ["stages"].array) {
+            if (st["task"].str != "WGHT") continue;
+            import std.string : split;
+            auto parts = st["attrs"]["center"].str.split(",");
+            assert(parts.length == 3,
+                "falloff center attr is not a 3-component string");
+            return parts[1].to!float;
+        }
+        assert(false, "falloff stage not found after RMB gesture");
+        return 0.0f;
+    }
+
+    float baseline = anchorYAt(0.0f);
+    float shifted = anchorYAt(0.6f);
+    float anchorShift = shifted - baseline;
+    assert(approx(anchorShift, 0.6f), format(
+        "task 5514 focus-plane mutation: radial anchor normal shift must equal "
+        ~ "focus normal shift 0.6000; baseline=%.4f shifted=%.4f delta=%.4f",
+        baseline, shifted, anchorShift));
 }
