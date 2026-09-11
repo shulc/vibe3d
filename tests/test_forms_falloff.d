@@ -22,9 +22,9 @@
 // this compile, and lets the write-path case build the exact line FormsPanel
 // would emit via the renderer's own substituteQuery/parseBinding.
 
-import http_client : testBaseUrl, postJson;
+import http_client : getJson, testBaseUrl, postJson;
 import http_command_helpers : commandBody;
-import forms : parseBinding, substituteQuery;
+import forms : Form, Row, RowKind, loadForms, parseBinding, substituteQuery;
 
 import std.net.curl;
 import std.json;
@@ -37,6 +37,42 @@ alias baseUrl = testBaseUrl;
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
+}
+
+double jsonNumber(JSONValue v) {
+    return v.type == JSONType.float_ ? v.floating
+         : v.type == JSONType.integer ? cast(double)v.integer
+         : double.nan;
+}
+
+struct BBox {
+    double[3] min;
+    double[3] max;
+}
+
+BBox modelBBox() {
+    auto vertices = getJson("/api/model")["vertices"];
+    assert(vertices.array.length != 0, "bbox fixture must contain vertices");
+    BBox bb;
+    foreach (axis; 0 .. 3) {
+        bb.min[axis] = jsonNumber(vertices.array[0].array[axis]);
+        bb.max[axis] = bb.min[axis];
+    }
+    foreach (v; vertices.array[1 .. $]) {
+        foreach (axis; 0 .. 3) {
+            double x = jsonNumber(v.array[axis]);
+            if (x < bb.min[axis]) bb.min[axis] = x;
+            if (x > bb.max[axis]) bb.max[axis] = x;
+        }
+    }
+    return bb;
+}
+
+void collectAxislessAutoSize(ref Row row, ref Row[] matches) {
+    if (row.kind == RowKind.cmd && row.command == "falloff.autosize")
+        matches ~= row;
+    foreach (ref child; row.rows)
+        collectAxislessAutoSize(child, matches);
 }
 
 
@@ -252,6 +288,7 @@ unittest {
 unittest {
     resetCube();
     cmd("tool.pipe.attr falloff type linear");
+    auto bb = modelBBox();
 
     cmd(`tool.pipe.attr falloff start "1,2,3"`);
     cmd(`tool.pipe.attr falloff end "4,5,6"`);
@@ -279,12 +316,83 @@ unittest {
     // autosize is accepted as a fire-only action and fits the layer even with
     // no selection — the SAME command the form's Auto Size X button fires.
     cmd("falloff.autosize x");
+    s = readVec("start");
+    e = readVec("end");
+    double[3] center = [(bb.min[0] + bb.max[0]) * 0.5,
+                        (bb.min[1] + bb.max[1]) * 0.5,
+                        (bb.min[2] + bb.max[2]) * 0.5];
+    assert(approxEqual(s[0], bb.min[0]) && approxEqual(s[1], center[1]) &&
+           approxEqual(s[2], center[2]) && approxEqual(e[0], bb.max[0]) &&
+           approxEqual(e[1], center[1]) && approxEqual(e[2], center[2]),
+        "explicit X autosize should remain the X extent through bbox center");
+
+    cmd("falloff.autosize");
+    s = readVec("start");
+    e = readVec("end");
+    foreach (axis; 0 .. 3) {
+        assert(approxEqual(s[axis], bb.min[axis]),
+            "axisless Linear autosize start must equal bb.min");
+        assert(approxEqual(e[axis], bb.max[axis]),
+            "axisless Linear autosize end must equal bb.max");
+    }
+
+    foreach (type; ["radial", "cylinder"]) {
+        cmd("tool.pipe.attr falloff type " ~ type);
+        cmd(`tool.pipe.attr falloff center "9,8,7"`);
+        cmd(`tool.pipe.attr falloff size "6,5,4"`);
+        cmd("falloff.autosize");
+        auto c = readVec("center");
+        auto size = readVec("size");
+        foreach (axis; 0 .. 3) {
+            assert(approxEqual(c[axis], center[axis]),
+                type ~ " axisless autosize center must equal bbox center");
+            assert(approxEqual(size[axis], (bb.max[axis] - bb.min[axis]) * 0.5),
+                type ~ " axisless autosize size must equal bbox half-size");
+        }
+    }
 
     cmd("tool.pipe.attr falloff type none");
 }
 
 // ---------------------------------------------------------------------------
-// 9. Screen falloff (soft drag) hides the Linear-only Auto Size + Reverse
+// 9. The shipped form exposes exactly one axisless Auto Size button. Its
+//    live whenAttr gate resolves for Radial and Cylinder, with an explicit
+//    population floor before the exact two-type census.
+// ---------------------------------------------------------------------------
+unittest {
+    auto forms = loadForms("config/forms/falloff.yaml");
+    Form* falloffForm;
+    foreach (ref form; forms)
+        if (form.whenStage == "falloff") falloffForm = &form;
+    assert(falloffForm !is null, "shipped falloff form missing");
+
+    Row[] axislessRows;
+    foreach (ref row; falloffForm.rows)
+        collectAxislessAutoSize(row, axislessRows);
+    assert(axislessRows.length != 0,
+        "axisless Auto Size button population must not be zero");
+    assert(axislessRows.length == 1,
+        "shipped form must contain exactly one axisless Auto Size button");
+
+    string[] visibleTypes;
+    foreach (type; ["linear", "radial", "screen", "lasso", "cylinder",
+                    "element", "selection", "vertexMap"]) {
+        cmd("tool.pipe.attr falloff type " ~ type);
+        if (axislessRows[0].whenAttr.length == 0 ||
+            rowVisible(axislessRows[0].whenAttr))
+            visibleTypes ~= type;
+    }
+    assert(visibleTypes.length != 0,
+        "axisless Auto Size type population must not be zero");
+    assert(visibleTypes.length == 2,
+        "axisless Auto Size button must be visible for exactly 2 types");
+    assert(visibleTypes == ["radial", "cylinder"],
+        "axisless Auto Size types must be radial and cylinder");
+    cmd("tool.pipe.attr falloff type none");
+}
+
+// ---------------------------------------------------------------------------
+// 10. Screen falloff (soft drag) hides the Linear-only Auto Size + Reverse
 //    action rows. Those `cmd`/`group` rows carry no value bind of their own, so
 //    they are gated in falloff.yaml on `whenAttr: start` — and Screen's
 //    params() does not expose `start`. rowVisible("start") is therefore false,

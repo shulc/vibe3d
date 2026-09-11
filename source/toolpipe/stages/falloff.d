@@ -218,9 +218,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     private @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     private EditMode* editMode_;
 
-    // Last workplane normal cached at evaluate(). Used by activation auto-fit
-    // to orient Linear's start→end along the construction-plane normal —
-    // "the line stands up out of the work plane".
+    // Last workplane normal cached at evaluate(). Retained for the pre-existing
+    // workplane-aware paths below; activation auto-fit chooses a bbox axis.
     private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
 
     // Last viewport cached at evaluate(). Screen's pre-existing type-switch
@@ -927,6 +926,47 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         end   = bbCenter + n * ext;
     }
 
+    /// Fit the active layer-sized falloff without constraining Linear to one
+    /// axis. Linear takes the full bbox diagonal; Radial and Cylinder retain
+    /// their established centre and per-axis half-size formulas.
+    void autoSize() {
+        if (mesh_ is null) return;
+        Vec3 bbMinLocal, bbMaxLocal;
+        if (!layerBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        Vec3 bbMin, bbMax;
+        worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
+        Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
+        Vec3 bbHalf = (bbMax - bbMin) * 0.5f;
+
+        final switch (type) {
+            case FalloffType.Linear:
+                start = bbMin;
+                end = bbMax;
+                break;
+            case FalloffType.Radial:
+                center = bbCenter;
+                size = Vec3(
+                    bbHalf.x > 1e-6f ? bbHalf.x : 0.5f,
+                    bbHalf.y > 1e-6f ? bbHalf.y : 0.5f,
+                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f);
+                break;
+            case FalloffType.Cylinder:
+                center = bbCenter;
+                size = Vec3(
+                    bbHalf.x > 0 ? bbHalf.x : 1.0f,
+                    bbHalf.y > 0 ? bbHalf.y : 1.0f,
+                    bbHalf.z > 0 ? bbHalf.z : 1.0f);
+                break;
+            case FalloffType.None: break;
+            case FalloffType.Screen: break;
+            case FalloffType.Lasso: break;
+            case FalloffType.Element: break;
+            case FalloffType.Selection: break;
+            case FalloffType.Composite: break;
+            case FalloffType.VertexMap: break;
+        }
+    }
+
     /// D.7: bake Selection per-vert weights into `selWeights_`,
     /// implementing `falloff.selection` semantics via
     /// `falloff.bakeSelectionRingWeights` (see that function's header for
@@ -1330,11 +1370,11 @@ private:
                 return true;
             }
             // ACTION pseudo-attrs (fire-only `cmd` form rows, not readable state
-            // — deliberately absent from knownAttrs()/listAttrs()). Both operate
-            // on the Linear start/end endpoints, so they no-op for other types.
+            // — deliberately absent from knownAttrs()/listAttrs()).
             case "autosize": {
-                if (type != FalloffType.Linear) return true;   // no-op, not error
-                if      (value == "x" || value == "0") autoSizeAxis(0);
+                if (value.length == 0) autoSize();
+                else if (type != FalloffType.Linear) return true;
+                else if (value == "x" || value == "0") autoSizeAxis(0);
                 else if (value == "y" || value == "1") autoSizeAxis(1);
                 else if (value == "z" || value == "2") autoSizeAxis(2);
                 else return false;
@@ -1641,9 +1681,18 @@ private:
         }
     }
 
+    private static int maxExtentAxis(Vec3 extent) pure nothrow @nogc {
+        float x = abs(extent.x);
+        float y = abs(extent.y);
+        float z = abs(extent.z);
+        if (x > y && x > z) return 0;
+        if (y >= x && y > z) return 1;
+        return 2;
+    }
+
     // Prepare an activation-time fit only for falloffs that own layer-sized
-    // geometry. Coordinates remain world-space (task 0659), and Linear keeps
-    // using WorkplaneStage.currentBasis to choose its orientation.
+    // geometry. Coordinates remain world-space (task 0659). Linear uses the
+    // largest bbox extent, resolving ties toward the higher axis index.
     public PreparedFalloffAutoFit prepareAutoFitForActivation(FalloffType nextType) {
         PreparedFalloffAutoFit fit;
         fit.type = nextType;
@@ -1663,7 +1712,10 @@ private:
 
         final switch (nextType) {
             case FalloffType.Linear: {
-                Vec3 n = currentWorkplaneNormal();
+                int axis = maxExtentAxis(bbMax - bbMin);
+                Vec3 n = (axis == 0) ? Vec3(1, 0, 0)
+                       : (axis == 1) ? Vec3(0, 1, 0)
+                                     : Vec3(0, 0, 1);
                 float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
                           + abs(bbHalf.z * n.z);
                 if (ext < 1e-6f) ext = 0.5f;

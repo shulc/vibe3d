@@ -1397,9 +1397,9 @@ private void registerPipeStageCommands(EditorApp app) {
         reg.commandFactories["falloff.clear"] = () => cast(Command)
             new FalloffClearCommand(&mesh(), cameraView, editMode, toolHost);
 
-        // Falloff form action buttons: `falloff.autosize <axis>` (X/Y/Z fit) and
-        // `falloff.reverse` (swap start/end). autosize's axis is wired in
-        // injectToolCommandPositional below.
+        // Falloff form action buttons: `falloff.autosize` (axisless fit),
+        // `falloff.autosize <axis>` (Linear X/Y/Z fit), and `falloff.reverse`
+        // (swap start/end). The optional axis is wired below.
         reg.commandFactories["falloff.autosize"] = () => cast(Command)
             new FalloffAutoSizeCommand(&mesh(), cameraView, editMode, toolHost);
         reg.commandFactories["falloff.reverse"] = () => cast(Command)

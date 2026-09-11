@@ -94,13 +94,14 @@ class FalloffPresetCommand : Command {
 }
 
 // ---------------------------------------------------------------------------
-// Linear-endpoint action verbs — the falloff form's "Auto Size" X/Y/Z buttons
-// and "Reverse" button (config/forms/falloff.yaml). Fire-only `cmd` rows can't
+// Falloff sizing action verbs — the form's axisless and X/Y/Z buttons plus the
+// Linear "Reverse" button (config/forms/falloff.yaml). Fire-only `cmd` rows can't
 // use a `tool.pipe.attr falloff <attr>` line (the forms binding parser requires
 // a `?` value slot on stage-namespace lines), so these are top-level commands.
 // Both route through FalloffStage.setAttr (the `autosize` / `reverse` action
 // pseudo-attrs) so the state-publish + live-eval side-effects match every other
-// falloff edit. Linear-only at the stage level (no-op for other types).
+// falloff edit. Axis arguments remain Linear-only; the empty argument fits
+// Linear, Radial, or Cylinder according to the active type.
 // ---------------------------------------------------------------------------
 
 /// Resolve the primary falloff (WGHT) stage, or throw with `who` as the prefix.
@@ -115,7 +116,7 @@ private FalloffStage requireFalloffStage(string who) {
 
 class FalloffAutoSizeCommand : Command {
     private ToolHost toolHost;
-    private string   axis_;   // "x" / "y" / "z" — declared in params()
+    private string   axis_;   // optional "x" / "y" / "z" — declared in params()
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
@@ -137,8 +138,6 @@ class FalloffAutoSizeCommand : Command {
 
     protected override bool applyImpl() {
         auto fo = requireFalloffStage(name());
-        if (axis_.length == 0)
-            throw new Exception("falloff.autosize: no axis specified (x/y/z)");
         if (!fo.setAttr("autosize", axis_))
             throw new Exception(
                 "falloff.autosize: rejected axis '" ~ axis_ ~ "' (expected x/y/z)");

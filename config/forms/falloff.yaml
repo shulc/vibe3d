@@ -53,6 +53,9 @@ forms:
           - { cmd: "falloff.autosize y", label: Y }
           - { cmd: "falloff.autosize z", label: Z }
 
+      # ---- Radial / Cylinder: fit centre and per-axis radii to the layer. ----
+      - { cmd: "falloff.autosize", label: "Auto Size", whenAttr: center }
+
       # ---- Reverse: swap start/end (Linear-only action; gated on `start`). ----
       - { cmd: "falloff.reverse", label: Reverse, whenAttr: start }
 

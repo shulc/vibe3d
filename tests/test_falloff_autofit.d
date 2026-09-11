@@ -42,13 +42,16 @@ bool near(float[3] a, float[3] b, float eps = 1e-5f) {
     return true;
 }
 
-void buildRig() {
+void buildRig(float sizeX = 4.0f, float sizeY = 1.0f, float sizeZ = 0.5f,
+              string workplaneMode = "worldY") {
     auto reset = postJson("/api/command",
         commandBody("scene.reset", `{"empty":true}`));
     assert(reset["status"].str == "ok", "scene.reset failed: " ~ reset.toString());
     cmd("select.typeFrom vertex");
-    cmd("prim.cube cenX:3 cenY:2 cenZ:-1 sizeX:4 sizeY:1 sizeZ:0.5 "
-        ~ "segmentsX:4 segmentsY:2 segmentsZ:2 radius:0");
+    cmd(format("prim.cube cenX:3 cenY:2 cenZ:-1 sizeX:%g sizeY:%g sizeZ:%g "
+        ~ "segmentsX:4 segmentsY:2 segmentsZ:2 radius:0",
+        sizeX, sizeY, sizeZ));
+    cmd("tool.pipe.attr workplane mode " ~ workplaneMode);
     auto model = getJson("/api/model");
     assert(model["vertexCount"].integer == 42,
         "falloff auto-fit fixture population changed: expected 42 vertices, got "
@@ -66,21 +69,41 @@ struct LinearFit {
     float[3] end;
 }
 
-LinearFit activateTaper(string selection) {
-    buildRig();
+LinearFit activateTaper(string selection, float sizeX = 4.0f,
+                        float sizeY = 1.0f, float sizeZ = 0.5f,
+                        string workplaneMode = "worldY") {
+    buildRig(sizeX, sizeY, sizeZ, workplaneMode);
     selectVertices(selection);
     cmd("tool.set xfrm.taper on");
     auto attrs = falloffAttrs();
     return LinearFit(vec3(attrs["start"]), vec3(attrs["end"]));
 }
 
-unittest { // empty selection still fits the whole layer on activation
-    auto fit = activateTaper("[]");
-    const float[3] expectedStart = [3.0f, 1.5f, -1.0f];
-    const float[3] expectedEnd = [3.0f, 2.5f, -1.0f];
+unittest { // cube control: workplane normal and higher-index max axis coincide
+    auto fit = activateTaper("[]", 2.0f, 2.0f, 2.0f, "worldZ");
+    const float[3] expectedStart = [3.0f, 2.0f, -2.0f];
+    const float[3] expectedEnd = [3.0f, 2.0f, 0.0f];
     assert(near(fit.start, expectedStart) && near(fit.end, expectedEnd),
-        format("empty-selection activation: xfrm.taper start/end must cover "
-            ~ "the layer mesh; got start=%s end=%s", fit.start, fit.end));
+        format("cube control: coincident workplane/max-extent axis should fit Z; "
+            ~ "got start=%s end=%s", fit.start, fit.end));
+}
+
+unittest { // three distinct extents choose X, not the workplane's Y normal
+    auto fit = activateTaper("[]");
+    const float[3] expectedStart = [1.0f, 2.0f, -1.0f];
+    const float[3] expectedEnd = [5.0f, 2.0f, -1.0f];
+    assert(near(fit.start, expectedStart) && near(fit.end, expectedEnd),
+        format("three-distinct-extents activation: expected largest X extent, "
+            ~ "not workplane Y; got start=%s end=%s", fit.start, fit.end));
+}
+
+unittest { // 2 x 2 x 1 tie resolves from X toward the higher Y index
+    auto fit = activateTaper("[]", 2.0f, 2.0f, 1.0f, "worldY");
+    const float[3] expectedStart = [3.0f, 1.0f, -1.0f];
+    const float[3] expectedEnd = [3.0f, 3.0f, -1.0f];
+    assert(near(fit.start, expectedStart) && near(fit.end, expectedEnd),
+        format("2x2x1 tie: expected higher-index Y extent; got start=%s end=%s",
+            fit.start, fit.end));
 }
 
 unittest { // one selected vertex yields the same fit as selecting every vertex
@@ -129,8 +152,8 @@ unittest { // all and only the 11 size-bearing shipped presets are covered
         assert(attrs["type"] == preset.type,
             preset.id ~ ": expected type " ~ preset.type ~ ", got " ~ attrs["type"]);
         if (preset.type == "linear") {
-            assert(near(vec3(attrs["start"]), [3.0f, 1.5f, -1.0f]) &&
-                   near(vec3(attrs["end"]), [3.0f, 2.5f, -1.0f]),
+            assert(near(vec3(attrs["start"]), [1.0f, 2.0f, -1.0f]) &&
+                   near(vec3(attrs["end"]), [5.0f, 2.0f, -1.0f]),
                 preset.id ~ ": linear activation did not fit the layer bbox");
         } else {
             assert(near(vec3(attrs["center"]), [3.0f, 2.0f, -1.0f]) &&
