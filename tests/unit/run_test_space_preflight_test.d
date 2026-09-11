@@ -114,6 +114,21 @@ unittest
         ~ r.output);
 }
 
+// The injection seam is test input, not a failed quota query: malformed input
+// must expose its parse error instead of taking the fail-open production arm.
+unittest
+{
+    auto r = rdmd(runnerPath,
+        ["--check-space", repoRoot, "--space-floor-mib", "256"],
+        [quotaTestEnv: "1 MiB"], tempDir());
+    assert(r.status != 0,
+        "run_test.d accepted a malformed quota injection instead of failing loudly:\n"
+        ~ r.output);
+    assert(r.output.canFind("std.conv.ConvException"),
+        "malformed quota injection failed without exposing its parse error:\n"
+        ~ r.output);
+}
+
 unittest
 {
     auto unlimited = rdmd(lanePath, ["check-space", repoRoot, "256"],

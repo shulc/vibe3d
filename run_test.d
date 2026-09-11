@@ -294,6 +294,7 @@ string prepareScratchDir(string path) {
 // exhausted filesystem says so, once, with the word "space" in it, before a
 // single test compiles, instead of failing 40 minutes in as red tests.
 //
+// kMinPreflightFreeBytes now lives in tools.harness.hostspace (task 5630).
 // THE FLOOR IS A DECIDED THRESHOLD, NOT A DERIVED ONE, and that distinction
 // is the point: CLAUDE.md's dead-check catalogue is about a threshold
 // DERIVED FROM THE RUN IT JUDGES (I1's `radial <= K1 * baseline` in task

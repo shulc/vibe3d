@@ -89,11 +89,11 @@ unittest
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runLock;
     auto run = execute([outBin], env);
     enforce(run.status == 0, format(
-        "%s's own unittest block failed (status %d):\n%s\n" ~
-        "This is run_test.d's `shouldKillGroup` witness (task 2001): the " ~
+        "%s's own or explicitly linked harness unittest failed (status %d):\n%s\n" ~
+        "This binary includes run_test.d's `shouldKillGroup` witness (task 2001): the " ~
         "teardown group-kill must never signal the runner's own process " ~
         "group, or it can SIGKILL the xvfb-run wrapper it runs under — and " ~
         "this process with it — AFTER a fully green suite summary already " ~
-        "printed.",
+        "printed. It also runs the linked host-space module's unittests.",
         runnerPath, run.status, run.output));
 }

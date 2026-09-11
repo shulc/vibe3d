@@ -10,7 +10,9 @@ import std.range   : empty;
 import std.regex   : matchFirst, regex;
 import std.string  : toStringz;
 
+// The fixed 256 MiB refusal floor is task 2080's invariant; evidence: doc/tasks/done/2080-scratch-in-ram-starves-the-host.md.
 enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
+// /var/tmp keeps the measured 9.59 GB -j 6 scratch off quota-limited /tmp (tasks 5502/5520); evidence: doc/tasks/done/5520-scratch-root-and-quota.md.
 enum kDefaultScratchRoot = "/var/tmp";
 enum kScratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
 enum kQuotaAvailableTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
@@ -82,11 +84,7 @@ ulong parseQuotaAvailableBytes(string output)
 ulong quotaAvailableBytes(string path)
 {
     const injected = environment.get(kQuotaAvailableTestEnv, "");
-    if (injected.length)
-    {
-        try return injected.to!ulong;
-        catch (Exception) return ulong.max;
-    }
+    if (injected.length) return injected.to!ulong;
 
     const p = existingAncestor(path);
     if (!p.length) return ulong.max;
