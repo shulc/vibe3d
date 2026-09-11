@@ -1,8 +1,6 @@
-// Tests for Stage 14.6 — RMB drag on element falloff adjusts the
-// sphere radius (= the `dist`/Range attr). Mirrors the screen-
-// falloff RMB API but in world space: RMB-down captures the current
-// pickedCenter/dist + click-point on a camera-back plane; RMB-motion
-// remaps cursor distance to a new dist; RMB-up ends the gesture.
+// Element-falloff integration checks. The discriminating incremental-tracker
+// and zero-floor cells live in test_falloff_rmb_all_kinds.d; this file keeps
+// the original end-to-end growth and inactive-fallthrough coverage.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -87,17 +85,14 @@ unittest { // RMB drag rightward grows dist; leftward shrinks
     assert(fabs(distBefore - 0.5) < 1e-4,
         "expected dist=0.5 baseline; got " ~ distBefore.to!string);
 
-    // Camera setup: use vibe3d's default view. The viewport is the
-    // window; pull it from /api/camera so RMB-projection lands on a
-    // sensible camera-back plane through the picked centre at origin.
+    // Camera setup: use vibe3d's default view and viewport.
     auto cam = getJson("/api/camera");
     int vpX = cast(int) cam["vpX"].integer;
     int vpY = cast(int) cam["vpY"].integer;
     int vpW = cast(int) cam["width"].integer;
     int vpH = cast(int) cam["height"].integer;
 
-    // Anchor click at the screen centre (= projects to ~origin on the
-    // camera-back plane through origin); drag rightward by 200 px.
+    // Drag rightward by 200 px from the screen centre.
     int cx = vpX + vpW / 2;
     int cy = vpY + vpH / 2;
     string log = buildRMBDragLog(vpX, vpY, vpW, vpH,

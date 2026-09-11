@@ -26,6 +26,7 @@ constraint
 drag
 drag_identity
 eventlog
+falloff_rmb_discipline_test
 forms
 frame_stall
 gl_thread_guard

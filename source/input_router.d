@@ -836,29 +836,9 @@ struct InputRouter {
         if (ifs.viewportInputAllowed())
             ImGui.SetWindowFocus(null);
         if (btn.button == SDL_BUTTON_RIGHT) {
-            import falloff_handles : screenFalloffActive, screenFalloffRMBDown,
-                                     radialFalloffActive, radialFalloffRMBDown,
-                                     elementFalloffActive, elementFalloffRMBDown;
-            if (screenFalloffActive()) {
-                screenFalloffRMBDown(btn.x, btn.y);
-                return;
-            }
-            if (radialFalloffActive()) {
-                SDL_Keymod mods = SDL_GetModState();
-                bool ctrl = (mods & KMOD_CTRL) != 0;
-                Viewport vp2 = app.vpm.originSnapshot();
-                if (radialFalloffRMBDown(btn.x, btn.y, ctrl, vp2))
-                    return;
-                // Plane projection failed (camera aligned to plane);
-                // fall through to lasso so the click isn't lost.
-            }
-            if (elementFalloffActive()) {
-                Viewport vp2 = app.vpm.originSnapshot();
-                if (elementFalloffRMBDown(btn.x, btn.y, vp2))
-                    return;
-                // Ray-parallel-to-camera-back is the only failure
-                // mode (degenerate camera state); fall through.
-            }
+            import falloff_handles : falloffRMBDown;
+            Viewport falloffVp = app.vpm.originSnapshot();
+            if (falloffRMBDown(btn.x, btn.y, falloffVp)) return;
             // Give the ACTIVE tool first crack at RMB (task 0288). A tool may bind
             // RMB to its own gesture — Slice uses RMB as the gap-adjust drag
             // (dashed-circle + value HUD), and the live-edit tools cancel on RMB.
@@ -1120,11 +1100,8 @@ struct InputRouter {
             tbSpinCam = null;
         }
         if (btn.button == SDL_BUTTON_RIGHT) {
-            import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp,
-                                     elementFalloffRMBUp;
-            if (screenFalloffRMBUp())  return;
-            if (radialFalloffRMBUp())  return;
-            if (elementFalloffRMBUp()) return;
+            import falloff_handles : falloffRMBUp;
+            if (falloffRMBUp()) return;
             // Active tool RMB gesture end (task 0288): if a tool owns this RMB
             // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
             // false), let it finish its gesture (Slice bakes the final gap here).
@@ -1571,21 +1548,10 @@ struct InputRouter {
         // the face under the old cursor instead of nothing.
         setOverrideMouse(mot.x, mot.y);
         {
-            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion,
-                                     radialFalloffRMBDragging, radialFalloffRMBMotion,
-                                     elementFalloffRMBDragging, elementFalloffRMBMotion;
-            if (screenFalloffRMBDragging()) {
-                screenFalloffRMBMotion(mot.x);
-                return;
-            }
-            if (radialFalloffRMBDragging()) {
-                Viewport vp2 = app.vpm.originSnapshot();
-                radialFalloffRMBMotion(mot.x, mot.y, vp2);
-                return;
-            }
-            if (elementFalloffRMBDragging()) {
-                Viewport vp2 = app.vpm.originSnapshot();
-                elementFalloffRMBMotion(mot.x, mot.y, vp2);
+            import falloff_handles : falloffRMBDragging, falloffRMBMotion;
+            if (falloffRMBDragging()) {
+                Viewport falloffVp = app.vpm.originSnapshot();
+                falloffRMBMotion(mot.x, mot.y, falloffVp);
                 return;
             }
         }

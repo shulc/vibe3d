@@ -3,16 +3,16 @@ module falloff_handles;
 import bindbc.sdl;
 
 import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
-import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot,
-                screenRay, screenPointToRay, rayPlaneIntersect;
+import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import shader : Shader;
-import drag   : screenAxisDelta, planeDragDelta;
+import drag   : screenAxisDelta, planeDragDelta, haulWorldPerPixel;
 import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
-import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame;
+import tools.create.create_common : screenToConstructionPlane,
+                                    ConstructionPlaneMode;
 
 import std.format : format;
 import std.math   : sqrt, abs;
@@ -449,488 +449,296 @@ public:
 }
 
 // ---------------------------------------------------------------------------
-// Screen-falloff RMB-radius gesture.
+// Falloff RMB gestures.
 //
-// When the active toolpipe has a FalloffStage of type Screen (e.g. the
-// xfrm.softDrag preset), RMB is repurposed: click sets the falloff
-// center to the cursor, drag along +X grows the radius. The disc
-// already renders through drawFalloffOverlay() from the FalloffPacket
-// the stage publishes — we only mutate the stage attributes here.
-//
-// Lives at module scope (not tied to any tool) because the gesture
-// belongs to the falloff system itself: any tool that activates Screen
-// falloff inherits it without overriding RMB handling. app.d's RMB
-// dispatch consults `screenFalloffActive()` first and routes to these
-// helpers instead of starting a selection lasso.
+// The falloff kinds intentionally split into three independent disciplines:
+// point placement in world space, an absolute integer haul in pixels, and an
+// incremental floating-point haul scaled by the view. Kinds outside those
+// groups do not claim RMB here, so the ordinary tool/lasso routing remains
+// available.
 // ---------------------------------------------------------------------------
-private bool  rmbScreenDragActive_ = false;
-private int   rmbScreenDragX0_     = 0;
-private int   rmbScreenDragY0_     = 0;
-private float rmbScreenDragR0_     = 0;
-// Bracketed by tools that consume screen falloff at LMB-down /
-// LMB-up of their own drags (MoveTool when dragAxis transitions in
-// and out of >=0). Drives `screenFalloffOverlayVisible()` so the
-// disc renders for the duration of an active soft-drag pull as
-// well as for the RMB-radius gesture.
-private bool  lmbScreenDragActive_ = false;
+
+/// Stable census used by dispatch and by the population test. None means
+/// this module does not own an attribute gesture for the kind.
+enum FalloffRMBDiscipline : ubyte {
+    None,
+    Point3D,
+    AbsoluteInteger,
+    IncrementalFloat,
+}
+
+FalloffRMBDiscipline falloffRMBDiscipline(FalloffType type) pure nothrow {
+    final switch (type) {
+        case FalloffType.Linear:
+        case FalloffType.Radial:
+        case FalloffType.Cylinder:
+            return FalloffRMBDiscipline.Point3D;
+
+        case FalloffType.Screen:
+        case FalloffType.Selection:
+            return FalloffRMBDiscipline.AbsoluteInteger;
+
+        case FalloffType.Element:
+            return FalloffRMBDiscipline.IncrementalFloat;
+
+        case FalloffType.None:
+        case FalloffType.Lasso:
+        case FalloffType.Composite:
+        case FalloffType.VertexMap:
+            return FalloffRMBDiscipline.None;
+    }
+}
+
+private FalloffType rmbFalloffKind_ = FalloffType.None;
+private Vec3 rmbPointAnchor_ = Vec3(0, 0, 0);
+
+private int   rmbAbsoluteX0_       = 0;
+private int   rmbAbsoluteY0_       = 0;
+private float rmbScreenBase_       = 0.0f;
+private float rmbScreenCurrent_    = 0.0f;
+private int   rmbSelectionBase_    = 1;
+private int   rmbSelectionCurrent_ = 1;
+
+private struct IncrementalFloatTracker {
+    int previousX;
+    float initialValue;
+    float value;
+    float unitsPerPixel;
+
+    void begin(int x, float initial, float scale) {
+        previousX = x;
+        initialValue = initial;
+        value = initial;
+        unitsPerPixel = scale;
+    }
+
+    float track(int x) {
+        value += cast(float)(x - previousX) * unitsPerPixel;
+        previousX = x;
+        return value;
+    }
+}
+private IncrementalFloatTracker rmbElementTracker_;
+private enum int kAbsoluteHaulFloor = 1;
+
+// Bracketed by tools that consume screen falloff at LMB-down / LMB-up.
+private bool lmbScreenDragActive_ = false;
 
 bool screenFalloffActive() {
     auto fs = primaryFalloffStage();
-    if (fs is null) return false;
-    return fs.type == FalloffType.Screen;
+    return fs !is null && fs.type == FalloffType.Screen;
 }
 
-bool screenFalloffRMBDragging() { return rmbScreenDragActive_; }
-
-/// Tools call these at the start / end of an LMB drag they want the
-/// Screen-falloff overlay to track. End is unconditional / idempotent
-/// — safe to call from the generic drag-end path even when no drag
-/// was started under screen falloff.
 void screenFalloffLMBBegin() { lmbScreenDragActive_ = true;  }
 void screenFalloffLMBEnd()   { lmbScreenDragActive_ = false; }
 
-/// True when the Screen-falloff disc overlay should be visible:
-/// either the RMB radius gesture is in flight, or a tool is mid-LMB
-/// drag with screen falloff active. Outside both, the disc stays
-/// hidden so it doesn't clutter the viewport during idle tool use.
 bool screenFalloffOverlayVisible() {
-    return rmbScreenDragActive_ || lmbScreenDragActive_;
+    return rmbFalloffKind_ == FalloffType.Screen || lmbScreenDragActive_;
 }
 
-private void pushScreenFalloff(float cx, float cy, float size) {
+bool elementFalloffOverlayVisible() {
+    return rmbFalloffKind_ == FalloffType.Element;
+}
+
+private string vecAttr(Vec3 value) {
+    return format("%g,%g,%g", value.x, value.y, value.z);
+}
+
+private void pushPointAnchor(FalloffType kind, Vec3 anchor) {
     auto st = primaryFalloffStage();
     if (st is null) return;
-    st.setAttr("screenCx",   format("%g", cx));
-    st.setAttr("screenCy",   format("%g", cy));
-    st.setAttr("screenSize", format("%g", size));
+
+    final switch (kind) {
+        case FalloffType.Linear:
+            st.setAttr("end", vecAttr(anchor));
+            break;
+
+        case FalloffType.Radial:
+        case FalloffType.Cylinder:
+            st.setAttr("center", vecAttr(anchor));
+            break;
+
+        case FalloffType.None:
+        case FalloffType.Screen:
+        case FalloffType.Lasso:
+        case FalloffType.Element:
+        case FalloffType.Selection:
+        case FalloffType.Composite:
+        case FalloffType.VertexMap:
+            break;
+    }
 }
 
-/// Push only the center (cx, cy) of the screen falloff disc, leaving
-/// the current radius untouched. Transform tools call this on LMB-down
-/// so the falloff re-centers at every fresh grab. Safe to call when
-/// the pipeline has no falloff stage (returns silently).
-void screenFalloffSetCenter(int x, int y) {
+private void pushPointSize(FalloffType kind, Vec3 anchor, Vec3 delta) {
+    auto st = primaryFalloffStage();
+    if (st is null) return;
+
+    if (kind == FalloffType.Linear)
+        st.setAttr("start", vecAttr(anchor + delta));
+    else if (kind == FalloffType.Radial || kind == FalloffType.Cylinder)
+        st.setAttr("size", vecAttr(delta));
+}
+
+private void pushScreenCenter(int x, int y) {
     auto st = primaryFalloffStage();
     if (st is null) return;
     st.setAttr("screenCx", format("%g", cast(float)x));
     st.setAttr("screenCy", format("%g", cast(float)y));
 }
 
-/// Begin RMB-radius gesture: re-center the falloff disc at (x, y) and
-/// capture the current radius as the baseline for the drag delta.
-/// Returns true so callers can early-out.
-bool screenFalloffRMBDown(int x, int y) {
-    rmbScreenDragActive_ = true;
-    rmbScreenDragX0_     = x;
-    rmbScreenDragY0_     = y;
-    rmbScreenDragR0_     = readScreenFalloffSize();
-    pushScreenFalloff(cast(float)x, cast(float)y, rmbScreenDragR0_);
-    return true;
-}
-
-/// Update radius from the X-axis drag offset, applied as a signed
-/// delta on top of the radius captured at RMB-down. The center stays
-/// pinned at the click location. Clamps to ≥1 px so the disc never
-/// inverts.
-void screenFalloffRMBMotion(int x) {
-    if (!rmbScreenDragActive_) return;
-    float r = rmbScreenDragR0_ + cast(float)(x - rmbScreenDragX0_);
-    if (r < 1.0f) r = 1.0f;
-    pushScreenFalloff(cast(float)rmbScreenDragX0_,
-                      cast(float)rmbScreenDragY0_, r);
+private void pushScreenSize(float size) {
+    auto st = primaryFalloffStage();
+    if (st !is null) st.setAttr("screenSize", format("%g", size));
 }
 
 private float readScreenFalloffSize() {
     auto fs = primaryFalloffStage();
-    if (fs is null) return 1.0f;
-    return fs.screenSize > 1.0f ? fs.screenSize : 1.0f;
+    if (fs is null) return cast(float)kAbsoluteHaulFloor;
+    return fs.screenSize > kAbsoluteHaulFloor
+        ? fs.screenSize : cast(float)kAbsoluteHaulFloor;
 }
 
-/// End the gesture. Returns true iff a drag was active (so app.d can
-/// suppress lasso commit).
-bool screenFalloffRMBUp() {
-    if (!rmbScreenDragActive_) return false;
-    rmbScreenDragActive_ = false;
-    return true;
+private int absoluteHaulDelta(int x, int y) {
+    return x - rmbAbsoluteX0_;
 }
 
-// ---------------------------------------------------------------------------
-// Radial-falloff RMB create gesture.
-//
-// Mirrors prim.sphere's click+drag UX, applied to the falloff stage
-// rather than mesh creation:
-//
-// - plain RMB drag → flat ellipsoid on the most-facing workplane axis
-//   pair. plane-normal axis is held at size=0 so radialWeight collapses
-//   to a 2D disc on that plane (see `radialWeight` in falloff.d, which
-//   skips axes with size ≤ 1e-9).
-// - Ctrl+RMB drag → uniform 3D sphere (size.x = size.y = size.z = r,
-//   r = distance from click to cursor along the same drag plane).
-//
-// Like screen-falloff RMB, lives at module scope so any tool with
-// radial falloff inherits the gesture. app.d's RMB dispatch consults
-// `radialFalloffActive()` before falling through to lasso.
-// ---------------------------------------------------------------------------
-// Two-stage RMB-create state machine, mirroring prim.sphere:
-//   Idle → FirstActive (RMB held, dragging in-plane disc radius)
-//        → FirstDone   (RMB released; flat disc committed,
-//                        awaiting second RMB to set height)
-//        → SecondActive (RMB held again, extruding the disc along
-//                        the construction-plane normal into a 3D
-//                        ellipsoid)
-//        → Idle
-//
-// Ctrl at the first RMB-down skips the two-stage flow — the drag
-// directly produces a uniform 3D sphere (FirstActive but with a
-// `uniform` flag set), and RMB-up returns to Idle.
-private enum RadialStage { Idle, FirstActive, FirstDone, SecondActive }
-private RadialStage radialStage_   = RadialStage.Idle;
-private bool        rmbRadialUniform_      = false;
-private Vec3        rmbRadialCenter_       = Vec3(0, 0, 0);
-private Vec3        rmbRadialPlaneN_       = Vec3(0, 1, 0);
-private Vec3        rmbRadialFlatSize_     = Vec3(0, 0, 0); // size frozen after first drag
-private Vec3        rmbRadialHpn_          = Vec3(1, 0, 0); // height-plane normal (in-plane camera dir)
-private Vec3        rmbRadialHeightStart_  = Vec3(0, 0, 0); // hit on height plane at second RMB-down
-
-bool radialFalloffActive() {
-    auto fs = primaryFalloffStage();
-    if (fs is null) return false;
-    return fs.type == FalloffType.Radial;
+private Vec3 pointDragDelta(Vec3 current) {
+    return current - rmbPointAnchor_;
 }
 
-bool radialFalloffRMBDragging() {
-    return radialStage_ == RadialStage.FirstActive
-        || radialStage_ == RadialStage.SecondActive;
-}
-
-private void pushRadialFalloff(Vec3 center, Vec3 size) {
+private void pushSelectionSteps(int steps) {
     auto st = primaryFalloffStage();
-    if (st is null) return;
-    st.setAttr("center",
-        format("%g,%g,%g", center.x, center.y, center.z));
-    st.setAttr("size",
-        format("%g,%g,%g", size.x,   size.y,   size.z));
-}
-
-/// Compute the height-drag plane analogous to
-/// `MeshSphereTool.setupHeightPlane`: plane through `center`, normal =
-/// camera direction projected into the construction plane (= camera
-/// dir with its plane-normal component removed). User's screen-
-/// vertical mouse motion then projects cleanly onto the construction
-/// plane's normal axis.
-private Vec3 computeHpn(Vec3 center, Vec3 planeN, const ref Viewport vp) {
-    // vp.eye used as camera position to compute direction-to-camera, NOT a ray origin.
-    Vec3 toCamera = Vec3(vp.eye.x - center.x,
-                         vp.eye.y - center.y,
-                         vp.eye.z - center.z);
-    float dProj = dot(toCamera, planeN);
-    Vec3 inPlane = Vec3(toCamera.x - planeN.x * dProj,
-                        toCamera.y - planeN.y * dProj,
-                        toCamera.z - planeN.z * dProj);
-    float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
-    if (len > 1e-6f) return Vec3(inPlane.x/len, inPlane.y/len, inPlane.z/len);
-    // Camera looking straight along plane normal — degenerate; pick any
-    // vector perpendicular to planeN.
-    if (abs(planeN.x) < 0.9f) return Vec3(1, 0, 0);
-    return Vec3(0, 1, 0);
-}
-
-/// Begin or continue the RMB create gesture. Two-stage by default,
-/// matching prim.sphere:
-///   - From Idle: pick the most-facing axis of the active workplane
-///     (analogue of `MeshSphereTool.choosePlane`), project the click
-///     onto the plane through `frame.origin` perpendicular to that
-///     axis, seed the falloff at the hit with size 0. Ctrl skips the
-///     two-stage flow and goes straight to a uniform 3D sphere drag.
-///   - From FirstDone (flat disc already committed): re-project the
-///     click onto the height-drag plane; the next motion extrudes
-///     the disc along the construction-plane normal.
-/// Returns false if the click ray is parallel to the chosen plane
-/// (rare degenerate camera angle); state is left untouched so app.d
-/// can fall through to its usual RMB lasso.
-bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
-    if (radialStage_ == RadialStage.FirstDone) {
-        // Second-stage RMB. Ctrl here repurposes the existing center
-        // for a uniform-radius drag (cursor → all three axes); plain
-        // RMB enters height-extrude mode.
-        Vec3 fhOrig, dir;
-        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig, dir);
-        Vec3 hit;
-        if (ctrl) {
-            // Uniform: project onto construction plane through center,
-            // use distance as r for all three world axes.
-            if (!rayPlaneIntersect(fhOrig, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
-                return false;
-            rmbRadialUniform_     = true;
-            rmbRadialHeightStart_ = rmbRadialCenter_;     // unused in uniform path
-            radialStage_          = RadialStage.SecondActive;
-            return true;
-        }
-        // Height extrude: project onto the height plane.
-        Vec3 hpn = computeHpn(rmbRadialCenter_, rmbRadialPlaneN_, vp);
-        if (!rayPlaneIntersect(fhOrig, dir, rmbRadialCenter_, hpn, hit))
-            hit = rmbRadialCenter_;
-        rmbRadialUniform_     = false;
-        rmbRadialHpn_         = hpn;
-        rmbRadialHeightStart_ = hit;
-        radialStage_          = RadialStage.SecondActive;
-        return true;
-    }
-
-    // Idle or stale state — start fresh. Pick the most-facing
-    // workplane axis as the plane normal.
-    WorkplaneFrame frame = pickWorkplaneFrame(vp);
-    // The radial-falloff anchor stays at the WORK-PLANE ORIGIN (world origin
-    // in auto mode) by design — not the camera focus. Whether the anchor
-    // should track the camera focus is a separate unverified question and is
-    // deliberately not changed here; the insulation below keeps the anchor
-    // byte-identical to the pre-0066 behaviour while pickWorkplaneFrame's
-    // auto branch now returns vp.focus as the origin for other callers.
-    // NOTE: frame.toWorld/toLocal are now stale-by-design (still encode
-    // vp.focus); this function only consumes frame.origin + the basis axes,
-    // never the baked matrices. Recompute them if a future edit reads them.
-    if (frame.isAuto) frame.origin = Vec3(0, 0, 0);
-    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-    float aA = abs(dot(camBack, frame.axis1));
-    float aN = abs(dot(camBack, frame.normal));
-    float a2 = abs(dot(camBack, frame.axis2));
-    Vec3 pn;
-    if      (aA >= aN && aA >= a2) pn = frame.axis1;
-    else if (aN >= aA && aN >= a2) pn = frame.normal;
-    else                           pn = frame.axis2;
-
-    Vec3 fhOrig2, dir;
-    screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig2, dir);
-    Vec3 hit;
-    if (!rayPlaneIntersect(fhOrig2, dir, frame.origin, pn, hit))
-        return false;
-    rmbRadialUniform_  = ctrl;
-    rmbRadialCenter_   = hit;
-    rmbRadialPlaneN_   = pn;
-    rmbRadialFlatSize_ = Vec3(0, 0, 0);
-    radialStage_       = RadialStage.FirstActive;
-    pushRadialFalloff(hit, Vec3(0, 0, 0));
-    return true;
-}
-
-/// Update center + size from a drag. First-drag uses in-plane distance
-/// from center to project onto a flat (or uniform if Ctrl was held)
-/// ellipsoid. Second-drag projects onto the height plane and grows
-/// the plane-normal axis from the frozen flat-disc base.
-void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
-    if (radialStage_ == RadialStage.FirstActive) {
-        Vec3 fhOrig3, dir;
-        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig3, dir);
-        Vec3 hit;
-        if (!rayPlaneIntersect(fhOrig3, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
-            return;
-        Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
-                      hit.y - rmbRadialCenter_.y,
-                      hit.z - rmbRadialCenter_.z);
-        float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-        Vec3 size = rmbRadialUniform_
-            ? Vec3(r, r, r)
-            // Flat disc: r along the two plane axes, 0 along plane
-            // normal. Plane normal is cardinal in the common case so
-            // |pn.i| ∈ {0, 1} maps cleanly to "this axis is the normal".
-            : Vec3(r * (1.0f - abs(rmbRadialPlaneN_.x)),
-                   r * (1.0f - abs(rmbRadialPlaneN_.y)),
-                   r * (1.0f - abs(rmbRadialPlaneN_.z)));
-        pushRadialFalloff(rmbRadialCenter_, size);
-        return;
-    }
-    if (radialStage_ == RadialStage.SecondActive) {
-        Vec3 fhOrig4, dir;
-        screenPointToRay(cast(float)x, cast(float)y, vp, fhOrig4, dir);
-        Vec3 hit;
-        if (rmbRadialUniform_) {
-            // Re-derive all three radii from cursor distance to center
-            // (in the construction plane). Replaces the flat disc.
-            if (!rayPlaneIntersect(fhOrig4, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
-                return;
-            Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
-                          hit.y - rmbRadialCenter_.y,
-                          hit.z - rmbRadialCenter_.z);
-            float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-            pushRadialFalloff(rmbRadialCenter_, Vec3(r, r, r));
-            return;
-        }
-        // Height extrude: project onto height plane, take signed
-        // drag-distance along plane normal as the extrude radius;
-        // add it to the frozen flat-disc size weighted by |pn[i]|
-        // so cardinal pn cleanly grows just the plane-normal axis.
-        if (!rayPlaneIntersect(fhOrig4, dir, rmbRadialCenter_, rmbRadialHpn_, hit))
-            return;
-        Vec3 dh = Vec3(hit.x - rmbRadialHeightStart_.x,
-                       hit.y - rmbRadialHeightStart_.y,
-                       hit.z - rmbRadialHeightStart_.z);
-        float h = abs(dot(dh, rmbRadialPlaneN_));
-        Vec3 size = Vec3(rmbRadialFlatSize_.x + h * abs(rmbRadialPlaneN_.x),
-                         rmbRadialFlatSize_.y + h * abs(rmbRadialPlaneN_.y),
-                         rmbRadialFlatSize_.z + h * abs(rmbRadialPlaneN_.z));
-        pushRadialFalloff(rmbRadialCenter_, size);
-        return;
-    }
-}
-
-/// End the current stage. FirstActive → FirstDone (snapshot the flat
-/// size so the second drag can extrude from it). SecondActive → Idle.
-/// Returns true iff a drag was active (so app.d can suppress lasso
-/// commit).
-bool radialFalloffRMBUp() {
-    if (radialStage_ == RadialStage.FirstActive) {
-        if (rmbRadialUniform_) {
-            // Ctrl-first-drag finishes the sphere outright; no second
-            // stage to wait for.
-            radialStage_ = RadialStage.Idle;
-            return true;
-        }
-        // Freeze the flat-disc size as the baseline for height extrude.
-        // Read it back from the pipeline so we capture exactly what
-        // motion last pushed (no need to recompute from the last r).
-        if (g_pipeCtx is null) {
-            radialStage_ = RadialStage.Idle;
-            return true;
-        }
-        if (auto fs = primaryFalloffStage())
-            rmbRadialFlatSize_ = fs.size;
-        radialStage_ = RadialStage.FirstDone;
-        return true;
-    }
-    if (radialStage_ == RadialStage.SecondActive) {
-        radialStage_ = RadialStage.Idle;
-        return true;
-    }
-    return false;
-}
-
-// ---------------------------------------------------------------------------
-// Element-falloff RMB radius gesture (Stage 14.6).
-//
-// Mirrors screen-falloff's RMB API: RMB-down anchors the gesture at
-// the current pickedCenter (and captures the current `dist`); RMB-
-// motion remaps cursor distance from the anchor (projected onto a
-// camera-facing plane through pickedCenter) to a new `dist`; RMB-up
-// ends. The pickedCenter itself isn't relocated by the gesture —
-// LMB click-to-pick (XfrmTransformTool when falloff.element is
-// active) owns that. RMB only edits the sphere radius around the
-// currently-picked element.
-//
-// Lives at module scope (like screen / radial) so any tool with
-// falloff.element active inherits the gesture. app.d's RMB dispatch
-// consults `elementFalloffActive()` after the screen / radial
-// checks but before the lasso fallback.
-// ---------------------------------------------------------------------------
-private bool  rmbElementDragActive_ = false;
-private int   rmbElementDragX0_     = 0;
-private int   rmbElementDragY0_     = 0;
-private float rmbElementDragR0_     = 0.0f;
-private Vec3  rmbElementDragAnchor_ = Vec3(0, 0, 0);  // world hit at RMB-down
-private Vec3  rmbElementPlaneN_     = Vec3(0, 0, 1);  // camera-back at RMB-down
-
-bool elementFalloffActive() {
-    auto fs = primaryFalloffStage();
-    if (fs is null) return false;
-    return fs.type == FalloffType.Element;
-}
-
-bool elementFalloffRMBDragging() { return rmbElementDragActive_; }
-
-/// True when the Element-falloff sphere overlay should be visible:
-/// ONLY during the RMB radius-adjust gesture. Unlike Screen falloff
-/// (which also tracks LMB pulls), Element's sphere stays hidden
-/// during LMB click-pick + drag — the sphere doesn't move with the
-/// user's pull, so showing it would just clutter the viewport.
-bool elementFalloffOverlayVisible() {
-    return rmbElementDragActive_;
+    if (st !is null) st.setAttr("steps", format("%d", steps));
 }
 
 private void pushElementDist(float dist) {
     auto st = primaryFalloffStage();
-    if (st is null) return;
-    st.setAttr("dist", format("%g", dist));
+    if (st !is null) st.setAttr("dist", format("%g", dist));
 }
 
-private FalloffStageState readElementState() {
-    // sphere centre = ACEN.center (single source of truth — same
-    // point the gizmo sits on); radius = FalloffStage.pickedRadius (config
-    // field, wire attr name stays `dist`). The falloff half goes through
-    // primaryFalloffStage() (WGHT task); the actionCenter half stays a
-    // direct task lookup (ACEN task) — this loop is the one site that
-    // mixes both, so only the falloff half collapses into the shared
-    // helper.
+private struct ElementFalloffState {
+    Vec3 pickedCenter = Vec3(0, 0, 0);
+    float dist = 1.0f;
+}
+
+private ElementFalloffState readElementState() {
     import toolpipe.stages.actcenter : ActionCenterStage;
-    FalloffStageState s;
-    if (g_pipeCtx is null) return s;
+
+    ElementFalloffState state;
+    if (g_pipeCtx is null) return state;
     if (auto fs = primaryFalloffStage())
-        s.dist = fs.pickedRadius;
-    if (auto ac = cast(ActionCenterStage) g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
-        s.pickedCenter = ac.currentCenter();
-    return s;
+        state.dist = fs.pickedRadius;
+    if (auto ac = cast(ActionCenterStage)
+            g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
+        state.pickedCenter = ac.currentCenter();
+    return state;
 }
 
-private struct FalloffStageState {
-    Vec3  pickedCenter = Vec3(0, 0, 0);
-    float dist         = 1.0f;
+/// Push only the center of a screen falloff. Transform tools use this for
+/// their LMB grabs as well as the shared RMB dispatcher below.
+void screenFalloffSetCenter(int x, int y) {
+    pushScreenCenter(x, y);
 }
 
-/// Begin RMB-radius gesture. Project the click ray onto a camera-
-/// back plane through the current pickedCenter; cache the hit as
-/// the anchor and snapshot the current dist as the baseline. Returns
-/// true so caller can early-out; false on degenerate camera (ray ∥
-/// plane normal — extremely rare).
-bool elementFalloffRMBDown(int x, int y, const ref Viewport vp) {
-    auto state = readElementState();
-    // Construction plane: through pickedCenter, normal = camera-back.
-    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
-    Vec3 elemOrig, dir;
-    screenPointToRay(cast(float)x, cast(float)y, vp, elemOrig, dir);
-    Vec3 hit;
-    if (!rayPlaneIntersect(elemOrig, dir, state.pickedCenter, camBack, hit))
-        return false;
-    rmbElementDragActive_ = true;
-    rmbElementDragX0_     = x;
-    rmbElementDragY0_     = y;
-    rmbElementDragR0_     = state.dist;
-    rmbElementDragAnchor_ = hit;
-    rmbElementPlaneN_     = camBack;
-    return true;
+/// Start the active kind's RMB discipline. The gesture deliberately owns the
+/// whole viewport; whether a kind requires a handle hit is not established.
+bool falloffRMBDown(int x, int y, const ref Viewport vp) {
+    auto st = primaryFalloffStage();
+    if (st is null) return false;
+
+    FalloffRMBDiscipline discipline = falloffRMBDiscipline(st.type);
+    if (discipline == FalloffRMBDiscipline.None) return false;
+
+    rmbFalloffKind_ = st.type;
+    final switch (discipline) {
+        case FalloffRMBDiscipline.Point3D:
+            rmbPointAnchor_ = screenToConstructionPlane(
+                cast(float)x, cast(float)y, vp,
+                ConstructionPlaneMode.activeWorkplane);
+            pushPointAnchor(rmbFalloffKind_, rmbPointAnchor_);
+            pushPointSize(rmbFalloffKind_, rmbPointAnchor_, Vec3(0, 0, 0));
+            return true;
+
+        case FalloffRMBDiscipline.AbsoluteInteger:
+            rmbAbsoluteX0_ = x;
+            rmbAbsoluteY0_ = y;
+            if (rmbFalloffKind_ == FalloffType.Screen) {
+                rmbScreenBase_ = readScreenFalloffSize();
+                rmbScreenCurrent_ = rmbScreenBase_;
+                pushScreenCenter(x, y);
+                pushScreenSize(rmbScreenCurrent_);
+            } else {
+                rmbSelectionBase_ = st.steps >= kAbsoluteHaulFloor
+                    ? st.steps : kAbsoluteHaulFloor;
+                rmbSelectionCurrent_ = rmbSelectionBase_;
+            }
+            return true;
+
+        case FalloffRMBDiscipline.IncrementalFloat:
+            auto state = readElementState();
+            rmbElementTracker_.begin(
+                x, state.dist, haulWorldPerPixel(state.pickedCenter, vp));
+            return true;
+
+        case FalloffRMBDiscipline.None:
+            return false;
+    }
 }
 
-/// Update dist from the cursor's world-space distance to the click
-/// anchor on the camera-back plane through pickedCenter. New dist =
-/// baseline + signed_world_distance. Clamped to ≥ 1e-4 so the sphere
-/// never inverts (and the elementWeight degenerate-radius branch
-/// stays out of NaN territory).
-void elementFalloffRMBMotion(int x, int y, const ref Viewport vp) {
-    if (!rmbElementDragActive_) return;
-    auto state = readElementState();
-    Vec3 elemOrig2, dir;
-    screenPointToRay(cast(float)x, cast(float)y, vp, elemOrig2, dir);
-    Vec3 hit;
-    if (!rayPlaneIntersect(elemOrig2, dir, state.pickedCenter,
-                           rmbElementPlaneN_, hit))
-        return;
-    // Signed: +X drag from anchor → grow; −X → shrink (same direction
-    // mapping screen-falloff uses, just on a world-space plane).
-    Vec3 d = Vec3(hit.x - rmbElementDragAnchor_.x,
-                  hit.y - rmbElementDragAnchor_.y,
-                  hit.z - rmbElementDragAnchor_.z);
-    float wd  = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-    // Direction: rightward screen drag → grow. Compute the screen-X
-    // sign of the anchor→hit vector by projecting `d` onto the
-    // camera's right vector (view matrix row 0).
-    Vec3 camRight = Vec3(vp.view[0], vp.view[4], vp.view[8]);
-    float signR   = dot(d, camRight);
-    float signed  = (signR >= 0) ? wd : -wd;
-    float r = rmbElementDragR0_ + signed;
-    if (r < 1e-4f) r = 1e-4f;
-    pushElementDist(r);
+/// Apply one motion event according to the discipline latched at the press.
+void falloffRMBMotion(int x, int y, const ref Viewport vp) {
+    final switch (falloffRMBDiscipline(rmbFalloffKind_)) {
+        case FalloffRMBDiscipline.Point3D:
+            Vec3 current = screenToConstructionPlane(
+                cast(float)x, cast(float)y, vp,
+                ConstructionPlaneMode.activeWorkplane);
+            Vec3 delta = pointDragDelta(current);
+            pushPointSize(rmbFalloffKind_, rmbPointAnchor_, delta);
+            break;
+
+        case FalloffRMBDiscipline.AbsoluteInteger:
+            if (rmbFalloffKind_ == FalloffType.Screen) {
+                // The existing screen law is intentionally unchanged: X only,
+                // one size unit per pixel, with a floor of one.
+                rmbScreenCurrent_ =
+                    rmbScreenBase_ + cast(float)absoluteHaulDelta(x, y);
+                if (rmbScreenCurrent_ < kAbsoluteHaulFloor)
+                    rmbScreenCurrent_ = cast(float)kAbsoluteHaulFloor;
+                pushScreenCenter(rmbAbsoluteX0_, rmbAbsoluteY0_);
+                pushScreenSize(rmbScreenCurrent_);
+            } else {
+                rmbSelectionCurrent_ =
+                    rmbSelectionBase_ + absoluteHaulDelta(x, y);
+                if (rmbSelectionCurrent_ < kAbsoluteHaulFloor)
+                    rmbSelectionCurrent_ = kAbsoluteHaulFloor;
+                pushSelectionSteps(rmbSelectionCurrent_);
+            }
+            break;
+
+        case FalloffRMBDiscipline.IncrementalFloat:
+            float dist = rmbElementTracker_.track(x);
+            if (dist < 0.0f) dist = 0.0f;
+            pushElementDist(dist);
+            break;
+
+        case FalloffRMBDiscipline.None:
+            break;
+    }
 }
 
-/// End gesture. Returns true iff a drag was active.
-bool elementFalloffRMBUp() {
-    if (!rmbElementDragActive_) return false;
-    rmbElementDragActive_ = false;
+bool falloffRMBDragging() {
+    return falloffRMBDiscipline(rmbFalloffKind_)
+        != FalloffRMBDiscipline.None;
+}
+
+/// Finish a claimed gesture. Selection repeats its final integer at release;
+/// Screen retains its existing delivery boundary until that change is owned.
+bool falloffRMBUp() {
+    if (!falloffRMBDragging()) return false;
+
+    if (rmbFalloffKind_ == FalloffType.Selection)
+        pushSelectionSteps(rmbSelectionCurrent_);
+
+    rmbFalloffKind_ = FalloffType.None;
     return true;
 }
