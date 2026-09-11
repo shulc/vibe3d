@@ -223,6 +223,7 @@ tests.unit.eventlog_test
 tests.unit.face_reindex_arming_test
 tests.unit.facing_mirror_determinant_test
 tests.unit.facing_predicate_test
+tests.unit.falloff_screen_default_test
 tests.unit.falloff_selection_bake_test
 tests.unit.falloff_test
 tests.unit.fixture_parameters_census_test

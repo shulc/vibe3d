@@ -765,7 +765,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             case FalloffType.Screen:
                 ps ~= Param.float_("screenCx",   "Screen Cx",   &config.screenCx,   0.0f);
                 ps ~= Param.float_("screenCy",   "Screen Cy",   &config.screenCy,   0.0f);
-                ps ~= Param.float_("screenSize", "Screen Size", &config.screenSize, 64.0f);
+                ps ~= Param.float_("screenSize", "Screen Size", &config.screenSize, 20.0f);
                 ps ~= Param.bool_ ("transparent", "Transparent", &config.transparent, false);
                 break;
             case FalloffType.Lasso:
@@ -1801,7 +1801,11 @@ private:
                     float r = sqrt(dx * dx + dy * dy);
                     if (r > maxR) maxR = r;
                 }
-                screenSize = maxR > 1.0f ? maxR : 64.0f;
+                // The fallback follows the DEFAULT (20), so the tree carries one
+                // notion of "no size measured" rather than two. This half is
+                // OURS, not measured: the reference's auto-fit fallback was
+                // never captured — only its reset default was (§18).
+                screenSize = maxR > 1.0f ? maxR : 20.0f;
                 break;
             }
             case FalloffType.Element: {

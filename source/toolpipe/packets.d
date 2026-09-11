@@ -522,7 +522,12 @@ struct FalloffConfig {
     // facing geometry (verts behind the camera get weight 0).
     float        screenCx     = 0;
     float        screenCy     = 0;
-    float        screenSize   = 64;
+    // 20, not a number of our own: the reference's Screen-falloff reset writes
+    // `size = 20` as the instruction's own immediate (doc/measured_laws.md
+    // §18, task 5514). Both sides count WINDOW PIXELS — our own units note is
+    // a few lines up in falloff.d, and the reference's drag arm advances one
+    // unit per pixel — so the two numbers are comparable and this one matches.
+    float        screenSize   = 20;
     bool         transparent  = false;
 
     // Lasso: screen-space polygon (Freehand) or 2-corner shape
