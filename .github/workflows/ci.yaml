@@ -163,6 +163,24 @@ jobs:
     # verdict is surfaced as its own summary line below instead. `|| true` per
     # lane so one lane's fetch failure cannot hide the other two's verdicts —
     # the verdicts themselves are read out of the log, not out of exit codes.
+    # The self-hosted runner service starts with USER and HOME but WITHOUT
+    # XDG_RUNTIME_DIR (read out of /proc/<runner pid>/environ, 2026-09-11).
+    # The directory itself exists and persists -- the account has Linger=yes,
+    # so /run/user/<uid> is created at boot and never torn down -- so this
+    # exports a path that is already there, it does not create one.
+    #
+    # What it buys: every headless `vibe3d --test` worker logs
+    # `error: XDG_RUNTIME_DIR is invalid or not set in the environment.` right
+    # where the boot gate then reports `failed to come up`. Whether that is the
+    # CAUSE of the worker deaths is NOT established (task 5507) -- the run
+    # itself is the evidence. What IS established is that the variable is
+    # genuinely missing and the app genuinely complains about it.
+    #
+    # `id -u` rather than a literal 1000: the uid is the runner account's, and
+    # hardcoding it would break silently on a rebuilt runner.
+    - name: 'Export XDG_RUNTIME_DIR for headless GL/dbus clients'
+      run: echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+
     - name: 'Nightly lane freshness: perf + tsan + sanitizer (tasks 2040/2580 + term 3)'
       id: nightly_freshness
       continue-on-error: true
