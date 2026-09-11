@@ -1721,8 +1721,8 @@ private:
     }
 
     // Preserve the falloff kinds excluded from activation auto-fit. Screen
-    // and Element retain their selection-based type-switch sizing; Selection
-    // retains its fresh-switch default. Lasso and VertexMap remain no-ops.
+    // and Element retain their selection-based type-switch sizing; Selection,
+    // Lasso and VertexMap remain no-ops.
     private void autoSizeUntouchedType() {
         final switch (type) {
             case FalloffType.Screen: {
@@ -1795,9 +1795,7 @@ private:
                 if (maxHalf > 0) pickedRadius = maxHalf;
                 break;
             }
-            case FalloffType.Selection:
-                steps = 2;
-                break;
+            case FalloffType.Selection: break;
             case FalloffType.Lasso: break;
             case FalloffType.VertexMap: break;
             case FalloffType.None: break;
