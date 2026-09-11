@@ -123,8 +123,10 @@ unittest
     const sourceText = readText(runnerPath);
     assert(sourceText.canFind("2026-09-11")
         && sourceText.canFind("`-j 6`")
-        && sourceText.canFind("`du -sb <scratch>/worker_*`"),
-        "worker-scratch coefficient lost its date, -j, or measuring command");
+        && sourceText.canFind("`du -sb <scratch>/worker_*`")
+        && sourceText.canFind("largest worker"),
+        "worker-scratch coefficient lost its date, -j, measuring command, or "
+        ~ "largest-worker contract");
 
     // Keep the fatal floor at zero and inject 512 MiB of quota headroom: the
     // same diagnostic must continue, but its warning deterministically exposes
@@ -134,7 +136,7 @@ unittest
         [quotaTestEnv: (512UL * 1024 * 1024).to!string]);
     assert(r.status == 0,
         "advisory coefficient probe unexpectedly refused:\n" ~ r.output);
-    assert(r.output.canFind("estimated need for -j 8 is 12.0 GiB"),
+    assert(r.output.canFind("estimated need for -j 8 is 12.2 GiB"),
         "space warning does not name the updated -j 8 estimate:\n" ~ r.output);
     assert(r.output.canFind("1.5 GiB/worker coefficient measured 2026-09-11 at -j 6"),
         "space warning does not name the updated worker coefficient and provenance:\n"
@@ -344,7 +346,7 @@ unittest
       ~ "-j 8 estimate:\n" ~ warningSection);
     assert(warningSection.indexOf("512.0 MiB available") >= 0,
         "space warning does not name the real available-space reading:\n" ~ warningSection);
-    assert(warningSection.indexOf("estimated need for -j 8 is 12.0 GiB") >= 0,
+    assert(warningSection.indexOf("estimated need for -j 8 is 12.2 GiB") >= 0,
         "space warning does not name the updated -j 8 estimate:\n" ~ warningSection);
     assert(warningSection.indexOf("1.5 GiB/worker") >= 0
         && warningSection.indexOf("2026-09-11") >= 0,

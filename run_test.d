@@ -320,11 +320,12 @@ string prepareScratchDir(string path) {
 enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
 
 // Advisory only (tasks 4660/5502): measured 2026-09-11 on main@3b42e336 at
-// `-j 6` with `du -sb <scratch>/worker_*` while the run was live: 9.59 GB / 6
-// workers, rounded to 1.60 GB/worker. The shared 114,904,668-byte library was
-// remeasured by the same command and remains accurate. Estimate = shared +
-// jobs * worker; it does not raise the flat refusal floor.
-enum ulong kObservedWorkerScratchBytes = 1_600_000_000UL;
+// `-j 6` with `du -sb <scratch>/worker_*` while the run was live. The estimate
+// deliberately uses the largest worker as its coefficient: shared + jobs *
+// max-worker; that worker was 1,620,727,255 bytes. The live 115,491,790-byte
+// shared library was within ~0.5% of task 4640's 114,904,668-byte value, so its
+// coefficient is kept unchanged. This advisory does not raise the flat floor.
+enum ulong kObservedWorkerScratchBytes = 1_620_727_255UL;
 enum ulong kObservedSharedTestLibraryBytes = 114_904_668UL;
 
 ulong estimatedScratchBytes(int jobs) {
