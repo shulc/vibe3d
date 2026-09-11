@@ -3,9 +3,9 @@ module toolpipe.stages.falloff;
 import std.format    : format;
 import std.conv      : to;
 import std.string    : split, strip;
-import std.math      : abs;
+import std.math      : abs, sqrt;
 
-import math : Vec3, dot, ModelSpace;
+import math : Vec3, Viewport, dot, projectToWindowFull, aimSpace, ModelSpace;
 import document : primaryModelSpace;
 import mesh : Mesh, MapDomain, layerBBoxMinMax;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
@@ -223,6 +223,11 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // "the line stands up out of the work plane".
     private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
 
+    // Last viewport cached at evaluate(). Screen's pre-existing type-switch
+    // auto-fit projects the selected bbox through the drawn item pose.
+    private Viewport lastVp_;
+    private bool lastVpValid_ = false;
+
     // D.7 — Selection-falloff scratch buffer (xfrm.flex). Owned by
     // the stage so the slice we publish on the packet stays valid
     // for the duration of the pipe walk.
@@ -419,9 +424,15 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
     override bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : WorkplanePacket, ActionCenterPacket;
-        // Cache upstream WORK normal for callers outside the pipeline.
+        import toolpipe.packets : SubjectPacket, WorkplanePacket,
+                                  ActionCenterPacket;
+        // Cache upstream WORK normal and viewport for callers outside the
+        // pipeline.
         if (auto wp = vts.get!WorkplanePacket()) lastWpNormal_ = wp.normal;
+        if (auto subj = vts.get!SubjectPacket()) {
+            lastVp_ = subj.viewport;
+            lastVpValid_ = true;
+        }
         // One copy site (task 0179): the whole config field-set travels in
         // one assignment instead of ~25 hand-listed `pkt.<field> = <field>;`
         // lines. `pkt.enabled` / `pkt.pickedCenter` / the derived buffers
@@ -592,8 +603,13 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     }
 
     override bool setAttrImpl(string name, string value) {
+        FalloffType prev = type;
         bool ok = applySetAttr(name, value);
-        if (ok) publishState();
+        if (ok) {
+            if (name == "type" && type != prev)
+                autoSizeUntouchedType();
+            publishState();
+        }
         return ok;
     }
 
@@ -854,6 +870,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     override void onParamChanged(string name) {
         // PropertyPanel writes through typed pointers and therefore bypasses
         // setAttr; it still needs the same state publication side effect.
+        if (name == "type") autoSizeUntouchedType();
         publishState();
     }
 
@@ -1583,6 +1600,22 @@ private:
         return seen;
     }
 
+    // The selected bbox in the layer's own coordinates. This remains the
+    // source for the pre-existing Screen / Element type-switch behavior;
+    // activation auto-fit deliberately uses layerBBoxLocal instead.
+    private bool selectionBBoxLocal(out Vec3 bbMin, out Vec3 bbMax) {
+        bool seen;
+        final switch (*editMode_) {
+            case EditMode.Vertices:
+                mesh_.selectionBBoxMinMaxVertices(bbMin, bbMax, seen); break;
+            case EditMode.Edges:
+                mesh_.selectionBBoxMinMaxEdges(bbMin, bbMax, seen); break;
+            case EditMode.Polygons:
+                mesh_.selectionBBoxMinMaxFaces(bbMin, bbMax, seen); break;
+        }
+        return seen;
+    }
+
     // The world-space AABB of a local bbox: the axis-aligned bound of its
     // eight transformed corners.
     //
@@ -1684,6 +1717,94 @@ private:
             case FalloffType.Selection: break;
             case FalloffType.Composite: break;
             case FalloffType.VertexMap: break;
+        }
+    }
+
+    // Preserve the falloff kinds excluded from activation auto-fit. Screen
+    // and Element retain their selection-based type-switch sizing; Selection
+    // retains its fresh-switch default. Lasso and VertexMap remain no-ops.
+    private void autoSizeUntouchedType() {
+        final switch (type) {
+            case FalloffType.Screen: {
+                if (mesh_ is null || editMode_ is null || !lastVpValid_) break;
+                Vec3 bbMinLocal, bbMaxLocal;
+                if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) break;
+
+                // Project bbCenter to window pixels; place screenCx/Cy
+                // there. screenSize = max projected bbox extent in
+                // pixels (one of the 8 corners furthest from the
+                // centroid pixel). Falls back to defaults when
+                // projection fails or no live viewport has been
+                // captured yet.
+                // Task 0619, aiming kind **Pixel** (§1.1). `bbMinLocal` /
+                // `bbMaxLocal` come from `mesh_.selectionBBoxMinMax*`, which
+                // scan raw `mesh.vertices[]` — LOCAL coordinates. Projecting
+                // them through the plain world `lastVp_` placed the
+                // auto-sized disc where the selection would sit under an
+                // IDENTITY item transform, so on a transformed layer the disc
+                // appeared off the geometry it was sized from. Compose the
+                // primary's matrix into the viewport once for the whole
+                // branch (the centroid plus eight corners) and keep
+                // projecting the local points, which is exact.
+                //
+                // Task 0659: every non-pixel auto-fit branch reads a world
+                // bbox. Screen must not, or the item transform would be
+                // applied twice — once by worldBBox, once by the aim space.
+                //
+                // This has to move in lockstep with `screenWeight`
+                // (`falloff.d`): the disc's centre/radius and the per-vertex
+                // weights must be measured through the SAME projection, or an
+                // auto-sized disc would enclose a different vertex set than
+                // the one it was fitted to.
+                const auto aim = aimSpace(lastVp_, primaryModelSpace());
+                Vec3 bbCenterLocal = (bbMinLocal + bbMaxLocal) * 0.5f;
+                float cx, cy, ndcZ;
+                if (!projectToWindowFull(bbCenterLocal, aim.vp, cx, cy, ndcZ))
+                    break;
+                screenCx = cx;
+                screenCy = cy;
+                float maxR = 0.0f;
+                foreach (i; 0 .. 8) {
+                    Vec3 corner = Vec3(
+                        (i & 1) ? bbMaxLocal.x : bbMinLocal.x,
+                        (i & 2) ? bbMaxLocal.y : bbMinLocal.y,
+                        (i & 4) ? bbMaxLocal.z : bbMinLocal.z,
+                    );
+                    float kx, ky, knz;
+                    if (!projectToWindowFull(corner, aim.vp, kx, ky, knz))
+                        continue;
+                    float dx = kx - cx;
+                    float dy = ky - cy;
+                    float r = sqrt(dx * dx + dy * dy);
+                    if (r > maxR) maxR = r;
+                }
+                screenSize = maxR > 1.0f ? maxR : 64.0f;
+                break;
+            }
+            case FalloffType.Element: {
+                if (mesh_ is null || editMode_ is null) break;
+                Vec3 bbMinLocal, bbMaxLocal;
+                if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) break;
+                Vec3 bbMin, bbMax;
+                worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal,
+                          bbMin, bbMax);
+                Vec3 bbHalf = (bbMax - bbMin) * 0.5f;
+                float maxHalf = bbHalf.x;
+                if (bbHalf.y > maxHalf) maxHalf = bbHalf.y;
+                if (bbHalf.z > maxHalf) maxHalf = bbHalf.z;
+                if (maxHalf > 0) pickedRadius = maxHalf;
+                break;
+            }
+            case FalloffType.Selection:
+                steps = 2;
+                break;
+            case FalloffType.Lasso: break;
+            case FalloffType.VertexMap: break;
+            case FalloffType.None: break;
+            case FalloffType.Linear: break;
+            case FalloffType.Radial: break;
+            case FalloffType.Cylinder: break;
+            case FalloffType.Composite: break;
         }
     }
 }
