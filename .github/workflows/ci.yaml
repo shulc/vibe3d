@@ -392,7 +392,16 @@ jobs:
         RUN_ALL_EXCLUDE: test_acen_pin_characterization
       run: |
         set -o pipefail
-        xvfb-run -a ./run_all.d --only unit --no-build -j 4 2>&1 | tee integration.log
+        # run_test.d strips DISPLAY from every worker it spawns and restores
+        # it only from VIBE3D_TEST_DISPLAY (run_test.d:1667, added by 27be4958
+        # "Isolate runner workers from parent DISPLAY", 2026-09-07). Under
+        # xvfb-run the parent HAS a display and the workers do not, so each one
+        # boots, opens its HTTP port, fails to get a GL 3.3 context and exits --
+        # which the boot gate reports as "failed to come up". Propagating the
+        # display xvfb-run just allocated is what teaches the runner about it.
+        # CI was never taught: ci.yaml's last green run was 2026-09-05T16:34 and
+        # the first red one 2026-09-07T14:33, the day of that commit (task 5507).
+        xvfb-run -a bash -c 'export VIBE3D_TEST_DISPLAY="$DISPLAY"; exec ./run_all.d --only unit --no-build -j 4' 2>&1 | tee integration.log
 
     - name: 'Test results summary'
       # Parse run_test.d's per-test lines ("PASS  [wN]  name" / "FAIL ..." /

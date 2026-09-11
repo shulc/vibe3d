@@ -218,7 +218,16 @@ jobs:
         set -o pipefail
         rdmd tools/sanitizer/lane.d stage check
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
-          xvfb-run -a ./run_test.d --no-build 2>&1 | tee check_suite.log
+          # run_test.d strips DISPLAY from every worker it spawns and restores
+          # it only from VIBE3D_TEST_DISPLAY (run_test.d:1667, added by 27be4958
+          # "Isolate runner workers from parent DISPLAY", 2026-09-07). Under
+          # xvfb-run the parent HAS a display and the workers do not, so each one
+          # boots, opens its HTTP port, fails to get a GL 3.3 context and exits --
+          # which the boot gate reports as "failed to come up". Propagating the
+          # display xvfb-run just allocated is what teaches the runner about it.
+          # CI was never taught: ci.yaml's last green run was 2026-09-05T16:34 and
+          # the first red one 2026-09-07T14:33, the day of that commit (task 5507).
+          xvfb-run -a bash -c 'export VIBE3D_TEST_DISPLAY="$DISPLAY"; exec ./run_test.d --no-build' 2>&1 | tee check_suite.log
 
     - name: 'FFI-seam subset against the --build=sanitize binary'
       id: asan_suite
@@ -234,11 +243,11 @@ jobs:
         rdmd tools/sanitizer/lane.d stage sanitize
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
           ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-report \
-          xvfb-run -a ./run_test.d --no-build \
+          xvfb-run -a bash -c 'export VIBE3D_TEST_DISPLAY="$DISPLAY"; exec ./run_test.d --no-build \
             lwo_edge_cases lwo_multilayer lwo_roundtrip lwo_surfaces lwo_uv \
             obj_import gltf_transform native_v3d v3d_layers v3d_image_plane \
             image_commands image_cache_api morph_lwo morph_v3d weightmap_v3d \
-            subdivide subdivide_smooth subpatch subpatch_move subpatch_preserve \
+            subdivide subdivide_smooth subpatch subpatch_move subpatch_preserve' \
           2>&1 | tee asan_suite.log
         # detect_leaks=0 is permanent and deliberate: SDL / assimp / ImGui
         # allocate at startup and never free, and those are not our leaks.
