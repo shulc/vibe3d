@@ -320,10 +320,10 @@ final class EditSession {
     /// then BatchComplete exactly once.  This keeps notifications per value
     /// while grouping evaluate/live-session work per user gesture.
     ///
-    /// A Stage command whose `setAttr` already delivered its notification and
-    /// slot epoch starts at BatchComplete.  The legacy pointer-bound stage
-    /// panel uses both phases; ValueWritten supplies the notification and,
-    /// for a slot-selector row, the epoch that `setAttr` would have supplied.
+    /// A pointer-written stage batch uses both phases; ValueWritten supplies
+    /// its notification and, for a slot-selector row, its slot epoch.  An
+    /// already-published stage command or stack change instead uses the
+    /// compatibility entry below and therefore carries no write-set names.
     void orchestrateParameterChange(ParamProvider provider, string name,
             ParameterChangeSource source, ParameterChangePhase phase) {
         final switch (phase) {
@@ -390,16 +390,10 @@ final class EditSession {
                         return;
                     }
                     case ParameterChangeSource.StageAttribute:
-                        // Ask FIRST and unconditionally: the stage's event
-                        // counter, not this source label, says whether a slot
-                        // activated. Re-evaluation is the re-weigh and cannot
-                        // precede that boundary decision.
-                        if (requestSlotActivationEnd()) return;
-                        applyStageToLiveSession(batch);
+                        finishStageChange(batch);
                         return;
                     case ParameterChangeSource.SlotActivation:
-                        if (requestSlotActivationEnd()) return;
-                        applyStageToLiveSession(batch);
+                        finishStageChange(batch);
                         return;
                 }
         }
@@ -460,6 +454,14 @@ final class EditSession {
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate(batch);
     }
 
+    // Ask FIRST and unconditionally: the stage's event/capability, not the
+    // source enum, decides whether a slot activated. Re-evaluation is the
+    // re-weigh and cannot precede that boundary decision.
+    private void finishStageChange(ParameterChangeBatch batch) {
+        if (requestSlotActivationEnd()) return;
+        applyStageToLiveSession(batch);
+    }
+
     private bool requestSlotActivationEnd() {
         auto sa = cast(SlotActivationClient) tool_();
         return sa !is null && sa.endHeldRunIfSlotActivated();
@@ -468,14 +470,7 @@ final class EditSession {
     // Compatibility entry for stage commands outside task 4590's ownership.
     // Their Stage.setAttr call has already published notification/slot epoch.
     void onStageConfigChanged() {
-        // Task 0791 — ask FIRST whether this edit activated a slot. If it did,
-        // the tool has ended its held run and the result is frozen at the pipe
-        // state that produced it, so the re-evaluate below (the re-weigh) must
-        // not run. Ordering is the entire point: this path is synchronous with
-        // the command, while the idle poll is a frame later and cannot undo an
-        // already-recomputed geometry result.
-        if (requestSlotActivationEnd()) return;
-        applyStageToLiveSession(ParameterChangeBatch(
+        finishStageChange(ParameterChangeBatch(
             ParameterChangeSource.StageAttribute, null));
     }
 

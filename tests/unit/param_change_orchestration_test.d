@@ -31,6 +31,7 @@ private final class ProbeTool : Tool, FrameParameterEvalClient, LiveEvalClient,
     bool liveValue;
     bool liveStage;
     bool consumeSlot;
+    uint replayCount;
     ParameterChangeSource replaySource;
     string[] replayNames;
 
@@ -44,6 +45,7 @@ private final class ProbeTool : Tool, FrameParameterEvalClient, LiveEvalClient,
     override bool hasLiveEval() const { return liveStage; }
     override bool hasLiveAttrEval() const { return liveValue; }
     override void reEvaluate(ParameterChangeBatch batch) {
+        ++replayCount;
         replaySource = batch.source;
         replayNames = batch.names.dup;
         trace.add("R");
@@ -68,6 +70,14 @@ private final class ProbeStage : Stage {
 private EditSession sessionFor(Tool tool) {
     Tool active = tool;
     return new EditSession(() => active, new CommandHistory(), () {});
+}
+
+private void writeStageBatch(EditSession session, ProbeStage stage, string name,
+                             ParameterChangeSource source) {
+    session.orchestrateParameterChange(
+        stage, name, source, ParameterChangePhase.ValueWritten);
+    scope(exit) session.orchestrateParameterChange(
+        stage, "", source, ParameterChangePhase.BatchComplete);
 }
 
 unittest { // source and phase determine the notification/evaluation order
@@ -111,32 +121,113 @@ unittest { // source and phase determine the notification/evaluation order
         "interactive replay must receive all actually-written channels once");
 }
 
-unittest { // stage attributes re-grade; slot activation ends before re-grade
+unittest { // every public stage entry shares one slot-end/re-grade boundary
     auto trace = new Trace();
     auto tool = new ProbeTool(trace);
     auto stage = new ProbeStage(trace);
     auto session = sessionFor(tool);
     tool.liveStage = true;
 
-    session.orchestrateParameterChange(stage, "size",
-        ParameterChangeSource.StageAttribute, ParameterChangePhase.ValueWritten);
-    session.orchestrateParameterChange(stage, "",
-        ParameterChangeSource.StageAttribute, ParameterChangePhase.BatchComplete);
+    writeStageBatch(session, stage, "size", ParameterChangeSource.StageAttribute);
     assert(trace.value == "AHR",
-        "stage attribute must notify, ask for slot activation, then re-grade; got " ~ trace.value);
+        "stage attribute with refused slot-end must trace AHR; got " ~ trace.value);
+    assert(tool.replaySource == ParameterChangeSource.StageAttribute
+           && tool.replayNames == ["size"],
+        "stage attribute replay must preserve its exact source and names");
+
+    // The helper's closing brace ran BatchComplete; its nested scope(exit)
+    // cleared the accumulator before control returned. Only then start again.
+    trace.clear();
+    writeStageBatch(session, stage, "strength",
+                    ParameterChangeSource.StageAttribute);
+    assert(trace.value == "AHR" && tool.replayNames == ["strength"],
+        "a second completed stage batch must observe cleared names; got trace "
+      ~ trace.value);
+
+    // Keep the refused StageAttribute control above this mandatory accepted
+    // cell: slot-end is decided by the event/capability, not the source enum.
+    trace.clear();
+    tool.consumeSlot = true;
+    auto replayBefore = tool.replayCount;
+    auto attrEpochBefore = stage.slotEpoch;
+    writeStageBatch(session, stage, "radius",
+                    ParameterChangeSource.StageAttribute);
+    assert(trace.value == "AH",
+        "StageAttribute with accepted slot-end must trace AH; got " ~ trace.value);
+    assert(tool.replayCount == replayBefore && stage.slotEpoch == attrEpochBefore,
+        "accepted StageAttribute must skip replay without publishing a slot epoch");
+
+    trace.clear();
+    tool.consumeSlot = false;
+    auto epochBefore = stage.slotEpoch;
+    writeStageBatch(session, stage, "type", ParameterChangeSource.SlotActivation);
+    assert(stage.slotEpoch == epochBefore + 1,
+        "legacy slot widget must publish one slot epoch");
+    assert(trace.value == "AHR",
+        "SlotActivation with refused slot-end must trace AHR; got " ~ trace.value);
+    assert(tool.replaySource == ParameterChangeSource.SlotActivation
+           && tool.replayNames == ["type"],
+        "slot activation replay must preserve its exact source and names");
 
     trace.clear();
     tool.consumeSlot = true;
-    auto epochBefore = stage.slotEpoch;
-    session.orchestrateParameterChange(stage, "type",
-        ParameterChangeSource.SlotActivation, ParameterChangePhase.ValueWritten);
-    session.orchestrateParameterChange(stage, "",
-        ParameterChangeSource.SlotActivation, ParameterChangePhase.BatchComplete);
+    replayBefore = tool.replayCount;
+    epochBefore = stage.slotEpoch;
+    writeStageBatch(session, stage, "mode", ParameterChangeSource.SlotActivation);
     assert(stage.slotEpoch == epochBefore + 1,
-        "legacy slot widget must publish one slot epoch");
-    assert(trace.value == "AH",
-        "slot activation must notify and end the held run without re-grade; got "
+        "accepted slot widget write must still publish one slot epoch");
+    assert(trace.value == "AH" && tool.replayCount == replayBefore,
+        "SlotActivation with accepted slot-end must trace AH; got " ~ trace.value);
+
+    trace.clear();
+    tool.consumeSlot = false;
+    epochBefore = stage.slotEpoch;
+    session.onStageConfigChanged();
+    assert(trace.value == "HR",
+        "compatibility stage change with refused slot-end must trace HR; got "
       ~ trace.value);
+    assert(tool.replaySource == ParameterChangeSource.StageAttribute
+           && tool.replayNames.length == 0,
+        "compatibility stage changes must carry StageAttribute with no names");
+    assert(stage.slotEpoch == epochBefore,
+        "compatibility stage changes must not repeat stage notification or slot epoch");
+
+    trace.clear();
+    tool.consumeSlot = true;
+    replayBefore = tool.replayCount;
+    epochBefore = stage.slotEpoch;
+    session.onStageConfigChanged();
+    assert(trace.value == "H" && tool.replayCount == replayBefore,
+        "compatibility stage change with accepted slot-end must trace H; got "
+      ~ trace.value);
+    assert(stage.slotEpoch == epochBefore,
+        "accepted compatibility stage change must not bump the slot epoch");
+}
+
+unittest { // idle and capability-free stage boundaries stay inert
+    auto trace = new Trace();
+    auto tool = new ProbeTool(trace);
+    tool.liveValue = true;
+    auto stage = new ProbeStage(trace);
+    auto session = sessionFor(tool);
+
+    writeStageBatch(session, stage, "size", ParameterChangeSource.StageAttribute);
+    assert(trace.value == "AH",
+        "idle stage change must not use live-value capability for replay; got "
+      ~ trace.value);
+
+    auto plainTrace = new Trace();
+    auto plainStage = new ProbeStage(plainTrace);
+    auto plainSession = sessionFor(new Tool());
+    writeStageBatch(plainSession, plainStage, "size",
+                    ParameterChangeSource.StageAttribute);
+    assert(plainTrace.value == "A",
+        "a fresh tool without stage capabilities must add no session work; got "
+      ~ plainTrace.value);
+    plainTrace.clear();
+    plainSession.onStageConfigChanged();
+    assert(plainTrace.value == "",
+        "a compatibility stage change on a capability-free tool must be inert");
 }
 
 unittest { // frame-driven consumers are explicit and panel-independent
