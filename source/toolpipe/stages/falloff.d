@@ -897,13 +897,16 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     /// centre along world axis `axis` (0/1/2 = X/Y/Z), with length =
     /// bbox extent along that axis. Uses an explicit axis instead of the
     /// current workplane normal — surfaces the per-axis Auto Size
-    /// buttons in Tool Properties.
-    void autoSizeAxis(int axis) {
-        if (mesh_ is null) return;
+    /// buttons in Tool Properties. Only this explicit per-axis action refuses
+    /// an exactly vanished extent; axisless sizing and preset activation write
+    /// zero-valued geometry without a guard. Pinned by
+    /// tests/test_falloff_autofit.d's degenerate three-layer rig.
+    bool autoSizeAxis(int axis) {
+        if (mesh_ is null) return true;
         Vec3 bbMinLocal, bbMaxLocal;
-        if (!layerBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        if (!layerBBoxLocal(bbMinLocal, bbMaxLocal)) return true;
         // WORLD box: `axis` names a WORLD axis and
-        // `start`/`end` are world coordinates (task 0659).
+        // `start`/`end` are world coordinates (tasks 0659 and 5512).
         Vec3 bbMin, bbMax;
         worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
         Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
@@ -913,9 +916,10 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
                              : Vec3(0, 0, 1);
         float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
                   + abs(bbHalf.z * n.z);
-        if (ext < 1e-6f) ext = 0.5f;
+        if (ext == 0.0f) return false;
         start = bbCenter - n * ext;
         end   = bbCenter + n * ext;
+        return true;
     }
 
     /// Fit the active layer-sized falloff without constraining Linear to one
@@ -937,10 +941,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
                 break;
             case FalloffType.Radial:
                 center = bbCenter;
-                size = Vec3(
-                    bbHalf.x > 1e-6f ? bbHalf.x : 0.5f,
-                    bbHalf.y > 1e-6f ? bbHalf.y : 0.5f,
-                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f);
+                size = bbHalf;
                 break;
             case FalloffType.Cylinder:
                 center = bbCenter;
@@ -1366,9 +1367,9 @@ private:
             case "autosize": {
                 if (value.length == 0) autoSize();
                 else if (type != FalloffType.Linear) return true;
-                else if (value == "x" || value == "0") autoSizeAxis(0);
-                else if (value == "y" || value == "1") autoSizeAxis(1);
-                else if (value == "z" || value == "2") autoSizeAxis(2);
+                else if (value == "x" || value == "0") return autoSizeAxis(0);
+                else if (value == "y" || value == "1") return autoSizeAxis(1);
+                else if (value == "z" || value == "2") return autoSizeAxis(2);
                 else return false;
                 return true;
             }
@@ -1692,17 +1693,13 @@ private:
                                      : Vec3(0, 0, 1);
                 float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
                           + abs(bbHalf.z * n.z);
-                if (ext < 1e-6f) ext = 0.5f;
                 fit.start = bbCenter - n * ext;
                 fit.end = bbCenter + n * ext;
                 break;
             }
             case FalloffType.Radial:
                 fit.center = bbCenter;
-                fit.size = Vec3(
-                    bbHalf.x > 1e-6f ? bbHalf.x : 0.5f,
-                    bbHalf.y > 1e-6f ? bbHalf.y : 0.5f,
-                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f);
+                fit.size = bbHalf;
                 break;
             case FalloffType.Cylinder:
                 fit.center = bbCenter;

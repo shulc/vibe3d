@@ -42,6 +42,78 @@ bool near(float[3] a, float[3] b, float eps = 1e-5f) {
     return true;
 }
 
+struct LayerBounds {
+    float[3] min;
+    float[3] max;
+    float[3] extent;
+    float[3] center;
+}
+
+LayerBounds layerBounds(size_t layer) {
+    auto verts = getJson(format("/api/model?layer=%d", layer))["vertices"].array;
+    assert(verts.length > 0,
+        format("degenerate falloff rig layer %d has no vertices", layer));
+
+    LayerBounds b;
+    foreach (axis; 0 .. 3) {
+        b.min[axis] = cast(float)verts[0].array[axis].floating;
+        b.max[axis] = b.min[axis];
+    }
+    foreach (v; verts) foreach (axis; 0 .. 3) {
+        float x = cast(float)v.array[axis].floating;
+        if (x < b.min[axis]) b.min[axis] = x;
+        if (x > b.max[axis]) b.max[axis] = x;
+    }
+    foreach (axis; 0 .. 3) {
+        b.extent[axis] = b.max[axis] - b.min[axis];
+        b.center[axis] = (b.max[axis] + b.min[axis]) * 0.5f;
+    }
+    return b;
+}
+
+void buildDegenerateRig() {
+    auto reset = postJson("/api/command",
+        commandBody("scene.reset", `{"empty":true}`));
+    assert(reset["status"].str == "ok", "scene.reset failed: " ~ reset.toString());
+    cmd("select.typeFrom vertex");
+
+    cmd("prim.cube cenX:3 cenY:2 cenZ:-1 sizeX:4 sizeY:4 sizeZ:0 "
+        ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
+    cmd("layer.add name:Segment");
+    cmd("prim.cube cenX:3 cenY:2 cenZ:-1 sizeX:4 sizeY:0 sizeZ:0 "
+        ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
+    cmd("layer.add name:Point");
+    cmd("prim.cube cenX:3 cenY:2 cenZ:-1 sizeX:0 sizeY:0 sizeZ:0 "
+        ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
+
+    // Population floor: prove the three authored layers really expose the
+    // vanished extents before any falloff writer is exercised.
+    auto flat = layerBounds(0);
+    auto segment = layerBounds(1);
+    auto point = layerBounds(2);
+    assert(flat.extent[2] == 0.0f,
+        format("flat-layer population: expected zero Z extent, got %s", flat.extent));
+    assert(segment.extent[1] == 0.0f && segment.extent[2] == 0.0f,
+        format("segment-layer population: expected zero Y/Z extents, got %s",
+            segment.extent));
+    assert(point.extent == [0.0f, 0.0f, 0.0f],
+        format("point-layer population: expected three zero extents, got %s",
+            point.extent));
+    assert(near(flat.extent, [4.0f, 4.0f, 0.0f]) &&
+           near(segment.extent, [4.0f, 0.0f, 0.0f]),
+        format("degenerate falloff rig lost its surviving extents: flat=%s segment=%s",
+            flat.extent, segment.extent));
+    assert(near(flat.center, [3.0f, 2.0f, -1.0f]) &&
+           near(segment.center, flat.center) && near(point.center, flat.center),
+        format("degenerate falloff rig layers must share center (3,2,-1): %s %s %s",
+            flat.center, segment.center, point.center));
+}
+
+void selectRigLayer(size_t layer) {
+    cmd(format("layer.select index:%d mode:set", layer));
+    cmd("select.typeFrom vertex");
+}
+
 void buildRig(float sizeX = 4.0f, float sizeY = 1.0f, float sizeZ = 0.5f,
               string workplaneMode = "worldY") {
     auto reset = postJson("/api/command",
@@ -174,4 +246,86 @@ unittest { // an explicitly chosen falloff retains user-authored geometry
     assert(near(vec3(attrs["start"]), [9.0f, 8.0f, 7.0f]) &&
            near(vec3(attrs["end"]), [6.0f, 5.0f, 4.0f]),
         "userLocked falloff geometry was overwritten by tool activation");
+}
+
+unittest { // axisless sizing writes every vanished extent as exact zero
+    buildDegenerateRig();
+    immutable float[3][3] expectedHalf = [
+        [2.0f, 2.0f, 0.0f],
+        [2.0f, 0.0f, 0.0f],
+        [0.0f, 0.0f, 0.0f],
+    ];
+    foreach (layer; 0 .. expectedHalf.length) {
+        selectRigLayer(layer);
+        cmd("tool.pipe.attr falloff type radial");
+        cmd(`tool.pipe.attr falloff center "9,8,7"`);
+        cmd(`tool.pipe.attr falloff size "9,8,7"`);
+        cmd("falloff.autosize");
+        auto attrs = falloffAttrs();
+        assert(near(vec3(attrs["center"]), [3.0f, 2.0f, -1.0f]),
+            format("axisless Radial layer %d did not write the common center", layer));
+        assert(near(vec3(attrs["size"]), expectedHalf[layer]),
+            format("axisless Radial layer %d must write vanished extents as zero: "
+                ~ "expected %s, got %s", layer, expectedHalf[layer],
+                vec3(attrs["size"])));
+    }
+
+    selectRigLayer(2);
+    cmd("tool.pipe.attr falloff type linear");
+    cmd(`tool.pipe.attr falloff start "9,8,7"`);
+    cmd(`tool.pipe.attr falloff end "6,5,4"`);
+    cmd("falloff.autosize");
+    auto attrs = falloffAttrs();
+    assert(near(vec3(attrs["start"]), [3.0f, 2.0f, -1.0f]) &&
+           near(vec3(attrs["end"]), [3.0f, 2.0f, -1.0f]),
+        format("axisless Linear point layer must write a degenerate pair at the "
+            ~ "layer center; got %s -> %s", vec3(attrs["start"]),
+            vec3(attrs["end"])));
+}
+
+unittest { // per-axis sizing refuses each vanished axis and writes nothing
+    buildDegenerateRig();
+    struct RefusalCase { size_t layer; string axis; }
+    immutable RefusalCase[] cases = [
+        RefusalCase(0, "z"),
+        RefusalCase(1, "y"), RefusalCase(1, "z"),
+        RefusalCase(2, "x"), RefusalCase(2, "y"), RefusalCase(2, "z"),
+    ];
+    foreach (c; cases) {
+        selectRigLayer(c.layer);
+        cmd("tool.pipe.attr falloff type linear");
+        cmd(`tool.pipe.attr falloff start "9,8,7"`);
+        cmd(`tool.pipe.attr falloff end "6,5,4"`);
+        auto refused = postJson("/api/command", "falloff.autosize " ~ c.axis);
+        assert(refused["status"].str == "error",
+            format("degenerate axis action must refuse: layer=%d axis=%s response=%s",
+                c.layer, c.axis, refused));
+        auto attrs = falloffAttrs();
+        assert(near(vec3(attrs["start"]), [9.0f, 8.0f, 7.0f]) &&
+               near(vec3(attrs["end"]), [6.0f, 5.0f, 4.0f]),
+            format("refused degenerate axis action wrote falloff geometry: "
+                ~ "layer=%d axis=%s start=%s end=%s", c.layer, c.axis,
+                vec3(attrs["start"]), vec3(attrs["end"])));
+    }
+}
+
+unittest { // automatic activation has no degenerate-extent guard
+    buildDegenerateRig();
+
+    selectRigLayer(0);
+    cmd("tool.set xfrm.softMove on");
+    auto radial = falloffAttrs();
+    assert(near(vec3(radial["center"]), [3.0f, 2.0f, -1.0f]) &&
+           near(vec3(radial["size"]), [2.0f, 2.0f, 0.0f]),
+        format("automatic Radial flat-layer fit must write the degenerate size; "
+            ~ "got center=%s size=%s", vec3(radial["center"]),
+            vec3(radial["size"])));
+
+    selectRigLayer(2);
+    cmd("tool.set xfrm.taper on");
+    auto linear = falloffAttrs();
+    assert(near(vec3(linear["start"]), [3.0f, 2.0f, -1.0f]) &&
+           near(vec3(linear["end"]), [3.0f, 2.0f, -1.0f]),
+        format("automatic Linear point-layer fit must write the degenerate pair; "
+            ~ "got %s -> %s", vec3(linear["start"]), vec3(linear["end"])));
 }
