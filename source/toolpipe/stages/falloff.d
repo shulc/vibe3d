@@ -15,7 +15,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath, installPreparedStatePath;
 import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 
@@ -218,10 +217,6 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     private @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     private EditMode* editMode_;
 
-    // Last workplane normal cached at evaluate(). Retained for the pre-existing
-    // workplane-aware paths below; activation auto-fit chooses a bbox axis.
-    private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
-
     // Last viewport cached at evaluate(). Screen's pre-existing type-switch
     // auto-fit projects the selected bbox through the drawn item pose.
     private Viewport lastVp_;
@@ -423,11 +418,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
     override bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket, WorkplanePacket,
-                                  ActionCenterPacket;
-        // Cache upstream WORK normal and viewport for callers outside the
-        // pipeline.
-        if (auto wp = vts.get!WorkplanePacket()) lastWpNormal_ = wp.normal;
+        import toolpipe.packets : SubjectPacket, ActionCenterPacket;
+        // Cache the viewport for callers outside the pipeline.
         if (auto subj = vts.get!SubjectPacket()) {
             lastVp_ = subj.viewport;
             lastVpValid_ = true;
@@ -1611,24 +1603,6 @@ private:
 
     static string vec3Str(Vec3 v) {
         return format("%g,%g,%g", v.x, v.y, v.z);
-    }
-
-    // Cache-bypass workplane-normal lookup for activation auto-fit. Same value
-    // `state.workplane.normal` would have on the next pipeline.evaluate,
-    // but doesn't require an evaluate to have run since the last
-    // `workplane.*` mutation. Falls back to the cached `lastWpNormal_`
-    // when no pipeline / workplane stage is wired (unit tests that
-    // construct FalloffStage in isolation).
-    Vec3 currentWorkplaneNormal() {
-        if (g_pipeCtx is null) return lastWpNormal_;
-        foreach (s; g_pipeCtx.pipeline.all()) {
-            if (auto wp = cast(const(WorkplaneStage))s) {
-                Vec3 n, a1, a2;
-                wp.currentBasis(n, a1, a2);
-                return n;
-            }
-        }
-        return lastWpNormal_;
     }
 
     // The whole layer bbox in the layer's OWN coordinates, as
