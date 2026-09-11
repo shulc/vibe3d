@@ -22,8 +22,8 @@ import toolpipe.stage            : TaskCode;
 //
 // This is the exact analog of the status-bar Falloff pulldown action
 // (`tool.pipe.attr falloff type <type>`): it routes the type write through
-// the SAME FalloffStage.setAttr path, so the on-switch auto-size and
-// state-publish side-effects are identical, and it fires the SAME live
+// the SAME FalloffStage.setAttr path, so state publication is identical, and
+// it fires the SAME live
 // re-evaluation when a session is already open.
 //
 // Argument shape: positional, none. Just `falloff.linear` etc. The two
@@ -67,8 +67,8 @@ class FalloffPresetCommand : Command {
         if (fo is null)
             throw new Exception(name() ~ ": no falloff (WGHT) stage registered");
 
-        // Route through setAttr so the on-switch auto-size + state-publish
-        // side-effects match the status-bar pulldown exactly. Fail loudly if
+        // Route through setAttr so state publication matches the status-bar
+        // pulldown exactly. Fail loudly if
         // the stage rejects the type (catches a typo-ed registration).
         if (!fo.setAttr("type", typeName_))
             throw new Exception(
@@ -249,7 +249,7 @@ class FalloffAddCommand : Command {
             throw new Exception("falloff.add: no falloff type specified");
 
         // Mirror the mesh/editMode pointers the primary FalloffStage holds so
-        // the new instance auto-sizes + computes selection weights correctly.
+        // the new instance computes selection weights correctly.
         // Sourced from the primary so we don't need separate plumbing.
         import toolpipe.stage : TaskCode;
         auto primary = cast(FalloffStage)
@@ -270,9 +270,9 @@ class FalloffAddCommand : Command {
             throw new Exception(
                 "falloff.add: rejected type '" ~ typeName_ ~ "'");
         g_pipeCtx.pipeline.addStacked(fo);
-        // Route through setAttr so the on-switch auto-size + state-publish
-        // (guarded primary-only) side-effects run identically to the primary
-        // path. Cannot fail now (pre-validated above).
+        // Route through setAttr so state publication (guarded primary-only)
+        // runs identically to the primary path. Cannot fail now
+        // (pre-validated above).
         fo.setAttr("type", typeName_);
 
         // Explicit user selection → lock the slot so it survives a tool

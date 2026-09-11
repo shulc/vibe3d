@@ -246,7 +246,7 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // 8. Auto Size / Reverse action attrs — fire-only `cmd` rows. Reverse swaps the
-//    Linear start/end; autosize is accepted (no-op without a selection). Both
+//    Linear start/end; autosize fits the layer even without a selection. Both
 //    drive the same tool.pipe.attr path the form's button rows dispatch.
 // ---------------------------------------------------------------------------
 unittest {
@@ -276,8 +276,8 @@ unittest {
     assert(approxEqual(e[0], 1) && approxEqual(e[1], 2) && approxEqual(e[2], 3),
         "reverse: end should now be (1,2,3)");
 
-    // autosize is accepted as a fire-only action (no selection → no-op, still
-    // ok) — the SAME command the form's Auto Size X button fires.
+    // autosize is accepted as a fire-only action and fits the layer even with
+    // no selection — the SAME command the form's Auto Size X button fires.
     cmd("falloff.autosize x");
 
     cmd("tool.pipe.attr falloff type none");

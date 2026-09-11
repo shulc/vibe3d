@@ -273,6 +273,7 @@ tests.unit.mark_view_field_guard_test
 tests.unit.mark_view_test
 tests.unit.math_test
 tests.unit.mesh_analysis_test
+tests.unit.mesh_bbox_test
 tests.unit.mesh_bevel_census_test
 tests.unit.mesh_by_value_gate
 tests.unit.mesh_corner_provenance_test

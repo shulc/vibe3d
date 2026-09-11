@@ -5,10 +5,9 @@ import std.conv      : to;
 import std.string    : split, strip;
 import std.math      : abs;
 
-import math : Vec3, Viewport, dot, projectToWindowFull, aimSpace, ModelSpace;
+import math : Vec3, dot, ModelSpace;
 import document : primaryModelSpace;
-import std.math : sqrt;
-import mesh : Mesh, MapDomain;
+import mesh : Mesh, MapDomain, layerBBoxMinMax;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient;
@@ -32,6 +31,14 @@ import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, val
 /// `__gshared` and always-on rather than `debug`, because the unit lane and the
 /// suite lane build with different flags.
 __gshared ulong g_falloffSelWeightRebuilds;
+
+/// Falloff geometry computed during the fallible prepare half of a tool
+/// activation and installed later by its nothrow commit half.
+struct PreparedFalloffAutoFit {
+    bool applies;
+    FalloffType type;
+    Vec3 start, end, center, size;
+}
 
 // ---------------------------------------------------------------------------
 // Single-sourced enum token<->value tables (task 0184 / audit-2 C2). Each
@@ -204,27 +211,17 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // above — see that struct's field docs for the full semantics
     // previously documented at each of these decls.
 
-    // Optional refs for auto-size on `setAttr("type", ...)`. Phase 7.5a
-    // shipped without them (None type doesn't auto-size); 7.5b wires
-    // them in app.d's initToolPipe so Linear / Radial / Screen / Lasso
-    // can pre-fit to the active selection. nullable: unit tests that
-    // bypass the app-level wiring still work; auto-size becomes a
-    // no-op.
+    // Optional refs for layer auto-fit during tool activation and for
+    // selection-weight evaluation. Nullable so unit tests that construct a
+    // stage without app-level wiring keep working.
     private Mesh* delegate() meshSrc_;
     private @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     private EditMode* editMode_;
 
-    // Last workplane normal cached at evaluate(). Used by autoSize() to
-    // orient Linear's start→end along the construction-plane normal —
+    // Last workplane normal cached at evaluate(). Used by activation auto-fit
+    // to orient Linear's start→end along the construction-plane normal —
     // "the line stands up out of the work plane".
     private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
-
-    // Last viewport cached at evaluate(). Used by autoSize() for Screen
-    // type to project the selection bbox centroid into window pixels.
-    // Default-init produces a degenerate viewport — autoSize() guards
-    // against that with a "did we ever evaluate?" flag.
-    private Viewport lastVp_;
-    private bool     lastVpValid_ = false;
 
     // D.7 — Selection-falloff scratch buffer (xfrm.flex). Owned by
     // the stage so the slice we publish on the packet stays valid
@@ -422,15 +419,9 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
     override bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket, WorkplanePacket,
-                                  ActionCenterPacket;
-        // Cache upstream WORK normal + viewport for autoSize() callers
-        // outside the pipeline.
+        import toolpipe.packets : WorkplanePacket, ActionCenterPacket;
+        // Cache upstream WORK normal for callers outside the pipeline.
         if (auto wp = vts.get!WorkplanePacket()) lastWpNormal_ = wp.normal;
-        if (auto subj = vts.get!SubjectPacket()) {
-            lastVp_      = subj.viewport;
-            lastVpValid_ = true;
-        }
         // One copy site (task 0179): the whole config field-set travels in
         // one assignment instead of ~25 hand-listed `pkt.<field> = <field>;`
         // lines. `pkt.enabled` / `pkt.pickedCenter` / the derived buffers
@@ -601,20 +592,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     }
 
     override bool setAttrImpl(string name, string value) {
-        FalloffType prev = type;
         bool ok = applySetAttr(name, value);
-        if (ok) {
-            // Convention: switching the falloff type while a tool is
-            // active auto-sizes the new falloff to the current
-            // selection's bbox — the act of selecting the falloff type
-            // automatically scales it to the bounding-box size of the
-            // active selection. Only fires on a real
-            // type change (not no-op set-to-current); the user can
-            // still manually re-tune attrs after auto-size.
-            if (name == "type" && type != prev && type != FalloffType.None)
-                autoSize();
-            publishState();
-        }
+        if (ok) publishState();
         return ok;
     }
 
@@ -686,9 +665,9 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // ------------------------------------------------------------------
     // Phase 7.9: Param[] schema for the Tool Properties panel. PropertyPanel
     // writes new values directly through the typed pointers in each Param;
-    // onParamChanged() below mirrors the side-effects of setAttr (autoSize
-    // on type change, publishState on every change) so the UI path produces
-    // the same observable behaviour as the HTTP `tool.pipe.attr` path.
+    // onParamChanged() below mirrors setAttr's state publication so the UI
+    // path produces the same observable behaviour as the HTTP
+    // `tool.pipe.attr` path.
     //
     // Lasso polygon (lassoPolyX/Y arrays) isn't exposed here — there's no
     // single-line widget for it; users edit the lasso via direct viewport
@@ -706,8 +685,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
         // Type selection lives in the status-bar Falloff pulldown, NOT
         // the Tool Properties panel — switching type in the panel
-        // would conflict with auto-size + setStatePath flow that the
-        // status pulldown owns. Tool Properties only exposes the
+        // would conflict with the setStatePath flow that the status pulldown
+        // owns. Tool Properties only exposes the
         // CONFIG of the active type.
         //
         // Filter params() per active type so the panel shows ONLY
@@ -873,14 +852,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     }
 
     override void onParamChanged(string name) {
-        // Mirror setAttr's side-effects so PropertyPanel (which writes
-        // through the typed pointer directly, bypassing setAttr's
-        // string-parse path) still triggers autoSize on type changes
-        // and publishes state for the status-bar pulldown.
-        // autoSize is a no-op for type=None; cheap to call always on
-        // type change without prev-value tracking.
-        if (name == "type" && type != FalloffType.None)
-            autoSize();
+        // PropertyPanel writes through typed pointers and therefore bypasses
+        // setAttr; it still needs the same state publication side effect.
         publishState();
     }
 
@@ -912,17 +885,16 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         // Nothing left for the legacy imperative panel to draw.
     }
 
-    /// Fit the Linear-falloff start/end through the selection bbox
+    /// Fit the Linear-falloff start/end through the layer bbox
     /// centre along world axis `axis` (0/1/2 = X/Y/Z), with length =
-    /// bbox extent along that axis. Mirrors the existing autoSize()
-    /// for Linear but takes the axis explicitly instead of using the
+    /// bbox extent along that axis. Uses an explicit axis instead of the
     /// current workplane normal — surfaces the per-axis Auto Size
     /// buttons in Tool Properties.
     void autoSizeAxis(int axis) {
-        if (mesh_ is null || editMode_ is null) return;
+        if (mesh_ is null) return;
         Vec3 bbMinLocal, bbMaxLocal;
-        if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) return;
-        // WORLD box, same law as autoSize() — `axis` names a WORLD axis and
+        if (!layerBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        // WORLD box: `axis` names a WORLD axis and
         // `start`/`end` are world coordinates (task 0659).
         Vec3 bbMin, bbMax;
         worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
@@ -1584,7 +1556,7 @@ private:
         return format("%g,%g,%g", v.x, v.y, v.z);
     }
 
-    // Cache-bypass workplane-normal lookup for autoSize. Same value
+    // Cache-bypass workplane-normal lookup for activation auto-fit. Same value
     // `state.workplane.normal` would have on the next pipeline.evaluate,
     // but doesn't require an evaluate to have run since the last
     // `workplane.*` mutation. Falls back to the cached `lastWpNormal_`
@@ -1602,19 +1574,12 @@ private:
         return lastWpNormal_;
     }
 
-    // The selection bbox in the layer's OWN coordinates, as `mesh.vertices`
-    // stores them. Both auto-size entry points start here; what they do with
-    // it differs by space (see `worldBBox` and autoSize's SPACE note).
-    private bool selectionBBoxLocal(out Vec3 bbMin, out Vec3 bbMax) {
+    // The whole layer bbox in the layer's OWN coordinates, as
+    // `mesh.vertices` stores them. Selection and edit mode are intentionally
+    // absent from this path.
+    private bool layerBBoxLocal(out Vec3 bbMin, out Vec3 bbMax) {
         bool seen;
-        final switch (*editMode_) {
-            case EditMode.Vertices:
-                mesh_.selectionBBoxMinMaxVertices(bbMin, bbMax, seen); break;
-            case EditMode.Edges:
-                mesh_.selectionBBoxMinMaxEdges   (bbMin, bbMax, seen); break;
-            case EditMode.Polygons:
-                mesh_.selectionBBoxMinMaxFaces   (bbMin, bbMax, seen); break;
-        }
+        layerBBoxMinMax(*mesh_, bbMin, bbMax, seen);
         return seen;
     }
 
@@ -1643,165 +1608,82 @@ private:
         }
     }
 
-    // Pre-fit Linear / Radial / Screen / Lasso to the current selection
-    // bbox, so the user gets an immediately useful starting point on
-    // type switch. Each type uses what it needs from the bbox; the
-    // others' attrs are left alone.
-    //
-    // SPACE (task 0659). `bbCenter`/`bbHalf` are WORLD. They used to be the
-    // raw local bbox, which made this the one writer of `start`/`end`/
-    // `center`/`size`/`pickedRadius` that disagreed with the others — the
-    // handle drags and ACEN write those fields in world, and
-    // `falloff_render.d` draws them through the world viewport. Since the
-    // weight is now measured in world too, an auto-size that fitted the
-    // local box would place the region of influence off the geometry it was
-    // fitted to on any transformed layer. The Screen branch is the exception
-    // and deliberately keeps the LOCAL box: it projects through an aim space
-    // that already carries the item matrix.
-    void autoSize() {
-        if (mesh_ is null || editMode_ is null) return;
+    // Prepare an activation-time fit only for falloffs that own layer-sized
+    // geometry. Coordinates remain world-space (task 0659), and Linear keeps
+    // using WorkplaneStage.currentBasis to choose its orientation.
+    public PreparedFalloffAutoFit prepareAutoFitForActivation(FalloffType nextType) {
+        PreparedFalloffAutoFit fit;
+        fit.type = nextType;
+        if (userLocked || mesh_ is null) return fit;
+        if (nextType != FalloffType.Linear &&
+            nextType != FalloffType.Radial &&
+            nextType != FalloffType.Cylinder)
+            return fit;
+
         Vec3 bbMinLocal, bbMaxLocal;
-        if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        if (!layerBBoxLocal(bbMinLocal, bbMaxLocal)) return fit;
         Vec3 bbMin, bbMax;
         worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
         Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
-        Vec3 bbHalf   = (bbMax - bbMin) * 0.5f;
+        Vec3 bbHalf = (bbMax - bbMin) * 0.5f;
+        fit.applies = true;
 
-        final switch (type) {
-            case FalloffType.None: break;
+        final switch (nextType) {
             case FalloffType.Linear: {
-                // Anchor the line through bbCenter, oriented along the
-                // workplane normal, length = bbox extent along that
-                // normal. Falls back to a unit-Y line at the bbox
-                // centre when the projected extent is zero (flat
-                // selection in the construction plane).
-                //
-                // Query WorkplaneStage directly rather than reading the
-                // `lastWpNormal_` cache populated by evaluate(). The
-                // cache is only refreshed when pipeline.evaluate runs,
-                // and nothing forces an evaluate between a
-                // `tool.pipe.attr workplane mode worldY` and a
-                // `tool.pipe.attr falloff type linear` issued in the
-                // same frame — autoSize would otherwise pick up the
-                // PREVIOUS workplane orientation and lay the Linear
-                // line along the wrong axis. WorkplaneStage.currentBasis
-                // computes from rotation alone, no pipe round-trip
-                // required.
                 Vec3 n = currentWorkplaneNormal();
                 float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
                           + abs(bbHalf.z * n.z);
                 if (ext < 1e-6f) ext = 0.5f;
-                start = bbCenter - n * ext;
-                end   = bbCenter + n * ext;
+                fit.start = bbCenter - n * ext;
+                fit.end = bbCenter + n * ext;
                 break;
             }
             case FalloffType.Radial:
-                // Centre at bbox centre; per-axis radii = bbox half-
-                // extents (so the ellipsoid surface touches the bbox).
-                center = bbCenter;
-                size   = Vec3(
+                fit.center = bbCenter;
+                fit.size = Vec3(
                     bbHalf.x > 1e-6f ? bbHalf.x : 0.5f,
                     bbHalf.y > 1e-6f ? bbHalf.y : 0.5f,
-                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f,
-                );
-                break;
-            case FalloffType.Screen: {
-                // Project bbCenter to window pixels; place screenCx/Cy
-                // there. screenSize = max projected bbox extent in
-                // pixels (one of the 8 corners furthest from the
-                // centroid pixel). Falls back to defaults when
-                // projection fails or no live viewport has been
-                // captured yet.
-                if (!lastVpValid_) break;
-                // Task 0619, aiming kind **Pixel** (§1.1). `bbMinLocal` /
-                // `bbMaxLocal` come from `mesh_.selectionBBoxMinMax*`, which
-                // scan raw `mesh.vertices[]` — LOCAL coordinates. Projecting
-                // them through the plain world `lastVp_` placed the
-                // auto-sized disc where the selection would sit under an
-                // IDENTITY item transform, so on a transformed layer the disc
-                // appeared off the geometry it was sized from. Compose the
-                // primary's matrix into the viewport once for the whole
-                // branch (the centroid plus eight corners) and keep
-                // projecting the local points, which is exact.
-                //
-                // Task 0659: this branch is why the LOCAL box is still in
-                // scope. Every other branch reads the world `bbCenter` /
-                // `bbHalf` above; Screen must not, or the item transform
-                // would be applied twice — once by `worldBBox`, once by the
-                // aim space.
-                //
-                // This has to move in lockstep with `screenWeight`
-                // (`falloff.d`): the disc's centre/radius and the per-vertex
-                // weights must be measured through the SAME projection, or an
-                // auto-sized disc would enclose a different vertex set than
-                // the one it was fitted to.
-                const auto aim = aimSpace(lastVp_, primaryModelSpace());
-                Vec3 bbCenterLocal = (bbMinLocal + bbMaxLocal) * 0.5f;
-                float cx, cy, ndcZ;
-                if (!projectToWindowFull(bbCenterLocal, aim.vp, cx, cy, ndcZ))
-                    break;
-                screenCx = cx;
-                screenCy = cy;
-                float maxR = 0.0f;
-                foreach (i; 0 .. 8) {
-                    Vec3 corner = Vec3(
-                        (i & 1) ? bbMaxLocal.x : bbMinLocal.x,
-                        (i & 2) ? bbMaxLocal.y : bbMinLocal.y,
-                        (i & 4) ? bbMaxLocal.z : bbMinLocal.z,
-                    );
-                    float kx, ky, knz;
-                    if (!projectToWindowFull(corner, aim.vp, kx, ky, knz))
-                        continue;
-                    float dx = kx - cx;
-                    float dy = ky - cy;
-                    float r = sqrt(dx * dx + dy * dy);
-                    if (r > maxR) maxR = r;
-                }
-                // Screen-radius must be > 0 — a degenerate value would
-                // make every vert weight = 0/0. Fall back to a 64-px
-                // default (matches the FalloffPacket initializer).
-                screenSize = maxR > 1.0f ? maxR : 64.0f;
-                break;
-            }
-            case FalloffType.Lasso:
-                // Lasso polygon needs the user's input gesture (7.5e);
-                // nothing meaningful to auto-size.
+                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f);
                 break;
             case FalloffType.Cylinder:
-                // Mirrors the Radial branch: anchor the cylinder at the
-                // bbox centre, isotropic radial extent. The cylinder
-                // axis (`normal`) defaults to +Y per the FalloffPacket
-                // default — explicit user override via
-                // `tool.pipe.attr falloff axis "<x,y,z>"` if needed.
-                center = bbCenter;
-                size   = Vec3(
+                fit.center = bbCenter;
+                fit.size = Vec3(
                     bbHalf.x > 0 ? bbHalf.x : 1.0f,
                     bbHalf.y > 0 ? bbHalf.y : 1.0f,
                     bbHalf.z > 0 ? bbHalf.z : 1.0f);
                 break;
-            case FalloffType.Element:
-                // The sphere centre is owned by ACEN (gizmo pivot) —
-                // we only auto-size the RADIUS to the selection bbox
-                // half-extent. ACEN.Element already returns the
-                // selection-element centroid by default, so the
-                // resulting sphere comfortably encloses the bbox.
-                float maxHalf = bbHalf.x;
-                if (bbHalf.y > maxHalf) maxHalf = bbHalf.y;
-                if (bbHalf.z > maxHalf) maxHalf = bbHalf.z;
-                if (maxHalf > 0) pickedRadius = maxHalf;
+            case FalloffType.None: break;
+            case FalloffType.Screen: break;
+            case FalloffType.Lasso: break;
+            case FalloffType.Element: break;
+            case FalloffType.Selection: break;
+            case FalloffType.Composite: break;
+            case FalloffType.VertexMap: break;
+        }
+        return fit;
+    }
+
+    /// Commit a previously prepared activation fit without allocating or
+    /// consulting mutable scene state.
+    public void installPreparedAutoFit(in PreparedFalloffAutoFit fit) nothrow @nogc {
+        if (!fit.applies || fit.type != type || userLocked) return;
+        final switch (type) {
+            case FalloffType.Linear:
+                start = fit.start;
+                end = fit.end;
                 break;
-            case FalloffType.Selection:
-                // `steps` is the ring-seed cap depth — bbox sizing doesn't
-                // apply. Pin to the default so a fresh selection switch
-                // starts clean.
-                steps = 2;
+            case FalloffType.Radial:
+            case FalloffType.Cylinder:
+                center = fit.center;
+                size = fit.size;
                 break;
-            case FalloffType.Composite:
-                // Never a stage's own type — nothing to auto-size.
-                break;
-            case FalloffType.VertexMap:
-                // Weights come from a named map — no spatial auto-sizing.
-                break;
+            case FalloffType.None: break;
+            case FalloffType.Screen: break;
+            case FalloffType.Lasso: break;
+            case FalloffType.Element: break;
+            case FalloffType.Selection: break;
+            case FalloffType.Composite: break;
+            case FalloffType.VertexMap: break;
         }
     }
 }

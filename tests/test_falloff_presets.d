@@ -8,8 +8,7 @@
 //   bundle, no tool.set replacement).
 // - After activation, the falloff stage's type-specific params become live
 //   (start/end for linear, center/size for radial, axis for cylinder, ...).
-// - A preset-set geometry attr survives a (no-op) re-activation — the on-switch
-//   auto-size only fires on a REAL type change.
+// - A user-set geometry attr survives re-activation of the explicit falloff.
 // - Command labels read as first-class sub-tools ("Linear Falloff", ...).
 
 import http_client : testBaseUrl, getJson, postJson;
@@ -116,12 +115,10 @@ unittest { // bare = the active tool is NOT changed
     }
 }
 
-unittest { // a preset-set geometry attr survives a no-op re-activation
+unittest { // a user-set geometry attr survives explicit re-activation
     resetCube();
     cmd("falloff.cylinder");
-    // Set an explicit axis, then re-activate the SAME type — the on-switch
-    // auto-size only fires on a REAL type change, so the explicit value
-    // must survive.
+    // Set an explicit axis, then re-activate the same explicitly locked type.
     cmd(`tool.pipe.attr falloff axis "1,0,0"`);
     auto before = falloffAttrs();
     assert("axis" in before, "cylinder: axis attr missing pre re-activation");

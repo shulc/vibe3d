@@ -8,8 +8,8 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 521
-task-citation-lines 5088
+source-files 522
+task-citation-lines 5086
 citing-files 395
 long-comment-runs 279
 files-with-long-runs 148
@@ -322,7 +322,7 @@ allow source/toolpipe/stage.d 10
 allow source/toolpipe/stages/actcenter.d 57
 allow source/toolpipe/stages/axis.d 15
 allow source/toolpipe/stages/constrain.d 8
-allow source/toolpipe/stages/falloff.d 32
+allow source/toolpipe/stages/falloff.d 30
 allow source/toolpipe/stages/path.d 1
 allow source/toolpipe/stages/snap.d 12
 allow source/toolpipe/stages/symmetry.d 15

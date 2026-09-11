@@ -38,9 +38,8 @@ string[string] getFalloffAttrs() {
 void resetCube() {
     postJson("/api/command", commandBody("scene.reset", `{"type":"cube"}`));
     postJson("/api/command", "tool.pipe.attr falloff type none");
-    // Tools that auto-size on type-switch (e.g. D.1 `xfrm.twist`'s
-    // linear-falloff path) leave start/end / center/size at auto-fit
-    // values rather than their packet defaults. Reset explicitly so
+    // Preset activations leave start/end / center/size at auto-fit values
+    // rather than their packet defaults. Reset explicitly so
     // a previous test running in the same worker doesn't poison the
     // "defaults" assertions below.
     postJson("/api/command", `tool.pipe.attr falloff start "0,0,0"`);
@@ -195,49 +194,34 @@ unittest { // malformed Vec3 rejected
 }
 
 // -------------------------------------------------------------------------
-// 7.5b: switching type to linear auto-sizes start/end to the selection
-// bbox, oriented along the workplane normal. With workplane=worldY a
-// default cube produces start=(0,-0.5,0), end=(0,0.5,0) (centred on
-// origin, length = bbox Y extent = 1).
+// Choosing a falloff type explicitly does not run the activation-time fit.
+// This is the user-locking path; geometry stays available for manual tuning.
 // -------------------------------------------------------------------------
 
-unittest { // auto-size linear on type switch
+unittest { // explicit linear type preserves its geometry
     resetCube();
-    // Force workplane to worldY so the auto-size axis is deterministic.
-    postJson("/api/command", "tool.pipe.attr workplane mode worldY");
-    // Whole-mesh "selection" — no explicit selection means selectionBBox*
-    // falls back to all geometry, mirroring the rest of vibe3d's
-    // bbox-with-empty-selection convention.
     postJson("/api/command", "tool.pipe.attr falloff type linear");
     auto a = getFalloffAttrs();
     assert(a["type"]  == "linear", "type: " ~ a["type"]);
-    assert(a["start"] == "0,-0.5,0",
-        "auto-size start expected 0,-0.5,0; got " ~ a["start"]);
-    assert(a["end"]   == "0,0.5,0",
-        "auto-size end expected 0,0.5,0; got " ~ a["end"]);
-    postJson("/api/command", "tool.pipe.attr workplane mode auto");
+    assert(a["start"] == "0,0,0", "explicit type changed start: " ~ a["start"]);
+    assert(a["end"]   == "0,1,0", "explicit type changed end: " ~ a["end"]);
 }
 
 // -------------------------------------------------------------------------
-// 7.5b: switching type to radial auto-sizes center+size to the selection
-// bbox half-extents (cube → center=(0,0,0), size=(0.5,0.5,0.5)).
+// The same rule applies to Radial: type choice and activation are distinct.
 // -------------------------------------------------------------------------
 
-unittest { // auto-size radial on type switch
+unittest { // explicit radial type preserves its geometry
     resetCube();
     postJson("/api/command", "tool.pipe.attr falloff type radial");
     auto a = getFalloffAttrs();
     assert(a["type"]   == "radial");
-    assert(a["center"] == "0,0,0",
-        "auto-size center expected 0,0,0; got " ~ a["center"]);
-    assert(a["size"]   == "0.5,0.5,0.5",
-        "auto-size size expected 0.5,0.5,0.5; got " ~ a["size"]);
+    assert(a["center"] == "0,0,0", "explicit type changed center: " ~ a["center"]);
+    assert(a["size"]   == "1,1,1", "explicit type changed size: " ~ a["size"]);
 }
 
 // -------------------------------------------------------------------------
-// 7.5b: setting the same type as the current one does NOT auto-size —
-// the user can manually tune start/end and a no-op type set should
-// preserve those edits.
+// Repeating the same explicit type does not alter user-authored geometry.
 // -------------------------------------------------------------------------
 
 unittest { // no auto-size on no-op type set

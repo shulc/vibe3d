@@ -101,10 +101,9 @@
 //        → "auto-sized centre is (0.225000, 0.550000, 0.110000), the WORLD
 //           selection box centre is (0.450000, 0.275000, 0.440000) and the
 //           layer-local one is (0.225000, 0.550000, 0.110000)."
-//      Note for whoever mutates this next: `autoSize` and `autoSizeAxis` open
-//      with the SAME four lines, so a textual patch anchored on them lands in
-//      `autoSizeAxis` (which comes first in the file) and looks inert.  Anchor
-//      on the `final switch (type)` that follows autoSize's copy.
+//      Activation auto-fit and the explicit axis action share the same
+//      whole-layer bbox helper; mutate that source only after separating the
+//      two callers in the witness.
 //
 //   7. AN INERT MUTATION, recorded because it is the useful one.  Restoring
 //      the `toLocalPoint` fold on `FalloffStage.evaluate`'s published
@@ -221,10 +220,8 @@ double[][] modelVertices() {
     return outV;
 }
 
-// Arm the falloff described by the case, if any.  `type` is set FIRST and on
-// purpose: a type change runs FalloffStage.autoSize(), which overwrites
-// centre/size/start/end from the selection bbox — setting the handles before
-// the type would have them silently replaced.
+// Arm the falloff described by the case, if any, then install the fixture's
+// explicit geometry.
 void armFalloff(JSONValue kase) {
     if (kase["falloff"].type == JSONType.null_) return;
     auto f = kase["falloff"];
@@ -681,9 +678,9 @@ unittest {
 // ==========================================================================
 // 6. AUTO-SIZE FITS THE WORLD BOX.
 //
-//     The other half of the seam, and the write side of it.  `autoSize()`
-//     runs on a falloff type change and pre-fits centre/size (or start/end)
-//     to the selection's bounding box.  It used to fit the box in the
+//     The other half of the seam, and the write side of it. Tool activation
+//     pre-fits centre/size (or start/end) to the layer bounding box. It used
+//     to fit the box in the
 //     layer's OWN coordinates, which made it the single writer of these
 //     fields that disagreed with all the others — the handle drags, the
 //     action centre and the overlay are world.  With the weight now measured
@@ -733,8 +730,7 @@ unittest {
         "the local and world fits coincide on this stand — nothing to test");
 
     buildStand(kase);
-    cmd("tool.set move");
-    cmd("tool.pipe.attr falloff type radial");   // this is what runs autoSize
+    cmd("tool.set xfrm.softMove on");
 
     auto a = wghtAttrs();
     double[3] gotCen  = parseVec3Attr(a["center"]);

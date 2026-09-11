@@ -129,8 +129,7 @@ unittest { // softMove activates falloff (enabled=true after preset)
     postJson("/api/command", "tool.set xfrm.softMove on");
     auto a = falloffAttrs();
     assert(a["type"] == "radial");
-    // Auto-size on type-switch fits the radial to the cube bbox; size
-    // should be non-trivial (cube half-extent = 0.5 → radius ≥ 0.5).
+    // Activation-time fit gives the radial preset a non-empty size image.
     auto sizeParts = a["size"]; // "x,y,z"
     assert(sizeParts.length > 0);
 }

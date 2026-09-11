@@ -8,7 +8,7 @@ import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage,
     PreparedConstrainCompositionProjection;
-import toolpipe.stages.falloff : FalloffStage;
+import toolpipe.stages.falloff : FalloffStage, PreparedFalloffAutoFit;
 import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
 
 /// Owner-held prepared image for the universal tool-switch pipe prefix.
@@ -43,6 +43,7 @@ private:
     ElementMode falloffMode_;
     bool falloffTransparent_;
     string acenWire_, axisWire_, falloffTypeWire_, falloffShapeWire_;
+    PreparedFalloffAutoFit falloffAutoFit_;
 
 public:
     static PreparedPipeActivationOwner prepare(ref Pipeline pipeline,
@@ -135,6 +136,9 @@ public:
             default: throw new Exception("unsupported prepared pipe preset stage");
             }
         }
+        if (result.hasFalloff_)
+            result.falloffAutoFit_ = result.falloff_
+                .prepareAutoFitForActivation(result.falloffType_);
         return result;
     }
 
@@ -158,8 +162,11 @@ public:
         falloff_.installPreparedTransientReset();
         if (hasAcen_) acen_.installPreparedMode(acenMode_, acenWire_);
         if (hasAxis_) axis_.installPreparedMode(axisMode_, axisWire_);
-        if (hasFalloff_) falloff_.installPreparedPreset(falloffType_, falloffShape_,
-            falloffMode_, falloffTransparent_, falloffTypeWire_, falloffShapeWire_);
+        if (hasFalloff_) {
+            falloff_.installPreparedPreset(falloffType_, falloffShape_,
+                falloffMode_, falloffTransparent_, falloffTypeWire_, falloffShapeWire_);
+            falloff_.installPreparedAutoFit(falloffAutoFit_);
+        }
     }
 }
 

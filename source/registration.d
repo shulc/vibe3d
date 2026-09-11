@@ -1367,8 +1367,8 @@ private void registerPipeStageCommands(EditorApp app) {
     // stage's `type` and keeps the active transform tool (NOT a tool that
     // replaces the active tool, NOT a transform bundle). Same write path as
     // the status-bar Falloff pulldown (`tool.pipe.attr falloff type <type>`),
-    // so the on-switch auto-size + state-publish + live re-eval side-effects
-    // are identical. The two BUNDLE presets falloff.element / falloff.selection
+    // so state publication + live re-eval side-effects are identical. The two
+    // BUNDLE presets falloff.element / falloff.selection
     // (base xfrm.transform + pipe.falloff.type) live in config/tool_presets.yaml
     // and stay separate.
     {

@@ -63,6 +63,10 @@ public import mesh_visibility;
 // `EdgeSliceResult` -- a member of the MODULE, not of the type.
 public import mesh_edge_slice;
 
+// Whole-layer geometry bounds live outside `struct Mesh`; re-exported so
+// existing mesh imports can keep using UFCS at call sites.
+public import mesh_bbox;
+
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
