@@ -13,6 +13,7 @@ import ui.discard_guard : UiRunOutcome, GuardSettle;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
 import prefs;
+import sdl_error : sdlError;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -1113,7 +1114,7 @@ void main(string[] args) {
     // On macOS an unfocused window may consume the first click only to focus
     // the app. Let SDL deliver that click as a normal mouse button event too.
     SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1");
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", sdlError()); return; }
 
     // Task 2070 — stamp THIS thread as the main loop's, before the HTTP
     // server thread exists. Deliberately NOT recorded from
@@ -1347,7 +1348,7 @@ void main(string[] args) {
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
         SDL_WINDOW_OPENGL | visFlag | SDL_WINDOW_RESIZABLE
     );
-    if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
+    if (!window) { writefln("SDL_CreateWindow: %s", sdlError()); return; }
     scope(exit) SDL_DestroyWindow(window);
     // Persist preferences at clean shutdown. Registered AFTER the
     // SDL_DestroyWindow guard so LIFO runs this FIRST — the window is still
@@ -1402,7 +1403,7 @@ void main(string[] args) {
     }
 
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
-    if (!ctx) { writefln("SDL_GL_CreateContext: %s", SDL_GetError()); return; }
+    if (!ctx) { writefln("SDL_GL_CreateContext: %s", sdlError()); return; }
     scope(exit) SDL_GL_DeleteContext(ctx);
 
     if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }

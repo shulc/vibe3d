@@ -38,6 +38,7 @@ import cycles.c;
 
 import render.backend;
 import math : Vec3;
+import sdl_error : sdlError;
 
 // ---------------------------------------------------------------------------
 // Blueprint — D-side mirror of the scene, used to rebuild Cycles state
@@ -507,14 +508,15 @@ class CyclesBackend : RenderBackend
         const int rc = SDL_GL_MakeCurrent(self.sdlWindow, self.workerGlCtx);
         if (rc != 0 && !self.interopMakeCurrentWarned) {
             self.interopMakeCurrentWarned = true;
+            const error = sdlError();
             try fprintf(stderr,
                 "[ipr] GL interop disabled — SDL_GL_MakeCurrent on the "
-                ~ "worker thread failed (%s).\n"
+                ~ "worker thread failed (%.*s).\n"
                 ~ "      Likely Wayland+EGL — start vibe3d with "
                 ~ "SDL_VIDEODRIVER=x11 to enable zero-copy interop.\n"
                 ~ "      Falling back to CPU readback (rendering still "
                 ~ "correct, just slower at high res).\n",
-                SDL_GetError());
+                cast(int) error.length, error.ptr);
             catch (Exception) {}
         }
     }
