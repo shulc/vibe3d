@@ -11,9 +11,9 @@
 // It used to default under `/tmp`, a quota-limited tmpfs on the affected host.
 //
 // WHAT IS GATED HERE, following the same black-box discipline as
-// `run_test_scratch_test.d` (this project runs run_test.d/lane.d as
-// standalone rdmd scripts, never imported as modules — see that file's own
-// header for why):
+// `run_test_scratch_test.d`: the public surfaces remain the real standalone
+// rdmd scripts, while their shared host-space policy is also compiled by the
+// `tests` configuration.
 //
 //   1. `--check-space` — the real filesystem/quota query against a real path,
 //      on BOTH run_test.d and tools/sanitizer/lane.d, at the exact
@@ -95,9 +95,17 @@ private string askScratch(string cwd)
 // refusal must name the quota number that made the decision.
 unittest
 {
+    auto unlimited = rdmd(runnerPath,
+        ["--check-space", repoRoot, "--space-floor-mib", "256"],
+        [quotaTestEnv: ulong.max.to!string], tempDir());
+    assert(unlimited.status == 0,
+        "run_test.d quota cell prerequisite BLOCKED: the real filesystem does not "
+        ~ "clear the unchanged 256 MiB floor with unlimited quota:\n"
+        ~ unlimited.output);
+
     auto r = rdmd(runnerPath,
         ["--check-space", repoRoot, "--space-floor-mib", "256"],
-        [quotaTestEnv: "1048576"]);
+        [quotaTestEnv: "1048576"], tempDir());
     assert(r.status == 1,
         "run_test.d ignored a 1 MiB quota remainder on a filesystem with free blocks:\n"
         ~ r.output);
@@ -108,8 +116,15 @@ unittest
 
 unittest
 {
+    auto unlimited = rdmd(lanePath, ["check-space", repoRoot, "256"],
+                          [quotaTestEnv: ulong.max.to!string], tempDir());
+    assert(unlimited.status == 0,
+        "lane.d quota cell prerequisite BLOCKED: the real filesystem does not clear "
+        ~ "the unchanged 256 MiB floor with unlimited quota:\n"
+        ~ unlimited.output);
+
     auto r = rdmd(lanePath, ["check-space", repoRoot, "256"],
-                  [quotaTestEnv: "1048576"]);
+                  [quotaTestEnv: "1048576"], tempDir());
     assert(r.status == 1,
         "lane.d ignored a 1 MiB quota remainder on a filesystem with free blocks:\n"
         ~ r.output);

@@ -521,6 +521,7 @@ tools.edit.poly_bevel
 tools.edit.poly_extrude
 tools.edit.tack
 tools.edit.topology_pen.gestures_test
+tools.harness.hostspace
 tools.transform.arcball
 tools.transform.item_xform_kernels
 tools.transform.morph_route

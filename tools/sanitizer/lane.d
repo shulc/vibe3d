@@ -84,6 +84,10 @@ import std.format;
 import core.thread : Thread;
 import core.time   : msecs, seconds;
 
+import tools.harness.hostspace : availabilityDetails, humanBytes,
+    kMinPreflightFreeBytes, scratchRoot, spaceAvailability,
+    spacePreflightMessage;
+
 // ---------------------------------------------------------------------------
 // The compiler. ABSOLUTE, and version-asserted.
 //
@@ -200,120 +204,10 @@ void fail(string msg) {
 void ok(string msg) { writeln("lane.d: ok: ", msg); }
 
 // ---------------------------------------------------------------------------
-// Disk-space preflight (task 2080) — mirrors run_test.d's check of the same
-// name; kept as a separate small copy here (this file is a standalone rdmd
-// script like run_test.d, with no shared module between them, matching how
-// every other helper in this file — fail/ok/run/runStdout — is its own copy
-// rather than an import). See run_test.d's "Disk-space preflight" comment for
-// the incident and why 256 MiB is a flat, run-independent floor rather than
-// a threshold derived from anything this lane measures.
+// Disk-space preflight adapter. Root selection, queries, quota parsing and the
+// refusal decision are owned by tools.harness.hostspace; this standalone lane
+// only maps that decision onto its CLI convention (task 5630).
 // ---------------------------------------------------------------------------
-enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
-enum kDefaultScratchRoot = "/var/tmp";
-enum kScratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
-enum kQuotaAvailableTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
-
-string scratchRoot() {
-    const configured = environment.get("TMPDIR", "");
-    if (configured.length) return configured;
-    const testDefault = environment.get(kScratchRootTestEnv, "");
-    return testDefault.length ? testDefault : kDefaultScratchRoot;
-}
-
-ulong freeBytes(string path) {
-    import core.sys.posix.sys.statvfs : statvfs, statvfs_t;
-    string p = path;
-    while (p.length && !exists(p)) {
-        const parent = dirName(p);
-        if (parent == p) break;
-        p = parent;
-    }
-    if (!p.length || !exists(p)) return ulong.max;
-    statvfs_t st;
-    if (statvfs(p.toStringz, &st) != 0) return ulong.max;
-    return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
-}
-
-ulong quotaAvailableBytes(string path) {
-    const injected = environment.get(kQuotaAvailableTestEnv, "");
-    if (injected.length) return injected.to!ulong;
-
-    string p = path;
-    while (p.length && !exists(p)) {
-        const parent = dirName(p);
-        if (parent == p) break;
-        p = parent;
-    }
-    if (!p.length || !exists(p)) return ulong.max;
-
-    try {
-        string[string] env;
-        foreach (k, v; environment.toAA) env[k] = v;
-        env["LC_ALL"] = "C";
-        auto result = execute(["quota", "-w", "-v", "-p",
-            "--show-mntpoint", "--hide-device", "-f", p], env);
-        if (result.status != 0) return ulong.max;
-
-        import std.regex : matchFirst, regex;
-        auto row = result.output.matchFirst(regex(
-            r"(?m)^\s*(.*?)\s+([0-9]+)\*?\s+([0-9]+)\s+([0-9]+)(?:\s|$)"));
-        if (row.empty) return ulong.max;
-        const used = row[2].to!ulong;
-        const soft = row[3].to!ulong;
-        const hard = row[4].to!ulong;
-        ulong limit;
-        if (soft && hard) limit = soft < hard ? soft : hard;
-        else              limit = soft ? soft : hard;
-        if (!limit) return ulong.max;
-        const remainingKiB = used < limit ? limit - used : 0;
-        if (remainingKiB > ulong.max / 1024) return ulong.max;
-        return remainingKiB * 1024;
-    } catch (Exception) {
-        return ulong.max;
-    }
-}
-
-struct SpaceAvailability {
-    ulong filesystemFree;
-    ulong quotaRemaining;
-
-    @property ulong available() const {
-        return filesystemFree < quotaRemaining ? filesystemFree : quotaRemaining;
-    }
-}
-
-SpaceAvailability spaceAvailability(string path) {
-    return SpaceAvailability(freeBytes(path), quotaAvailableBytes(path));
-}
-
-string humanBytes(ulong b) {
-    enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
-    if (b == ulong.max)     return "unknown";
-    if (b >= cast(ulong)Gi) return format("%.1f GiB", b / Gi);
-    if (b >= cast(ulong)Mi) return format("%.1f MiB", b / Mi);
-    if (b >= cast(ulong)Ki) return format("%.1f KiB", b / Ki);
-    return format("%d B", b);
-}
-
-/// `null` => proceed; else the refusal message, always containing "space".
-string availabilityDetails(SpaceAvailability space) {
-    if (space.quotaRemaining == ulong.max)
-        return format("%s filesystem free, quota unlimited or unavailable",
-                      humanBytes(space.filesystemFree));
-    return format("%s filesystem free, %s quota remaining",
-                  humanBytes(space.filesystemFree),
-                  humanBytes(space.quotaRemaining));
-}
-
-string spacePreflightMessage(SpaceAvailability space, ulong floor, string path) {
-    if (space.available == ulong.max || space.available >= floor) return null;
-    return format(
-        "no space left: %s has %s available (%s), below the %s floor -- refusing to "
-        ~ "start rather than fail mid-run and disguise it as red tests "
-        ~ "(tasks 2080/5502)", path, humanBytes(space.available),
-        availabilityDetails(space), humanBytes(floor));
-}
-
 /// `check-space <path> [floorMiB]` — the same real, un-mocked surface
 /// run_test.d exposes, for a constrained-mount witness to drive against this
 /// lane's own binary.

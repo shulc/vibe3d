@@ -68,6 +68,10 @@ import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT, O_WRONLY, O_APPEND;
 import core.sys.posix.sys.stat : fstat, stat, stat_t;
 import core.sys.posix.sys.types : ssize_t;
 
+import tools.harness.hostspace : SpaceAvailability, availabilityDetails,
+    humanBytes, kMinPreflightFreeBytes, scratchRoot, spaceAvailability,
+    spacePreflightMessage;
+
 // flock(2) is not surfaced by this druntime's posix bindings; declare it.
 extern(C) int flock(int fd, int operation) nothrow @nogc;
 pragma(mangle, "write")
@@ -176,20 +180,6 @@ string bold  (string s) { return col("1",  s); }
 // /tmp` names the lane, plus a hash of the full absolute path so two lanes that
 // end in the same two components still differ.
 enum kScratchPrefix = "vibe3d-tests-";
-enum kDefaultScratchRoot = "/var/tmp";
-enum kScratchRootTestEnv = "VIBE3D_TEST_DEFAULT_SCRATCH_ROOT";
-
-// TMPDIR is an explicit caller contract and stays the first choice. With no
-// override, runner scratch belongs on the root filesystem: this host's /tmp is
-// a quota-limited tmpfs and moving 9.59 GB of -j 6 scratch to /var/tmp cost
-// 0.5% in the paired 2026-09-11 measurement (task 5502/5520). The test seam
-// substitutes only the default arm and is never set by a workflow.
-string scratchRoot() {
-    const configured = environment.get("TMPDIR", "");
-    if (configured.length) return configured;
-    const testDefault = environment.get(kScratchRootTestEnv, "");
-    return testDefault.length ? testDefault : kDefaultScratchRoot;
-}
 
 private string slugOf(string s) {
     import std.ascii : isAlphaNum;
@@ -317,8 +307,6 @@ string prepareScratchDir(string path) {
 // A run that clears the floor can still exhaust space mid-flight; that
 // failure mode is unchanged by this check — see the task card for what
 // (deliberately) was not decided here.
-enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
-
 // Advisory only (tasks 4660/5502): measured 2026-09-11 on main@3b42e336 at
 // `-j 6` with `du -sb <scratch>/worker_*` while the run was live. The estimate
 // deliberately uses the largest worker as its coefficient: shared + jobs *
@@ -332,122 +320,6 @@ ulong estimatedScratchBytes(int jobs) {
     if (jobs <= 0) return kObservedSharedTestLibraryBytes;
     return kObservedSharedTestLibraryBytes
          + cast(ulong) jobs * kObservedWorkerScratchBytes;
-}
-
-/// Free blocks on the filesystem containing `path`. `path` need not exist —
-/// this climbs to the nearest existing ancestor first, so it works against a
-/// cold checkout's not-yet-created scratch dir. Returns `ulong.max` (never
-/// blocks a run) when the query itself cannot be answered — a permission
-/// error or a path with no existing ancestor is a different problem, and one
-/// this check is not the place to raise.
-ulong freeBytes(string path) {
-    import core.sys.posix.sys.statvfs : statvfs, statvfs_t;
-    import std.string : toStringz;
-
-    string p = path;
-    while (p.length && !exists(p)) {
-        const parent = dirName(p);
-        if (parent == p) break;
-        p = parent;
-    }
-    if (!p.length || !exists(p)) return ulong.max;
-
-    statvfs_t st;
-    if (statvfs(p.toStringz, &st) != 0) return ulong.max;
-    return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
-}
-
-enum kQuotaAvailableTestEnv = "VIBE3D_TEST_QUOTA_AVAILABLE_BYTES";
-
-/// Remaining user block quota for the filesystem containing `path`, or
-/// ulong.max when the filesystem has no quota or the optional host query is
-/// unavailable. `quota` reports its block columns in KiB. The smaller nonzero
-/// soft/hard limit is deliberately conservative; on the incident host they
-/// are equal. The environment seam substitutes only the returned number so a
-/// black-box test can prove the real decision without depending on host quota.
-ulong quotaAvailableBytes(string path) {
-    const injected = environment.get(kQuotaAvailableTestEnv, "");
-    if (injected.length) return injected.to!ulong;
-
-    string p = path;
-    while (p.length && !exists(p)) {
-        const parent = dirName(p);
-        if (parent == p) break;
-        p = parent;
-    }
-    if (!p.length || !exists(p)) return ulong.max;
-
-    try {
-        string[string] env;
-        foreach (k, v; environment.toAA) env[k] = v;
-        env["LC_ALL"] = "C";
-        auto result = execute(["quota", "-w", "-v", "-p",
-            "--show-mntpoint", "--hide-device", "-f", p], env);
-        if (result.status != 0) return ulong.max;
-
-        import std.regex : matchFirst, regex;
-        auto row = result.output.matchFirst(regex(
-            r"(?m)^\s*(.*?)\s+([0-9]+)\*?\s+([0-9]+)\s+([0-9]+)(?:\s|$)"));
-        if (row.empty) return ulong.max;
-        const used = row[2].to!ulong;
-        const soft = row[3].to!ulong;
-        const hard = row[4].to!ulong;
-        ulong limit;
-        if (soft && hard) limit = soft < hard ? soft : hard;
-        else              limit = soft ? soft : hard;
-        if (!limit) return ulong.max;
-        const remainingKiB = used < limit ? limit - used : 0;
-        if (remainingKiB > ulong.max / 1024) return ulong.max;
-        return remainingKiB * 1024;
-    } catch (Exception) {
-        return ulong.max;
-    }
-}
-
-struct SpaceAvailability {
-    ulong filesystemFree;
-    ulong quotaRemaining;
-
-    @property ulong available() const {
-        return filesystemFree < quotaRemaining ? filesystemFree : quotaRemaining;
-    }
-}
-
-SpaceAvailability spaceAvailability(string path) {
-    return SpaceAvailability(freeBytes(path), quotaAvailableBytes(path));
-}
-
-string humanBytes(ulong b) {
-    enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
-    if (b == ulong.max)   return "unknown";
-    if (b >= cast(ulong)Gi) return format("%.1f GiB", b / Gi);
-    if (b >= cast(ulong)Mi) return format("%.1f MiB", b / Mi);
-    if (b >= cast(ulong)Ki) return format("%.1f KiB", b / Ki);
-    return format("%d B", b);
-}
-
-/// The whole decision, as one pure function: `null` means "proceed", a
-/// non-null string is the refusal message and always contains the word
-/// "space" (the witness this check exists to satisfy — a preflight that only
-/// prints free space is green when there is none). `free == ulong.max` (the
-/// query could not be answered) never refuses: this check must not turn an
-/// unrelated errno into a false "no space" report.
-string availabilityDetails(SpaceAvailability space) {
-    if (space.quotaRemaining == ulong.max)
-        return format("%s filesystem free, quota unlimited or unavailable",
-                      humanBytes(space.filesystemFree));
-    return format("%s filesystem free, %s quota remaining",
-                  humanBytes(space.filesystemFree),
-                  humanBytes(space.quotaRemaining));
-}
-
-string spacePreflightMessage(SpaceAvailability space, ulong floor, string path) {
-    if (space.available == ulong.max || space.available >= floor) return null;
-    return format(
-        "no space left: %s has %s available (%s), below the %s floor -- refusing to "
-        ~ "start rather than fail mid-run and disguise it as red tests "
-        ~ "(tasks 2080/5502)", path, humanBytes(space.available),
-        availabilityDetails(space), humanBytes(floor));
 }
 
 string spaceEstimateWarning(SpaceAvailability space, int jobs, string path) {

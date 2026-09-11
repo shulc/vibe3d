@@ -40,12 +40,9 @@
 //
 // WHY THIS IS A BLACK-BOX (subprocess) TEST, following the same discipline
 // as `run_test_scratch_test.d`/`run_test_space_preflight_test.d`: this
-// project runs `run_test.d` as a standalone rdmd script, never imported as
-// a module, and it lives outside `source/`+`tests/unit/`, so it has no
-// other home in the `dub test --config=tests` gate (the same reason
-// `tools/perf/lib/vslast.d` needed a `dub.json` carve-out — not repeated
-// here since `dub.json` is a live lane this task does not touch). Compiling
-// `run_test.d` WITH `-unittest` and running the resulting binary directly
+// project runs `run_test.d` as a standalone rdmd script, not as an application
+// module. Compiling `run_test.d` WITH `-unittest`, together with its explicitly
+// imported host-space helper, and running the resulting binary directly
 // exercises its own `unittest { }` block (which pins `shouldKillGroup`,
 // the extracted guard both group-kill sites and `killTestTree` route
 // through) without ever reaching the real `main()`: druntime's default
@@ -62,6 +59,7 @@ import std.process   : environment, execute, thisProcessID;
 
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
+private enum hostspacePath = buildPath(repoRoot, "tools", "harness", "hostspace.d");
 
 unittest
 {
@@ -75,7 +73,8 @@ unittest
     scope(exit) cast(void) collectException(remove(outBin));
     scope(exit) if (exists(runLock)) cast(void) collectException(remove(runLock));
 
-    auto build = execute(["dmd", "-unittest", runnerPath, "-of=" ~ outBin]);
+    auto build = execute(["dmd", "-unittest", runnerPath, hostspacePath,
+                          "-of=" ~ outBin]);
     enforce(build.status == 0, format(
         "compiling %s with -unittest failed (status %d):\n%s",
         runnerPath, build.status, build.output));

@@ -122,6 +122,24 @@ private string askScratch(string cwd, string[string] extraEnv = null,
 
 unittest
 {
+    // This cell intentionally runs before the default-root cell: a default
+    // mutation must reach that later red only after this explicit override
+    // has demonstrably survived.
+    const stem = buildPath(tempDir(), format(
+        "vibe3d-scratch-explicit-test-%d", thisProcessID));
+    const laneA = buildPath(stem, "alpha", "vibe3d");
+    const explicitRoot = buildPath(stem, "explicit-root");
+    foreach (d; [laneA, explicitRoot]) mkdirRecurse(d);
+    scope(exit) cast(void) collectException(rmdirRecurse(stem));
+
+    const explicitScratch = askScratch(laneA, ["TMPDIR": explicitRoot]);
+    assert(explicitScratch.startsWith(buildPath(explicitRoot, "vibe3d-tests-")),
+        format("explicit TMPDIR=%s was ignored; --print-scratch returned %s",
+               explicitRoot, explicitScratch));
+}
+
+unittest
+{
     enforce(exists(runnerPath), runnerPath ~ " not found — repo root misderived");
     if (exists(runnerLockPath())) remove(runnerLockPath());
     scope(exit) if (exists(runnerLockPath())) remove(runnerLockPath());
@@ -182,16 +200,18 @@ unittest
         assert(p.startsWith(buildPath("/var/tmp", "vibe3d-tests-")), format(
             "scratch path %s is not a `vibe3d-tests-*` directory under the " ~
             "root-filesystem default /var/tmp", p));
+}
 
-    // An explicitly-set TMPDIR remains the caller's isolation mechanism.
-    const explicitRoot = buildPath(stem, "explicit-root");
-    mkdirRecurse(explicitRoot);
-    const explicitScratch = askScratch(laneA, ["TMPDIR": explicitRoot]);
-    assert(explicitScratch.startsWith(buildPath(explicitRoot, "vibe3d-tests-")),
-        format("explicit TMPDIR=%s was ignored; --print-scratch returned %s",
-               explicitRoot, explicitScratch));
-
+unittest
+{
     // Capacity isolation must never split the host-wide lock.
+    const stem = buildPath(tempDir(), format(
+        "vibe3d-scratch-lock-test-%d", thisProcessID));
+    const laneA = buildPath(stem, "alpha", "vibe3d");
+    const explicitRoot = buildPath(stem, "explicit-root");
+    foreach (d; [laneA, explicitRoot]) mkdirRecurse(d);
+    scope(exit) cast(void) collectException(rmdirRecurse(stem));
+
     const defaultLock = askRunner(laneA, "--print-run-lock", null, true);
     const explicitLock = askRunner(laneA, "--print-run-lock",
                                    ["TMPDIR": explicitRoot]);
