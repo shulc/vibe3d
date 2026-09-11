@@ -185,7 +185,7 @@ private:
                                   ref Viewport viewport, Shader shader) {
         if (mode == OverlayMode.None) return;
         // Keep the pass below the off-overlay guard: a disabled cell must not
-        // publish an empty handle pass (task 5510, witness cell 2(j)/(k)).
+        // publish an empty handle pass (task 5490, witness cell 2(j)/(k)).
         auto handlePassScope = g_fc.handlePass();
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         bool visualOnly = (mode == OverlayMode.Visual);

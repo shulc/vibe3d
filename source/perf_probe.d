@@ -1516,8 +1516,9 @@ struct HandlePassScope {
     ~this() { if (owner_ !is null) owner_.popHandlePass(); }
 }
 
-/// RAII identity for one leaf handle renderer. Restores the enclosing identity
-/// so non-Handler overlay primitives cannot inherit a receipt accidentally.
+/// RAII identity for one leaf handle renderer. Restores an enclosing identity
+/// only inside an open pass; otherwise clears it so later primitives cannot
+/// inherit a receipt accidentally.
 struct HandleDrawScope {
     private FrameWorkProbe* owner_;
     private size_t priorId_;
@@ -1614,7 +1615,7 @@ struct FrameWorkProbe {
     /// sees the ImGui centre disc through its explicit writer. The Move witness's
     /// cell 1(f) equality, `writes == handleCalls == 13`, is a rig property, not
     /// a law: a Slice rig can legally break it because its free world primitives
-    /// add frame-scoped GL calls without a current handle identity (task 5510).
+    /// add frame-scoped GL calls without a current handle identity (task 5490).
     void draw(DrawPass p, long verts) {
         if (backdropDepth_ > 0) {
             if (p == DrawPass.faces) p = DrawPass.bgFaces;
@@ -1675,6 +1676,7 @@ struct FrameWorkProbe {
     /// while this scope is alive; its old identity must not be resurrected.
     void restoreHandleDraw(size_t priorId) {
         if (handlePassDepth_ > 0) curHandleId_ = priorId;
+        else curHandleId_ = 0;
     }
 
     /// Open a backdrop redirect for the enclosing scope.

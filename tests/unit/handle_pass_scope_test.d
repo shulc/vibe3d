@@ -76,27 +76,57 @@ unittest {
     // pass; this is the construction defect caught by task 5480's final review.
     {
         auto interrupted = p.handlePass();
+        p.reset();
+    }
+    // Generation 0 alone also accepts depth -1; the reopen below witnesses
+    // the floor.
+    assert(p.currentHandlePassGeneration() == 0,
+           "reset inside a pass left a negative/nonzero handle-pass depth");
+    {
+        auto afterReset = p.handlePass();
+        assert(p.currentHandlePassGeneration() == 1,
+               "the first pass after an interrupted reset did not reopen");
+        auto draw = p.handleDraw(0xDD);
+        p.draw(DrawPass.handles, 1);
+    }
+    auto after = p.lastHandlePass();
+    assert(after.generation == 1 && after.writes == 1
+           && after.submitted == 1 && after.ids[0] == 0xDD,
+           "the first pass after an interrupted reset lost its receipt");
+
+    // Identity restoration has its own reset witness. Keep it separate from the
+    // depth-floor block above so extending this fixture cannot delay that pop.
+    p.reset();
+    {
+        auto interruptedIdentity = p.handlePass();
         auto outerDraw = p.handleDraw(0xEE);
         {
             auto innerDraw = p.handleDraw(0xFF);
             p.reset();
         }
-        // This 0 also covers depth -1; only the reopen assertion below witnesses the floor.
-        assert(p.currentHandlePassGeneration() == 0,
-               "reset inside a pass left a negative/nonzero handle-pass depth");
         {
-            auto afterReset = p.handlePass();
-            assert(p.currentHandlePassGeneration() == 1,
-                   "the first pass after an interrupted reset did not reopen");
+            auto afterIdentityReset = p.handlePass();
             p.draw(DrawPass.handles, 1);
             auto draw = p.handleDraw(0xDD);
             p.draw(DrawPass.handles, 1);
         }
     }
-    auto after = p.lastHandlePass();
-    assert(after.writes == 1,
+    auto identityAfter = p.lastHandlePass();
+    assert(identityAfter.writes == 1,
            "the first pass after an interrupted reset inherited a stale handle identity");
-    assert(after.generation == 1 && after.writes == 1
-           && after.submitted == 1 && after.ids[0] == 0xDD,
-           "the first pass after an interrupted reset lost its receipt");
+    assert(identityAfter.generation == 1 && identityAfter.submitted == 1
+           && identityAfter.ids[0] == 0xDD,
+           "the identity reset witness lost its post-reset receipt");
+
+    p.reset();
+    {
+        auto outsidePass = p.handleDraw(0xEE);
+    }
+    {
+        auto nextPass = p.handlePass();
+        p.draw(DrawPass.handles, 1);
+    }
+    auto outsideAfter = p.lastHandlePass();
+    assert(outsideAfter.writes == 0 && outsideAfter.submitted == 0,
+           "a handle identity opened outside a pass leaked into the next pass");
 }

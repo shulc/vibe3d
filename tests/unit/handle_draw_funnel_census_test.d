@@ -211,7 +211,7 @@ unittest {
     assert(scan.handleDrawOwners ==
            ["Handler.draw", "CubicArrow.drawHeadOnly"],
            "G2 r3 handleDraw owners changed: expected Handler.draw and "
-           ~ "CubicArrow.drawHeadOnly, got ["
+           ~ "CubicArrow.drawHeadOnly exactly once each, got ["
            ~ missingFrom(scan.handleDrawOwners, []) ~ "]");
     assert(scan.manualReceiptOwners == ["CenterDiskGizmo.drawImpl"],
            "G2 r4 manual receipt owners changed: got ["
