@@ -452,7 +452,7 @@ public:
 // Falloff RMB gestures.
 //
 // The falloff kinds intentionally split into three independent disciplines:
-// point placement in world space, an absolute integer haul in pixels, and an
+// three-dimensional point placement, an absolute integer haul in pixels, and an
 // incremental floating-point haul scaled by the view. Kinds outside those
 // groups do not claim RMB here, so the ordinary tool/lasso routing remains
 // available.
