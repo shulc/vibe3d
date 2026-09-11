@@ -70,7 +70,7 @@ import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
-import drag : axisDragDelta, planeDragDelta, primitiveCenterDragDelta,
+import drag : axisDragDelta, primitiveCenterDragDelta,
               screenAxisDelta;
 import shader : Shader, LitShader, drawLitPreview;
 import command_history : CommandHistory;
