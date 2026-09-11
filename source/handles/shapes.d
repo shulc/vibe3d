@@ -1655,8 +1655,8 @@ class CenterDiskGizmo : Handler {
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
         dl.AddPolyline(pts.ptr, SEGS, outlineCol, ImDrawFlags.Closed, 1.5f);
         // This ImGui path has no GL call, so it writes the per-pass receipt
-        // explicitly without touching `lastScene.pass.handles.calls`. task
-        // 5480 asserts the intended 1 receipt / 0 GL-call disagreement.
+        // explicitly without touching `lastScene.pass.handles.calls`; task 5480
+        // asserts the intended 1 receipt / 0 GL-call disagreement.
         g_fc.noteHandleSubmission();
     }
 

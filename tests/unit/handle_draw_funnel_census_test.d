@@ -208,8 +208,8 @@ unittest {
            ~ missingFrom(expectedModules, closure.modules)
            ~ "], modules unrecorded ["
            ~ missingFrom(closure.modules, expectedModules) ~ "]");
-    assert(sameSet(scan.handleDrawOwners,
-                   ["Handler.draw", "CubicArrow.drawHeadOnly"]),
+    assert(scan.handleDrawOwners ==
+           ["Handler.draw", "CubicArrow.drawHeadOnly"],
            "G2 r3 handleDraw owners changed: expected Handler.draw and "
            ~ "CubicArrow.drawHeadOnly, got ["
            ~ missingFrom(scan.handleDrawOwners, []) ~ "]");

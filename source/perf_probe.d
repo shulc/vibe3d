@@ -1611,8 +1611,10 @@ struct FrameWorkProbe {
     ///
     /// `lastScene.pass.handles.calls` is the GL-only per-frame authority.
     /// `handlePass` is the per-pass identity receipt authority and additionally
-    /// sees the ImGui centre disc through its explicit writer; their deliberate
-    /// disagreement is asserted by task 5480's uniform and Move cells.
+    /// sees the ImGui centre disc through its explicit writer. The Move witness's
+    /// cell 1(f) equality, `writes == handleCalls == 13`, is a rig property, not
+    /// a law: a Slice rig can legally break it because its free world primitives
+    /// add frame-scoped GL calls without a current handle identity (task 5510).
     void draw(DrawPass p, long verts) {
         if (backdropDepth_ > 0) {
             if (p == DrawPass.faces) p = DrawPass.bgFaces;
@@ -1669,8 +1671,11 @@ struct FrameWorkProbe {
         lastHandlePass_ = inFlightHandlePass_;
     }
 
-    /// Internal: restore the enclosing leaf identity.
-    void restoreHandleDraw(size_t priorId) { curHandleId_ = priorId; }
+    /// Internal: restore the enclosing leaf identity. A reset can zero the pass
+    /// while this scope is alive; its old identity must not be resurrected.
+    void restoreHandleDraw(size_t priorId) {
+        if (handlePassDepth_ > 0) curHandleId_ = priorId;
+    }
 
     /// Open a backdrop redirect for the enclosing scope.
     BackdropScope backdrop() return {
@@ -1738,6 +1743,8 @@ struct FrameWorkProbe {
     HandlePassRecord lastHandlePass() const { return lastHandlePass_; }
 
     /// Registration stamps are meaningful only while their pass is open.
+    /// `ToolHandles.drawGeneration_` snapshots this in `ToolHandles.begin` and
+    /// pairs it with the completed draw-side `HandlePassRecord.generation`.
     long currentHandlePassGeneration() const {
         return handlePassDepth_ > 0 ? handlePassSeq_ : 0;
     }

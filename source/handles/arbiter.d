@@ -98,6 +98,8 @@ class ToolHandles {
     private int lastDefaultPart = -1;
     private bool aiHoverPreviewEnabled;
     private AiHoverPreviewPredicate aiHoverPreviewPredicate;
+    // Registration-side snapshot of `FrameWorkProbe.currentHandlePassGeneration`;
+    // paired with the completed draw-side `HandlePassRecord.generation`.
     private long drawGeneration_;
 
     // ε-exploration silent-hover flag (task 0033, Phase 3).  When true,

@@ -76,18 +76,26 @@ unittest {
     // pass; this is the construction defect caught by task 5480's final review.
     {
         auto interrupted = p.handlePass();
-        p.reset();
-    }
-    assert(p.currentHandlePassGeneration() == 0,
-           "reset inside a pass left a negative/nonzero handle-pass depth");
-    {
-        auto afterReset = p.handlePass();
-        assert(p.currentHandlePassGeneration() == 1,
-               "the first pass after an interrupted reset did not reopen");
-        auto draw = p.handleDraw(0xDD);
-        p.draw(DrawPass.handles, 1);
+        auto outerDraw = p.handleDraw(0xEE);
+        {
+            auto innerDraw = p.handleDraw(0xFF);
+            p.reset();
+        }
+        // This 0 also covers depth -1; only the reopen assertion below witnesses the floor.
+        assert(p.currentHandlePassGeneration() == 0,
+               "reset inside a pass left a negative/nonzero handle-pass depth");
+        {
+            auto afterReset = p.handlePass();
+            assert(p.currentHandlePassGeneration() == 1,
+                   "the first pass after an interrupted reset did not reopen");
+            p.draw(DrawPass.handles, 1);
+            auto draw = p.handleDraw(0xDD);
+            p.draw(DrawPass.handles, 1);
+        }
     }
     auto after = p.lastHandlePass();
+    assert(after.writes == 1,
+           "the first pass after an interrupted reset inherited a stale handle identity");
     assert(after.generation == 1 && after.writes == 1
            && after.submitted == 1 && after.ids[0] == 0xDD,
            "the first pass after an interrupted reset lost its receipt");
