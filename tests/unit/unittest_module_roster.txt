@@ -375,6 +375,7 @@ tests.unit.run_test_protocol_census_pin_test
 tests.unit.run_test_scratch_test
 tests.unit.run_test_space_preflight_test
 tests.unit.run_test_worker_display_behavior_test
+tests.unit.sdl_error_census_test
 tests.unit.sdl_error_test
 tests.unit.sel_channel_census_test
 tests.unit.select_set_commands_test
