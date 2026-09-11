@@ -454,9 +454,9 @@ final class EditSession {
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate(batch);
     }
 
-    // Ask FIRST and unconditionally: the stage's event/capability, not the
-    // source enum, decides whether a slot activated. Re-evaluation is the
-    // re-weigh and cannot precede that boundary decision.
+    // Ask FIRST and unconditionally (task 0791): the stage's event/capability,
+    // not the source enum, decides whether a slot activated. Re-evaluation is
+    // the re-weigh and cannot precede that boundary decision.
     private void finishStageChange(ParameterChangeBatch batch) {
         if (requestSlotActivationEnd()) return;
         applyStageToLiveSession(batch);

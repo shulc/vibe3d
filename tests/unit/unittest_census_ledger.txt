@@ -207,3 +207,8 @@ drop 1 0 4590 the idle and writing PropertyPanel cells became one sequential wit
 # six command/drop/undo/redo tail assertions are covered by the new application
 # test_command_wrapper_smooth_result lifecycle cell instead.
 drop 0 6 4560 the Smooth observer keeps its callback-time purity assertions in tests/unit while command/drop/undo/redo convergence moved to the application lifecycle cell
+
+# Task 5610 removed three compatibility assertions that could not observe their
+# stated property: onStageConfigChanged receives no provider, so its call graph
+# cannot reach either ProbeStage.slotEpoch or the ProbeStage trace.
+drop 0 3 5610 compatibility stage changes have no provider through which the removed stage epoch/trace checks could vary

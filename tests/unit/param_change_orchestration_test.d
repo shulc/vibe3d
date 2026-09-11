@@ -181,7 +181,6 @@ unittest { // every public stage entry shares one slot-end/re-grade boundary
 
     trace.clear();
     tool.consumeSlot = false;
-    epochBefore = stage.slotEpoch;
     session.onStageConfigChanged();
     assert(trace.value == "HR",
         "compatibility stage change with refused slot-end must trace HR; got "
@@ -189,19 +188,14 @@ unittest { // every public stage entry shares one slot-end/re-grade boundary
     assert(tool.replaySource == ParameterChangeSource.StageAttribute
            && tool.replayNames.length == 0,
         "compatibility stage changes must carry StageAttribute with no names");
-    assert(stage.slotEpoch == epochBefore,
-        "compatibility stage changes must not repeat stage notification or slot epoch");
 
     trace.clear();
     tool.consumeSlot = true;
     replayBefore = tool.replayCount;
-    epochBefore = stage.slotEpoch;
     session.onStageConfigChanged();
     assert(trace.value == "H" && tool.replayCount == replayBefore,
         "compatibility stage change with accepted slot-end must trace H; got "
       ~ trace.value);
-    assert(stage.slotEpoch == epochBefore,
-        "accepted compatibility stage change must not bump the slot epoch");
 }
 
 unittest { // idle and capability-free stage boundaries stay inert
@@ -224,10 +218,6 @@ unittest { // idle and capability-free stage boundaries stay inert
     assert(plainTrace.value == "A",
         "a fresh tool without stage capabilities must add no session work; got "
       ~ plainTrace.value);
-    plainTrace.clear();
-    plainSession.onStageConfigChanged();
-    assert(plainTrace.value == "",
-        "a compatibility stage change on a capability-free tool must be inert");
 }
 
 unittest { // frame-driven consumers are explicit and panel-independent
