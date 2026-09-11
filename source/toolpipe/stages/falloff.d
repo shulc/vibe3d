@@ -885,10 +885,10 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     }
 
     override void drawProperties() {
-        // Shape preset, per-axis Auto Size, and Reverse all moved into the
+        // Shape preset, axisless/per-axis Auto Size, and Reverse all moved into the
         // config-driven Tool Properties form (config/forms/falloff.yaml):
         //   * shape   → "Shape Preset" dropdown (exposed in params()).
-        //   * autosize→ "Auto Size" X/Y/Z button row (tool.pipe.attr autosize).
+        //   * autosize→ axisless and X/Y/Z buttons (tool.pipe.attr autosize).
         //   * reverse → "Reverse" button (tool.pipe.attr reverse).
         // Nothing left for the legacy imperative panel to draw.
     }
