@@ -8,12 +8,15 @@ import edit_session : EditSession, KeepAliveOnCancel;
 import editmode : EditMode;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
+import commands.macros.record : MacroRecord;
 import macro_recorder : MacroRecorder;
 import mesh : Mesh, makeCube;
 import registry : Registry;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import ui.history_panel;
+import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot;
+import tests.unit.ui.headless_panel : openPanel;
 import view : View;
 
 private string repositoryRoot() {
@@ -25,11 +28,14 @@ private string repositoryRoot() {
 private final class HistoryPanelProbeCommand : Command {
     private string id_;
     private size_t* calls_;
+    private bool applies_;
 
-    this(Mesh* mesh, ref View view, string id, size_t* calls) {
+    this(Mesh* mesh, ref View view, string id, size_t* calls,
+         bool applies = true) {
         super(mesh, view, EditMode.Polygons);
         id_ = id;
         calls_ = calls;
+        applies_ = applies;
     }
 
     override string name() const { return id_; }
@@ -37,7 +43,7 @@ private final class HistoryPanelProbeCommand : Command {
 
     protected override bool applyImpl() {
         ++*calls_;
-        return true;
+        return applies_;
     }
 }
 
@@ -68,6 +74,7 @@ private final class HistoryPanelActionHarness {
     Tool activeTool;
     size_t firstCalls;
     size_t secondCalls;
+    size_t refusedCalls;
     HistoryPanelActions actions;
 
     this() {
@@ -98,6 +105,11 @@ private final class HistoryPanelActionHarness {
         registry.commandFactories["probe.second"] = () => cast(Command)
             new HistoryPanelProbeCommand(
                 &mesh, view, "probe.second", &secondCalls);
+        registry.commandFactories["probe.refused"] = () => cast(Command)
+            new HistoryPanelProbeCommand(
+                &mesh, view, "probe.refused", &refusedCalls, false);
+        registry.commandFactories["macro.record"] = () => cast(Command)
+            new MacroRecord(&mesh, view, EditMode.Polygons, macroRecorder);
 
         actions = bindHistoryPanelActions(
             history,
@@ -120,6 +132,9 @@ private final class HistoryPanelActionHarness {
 unittest { // each state owns its buffers for its whole panel lifetime
     auto a = new HistoryPanelState();
     auto b = new HistoryPanelState();
+    assert(!a.visible && a.showArgs && !a.showRowNumbers
+        && !a.showTimestamps && !a.showCommandIds && !a.replLastWasError,
+        "History panel state lost its initial visibility/display field vector");
     assert(a.filterBuffer.ptr !is b.filterBuffer.ptr,
         "history states A and B share the filter backing buffer");
     assert(a.replBuffer.ptr !is b.replBuffer.ptr,
@@ -159,6 +174,14 @@ unittest { // REPL parsing and state reaction through real application dispatch
         && harness.history.undoEntries().length == 0,
         "parse failure must retain input, mark error, and dispatch nothing");
 
+    state.setReplText("probe.refused");
+    assert(controller.submitRepl() == HistoryReplOutcome.dispatched,
+        "a non-throwing refused History REPL dispatch was treated as failure");
+    assert(!state.replLastWasError && state.replText.length == 0
+        && harness.refusedCalls == 1
+        && harness.history.undoEntries().length == 0,
+        "a non-throwing refused History REPL dispatch must still clear input");
+
     state.setReplText("probe.first");
     assert(controller.submitRepl() == HistoryReplOutcome.dispatched,
         "valid History REPL input did not dispatch");
@@ -168,6 +191,42 @@ unittest { // REPL parsing and state reaction through real application dispatch
         && harness.history.undoEntries().length == 1
         && harness.history.undoEntries()[0].commandName == "probe.first",
         "History REPL success did not call the real application binding/history action");
+}
+
+unittest { // macro strip reads the recorder again after its button dispatch
+    auto harness = new HistoryPanelActionHarness();
+    harness.macroRecorder.start();
+    harness.macroRecorder.onCommandRecorded("probe.first", 0);
+    harness.macroRecorder.stop();
+    assert(!harness.macroRecorder.active && harness.macroRecorder.length == 1,
+        "macro strip setup needs an inactive non-empty recorder");
+
+    auto state = new HistoryPanelState();
+    state.visible = true;
+    auto read = bindHistoryPanelRead(harness.history);
+    auto ui = openPanel(() {
+        drawCommandHistoryPanel(state, read, harness.actions, 0.0f);
+    }, "History panel host");
+    scope (exit) ui.close();
+
+    ui.frame();
+    auto before = historyMacroStripSnapshot();
+    assert(before.status.length == 1 && before.saveEnabled,
+        "macro strip setup did not draw its populated-buffer state");
+    assert(before.recMax.x > before.recMin.x
+        && before.recMax.y > before.recMin.y,
+        "macro strip did not publish a clickable Rec rectangle");
+    auto recPoint = before.recMin;
+    recPoint.x = (before.recMin.x + before.recMax.x) * 0.5f;
+    recPoint.y = (before.recMin.y + before.recMax.y) * 0.5f;
+
+    ui.pressAt(recPoint);
+    ui.release();
+    auto after = historyMacroStripSnapshot();
+    assert(harness.macroRecorder.active && harness.macroRecorder.length == 0,
+        "the real macro.record action did not start and clear the recorder");
+    assert(after.status.length == 0 && !after.saveEnabled,
+        "macro strip used the pre-dispatch recorder length for Save/REC");
 }
 
 unittest { // cursor undo cancels the live edit, then moves raw history
@@ -224,7 +283,8 @@ unittest { // the History panel seam cannot silently grow EditorApp back
     const root = repositoryRoot();
     const stateSource = readText(root.buildPath("source", "ui", "history_panel.d"));
     const panelSource = readText(root.buildPath("source", "ui", "panels.d"));
-    const appSource = readText(root.buildPath("source", "editor_app.d"));
+    const editorAppSource = readText(root.buildPath("source", "editor_app.d"));
+    const appSource = readText(root.buildPath("source", "app.d"));
 
     assert(!stateSource.canFind("EditorApp")
         && !stateSource.canFind("editor_app"),
@@ -233,10 +293,13 @@ unittest { // the History panel seam cannot silently grow EditorApp back
             "void drawCommandHistoryPanel(HistoryPanelState state,")
         && !panelSource.canFind("drawCommandHistoryPanel(EditorApp"),
         "History panel drawing regained the whole EditorApp seam");
+    assert(appSource.canFind(
+            "bindHistoryPanelActions(\n        history, &navHistory,"),
+        "app.d no longer binds History panel navigation through navHistory");
     foreach (retired; ["historyFilterPtr", "historyShowArgsPtr",
              "historyShowRowNumbersPtr", "historyShowTimestampsPtr",
              "historyShowCommandIdsPtr", "historyReplLastWasErrorPtr",
              "historyReplInputPtr"])
-        assert(!appSource.canFind(retired),
+        assert(!editorAppSource.canFind(retired),
             "EditorApp regained retired History form pointer: " ~ retired);
 }

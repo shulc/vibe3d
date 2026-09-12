@@ -160,6 +160,12 @@ struct HeadlessPanel {
         frame();
     }
 
+    /// Move the pointer to a screen-space point recorded by the panel itself.
+    void hoverAt(ImVec2 p) {
+        ImGuiIO_AddMousePosEvent(io, p.x, p.y);
+        frame();
+    }
+
     /// Press and hold the left button on a row. Asserts the press landed on an
     /// item: a gesture that hits the gap between rows must fail here, not
     /// silently assert nothing later.
@@ -172,6 +178,15 @@ struct HeadlessPanel {
         frame();
         assert(anyActive,
                "pressRow: no item took ActiveId — the point missed every widget");
+    }
+
+    /// Press a widget at a screen-space point recorded by its draw path.
+    void pressAt(ImVec2 p) {
+        hoverAt(p);
+        ImGuiIO_AddMouseButtonEvent(io, 0, true);
+        frame();
+        assert(anyActive,
+               "pressAt: no item took ActiveId — the point missed every widget");
     }
 
     /// Release the left button.

@@ -71,7 +71,7 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import ui.availability : actionRefusal, recordDrawnButton;
 import ui.mode_popup : dynamicModeCheckedLabel, dynamicModePopupItems;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
-    HistoryPanelActions, HistoryPanelController;
+    HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
@@ -3590,6 +3590,21 @@ void drawQuitGuardModal(EditorApp app) {
     }
 }
 
+version (unittest) {
+    struct HistoryMacroStripSnapshot {
+        HistoryMacroStatus status;
+        bool saveEnabled;
+        ImVec2 recMin;
+        ImVec2 recMax;
+    }
+
+    private __gshared HistoryMacroStripSnapshot g_historyMacroStripSnapshot;
+
+    HistoryMacroStripSnapshot historyMacroStripSnapshot() {
+        return g_historyMacroStripSnapshot;
+    }
+}
+
 void drawCommandHistoryPanel(HistoryPanelState state,
         HistoryPanelRead historyRead, HistoryPanelActions actions,
         float leftOffset) {
@@ -3640,6 +3655,10 @@ void drawCommandHistoryPanel(HistoryPanelState state,
             if (ImGui.SmallButton("Rec")) {
                 controller.dispatch("macro.record", `{"state":1}`);
             }
+            version (unittest) {
+                const macroRecMin = ImGui.GetItemRectMin();
+                const macroRecMax = ImGui.GetItemRectMax();
+            }
             ImGui.EndDisabled();
             if (recActive) ImGui.PopStyleColor();
             ImGui.SameLine();
@@ -3648,11 +3667,19 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                 controller.dispatch("macro.record", `{"state":0}`);
             }
             ImGui.EndDisabled();
+            // Rec/Stop dispatch synchronously and may clear the macro buffer.
+            // Save availability and the REC count must use that new state.
+            macroStatus = controller.macroStatus();
+            const macroSaveEnabled = macroStatus.length != 0;
             ImGui.SameLine();
-            ImGui.BeginDisabled(macroStatus.length == 0);
+            ImGui.BeginDisabled(!macroSaveEnabled);
             if (ImGui.SmallButton("Save..."))
                 controller.openArgs("macro.saveRecorded");
             ImGui.EndDisabled();
+            version (unittest) {
+                g_historyMacroStripSnapshot = HistoryMacroStripSnapshot(
+                    macroStatus, macroSaveEnabled, macroRecMin, macroRecMax);
+            }
             if (recActive) {
                 ImGui.SameLine();
                 ImGui.TextColored(
@@ -3690,7 +3717,7 @@ void drawCommandHistoryPanel(HistoryPanelState state,
 
             // Read the filter buffer once per frame into a D
             // string for comparisons.
-            string filter = state.filterText;
+            const(char)[] filter = state.filterText;
 
             // Phase 3: panel-level right-click menu — fires when
             // the user right-clicks empty space within the list.

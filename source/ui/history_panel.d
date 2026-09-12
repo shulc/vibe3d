@@ -30,14 +30,14 @@ final class HistoryPanelState {
     @property char[] filterBuffer() { return filterStorage_; }
     @property char[] replBuffer() { return replStorage_; }
 
-    @property string filterText() const {
+    @property const(char)[] filterText() const {
         import std.string : fromStringz;
-        return cast(string)fromStringz(filterStorage_.ptr);
+        return fromStringz(filterStorage_.ptr);
     }
 
-    @property string replText() const {
+    @property const(char)[] replText() const {
         import std.string : fromStringz;
-        return cast(string)fromStringz(replStorage_.ptr);
+        return fromStringz(replStorage_.ptr);
     }
 
     void setFilterText(string text) {
