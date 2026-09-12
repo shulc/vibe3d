@@ -105,12 +105,11 @@ mixin template XfrmApplyImpl() {
         // returns ALL vertices on an empty selection, so reaching the vertex
         // path in item mode would translate the whole layer's mesh). Reads
         // `subj.selType` FRESH from THIS call's own `buildLocalVts` above —
-        // not the instance-cached `cachedSubjType_` (refreshed only at this
-        // tool's three per-frame/per-event entry points — `update()`,
-        // `draw()` and `syncInputViewport` — so it is one frame phase behind
-        // for anyone who arrives by another route) — so a headless/
-        // panel-replay `applyTRS` call with no preceding mouse event still
-        // resolves the LIVE subject correctly.
+        // not the instance-cached `cachedSubjType_`; that field's declaration
+        // owns its complete writer list, and no arbitrary `applyTRS` caller is
+        // one of its live refresh points. Thus a headless/panel-replay call
+        // with no preceding mouse event still resolves the LIVE subject
+        // correctly.
         //
         // Goes THROUGH the freeze (REVIEW-1 / Phase 2.5), not around it:
         // restoreItemBaseline() (the item analogue of restoreBaseline())

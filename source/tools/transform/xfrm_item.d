@@ -58,13 +58,15 @@ mixin template XfrmItemImpl() {
         itemTargetsSrc_(buf);
     }
 
-    // Cached subject type — refreshed once per input event in
-    // `syncInputViewport` (the SAME point that caches `cachedVp`), from the
-    // SAME `SubjectPacket` `selTypeSrc_` publishes into the toolpipe. A
-    // per-field cache here is safe (unlike the process-wide-singleton hazard
-    // Blocker 2 fixed on the pipe STAGES): this is a per-INSTANCE field on
-    // the tool itself, refreshed at the top of every mouse handler this
-    // instance receives, never read across a different tool's evaluate().
+    // Cached subject type. Its live-source writers are the wrapper constructor
+    // (when the optional source exists), `update()`, the owner-cell `draw()`,
+    // and `syncInputViewport()`; the latter three read the same `SubjectPacket`
+    // that the source publishes into the toolpipe. Prepared-tail installation
+    // restores a projected subject, and refire preparation pins its detached
+    // shadow explicitly. This declaration is the authoritative writer list.
+    // A per-field cache is safe here (unlike the process-wide-singleton hazard
+    // Blocker 2 fixed on the pipe STAGES): this is a per-INSTANCE field on the
+    // tool itself, never read across a different tool's evaluate().
     private SelType cachedSubjType_ = SelType.Vertex;
     private bool itemSubjectActive() const nothrow @nogc {
         return cachedSubjType_ == SelType.Item;
