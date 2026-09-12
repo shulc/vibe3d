@@ -226,7 +226,7 @@ preflight_gpu() {
     name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
     # A legal empty parse must reach the explicit diagnostics below under pipefail
     # (task 5740); the deterministic probes and mutation evidence live in
-    # doc/tasks/work/5740-installer-preflight-dies-on-grep-miss.md.
+    # doc/tasks/done/5740-installer-preflight-dies-on-grep-miss.md.
     cuda="$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)"
     # largest VRAM across GPUs, in MiB
     vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' | grep -E '^[0-9]+$' | sort -n | tail -1 || true)"
