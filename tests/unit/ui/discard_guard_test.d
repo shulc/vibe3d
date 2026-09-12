@@ -115,6 +115,8 @@ unittest {
 }
 
 unittest { // the real application owner, with no window and no HTTP
+    import std.json : parseJSON;
+
     const oldTestMode = g_testMode;
     g_testMode = true;
     scope(exit) {
@@ -128,11 +130,12 @@ unittest { // the real application owner, with no window and no HTTP
     size_t saveCount;
     size_t deferredCount;
     Command[] applied;
-    Command[] noticed;
+    RecordMode[] appliedModes;
 
     auto controller = new GuardedActionController(GuardedActionPorts(
-        (Command command, RecordMode) {
+        (Command command, RecordMode mode) {
             applied ~= command;
+            appliedModes ~= mode;
             return true;
         },
         () => dirty,
@@ -142,7 +145,7 @@ unittest { // the real application owner, with no window and no HTTP
             if (lastSaveResult) dirty = false;
             return lastSaveResult;
         },
-        (Command command) { noticed ~= command; },
+        (Command) {},
         GuardObservationPorts(
             (record) => recordGuardRequest(record),
             (answer, performed) => recordGuardAnswer(answer, performed),
@@ -156,6 +159,10 @@ unittest { // the real application owner, with no window and no HTTP
     auto busyB = new GuardProbeCommand("scene.reset", "Replacement reset");
     assert(controller.invoke(busyA, RecordMode.Record, "file.new")
         == UiRunOutcome.deferred);
+    auto firstRecord = parseJSON(uiPolicyJson())["last"];
+    assert(firstRecord["id"].str == "file.new"
+        && firstRecord["name"].str == "scene.reset",
+        "guard record replaced the dispatched id with the command name");
     assert(applied.length == 0, "guarded action applied before settle");
     assert(controller.invoke(busyB, RecordMode.Coalescing, "scene.reset")
         == UiRunOutcome.deferred);
@@ -216,6 +223,6 @@ unittest { // the real application owner, with no window and no HTTP
         "deferred-action population floor: expected four held commands");
     assert(applied.length == 2,
         "guarded-apply population floor: expected two guarded applies");
-    assert(noticed.length == 0,
-        "successful guarded commands must not raise notices");
+    assert(appliedModes == [RecordMode.Coalescing, RecordMode.Record],
+        "guarded applies lost their requested record modes");
 }

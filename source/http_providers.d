@@ -2273,7 +2273,7 @@ private void wireCommandAdapters(HttpServer httpServer, ref EditorApp app,
             if (!command.g_testMode || id != "scene.reset") return;
             import ui.discard_guard : resetUiPolicyRecord;
             resetUiPolicyRecord();
-            guardController.dropPending();
+            if (guardController !is null) guardController.dropPending();
         }
 
         void deliverResult(CommandInvocationResult invocation, string id,

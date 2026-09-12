@@ -3489,9 +3489,12 @@ void drawQuitGuardModal(EditorApp app) {
         //
         // THE MODAL ENTRY THAT USED TO LIVE HERE IS GONE. Until task 1521 this
         // function ALSO decided whether to prompt — it drained `quitRequested`
-        // and asked `docDirty()` itself. The decision now belongs to the one
-        // GuardedActionController used by every UI command; this function only
-        // owns the popup handshake, renders its state and hands answers back.
+        // and asked `docDirty()` itself. That made the guard a SECOND point
+        // beside command dispatch, and the consequence was measured: removing
+        // the dispatch guard reddened File → New and File → Open but NOT quit,
+        // because quit was still guarded here. The decision now belongs to the
+        // one GuardedActionController used by every UI command; this function
+        // only owns the popup handshake, renders state and hands answers back.
         //
         // Three buttons, not two (owner-directed): "Yes/No" cannot tell
         // "throw the work away" from "I changed my mind".

@@ -48,8 +48,7 @@ unittest {
         && controller.canFind("GuardSettle settle_"),
         "guard action ownership: controller lost owned pending state");
     immutable string[] forbiddenControllerImports = [
-        "import editor_app", "import http_server", "import bindbc.sdl",
-        "import d_imgui",
+        "editor_app", "http_server", "bindbc.sdl", "d_imgui",
     ];
     foreach (needle; forbiddenControllerImports)
         assert(!controller.canFind(needle),
@@ -87,6 +86,8 @@ unittest {
     assert(occurrences(app, "guardController.dropPending();") == 1,
         "primary switch forgot the pending guarded action");
 
+    // This byte-offset check pins only the calls' order within app.d; it does
+    // not claim which ImGui phase contains them.
     const syncAt = app.indexOf("syncDocRevision(changeBus.docRevision());");
     const settleAt = app.indexOf("guardController.settle();");
     assert(syncAt >= 0 && settleAt > syncAt,

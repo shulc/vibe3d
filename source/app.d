@@ -2922,6 +2922,8 @@ void main(string[] args) {
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
         import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
+        // A held Command's Mesh* was bound at fire time, so dropping it here
+        // beats letting it land in the wrong primary layer (task 5640).
         if (guardController !is null) guardController.dropPending();
         // LayerSelect drops an active tool before moving the primary, while
         // the tool's original mesh is still current. This hook therefore sees
@@ -4428,6 +4430,8 @@ void main(string[] args) {
     import io.doc_state : docDirty;
     import ui.discard_guard : recordGuardAnswer, recordGuardRequest,
         setGuardPending;
+    // Both UI apply ports keep throwMsg null: a throw during ImGui authoring
+    // terminates the process; refusal is reported by notice policy (task 1520).
     guardController = new GuardedActionController(GuardedActionPorts(
         (Command c, RecordMode m) => executor.applyOrRefire(c, m, null),
         () => docDirty(),
