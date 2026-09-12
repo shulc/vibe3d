@@ -591,7 +591,7 @@ private class TestPreparedDoorTool : Tool, PreparedToolDoorClient,
 
 // A switch is speculative through both refusal sites. The stand drives a
 // non-zero item edit first, then checks the post-outgoing refusal, incoming
-// refusal, and the single atomic success publication.
+// refusal, and the single successful publication.
 unittest {
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
@@ -720,7 +720,7 @@ unittest {
     assert(commitPreparedArm(active, activeId, acceptedArm) &&
            active is acceptedCandidate && activeId == "test.accepted" &&
            layer.xform == pendingXform,
-        "successful switch did not install both sides atomically");
+        "successful switch did not publish the candidate with the pending transform intact");
     auto rows = history.undoEntriesVisible();
     assert(rows.length == 3 &&
            rows[0].cmd.name == "tool.activate" &&

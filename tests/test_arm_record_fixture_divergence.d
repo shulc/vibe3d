@@ -158,40 +158,6 @@ void panelRedo(){postJson("/api/command", commandBody("history.redo"));settle();
 unittest {
  auto fx=parseJSON(import("fixtures/tool_arm_undo_trajectory.json"));
 
- // --- law 1: the edit survives the SWITCH and owns its own step ----------
- panelBaseline();
- JSONValue[] a;
- cmd("tool.set rotate on");      a~=rotPoint("armed");
- panelEdit();                    a~=rotPoint("edit");
- assert(getJson("/api/tool/state")["editOpen"].boolean,
-     "panel-edit switch cell did not retain an open edit before the door");
- panelDoor("tool.set mesh.sliceTool on"); a~=rotPoint("door");
- auto switchHistory=historyCommands();
- panelUndo();                    a~=rotPoint("u1");
- assert(a[3]["item_rot"]==a[1]["item_rot"],
-     "panel item edit vanished on the FIRST switch undo; expected RY=40 to remain");
- panelUndo();                    a~=rotPoint("u2");
- assert(a[4]["item_rot"]==a[0]["item_rot"],
-     "panel item edit survived the SECOND switch undo; expected RY=0 after its own history step");
- // POPULATION FLOOR, and it must sit ABOVE the trajectory compare: "the edit
- // is lost" is also true over ZERO edits, and "the door consolidated it" is
- // also true over zero doors. Ordering them first means one run buys both --
- // everything above a red line demonstrably ran and passed.
- assert(g_panelEdits==1,format("panel-edit cell drove %d edits, not 1",g_panelEdits));
- assert(g_panelDoors==1,format("panel-edit cell drove %d doors, not 1",g_panelDoors));
- assert(a.length==5,format("panel-edit cell recorded %d rows, not 5",a.length));
- assert(a[0]["item_rot"]!=a[1]["item_rot"],"panel-edit cell is DEGENERATE: the edit changed nothing, and a zero-valued edit satisfies every candidate");
- assert(switchHistory==["tool.activate","layer.xform.edit","tool.activate"],
-     format("panel-edit switch history lost its edit/activation order: %s",switchHistory));
- retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
-
- // Redo is our round-trip, not a captured reference law. The activation redo
- // is intentionally unavailable after restoring the outgoing family; the item
- // command itself must still re-apply its payload.
- panelRedo();
- assert(itemRot()==a[1]["item_rot"],
-     "redo did not re-apply the panel item-transform payload after the switch");
-
  // Control: the reset door owns a different grouping law. It closes the same
  // non-zero interactive edit into one model step, so one undo returns RY to 0.
  panelBaseline();
@@ -209,5 +175,38 @@ unittest {
      "reset door did not return the panel item edit to RY=0 in one undo");
  assert(resetHistory==["tool.activate","layer.xform.edit"],
      format("panel-edit reset history did not collapse to one edit step: %s",resetHistory));
+
+ // --- law 1: the edit survives the SWITCH and owns its own step ----------
+ panelBaseline();
+ JSONValue[] a;
+ cmd("tool.set rotate on");      a~=rotPoint("armed");
+ panelEdit();                    a~=rotPoint("edit");
+ assert(a[0]["item_rot"]!=a[1]["item_rot"],"panel-edit cell is DEGENERATE: the edit changed nothing, and a zero-valued edit satisfies every candidate");
+ assert(getJson("/api/tool/state")["editOpen"].boolean,
+     "panel-edit switch cell did not retain an open edit before the door");
+ panelDoor("tool.set mesh.sliceTool on"); a~=rotPoint("door");
+ auto switchHistory=historyCommands();
+ panelUndo();                    a~=rotPoint("u1");
+ panelUndo();                    a~=rotPoint("u2");
+ // POPULATION FLOOR, and it must sit ABOVE the trajectory compare: "the edit
+ // is lost" is also true over ZERO edits, and "the door consolidated it" is
+ // also true over zero doors. Ordering them first means one run buys both --
+ // everything above a red line demonstrably ran and passed.
+ assert(g_panelEdits==1,format("panel-edit cell drove %d edits, not 1",g_panelEdits));
+ assert(g_panelDoors==1,format("panel-edit cell drove %d doors, not 1",g_panelDoors));
+ assert(a.length==5,format("panel-edit cell recorded %d rows, not 5",a.length));
+ assert(a[3]["item_rot"]==a[1]["item_rot"],
+     "panel item edit vanished on the FIRST switch undo; expected RY=40 to remain");
+ assert(a[4]["item_rot"]==a[0]["item_rot"],
+     "panel item edit survived the SECOND switch undo; expected RY=0 after its own history step");
+ assert(switchHistory==["tool.activate","layer.xform.edit","tool.activate"],
+     format("panel-edit switch history lost its edit/activation order: %s",switchHistory));
+ retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
+
+ // Redo is our round-trip, not a captured reference law. After undoing the
+ // switch and item rows, the item command must re-apply its payload.
+ panelRedo();
+ assert(itemRot()==a[1]["item_rot"],
+     "redo did not re-apply the panel item-transform payload after the switch");
 
 }
