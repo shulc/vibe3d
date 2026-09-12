@@ -10,15 +10,13 @@ module tests.unit.transform_history_ownership_census_test;
 import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import document : Document;
 import editor_app : EditorApp;
-import editmode : EditMode;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import registry : Registry;
-import seltype : SelTypeOrder;
+import session_owner : Session;
 import operator : VectorStack;
 import std.conv : to;
 import ai.exploration : AiExplorationController;
@@ -29,19 +27,15 @@ unittest // executes in the module-unittest gate, before any HTTP driver starts
 {
     Mesh mesh = makeCube();
     GpuMesh gpu;
-    EditMode mode = EditMode.Vertices;
-    Document document;
     Registry registry;
-    SelTypeOrder selTypeOrder;
+    auto sessionOwner = Session.bootstrap(makeCube());
     ref Mesh currentMesh() nothrow @nogc { return mesh; }
 
     EditorApp app;
     app.meshDg = cast(typeof(app.meshDg)) &currentMesh;
     app.gpuPtr = &gpu;
-    app.editModePtr = &mode;
-    app.documentPtr = &document;
+    app.sessionOwner = sessionOwner;
     app.regPtr = &registry;
-    app.selTypeOrderPtr = &selTypeOrder;
     app.history = new CommandHistory();
     app.vxEditFactory = () => cast(MeshVertexEdit) null;
     app.layerXformEditFactory = () => cast(LayerXformEdit) null;

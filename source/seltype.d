@@ -27,9 +27,8 @@ import editmode : EditMode;
 // geometry while items are current. See `SelTypeOrder.resolve`.
 //
 // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`:
-// it is written by exactly ONE writer path — `setEditModeFromOrder()` in
-// `app.d` (called from the geometry-type funnel `switchGeometryType` /
-// `promoteGeometryType`). No command or handler writes `editMode` independently
+// Session's geometry-type funnel writes the order and then derives the mode.
+// No application command or handler writes the live `editMode` independently
 // of the order. A debug-only invariant on the `/api/selection` read boundary
 // asserts `editMode == geometryEditMode(selTypeOrder.mostRecentGeometry)`.
 //
@@ -207,9 +206,9 @@ SelType geometrySelType(EditMode m) pure nothrow @safe @nogc {
 }
 
 /// The EditMode corresponding to a geometry SelType (the inverse of
-/// `geometrySelType`, restricted to Vertex/Edge/Polygon). Used by the single
-/// `setEditModeFromOrder()` writer in `app.d` to recompute the materialized
-/// `editMode` from `selTypeOrder.mostRecentGeometry`. Calling with `Item`
+/// `geometrySelType`, restricted to Vertex/Edge/Polygon). Used by Session's
+/// single geometry-type funnel to recompute the materialized `editMode` from
+/// `selTypeOrder.mostRecentGeometry`. Calling with `Item`
 /// is a logic error (Item has no EditMode counterpart); assert(false) guards it.
 EditMode geometryEditMode(SelType t) pure nothrow @safe @nogc {
     final switch (t) {

@@ -327,8 +327,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     wireViewportProviders(httpServer, app, ifs, optionalSlots);
     auto selectionProjection = new SelectionProjectionReadModel(() {
         return SelectionProjectionInput(
-            app.documentPtr, app.selTypeOrderPtr, app.editMode,
-            (*app.documentPtr).activeMesh());
+            app.sessionOwner.documentPtr(), app.sessionOwner.selTypeOrderPtr(),
+            app.editMode, app.document.activeMesh());
     });
     wireSelectionProviders(httpServer, app, selectionProjection, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);

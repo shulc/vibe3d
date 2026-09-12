@@ -37,6 +37,7 @@ import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import editmode;
 import seltype;
+import session_owner : Session;
 import toolpipe;
 import operator         : VectorStack;
 import toolpipe.packets : SubjectPacket, GesturePacket, GestureTrack;
@@ -1651,9 +1652,17 @@ void main(string[] args) {
     // fire time) — see the seam conversions below. Exactly ONE layer ever
     // exists in 0b (no layer.* commands until Stage 2), so this is provably
     // byte-neutral with the prior global mesh.
-    import document : Document, primaryModelSpaceResolver, primaryModelSpace,
-                      noEditTargetMesh;
-    Document document = Document.bootstrap(makeCube());
+    import document : Document, primaryModelSpaceResolver, primaryModelSpace;
+    Session* sessionOwner = Session.bootstrap(makeCube());
+    @property ref Document document() nothrow @nogc {
+        return sessionOwner.document;
+    }
+    @property ref EditMode editMode() nothrow @nogc {
+        return sessionOwner.editMode;
+    }
+    @property ref SelTypeOrder selTypeOrder() nothrow @nogc {
+        return sessionOwner.selTypeOrder;
+    }
     // Task 0654 — the empty item selection is legal, and then there is NO edit
     // target. `Document.activeMeshRef()` refuses by throwing, which is right for
     // a caller that requires one; this accessor is read by the frame draw and
@@ -1683,8 +1692,7 @@ void main(string[] args) {
         // Behaviour is identical, branch for branch: today `hasEditTarget()`
         // true implies `primary !is null`, so `activeMeshRef()`'s throw is
         // unreachable from here and the false arm is `noEditTargetMesh()`.
-        auto p = document.primary;
-        return p !is null ? p.meshRef() : noEditTargetMesh();
+        return sessionOwner.editMesh();
     }
     // The command layer's half of the same rule. `command.d` cannot import
     // `document.d` (it is imported by headless tests that hold a bare `Mesh`),
@@ -2280,19 +2288,9 @@ void main(string[] args) {
     // task 0781 steps 1c/2, and STEP 3 DELETED THE FORWARDER: the frame
     // body's six remaining reads -- the `doingCameraDrag` term and the two
     // "is a drag in flight" guards -- now spell `ifs.dragMode`.
-    // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`.
-    // It is written by exactly ONE path — `setEditModeFromOrder()` below —
-    // called from the geometry-type funnel (`switchGeometryType` /
-    // `promoteGeometryType`). No command or handler writes this field
-    // independently of the order. `encodeSelectionProjection` keeps a
-    // debug-only read-boundary invariant against the order as a regression guard.
-    EditMode editMode = EditMode.Vertices;
-    // Selection-types Stage 1: the most-recent-first ordering of selection types
-    // is the "current type" authority. `editMode` stays the picking/draw
-    // authority and mirrors the current GEOMETRY type (it persists under Item).
-    // Item is never made current in Stage 1 — the ordering only ever holds a
-    // geometry type at the front here.
-    SelTypeOrder selTypeOrder;
+    // Task 5700: Session owns the document, the recent type ordering and its
+    // derived EditMode. The accessors above preserve existing call syntax but
+    // carry no storage; all three addresses now come from the one heap owner.
     int activePanelIdx = 0;
 
     // RMB path trail
@@ -2556,36 +2554,14 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
-    // Selection-types — single-writer derivation helpers.
-    //
-    // `editMode` is a materialized view of `selTypeOrder.mostRecentGeometry`.
-    // `derivedEditMode()` computes it purely from the order; `setEditModeFromOrder()`
-    // is the SOLE write site for the field — called from both funnel functions
-    // AFTER the order has been touched, so mostRecentGeometry already equals the
-    // intended mode. No other code path writes `editMode` on a live app path.
-
-    // The geometry EditMode that the current recent-ordering implies.
-    // `editMode` must always equal this value — `encodeSelectionProjection`
-    // asserts the equivalent order-derived value as a regression tripwire.
-    EditMode derivedEditMode() const {
-        return geometryEditMode(selTypeOrder.mostRecentGeometry());
-    }
-
-    // The sole writer: recomputes `editMode` from the order.
-    // Always call AFTER `selTypeOrder.touch(t)` so mostRecentGeometry is current.
-    void setEditModeFromOrder() {
-        editMode = derivedEditMode();
-    }
-
-    // -------------------------------------------------------------------------
     // Selection-types Stage 1: the single funnel for a GEOMETRY-type switch
     // (keys 1/2/3 and the `select.typeFrom` command both route through here).
     //
     // Contract:
     //   * Promote the matching SelType to the front of the recent ordering
-    //     (`touchSelType`). `editMode` is recomputed in LOCKSTEP via
-    //     `setEditModeFromOrder()` — it stays the picking/draw authority and
-    //     always mirrors the current geometry type.
+    //     (`touchSelType`). Session recomputes `editMode` in LOCKSTEP — it
+    //     stays the picking/draw authority and always mirrors the current
+    //     geometry type.
     //   * A switch that FLIPS the front type DROPS the active tool (B2 — mirrors
     //     the documented tool-drop on a selection-mode change), routed through
     //     the same `dropActiveTool` door the active-layer switch hook uses.
@@ -2597,10 +2573,7 @@ void main(string[] args) {
     void switchGeometryType(EditMode mode) {
         import change_bus : noteCurrentType;
         const t = geometrySelType(mode);
-        const flipped = selTypeOrder.touch(t);
-        // Recompute editMode from the order (idempotent when already that mode —
-        // keeps the lockstep invariant even on a no-flip).
-        setEditModeFromOrder();
+        const flipped = sessionOwner.switchGeometryType(mode);
         if (flipped) {
             dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
             noteCurrentType(t);           // current-type changed (bus, drained at flush)
@@ -2620,8 +2593,7 @@ void main(string[] args) {
     void promoteGeometryType(EditMode mode) {
         import change_bus : noteCurrentType;
         const t = geometrySelType(mode);
-        const flipped = selTypeOrder.touch(t);
-        setEditModeFromOrder();           // lockstep with the order
+        const flipped = sessionOwner.promoteGeometryType(mode);
         if (flipped) noteCurrentType(t);  // current-type changed (no tool-drop)
     }
 
@@ -2648,7 +2620,7 @@ void main(string[] args) {
     // the same way on both sides of the geometry/item line.
     void promoteItemType() {
         import change_bus : noteCurrentType;
-        const flipped = selTypeOrder.touch(SelType.Item);
+        const flipped = sessionOwner.promoteItemType();
         if (flipped)
             noteCurrentType(SelType.Item);
     }
@@ -2677,7 +2649,7 @@ void main(string[] args) {
     //     like the other doors rather than inventing a third rule.)
     void switchItemType() {
         import change_bus : noteCurrentType;
-        const flipped = selTypeOrder.touch(SelType.Item);
+        const flipped = sessionOwner.switchItemType();
         if (flipped) {
             dropActiveTool(ToolTransition.selTypeFlipDrop);  // front-flip (B2)
             noteCurrentType(SelType.Item);
@@ -3411,7 +3383,8 @@ void main(string[] args) {
         import toolpipe.stages.constrain : ConstrainStage;
         import toolpipe.stages.falloff   : FalloffStage;
         import toolpipe.stages.symmetry  : SymmetryStage;
-        g_pipeCtx.pipeline.add(new SymmetryStage(() => &mesh(), &editMode));
+        g_pipeCtx.pipeline.add(new SymmetryStage(
+            () => &mesh(), sessionOwner.editModePtr()));
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ConstrainStage());
         // Blocker 2 (0614 review): a live `SelType delegate()`, queried fresh
@@ -3429,13 +3402,16 @@ void main(string[] args) {
         // measured. The SET (`registration.d`'s `itemTransformTargets`) reads
         // the same funnel — narrowing one without the other would centre the
         // gizmo on a layer it refuses to move (§7.2 consequence 1).
-        g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode,
+        g_pipeCtx.pipeline.add(new ActionCenterStage(
+                                                       () => &mesh(), sessionOwner.editModePtr(),
                                                        () => document.itemTransformTarget(),
                                                        () => currentSelType(selTypeOrder)));
-        g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode,
+        g_pipeCtx.pipeline.add(new AxisStage(
+                                              () => &mesh(), sessionOwner.editModePtr(),
                                               () => document.itemTransformTarget(),
                                               () => currentSelType(selTypeOrder)));
-        g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
+        g_pipeCtx.pipeline.add(new FalloffStage(
+            () => &mesh(), sessionOwner.editModePtr()));
         import toolpipe.stages.path : PathStage;
         g_pipeCtx.pipeline.add(new PathStage(() => &mesh()));
     }
@@ -3454,7 +3430,7 @@ void main(string[] args) {
 
     // -------------------------------------------------------------------------
     // EditorApp ctx assembly (task 0415, campaign 0407 §B.V1 step 1) -- every
-    // field below is wired from a main()-local declared above this point,
+    // field below is wired from live storage available above this point,
     // except `toolHostPtr` (ToolHost is declared further down; its wiring
     // sits right after the ToolHost block, before registerCommands(app) is
     // called). Passed BY VALUE into registerTools/registerCommands, which
@@ -3470,19 +3446,13 @@ void main(string[] args) {
     app.meshDg      = cast(MeshDg)&mesh;
     app.cameraViewDg = cast(ViewDg)&cameraView;
     app.gpuPtr      = &gpu;
-    app.editModePtr = &editMode;
-    app.documentPtr = &document;
+    app.sessionOwner = sessionOwner;
     app.regPtr      = &reg;
-    // Blocker 1 (0614 review): wired HERE, not at the later "Phase-B ctx
-    // wiring" block (~selTypeOrderPtr's other assignment, further down) —
-    // this earlier block is copied BY VALUE into registerTools(app) below,
-    // so a tool factory built there (XfrmTransformTool's `() =>
-    // currentSelType(selTypeOrder)`) needs the pointer live before that
-    // copy is taken, or it captures a null. The later assignment stays;
-    // re-assigning the same address twice is harmless (idempotent) and
-    // serves wireHttpProviders' separate `ref EditorApp app`.
-    app.selTypeOrderPtr = &selTypeOrder;
-
+    // Blocker 1 (0614 review): Session is wired HERE, before this context is
+    // copied BY VALUE into registerTools(app) below. A tool factory built
+    // there (XfrmTransformTool's `() => currentSelType(selTypeOrder)`) needs
+    // the owner live before that copy is taken, or it captures a null.
+    // wireHttpProviders observes the same owner through `ref EditorApp app`.
     app.subpatchPreviewPtr  = &subpatchPreview;
     app.gpuUploadedPreviewPtr = &gpuUploadedPreview;
     app.activeToolPtr       = &activeTool;
@@ -4463,9 +4433,8 @@ void main(string[] args) {
     // moved provider closures read `app` through the `ref` parameter.
     app.viewportInputAllowedDg = &ifs.viewportInputAllowed;
 
-    // Phase-B ctx wiring (source/http_providers.d): pointer-backed selection
-    // order, by-value class refs, and app-owned hook delegates.
-    app.selTypeOrderPtr      = &selTypeOrder;
+    // Phase-B ctx wiring (source/http_providers.d): the Session pointer above,
+    // by-value class refs, and app-owned hook delegates.
     app.bvhPick              = bvhPick;
     app.stepTrace            = stepTrace;
     app.session              = session;
@@ -7449,7 +7418,7 @@ void main(string[] args) {
                     g_fc.bumpCellRendered();
 
                     SceneInputs _sceneInputs;
-                    _sceneInputs.document = &document;
+                    _sceneInputs.document = sessionOwner.documentPtr();
                     _sceneInputs.mesh = &mesh();
                     _sceneInputs.pipeContext = g_pipeCtx;
                     version (WithAI) static if (kCopilotEnabled) {

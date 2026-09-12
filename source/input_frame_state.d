@@ -238,10 +238,9 @@ final class InputFrameState {
     // Verbatim body from app.d's main() (task 1040 relocation). The only
     // free-name change is `mesh()`/`editMode`/`selTypeOrder`/`vpm` reading
     // through `app.` -- EditorApp's own properties forward to the SAME
-    // main()-local `mesh()`/`editMode`/`selTypeOrder`/`vpm` this function
-    // read directly before the move (see EditorApp.meshDg / .editModePtr /
-    // .selTypeOrderPtr / .vpm, wired at app.d's early ctx-assembly block,
-    // well before this method is ever called).
+    // live `mesh()`/Session-owned `editMode`/Session-owned `selTypeOrder`/vpm
+    // this function read directly before the move. They are wired at app.d's
+    // early ctx-assembly block, well before this method is ever called.
     //
     // Full six-parameter form, unlike `EditorApp.buildToolVts`'s own field
     // (still the narrow two-parameter delegate 0781 flagged as an ABI trap

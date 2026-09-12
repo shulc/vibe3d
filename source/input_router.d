@@ -727,13 +727,9 @@ struct InputRouter {
     // Both functions moved WHOLE, with the three `pendingSel*` fields above:
     // the press/release pair this struct just took were their only callers
     // (six sites), so nothing in main() names either any more. Bodies verbatim
-    // apart from the `app.` prefixes -- and ONE line that is not a pure
-    // prefix, flagged because R3 is exactly this shape: `&editMode` was the
-    // address of a main() LOCAL and is now `&app.editMode()`, WITH the call
-    // parens, because `&app.editMode` would address the @property FUNCTION.
-    // The pointer is the same object either way (`app.editModePtr = &editMode`
-    // at the ctx wiring), which is what makes the edit a spelling and not a
-    // behaviour change.
+    // apart from the `app.` prefixes. `&app.editMode()` takes the address of
+    // Session's stable field; the call parens matter because `&app.editMode`
+    // would address the @property FUNCTION rather than the returned storage.
 
     // Open an interactive selection edit session. Idempotent — repeated
     // calls before commitInteractiveSelEdit() are no-ops. Snapshot must be

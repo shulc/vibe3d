@@ -389,6 +389,7 @@ tests.unit.selection_order_scan_test
 tests.unit.selection_projection_test
 tests.unit.seltype_test
 tests.unit.session_edit_payload_test
+tests.unit.session_ownership_test
 tests.unit.snap_election_corpus_test
 tests.unit.snap_test
 tests.unit.snap_visibility_corpus_test

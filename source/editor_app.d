@@ -41,6 +41,7 @@ import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import editmode;
 import seltype;
+import session_owner : Session;
 import toolpipe;
 import operator         : VectorStack;
 import toolpipe.packets : SubjectPacket;
@@ -703,15 +704,17 @@ struct RemeshModalRefs {
 // register* functions (the struct-of-pointers/delegates copy is safe --
 // scratch-proven in withctx.d/withctx2.d/withctx3_nested.d: the closures
 // built inside registerTools/registerCommands capture the copy, but every
-// field either points at or IS one of main()'s own locals, which stay alive
-// for the process lifetime).
+// field either reaches process-lifetime storage or is an immutable-at-wiring
+// class/delegate value. Session is the one heap owner pointer; the remaining
+// pointer-backed locals retain main()'s process lifetime.
 //
 // ROOT RULE (see task doc): every field defaults to a pointer-backed
 // `@property ref T` (category "a"). A field is by-value (category "в") ONLY
-// when it is a class-ref or delegate assigned EXACTLY ONCE in main() --
-// grep-verified per field, not assumed from its being a class. Getting this
-// wrong is SILENT: a by-value copy of a mutated value-type or a reassigned
-// reference compiles cleanly and just stops seeing later writes.
+// when it is a class-ref or delegate assigned EXACTLY ONCE in main(), or the
+// single stable Session pointer -- grep-verified per field, not assumed from
+// its type. Getting this wrong is SILENT: a by-value copy of a mutated
+// value-type or a reassigned reference compiles cleanly and just stops seeing
+// later writes.
 // ---------------------------------------------------------------------------
 struct EditorApp {
     // ---- (б) nested-accessor delegates: lazy, live-binding ----
@@ -757,10 +760,12 @@ struct EditorApp {
     //      (Edit-class 1: &x -> &x() at the call site) ----
     GpuMesh* gpuPtr;
     @property ref GpuMesh gpu() { return *gpuPtr; }
-    EditMode* editModePtr;
-    @property ref EditMode editMode() { return *editModePtr; }
-    Document* documentPtr;
-    @property ref Document document() { return *documentPtr; }
+    // Task 5700: EditorApp sees the one heap Session through a pointer; it
+    // neither copies the owner nor keeps three pointers to former stack slots.
+    Session* sessionOwner;
+    @property ref EditMode editMode() { return sessionOwner.editMode; }
+    @property ref Document document() { return sessionOwner.document; }
+    @property ref SelTypeOrder selTypeOrder() { return sessionOwner.selTypeOrder; }
     Registry* regPtr;
     @property ref Registry reg() { return *regPtr; }
 
@@ -1034,11 +1039,6 @@ struct EditorApp {
     // `gpuSelect()` shape (the moved block reads it bare, `gpuSelect.pick`,
     // so a property preserves every call site verbatim).
     // =========================================================================
-
-    // ---- (a) pointer-backed: struct mutated via .touch()/.order writes in
-    //      both main() and the moved block. ----
-    SelTypeOrder* selTypeOrderPtr;
-    @property ref SelTypeOrder selTypeOrder() { return *selTypeOrderPtr; }
 
     // ---- (б) by-value class refs, each assigned exactly once in main()
     //      before the wireHttpProviders call (grep-verified: bvhPick app.d
