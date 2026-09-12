@@ -137,6 +137,14 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         owner.bridges ~= this;
     }
 
+    // Legacy surface memory ordering (load-bearing — mirrors the old
+    // per-endpoint code exactly): the HTTP thread writes `req` BEFORE bumping
+    // the submitted epoch; the main thread's tick() reads `req`/runs `service`
+    // and writes `resp` BEFORE storing the completed epoch (the LAST statement
+    // in tick()); the HTTP thread reads `resp` only AFTER submitAndWait()
+    // observes the completed epoch catch up. Same seq-cst
+    // atomicOp/atomicLoad/atomicStore as before, same 2500-iter / 2ms sleep
+    // timeout. Do not weaken any of this.
     /// HTTP thread: bump the submit epoch and spin until the main thread's
     /// tick() drains it, or maxIters*2ms elapses. Returns false on timeout —
     /// the CALLER decides what timeout body to emit (see file header).
