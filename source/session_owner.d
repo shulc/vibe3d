@@ -101,7 +101,4 @@ public:
         return selTypeOrder_.touch(SelType.Item);
     }
 
-    void replaceDocument(Document document) {
-        document_ = document;
-    }
 }

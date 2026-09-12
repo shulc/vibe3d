@@ -78,7 +78,6 @@ unittest {
 
 unittest {
     auto owner = Session.bootstrap(makeCube());
-    auto documentSlot = owner.documentPtr();
     auto layerA = owner.document.primary;
     auto meshA = &owner.editMesh();
     immutable aStart = Vec3(-0.5f, -0.5f, -0.5f);
@@ -145,9 +144,7 @@ unittest {
         && meshB.vertices[0] == bStart,
         "session ownership lifetime witness: production command A did not bind document A");
 
-    owner.replaceDocument(documentB);
-    assert(owner.documentPtr() is documentSlot,
-        "session ownership lifetime witness: replacement moved the Document field");
+    *owner.documentPtr() = documentB;
     assert(owner.document.primary is layerB,
         "session ownership lifetime witness: replacement did not install document B");
 
@@ -163,6 +160,8 @@ unittest {
         "session ownership lifetime witness: a new command did not bind document B after replacement");
 
     const historyBeforeEmpty = history.undoEntriesVisible.length;
+    assert(historyBeforeEmpty == 1,
+        "session ownership lifetime witness: expected one history entry before empty-target refusal");
     owner.document.resetSelectionState();
     assert(!owner.document.hasEditTarget() && owner.document.layers.length == 1
         && meshB.vertices.length == 8 && owner.editMesh().vertices.length == 0,
@@ -208,4 +207,10 @@ unittest {
         && occurrences(app, "EditMode editMode =") == 0
         && occurrences(app, "SelTypeOrder selTypeOrder;") == 0,
         "session ownership census: retired main-frame storage returned");
+    assert(occurrences(app, "Document document") == 1,
+        "session ownership census: Document storage spelling count changed");
+    assert(occurrences(app, "EditMode editMode") == 1,
+        "session ownership census: EditMode storage spelling count changed");
+    assert(occurrences(app, "SelTypeOrder selTypeOrder") == 1,
+        "session ownership census: SelTypeOrder storage spelling count changed");
 }

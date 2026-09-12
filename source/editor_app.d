@@ -705,13 +705,13 @@ struct RemeshModalRefs {
 // scratch-proven in withctx.d/withctx2.d/withctx3_nested.d: the closures
 // built inside registerTools/registerCommands capture the copy, but every
 // field either reaches process-lifetime storage or is an immutable-at-wiring
-// class/delegate value. Session is the one heap owner pointer; the remaining
+// class/delegate value. Session is the one stable owner pointer; the remaining
 // pointer-backed locals retain main()'s process lifetime.
 //
 // ROOT RULE (see task doc): every field defaults to a pointer-backed
-// `@property ref T` (category "a"). A field is by-value (category "в") ONLY
-// when it is a class-ref or delegate assigned EXACTLY ONCE in main(), or the
-// single stable Session pointer -- grep-verified per field, not assumed from
+// `@property ref T` (category "а"). A field is by-value (category "в") ONLY
+// when it is a class-ref or delegate assigned EXACTLY ONCE in main(); the
+// single stable Session pointer is category "в" too -- grep-verified, not assumed from
 // its type. Getting this wrong is SILENT: a by-value copy of a mutated
 // value-type or a reassigned reference compiles cleanly and just stops seeing
 // later writes.
@@ -760,12 +760,14 @@ struct EditorApp {
     //      (Edit-class 1: &x -> &x() at the call site) ----
     GpuMesh* gpuPtr;
     @property ref GpuMesh gpu() { return *gpuPtr; }
+    // ---- (в) by-value stable owner pointer: assigned once in main() ----
     // Task 5700: EditorApp sees the one heap Session through a pointer; it
     // neither copies the owner nor keeps three pointers to former stack slots.
     Session* sessionOwner;
     @property ref EditMode editMode() { return sessionOwner.editMode; }
     @property ref Document document() { return sessionOwner.document; }
     @property ref SelTypeOrder selTypeOrder() { return sessionOwner.selTypeOrder; }
+    // ---- (а) pointer-backed core locals, continued ----
     Registry* regPtr;
     @property ref Registry reg() { return *regPtr; }
 

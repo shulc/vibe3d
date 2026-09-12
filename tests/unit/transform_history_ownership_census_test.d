@@ -10,6 +10,7 @@ module tests.unit.transform_history_ownership_census_test;
 import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import document : Document;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
@@ -28,7 +29,7 @@ unittest // executes in the module-unittest gate, before any HTTP driver starts
     Mesh mesh = makeCube();
     GpuMesh gpu;
     Registry registry;
-    auto sessionOwner = Session.bootstrap(makeCube());
+    auto sessionOwner = Session.create(Document.init);
     ref Mesh currentMesh() nothrow @nogc { return mesh; }
 
     EditorApp app;

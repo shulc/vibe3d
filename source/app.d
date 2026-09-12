@@ -1711,7 +1711,7 @@ void main(string[] args) {
     // the declaration): headless unit tests have no `Document`.
     //
     // IT CANNOT BE INSTALLED EARLIER, and that is fine. The lambda closes over
-    // `document`, which is `Document.bootstrap(makeCube())` above — so the six
+    // `document`, which is owned by `Session.bootstrap(makeCube())` above — so the six
     // `addFace` commits inside that `makeCube()` run with the resolver still
     // null and are therefore DELIVERED unfiltered. Harmless, and not by luck:
     // `changeBus.meshSubs` is empty until the hub registers far below, so those
