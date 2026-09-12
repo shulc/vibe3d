@@ -1,3 +1,8 @@
+/// Selection projection intentionally reads the active mesh through
+/// Document.activeMesh, the prepared-lifecycle-aware accessor. That is
+/// equivalent to the former Layer.meshRef read only while the reader is off
+/// the main thread: moving this projection on-thread changes which mesh is
+/// seen during a prepared lifecycle read, from meshRef to enlistedShadow.
 module selection_projection;
 
 import document : Document, tokenOf;
@@ -46,6 +51,12 @@ string encodeSelectionProjection(scope const ref SelectionProjectionInput input)
         "selection projection requires a document");
     assert(input.order !is null,
         "selection projection requires a selection order");
+
+    // Task 1906 §3.5 row 26: this provider polls no counter and MUST NOT
+    // subscribe to or read `mesh_dirty.g_*Epochs`. It currently reads on the
+    // HTTP thread, while the bus and epoch tables are main-thread-only and
+    // unsynchronised; an epoch-keyed cache here would be a data race, not a
+    // freshness mechanism. Task 0950 owns moving this read onto the main thread.
 
     ref const Document document = *input.document;
     ref const SelTypeOrder order = *input.order;

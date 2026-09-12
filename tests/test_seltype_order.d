@@ -28,6 +28,7 @@ import std.algorithm : map, sort, equal;
 import std.array     : join, array;
 import std.file      : exists, remove, tempDir;
 import std.path      : buildPath;
+import std.process   : thisProcessID;
 import core.thread : Thread;
 import core.time   : dur;
 
@@ -132,7 +133,8 @@ unittest {
         && getJson("/api/model?layer=1")["vertices"].array.length == 8,
         "selection live-accessor fixture population floor: both layers are populated cubes");
 
-    immutable path = buildPath(tempDir(), "vibe3d_5690_selection_projection.v3d");
+    immutable path = buildPath(tempDir(),
+        text("vibe3d_5690_selection_projection_", thisProcessID, ".v3d"));
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
     cmd(`{"id":"file.save","path":` ~ JSONValue(path).toString ~ `}`);
