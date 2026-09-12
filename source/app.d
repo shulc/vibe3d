@@ -9,7 +9,8 @@ import std.json : JSONValue, JSONType;
 // HTTP server module
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
-import ui.discard_guard : UiRunOutcome, GuardSettle;
+import guarded_action_controller : GuardedActionController,
+    GuardedActionPorts, GuardObservationPorts;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
 import prefs;
@@ -2688,6 +2689,7 @@ void main(string[] args) {
     auto executor = new CommandExecutor(history,
         () => activeTool !is null, &dropActiveTool);
     ApplicationCommandBinding commandBinding;
+    GuardedActionController guardController;
 
     // Phase 7: macro recorder captures successful command lines
     // (via history.onRecord delegate) when active. Survives undo /
@@ -2917,17 +2919,10 @@ void main(string[] args) {
     //      mesh-address keys). Belt-and-braces beside the address keys.
     //   5. noteChange(MeshChangeAll) on the NEW active mesh so the per-frame
     //      bus flush invalidates every subscriber exactly as a file load does.
-    // Task 1521, R4: a deferred guarded action holds a Command built against
-    // the primary of the moment (its `Mesh*` was bound at fire time). If the
-    // primary changes while the prompt is up, DROP it — a dropped action is
-    // safer than one that lands in the wrong layer. Forward hook because the
-    // guard state is declared further down in main().
-    void delegate() dropPendingGuardHook;
-
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
         import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
-        if (dropPendingGuardHook !is null) dropPendingGuardHook();
+        if (guardController !is null) guardController.dropPending();
         // LayerSelect drops an active tool before moving the primary, while
         // the tool's original mesh is still current. This hook therefore sees
         // no active tool for a guarded selection move.
@@ -3077,17 +3072,11 @@ void main(string[] args) {
     // slot: the guard now covers file.new / file.open / file.import.* / quit
     // through the single `runUiCommand` point, and a second modal entry would
     // have asked twice AND kept the guard at two places.
-    //   * `pendingGuardedCmd` — the action held while the prompt is up. While
-    //     it is non-null a SECOND guarded dispatch is refused, not queued and
-    //     not overwritten (task 1521, B9).
-    //   * `guardSettle` — answered in the draw, PERFORMED in the post-flush
-    //     settle, so nothing mutates the document from inside an ImGui frame.
+    // The two booleans below belong only to the modal's ImGui open handshake.
+    // The pending command and its settle state are application-owned by
+    // GuardedActionController (task 5640).
     bool   discardConfirmOpen;
     bool   discardConfirmPending;
-    string guardPromptText;
-    Command    pendingGuardedCmd;
-    RecordMode pendingGuardedMode;
-    GuardSettle guardSettle;
     // Command-failure notice (task 0616 review B1). Same pendingOpen→OpenPopup
     // convention. `noticeText` is built by ui.command_notice.commandNoticeText,
     // which is also what decides whether there IS a notice — a command that
@@ -3549,7 +3538,6 @@ void main(string[] args) {
     app.remeshSharpEdgePtr            = &remeshSharpEdge;
     app.discardConfirmOpenPtr         = &discardConfirmOpen;
     app.discardConfirmPendingPtr      = &discardConfirmPending;
-    app.guardPromptTextPtr            = &guardPromptText;
     app.noticeTextPtr                 = &noticeText;
     app.noticeOpenPtr                 = &noticeOpen;
     app.noticePendingPtr              = &noticePending;
@@ -4161,156 +4149,9 @@ void main(string[] args) {
         raiseNotice(commandNoticeText(cmd.label(), cmd.refusalReason()));
     }
 
-    // The guard-free half: apply + record, refusal is silent here (the caller
-    // owns the notice). `throwMsg` is null — a user gesture has no caller to
-    // throw at, and a throw from inside an ImGui draw kills the process.
-    bool runUiCommandForced(Command cmd, RecordMode mode) {
-        if (cmd is null) return false;
-        return executor.applyOrRefire(cmd, mode, null);
-    }
-
-    // ---- THE single user-command entry point (tasks 1520 + 1521) ---------
-    //
-    // Every user-driven command line lands here: the menu / keyboard
-    // (`runCommand`), every panel button and status-line script action (the
-    // UI dispatch adapter in http_providers.d), and — since task 1521 — the
-    // window close. Three inputs, ONE guard, which is the whole point: with
-    // the quit guard left at its own modal entry, the mutation "remove the
-    // guard call from here" reddened two of the three paths instead of three.
-    //
-    // `dispatchedId` is the id the CALLER asked for and is NOT derivable from
-    // the command: `file.new`'s factory builds a `SceneReset` whose `name()`
-    // is `"scene.reset"`, the same string `/api/reset` uses. `runCommand`
-    // has no id to give and passes "", and the record shows that honestly.
-    UiRunOutcome runUiCommand(Command cmd, RecordMode mode, string dispatchedId = "") {
-        import io.doc_state    : docDirty;
-        import ui.discard_guard;
-        if (cmd is null) return UiRunOutcome.refused;
-
-        const discards = cmd.discardsUnsavedWork();
-        const dirty    = docDirty();
-        const verdict  = guardVerdict(discards, dirty);
-
-        GuardRecord rec;
-        rec.id       = dispatchedId;
-        rec.name     = cmd.name();
-        rec.discards = discards;
-        rec.dirty    = dirty;
-        rec.verdict  = verdict == GuardVerdict.prompt ? "prompt" : "proceed";
-        rec.answer   = "none";
-
-        if (verdict == GuardVerdict.prompt) {
-            // BUSY RULE (task 1521, opponent blocker B9). ImGui modals do not
-            // raise `WantTextInput`, and `WantCaptureKeyboard` is explicitly
-            // unusable as a gate in this app (see the keyboard router), so a
-            // Ctrl+N pressed while the prompt is up DOES reach here. Silently
-            // overwriting the held action would throw away a decision the user
-            // is in the middle of making, so the second one is refused and the
-            // modal stays on the first.
-            if (pendingGuardedCmd !is null) {
-                rec.suppressed = command.g_testMode;
-                rec.dropped    = "guard already pending";
-                rec.outcome    = "deferred";
-                recordGuardRequest(rec);
-                return UiRunOutcome.deferred;
-            }
-            rec.suppressed = command.g_testMode;
-            rec.outcome    = "deferred";
-            recordGuardRequest(rec);
-            // WHAT `--test` SUPPRESSES IS THE MODAL, NOT THE DEFERRAL. The
-            // action is held either way — "asked, not yet answered" is the
-            // honest state and it is what makes the busy rule observable
-            // headlessly. `/api/reset` drops the held action so one case
-            // cannot leak into the next on the shared --test instance.
-            pendingGuardedCmd  = cmd;
-            pendingGuardedMode = mode;
-            guardPromptText    =
-                "You have unsaved changes.\n\nSave them before "
-                ~ (cmd.label().length ? cmd.label() : cmd.name()) ~ "?";
-            setGuardPending(true);
-            if (!command.g_testMode) {
-                discardConfirmOpen    = true;
-                discardConfirmPending = true;
-            }
-            return UiRunOutcome.deferred;
-        }
-
-        const applied = runUiCommandForced(cmd, mode);
-        rec.outcome = applied ? "applied" : "refused";
-        rec.refused = !applied;
-        recordGuardRequest(rec);
-        if (!applied) raiseCommandNotice(cmd);
-        return applied ? UiRunOutcome.applied : UiRunOutcome.refused;
-    }
-
-    // The menu / keyboard / UI-button entry. Unchanged shape for its 8
-    // callers; the body is now the single guarded point above.
+    // The menu / keyboard / UI-button entry remains a thin binding forward.
     void runCommand(Command cmd) {
         commandBinding.invokeUiCommand(cmd, RecordMode.Record, "");
-    }
-
-    // ---- The three answers to the unsaved-work prompt (task 1521) --------
-    // Each ARMS the settle; none performs the action. Doing it here would run
-    // a document replacement from inside the ImGui frame that is drawing the
-    // modal — the shape task 0434 already avoided for the quit, kept.
-    void guardAnswerSave() {
-        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
-        // The ordinary `file.save` — which prompts when the document is
-        // untitled, and whose CANCELLATION leaves the document dirty. That is
-        // exactly why the perform is conditional at settle: a cancelled Save
-        // must abort the discard, not complete it.
-        runUiCommandForced(reg.commandFactories["file.save"](), RecordMode.Record);
-        guardSettle           = GuardSettle.afterSave;
-        discardConfirmOpen    = false;
-        recordGuardAnswer(GuardAnswer.save, false);
-    }
-    void guardAnswerDiscard() {
-        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
-        guardSettle        = GuardSettle.perform;
-        discardConfirmOpen = false;
-        recordGuardAnswer(GuardAnswer.discard, false);
-    }
-    // Forget the held action without performing it. Used by Cancel, by
-    // `/api/reset` (so one test's deferred action cannot leak into the next on
-    // the shared --test instance) and by a primary change (R4).
-    void dropPendingGuard() {
-        import ui.discard_guard : setGuardPending;
-        pendingGuardedCmd     = null;
-        guardSettle           = GuardSettle.none;
-        discardConfirmOpen    = false;
-        discardConfirmPending = false;
-        setGuardPending(false);
-    }
-    void guardAnswerCancel() {
-        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
-        // CANCEL CANCELS. The held action is dropped, never queued.
-        dropPendingGuard();
-        recordGuardAnswer(GuardAnswer.cancel, false);
-    }
-
-    // Post-flush settle for the deferred action. Called once per frame from
-    // the same block that pushes the document revision, so `docDirty()` here
-    // already counts this frame's Save.
-    void settleGuardedAction() {
-        import ui.discard_guard : GuardSettle, recordGuardAnswer, GuardAnswer,
-                                  setGuardPending, settlePerforms;
-        import io.doc_state : docDirty;
-        if (guardSettle == GuardSettle.none) return;
-        auto cmd  = pendingGuardedCmd;
-        auto mode = pendingGuardedMode;
-        const settle       = guardSettle;
-        const wasAfterSave = (settle == GuardSettle.afterSave);
-        pendingGuardedCmd = null;
-        guardSettle       = GuardSettle.none;
-        setGuardPending(false);
-        if (cmd is null) return;
-        // A Save that did not land (cancelled dialog, unwritable path) leaves
-        // the document dirty ⇒ DROP the action. The rule itself is the pure
-        // `settlePerforms` so it can be asserted without an app.
-        if (!settlePerforms(settle, docDirty())) return;
-        const ok = runUiCommandForced(cmd, mode);
-        recordGuardAnswer(wasAfterSave ? GuardAnswer.save : GuardAnswer.discard, ok);
-        if (!ok) raiseCommandNotice(cmd);
     }
 
     // AI3D (task 0381) main-thread drain handler — the ONLY place the
@@ -4584,9 +4425,22 @@ void main(string[] args) {
     // Task 4711: application command binding is assembled here from the live
     // registry/executor/session and the concrete UI guard/notice policies.
     // Its UI, forms and History delegates exist even when HTTP is not started.
+    import io.doc_state : docDirty;
+    import ui.discard_guard : recordGuardAnswer, recordGuardRequest,
+        setGuardPending;
+    guardController = new GuardedActionController(GuardedActionPorts(
+        (Command c, RecordMode m) => executor.applyOrRefire(c, m, null),
+        () => docDirty(),
+        () => executor.applyOrRefire(
+            reg.commandFactories["file.save"](), RecordMode.Record, null),
+        cast(void delegate(Command))&raiseCommandNotice,
+        GuardObservationPorts(
+            (record) => recordGuardRequest(record),
+            (answer, performed) => recordGuardAnswer(answer, performed),
+            (pending) => setGuardPending(pending))));
     commandBinding = new ApplicationCommandBinding(
         reg, executor, session, history,
-        (Command c, RecordMode m, string id) => runUiCommand(c, m, id),
+        guardController,
         cast(void delegate(Command))&raiseCommandNotice,
         cast(void delegate(string))&raiseNotice);
     uiCommandDelegate = (string id, string paramsJson) {
@@ -4606,11 +4460,7 @@ void main(string[] args) {
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
         commandBinding.invokeUiCommand(c, m, id);
-    app.guardAnswerSave    = cast(void delegate())&guardAnswerSave;
-    app.guardAnswerDiscard = cast(void delegate())&guardAnswerDiscard;
-    app.guardAnswerCancel  = cast(void delegate())&guardAnswerCancel;
-    app.dropPendingGuard   = cast(void delegate())&dropPendingGuard;
-    dropPendingGuardHook   = cast(void delegate())&dropPendingGuard;
+    app.guardController      = guardController;
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
     app.activateToolById     = cast(void delegate(string))&activateToolById;
     // NOT a bare same-arity cast like its neighbours above: buildToolVts
@@ -5913,7 +5763,7 @@ void main(string[] args) {
 
             // Task 1521: ONE settle for every deferred guarded action (New /
             // Open / Import / Quit), replacing 0434's quit-only `quitAfterSave`.
-            settleGuardedAction();
+            guardController.settle();
 
             // Title: "<file> - Vibe3d", leading "*" while dirty, "untitled"
             // when no native document is open. Only touch SDL on change.

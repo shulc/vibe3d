@@ -22,7 +22,8 @@ import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
 import tool_activation_ownership : ToolTransition;
-import ui.discard_guard : UiRunOutcome, GuardSettle;
+import ui.discard_guard : UiRunOutcome;
+import guarded_action_controller : GuardedActionController;
 import log : logInfo, logWarn, logError;
 import prefs;
 import ImGui = d_imgui;
@@ -1008,6 +1009,7 @@ struct EditorApp {
     /// Task 1520/1521 — the guarded UI policy reached through the application
     /// command binding, including window-close dispatch from InputRouter.
     UiRunOutcome delegate(Command, RecordMode, string) runUiCommand;
+    GuardedActionController guardController;
     bool delegate(string)       tryOpenArgsDialog;
     void delegate(string)       activateToolById;
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
@@ -1112,15 +1114,6 @@ struct EditorApp {
     @property ref bool discardConfirmOpen() { return *discardConfirmOpenPtr; }
     bool* discardConfirmPendingPtr;
     @property ref bool discardConfirmPending() { return *discardConfirmPendingPtr; }
-    string* guardPromptTextPtr;
-    @property ref string guardPromptText() { return *guardPromptTextPtr; }
-    /// The three answers, each a main()-nested function: they arm the settle,
-    /// they never perform the action from inside the draw.
-    void delegate() guardAnswerSave;
-    void delegate() guardAnswerDiscard;
-    void delegate() guardAnswerCancel;
-    /// Forget a held guarded action without performing it (`/api/reset`).
-    void delegate() dropPendingGuard;
 
     // ---- command-failure notice (task 0616 review B1) ----
     // The text a declining command asked to be shown, and the same

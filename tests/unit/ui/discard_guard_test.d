@@ -8,6 +8,31 @@
 module tests.unit.ui.discard_guard_test;
 
 import ui.discard_guard;
+import guarded_action_controller : GuardedActionController,
+    GuardedActionPorts, GuardObservationPorts;
+import command : Command, g_testMode;
+import command_history : RecordMode;
+import editmode : EditMode;
+import mesh : Mesh;
+import view : View;
+
+private Mesh guardProbeMesh;
+private View guardProbeView;
+
+private final class GuardProbeCommand : Command {
+    private string name_;
+    private string label_;
+
+    this(string name, string label) {
+        super(&guardProbeMesh, guardProbeView, EditMode.Vertices);
+        name_ = name;
+        label_ = label;
+    }
+
+    override string name() const { return name_; }
+    override string label() const { return label_; }
+    override bool discardsUnsavedWork() const { return true; }
+}
 
 unittest {
     // THE TABLE. Two inputs, and both terms matter:
@@ -87,4 +112,110 @@ unittest {
     auto j3 = parseJSON(uiPolicyJson());
     assert(!j3["pending"].boolean);
     assert("last" !in j3.object, "reset must leave no record behind");
+}
+
+unittest { // the real application owner, with no window and no HTTP
+    const oldTestMode = g_testMode;
+    g_testMode = true;
+    scope(exit) {
+        g_testMode = oldTestMode;
+        resetUiPolicyRecord();
+    }
+
+    bool dirty = true;
+    bool saveShouldLand;
+    bool lastSaveResult;
+    size_t saveCount;
+    size_t deferredCount;
+    Command[] applied;
+    Command[] noticed;
+
+    auto controller = new GuardedActionController(GuardedActionPorts(
+        (Command command, RecordMode) {
+            applied ~= command;
+            return true;
+        },
+        () => dirty,
+        () {
+            ++saveCount;
+            lastSaveResult = saveShouldLand;
+            if (lastSaveResult) dirty = false;
+            return lastSaveResult;
+        },
+        (Command command) { noticed ~= command; },
+        GuardObservationPorts(
+            (record) => recordGuardRequest(record),
+            (answer, performed) => recordGuardAnswer(answer, performed),
+            (pending) {
+                setGuardPending(pending);
+                if (pending) ++deferredCount;
+            })));
+
+    // Busy holds A by identity even when B has the same command name.
+    auto busyA = new GuardProbeCommand("scene.reset", "Original new");
+    auto busyB = new GuardProbeCommand("scene.reset", "Replacement reset");
+    assert(controller.invoke(busyA, RecordMode.Record, "file.new")
+        == UiRunOutcome.deferred);
+    assert(applied.length == 0, "guarded action applied before settle");
+    assert(controller.invoke(busyB, RecordMode.Coalescing, "scene.reset")
+        == UiRunOutcome.deferred);
+    assert(controller.pendingCommand is busyA,
+        "busy dispatch replaced the original pending command");
+    controller.answerCancel();
+    assert(!controller.pending, "cancel left a guarded action pending");
+    assert(applied.length == 0, "cancel performed the guarded action");
+
+    // A cancelled ordinary Save fires at answer time but cannot arm an early
+    // guarded apply, and the dirty read prevents it at settle.
+    auto saveCancelled = new GuardProbeCommand("scene.reset", "Cancelled save");
+    dirty = true;
+    saveShouldLand = false;
+    assert(controller.invoke(saveCancelled, RecordMode.Record, "file.new")
+        == UiRunOutcome.deferred);
+    assert(!controller.answerSave());
+    assert(saveCount == 1 && !lastSaveResult,
+        "cancelled ordinary save did not report its own result");
+    assert(applied.length == 0,
+        "guarded action applied at the cancelled-save answer");
+    assert(!controller.settle());
+    assert(applied.length == 0,
+        "cancelled save performed the guarded action at settle");
+
+    // A landed ordinary Save still performs only the original held instance,
+    // and only after the explicit settle.
+    auto saveLanded = new GuardProbeCommand("scene.reset", "Landed save");
+    dirty = true;
+    saveShouldLand = true;
+    assert(controller.invoke(saveLanded, RecordMode.Coalescing, "file.new")
+        == UiRunOutcome.deferred);
+    assert(controller.answerSave());
+    assert(saveCount == 2 && lastSaveResult,
+        "landed ordinary save did not report its own result");
+    assert(applied.length == 0,
+        "guarded action applied at the landed-save answer");
+    assert(controller.settle());
+    assert(applied.length == 1 && applied[$ - 1] is saveLanded,
+        "save settle did not apply the original guarded command");
+
+    // Discard has the same answer/settle split, and settle is one-shot.
+    auto discarded = new GuardProbeCommand("scene.reset", "Discarded original");
+    dirty = true;
+    assert(controller.invoke(discarded, RecordMode.Record, "file.new")
+        == UiRunOutcome.deferred);
+    controller.answerDiscard();
+    assert(applied.length == 1,
+        "guarded action applied at the discard answer");
+    assert(controller.settle());
+    assert(applied.length == 2 && applied[$ - 1] is discarded,
+        "discard settle did not apply the original guarded command");
+    assert(!controller.settle());
+    assert(applied.length == 2,
+        "repeated settle applied the guarded command twice");
+
+    assert(deferredCount == 4,
+        "deferred-action population floor: expected four held commands");
+    assert(applied.length == 2,
+        "guarded-apply population floor: expected two guarded applies");
+    assert(noticed.length == 0,
+        "successful guarded commands must not raise notices");
 }

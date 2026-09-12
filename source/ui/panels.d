@@ -3489,16 +3489,17 @@ void drawQuitGuardModal(EditorApp app) {
         //
         // THE MODAL ENTRY THAT USED TO LIVE HERE IS GONE. Until task 1521 this
         // function ALSO decided whether to prompt — it drained `quitRequested`
-        // and asked `docDirty()` itself. That made the guard a SECOND point
-        // beside the command dispatch, and the consequence was measurable: the
-        // mutation "remove the guard call from the dispatch point" reddened
-        // File → New and File → Open but NOT the quit, because the quit was
-        // guarded here. The decision now happens once, in `runUiCommand`
-        // (app.d); this function only DRAWS the question and hands the answer
-        // back.
+        // and asked `docDirty()` itself. The decision now belongs to the one
+        // GuardedActionController used by every UI command; this function only
+        // owns the popup handshake, renders its state and hands answers back.
         //
         // Three buttons, not two (owner-directed): "Yes/No" cannot tell
         // "throw the work away" from "I changed my mind".
+        if (!testMode && guardController.awaitingAnswer
+            && !discardConfirmOpen) {
+            discardConfirmOpen = true;
+            discardConfirmPending = true;
+        }
         if (discardConfirmOpen) {
             if (discardConfirmPending) {
                 ImGui.OpenPopup("Unsaved Changes");
@@ -3509,31 +3510,40 @@ void drawQuitGuardModal(EditorApp app) {
                 // TextUnformatted: the text carries a command LABEL, which can
                 // contain a "%" (a file name), and this is the overload that
                 // takes no format string.
-                ImGui.TextUnformatted(guardPromptText);
-                ImGui.Separator();
-                // Save leads: it is the destructive-safe default. The action is
-                // performed at the post-flush settle and ONLY if the save
-                // actually landed — a cancelled Save dialog leaves the document
-                // dirty and aborts the discard.
-                if (ImGui.Button("Save")) {
-                    guardAnswerSave();
+                if (!guardController.awaitingAnswer) {
+                    discardConfirmOpen = false;
                     ImGui.CloseCurrentPopup();
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("Discard")) {
-                    guardAnswerDiscard();
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("Cancel")) {
-                    guardAnswerCancel();
-                    ImGui.CloseCurrentPopup();
+                } else {
+                    ImGui.TextUnformatted(guardController.promptText);
+                    ImGui.Separator();
+                    // Save leads: it is the destructive-safe default. The action is
+                    // performed at the post-flush settle and ONLY if the save
+                    // actually landed — a cancelled Save dialog leaves the document
+                    // dirty and aborts the discard.
+                    if (ImGui.Button("Save")) {
+                        guardController.answerSave();
+                        discardConfirmOpen = false;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Discard")) {
+                        guardController.answerDiscard();
+                        discardConfirmOpen = false;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) {
+                        guardController.answerCancel();
+                        discardConfirmOpen = false;
+                        ImGui.CloseCurrentPopup();
+                    }
                 }
                 ImGui.EndPopup();
             } else {
                 // Closed via ESC / [X] — same semantics as Cancel: the held
                 // action is DROPPED, never performed.
-                guardAnswerCancel();
+                guardController.answerCancel();
+                discardConfirmOpen = false;
             }
         }
 

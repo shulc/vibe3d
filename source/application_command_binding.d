@@ -4,6 +4,7 @@ import command : Command, CommandOrigin;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
+import guarded_action_controller : GuardedActionController;
 import registry : Registry;
 import ui.discard_guard : UiRunOutcome;
 
@@ -33,7 +34,6 @@ struct CommandInvocationResult {
     }
 }
 
-alias UiCommandPolicy = UiRunOutcome delegate(Command, RecordMode, string);
 alias CommandNotice = void delegate(Command);
 alias TextNotice = void delegate(string);
 
@@ -46,7 +46,7 @@ private:
     CommandExecutor executor;
     EditSession session;
     CommandHistory history;
-    UiCommandPolicy uiPolicy;
+    GuardedActionController uiPolicy;
     CommandNotice commandNotice;
     TextNotice textNotice;
 
@@ -58,7 +58,7 @@ private:
 
     CommandInvocationResult uiResult(Command command, RecordMode mode,
                                      string dispatchedId) {
-        final switch (uiPolicy(command, mode, dispatchedId)) {
+        final switch (uiPolicy.invoke(command, mode, dispatchedId)) {
             case UiRunOutcome.applied:
                 return result(CommandInvocationOutcome.applied, command);
             case UiRunOutcome.refused:
@@ -70,7 +70,7 @@ private:
 
 public:
     this(ref Registry registry, CommandExecutor executor, EditSession session,
-         CommandHistory history, UiCommandPolicy uiPolicy,
+         CommandHistory history, GuardedActionController uiPolicy,
          CommandNotice commandNotice, TextNotice textNotice) {
         assert(executor !is null, "ApplicationCommandBinding requires CommandExecutor");
         assert(session !is null, "ApplicationCommandBinding requires EditSession");
@@ -150,7 +150,7 @@ public:
 
     UiRunOutcome invokeUiCommand(Command command, RecordMode mode,
                                  string dispatchedId = "") {
-        return uiPolicy(command, mode, dispatchedId);
+        return uiPolicy.invoke(command, mode, dispatchedId);
     }
 
     void dispatchUi(string id, string paramsJson) {
