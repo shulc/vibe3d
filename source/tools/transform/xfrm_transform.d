@@ -1293,7 +1293,27 @@ public:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted = prepareEditRecord(context, "Move");
+        if (context is null)
+            return PreparedDeactivateEffect(preparedToolStateOwner,
+                PreparedDeactivateKind.Xfrm, false);
+        scope(failure) context.discard();
+
+        // The outgoing switch door must project the wrapper-owned
+        // item/vertex close without closing the live edit.  Besides preserving
+        // the item payload, this routes the run id through prepareOwnedEditClose
+        // into the detached history image that transferHistoryTo hands to the
+        // incoming door.  Installation closes the live wrapper only after every
+        // side of the arm transaction has validated; any refusal discards the
+        // projection and leaves the open edit untouched.
+        auto editClose = PreparedXfrmUpdateEditCloseOwner.prepare(this, context);
+        bool prepared = editClose !is null &&
+            context.prepareXfrmUpdateEditClose(editClose);
+        if (!prepared) {
+            context.discard();
+            return PreparedDeactivateEffect(preparedToolStateOwner,
+                PreparedDeactivateKind.Xfrm, false);
+        }
+        bool accepted = editClose.historyPrepared();
         // TASK 4053 measured what this line does NOT do, and left it alone.
         // The consolidate prepares INTO the history token, and the door below
         // picks `markNoHistoryInstall()` whenever the run recorded no NEW
@@ -7918,15 +7938,22 @@ unittest {
     assert(p9Acen.currentUserPin() == Pin(true, committedPin),
         "next session restored a stale action-center cancel baseline");
 
-    // prepareEditRecord preserves the destructive close of its old builders.
+    // Prepared deactivation projects the close without mutating the live
+    // wrapper; only the validated installer may consume the capture session.
     p9Tool.openLiveSessionForTest();
     p9Mesh.vertices[0].x += 1;
     auto p9PrepareContext = new PreparedRecordContext(p9History, null);
     auto p9Deactivate = p9Tool.prepareDeactivate(p9PrepareContext);
     assert(p9Deactivate.kind == PreparedDeactivateKind.Xfrm &&
-           p9Deactivate.historyAccepted && !p9Tool.editIsOpen(),
-        "prepared edit record left its capture session open");
-    p9PrepareContext.discard();
+           p9Deactivate.historyAccepted && p9Tool.editIsOpen(),
+        "prepared deactivation mutated its live capture session");
+    assert(p9PrepareContext.markHistoryInstall() &&
+           p9PrepareContext.validate(),
+        "prepared deactivation did not validate its projected close");
+    p9PrepareContext.install();
+    assert(!p9Tool.editIsOpen(),
+        "validated deactivation did not install its projected close");
+
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

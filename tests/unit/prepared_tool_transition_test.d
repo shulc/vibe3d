@@ -10,9 +10,32 @@ import document : PreparedLayerReadScope;
 import record_observer_hub : PreparedRecordObserverImage;
 import edit_session : LifecycleUndoEmitter;
 import tool : Tool;
-import registry : ToolFactory;
+import registry : PreparedPipeAttrs, ToolFactory;
 import tools.edit.topology_pen.tool : TopologyPenTool;
 import std.algorithm : canFind, endsWith, startsWith;
+
+import commands.layer.xform_edit : LayerXformEdit;
+import commands.mesh.vertex_edit : MeshVertexEdit;
+import commands.tool.lifecycle : ToolActivationCommand;
+import document : Layer;
+import editmode : EditMode;
+import math : Vec3;
+import mesh : makeCube;
+import mesh_gpu : GpuMesh;
+import operator : VectorStack;
+import pipe_gizmo_host : PipeGizmoHost;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import record_observer_hub : RecordObserverHub;
+import seltype : SelType;
+import std.json : JSONValue;
+import toolpipe.packets : SubjectPacket;
+import toolpipe.pipeline : g_pipeCtx, Pipeline;
+import toolpipe.stages.actcenter : ActionCenterStage;
+import toolpipe.stages.axis : AxisStage;
+import toolpipe.stages.constrain : ConstrainStage;
+import toolpipe.stages.falloff : FalloffStage;
+import tools.transform.xfrm_transform : XfrmTransformTool;
+import view : View;
 
 // ---------------------------------------------------------------------------
 // The prepared-effect FIELD SHAPE census (task 4052)
@@ -539,4 +562,179 @@ unittest {
            "the tail refusal must name itself; got \"" ~
            starved.validateFailureReason() ~ "\" (an empty string is the "
            ~ "defect: it reaches the user as a message ending in ': ')");
+}
+
+private class NoPreparedDoorTool : Tool { }
+
+private class TestPreparedDoorTool : Tool, PreparedToolDoorClient,
+                                     LifecycleUndoEmitter {
+    bool refuseActivation;
+    size_t* activationCalls;
+
+    this(bool refuseActivation, size_t* activationCalls) {
+        this.refuseActivation = refuseActivation;
+        this.activationCalls = activationCalls;
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        ++*activationCalls;
+        return !refuseActivation && context !is null &&
+            context.markNoHistoryInstall();
+    }
+}
+
+// A switch is speculative through both refusal sites. The stand drives a
+// non-zero item edit first, then checks the post-outgoing refusal, incoming
+// refusal, and the single atomic success publication.
+unittest {
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+
+    auto layer = new Layer;
+    layer.meshRef() = makeCube();
+    GpuMesh gpu;
+    EditMode mode = EditMode.Polygons;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    auto outgoing = new XfrmTransformTool(
+        () => &layer.meshRef(), &gpu, &mode, () => SelType.Item,
+        (ref Layer[] targets) { targets = [layer]; });
+    outgoing.flagR = true;
+    outgoing.setUndoBindings(history,
+        () => new MeshVertexEdit(&layer.meshRef(), view, mode));
+    outgoing.setItemUndoFactory(
+        () => new LayerXformEdit(&layer.meshRef(), view, mode));
+    outgoing.activate();
+    VectorStack pose;
+    SubjectPacket subject;
+    subject.mesh = &layer.meshRef();
+    subject.editMode = mode;
+    subject.selType = SelType.Item;
+    pose.put(&subject);
+    outgoing.update(pose);
+    history.record(new ToolActivationCommand(
+        &layer.meshRef(), view, mode, "rotate", ""));
+    immutable seededRunId = history.nextRun();
+    outgoing.openLiveSessionForTest();
+    layer.xform.rot = Vec3(0, 40, 0);
+
+    const pendingXform = layer.xform;
+    immutable switchRunId = history.currentRunId;
+    assert(pendingXform.rot != Vec3(0, 0, 0),
+        "tool-switch refusal stand has a ZERO item edit");
+    assert(outgoing.publicEditIsOpen(),
+        "tool-switch refusal stand did not retain its pending item edit");
+    assert(history.undoEntriesVisible().length == 1 &&
+           history.toolLifecycleCount() == 1 &&
+           switchRunId >= seededRunId && switchRunId != 0 &&
+           !history.runOpen(),
+        "tool-switch refusal stand did not start from one activation row");
+
+    Tool active = outgoing;
+    string activeId = "rotate";
+    Pipeline pipeline;
+    pipeline.add(new ActionCenterStage(() => &layer.meshRef(), &mode));
+    pipeline.add(new AxisStage);
+    pipeline.add(new ConstrainStage);
+    pipeline.add(new FalloffStage(() => &layer.meshRef(), &mode));
+    PreparedPipeAttrs attrs;
+    auto host = new PipeGizmoHost;
+    auto observers = new RecordObserverHub;
+    JSONValue args = JSONValue.emptyObject;
+    string callbackActiveId = activeId;
+    auto activateCallback = (string id) { callbackActiveId = id; };
+    auto deactivateCallback = () { callbackActiveId = ""; };
+
+    void assertAttemptUnchanged(string door) {
+        assert(layer.xform == pendingXform,
+            door ~ ": refusal changed the pending item transform");
+        assert(active is outgoing && activeId == "rotate",
+            door ~ ": refusal changed the active tool");
+        assert(outgoing.publicEditIsOpen(),
+            door ~ ": refusal closed the outgoing open edit");
+        assert(history.undoEntriesVisible().length == 1 &&
+               history.toolLifecycleCount() == 1 &&
+               history.currentRunId == switchRunId &&
+               !history.runOpen(),
+            door ~ ": refusal changed history or its open-run state");
+    }
+
+    size_t noDoorConstructions;
+    ToolFactory noDoorFactory = () {
+        ++noDoorConstructions;
+        return new NoPreparedDoorTool;
+    };
+    string refusalMessage;
+    try {
+        auto ignored = prepareArm(noDoorFactory, "test.no-door", outgoing,
+            history, observers, layer, pipeline, attrs, host, args, pose,
+            17, 23, &layer.meshRef(), view, mode, activeId,
+            activateCallback, deactivateCallback);
+    } catch (Exception e) {
+        refusalMessage = e.msg;
+    }
+    assert(noDoorConstructions == 1 &&
+           refusalMessage == "candidate lacks prepared activation door",
+        "post-outgoing-preparation refusal was not reached: " ~ refusalMessage);
+    assertAttemptUnchanged("post-outgoing-preparation refusal");
+
+    size_t refusedActivationCalls;
+    ToolFactory refusingFactory = () => new TestPreparedDoorTool(
+        true, &refusedActivationCalls);
+    refusalMessage = null;
+    try {
+        auto ignored = prepareArm(refusingFactory, "test.refusing", outgoing,
+            history, observers, layer, pipeline, attrs, host, args, pose,
+            17, 23, &layer.meshRef(), view, mode, activeId,
+            activateCallback, deactivateCallback);
+    } catch (Exception e) {
+        refusalMessage = e.msg;
+    }
+    assert(refusedActivationCalls == 1 &&
+           refusalMessage == "prepared candidate activation refused for "
+               ~ "'test.refusing' (lifecycleReplay=false)",
+        "incoming activation refusal was not reached: " ~ refusalMessage);
+    assertAttemptUnchanged("incoming activation refusal");
+
+    size_t acceptedActivationCalls;
+    TestPreparedDoorTool acceptedCandidate;
+    ToolFactory acceptedFactory = () {
+        acceptedCandidate = new TestPreparedDoorTool(
+            false, &acceptedActivationCalls);
+        return acceptedCandidate;
+    };
+    PreparedArm acceptedArm = prepareArm(acceptedFactory, "test.accepted",
+        outgoing, history, observers, layer, pipeline, attrs, host, args, pose,
+        17, 23, &layer.meshRef(), view, mode, activeId,
+        activateCallback, deactivateCallback);
+    assert(acceptedActivationCalls == 1,
+        "successful incoming activation preparation was not reached");
+    assertAttemptUnchanged("validated pre-install transaction");
+    assert(commitPreparedArm(active, activeId, acceptedArm) &&
+           active is acceptedCandidate && activeId == "test.accepted" &&
+           layer.xform == pendingXform,
+        "successful switch did not install both sides atomically");
+    auto rows = history.undoEntriesVisible();
+    assert(rows.length == 3 &&
+           rows[0].cmd.name == "tool.activate" &&
+           rows[1].cmd.name == "layer.xform.edit" &&
+           rows[2].cmd.name == "tool.activate",
+        "successful switch did not preserve item-edit then activation order");
+    assert(rows[1].runId == 0 && history.currentRunId == switchRunId &&
+           !history.runOpen(),
+        "switch history did not close the edit run on the detached image");
+    assert(history.undo() && callbackActiveId == "rotate" &&
+           layer.xform == pendingXform,
+        "first switch undo did not leave the item edit standing");
+    assert(history.undo() && layer.xform.rot == Vec3(0, 0, 0),
+        "second switch undo did not restore the item payload");
+    assert(history.redo() && layer.xform == pendingXform,
+        "item payload did not survive its local undo/redo round-trip");
 }

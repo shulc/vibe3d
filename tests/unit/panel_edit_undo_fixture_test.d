@@ -11,9 +11,9 @@
 /// obvious. Every one of these failures leaves the suite reader GREEN, which
 /// is the shape this project pays for most:
 ///
-///   * the two sides record the SAME trajectory — the fixture then pins no
-///     divergence at all and the `open` status is a lie the suite reader
-///     cannot see, because it compares against `vibe3d_current` and passes;
+///   * the two sides record DIFFERENT trajectories after the law is closed —
+///     the fixture then claims parity while its recorded local side still
+///     describes the defect;
 ///   * `r0` and `r40` carry the same literal on some side — every trajectory
 ///     comparison is then satisfied by every candidate, VACUOUSLY;
 ///   * the `edit` row equals the `armed` row — a zero-valued edit, and a
@@ -75,10 +75,10 @@ unittest {
     foreach (spec; kLaws) {
         auto l = law(fx, spec.id);
         ++seen;
-        assert(l["status"].str == "open",
-            format("%s: status is %s — these laws are DIVERGENCES and must stay open "
-                ~ "until card 4300 lands, or the suite reader compares against the "
-                ~ "wrong side", spec.id, l["status"].str));
+        assert(l["status"].str == "closed",
+            format("%s: status is %s — card 4300 closed this law, so both readers "
+                ~ "must compare the driven trajectory with the reference side",
+                spec.id, l["status"].str));
 
         auto refRows = l["reference"];
         auto ourRows = l["vibe3d_current"];
@@ -126,11 +126,10 @@ unittest {
         assert(refRows.array.count!(r => r["at"].str == "door") == spec.doorRows,
             format("%s: expected %d door rows", spec.id, spec.doorRows));
 
-        // --- the fixture must record a real DIVERGENCE ---------------------
-        assert(symbolsOf(refRows) != symbolsOf(ourRows),
-            spec.id ~ ": reference and vibe3d_current record the SAME rotation trajectory, "
-            ~ "so this `open` law pins no divergence and would stay green if the defect "
-            ~ "were never fixed AND if it were");
+        // --- the closed fixture must record the same symbolic law -----------
+        assert(symbolsOf(refRows) == symbolsOf(ourRows),
+            spec.id ~ ": the law is `closed` but reference and vibe3d_current "
+            ~ "still record different rotation trajectories");
 
         // --- the rival the suite reader applies must be LIVE ----------------
         assert(spec.rivalRow < refRows.array.length, spec.id ~ ": rival row out of range");

@@ -130,9 +130,10 @@ unittest {
 // cannot separate "the edit kept its own step" from "the edit moved into the
 // incoming tool".
 //
-// The law is `open`: `retirement` therefore compares against `vibe3d_current`
-// and REFUSES a run that matches the reference, so the day card 4300 lands
-// this file says so instead of going quietly green.
+// Task 4300 closed the law: `retirement` therefore compares the driven
+// trajectory with the frozen reference side.  The explicit u1/u2 checks below
+// keep the mutation failure on the SECOND undo while proving the first step
+// still leaves the edit standing.
 //
 // The DOOR here is a SWITCH and only a switch. A drop-door cell was measured
 // and NOT frozen: headless it reads the same trajectory, live it clears one
@@ -146,11 +147,13 @@ int g_panelEdits, g_panelDoors;
 /// this and not `postJson("/api/script", ...)`.
 void panelEdit(){postJson("/api/script?interactive=true","tool.attr rotate RY 40");++g_panelEdits;settle();}
 void panelDoor(string line){cmd(line);++g_panelDoors;}
-void panelBaseline(){postJson("/api/script","tool.set rotate off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("history.clear");cmd("layer.select 0");g_panelEdits=0;g_panelDoors=0;}
+void panelBaseline(){postJson("/api/script","tool.set rotate off");settle();postJson("/api/command", commandBody("scene.reset"));cmd("layer.select 0");cmd("history.clear");g_panelEdits=0;g_panelDoors=0;}
 JSONValue itemRot(){auto r=getJson("/api/layers")["layers"].array[0]["xform"]["rot"];JSONValue[] v;foreach(c;r.array){auto x=c.type==JSONType.integer?cast(double)c.integer:c.floating;v~=JSONValue(round(x*1e9)/1e9+0.0);}return JSONValue(v);}
+string[] historyCommands(){string[] out_;foreach(e;getJson("/api/history")["undo"].array)out_~=e["command"].str;return out_;}
 string liveToolFamily(){auto s=getJson("/api/tool/state");if(!("tool" in s.object))return "none";auto t=s["tool"].str;return t=="xfrm"?"transform":t=="slice"?"cutting":t;}
 JSONValue rotPoint(string at){settle();JSONValue[string] o;o["at"]=at;o["item_rot"]=itemRot();o["tool"]=liveToolFamily();return JSONValue(o);}
 void panelUndo(){postJson("/api/command", commandBody("history.undo"));settle();}
+void panelRedo(){postJson("/api/command", commandBody("history.redo"));settle();}
 
 unittest {
  auto fx=parseJSON(import("fixtures/tool_arm_undo_trajectory.json"));
@@ -160,9 +163,16 @@ unittest {
  JSONValue[] a;
  cmd("tool.set rotate on");      a~=rotPoint("armed");
  panelEdit();                    a~=rotPoint("edit");
+ assert(getJson("/api/tool/state")["editOpen"].boolean,
+     "panel-edit switch cell did not retain an open edit before the door");
  panelDoor("tool.set mesh.sliceTool on"); a~=rotPoint("door");
+ auto switchHistory=historyCommands();
  panelUndo();                    a~=rotPoint("u1");
+ assert(a[3]["item_rot"]==a[1]["item_rot"],
+     "panel item edit vanished on the FIRST switch undo; expected RY=40 to remain");
  panelUndo();                    a~=rotPoint("u2");
+ assert(a[4]["item_rot"]==a[0]["item_rot"],
+     "panel item edit survived the SECOND switch undo; expected RY=0 after its own history step");
  // POPULATION FLOOR, and it must sit ABOVE the trajectory compare: "the edit
  // is lost" is also true over ZERO edits, and "the door consolidated it" is
  // also true over zero doors. Ordering them first means one run buys both --
@@ -171,6 +181,33 @@ unittest {
  assert(g_panelDoors==1,format("panel-edit cell drove %d doors, not 1",g_panelDoors));
  assert(a.length==5,format("panel-edit cell recorded %d rows, not 5",a.length));
  assert(a[0]["item_rot"]!=a[1]["item_rot"],"panel-edit cell is DEGENERATE: the edit changed nothing, and a zero-valued edit satisfies every candidate");
+ assert(switchHistory==["tool.activate","layer.xform.edit","tool.activate"],
+     format("panel-edit switch history lost its edit/activation order: %s",switchHistory));
  retirement(law(fx,"panel_edit_owns_its_undo_step"),JSONValue(a));
+
+ // Redo is our round-trip, not a captured reference law. The activation redo
+ // is intentionally unavailable after restoring the outgoing family; the item
+ // command itself must still re-apply its payload.
+ panelRedo();
+ assert(itemRot()==a[1]["item_rot"],
+     "redo did not re-apply the panel item-transform payload after the switch");
+
+ // Control: the reset door owns a different grouping law. It closes the same
+ // non-zero interactive edit into one model step, so one undo returns RY to 0.
+ panelBaseline();
+ cmd("tool.set rotate on");
+ auto resetArmed=rotPoint("reset_armed");
+ panelEdit();
+ auto resetEdit=rotPoint("reset_edit");
+ assert(resetArmed["item_rot"]!=resetEdit["item_rot"] &&
+        getJson("/api/tool/state")["editOpen"].boolean,
+     "panel-edit reset control had no non-zero open edit before the door");
+ panelDoor("tool.set rotate off");
+ auto resetHistory=historyCommands();
+ panelUndo();
+ assert(itemRot()==resetArmed["item_rot"],
+     "reset door did not return the panel item edit to RY=0 in one undo");
+ assert(resetHistory==["tool.activate","layer.xform.edit"],
+     format("panel-edit reset history did not collapse to one edit step: %s",resetHistory));
 
 }

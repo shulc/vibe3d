@@ -607,7 +607,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
     "tools/edit/vertex_bevel_tool":"935c400d06133076e34d5c6a5d62d1ba2a93eb7b4eac88a7a1c9bdd42639aabf",
     "tools/edit/vertex_extrude_tool":"5bd4def636ee6e51247ad7c4b11055ffa57985038233cb97c82c86d13200dcca",
-    "tools/transform/xfrm_transform":"bc882d745e61bbec7a88bd49e7b813ebe4544d92ef837138c1f330bdf51f84f4",
+    "tools/transform/xfrm_transform":"65b18f87900816d267af281f4773a73bf8c22014bf6e7a01bdcbb6987b9f8623",
     "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
 }
 def validate_b3d_producers(sources, only=None):

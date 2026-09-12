@@ -361,7 +361,7 @@
     },
     {
       "id": "panel_edit_owns_its_undo_step",
-      "status": "open",
+      "status": "closed",
       "rival_mutation": "consolidate the panel edit into the door's own step, so the first undo clears the rotation",
       "symbols": {
         "reference": {
@@ -484,13 +484,13 @@
         },
         {
           "at": "u2",
-          "item_rot": "r40",
+          "item_rot": "r0",
           "item_rot_literal": [
             0.0,
-            40.0,
+            0.0,
             0.0
           ],
-          "tool": "none"
+          "tool": "transform"
         }
       ]
     }
