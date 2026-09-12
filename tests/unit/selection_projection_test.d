@@ -1,19 +1,22 @@
 module tests.unit.selection_projection_test;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
+import core.memory : GC;
 import core.thread : Thread;
 import core.time : msecs, seconds;
 import document : Document, Layer, beginPreparedLayerRead;
 import editmode : EditMode;
 import http_server : HttpServer;
-import mesh : makeCube;
+import mesh : makeCube, subdivideCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import seltype : SelMode, SelType, SelTypeOrder;
 import std.algorithm : canFind;
+import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
+import std.stdio : writefln;
 import std.string : indexOf;
 
 private final class AsyncHttpReply {
@@ -102,6 +105,73 @@ private string[] tokens(JSONValue value) {
 
 private JSONValue read(SelectionProjectionReadModel model) {
     return parseJSON(model.read());
+}
+
+private ulong measureEmptyProjection(ref Document doc, ref SelTypeOrder order) {
+    auto input = SelectionProjectionInput(
+        &doc, &order, EditMode.Vertices, doc.activeMesh());
+    auto warm = encodeSelectionProjection(input);
+    immutable before = GC.allocatedInCurrentThread;
+    auto measured = encodeSelectionProjection(input);
+    immutable bytes = GC.allocatedInCurrentThread - before;
+    assert(measured == warm,
+        "selection projection changed between the warm and measured calls");
+    return bytes;
+}
+
+unittest { // selection projection allocation must not scale with mesh population
+    auto smallMesh = subdivideCube(1);
+    auto largeMesh = subdivideCube(5);
+    smallMesh.syncSelection();
+    largeMesh.syncSelection();
+    auto small = Document.bootstrap(smallMesh);
+    auto large = Document.bootstrap(largeMesh);
+
+    auto smallMeshRef = small.activeMesh();
+    auto largeMeshRef = large.activeMesh();
+    assert(smallMeshRef !is null && largeMeshRef !is null,
+        "selection projection allocation fixture requires two active meshes");
+    assert(smallMeshRef.vertexMarks.length == smallMeshRef.vertices.length
+        && smallMeshRef.edgeMarks.length == smallMeshRef.edges.length
+        && smallMeshRef.faceMarks.length == smallMeshRef.faces.length
+        && largeMeshRef.vertexMarks.length == largeMeshRef.vertices.length
+        && largeMeshRef.edgeMarks.length == largeMeshRef.edges.length
+        && largeMeshRef.faceMarks.length == largeMeshRef.faces.length,
+        "selection projection traversal fixture requires marks and geometry "
+        ~ "lengths to match in all three domains");
+    assert(largeMeshRef.vertices.length > smallMeshRef.vertices.length * 4
+        && largeMeshRef.edges.length > smallMeshRef.edges.length * 4
+        && largeMeshRef.faces.length > smallMeshRef.faces.length * 4,
+        format("selection projection population floor: large mesh must exceed "
+             ~ "4x small in every domain; V %d -> %d, E %d -> %d, F %d -> %d",
+               smallMeshRef.vertices.length, largeMeshRef.vertices.length,
+               smallMeshRef.edges.length, largeMeshRef.edges.length,
+               smallMeshRef.faces.length, largeMeshRef.faces.length));
+    assert(!smallMeshRef.hasAnySelectedVertices()
+        && !smallMeshRef.hasAnySelectedEdges()
+        && !smallMeshRef.hasAnySelectedFaces()
+        && !largeMeshRef.hasAnySelectedVertices()
+        && !largeMeshRef.hasAnySelectedEdges()
+        && !largeMeshRef.hasAnySelectedFaces(),
+        "selection projection allocation fixture requires the same empty "
+        ~ "selection on both meshes");
+
+    SelTypeOrder smallOrder;
+    SelTypeOrder largeOrder;
+    immutable smallBytes = measureEmptyProjection(small, smallOrder);
+    immutable largeBytes = measureEmptyProjection(large, largeOrder);
+    enum ulong kMaxMeshGrowth = 4096;
+    immutable growth = cast(long) largeBytes - cast(long) smallBytes;
+    writefln("[selection-projection-alloc] small %d B, large %d B, "
+           ~ "growth %d B, limit %d B",
+             smallBytes, largeBytes, growth, kMaxMeshGrowth);
+    assert(growth <= kMaxMeshGrowth,
+        format("selection projection allocation grew with mesh population: "
+             ~ "small %d B, large %d B, growth %d B (limit %d B). "
+             ~ "Build selected index arrays from scalar mark predicates; do "
+             ~ "not materialize whole-mesh bool[] selection views.",
+               smallBytes, largeBytes, growth,
+               kMaxMeshGrowth));
 }
 
 unittest { // live accessor follows primary, front, item set and document swap

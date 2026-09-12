@@ -32,10 +32,28 @@ private string geometryModeToken(EditMode mode) pure nothrow @safe @nogc {
     }
 }
 
-private JSONValue selectedIndices(scope const bool[] selected) {
+/// Task 5750: traverse the same authoritative marks-array lengths as the old
+/// materialized selection views, but test each mark through the scalar mesh
+/// predicates so allocation follows selected output only. Allocation and wire
+/// identity evidence lives in tests/unit/selection_projection_test.d.
+private JSONValue selectedVertexIndices(scope const ref Mesh mesh) {
     JSONValue[] result;
-    foreach (i, flag; selected)
-        if (flag) result ~= JSONValue(i);
+    foreach (i; 0 .. mesh.vertexMarks.length)
+        if (mesh.isVertexSelected(i)) result ~= JSONValue(i);
+    return JSONValue(result);
+}
+
+private JSONValue selectedEdgeIndices(scope const ref Mesh mesh) {
+    JSONValue[] result;
+    foreach (i; 0 .. mesh.edgeMarks.length)
+        if (mesh.isEdgeSelected(i)) result ~= JSONValue(i);
+    return JSONValue(result);
+}
+
+private JSONValue selectedFaceIndices(scope const ref Mesh mesh) {
+    JSONValue[] result;
+    foreach (i; 0 .. mesh.faceMarks.length)
+        if (mesh.isFaceSelected(i)) result ~= JSONValue(i);
     return JSONValue(result);
 }
 
@@ -91,12 +109,9 @@ string encodeSelectionProjection(scope const ref SelectionProjectionInput input)
         root["selectedEdges"] = emptyIndices();
         root["selectedFaces"] = emptyIndices();
     } else {
-        root["selectedVertices"] = selectedIndices(
-            (*input.activeMesh).selectedVertices);
-        root["selectedEdges"] = selectedIndices(
-            (*input.activeMesh).selectedEdges);
-        root["selectedFaces"] = selectedIndices(
-            (*input.activeMesh).selectedFaces);
+        root["selectedVertices"] = selectedVertexIndices(*input.activeMesh);
+        root["selectedEdges"] = selectedEdgeIndices(*input.activeMesh);
+        root["selectedFaces"] = selectedFaceIndices(*input.activeMesh);
     }
     return root.toString();
 }
