@@ -102,6 +102,26 @@ void waitForUndoCount(size_t target) {
         ~ target.to!string ~ " undo entries, got " ~ last.to!string);
 }
 
+// THE HOVER'S PREVIEW IS BUILT ON A LATER FRAME THAN THE HOVER ITSELF, and the
+// failure that taught us so had `hoveredTargetFace` ALREADY CORRECT with
+// `previewActive` still false:
+//   {"hoveredTargetFace":10,"previewActive":false,"sourceFace":4,...}
+// So the read below was right and its MOMENT was wrong. `settle()` above is a
+// fixed sleep, and its own comment already calls that a guess; polling the
+// authoritative flag closes the window regardless of load and still fails
+// loudly if the preview never arrives, so it cannot mask a regression. Seen in
+// two lanes' full gates and once in CI on an older revision; task 1871.
+JSONValue waitForHoverPreview() {
+    JSONValue last;
+    foreach (_; 0 .. 200) {
+        last = getToolState();
+        if (last["previewActive"].type == JSONType.true_) return last;
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "hover preview never became active: " ~ last.toString);
+    return last;
+}
+
 string tackHeadlessCmd(int targetFace, double[3] point) {
     return format(
         `{"id":"mesh.tack","params":{"targetFace":%d,"targetPoint":[%.17g,%.17g,%.17g]}}`,
@@ -255,9 +275,7 @@ unittest {
     // state via /api/tool/state before committing.
     playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
                         cast(int) sx, cast(int) sy));
-    settle();
-
-    auto stateHover = getToolState();
+    auto stateHover = waitForHoverPreview();
     assert(stateHover["tool"].str == "mesh.tack",
         "expected mesh.tack tool state, got: " ~ stateHover.toString);
     assert(stateHover["sourceFace"].integer == SRC_FACE,
