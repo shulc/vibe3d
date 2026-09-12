@@ -14,8 +14,7 @@ module http_providers;
 // from app.d's top-level import block for task 0415), plus step_trace for
 // the StepTrace-typed ctx field.
 import editor_app : EditorApp;
-import application_command_binding : ApplicationCommandBinding,
-    CommandInvocationContext, CommandInvocationOutcome, CommandInvocationResult;
+import http_command_adapter : CommandHttpAdapter;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, HistoryEntry, HistoryFlags, RecordMode,
     UndoState;
@@ -311,7 +310,7 @@ import document       : primaryModelSpace;
 
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
                        InputFrameState ifs, CommandExecutor executor,
-                       ApplicationCommandBinding binding) {
+                       CommandHttpAdapter commandAdapter) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
     // bottom — a list at the bottom is how such a list rots away from the
@@ -326,7 +325,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     wireViewportProviders(httpServer, app, ifs, optionalSlots);
     wireSelectionProviders(httpServer, app, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
-    wireCommandAdapters(httpServer, app, binding, optionalSlots);
+    commandAdapter.wire();
     new HistoryHttpAdapter(app.history, app.session, app.stepTrace).wire(httpServer);
     wireMutationHandlers(httpServer, app, executor, optionalSlots);
 
@@ -2253,77 +2252,6 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
                 jsonNum(tan.z, "%f"),
                 jsonNum(len, "%f"));
         });
-    }
-}
-
-// HTTP adapters for `/api/command` and `/api/script`. Application command
-// construction and UI/forms/history callbacks are already bound (task 4711).
-private void wireCommandAdapters(HttpServer httpServer, ref EditorApp app,
-                             ApplicationCommandBinding binding,
-                             ref string[] optionalSlots) {
-    with (app) {
-        // HTTP owns protocol refusal, result delivery and test-automation
-        // re-baselining. Command construction and UI/forms/history policy are
-        // already bound by the application before this adapter is installed.
-        void refused(Command cmd, string id) {
-            throw new Exception("command '" ~ id ~ "' did not apply"
-                ~ (cmd.refusalReason().length ? ": " ~ cmd.refusalReason() : ""));
-        }
-
-        void resetAutomationBefore(string id) {
-            if (!command.g_testMode || id != "scene.reset") return;
-            import ui.discard_guard : resetUiPolicyRecord;
-            resetUiPolicyRecord();
-            if (guardController !is null) guardController.dropPending();
-        }
-
-        void deliverResult(CommandInvocationResult invocation, string id,
-                           CommandOrigin origin) {
-            if (invocation.outcome == CommandInvocationOutcome.query) {
-                httpServer.setCmdResult(invocation.queryJson);
-                return;
-            }
-            if (origin == CommandOrigin.script
-                && invocation.outcome == CommandInvocationOutcome.refused)
-                refused(invocation.command, id);
-        }
-
-        void resetAutomationAfter(CommandInvocationResult invocation,
-                                  string id, CommandOrigin origin) {
-            if (!command.g_testMode || id != "scene.reset"
-                || origin != CommandOrigin.script || !invocation.applied)
-                return;
-            pipeGizmoHost.cancelDrag();
-            import ai.debug_trace : clearLatestAiDebugTraces;
-            clearLatestAiDebugTraces();
-            aiState.setEnabled(false);
-            import eventlog : parkOverrideMouse;
-            parkOverrideMouse();
-            import pie_state : closePie;
-            closePie();
-            aiExplore.discardPending();
-            if (stepTrace !is null) stepTrace.reset();
-        }
-
-        httpServer.setCommandHandler(
-            (string id, string paramsJson, bool interactive) {
-                resetAutomationBefore(id);
-                auto invocation = binding.invokeLine(id, paramsJson,
-                    CommandInvocationContext(CommandOrigin.script, interactive));
-                deliverResult(invocation, id, CommandOrigin.script);
-                resetAutomationAfter(invocation, id, CommandOrigin.script);
-            });
-
-        // Test-only protocol adapter for the same UI policy used by panels.
-        // A refusal remains a notice/deferred outcome and therefore does not
-        // become the script adapter's status:error.
-        httpServer.setUiCommandHandler(
-            (string id, string paramsJson, bool interactive) {
-                resetAutomationBefore(id);
-                auto invocation = binding.invokeLine(id, paramsJson,
-                    CommandInvocationContext(CommandOrigin.ui, interactive));
-                deliverResult(invocation, id, CommandOrigin.ui);
-            });
     }
 }
 

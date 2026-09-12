@@ -34,6 +34,14 @@ JSONValue postCmd(string query, string argstring) {
 
 void resetScene() { post(baseUrl ~ "/api/command", commandBody("scene.reset")); }
 
+long undoLength() {
+    return cast(long)getJson("/api/history")["undo"].array.length;
+}
+
+long traceLength() {
+    return cast(long)getJson("/api/trace").array.length;
+}
+
 unittest { // UI notice and HTTP exception remain two adapter policies
     // Keep the UI half first: mutating http_providers.refused into a quiet
     // return reaches the script red below only after this policy stayed green.
@@ -58,14 +66,89 @@ unittest { // UI notice and HTTP exception remain two adapter policies
     assert(pol["last"]["notice"].str.canFind("no path given"), pol.toString);
 
     resetScene();
+    postCmd("", "history.clear");
+    const historyBeforeRefusal = undoLength();
     // The same refusal under script origin is the HTTP adapter's exception.
     r = postCmd("", "image.load");
+    const historyAfterRefusal = undoLength();
+    // Keep this above the status assertion: the prescribed silent-refusal
+    // mutation reaches and passes the no-history half before status reddens.
+    assert(historyAfterRefusal == historyBeforeRefusal,
+        "a script-origin refusal must add NO history entry: "
+        ~ historyBeforeRefusal.to!string ~ " -> "
+        ~ historyAfterRefusal.to!string);
     assert(r["status"].str == "error",
         "a script-origin refusal must be reported as an error, got: " ~ r.toString);
     assert(r["message"].str.canFind("image.load"),
         "the error must name the command: " ~ r.toString);
     assert(r["message"].str.canFind("no path given"),
         "the error must carry the command's own reason: " ~ r.toString);
+}
+
+unittest { // a command query returns its own JSON through the adapter
+    resetScene();
+    auto armed = postCmd("", "tool.set move");
+    assert(armed["status"].str == "ok", "could not arm query fixture: " ~ armed.toString);
+    auto query = postCmd("", "tool.attr move TX ?");
+    assert(query["status"].str == "ok", "query failed: " ~ query.toString);
+    assert("value" in query.object,
+        "the command adapter lost the query command's own JSON: " ~ query.toString);
+    assert(query["value"].floating == 0.0,
+        "fresh move.TX query must return its own zero value: " ~ query.toString);
+    postCmd("", "tool.set move off");
+}
+
+unittest { // automation reset before remains reachable through both doors
+    resetScene();
+    auto dirty = postCmd("", "mesh.subdivide");
+    assert(dirty["status"].str == "ok", "could not dirty reset fixture");
+    auto held = postCmd("?origin=ui", "file.new");
+    assert(held["status"].str == "ok", held.toString);
+    assert(getJson("/api/ui/policy")["pending"].boolean,
+        "setup: file.new must leave a non-empty guarded action pending");
+
+    // UI scene.reset must first drop that pending action. It then creates its
+    // own deferral because the document is still dirty. Without before(), the
+    // busy guard reports `guard already pending` instead.
+    auto uiReset = postCmd("?origin=ui", "scene.reset");
+    assert(uiReset["status"].str == "ok", uiReset.toString);
+    auto uiPolicy = getJson("/api/ui/policy");
+    assert(uiPolicy["pending"].boolean,
+        "UI scene.reset must leave its own deferred action pending");
+    assert(uiPolicy["last"]["id"].str == "scene.reset"
+        && uiPolicy["last"]["outcome"].str == "deferred"
+        && uiPolicy["last"]["dropped"].str.length == 0,
+        "UI scene.reset did not run automation-before before guard dispatch: "
+        ~ uiPolicy.toString);
+
+    // Script scene.reset does not consult the UI guard. The only mechanism
+    // that can clear the pending UI reset is automation-before on this door.
+    auto scriptReset = postCmd("", "scene.reset");
+    assert(scriptReset["status"].str == "ok", scriptReset.toString);
+    auto scriptPolicy = getJson("/api/ui/policy");
+    assert(!scriptPolicy["pending"].boolean,
+        "script scene.reset did not run automation-before: "
+        ~ scriptPolicy.toString);
+    assert("last" !in scriptPolicy.object,
+        "script scene.reset must clear, not replace, the UI policy record: "
+        ~ scriptPolicy.toString);
+}
+
+unittest { // successful script reset runs automation-after
+    resetScene();
+    auto armed = parseJSON(cast(string)post(baseUrl ~ "/api/trace/reset", ""));
+    assert(armed["status"].str == "ok", "could not arm step trace");
+    auto populated = postCmd("", "mesh.subdivide");
+    assert(populated["status"].str == "ok", "could not populate step trace");
+    assert(traceLength() == 1,
+        "automation reset witness population floor: expected one live trace row, got "
+        ~ traceLength().to!string);
+
+    auto reset = postCmd("", "scene.reset");
+    assert(reset["status"].str == "ok", reset.toString);
+    assert(traceLength() == 0,
+        "successful script scene.reset did not run automation-after: step trace survived");
+    parseJSON(cast(string)post(baseUrl ~ "/api/trace/disarm", ""));
 }
 
 unittest { // origin=ui is TEST-ONLY plumbing and must not silently no-op

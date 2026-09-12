@@ -180,6 +180,7 @@ import command;
 import command_executor : CommandExecutor;
 import command_history : RecordMode;
 import application_command_binding : ApplicationCommandBinding;
+import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import registry;
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration moved out of main() below,
@@ -208,7 +209,7 @@ import buttonset;
 // Pie menus (task 1800): state + aim live in their own module so the command,
 // the event pump and the drawer all read one place.
 import pie_state : g_pie, openPie, closePie, aimPie, armPie;
-import ai.debug_trace : latestHandleDebugTraceJson;
+import ai.debug_trace : clearLatestAiDebugTraces, latestHandleDebugTraceJson;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : makeAiInteractionLogRecord;
@@ -4399,7 +4400,7 @@ void main(string[] args) {
     // Its UI, forms and History delegates exist even when HTTP is not started.
     import io.doc_state : docDirty;
     import ui.discard_guard : recordGuardAnswer, recordGuardRequest,
-        setGuardPending;
+        resetUiPolicyRecord, setGuardPending;
     // Both UI apply ports keep throwMsg null: a throw during ImGui authoring
     // terminates the process; refusal is reported by notice policy (task 1520).
     guardController = new GuardedActionController(GuardedActionPorts(
@@ -4477,7 +4478,20 @@ void main(string[] args) {
     // runs unconditionally exactly like the block it replaces. Placed HERE,
     // after the 0419 LATE wiring, because the moved block reads fields from
     // BOTH wiring blocks (0415's at ~2873 and 0419's above).
-    wireHttpProviders(httpServer, app, ifs, executor, commandBinding);
+    auto commandHttpAdapter = new CommandHttpAdapter(
+        httpServer,
+        commandBinding,
+        AutomationResetContext(
+            guardController,
+            pipeGizmoHost,
+            aiState,
+            aiExplore,
+            stepTrace,
+            &resetUiPolicyRecord,
+            &clearLatestAiDebugTraces,
+            &parkOverrideMouse,
+            &closePie));
+    wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;
     // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call
