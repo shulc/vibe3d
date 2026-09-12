@@ -1,7 +1,9 @@
-/// Selection projection intentionally reads the active mesh through
-/// Document.activeMesh, the prepared-lifecycle-aware accessor. Task 0950 item
-/// F runs this projection on the main thread and deliberately reports the
-/// enlisted shadow during a prepared lifecycle read, not the layer mesh.
+/// Selection projection reads the active mesh through Document.activeMesh
+/// (source/document_selection.d), which differs from Layer.meshRef only inside
+/// a prepared lifecycle read. Task 0950's production read scope is contained
+/// in prepareArm and cannot span HttpServer.tickAll, so that divergence is not
+/// reachable by a production reply; the unit witness constructs the overlap
+/// deliberately so main-thread servicing is visible in the payload bytes.
 module selection_projection;
 
 import document : Document, tokenOf;

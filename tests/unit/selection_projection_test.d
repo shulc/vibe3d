@@ -302,8 +302,8 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         "0950 item F: bridged selection request did not return 200: " ~ okReply.wire);
     auto payload = parseJSON(responseBody(okReply.wire));
     assert(ids(payload["selectedVertices"]) == [6],
-        "0950 item F prepared read: /api/selection must report "
-        ~ "enlisted-shadow vertex 6, not live-layer vertex 1");
+        "0950 item F synthetic prepared-read witness: the deliberately open "
+        ~ "scope must expose enlisted-shadow vertex 6, not live-layer vertex 1");
 
     server.setSelectionDataProvider(() {
         throw new Exception("selection provider injected failure");

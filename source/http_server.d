@@ -659,12 +659,12 @@ class HttpServer {
     // ========================================================================
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
     // constructed (and self-registered into `bridges`) in the HttpServer
-    // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
-    // (model, pipeEval, path, command,
-    // cameraSet, gpuSurface, pick, refire, block, jump). Each bridge's
-    // `service` delegate closes over `this` (reading the handler/provider
-    // fields above AT TICK TIME, so it works even though app.d wires those
-    // fields after HttpServer is constructed).
+    // constructor. The accept loop handles one client inline, so today at most
+    // one request can be pending and drain order is inert; self-registration
+    // removes the stale named roster the old hand-written app.d tick list
+    // required. Each bridge's `service` delegate closes over `this` (reading
+    // the handler/provider fields above AT TICK TIME, so it works even though
+    // app.d wires those fields after HttpServer is constructed).
     private IMainThreadBridge[] bridges;
 
     struct ModelReq  { int layer = -1; bool detailed; }

@@ -1563,12 +1563,14 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
                                ref string[] optionalSlots) {
     with (app) {
         // Task 0950 item F: selectionBridge invokes this callback on the main
-        // thread. The active-mesh accessor is deliberately lifecycle-aware:
-        // during a prepared lifecycle read the payload reflects the enlisted
-        // shadow, not the layer mesh. That is the intended mid-gesture answer,
-        // pinned with distinct live/shadow marks by the real-HTTP witness in
-        // tests.unit.selection_projection_test. Acquisition remains per
-        // request, so switches and document loads cannot leave a cached Mesh*.
+        // thread, and the payload follows Document.activeMesh
+        // (source/document_selection.d). That accessor differs from
+        // Layer.meshRef only inside a prepared lifecycle read; today's sole
+        // production scope closes inside prepareArm before a frame can reach
+        // HttpServer.tickAll. The unit witness deliberately constructs that
+        // otherwise-unreachable overlap so the serving thread is visible in
+        // distinct live/shadow payload bytes. Acquisition remains per request,
+        // so switches and document loads cannot leave a cached Mesh*.
         httpServer.setSelectionDataProvider(() => selectionProjection.read());
         // Task 0234 — GET /api/tool/handles + GET /api/tool/state. Read-only
         // test-introspection over the active tool; null-guard mirrors every
