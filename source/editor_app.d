@@ -24,6 +24,7 @@ import http_server;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome;
 import guarded_action_controller : GuardedActionController;
+import ui.history_panel : HistoryPanelState;
 import log : logInfo, logWarn, logError;
 import prefs;
 import ImGui = d_imgui;
@@ -782,8 +783,10 @@ struct EditorApp {
     // of clearing `running` directly, so the main loop can route the close
     // through the unsaved-changes guard (window title / quit-confirm modal).
 
-    bool* showHistoryPanelPtr;
-    @property ref bool showHistoryPanel() { return *showHistoryPanelPtr; }
+    // One reference-semantics owner for the History panel's persistent form
+    // state. Unlike the neighbouring main()-local bridges, its fields live in
+    // the panel state itself and are not pointers back into main().
+    HistoryPanelState historyPanelState;
 
     // ---- (а) pointer-backed, wired AFTER the ToolHost block in main()
     //      (Span A precedes ToolHost's declaration and never touches it) ----
@@ -1059,13 +1062,13 @@ struct EditorApp {
     EditMode delegate() derivedEditMode;
     // =========================================================================
     // app.d decomp phase B (source/ui/panels.d main-loop panels): members
-    // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal /
-    // drawCommandHistoryPanel. Pointer-backed throughout: every value-type
-    // here is either mutated or address-taken (ImGui SliderInt/SliderFloat/
-    // Checkbox/InputText all take `&field` / `field[]`) by the moved blocks.
+    // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal.
+    // Pointer-backed throughout: every value-type here is either mutated or
+    // address-taken (ImGui SliderInt/SliderFloat/Checkbox/InputText all take
+    // `&field` / `field[]`) by the moved blocks.
     // ai3dWorkerManager is a class ref assigned exactly once (app.d ~1179);
-    // navHistory is a main() nested function captured as a hook delegate
-    // (always called with explicit args/parens in the moved block).
+    // navHistory is a main() nested function captured as a hook delegate for
+    // InputRouter's shortcut path.
     // =========================================================================
 
     // ---- forwards into ai3dRefs/remeshRefs (the 0415 clusters above): the
@@ -1127,20 +1130,5 @@ struct EditorApp {
     bool* noticePendingPtr;
     @property ref bool noticePending() { return *noticePendingPtr; }
 
-    // ---- Command History panel ----
-    char[256]* historyFilterPtr;
-    @property ref char[256] historyFilter() { return *historyFilterPtr; }
-    bool* historyShowArgsPtr;
-    @property ref bool historyShowArgs() { return *historyShowArgsPtr; }
-    bool* historyShowRowNumbersPtr;
-    @property ref bool historyShowRowNumbers() { return *historyShowRowNumbersPtr; }
-    bool* historyShowTimestampsPtr;
-    @property ref bool historyShowTimestamps() { return *historyShowTimestampsPtr; }
-    bool* historyShowCommandIdsPtr;
-    @property ref bool historyShowCommandIds() { return *historyShowCommandIdsPtr; }
-    bool* historyReplLastWasErrorPtr;
-    @property ref bool historyReplLastWasError() { return *historyReplLastWasErrorPtr; }
-    char[512]* historyReplInputPtr;
-    @property ref char[512] historyReplInput() { return *historyReplInputPtr; }
     bool delegate(bool) navHistory;
 }

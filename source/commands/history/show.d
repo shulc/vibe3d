@@ -6,8 +6,8 @@ import view;
 import editmode;
 
 /// Toggle the floating Command-History panel. Wired to a button in
-/// buttons.yaml; the actual visibility flag lives in app.d, mutated via
-/// the toggle delegate. Itself never lands on the undo stack
+/// buttons.yaml; the panel state owns visibility and this command reaches it
+/// through the toggle delegate. Itself never lands on the undo stack
 /// (isUndoable = false) — it's a UI-only command.
 class HistoryShow : Command {
     private void delegate() toggle;

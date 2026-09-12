@@ -457,6 +457,7 @@ tests.unit.ui.availability_test
 tests.unit.ui.channel_rows_test
 tests.unit.ui.command_notice_test
 tests.unit.ui.discard_guard_test
+tests.unit.ui.history_panel_test
 tests.unit.ui.image_rows_test
 tests.unit.ui.imgui_tabbing_test
 tests.unit.ui.item_rows_test

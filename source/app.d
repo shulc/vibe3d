@@ -199,6 +199,8 @@ import input_frame_state : InputFrameState, DragMode;
 import frame_runner : FrameRunner, resolveFramePresentMode;
 import ui.viewport_render : SceneInputs, SceneViewInputs,
     SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;
+import ui.history_panel : HistoryPanelState, HistoryPanelActions,
+    bindHistoryPanelRead, bindHistoryPanelActions;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -2697,6 +2699,9 @@ void main(string[] args) {
     // produces a replayable script regardless of intervening undos.
     auto macroRecorder = new MacroRecorder();
     macroRecorder.bindObserverHub(recordObserverHub);
+    auto historyPanelState = new HistoryPanelState();
+    auto historyPanelRead = bindHistoryPanelRead(history);
+    HistoryPanelActions historyPanelActions;
 
     // GET /api/trace — non-destructive per-step capture. Every discrete
     // recorded command appends one entry (command + args + the resulting
@@ -2994,17 +2999,6 @@ void main(string[] args) {
         noteLayerChange(LayerChange.ActiveChanged);
     };
 
-    // Visibility of the floating Command-History panel (drawn in the main
-    // render loop). Toggled by the history.show command, wired below.
-    bool showHistoryPanel = false;
-    // Phase 5: REPL state for the History panel's bottom-anchored
-    // command bar. `historyReplInput` is the in-flight input buffer;
-    // `historyReplLastWasError` highlights the input red after a
-    // parse / dispatch failure until the user edits the next time.
-    char[512] historyReplInput;  // null-terminated for ImGui.InputText
-    historyReplInput[] = 0;
-    bool historyReplLastWasError = false;
-
     // Layers panel (layers Stage 4): rename-in-place state. `layerRenameIndex`
     // is the layer index whose name is currently being edited inline (-1 = none,
     // i.e. all rows show a plain label); `layerRenameBuf` is the null-terminated
@@ -3030,19 +3024,6 @@ void main(string[] args) {
     // that momentarily crosses another marker's pixel column doesn't
     // reassign mid-gesture.
     int   lsHudDragMarker     = -1;
-    // Phase 4: substring filter for the History panel list.
-    // Type-to-narrow — both command name and args searched (case-
-    // sensitive substring).
-    char[256] historyFilter;
-    historyFilter[] = 0;
-    // Phase 4: show args toggle. When false, the row is just the
-    // command's label (a compact "hide arguments" view).
-    bool historyShowArgs = true;
-    // Phase 6 display options (gear popover).
-    bool historyShowRowNumbers = false;  // index column on the left
-    bool historyShowTimestamps = false;  // "+12.3s" relative to first entry
-    bool historyShowCommandIds = false;  // internal commandName vs label
-
     // ----- Per-command argument dialogs -----------------------------------
     // Universal schema-driven modal dialog. open(cmd) queues a popup;
     // draw(&runCommand) renders it each frame. Replaces per-command state
@@ -3508,7 +3489,7 @@ void main(string[] args) {
     // is lexically visible (the guard itself is declared far earlier).
     displayVboOwnedByTool_  = () => activeTool !is null && activeTool.isDragging();
     app.runningPtr          = &running;
-    app.showHistoryPanelPtr = &showHistoryPanel;
+    app.historyPanelState = historyPanelState;
 
     app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
     app.ai3dRefs.ai3dModalOpenPtr        = &ai3dModalOpen;
@@ -3521,12 +3502,9 @@ void main(string[] args) {
     app.remeshRefs.remeshLastErrorPtr        = &remeshLastError;
     app.remeshRefs.remeshLastSummaryPtr      = &remeshLastSummary;
 
-    // Phase-B panel wiring (source/ui/panels.d main-loop panels --
-    // drawAi3dModal/drawRemeshModal/drawQuitGuardModal/
-    // drawCommandHistoryPanel). All pointer-backed locals are declared
-    // above (~2710-2823); ai3dWorkerManager is assigned exactly once
-    // (~1179). navHistory is a nested function declared far below
-    // (~4051), wired separately right after its declaration.
+    // Phase-B pointer wiring for drawAi3dModal/drawRemeshModal/
+    // drawQuitGuardModal. HistoryPanelState above owns the fourth panel's
+    // form storage. ai3dWorkerManager is assigned exactly once (~1179).
     app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
     app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
     app.ai3dWorkerNextHealthProbePtr  = &ai3dWorkerNextHealthProbe;
@@ -3543,14 +3521,6 @@ void main(string[] args) {
     app.noticeTextPtr                 = &noticeText;
     app.noticeOpenPtr                 = &noticeOpen;
     app.noticePendingPtr              = &noticePending;
-    app.historyFilterPtr              = &historyFilter;
-    app.historyShowArgsPtr            = &historyShowArgs;
-    app.historyShowRowNumbersPtr      = &historyShowRowNumbers;
-    app.historyShowTimestampsPtr      = &historyShowTimestamps;
-    app.historyShowCommandIdsPtr      = &historyShowCommandIds;
-    app.historyReplLastWasErrorPtr    = &historyReplLastWasError;
-    app.historyReplInputPtr           = &historyReplInput;
-
     app.history         = history;
     app.vpm             = vpm;
     app.litShader       = litShader;
@@ -4527,6 +4497,9 @@ void main(string[] args) {
     // (ui/panels.d's drawCommandHistoryPanel) drags its cursor row through
     // this chokepoint; declared HERE because navHistory only exists now.
     app.navHistory = &navHistory;
+    historyPanelActions = bindHistoryPanelActions(
+        history, &navHistory, replayUndoEntry, uiCommandDelegate,
+        cast(bool delegate(string))&tryOpenArgsDialog, macroRecorder);
 
     // Task 0781 — the input-router cluster's first slice
     // (source/input_router.d): handleWindowEvent + handleMouseWheel.
@@ -5444,9 +5417,10 @@ void main(string[] args) {
         }
 
         // ---- Command History (floating) ----
-        // Moved VERBATIM to ui/panels.d's drawCommandHistoryPanel (app.d
-        // decomp, phase B; same `with (app)` seam as the 0419 panels).
-        drawCommandHistoryPanel(app);
+        // The History panel owns its form state and receives only its raw
+        // history read role, application actions, and the concrete X offset.
+        drawCommandHistoryPanel(historyPanelState, historyPanelRead,
+                                historyPanelActions, layout.sideW + 10);
 
         // ---- Close the zone frame (task 1810) ------------------------------
         // HERE, and not next to `endButtonAvailabilityFrame` above, which is

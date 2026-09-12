@@ -1020,7 +1020,7 @@ private void registerEditTools(EditorApp app) {
 /// Body is a VERBATIM cut of former app.d text, wrapped in `with (app) {
 /// with (ai3dRefs) { with (remeshRefs) { } } }` so every bare identifier
 /// (mesh(), reg.*, history, vpm, toolHost, the ai3d/remesh modal fields,
-/// subpatchPreview, activeTool, running, showHistoryPanel,
+/// subpatchPreview, activeTool, running, historyPanelState,
 /// resetAllPipeStages, the hook delegates, ...) resolves through the ctx
 /// instead of a main()-local of the same name. The only line-level edits
 /// versus the original text are Edit-class 1 (`&x` -> `&x()`, 19 &document
@@ -2150,7 +2150,8 @@ private void registerHistoryCommands(EditorApp app) {
         new HistoryRedo(&mesh(), cameraView, editMode, history);
     reg.commandFactories["history.show"] = () => cast(Command)
         new HistoryShow(&mesh(), cameraView, editMode,
-                        () { showHistoryPanel = !showHistoryPanel; });
+                        () { historyPanelState.visible =
+                                 !historyPanelState.visible; });
     // Phase 3 of the history-panel design doc — backing
     // commands for the panel's right-click context menu.
     reg.commandFactories["history.clear"] = () => cast(Command)
