@@ -130,6 +130,8 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
             Resp result = Resp.init;
         }
         private OwnedTraceEntry[] ownedTrace = null;
+        private shared bool holdOwnedWaitForTest_ = false;
+        private shared bool ownedWaitReachedForTest_ = false;
     }
 
     this(HttpServer owner, void delegate(ref Req, ref Resp) service) {
@@ -198,9 +200,11 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                                         BridgeResultKind.stopping);
 
         for (;;) {
-            if (atomicLoad(ownedStopping))
-                return syntheticOwnedResult(call, stoppingResult,
-                                            BridgeResultKind.stopping);
+            version(unittest) {
+                atomicStore(ownedWaitReachedForTest_, true);
+                while (atomicLoad(holdOwnedWaitForTest_))
+                    Thread.sleep(1.msecs);
+            }
             if (atomicLoad(call.finished) != 0) {
                 OwnedResult result;
                 result.result = call.result;
@@ -209,6 +213,9 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 result.kind = BridgeResultKind.completed;
                 return result;
             }
+            if (atomicLoad(ownedStopping))
+                return syntheticOwnedResult(call, stoppingResult,
+                                            BridgeResultKind.stopping);
             if (MonoTime.currTime >= call.deadline)
                 return syntheticOwnedResult(call, timeoutResult,
                                             BridgeResultKind.timedOut);
@@ -263,6 +270,15 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         size_t ownedPendingForTest() {
             synchronized (this) return ownedPending.length;
         }
+
+        void holdOwnedWaitForTest(bool held) {
+            if (held) atomicStore(ownedWaitReachedForTest_, false);
+            atomicStore(holdOwnedWaitForTest_, held);
+        }
+
+        bool ownedWaitReachedForTest() {
+            return atomicLoad(ownedWaitReachedForTest_);
+        }
     }
 
     /// Main thread (called once per frame via HttpServer.tickAll()): runs
@@ -283,6 +299,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 traceOwned(BridgeResultKind.completed, owned,
                            owned.serviceResultIdentity, owned.result);
             }
+            // Owned publish contract (task 5730): service/trace writes the
+            // result before this seq-cst store, which stays the LAST statement
+            // in this branch; waiter reads only after observing it. Evidence:
+            // request_result_ownership_test.d.
             atomicStore(owned.finished, 1);
         }
 
@@ -1452,6 +1472,14 @@ class HttpServer {
 
     version(unittest) public size_t layersOwnedPendingForTest() {
         return layersBridge.ownedPendingForTest();
+    }
+
+    version(unittest) public void holdSelectionOwnedWaitForTest(bool held) {
+        selectionBridge.holdOwnedWaitForTest(held);
+    }
+
+    version(unittest) public bool selectionOwnedWaitReachedForTest() {
+        return selectionBridge.ownedWaitReachedForTest();
     }
 
     /// GET /api/tool/handles — see the ToolHandlesDataProvider doc comment above.

@@ -101,13 +101,92 @@ private size_t occurrences(string source, string needle) {
 unittest {
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable source = readText(buildPath(root, "source", "http_server.d"));
+    assert(occurrences(source, "selectionBridge.submitAndWait") == 0,
+        "5730 surface coexistence: selectionBridge must not use submitAndWait");
     assert(occurrences(source, "selectionBridge.submitOwned(") == 1,
         "5730 production wiring: route_apiSelection must contain the one "
         ~ "selectionBridge.submitOwned call; the helper alone is not evidence");
+    assert(occurrences(source, "layersBridge.submitAndWait") == 0,
+        "5730 surface coexistence: layersBridge must not use submitAndWait");
     assert(occurrences(source, "layersBridge.submitOwned(") == 1,
         "5730 production wiring: route_apiLayers must contain the one "
         ~ "layersBridge.submitOwned call; the helper alone is not evidence");
+}
 
+unittest {
+    shared int providerCalls = 0;
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.holdSelectionOwnedWaitForTest(true);
+    server.setSelectionDataProvider(() {
+        atomicOp!"+="(providerCalls, 1);
+        return `{"payload":"completed-before-stop"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+
+    Thread stopper = null;
+    scope(exit) {
+        server.holdSelectionOwnedWaitForTest(false);
+        if (stopper !is null && stopper.isRunning) stopper.join();
+        if (server.running) server.stop();
+    }
+
+    auto reply = new AsyncHttpReply();
+    auto client = startHttpGet(port, "/api/selection", reply);
+    assert(waitUntil(() => server.selectionOwnedPendingForTest() == 1,
+                     2.seconds),
+        "5730 completed-before-stop: request never reached the owned queue");
+    assert(waitUntil(() => server.selectionOwnedWaitReachedForTest(),
+                     2.seconds),
+        "5730 completed-before-stop: HTTP waiter did not reach its test barrier");
+    server.tickAll();
+    assert(atomicLoad(providerCalls) == 1
+        && server.selectionOwnedPendingForTest() == 0,
+        "5730 completed-before-stop population floor: tick must finish the one request");
+
+    stopper = new Thread({ server.stop(); });
+    stopper.start();
+    assert(waitUntil(() => !server.running, 2.seconds),
+        "5730 completed-before-stop: stop did not publish shutdown");
+    server.holdSelectionOwnedWaitForTest(false);
+    stopper.join();
+    client.join();
+    assert(reply.failure.length == 0,
+        "5730 completed-before-stop: HTTP client failed: " ~ reply.failure);
+    assert(responseBody(reply.wire) == `{"payload":"completed-before-stop"}`,
+        "5730 completed-before-stop: a finished request must return its service "
+        ~ "payload, not the stopping envelope: " ~ reply.wire);
+}
+
+unittest {
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.setLayersDataProvider(() => `{"layers":[{"name":"budget"}]}`);
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    auto reply = new AsyncHttpReply();
+    auto client = startHttpGet(port, "/api/layers", reply);
+    assert(waitUntil(() => server.layersOwnedPendingForTest() == 1, 2.seconds),
+        "5730 layers budget: request did not reach the owned queue");
+    Thread.sleep(300.msecs);
+    assert(server.layersOwnedPendingForTest() == 1,
+        "5730 layers budget: unticked call must remain queued across 300 ms");
+    assert(!atomicLoad(reply.done),
+        "5730 layers budget: the five-second call completed before its first tick");
+    tickUntilDone(server, reply);
+    client.join();
+    assert(reply.failure.length == 0
+        && responseBody(reply.wire) == `{"layers":[{"name":"budget"}]}`,
+        "5730 layers budget: tick did not return the real provider payload: "
+        ~ reply.wire);
+}
+
+unittest {
     enum int kRigMaxIters = 50;
     shared int providerCalls = 0;
     shared bool firstServiceEntered = false;
@@ -152,6 +231,7 @@ unittest {
     assert(waitUntil(() => atomicLoad(firstReply.done), 2.seconds),
         "5730 order 1: HTTP timeout did not occur while service was held");
     firstClient.join();
+    server.setSelectionBridgeMaxItersForTest(2500);
     assert(firstReply.failure.length == 0,
         "5730 order 1: first HTTP client failed: " ~ firstReply.failure);
     assert(firstReply.wire.canFind("HTTP/1.1 500 Internal Server Error")
@@ -244,6 +324,7 @@ unittest {
     assert(waitUntil(() => atomicLoad(firstReply.done), 2.seconds),
         "5730 order 2: first request did not time out before service");
     firstClient.join();
+    server.setSelectionBridgeMaxItersForTest(2500);
     assert(firstReply.failure.length == 0
         && responseBody(firstReply.wire).canFind(
             `"message": "timeout waiting for main thread"`),
