@@ -1,12 +1,92 @@
 module tests.unit.selection_projection_test;
 
-import document : Document, Layer;
+import core.atomic : atomicLoad, atomicOp, atomicStore;
+import core.thread : Thread;
+import core.time : msecs, seconds;
+import document : Document, Layer, beginPreparedLayerRead;
 import editmode : EditMode;
+import http_server : HttpServer;
 import mesh : makeCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import seltype : SelMode, SelType, SelTypeOrder;
+import std.algorithm : canFind;
 import std.json : JSONType, JSONValue, parseJSON;
+import std.socket : InternetAddress, Socket, SocketOption,
+    SocketOptionLevel, TcpSocket;
+import std.string : indexOf;
+
+private final class AsyncHttpReply {
+    shared bool done;
+    string wire;
+    string failure;
+}
+
+private size_t threadIdentity() nothrow {
+    try return cast(size_t) cast(void*) Thread.getThis();
+    catch (Throwable) return 0;
+}
+
+private ushort freePort() {
+    auto probe = new TcpSocket();
+    scope(exit) probe.close();
+    probe.bind(new InternetAddress("127.0.0.1", cast(ushort) 0));
+    return (cast(InternetAddress) probe.localAddress).port;
+}
+
+private Thread startHttpGet(ushort port, AsyncHttpReply reply) {
+    auto client = new Thread({
+        try {
+            Socket socket;
+            foreach (_; 0 .. 200) {
+                try {
+                    socket = new TcpSocket();
+                    socket.connect(new InternetAddress("127.0.0.1", port));
+                    break;
+                } catch (Exception) {
+                    if (socket !is null) socket.close();
+                    socket = null;
+                    Thread.sleep(5.msecs);
+                }
+            }
+            if (socket is null)
+                throw new Exception("server did not accept a connection");
+            scope(exit) socket.close();
+            socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO,
+                             2.seconds);
+            socket.send("GET /api/selection HTTP/1.1\r\n"
+                      ~ "Host: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            ubyte[4096] buf;
+            for (;;) {
+                auto n = socket.receive(buf[]);
+                if (n <= 0) break;
+                reply.wire ~= cast(string) buf[0 .. n].idup;
+            }
+        } catch (Exception e) {
+            reply.failure = e.msg;
+        }
+        atomicStore(reply.done, true);
+    });
+    client.start();
+    return client;
+}
+
+private void tickUntilDone(HttpServer server, AsyncHttpReply reply) {
+    foreach (_; 0 .. 5000) {
+        if (atomicLoad(reply.done)) return;
+        server.tickAll();
+        Thread.sleep(1.msecs);
+    }
+    assert(false, "0950 item F: genuine HTTP request did not complete "
+        ~ "while tickAll was running");
+}
+
+private string responseBody(string wire) {
+    auto split = wire.indexOf("\r\n\r\n");
+    assert(split >= 0,
+        "0950 item F: HTTP response had no header/body boundary: " ~ wire);
+    return wire[split + 4 .. $];
+}
 
 private int[] ids(JSONValue value) {
     int[] result;
@@ -164,4 +244,98 @@ unittest { // no target never substitutes an arbitrary populated layer
         "no-target projection must still report the live parsed order");
     assert(payload["mode"].str == "vertices",
         "item front must preserve the derived geometry mode invariant");
+}
+
+unittest { // genuine HTTP selection service runs on tick thread and sees prepared shadow
+    auto doc = Document.bootstrap(makeCube());
+    auto layer = doc.primary;
+    layer.meshRef().syncSelection();
+    layer.meshRef().selectVertex(1);
+    assert(layer.beginEnlistedMesh(),
+        "0950 item F fixture: primary layer did not enlist a prepared shadow");
+    scope(exit) layer.abortEnlistedMesh();
+    layer.enlistedShadow().clearVertexSelection();
+    layer.enlistedShadow().selectVertex(6);
+    SelTypeOrder order;
+    auto liveInput = SelectionProjectionInput(
+        &doc, &order, EditMode.Vertices, &layer.meshRef());
+    assert(ids(parseJSON(encodeSelectionProjection(liveInput))
+            ["selectedVertices"]) == [1],
+        "0950 item F fixture: the live layer mesh must carry distinct vertex 1");
+
+    auto projection = new SelectionProjectionReadModel(() {
+        return SelectionProjectionInput(
+            &doc, &order, EditMode.Vertices, doc.activeMesh());
+    });
+
+    shared size_t callbackThread;
+    shared int callbackCount;
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.setSelectionDataProvider(() {
+        atomicStore(callbackThread, threadIdentity());
+        atomicOp!"+="(callbackCount, 1);
+        return projection.read();
+    });
+    server.markProvidersWired();
+    immutable tickThread = threadIdentity();
+    assert(tickThread != 0,
+        "0950 item F fixture: known tick-thread identity must be populated");
+    server.tickAll();
+    server.start();
+    scope(exit) server.stop();
+
+    auto prepared = beginPreparedLayerRead(layer);
+    scope(exit) prepared.close();
+    auto okReply = new AsyncHttpReply();
+    auto okClient = startHttpGet(port, okReply);
+    tickUntilDone(server, okReply);
+    okClient.join();
+    assert(okReply.failure.length == 0,
+        "0950 item F: genuine HTTP client failed: " ~ okReply.failure);
+    assert(atomicLoad(callbackCount) == 1,
+        "0950 item F thread identity: expected exactly one real provider callback");
+    assert(atomicLoad(callbackThread) == tickThread,
+        "0950 item F thread identity: /api/selection provider callback did "
+        ~ "not run on the known tick thread");
+    assert(okReply.wire.canFind("HTTP/1.1 200 OK"),
+        "0950 item F: bridged selection request did not return 200: " ~ okReply.wire);
+    auto payload = parseJSON(responseBody(okReply.wire));
+    assert(ids(payload["selectedVertices"]) == [6],
+        "0950 item F prepared read: /api/selection must report "
+        ~ "enlisted-shadow vertex 6, not live-layer vertex 1");
+
+    server.setSelectionDataProvider(() {
+        throw new Exception("selection provider injected failure");
+        return "";
+    });
+    auto errorReply = new AsyncHttpReply();
+    auto errorClient = startHttpGet(port, errorReply);
+    tickUntilDone(server, errorReply);
+    errorClient.join();
+    assert(errorReply.failure.length == 0,
+        "0950 item F: provider-exception HTTP client failed: " ~ errorReply.failure);
+    assert(errorReply.wire.canFind("HTTP/1.1 500 Internal Server Error")
+        && responseBody(errorReply.wire).canFind("selection provider injected failure"),
+        "0950 item F: provider exception must complete as the existing JSON 500 path: "
+        ~ errorReply.wire);
+
+    shared int timedOutProviderCalls;
+    server.setSelectionDataProvider(() {
+        atomicOp!"+="(timedOutProviderCalls, 1);
+        return `{}`;
+    });
+    server.setSelectionBridgeMaxItersForTest(2);
+    auto timeoutReply = new AsyncHttpReply();
+    auto timeoutClient = startHttpGet(port, timeoutReply);
+    timeoutClient.join(); // deliberately no tick: exercise the bridge timeout contract
+    assert(timeoutReply.failure.length == 0,
+        "0950 item F: timeout HTTP client failed: " ~ timeoutReply.failure);
+    assert(timeoutReply.wire.canFind("HTTP/1.1 500 Internal Server Error")
+        && responseBody(timeoutReply.wire).canFind("timeout waiting for main thread"),
+        "0950 item F: an unserviced selection request must complete through "
+        ~ "the existing timeout path: "
+        ~ timeoutReply.wire);
+    assert(atomicLoad(timedOutProviderCalls) == 0,
+        "0950 item F timeout: provider ran even though no tick serviced the request");
 }

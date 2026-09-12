@@ -671,6 +671,15 @@ class HttpServer {
     struct ModelResp { string result; string error; }
     private MainThreadBridge!(ModelReq, ModelResp) modelBridge;
 
+    // Task 0950 item F — /api/selection has its OWN bridge. The provider
+    // walks Document.layers and resolves the active mesh, both main-thread
+    // state; sharing another endpoint's epochs would allow their replies to
+    // interleave.
+    struct SelectionReq  { }
+    struct SelectionResp { string result; string error; }
+    private MainThreadBridge!(SelectionReq, SelectionResp) selectionBridge;
+    private int selectionBridgeMaxIters_ = 2500;
+
     struct PipeEvalReq  { }
     struct PipeEvalResp { string result; string error; }
     private MainThreadBridge!(PipeEvalReq, PipeEvalResp) pipeEvalBridge;
@@ -868,6 +877,18 @@ class HttpServer {
                         resp.result = detailedModelDataProvider();
                     else
                         resp.error = "model data provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        selectionBridge = new MainThreadBridge!(SelectionReq, SelectionResp)(this,
+            (ref SelectionReq req, ref SelectionResp resp) {
+                try {
+                    if (selectionDataProvider !is null)
+                        resp.result = selectionDataProvider();
+                    else
+                        resp.error = "Selection data provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -1253,6 +1274,11 @@ class HttpServer {
 
     public void setSelectionDataProvider(SelectionDataProvider provider) {
         this.selectionDataProvider = provider;
+    }
+
+    version(unittest) public void setSelectionBridgeMaxItersForTest(int maxIters) {
+        assert(maxIters >= 0);
+        selectionBridgeMaxIters_ = maxIters;
     }
 
     /// GET /api/tool/handles — see the ToolHandlesDataProvider doc comment above.
@@ -1956,34 +1982,27 @@ class HttpServer {
     }
 
     private void route_apiSelection(HttpRequest request, HttpResponse response) {
-        // Task 0763 — `selectionDataProvider` (http_providers.d) walks
-        // `document.layers` with `foreach (l; document.layers)` directly on
-        // the HTTP thread, unguarded, while app.d splices that same array in
-        // four places (layer.add/delete/reorder/select). This is the EXACT
-        // argument task 0612 (Stage 3) used to marshal /api/layers onto the
-        // main thread — 0700 §2 already noted /api/layers and /api/selection
-        // walk `document.layers` as two independent, unsynchronized
-        // providers with no shared source of truth. /api/selection is the
-        // single most-called endpoint in the whole HTTP test surface, so
-        // marshaling it needs the FULL suite to validate the added
-        // submitAndWait() latency doesn't regress timing-sensitive tests —
-        // out of scope for this follow-up's narrow lanes. Deferred with the
-        // rest of this class to task 0950, not fixed here.
+        // Task 0950 item F — the provider walks Document.layers and resolves
+        // the active mesh, so the bytes are produced by selectionBridge's
+        // service body on the main thread. The real-HTTP thread-identity and
+        // prepared-shadow cells live in tests.unit.selection_projection_test.
+        response.headers["Content-Type"] = "application/json";
         if (selectionDataProvider !is null) {
-            try {
+            selectionBridge.resp.result = "";
+            selectionBridge.resp.error  = "";
+            if (!selectionBridge.submitAndWait(selectionBridgeMaxIters_))
+                selectionBridge.resp.error = "timeout waiting for main thread";
+            if (selectionBridge.resp.error.length == 0) {
                 response.statusCode = 200;
-                response.body = selectionDataProvider();
-                response.headers["Content-Type"] = "application/json";
-            } catch (Exception e) {
+                response.body = selectionBridge.resp.result;
+            } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
-                               jsonEsc(e.msg) ~ "\"}";
-                response.headers["Content-Type"] = "application/json";
+                               jsonEsc(selectionBridge.resp.error) ~ "\"}";
             }
         } else {
             response.statusCode = 500;
             response.body = "{\"error\": \"Selection data provider not set\"}";
-            response.headers["Content-Type"] = "application/json";
         }
     }
 
@@ -3955,7 +3974,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/ping",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPing"),
     RouteSpec("/api/version",              "GET",  Match.exact,  Answered.httpThread, "route_apiVersion"),
     RouteSpec("/api/model",                "",     Match.prefix, Answered.mainThread, "route_apiModel"),
-    RouteSpec("/api/selection",            "",     Match.exact,  Answered.httpThread, "route_apiSelection"),
+    RouteSpec("/api/selection",            "",     Match.exact,  Answered.mainThread, "route_apiSelection"),
     RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
     RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
     RouteSpec("/api/tool/disarm",          "GET",  Match.exact,  Answered.httpThread, "route_apiToolDisarm"),

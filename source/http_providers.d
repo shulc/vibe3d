@@ -1562,10 +1562,13 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
                                SelectionProjectionReadModel selectionProjection,
                                ref string[] optionalSlots) {
     with (app) {
-        // `/api/selection` still answers on the HTTP thread until wave-9 item F;
-        // extracting a payload supplies no synchronization. The read-model's
-        // accessor is deliberately invoked per request, so switches and whole
-        // document loads cannot leave a copied Document or cached Mesh* here.
+        // Task 0950 item F: selectionBridge invokes this callback on the main
+        // thread. The active-mesh accessor is deliberately lifecycle-aware:
+        // during a prepared lifecycle read the payload reflects the enlisted
+        // shadow, not the layer mesh. That is the intended mid-gesture answer,
+        // pinned with distinct live/shadow marks by the real-HTTP witness in
+        // tests.unit.selection_projection_test. Acquisition remains per
+        // request, so switches and document loads cannot leave a cached Mesh*.
         httpServer.setSelectionDataProvider(() => selectionProjection.read());
         // Task 0234 — GET /api/tool/handles + GET /api/tool/state. Read-only
         // test-introspection over the active tool; null-guard mirrors every
