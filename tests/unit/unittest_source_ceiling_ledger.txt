@@ -185,7 +185,6 @@ block source/weightmap_view.d 1
 
 # Files above the per-file version(unittest) ceiling of 10. This list may
 # only shrink, and each number is EXACT: shed a guard and lower the row.
-allow-version source/http_server.d 11
 allow-version source/mesh.d 17
 allow-version source/mesh_gpu.d 44
 allow-version source/mesh_visibility.d 13

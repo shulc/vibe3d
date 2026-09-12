@@ -1453,33 +1453,35 @@ class HttpServer {
         this.selectionDataProvider = provider;
     }
 
-    version(unittest) public void setSelectionBridgeMaxItersForTest(int maxIters) {
-        assert(maxIters >= 0);
-        selectionBridgeMaxIters_ = maxIters;
-    }
+    version(unittest) {
+        public void setSelectionBridgeMaxItersForTest(int maxIters) {
+            assert(maxIters >= 0);
+            selectionBridgeMaxIters_ = maxIters;
+        }
 
-    version(unittest) public auto selectionOwnedTraceForTest() {
-        return selectionBridge.ownedTraceForTest();
-    }
+        public auto selectionOwnedTraceForTest() {
+            return selectionBridge.ownedTraceForTest();
+        }
 
-    version(unittest) public auto layersOwnedTraceForTest() {
-        return layersBridge.ownedTraceForTest();
-    }
+        public auto layersOwnedTraceForTest() {
+            return layersBridge.ownedTraceForTest();
+        }
 
-    version(unittest) public size_t selectionOwnedPendingForTest() {
-        return selectionBridge.ownedPendingForTest();
-    }
+        public size_t selectionOwnedPendingForTest() {
+            return selectionBridge.ownedPendingForTest();
+        }
 
-    version(unittest) public size_t layersOwnedPendingForTest() {
-        return layersBridge.ownedPendingForTest();
-    }
+        public size_t layersOwnedPendingForTest() {
+            return layersBridge.ownedPendingForTest();
+        }
 
-    version(unittest) public void holdSelectionOwnedWaitForTest(bool held) {
-        selectionBridge.holdOwnedWaitForTest(held);
-    }
+        public void holdSelectionOwnedWaitForTest(bool held) {
+            selectionBridge.holdOwnedWaitForTest(held);
+        }
 
-    version(unittest) public bool selectionOwnedWaitReachedForTest() {
-        return selectionBridge.ownedWaitReachedForTest();
+        public bool selectionOwnedWaitReachedForTest() {
+            return selectionBridge.ownedWaitReachedForTest();
+        }
     }
 
     /// GET /api/tool/handles — see the ToolHandlesDataProvider doc comment above.
