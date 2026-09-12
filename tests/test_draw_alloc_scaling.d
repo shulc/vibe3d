@@ -48,7 +48,9 @@
 // main-loop frame, so an HTTP read marshalled to and serviced on the main
 // thread inside that bracket DOES count. This is intentional: moving work into
 // the measured frame can introduce a mesh-scaled allocation even when the draw
-// calls themselves are unchanged, and this slope test should catch it.
+// calls themselves are unchanged. This slope test catches such a migration only
+// when frames per request is low; the deterministic witness is the selection-
+// projection allocation cell.
 // `/api/selection` therefore stays in `readNow()` as the selection-type witness;
 // its projection must avoid whole-mesh temporaries instead of escaping the
 // frame measurement.

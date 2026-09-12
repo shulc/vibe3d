@@ -119,6 +119,10 @@ private ulong measureEmptyProjection(ref Document doc, ref SelTypeOrder order) {
     return bytes;
 }
 
+// Empty selection and one layer per document make the small and large wire
+// outputs byte-identical, isolating work that scales with the mesh. A future
+// reserve(marks.length) still reddens this cell; materialization gated behind a
+// non-empty selection is outside its scope.
 unittest { // selection projection allocation must not scale with mesh population
     auto smallMesh = subdivideCube(1);
     auto largeMesh = subdivideCube(5);
@@ -160,6 +164,7 @@ unittest { // selection projection allocation must not scale with mesh populatio
     SelTypeOrder largeOrder;
     immutable smallBytes = measureEmptyProjection(small, smallOrder);
     immutable largeBytes = measureEmptyProjection(large, largeOrder);
+    /// One GC page; the 32640 B signal leaves an 8x margin. Never raise.
     enum ulong kMaxMeshGrowth = 4096;
     immutable growth = cast(long) largeBytes - cast(long) smallBytes;
     writefln("[selection-projection-alloc] small %d B, large %d B, "
