@@ -394,7 +394,7 @@ allow source/tools/transform/xform_kernels.d 7
 allow source/tools/transform/xfrm_apply.d 19
 allow source/tools/transform/xfrm_handles.d 5
 allow source/tools/transform/xfrm_item.d 8
-allow source/tools/transform/xfrm_transform.d 79
+allow source/tools/transform/xfrm_transform.d 80
 allow source/tsan_preinit.d 1
 allow source/ui/availability.d 1
 allow source/ui/channel_rows.d 2

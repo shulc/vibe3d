@@ -922,6 +922,10 @@ public:
          SelType delegate() selTypeSrc = null,
          void delegate(ref Layer[]) itemTargetsSrc = null) {
         super(meshSrc, gpu, editMode, selTypeSrc);
+        // Task 5751: a fresh wrapper must reflect the live subject before its
+        // first update/draw. The constructor unittest below is the red-on-removal
+        // evidence; a missing source deliberately preserves the Vertex default.
+        if (selTypeSrc !is null) cachedSubjType_ = selTypeSrc();
         this.itemTargetsSrc_ = itemTargetsSrc;
         // Blocker 1 (0614 review): the sub-tools each have their OWN
         // `buildLocalVts` call sites (the property-panel replay entries in
@@ -7267,6 +7271,17 @@ private:
         if (flagS) return scaleSub.gpuMatrix;
         return gpuMatrix;
     }
+}
+
+unittest { // A fresh wrapper caches its live subject before any lifecycle tick.
+    Mesh owned;
+    EditMode mode = EditMode.Vertices;
+    SelType liveSubject = SelType.Item;
+    auto tool = new XfrmTransformTool(
+        () => &owned, null, &mode, () => liveSubject);
+
+    assert(tool.cachedSubjType_ == SelType.Item,
+        "fresh Xfrm wrapper must cache the live item subject before update");
 }
 
 unittest {
