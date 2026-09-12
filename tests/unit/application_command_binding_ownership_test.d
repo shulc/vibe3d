@@ -1,6 +1,7 @@
 module application_command_binding_ownership_test;
 
 import std.file : exists, readText;
+import std.functional : toDelegate;
 import std.path : buildPath, dirName;
 import std.algorithm.searching : canFind;
 import std.string : indexOf;
@@ -16,7 +17,8 @@ import edit_session : EditSession;
 import editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
+import http_command_adapter : AutomationResetContext, AutomationResetHook,
+    CommandHttpAdapter;
 import http_server : HttpServer;
 import mesh : Mesh;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -35,6 +37,14 @@ private void resetUiRecordProbe() { ++uiResetCalls; }
 private void clearAiTraceProbe() { ++aiTraceResetCalls; }
 private void parkMouseProbe() { ++parkMouseCalls; }
 private void closePieProbe() { ++closePieCalls; }
+
+private AutomationResetHook resetHook(void function() hook) {
+    static if (is(AutomationResetHook == void function())) {
+        return hook;
+    } else {
+        return toDelegate(hook);
+    }
+}
 
 private final class AdapterProbeCommand : Command {
     private bool succeeds_;
@@ -131,6 +141,11 @@ unittest {
     assert(!httpCommand.canFind("editor_app")
         && !httpCommand.canFind("EditorApp"),
         "HTTP command adapter regained a dependency on EditorApp");
+    assert(httpCommand.canFind(
+            "alias AutomationResetHook = void function();"),
+        "HTTP command adapter reset hooks must remain plain function pointers");
+    assert(!httpCommand.canFind("http_providers"),
+        "HTTP command adapter must not depend on legacy HTTP providers");
     assert(httpCommand.canFind("HttpServer httpServer_")
         && httpCommand.canFind("ApplicationCommandBinding binding_")
         && httpCommand.canFind("AutomationResetContext automation_"),
@@ -160,6 +175,11 @@ unittest {
         "wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);");
     assert(bindingAt >= 0 && adapterAt > bindingAt && wireAt > adapterAt,
         "application binding must exist before the listener-independent HTTP wiring");
+    const adapterRegion = app[cast(size_t)bindingAt ..
+        cast(size_t)wireAt +
+        "wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);".length];
+    assert(!adapterRegion.canFind("if (startHttpServer)"),
+        "HTTP command adapter construction and wiring must remain available under --no-http");
 
     immutable string[] retiredGuardLocals = [
         "pendingGuardedCmd", "pendingGuardedMode", "guardSettle",
@@ -236,10 +256,10 @@ unittest { // command adapter owns reset policy without an EditorApp capture
             aiState,
             exploration,
             trace,
-            &resetUiRecordProbe,
-            &clearAiTraceProbe,
-            &parkMouseProbe,
-            &closePieProbe));
+            resetHook(&resetUiRecordProbe),
+            resetHook(&clearAiTraceProbe),
+            resetHook(&parkMouseProbe),
+            resetHook(&closePieProbe)));
     adapter.wire();
 
     // Seed a real pending guard, then drive scene.reset through the UI door.
@@ -331,4 +351,35 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     assert(query.outcome == CommandInvocationOutcome.query
         && query.queryJson == `{"value":7}`,
         "command adapter did not preserve the query's own JSON");
+
+    // Outside test automation, neither reset gate may touch its context.
+    g_testMode = false;
+    dirty = true;
+    assert(guard.invoke(new AdapterProbeCommand(true, true),
+        RecordMode.Record, "file.new") == UiRunOutcome.deferred,
+        "non-test reset setup must create a pending guarded action");
+    assert(guard.pending,
+        "non-test reset population floor: pending action was not seeded");
+    dirty = false;
+    trace.append(`{"door":"non-test"}`);
+    assert(trace.snapshotJson() != "[]",
+        "non-test reset population floor: trace was not populated");
+    aiState.setEnabled(true);
+    const uiCallsBeforeNonTest = uiResetCalls;
+    const pipeBeforeNonTest = pipeGizmo.preparedCancelCountForTest();
+    const aiTraceBeforeNonTest = aiTraceResetCalls;
+    const parkBeforeNonTest = parkMouseCalls;
+    const pieBeforeNonTest = closePieCalls;
+    auto nonTestResult = adapter.dispatchScript("scene.reset", "", false);
+    assert(nonTestResult.outcome == CommandInvocationOutcome.applied,
+        "non-test scene.reset did not apply");
+    assert(guard.pending && uiResetCalls == uiCallsBeforeNonTest,
+        "non-test scene.reset incorrectly ran automation-before");
+    assert(trace.snapshotJson() != "[]"
+        && pipeGizmo.preparedCancelCountForTest() == pipeBeforeNonTest
+        && aiState.enabled
+        && aiTraceResetCalls == aiTraceBeforeNonTest
+        && parkMouseCalls == parkBeforeNonTest
+        && closePieCalls == pieBeforeNonTest,
+        "non-test scene.reset incorrectly ran automation-after");
 }

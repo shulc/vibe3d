@@ -26,6 +26,8 @@ struct AutomationResetContext {
     AutomationResetHook parkMouse;
     AutomationResetHook closePie;
 
+    @disable this();
+
     this(GuardedActionController guardController,
          PipeGizmoHost pipeGizmoHost,
          EditorAiState aiState,
@@ -97,6 +99,8 @@ private:
 
     void resetAutomationAfter(CommandInvocationResult invocation,
                               string id, CommandOrigin origin) {
+        // A script refusal already throws in deliverResult, so control flow,
+        // not the !invocation.applied term, keeps the after policy off refusals.
         if (!g_testMode || id != "scene.reset"
             || origin != CommandOrigin.script || !invocation.applied)
             return;

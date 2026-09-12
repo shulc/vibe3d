@@ -43,8 +43,9 @@ long traceLength() {
 }
 
 unittest { // UI notice and HTTP exception remain two adapter policies
-    // Keep the UI half first: mutating http_providers.refused into a quiet
-    // return reaches the script red below only after this policy stayed green.
+    // Keep the UI half first: mutating CommandHttpAdapter.refused in
+    // source/http_command_adapter.d into a quiet return reaches the script red
+    // below only after this policy stayed green.
     resetScene();
     auto r = postCmd("?origin=ui", "image.load");
     assert(r["status"].str == "ok",
@@ -67,7 +68,13 @@ unittest { // UI notice and HTTP exception remain two adapter policies
 
     resetScene();
     postCmd("", "history.clear");
+    auto lifted = postCmd("", "mesh.subdivide");
+    assert(lifted["status"].str == "ok",
+        "could not lift the refusal history witness: " ~ lifted.toString);
     const historyBeforeRefusal = undoLength();
+    assert(historyBeforeRefusal == 1,
+        "refusal history population floor: expected one successful entry, got "
+        ~ historyBeforeRefusal.to!string);
     // The same refusal under script origin is the HTTP adapter's exception.
     r = postCmd("", "image.load");
     const historyAfterRefusal = undoLength();
