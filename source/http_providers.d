@@ -289,7 +289,7 @@ import commands.prefs.coord_rounding : CoordRoundingCommand;
 import commands.prefs.trackball     : TrackballPrefCommand;
 
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
-// module-scope struct so these three need to be top-level here (0415).
+// module-scope struct so these two need to be top-level here (0415).
 import document       : Document;
 import viewport        : ViewportManager, Viewport3D;
 // Task 0617 — this module has no `Document` of its own (it operates on
@@ -2435,7 +2435,8 @@ public:
             return payload.toString();
         });
 
-        // Re-execute an undo row through the application-owned replay bridge.
+        // Returns the canonical argstring line for undoStack[index], or "" when
+        // the index is out of range. Runs on the HTTP thread (read-only snapshot).
         httpServer.setReplayProvider((size_t i) {
             return history_.undoEntryCommandLine(i);
         });

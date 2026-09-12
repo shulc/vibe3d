@@ -179,6 +179,9 @@ unittest { // both non-empty stacks use the same complete row encoder
     }
     assert(wantedUndo[2].args.length == 0 && wantedRedo[2].args.length == 0,
         "history adapter lifecycle records must preserve their empty args");
+    assert(wantedUndo[3].inSession && wantedUndo[3].refire
+        && wantedUndo[1].ui,
+        "history adapter stand must exercise true inSession/refire/ui flags");
     assert(wantedUndo[3].runId != wantedRedo[3].runId
         && wantedUndo[3].tweakGen != wantedRedo[3].tweakGen,
         "history adapter stand must distinguish undo and redo refire identity");
