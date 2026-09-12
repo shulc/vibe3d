@@ -5,6 +5,12 @@ import editmode : EditMode;
 import mesh : Mesh;
 import seltype : SelType, SelTypeOrder, geometryEditMode, geometrySelType;
 
+/// The one approved active-layer lifecycle seam (task 5720). It is a function
+/// pointer, not a subscriber collection: this pilot moves one cleanup and does
+/// not establish a general event bus.
+alias ActiveLayerPreRefreshConsumer =
+    void function() nothrow @nogc;
+
 /// Stable owner for the document and selection-type state (task 5700).
 /// Construct it through `create`/`bootstrap`, keep the returned pointer for the
 /// application lifetime, and replace the document field in place. The focused
@@ -14,6 +20,7 @@ private:
     Document     document_;
     SelTypeOrder selTypeOrder_;
     EditMode     editMode_ = EditMode.Vertices;
+    ActiveLayerPreRefreshConsumer activeLayerPreRefresh_;
 
     this(Document document) {
         document_ = document;
@@ -75,6 +82,29 @@ public:
 
     EditMode* editModePtr() nothrow @nogc {
         return &editMode_;
+    }
+
+    /// Claim the single pre-refresh lifecycle slot. The feature module owns
+    /// the registration call; Session owns storage and teardown.
+    bool registerActiveLayerPreRefresh(
+            ActiveLayerPreRefreshConsumer consumer) nothrow @nogc {
+        if (consumer is null || activeLayerPreRefresh_ !is null) return false;
+        activeLayerPreRefresh_ = consumer;
+        return true;
+    }
+
+    void teardownActiveLayerPreRefresh() nothrow @nogc {
+        activeLayerPreRefresh_ = null;
+    }
+
+    /// Deliver the narrow transition synchronously, then resume the existing
+    /// app-owned switch sequence. Keeping the tail as a continuation makes
+    /// "before the first GPU refresh" structural and directly testable while
+    /// Session still owns none of tool, history, GPU, snap, or publication.
+    void transitionActiveLayerBeforeRefresh(scope void delegate() continue_) {
+        auto consumer = activeLayerPreRefresh_;
+        if (consumer !is null) consumer();
+        if (continue_ !is null) continue_();
     }
 
     /// The application edit target, resolved afresh without entering a

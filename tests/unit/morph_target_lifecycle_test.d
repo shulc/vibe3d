@@ -31,10 +31,11 @@ module tests.unit.morph_target_lifecycle_test;
 
 import math        : Vec3;
 import mesh        : Mesh, MapKind, makeCube;
-import document    : Document;
+import document    : Document, Layer;
 import view        : View;
 import editmode    : EditMode;
 import morph_target;
+import session_owner : Session;
 
 // ---------------------------------------------------------------------------
 // B2 — scene.reset (which is what File → New and `/api/reset` both fire).
@@ -130,6 +131,91 @@ unittest {
       ~ "a map in the document that was just replaced, and silently "
       ~ "re-pointing it at a same-named map in the NEW one routes the user's "
       ~ "next edit into a map they never selected");
+}
+
+// ---------------------------------------------------------------------------
+// Task 5720 — Session delivers the feature-owned reset BEFORE the first
+// active-layer refresh callback.
+//
+// The continuation below reproduces `GpuMesh.upload`'s real position choice:
+// use `displayVertices` when it covers the mesh, otherwise the base vertices.
+// A delivery counter cannot distinguish early from late; the captured first
+// position can. A and B deliberately carry the SAME map name with DIFFERENT
+// nonzero deltas, so a stale binding produces B's morphed value rather than a
+// coincidentally correct base.
+// ---------------------------------------------------------------------------
+unittest {
+    import display_sync : activeMeshResolver;
+
+    auto priorResolver = activeMeshResolver;
+    scope (exit) {
+        activeMeshResolver = priorResolver;
+        clearMorphTarget();
+    }
+
+    auto owner = Session.bootstrap(makeCube());
+    scope (exit) owner.teardownActiveLayerPreRefresh();
+    registerMorphTargetLifecycle(owner);
+
+    auto layerA = owner.document.primary;
+    auto layerB = new Layer();
+    layerB.meshRef() = makeCube();
+    owner.document.layers ~= layerB;
+    owner.document.noteLayerListChanged();
+    auto meshA = &layerA.meshRef();
+    auto meshB = &layerB.meshRef();
+
+    enum mapName = "shared";
+    immutable deltaA = Vec3(0.75f, 0.0f, 0.0f);
+    immutable deltaB = Vec3(-0.25f, 0.5f, 0.0f);
+    assert(meshA.addMeshMapOfKind(MapKind.morphRelative, mapName) !is null
+        && meshA.setMorphValue(mapName, 0, deltaA));
+    assert(meshB.addMeshMapOfKind(MapKind.morphRelative, mapName) !is null
+        && meshB.setMorphValue(mapName, 0, deltaB));
+    activeMeshResolver = () => owner.document.activeMesh();
+    setMorphTarget(mapName, MapKind.morphRelative);
+
+    // Population floors precede every transition verdict: both maps contain
+    // a real entry, and each would visibly move vertex 0 by a different amount.
+    auto mapA = meshA.meshMap(mapName);
+    auto mapB = meshB.meshMap(mapName);
+    assert(mapA !is null && mapB !is null
+        && mapA.data.length == meshA.vertices.length * 3
+        && mapB.data.length == meshB.vertices.length * 3
+        && mapA.present[0] != 0 && mapB.present[0] != 0,
+        "pre-refresh floor: both same-named morph maps must be non-empty");
+    assert(meshA.morphEvaluate(mapName, 0) == deltaA
+        && meshB.morphEvaluate(mapName, 0) == deltaB
+        && deltaA != Vec3(0, 0, 0) && deltaB != Vec3(0, 0, 0)
+        && deltaA != deltaB,
+        "pre-refresh floor: A and B need distinct non-zero morph effects");
+    assert(displayPosition(meshA, 0) == meshA.vertices[0] + deltaA,
+        "pre-refresh floor: the target must be active on A before switching");
+
+    owner.document.setActive(1);
+    assert(owner.document.primary is layerB,
+        "pre-refresh floor: the switch did not make B primary");
+
+    size_t firstUploadCalls;
+    bool targetBoundAtFirstUpload;
+    Vec3 firstUploadedPosition;
+    owner.transitionActiveLayerBeforeRefresh(() {
+        ++firstUploadCalls;
+        targetBoundAtFirstUpload = hasMorphTarget();
+        auto displayed = displayVertices(meshB);
+        firstUploadedPosition = displayed.length == meshB.vertices.length
+            ? displayed[0] : meshB.vertices[0];
+    });
+
+    assert(firstUploadCalls == 1,
+        "pre-refresh floor: the first GPU upload callback did not run exactly once");
+    assert(!hasMorphTarget(),
+        "morph pre-refresh registration missing: the Session transition did "
+      ~ "not clear the routing target");
+    assert(!targetBoundAtFirstUpload
+        && firstUploadedPosition == meshB.vertices[0],
+        "morph pre-refresh delivery was late: B's FIRST GPU upload observed "
+      ~ "its same-named non-zero morph instead of B's base");
 }
 
 // ---------------------------------------------------------------------------

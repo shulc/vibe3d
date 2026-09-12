@@ -302,7 +302,7 @@ allow source/selection_product.d 3
 allow source/selection_projection.d 4
 allow source/selftest_fault.d 3
 allow source/seltype.d 3
-allow source/session_owner.d 1
+allow source/session_owner.d 2
 allow source/shader.d 16
 allow source/shortcuts.d 3
 allow source/snap.d 68

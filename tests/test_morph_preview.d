@@ -67,6 +67,20 @@ double[3] modelVertex(size_t vi) {
     return [a[0].floating, a[1].floating, a[2].floating];
 }
 
+/// A vertex position read from the real GPU vertex buffer. This is the
+/// display half of task 5720's split witness; the headless half pins the first
+/// refresh ordering in `tests/unit/morph_target_lifecycle_test.d`.
+double[3] gpuVertex(size_t vi) {
+    auto gpu = getJson("/api/gpu/face-vbo");
+    auto positions = gpu["vertPositions"].array;
+    assert(gpu["vertCount"].integer == 8 && positions.length == 8,
+        format("morph GPU floor: expected the populated cube VBO (8), got %d/%d",
+               gpu["vertCount"].integer, positions.length));
+    assert(vi < positions.length, "morph GPU floor: vertex index is out of range");
+    auto a = positions[vi].array;
+    return [a[0].floating, a[1].floating, a[2].floating];
+}
+
 // ==========================================================================
 
 unittest { // (7b) THE GIZMO FOLLOWS THE PREVIEW.
@@ -87,6 +101,7 @@ unittest { // (7b) THE GIZMO FOLLOWS THE PREVIEW.
     runCmd("mesh.morph.set", `{"name":"m","vert":6,"x":2.0,"y":0.0,"z":0.0}`);
     Thread.sleep(dur!"msecs"(120));
     auto after = actionCentre();
+    auto gpuAfter = gpuVertex(6);
 
     // The selection is the single vertex 6, so its action centre IS its drawn
     // position: base (0.5,0.5,0.5) plus the delta (2,0,0).
@@ -101,6 +116,11 @@ unittest { // (7b) THE GIZMO FOLLOWS THE PREVIEW.
     assert(!approxEq(before[0], after[0]),
         format("...and it must have MOVED: it was (%.4f,%.4f,%.4f)",
                before[0], before[1], before[2]));
+    assert(approxEq(gpuAfter[0], 2.5) && approxEq(gpuAfter[1], 0.5)
+        && approxEq(gpuAfter[2], 0.5),
+        format("the real GPU vertex buffer must carry the non-zero morph "
+             ~ "effect (2.5,0.5,0.5), got (%.4f,%.4f,%.4f)",
+               gpuAfter[0], gpuAfter[1], gpuAfter[2]));
 
     // ...and the BASE really did not move, so the gizmo followed the DRAWN
     // position rather than a geometry edit.
@@ -109,6 +129,48 @@ unittest { // (7b) THE GIZMO FOLLOWS THE PREVIEW.
         format("the base vertex must be untouched, got (%.4f,%.4f,%.4f)",
                v[0], v[1], v[2]));
     cmd("tool.set move off");
+}
+
+unittest { // TASK 5720 — the switched layer reaches the real GPU at base.
+    resetCube();
+    runCmd("mesh.morph.create", `{"name":"shared","kind":"relative"}`);
+    runCmd("mesh.morph.set",
+        `{"name":"shared","vert":6,"x":2.0,"y":0.0,"z":0.0}`);
+
+    // Duplicate B inherits the same map name. Give it a distinct non-zero
+    // effect and bind it once so the GPU itself proves that effect is live.
+    cmd("layer.duplicate");
+    runCmd("mesh.morph.set",
+        `{"name":"shared","vert":6,"x":-1.0,"y":0.75,"z":0.0}`);
+    runCmd("mesh.morph.select", `{"name":"shared"}`);
+    Thread.sleep(dur!"msecs"(80));
+    auto bMorphed = gpuVertex(6);
+    assert(approxEq(bMorphed[0], -0.5) && approxEq(bMorphed[1], 1.25)
+        && approxEq(bMorphed[2], 0.5),
+        format("pre-refresh GPU floor: B needs its distinct non-zero morph "
+             ~ "(-0.5,1.25,0.5), got (%.4f,%.4f,%.4f)",
+               bMorphed[0], bMorphed[1], bMorphed[2]));
+
+    // Rebind on A; this pins a different live effect before the decisive
+    // switch. The command response returns only after the synchronous upload.
+    cmd("layer.select index:0");
+    runCmd("mesh.morph.select", `{"name":"shared"}`);
+    Thread.sleep(dur!"msecs"(80));
+    auto aMorphed = gpuVertex(6);
+    assert(approxEq(aMorphed[0], 2.5) && approxEq(aMorphed[1], 0.5)
+        && approxEq(aMorphed[2], 0.5),
+        format("pre-refresh GPU floor: A needs its distinct non-zero morph "
+             ~ "(2.5,0.5,0.5), got (%.4f,%.4f,%.4f)",
+               aMorphed[0], aMorphed[1], aMorphed[2]));
+
+    cmd("layer.select index:1");
+    auto bFirstUpload = gpuVertex(6);
+    assert(approxEq(bFirstUpload[0], 0.5)
+        && approxEq(bFirstUpload[1], 0.5)
+        && approxEq(bFirstUpload[2], 0.5),
+        format("B's first pre-refresh GPU upload must use its base "
+             ~ "(0.5,0.5,0.5), got (%.4f,%.4f,%.4f)",
+               bFirstUpload[0], bFirstUpload[1], bFirstUpload[2]));
 }
 
 unittest { // (7a) PICKING FOLLOWS THE DRAWN SURFACE.

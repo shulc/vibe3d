@@ -479,3 +479,42 @@ unittest { // TASK 1073, review B2 — a PRIMARY-LAYER CHANGE drops the routing
     assert(morphOf(original, "m").valueOf(6, o));
     assertVec(o, [0.25, 0, 0], "nor its map");
 }
+
+unittest { // TASK 5720 — a same-primary multi-select produces NO lifecycle
+           // transition, so it must not clear the feature-owned morph target.
+    resetCube();
+    runCmd("mesh.morph.create", `{"name":"shared","kind":"relative"}`);
+    runCmd("mesh.morph.set",
+        `{"name":"shared","vert":6,"x":0.25,"y":0.0,"z":0.0}`);
+
+    // B receives the same non-empty map, then A becomes primary again. The
+    // explicit select below binds the target to A after both genuine switches.
+    cmd("layer.duplicate");
+    cmd("layer.select index:0");
+    runCmd("mesh.morph.select", `{"name":"shared"}`);
+
+    // Add B to the item selection without moving the primary away from A.
+    // `LayerCommandBase.fireSwitchIfChanged` must return before the Session
+    // transition; an event counter would not prove the retained routing state.
+    cmd("layer.select index:1 mode:add");
+    postSelect("vertices", [6]);
+    numericMoveX(0.1);
+
+    auto doc = saveAndReadDoc("same-primary");
+    assert(doc["layers"].array.length == 2
+        && doc["primaryLayer"].integer == 0,
+        "same-primary floor: multi-select must retain A as primary");
+    auto a = doc["layers"].array[0]["mesh"];
+    auto b = doc["layers"].array[1]["mesh"];
+    assertVec(vertexAt(a, 6), [0.5, 0.5, 0.5],
+        "same-primary multi-select emitted a pre-refresh transition: the "
+      ~ "target cleared and the next move hit A's base");
+    double[3] av;
+    assert(morphOf(a, "shared").valueOf(6, av));
+    assertVec(av, [0.35, 0, 0],
+        "same-primary multi-select must retain A's target and route the next move");
+    double[3] bv;
+    assert(morphOf(b, "shared").valueOf(6, bv));
+    assertVec(bv, [0.25, 0, 0],
+        "same-primary multi-select must not edit B's copied map");
+}

@@ -1654,6 +1654,9 @@ void main(string[] args) {
     // byte-neutral with the prior global mesh.
     import document : Document, primaryModelSpaceResolver, primaryModelSpace;
     Session* sessionOwner = Session.bootstrap(makeCube());
+    import morph_target : registerMorphTargetLifecycle;
+    registerMorphTargetLifecycle(sessionOwner);
+    scope(exit) sessionOwner.teardownActiveLayerPreRefresh();
     @property ref Document document() nothrow @nogc {
         return sessionOwner.document;
     }
@@ -2880,8 +2883,9 @@ void main(string[] args) {
     // Active-layer-switch hook (layers Stage 2). The single contract every
     // layer-active change funnels through — fired by the layer.add / .delete /
     // .select commands (and their undo/redo paths) whenever the active layer
-    // OBJECT changes. Order matters (see the design doc):
-    //   1. Drop the active tool FIRST — an edit scan is bound to a fixed
+    // OBJECT changes. Order matters (see the design doc): pending command
+    // drop, morph pre-refresh, then this unchanged tail:
+    //   1. Drop the active tool — an edit scan is bound to a fixed
     //      foreground layer; a transform session / live preview must never
     //      straddle a switch.
     //   2. Break the coalescing boundary — a selection/delta edit recorded on
@@ -2906,70 +2910,61 @@ void main(string[] args) {
         // LayerSelect drops an active tool before moving the primary, while
         // the tool's original mesh is still current. This hook therefore sees
         // no active tool for a guarded selection move.
-        // 0b. Drop the morph ROUTING TARGET (task 1073, review B2). It is a
-        //     NAME resolved per use, so carrying it across a primary change
-        //     silently routes the next edit into a same-named map on the new
-        //     layer — and a DUPLICATED layer carries the same map names by
-        //     construction, so that is the common case rather than the exotic
-        //     one. `morph_target`'s own header has claimed this since task
-        //     1069; nothing implemented it. Must run BEFORE step 3's
-        //     `gpu.upload`, which reads the drawn positions through the
-        //     binding: clearing after it would upload the new layer morphed
-        //     by the old layer's target and leave that on screen.
-        {
-            import morph_target : clearMorphTarget;
-            clearMorphTarget();
-        }
-        // 1. tool-drop for non-LayerSelect callers of this hook.
-        dropActiveTool(ToolTransition.activeLayerChangedDrop);
-        // 2. explicit coalesce barrier on the history.
-        history.breakCoalescing();
-        // 3. GPU re-upload against the NEW mesh.
-        //    Task 0654: "the new mesh" can be NO mesh — this hook also fires on
-        //    the transition INTO an empty item selection, where the primary
-        //    went away rather than moved. The stand-in is empty, so uploading
-        //    it clears the GPU buffers, which is what the frame after an
-        //    emptying select must draw. It is a READ of the stand-in, so the
-        //    no-write rule is intact.
-        Mesh* active = document.activeMesh();
-        if (active is null) active = &mesh();
-        gpu.upload(*active);
-        // 4. blanket-invalidate the snap grids. Since task 1906 stage 2c this
-        //    is the ONLY production caller of `invalidateSnapGrids()`, and it
-        //    is here because a layer switch is not a mesh change: nothing was
-        //    edited, so no change class describes it and no bus epoch moves.
-        //    The grids' address key is the primary defense (a grid built over
-        //    the prior layer's mesh mismatches on address); this blanket drop
-        //    is the belt-and-braces one, and it also covers a slot table whose
-        //    SOURCE ORDER changed under it. Symmetry + the subpatch preview
-        //    self-invalidate on their own address terms.
-        invalidateSnapGrids();
-        // 5. publish a bulk change on the new active mesh. (The required cache
-        //    refresh stays MeshChangeAll — the on-screen geometry is a different
-        //    mesh; the scope-down rider is deliberately NOT taken here.)
-        //    TASK 1906 STAGE 3 — this WAS the one `noteChange` whose only
-        //    channel was the per-frame drain, and the stage-2 comment here said
-        //    so in as many words ("what this line is for is the per-frame
-        //    drain's subscribers, and they read `pendingChanges_`"). It was also
-        //    the only residue the stage-3 census measured: with delivery
-        //    consuming the drain words, `layer.add` and `layer.duplicate` were
-        //    the two commands that still left `flags=0x3f` for the flush.
-        //    Publishing instead is strictly MORE information, not less — the
-        //    drain's own delivery carried `subjectAddr == 0`, which `mesh_dirty`
-        //    refuses by design, so the three epoch tables never saw this hook at
-        //    all; a publish names the NEW mesh and advances them for its
-        //    address. Step 3 above and the address term in `displayServiced_`
-        //    still cover the display half independently, as they did before.
-        active.publishChange(MeshChangeAll);
-        // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
-        //    that fires iff the PRIMARY (active) Layer OBJECT genuinely changed
-        //    (Stage 2a: `active()` == `primary`, so `fireSwitchIfChanged` keys on
-        //    the primary identity — a multi-select add/remove that leaves the
-        //    primary put does NOT fire this). It is the ONE place ActiveChanged
-        //    is emitted — add/delete/select/reorder/setVisible-promote route
-        //    their primary-change through here and must NOT emit it themselves
-        //    (no double-count).
-        noteLayerChange(LayerChange.ActiveChanged);
+        // Task 5720: Session synchronously delivers the morph module's own
+        // reset, then resumes this unchanged tail. The continuation boundary
+        // is the proof that delivery precedes its first `GpuMesh.upload`.
+        sessionOwner.transitionActiveLayerBeforeRefresh(() {
+            // 1. tool-drop for non-LayerSelect callers of this hook.
+            dropActiveTool(ToolTransition.activeLayerChangedDrop);
+            // 2. explicit coalesce barrier on the history.
+            history.breakCoalescing();
+            // 3. GPU re-upload against the NEW mesh.
+            //    Task 0654: "the new mesh" can be NO mesh — this hook also fires on
+            //    the transition INTO an empty item selection, where the primary
+            //    went away rather than moved. The stand-in is empty, so uploading
+            //    it clears the GPU buffers, which is what the frame after an
+            //    emptying select must draw. It is a READ of the stand-in, so the
+            //    no-write rule is intact.
+            Mesh* active = document.activeMesh();
+            if (active is null) active = &mesh();
+            gpu.upload(*active);
+            // 4. blanket-invalidate the snap grids. Since task 1906 stage 2c this
+            //    is the ONLY production caller of `invalidateSnapGrids()`, and it
+            //    is here because a layer switch is not a mesh change: nothing was
+            //    edited, so no change class describes it and no bus epoch moves.
+            //    The grids' address key is the primary defense (a grid built over
+            //    the prior layer's mesh mismatches on address); this blanket drop
+            //    is the belt-and-braces one, and it also covers a slot table whose
+            //    SOURCE ORDER changed under it. Symmetry + the subpatch preview
+            //    self-invalidate on their own address terms.
+            invalidateSnapGrids();
+            // 5. publish a bulk change on the new active mesh. (The required cache
+            //    refresh stays MeshChangeAll — the on-screen geometry is a different
+            //    mesh; the scope-down rider is deliberately NOT taken here.)
+            //    TASK 1906 STAGE 3 — this WAS the one `noteChange` whose only
+            //    channel was the per-frame drain, and the stage-2 comment here said
+            //    so in as many words ("what this line is for is the per-frame
+            //    drain's subscribers, and they read `pendingChanges_`"). It was also
+            //    the only residue the stage-3 census measured: with delivery
+            //    consuming the drain words, `layer.add` and `layer.duplicate` were
+            //    the two commands that still left `flags=0x3f` for the flush.
+            //    Publishing instead is strictly MORE information, not less — the
+            //    drain's own delivery carried `subjectAddr == 0`, which `mesh_dirty`
+            //    refuses by design, so the three epoch tables never saw this hook at
+            //    all; a publish names the NEW mesh and advances them for its
+            //    address. Step 3 above and the address term in `displayServiced_`
+            //    still cover the display half independently, as they did before.
+            active.publishChange(MeshChangeAll);
+            // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
+            //    that fires iff the PRIMARY (active) Layer OBJECT genuinely changed
+            //    (Stage 2a: `active()` == `primary`, so `fireSwitchIfChanged` keys on
+            //    the primary identity — a multi-select add/remove that leaves the
+            //    primary put does NOT fire this). It is the ONE place ActiveChanged
+            //    is emitted — add/delete/select/reorder/setVisible-promote route
+            //    their primary-change through here and must NOT emit it themselves
+            //    (no double-count).
+            noteLayerChange(LayerChange.ActiveChanged);
+        });
     };
 
     // Layers panel (layers Stage 4): rename-in-place state. `layerRenameIndex`

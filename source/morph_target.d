@@ -17,13 +17,14 @@ module morph_target;
 // Main-thread only, like `io.doc_state` — the HTTP command routes are
 // dispatched as `Answered.mainThread`.
 //
-// Cleared on a primary-layer change (`app.d`'s `onActiveLayerChanged` hook),
-// by File → New / `scene.reset` (`commands/scene/reset.d`) and by File → Open
+// Cleared on Session's synchronous active-layer pre-refresh transition, by
+// File → New / `scene.reset` (`commands/scene/reset.d`) and by File → Open
 // (`commands/file/load.d`): the same NAME may denote a different map on
 // another layer — a duplicated layer carries the same map names by
 // construction — and silently retargeting an edit at a same-named map on a
 // layer the user just switched to is worse than dropping the target. OUR
-// choice, not a measurement — registry row 50.
+// choice, not a measurement — registry row 50. The feature-owned registration
+// is `registerMorphTargetLifecycle`; Session owns its slot and teardown.
 //
 // Those three call sites are the WHOLE list, and `clearMorphTarget` is
 // otherwise called only by `MorphSelect` and `forgetMorphTargetIfNamed`. The
@@ -35,6 +36,7 @@ module morph_target;
 // 1073, review B2.)
 
 import mesh : MapKind, Mesh, isMorphKind;
+import session_owner : Session;
 
 private string  g_targetName;
 private MapKind g_targetKind = MapKind.unclassified;
@@ -64,9 +66,23 @@ void setMorphTarget(string name, MapKind kind) {
 
 /// Drop the binding. Called on a primary-layer change, by File → New /
 /// `scene.reset` (which is what `/api/reset` fires) and by File → Open.
-void clearMorphTarget() {
+void clearMorphTarget() nothrow @nogc {
     g_targetName = null;
     g_targetKind = MapKind.unclassified;
+}
+
+private void clearMorphTargetBeforeLayerRefresh() nothrow @nogc {
+    clearMorphTarget();
+}
+
+/// Register the morph module's own reset as the sole task-5720 lifecycle
+/// consumer. A second consumer is outside this pilot and is refused loudly.
+void registerMorphTargetLifecycle(Session* session) {
+    if (session is null)
+        throw new Exception("morph lifecycle requires a Session owner");
+    if (!session.registerActiveLayerPreRefresh(
+            &clearMorphTargetBeforeLayerRefresh))
+        throw new Exception("active-layer pre-refresh lifecycle is already owned");
 }
 
 /// Is `m` the mesh the binding applies to — the PRIMARY (edit-target) layer's
