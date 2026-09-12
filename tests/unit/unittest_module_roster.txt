@@ -372,6 +372,7 @@ tests.unit.quad_overlay_eligibility_test
 tests.unit.quit_window_close_guard_test
 tests.unit.removeverts_pointmap_test
 tests.unit.render_ipr_bus_witness_test
+tests.unit.request_result_ownership_test
 tests.unit.revert_entry_census_test
 tests.unit.run_test_display_environment_test
 tests.unit.run_test_pgid_test

@@ -55,21 +55,9 @@ string versionJson() {
 // Generic HTTP-thread <-> main-thread request/response bridge (task 0183 C3).
 //
 // Every marshaled endpoint used to hand-roll the same atomic-epoch spin/tick
-// pair (submit epoch bumped by the HTTP thread, drained by a per-endpoint
-// tickX() on the main thread, completed epoch bumped last). That duplication
-// is collapsed into one generic primitive here: MainThreadBridge!(Req,Resp)
-// holds the epoch pair + a typed request/response payload + a per-bridge
-// "service" delegate; each bridge self-registers into HttpServer.bridges at
-// construction, so tickAll() can drain every bridge without a hand-maintained
-// call list (a bridge that is constructed can never be "forgotten").
-//
-// Memory ordering (load-bearing — mirrors the old per-endpoint code exactly):
-// the HTTP thread writes `req` BEFORE bumping the submitted epoch; the main
-// thread's tick() reads `req`/runs `service` and writes `resp` BEFORE storing
-// the completed epoch (the LAST statement in tick()); the HTTP thread reads
-// `resp` only AFTER submitAndWait() observes the completed epoch catch up.
-// Same seq-cst atomicOp/atomicLoad/atomicStore as before, same 2500-iter /
-// 2ms sleep timeout. Do not weaken any of this.
+// pair. MainThreadBridge!(Req,Resp) keeps that legacy surface temporarily and
+// also self-registers into HttpServer.bridges, so tickAll() drains every
+// constructed bridge without a named call list.
 //
 // Command dispatch gets a longer leash than the 2500-iter default: a
 // legitimate one-shot mesh command on a ~100K-face mesh (whole-mesh bevel,
@@ -79,20 +67,70 @@ string versionJson() {
 // the client already gave up on. 60000 iters ≈ 2 min.
 enum int kCommandBridgeMaxIters = 60_000;
 
-// Timeout is per-bridge, NOT uniform: submitAndWait() returns a plain bool
-// and never synthesizes a timeout body — each call site keeps its own
-// bespoke timeout response (silent-ok for reset, noop-false for undo/jump,
-// an explicit "timeout waiting for main thread" error string for the rest).
+// Timeout is per-call-site, NOT uniform. The legacy submitAndWait() returns a
+// bool; migrated callers pass explicit initial/timeout/stopping results to the
+// owned surface. The two surfaces coexist only for the narrow migration: a
+// bridge instance is used through one or the other, never both concurrently.
 interface IMainThreadBridge {
     void tick();
+    void notifyStarted();
+    void notifyStopping();
+}
+
+enum BridgeResultKind : ubyte {
+    submitted,
+    timedOut,
+    completed,
+    stopping,
 }
 
 final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
-    private shared long submitted;
-    private shared long completed;
-    Req  req;
-    Resp resp;
+    private shared long submitted = 0;
+    private shared long completed = 0;
+    Req  req = Req.init;
+    Resp resp = Resp.init;
     private void delegate(ref Req, ref Resp) service;
+
+    private final class OwnedCall {
+        Req request = Req.init;
+        Resp result = Resp.init;
+        MonoTime deadline = MonoTime.init;
+        long requestIdentity = 0;
+        long serviceResultIdentity = 0;
+        shared int finished = 0;
+
+        this(Req request, Resp initialResult, MonoTime deadline,
+             long requestIdentity, long serviceResultIdentity) {
+            this.request = request;
+            this.result = initialResult;
+            this.deadline = deadline;
+            this.requestIdentity = requestIdentity;
+            this.serviceResultIdentity = serviceResultIdentity;
+            atomicStore(this.finished, 0);
+        }
+    }
+
+    struct OwnedResult {
+        Resp result = Resp.init;
+        long requestIdentity = 0;
+        long resultIdentity = 0;
+        BridgeResultKind kind = BridgeResultKind.completed;
+    }
+
+    private OwnedCall[] ownedPending = null;
+    private shared long nextOwnedIdentity = 0;
+    private shared bool ownedStopping = false;
+
+    version(unittest) {
+        struct OwnedTraceEntry {
+            BridgeResultKind kind = BridgeResultKind.submitted;
+            long requestIdentity = 0;
+            long resultIdentity = 0;
+            size_t stateIdentity = 0;
+            Resp result = Resp.init;
+        }
+        private OwnedTraceEntry[] ownedTrace = null;
+    }
 
     this(HttpServer owner, void delegate(ref Req, ref Resp) service) {
         this.service = service;
@@ -126,9 +164,120 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         return true;
     }
 
+    // Task 5730 invariant: an owned submission keeps its request and service
+    // result alive past timeout; timeout/shutdown return separate values and
+    // never mutate the state tick() may still be filling. The controlled
+    // ordering and identity evidence is request_result_ownership_test.d.
+    OwnedResult submitOwned(Req request, Resp initialResult,
+                            Resp timeoutResult, Resp stoppingResult,
+                            Duration budget) {
+        immutable submittedAt = MonoTime.currTime;
+        immutable requestIdentity = nextIdentity();
+        auto call = new OwnedCall(request, initialResult,
+                                  submittedAt + budget,
+                                  requestIdentity, nextIdentity());
+        bool queued = false;
+        synchronized (this) {
+            traceOwned(BridgeResultKind.submitted, call,
+                       call.serviceResultIdentity, initialResult);
+            if (!atomicLoad(ownedStopping)) {
+                ownedPending ~= call;
+                queued = true;
+            }
+        }
+        if (!queued)
+            return syntheticOwnedResult(call, stoppingResult,
+                                        BridgeResultKind.stopping);
+
+        for (;;) {
+            if (atomicLoad(ownedStopping))
+                return syntheticOwnedResult(call, stoppingResult,
+                                            BridgeResultKind.stopping);
+            if (atomicLoad(call.finished) != 0) {
+                OwnedResult result;
+                result.result = call.result;
+                result.requestIdentity = call.requestIdentity;
+                result.resultIdentity = call.serviceResultIdentity;
+                result.kind = BridgeResultKind.completed;
+                return result;
+            }
+            if (MonoTime.currTime >= call.deadline)
+                return syntheticOwnedResult(call, timeoutResult,
+                                            BridgeResultKind.timedOut);
+            Thread.sleep(2.msecs);
+        }
+    }
+
+    override void notifyStarted() {
+        atomicStore(ownedStopping, false);
+    }
+
+    override void notifyStopping() {
+        atomicStore(ownedStopping, true);
+        synchronized (this) ownedPending = null;
+    }
+
+    private long nextIdentity() {
+        return atomicOp!"+="(nextOwnedIdentity, 1);
+    }
+
+    private OwnedResult syntheticOwnedResult(OwnedCall call, Resp value,
+                                             BridgeResultKind kind) {
+        OwnedResult result;
+        result.result = value;
+        result.requestIdentity = call.requestIdentity;
+        result.resultIdentity = nextIdentity();
+        result.kind = kind;
+        synchronized (this) {
+            traceOwned(kind, call, result.resultIdentity, value);
+        }
+        return result;
+    }
+
+    private void traceOwned(BridgeResultKind kind, OwnedCall call,
+                            long resultIdentity, Resp result) {
+        version(unittest) {
+            OwnedTraceEntry entry;
+            entry.kind = kind;
+            entry.requestIdentity = call.requestIdentity;
+            entry.resultIdentity = resultIdentity;
+            entry.stateIdentity = cast(size_t) cast(void*) call;
+            entry.result = result;
+            ownedTrace ~= entry;
+        }
+    }
+
+    version(unittest) {
+        OwnedTraceEntry[] ownedTraceForTest() {
+            synchronized (this) return ownedTrace.dup;
+        }
+
+        size_t ownedPendingForTest() {
+            synchronized (this) return ownedPending.length;
+        }
+    }
+
     /// Main thread (called once per frame via HttpServer.tickAll()): runs
     /// the pending request's service body, if any, then publishes it.
     void tick() {
+        OwnedCall owned;
+        synchronized (this) {
+            if (ownedPending.length != 0) {
+                owned = ownedPending[0];
+                ownedPending[0] = null;
+                ownedPending = ownedPending[1 .. $];
+                if (ownedPending.length == 0) ownedPending = null;
+            }
+        }
+        if (owned !is null) {
+            service(owned.request, owned.result);
+            synchronized (this) {
+                traceOwned(BridgeResultKind.completed, owned,
+                           owned.serviceResultIdentity, owned.result);
+            }
+            atomicStore(owned.finished, 1);
+        }
+
         immutable long sub = atomicLoad(submitted);
         if (sub <= atomicLoad(completed)) return;
         service(req, resp);
@@ -1281,6 +1430,22 @@ class HttpServer {
         selectionBridgeMaxIters_ = maxIters;
     }
 
+    version(unittest) public auto selectionOwnedTraceForTest() {
+        return selectionBridge.ownedTraceForTest();
+    }
+
+    version(unittest) public auto layersOwnedTraceForTest() {
+        return layersBridge.ownedTraceForTest();
+    }
+
+    version(unittest) public size_t selectionOwnedPendingForTest() {
+        return selectionBridge.ownedPendingForTest();
+    }
+
+    version(unittest) public size_t layersOwnedPendingForTest() {
+        return layersBridge.ownedPendingForTest();
+    }
+
     /// GET /api/tool/handles — see the ToolHandlesDataProvider doc comment above.
     public void setToolHandlesDataProvider(ToolHandlesDataProvider provider) {
         this.toolHandlesDataProvider = provider;
@@ -1567,6 +1732,7 @@ class HttpServer {
             return;
         }
 
+        foreach (bridge; bridges) bridge.notifyStarted();
         serverThread = new Thread({
             import std.format : format;
             try {
@@ -1605,6 +1771,7 @@ class HttpServer {
             return;
         }
 
+        foreach (bridge; bridges) bridge.notifyStopping();
         atomicStore(isRunning, false);
         if (serverSocket !is null) {
             // Connect to ourselves to unblock the accept() call in serverThread
@@ -1988,17 +2155,27 @@ class HttpServer {
         // prepared-shadow cells live in tests.unit.selection_projection_test.
         response.headers["Content-Type"] = "application/json";
         if (selectionDataProvider !is null) {
-            selectionBridge.resp.result = "";
-            selectionBridge.resp.error  = "";
-            if (!selectionBridge.submitAndWait(selectionBridgeMaxIters_))
-                selectionBridge.resp.error = "timeout waiting for main thread";
-            if (selectionBridge.resp.error.length == 0) {
+            SelectionReq bridgeRequest = SelectionReq.init;
+            SelectionResp initialResult = SelectionResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            SelectionResp timeoutResult = SelectionResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            SelectionResp stoppingResult = SelectionResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "HTTP server stopping";
+            immutable budget = (selectionBridgeMaxIters_ * 2L).msecs;
+            auto owned = selectionBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                budget);
+            if (owned.result.error.length == 0) {
                 response.statusCode = 200;
-                response.body = selectionBridge.resp.result;
+                response.body = owned.result.result;
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
-                               jsonEsc(selectionBridge.resp.error) ~ "\"}";
+                               jsonEsc(owned.result.error) ~ "\"}";
             }
         } else {
             response.statusCode = 500;
@@ -2225,17 +2402,26 @@ class HttpServer {
             response.statusCode = 500;
             response.body = "{\"error\": \"Layers data provider not set\"}";
         } else {
-            layersBridge.resp.result = "";
-            layersBridge.resp.error  = "";
-            if (!layersBridge.submitAndWait())
-                layersBridge.resp.error = "timeout waiting for main thread";
-            if (layersBridge.resp.error.length == 0) {
+            LayersReq bridgeRequest = LayersReq.init;
+            LayersResp initialResult = LayersResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            LayersResp timeoutResult = LayersResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            LayersResp stoppingResult = LayersResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "HTTP server stopping";
+            auto owned = layersBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                5.seconds);
+            if (owned.result.error.length == 0) {
                 response.statusCode = 200;
-                response.body = layersBridge.resp.result;
+                response.body = owned.result.result;
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
-                               jsonEsc(layersBridge.resp.error) ~ "\"}";
+                               jsonEsc(owned.result.error) ~ "\"}";
             }
         }
     }
