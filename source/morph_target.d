@@ -71,17 +71,12 @@ void clearMorphTarget() nothrow @nogc {
     g_targetKind = MapKind.unclassified;
 }
 
-private void clearMorphTargetBeforeLayerRefresh() nothrow @nogc {
-    clearMorphTarget();
-}
-
 /// Register the morph module's own reset as the sole task-5720 lifecycle
 /// consumer. A second consumer is outside this pilot and is refused loudly.
 void registerMorphTargetLifecycle(Session* session) {
     if (session is null)
         throw new Exception("morph lifecycle requires a Session owner");
-    if (!session.registerActiveLayerPreRefresh(
-            &clearMorphTargetBeforeLayerRefresh))
+    if (!session.registerActiveLayerPreRefresh(&clearMorphTarget))
         throw new Exception("active-layer pre-refresh lifecycle is already owned");
 }
 

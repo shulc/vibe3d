@@ -152,7 +152,7 @@ unittest { // TASK 5720 — the switched layer reaches the real GPU at base.
                bMorphed[0], bMorphed[1], bMorphed[2]));
 
     // Rebind on A; this pins a different live effect before the decisive
-    // switch. The command response returns only after the synchronous upload.
+    // switch. The command response returns only after the switch refresh.
     cmd("layer.select index:0");
     runCmd("mesh.morph.select", `{"name":"shared"}`);
     Thread.sleep(dur!"msecs"(80));
@@ -164,13 +164,13 @@ unittest { // TASK 5720 — the switched layer reaches the real GPU at base.
                aMorphed[0], aMorphed[1], aMorphed[2]));
 
     cmd("layer.select index:1");
-    auto bFirstUpload = gpuVertex(6);
-    assert(approxEq(bFirstUpload[0], 0.5)
-        && approxEq(bFirstUpload[1], 0.5)
-        && approxEq(bFirstUpload[2], 0.5),
-        format("B's first pre-refresh GPU upload must use its base "
+    auto bAfterSwitch = gpuVertex(6);
+    assert(approxEq(bAfterSwitch[0], 0.5)
+        && approxEq(bAfterSwitch[1], 0.5)
+        && approxEq(bAfterSwitch[2], 0.5),
+        format("B's GPU upload after the switch must use its base "
              ~ "(0.5,0.5,0.5), got (%.4f,%.4f,%.4f)",
-               bFirstUpload[0], bFirstUpload[1], bFirstUpload[2]));
+               bAfterSwitch[0], bAfterSwitch[1], bAfterSwitch[2]));
 }
 
 unittest { // (7a) PICKING FOLLOWS THE DRAWN SURFACE.

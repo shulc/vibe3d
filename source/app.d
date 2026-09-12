@@ -1656,6 +1656,8 @@ void main(string[] args) {
     Session* sessionOwner = Session.bootstrap(makeCube());
     import morph_target : registerMorphTargetLifecycle;
     registerMorphTargetLifecycle(sessionOwner);
+    // Unconditional main-body teardown is sufficient: there is one Session,
+    // and the consumer is a module function rather than a bound delegate.
     scope(exit) sessionOwner.teardownActiveLayerPreRefresh();
     @property ref Document document() nothrow @nogc {
         return sessionOwner.document;

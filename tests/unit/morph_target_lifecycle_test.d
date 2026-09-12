@@ -23,11 +23,17 @@
 //        binds one target and every same-named layer in the scene is drawn,
 //        snapped to and picked MORPHED.
 //
-// The third B2 site — `app.d`'s `onActiveLayerChanged` — is not reachable
-// from a module unittest (app.d is the entry module and the hook is a local
-// delegate); it is covered by the layer-switch case in
-// `tests/test_morph_routing.d`.
+// The third B2 site — `app.d`'s `onActiveLayerChanged` — is not callable from
+// a module unittest because app.d is the entry module and the hook is local.
+// The task-5720 block therefore reads that production body and pins its upload
+// inside the Session continuation; the HTTP cell pins the post-switch buffer.
 module tests.unit.morph_target_lifecycle_test;
+
+import std.algorithm : count;
+import std.exception : enforce;
+import std.file      : readText;
+import std.path      : buildPath, dirName;
+import std.string    : indexOf;
 
 import math        : Vec3;
 import mesh        : Mesh, MapKind, makeCube;
@@ -36,6 +42,28 @@ import view        : View;
 import editmode    : EditMode;
 import morph_target;
 import session_owner : Session;
+import tests.unit.census_symbols : blankNonCode;
+
+private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+private string bodyAt(string code, string marker)
+{
+    const at = code.indexOf(marker);
+    enforce(at >= 0, "missing source marker `" ~ marker ~ "`");
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    enforce(i < code.length, "no body after source marker `" ~ marker ~ "`");
+    const begin = i;
+    size_t depth;
+    for (; i < code.length; ++i)
+    {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    enforce(false, "unterminated body after source marker `" ~ marker ~ "`");
+    return null;
+}
 
 // ---------------------------------------------------------------------------
 // B2 — scene.reset (which is what File → New and `/api/reset` both fire).
@@ -146,6 +174,22 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import display_sync : activeMeshResolver;
+
+    const app = blankNonCode(readText(
+        buildPath(repoRoot, "source", "app.d")));
+    const mainBody = bodyAt(app, "void main(string[] args)");
+    const switchBody = bodyAt(mainBody,
+        "void delegate(size_t, size_t) onActiveLayerChanged =");
+    enum transition = "sessionOwner.transitionActiveLayerBeforeRefresh(()";
+    enum upload = "gpu.upload(*active)";
+    assert(switchBody.count(transition) == 1
+        && switchBody.count(upload) == 1,
+        "morph production ordering census: active-layer switch must contain "
+      ~ "one Session transition and one GPU upload");
+    const continuation = bodyAt(switchBody, transition);
+    assert(continuation.count(upload) == 1,
+        "morph production ordering: app.main.onActiveLayerChanged must keep "
+      ~ "gpu.upload inside the Session pre-refresh continuation");
 
     auto priorResolver = activeMeshResolver;
     scope (exit) {
