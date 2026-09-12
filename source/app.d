@@ -2284,8 +2284,8 @@ void main(string[] args) {
     // It is written by exactly ONE path — `setEditModeFromOrder()` below —
     // called from the geometry-type funnel (`switchGeometryType` /
     // `promoteGeometryType`). No command or handler writes this field
-    // independently of the order. A debug-only invariant on the `/api/selection`
-    // read boundary asserts it equals `derivedEditMode()` as a regression guard.
+    // independently of the order. `encodeSelectionProjection` keeps a
+    // debug-only read-boundary invariant against the order as a regression guard.
     EditMode editMode = EditMode.Vertices;
     // Selection-types Stage 1: the most-recent-first ordering of selection types
     // is the "current type" authority. `editMode` stays the picking/draw
@@ -2565,8 +2565,8 @@ void main(string[] args) {
     // intended mode. No other code path writes `editMode` on a live app path.
 
     // The geometry EditMode that the current recent-ordering implies.
-    // `editMode` must always equal this value — the debug invariant on
-    // `/api/selection` asserts it as a regression tripwire.
+    // `editMode` must always equal this value — `encodeSelectionProjection`
+    // asserts the equivalent order-derived value as a regression tripwire.
     EditMode derivedEditMode() const {
         return geometryEditMode(selTypeOrder.mostRecentGeometry());
     }
@@ -4470,7 +4470,6 @@ void main(string[] args) {
     app.stepTrace            = stepTrace;
     app.session              = session;
     app.ensureDisplayCurrent = cast(void delegate())&ensureDisplayCurrent;
-    app.derivedEditMode      = cast(EditMode delegate())&derivedEditMode;
     // Phase-B HTTP wiring call (was the inline `if (httpServer !is null) {
     // ... }` block that sat right after this main()'s outer-scope delegate
     // declarations, app.d ~3633-6044 pre-move). httpServer is ALWAYS

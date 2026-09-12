@@ -291,6 +291,8 @@ import commands.prefs.trackball     : TrackballPrefCommand;
 // module-scope struct so these two need to be top-level here (0415).
 import document       : Document;
 import viewport        : ViewportManager, Viewport3D;
+import selection_projection : SelectionProjectionInput,
+    SelectionProjectionReadModel;
 // Task 0617 — this module has no `Document` of its own (it operates on
 // `EditorApp app`'s pointer-backed properties via `with(app)`); the primary
 // layer's ModelSpace is resolved through the same global app.d's main()
@@ -323,7 +325,12 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     // see the end of this function.
     wireModelProviders(httpServer, app, optionalSlots);
     wireViewportProviders(httpServer, app, ifs, optionalSlots);
-    wireSelectionProviders(httpServer, app, optionalSlots);
+    auto selectionProjection = new SelectionProjectionReadModel(() {
+        return SelectionProjectionInput(
+            app.documentPtr, app.selTypeOrderPtr, app.editMode,
+            (*app.documentPtr).activeMesh());
+    });
+    wireSelectionProviders(httpServer, app, selectionProjection, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
     commandAdapter.wire();
     new HistoryHttpAdapter(app.history, app.session, app.stepTrace).wire(httpServer);
@@ -1552,70 +1559,14 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
 // `/api/recorded-events` — read-only introspection of what is selected
 // and what the active tool is doing.
 private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
+                               SelectionProjectionReadModel selectionProjection,
                                ref string[] optionalSlots) {
     with (app) {
-        httpServer.setSelectionDataProvider(() {
-            // recorded remainder (1906 §3.5 row 26, §1.8): this provider polls
-            // no counter and MUST NOT subscribe or read `mesh_dirty.g_*Epochs`.
-            // `/api/selection` is `Answered.httpThread` — it runs on the HTTP
-            // thread, and both the change bus and the epoch tables are
-            // main-thread-only and unsynchronised by design (delivery is
-            // main-thread by construction, since every mutating endpoint reaches
-            // the mesh through `MainThreadBridge`). It re-reads live state
-            // instead, which is race-tolerant for a read-only introspection
-            // endpoint in the way an epoch compare would not be. The task 0950
-            // hole is untouched by 1906.
-            // Derivation invariant: editMode is a materialized view of
-            // selTypeOrder.mostRecentGeometry. Any bypassing writer (raw
-            // *editModePtr write without going through the funnel) surfaces
-            // here as a hard failure in a debug build — every selection test
-            // already reads /api/selection, so regressions are caught immediately.
-            debug assert(editMode == derivedEditMode(),
-                "editMode drifted from selTypeOrder — a writer bypassed the funnel");
-            string modeName;
-            final switch (editMode) {
-                case EditMode.Vertices: modeName = "vertices"; break;
-                case EditMode.Edges:    modeName = "edges";    break;
-                case EditMode.Polygons: modeName = "polygons"; break;
-            }
-            // selType (Stage 1): the CURRENT selection type from the recent
-            // ordering — lowercase singular token (vertex/edge/polygon/item),
-            // matching the geometry payload's vocabulary. `selTypeOrder` is the
-            // full most-recent-first ordering (front == current); `items` is the
-            // item (layer) selection view — one `{selected,primary,type,focused}`
-            // entry per layer, in layer order. These are the Stage 4 final
-            // shapes plus the Stage 9 `type`/`focused` additions; the
-            // geometry-selection arrays are unchanged.
-            import std.json : JSONValue;
-            import document : tokenOf;
-            JSONValue[] orderArr;
-            foreach (t; selTypeOrder.order)
-                orderArr ~= JSONValue(selTypeToken(t));
-            JSONValue[] itemsArr;
-            foreach (l; document.layers) {
-                auto item = JSONValue.emptyObject;
-                item["selected"] = JSONValue(l.selected);
-                item["primary"]  = JSONValue(document.isPrimary(l));
-                item["type"]     = JSONValue(tokenOf(l.kind));
-                item["focused"]  = JSONValue(document.isFocused(l));
-                itemsArr ~= item;
-            }
-            JSONValue selectedIndices(bool[] sel) {
-                JSONValue[] arr;
-                foreach (i, s; sel)
-                    if (s) arr ~= JSONValue(i);
-                return JSONValue(arr);
-            }
-            auto root = JSONValue.emptyObject;
-            root["mode"]             = JSONValue(modeName);
-            root["selType"]          = JSONValue(selTypeToken(selTypeOrder.current()));
-            root["selTypeOrder"]     = JSONValue(orderArr);
-            root["items"]            = JSONValue(itemsArr);
-            root["selectedVertices"] = selectedIndices(mesh.selectedVertices);
-            root["selectedEdges"]    = selectedIndices(mesh.selectedEdges);
-            root["selectedFaces"]    = selectedIndices(mesh.selectedFaces);
-            return root.toString();
-        });
+        // `/api/selection` still answers on the HTTP thread until wave-9 item F;
+        // extracting a payload supplies no synchronization. The read-model's
+        // accessor is deliberately invoked per request, so switches and whole
+        // document loads cannot leave a copied Document or cached Mesh* here.
+        httpServer.setSelectionDataProvider(() => selectionProjection.read());
         // Task 0234 — GET /api/tool/handles + GET /api/tool/state. Read-only
         // test-introspection over the active tool; null-guard mirrors every
         // other activeTool-reading provider in this file. See the

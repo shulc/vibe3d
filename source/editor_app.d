@@ -1056,10 +1056,8 @@ struct EditorApp {
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      cast+&funcName; always called with explicit parens in the moved
-    //      block. derivedEditMode is `const` in main() -- hence the cast at
-    //      the wiring site (same precedent as runCommand above). ----
+    //      block. ----
     void delegate()     ensureDisplayCurrent;
-    EditMode delegate() derivedEditMode;
     // =========================================================================
     // app.d decomp phase B (source/ui/panels.d main-loop panels): members
     // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal.
