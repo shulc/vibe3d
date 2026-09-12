@@ -69,7 +69,7 @@ private enum LedgerRow[] kResidue = [
     LedgerRow("PreparedRecordContext.install|installPreparedToken", 2,
         "prepared Command arm — installs from both journal paths at "
       ~ "source/prepared_record_context.d:1661 and :1971"),
-    LedgerRow("wireHistoryProviders.setBlockHandler|blockEnd", 1,
+    LedgerRow("HistoryHttpAdapter.wire.setBlockHandler|blockEnd", 1,
         "command block — the history endpoint lands the collected children"),
     LedgerRow("Tool.recordGestureEdit|record", 1,
         "GesturePayload — Tool validates the carrier before recording"),

@@ -17,7 +17,9 @@ import editor_app : EditorApp;
 import application_command_binding : ApplicationCommandBinding,
     CommandInvocationContext, CommandInvocationOutcome, CommandInvocationResult;
 import command_executor : CommandExecutor;
-import command_history : RecordMode;
+import command_history : CommandHistory, HistoryEntry, HistoryFlags, RecordMode,
+    UndoState;
+import edit_session : EditSession;
 import input_frame_state : InputFrameState;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
@@ -289,7 +291,6 @@ import commands.prefs.trackball     : TrackballPrefCommand;
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
 // module-scope struct so these three need to be top-level here (0415).
 import document       : Document;
-import command_history : CommandHistory;
 import viewport        : ViewportManager, Viewport3D;
 // Task 0617 — this module has no `Document` of its own (it operates on
 // `EditorApp app`'s pointer-backed properties via `with(app)`); the primary
@@ -326,7 +327,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     wireSelectionProviders(httpServer, app, optionalSlots);
     wireToolpipeProviders(httpServer, app, optionalSlots);
     wireCommandAdapters(httpServer, app, binding, optionalSlots);
-    wireHistoryProviders(httpServer, app, optionalSlots);
+    new HistoryHttpAdapter(app.history, app.session, app.stepTrace).wire(httpServer);
     wireMutationHandlers(httpServer, app, executor, optionalSlots);
 
     // Every slot filled? Task 0720. This function installs 42 delegates and
@@ -2326,167 +2327,134 @@ private void wireCommandAdapters(HttpServer httpServer, ref EditorApp app,
     }
 }
 
-// wireHistoryProviders — `/api/history*`, `/api/trace*`,
-// `/api/refire` — the undo service and its observables.
-private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
-                             ref string[] optionalSlots) {
-    with (app) {
+// One history-row encoder for both stack directions. Its input is the record
+// being surfaced, so neither undo nor redo can accidentally retain a hidden
+// dependency on the application aggregate.
+private JSONValue encodeHistoryRow(ref const(HistoryEntry) entry) {
+    auto obj = JSONValue.emptyObject;
+    obj["label"]     = JSONValue(entry.label);
+    obj["args"]      = JSONValue(entry.args);
+    obj["command"]   = JSONValue(entry.commandName);
+    obj["flags"]     = JSONValue(cast(long)entry.flags);
+    obj["ui"]        = JSONValue((entry.flags & HistoryFlags.UiUndo) != 0);
+    obj["inSession"] = JSONValue((entry.flags & HistoryFlags.InSession) != 0);
+    obj["refire"]    = JSONValue((entry.flags & HistoryFlags.Refire) != 0);
+    obj["runId"]     = JSONValue(cast(long)entry.runId);
+    obj["tweakGen"]  = JSONValue(cast(long)entry.tweakGeneration);
+    // `opInverse` is a self-report by the command, not proof that its payload
+    // is complete. Geometry round-trip tests remain the payload witness.
+    obj["opInverse"] = JSONValue(entry.cmd !is null
+        && entry.cmd.isOperationInverse());
+    return obj;
+}
+
+// `/api/history*`, `/api/trace*`, `/api/refire` and `/api/history/block` need
+// exactly the undo service, its edit-session navigation seam and the optional
+// trace ring. The adapter owns no editor/document/GPU/UI state.
+final class HistoryHttpAdapter {
+private:
+    CommandHistory history_;
+    EditSession session_;
+    StepTrace stepTrace_;
+
+public:
+    this(CommandHistory history, EditSession session, StepTrace stepTrace) {
+        assert(history !is null, "HistoryHttpAdapter requires CommandHistory");
+        assert(session !is null, "HistoryHttpAdapter requires EditSession");
+        history_ = history;
+        session_ = session;
+        stepTrace_ = stepTrace;
+    }
+
+    string historyJson() {
+        JSONValue[] undoArr;
+        foreach (ref entry; history_.undoEntriesVisible())
+            undoArr ~= encodeHistoryRow(entry);
+
+        JSONValue[] redoArr;
+        foreach (ref entry; history_.redoEntriesVisible())
+            redoArr ~= encodeHistoryRow(entry);
+
+        JSONValue payload = JSONValue.emptyObject;
+        payload["undo"] = JSONValue(undoArr);
+        payload["redo"] = JSONValue(redoArr);
+        return payload.toString();
+    }
+
+    string traceJson() {
+        return stepTrace_ !is null ? stepTrace_.snapshotJson() : "[]";
+    }
+
+    void armTrace() {
+        if (stepTrace_ !is null) stepTrace_.arm();
+    }
+
+    void disarmTrace() {
+        if (stepTrace_ !is null) stepTrace_.disarm();
+    }
+
+    void wire(HttpServer httpServer) {
         // History panel Phase 2 — multi-step jump via /api/history/jump.
         httpServer.setJumpHandler((size_t target) {
-            return history.jumpToVisible(target);
+            return history_.jumpToVisible(target);
         });
-        httpServer.setHistoryProvider(() {
-            // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
-            //                   "inSession":bool,"refire":bool,"runId":N,
-            //                   "opInverse":bool}, ...],
-            //         "redo":[..] }
-            // "ui" is true for UI-undo state (selection / edit mode). False
-            // rows may be Model or surfaced ToolLifecycle steps; `flags`
-            // carries the full classification.
-            // "inSession" is true when the entry is one step of an open tool RUN
-            // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
-            // "refire" is true when an in-session entry is a falloff RE-GRADE of
-            // the run's last gesture (HistoryFlags.Refire — always implies
-            // inSession); "runId" groups the gestures of one run. All surface the
-            // record+consolidate structure for a future command-history panel.
-            import std.json : JSONValue;
-            import command_history : HistoryFlags;
-            JSONValue[] undoArr;
-            foreach (ref e; history.undoEntriesVisible()) {
-                auto obj = JSONValue.emptyObject;
-                obj["label"]     = JSONValue(e.label);
-                obj["args"]      = JSONValue(e.args);
-                obj["command"]   = JSONValue(e.commandName);
-                obj["flags"]     = JSONValue(cast(long)e.flags);
-                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
-                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
-                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
-                obj["runId"]     = JSONValue(cast(long)e.runId);
-                // P-E: pipe-tweak generation token (load-bearing on Refire
-                // entries — see HistoryEntry.tweakGeneration). Surfaced so a test
-                // can assert two discrete tweaks carry DIFFERENT generations.
-                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
-                // "opInverse" (task 1903 §6.4) — does this entry undo itself by
-                // an INVERSE OPERATION (an op-log delta) rather than by
-                // restoring a whole-mesh snapshot? `Command.isOperationInverse`
-                // had zero readers anywhere in source/ or tests/ until this
-                // line; the migration needs an observable that is not the
-                // geometry, and this is the cheapest one.
-                //
-                // IT IS A SELF-REPORT, AND THAT BOUNDS WHAT IT CAN WITNESS. The
-                // bit is `useDelta_`, which the command sets ABOUT ITSELF: a
-                // class that sets it true while its delta is empty or
-                // degenerate reports true and is still broken. So this row is a
-                // cheap TELL, run alongside the two things that can actually
-                // see the failure — the counted MeshSnapshot-holder census
-                // (which reddens on a revert with no cooperation from the class
-                // under test) and the per-family plane-dump parity fixture
-                // (which is what catches a degenerate delta). Never let a green
-                // `opInverse` stand in for either.
-                obj["opInverse"] = JSONValue(e.cmd !is null && e.cmd.isOperationInverse());
-                undoArr ~= obj;
-            }
-            JSONValue[] redoArr;
-            foreach (ref e; history.redoEntriesVisible()) {
-                auto obj = JSONValue.emptyObject;
-                obj["label"]     = JSONValue(e.label);
-                obj["args"]      = JSONValue(e.args);
-                obj["command"]   = JSONValue(e.commandName);
-                obj["flags"]     = JSONValue(cast(long)e.flags);
-                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
-                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
-                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
-                obj["runId"]     = JSONValue(cast(long)e.runId);
-                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
-                // See the undo arm above for what this bit is and is not.
-                obj["opInverse"] = JSONValue(e.cmd !is null && e.cmd.isOperationInverse());
-                redoArr ~= obj;
-            }
-            JSONValue payload = JSONValue.emptyObject;
-            payload["undo"] = JSONValue(undoArr);
-            payload["redo"] = JSONValue(redoArr);
-            return payload.toString();
-        });
+        httpServer.setHistoryProvider(() => historyJson());
 
         // GET /api/trace / POST /api/trace/reset — non-destructive per-step
-        // capture (task: step-trace). stepTrace is appended to by
-        // captureStepTrace() (installed on history.onRecord above); the
-        // provider here is just a snapshot-at-request-time read guarded by
-        // StepTrace's own Mutex. This provider-wiring block runs even when
-        // startHttpServer is false (httpServer is always constructed — see
-        // the comment at its declaration — only .start() is gated), so
-        // stepTrace can still be null here; null-guard so a stray call
-        // returns an empty trace instead of a null-dereference crash.
-        httpServer.setTraceProvider(() =>
-            stepTrace !is null ? stepTrace.snapshotJson() : "[]");
-        httpServer.setTraceResetHandler(() {
-            if (stepTrace !is null) stepTrace.arm();
-        });
-        httpServer.setTraceDisarmHandler(() {
-            if (stepTrace !is null) stepTrace.disarm();
-        });
+        // capture. StepTrace owns the mutex shared by append and these reads /
+        // writes. The null role is valid when HTTP capture was not constructed.
+        httpServer.setTraceProvider(() => traceJson());
+        httpServer.setTraceResetHandler(() => armTrace());
+        httpServer.setTraceDisarmHandler(() => disarmTrace());
 
         // Read-only undo-service status for automation: {state, lockout,
         // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
-        // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
-        // stack; canUndoModel/canUndoUi — the class of the next strict-LIFO
-        // undo step. A lifecycle tail makes both class predicates false.
-        // All are pure reads, safe on the HTTP server thread.
+        // This remains an HTTP-thread snapshot; task 0950 owns its races.
         httpServer.setUndoStatusProvider(() {
-            import std.json : JSONValue;
-            import command_history : UndoState;
             string stateStr;
-            final switch (history.state()) {
+            final switch (history_.state()) {
                 case UndoState.Active:  stateStr = "active";  break;
                 case UndoState.Suspend: stateStr = "suspend"; break;
                 case UndoState.Invalid: stateStr = "invalid"; break;
             }
             size_t modelDepth, uiDepth;
-            history.undoDepthCounts(modelDepth, uiDepth);
+            history_.undoDepthCounts(modelDepth, uiDepth);
             JSONValue payload = JSONValue.emptyObject;
             payload["state"]        = JSONValue(stateStr);
-            payload["lockout"]      = JSONValue(history.lockedOut());
-            payload["canUndo"]      = JSONValue(history.canUndo());
-            payload["canRedo"]      = JSONValue(history.canRedo());
+            payload["lockout"]      = JSONValue(history_.lockedOut());
+            payload["canUndo"]      = JSONValue(history_.canUndo());
+            payload["canRedo"]      = JSONValue(history_.canRedo());
             payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
             payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
-            payload["canUndoModel"]       = JSONValue(history.canUndoModel());
-            payload["canUndoUi"]          = JSONValue(history.canUndoUi());
-            payload["toolLifecycleCount"] = JSONValue(cast(long)history.toolLifecycleCount());
-            payload["canUndoLifecycle"]   = JSONValue(history.canUndoLifecycle());
+            payload["canUndoModel"]       = JSONValue(history_.canUndoModel());
+            payload["canUndoUi"]          = JSONValue(history_.canUndoUi());
+            payload["toolLifecycleCount"] = JSONValue(
+                cast(long)history_.toolLifecycleCount());
+            payload["canUndoLifecycle"]   = JSONValue(
+                history_.canUndoLifecycle());
             return payload.toString();
         });
 
-        // Phase 5.5: re-execute the argstring of any undo stack entry against
-        // the current mesh state.  The original entry is not modified; a new
-        // history entry is created by the normal apply()+record() path.
+        // Re-execute an undo row through the application-owned replay bridge.
         httpServer.setReplayProvider((size_t i) {
-            return history.undoEntryCommandLine(i);
+            return history_.undoEntryCommandLine(i);
         });
 
-        // Phase C: /api/refire opens/closes a refire block on the history.
-        // The bracket is driven by EditSession on the main thread; this
-        // endpoint exists for HTTP-driven tests that want to verify the
-        // refire-coalescing behavior without going through SDL. refireEnded()
-        // carries the P4 opted-in-tool commit notification.
+        // Refire remains on the main-thread bridge and goes through EditSession.
         httpServer.setRefireHandler((string action) {
-            if (action == "begin")     session.refireBegin();
-            else if (action == "end")  session.refireEnded();
+            if (action == "begin")     session_.refireBegin();
+            else if (action == "end")  session_.refireEnded();
             else throw new Exception("invalid refire action '" ~ action ~ "'");
         });
 
-        // /api/history/block opens/closes a command block on the history.
-        // N undoable commands recorded between begin and end collapse into a
-        // single CompositeCommand undo entry. Exists for HTTP-driven tests and
-        // any future macro/replay consumer that wants to group sub-commands.
         httpServer.setBlockHandler((string action, string label) {
-            if (action == "begin")     history.blockBegin(label);
-            else if (action == "end")  history.blockEnd();
+            if (action == "begin")     history_.blockBegin(label);
+            else if (action == "end")  history_.blockEnd();
             else throw new Exception("invalid block action '" ~ action ~ "'");
         });
-
     }
 }
+
 
 // wireMutationHandlers — POST routes that retain dedicated test scaffolding.
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
