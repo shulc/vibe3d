@@ -6,6 +6,8 @@ module tests.unit.frame_runner_finish_test;
 
 import bindbc.opengl;
 import bindbc.sdl;
+import core.exception : AssertError;
+import core.time : Duration, MonoTime, msecs;
 import d_imgui.imgui_h : ImVec2, IM_COL32;
 import frame_runner : FrameFinishEvent, FrameFinishSdlTestOps,
     FramePresentMode, FrameRunner, frameFinishSdlOpsForTest,
@@ -22,6 +24,9 @@ import std.conv : to;
 import std.format : format;
 import std.process : environment;
 import std.stdio : writefln;
+import sdl.vibe3d_frame_finish_witness : FrameFinishSdlCallSnapshot,
+    frameFinishSdlCallSnapshot, installFrameFinishSdlCallWitness,
+    restoreFrameFinishSdlCallWitness;
 
 private struct ModeCase {
     string name;
@@ -97,6 +102,41 @@ private int overlayPixelPopulation(int width, int height) {
     return result;
 }
 
+private void assertLowLevelDelay(const FrameFinishSdlCallSnapshot calls,
+                                 Duration normalElapsed,
+                                 Duration hiddenTestElapsed,
+                                 bool sawNormalTiming,
+                                 bool sawHiddenTestTiming) {
+    assert(calls.delayCallbackCalls > 0,
+        "LOW-LEVEL SDL DELAY CALLBACK FLOOR: observer never ran");
+    assert(calls.delayCallbackCalls == 1
+        && calls.delayMilliseconds == 4,
+        format("LOW-LEVEL SDL DELAY CALL: callbacks=%d delayMs=%d; "
+             ~ "expected one SDL_Delay loader-pointer call with 4 ms",
+               calls.delayCallbackCalls, calls.delayMilliseconds));
+    assert(sawNormalTiming && sawHiddenTestTiming,
+        "LOW-LEVEL SDL DELAY TIMING FLOOR: normal/hidden finish was not timed");
+    const delayEffect = hiddenTestElapsed - normalElapsed;
+    assert(delayEffect >= 2.msecs,
+        format("LOW-LEVEL SDL DELAY EFFECT: hidden=%s normal=%s delta=%s; "
+             ~ "expected SDL_Delay(4) to add at least 2 ms",
+               hiddenTestElapsed, normalElapsed, delayEffect));
+}
+
+private void assertLowLevelSwap(const FrameFinishSdlCallSnapshot calls,
+                                SDL_Window* window) {
+    assert(calls.swapCallbackCalls > 0,
+        "LOW-LEVEL SDL SWAP CALLBACK FLOOR: observer never ran");
+    assert(calls.swapCallbackCalls == 3
+        && calls.swapWindow is window
+        && !calls.swapWindowMismatch,
+        format("LOW-LEVEL SDL SWAP CALL: callbacks=%d window=%s mismatch=%s; "
+             ~ "expected three loader-pointer calls, all with the finishFrame "
+             ~ "window (swap forwarding has no portable effect witness)",
+               calls.swapCallbackCalls, calls.swapWindow,
+               calls.swapWindowMismatch));
+}
+
 void runFrameRunnerFinishWitness() {
     enum width = 96;
     enum height = 64;
@@ -152,8 +192,9 @@ void runFrameRunnerFinishWitness() {
     auto savedFlush = glFlush;
     auto savedSdlOps = frameFinishSdlOpsForTest();
     // Restore first: every later scope(exit), including backend/context
-    // teardown, must see the real GL pointers and production SDL seam.
+    // teardown, must see the real GL/SDL pointers and production SDL seam.
     scope(exit) {
+        restoreFrameFinishSdlCallWitness();
         glClearColor = savedClearColor;
         glClear = savedClear;
         glViewport = savedViewport;
@@ -171,6 +212,8 @@ void runFrameRunnerFinishWitness() {
     glFlush = &FinishGlObserver.flush;
     installFrameFinishSdlOpsForTest(FrameFinishSdlTestOps(
         &FinishSdlObserver.swap, &FinishSdlObserver.delay));
+    assert(installFrameFinishSdlCallWitness(),
+        "frame finish rig could not install loaded SDL call observers");
 
     auto runner = new FrameRunner(new InputFrameState);
     immutable ModeCase[] cases = [
@@ -179,6 +222,10 @@ void runFrameRunnerFinishWitness() {
         ModeCase("test+perf",    true,  true,  false, 1, 0, 0),
         ModeCase("test+visible", true,  false, true,  1, 0, 0),
     ];
+    Duration normalElapsed;
+    Duration hiddenTestElapsed;
+    bool sawNormalTiming;
+    bool sawHiddenTestTiming;
 
     foreach (row; cases) {
         ImGui_ImplOpenGL3_NewFrame();
@@ -199,7 +246,16 @@ void runFrameRunnerFinishWitness() {
 
         const mode = resolveFramePresentMode(
             row.testMode, row.perfMode, row.visibleTest);
+        const finishStarted = MonoTime.currTime;
         runner.finishFrame(window, width, height, mode);
+        const finishElapsed = MonoTime.currTime - finishStarted;
+        if (row.name == "normal") {
+            normalElapsed = finishElapsed;
+            sawNormalTiming = true;
+        } else if (mode == FramePresentMode.hiddenTest) {
+            hiddenTestElapsed = finishElapsed;
+            sawHiddenTestTiming = true;
+        }
 
         const events = g_frameFinishTrace.events;
         assert(!g_frameFinishTrace.overflowed,
@@ -281,6 +337,31 @@ void runFrameRunnerFinishWitness() {
                  ~ "drawVerts=%d calls=%d", row.name, swaps, flushes,
                  row.delayMs, g_frameFinishTrace.renderVertices, lowLevelCalls);
     }
+
+    // Both cells run under either mutation. Rethrowing the first recorded
+    // AssertError keeps the ordinary gate red while the matrix proves that
+    // the sibling low-level call remained green.
+    const calls = frameFinishSdlCallSnapshot();
+    AssertError delayFailure;
+    AssertError swapFailure;
+    try assertLowLevelDelay(calls, normalElapsed, hiddenTestElapsed,
+                            sawNormalTiming, sawHiddenTestTiming);
+    catch (AssertError error) delayFailure = error;
+    try assertLowLevelSwap(calls, window);
+    catch (AssertError error) swapFailure = error;
+    if (delayFailure !is null || swapFailure !is null) {
+        writefln("[frame-finish-low-level] delay=%s swap=%s",
+            delayFailure is null ? "PASS" : "FAIL",
+            swapFailure is null ? "PASS" : "FAIL");
+        if (delayFailure !is null)
+            throw delayFailure;
+        throw swapFailure;
+    }
+    writefln("[frame-finish-low-level] swap callbacks=%d mismatch=%s "
+           ~ "delay callbacks=%d delayMs=%d normal=%s hidden=%s",
+        calls.swapCallbackCalls, calls.swapWindowMismatch,
+        calls.delayCallbackCalls, calls.delayMilliseconds,
+        normalElapsed, hiddenTestElapsed);
 }
 
 unittest {

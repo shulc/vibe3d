@@ -124,6 +124,7 @@ registry
 remesh.region_stitch
 remesh.remesh_job
 screen_buckets
+sdl.vibe3d_frame_finish_witness
 selection_product
 snap
 snap_render

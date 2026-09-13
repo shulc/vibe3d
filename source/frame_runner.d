@@ -76,8 +76,8 @@ private __gshared FrameFinishSdlOps g_frameFinishSdlOps = {
 };
 
 version (FrameFinishTraceEnabled) {
-    /// SDL exposes wrappers over private loader pointers, so the finish
-    /// witness observes these two production-owned call points instead.
+    /// The finish trace observes these production-owned call points; the unit
+    /// rig separately intercepts BindBC-SDL's loader pointers below them.
     struct FrameFinishSdlTestOps {
         FrameSwapFn swap;
         FrameDelayFn delay;
