@@ -57,9 +57,13 @@ public:
     }
 }
 
-/// File-I/O factories resolve the active Session mesh and live View/Mode when
-/// each command is created, while the helper parameters give every format
-/// closure its own extension (task 5790; evidence: file_io_registration_test).
+/// File-I/O factories resolve the Session mesh and live View/Mode when each
+/// command is created. `setPath` bypasses the dialog, so `file.load` retains
+/// open framing. A plain foreach-body closure would capture the loop variable
+/// by reference and every delegate would see the LAST ext (.fbx); even
+/// `immutable ext = importExt;` does NOT create a fresh per-iteration binding.
+/// Helper parameters give each closure its own copy (task 5790; evidence:
+/// file_io_registration_test).
 void registerFileIoCommands(ref Registry reg,
                             FileIoSessionRole session,
                             LiveFileViewModeRole live) {

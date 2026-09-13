@@ -14,7 +14,7 @@ import document : Document, Layer;
 import editmode : EditMode;
 import file_io_registration : FileIoSessionRole, LiveFileView,
     LiveFileViewModeRole, registerFileIoCommands;
-import mesh : makeCube, makeDiamond, makeGridPlane;
+import mesh : makeCube, makeGridPlane, makeOctahedron;
 import registry : Registry;
 import session_owner : Session;
 import view : View;
@@ -37,6 +37,18 @@ unittest { // every format factory retains its own configure argument
     assert(reg.commandFactories["file.open"] ==
            reg.commandFactories["file.load"],
         "file.open must remain the file.load factory alias");
+    auto load = cast(FileLoad)reg.commandFactories["file.load"]();
+    assert(load !is null && load.configuredMode == FileLoadMode.open
+        && load.configuredExtension is null,
+        "5790 file.load framing witness: expected open mode with no extension");
+    auto save = cast(FileSave)reg.commandFactories["file.save"]();
+    assert(save !is null && save.configuredMode == FileSaveMode.save
+        && save.configuredExtension is null,
+        "5790 file.save framing witness: expected save mode with no extension");
+    auto saveAs = cast(FileSave)reg.commandFactories["file.saveAs"]();
+    assert(saveAs !is null && saveAs.configuredMode == FileSaveMode.saveAs
+        && saveAs.configuredExtension is null,
+        "5790 file.saveAs framing witness: expected saveAs mode with no extension");
 
     immutable importIds = ["file.import.lwo", "file.import.obj"];
     immutable importExts = [".lwo", ".obj"];
@@ -95,8 +107,10 @@ unittest { // a history-held command stays on A while new factories resolve B
 
     auto layerB = new Layer;
     layerB.name = "B";
-    layerB.meshRef() = makeDiamond();
+    layerB.meshRef() = makeOctahedron();
     session.document.layers ~= layerB;
+    assert(layerB.meshRef().vertices.length == 6,
+        "setup: B starts as a six-vertex octahedron");
     layerA.meshRef() = makeGridPlane(1);
     assert(layerA.meshRef().vertices.length == 4,
         "setup: A starts as a four-vertex grid before import");
@@ -117,9 +131,10 @@ unittest { // a history-held command stays on A while new factories resolve B
     auto meshB = &layerB.meshRef();
 
     assert(history.undo(), "old history command must remain undoable after A to B");
-    assert(layerA.meshRef().vertices.length == 4
-        && layerB.meshRef().vertices.length == makeDiamond().vertices.length,
-        "5790 old history command witness: undo restored A and did not touch B");
+    assert(layerA.meshRef().vertices.length == 4,
+        "5790 old history command witness: undo did not restore A");
+    assert(layerB.meshRef().vertices.length == 6,
+        "5790 old history command B witness: undo touched active mesh B");
 
     assert(newCommand.meshPtr is meshB,
         "5790 live mesh resolution witness: a command created after A to B "
