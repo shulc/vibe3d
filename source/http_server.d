@@ -9,6 +9,8 @@ import std.array;
 import std.datetime;
 import std.json;
 import core.thread;
+import core.sync.condition : Condition;
+import core.sync.mutex : Mutex;
 
 import mesh : Mesh, Surface;
 // The JSON bodies and the escaper that assembles them (task 0720, D5). Public
@@ -120,6 +122,8 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     private OwnedCall[] ownedPending = null;
     private shared long nextOwnedIdentity = 0;
     private shared bool ownedStopping = false;
+    private Mutex ownedWaitMutex;
+    private Condition ownedWaitCondition;
 
     version(unittest) {
         struct OwnedTraceEntry {
@@ -132,10 +136,15 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         private OwnedTraceEntry[] ownedTrace = null;
         private shared bool holdOwnedWaitForTest_ = false;
         private shared bool ownedWaitReachedForTest_ = false;
+        private shared long ownedConditionWaitsForTest_ = 0;
+        private shared long ownedConditionReturnsForTest_ = 0;
+        private shared bool suppressOwnedCompletionNotifyForTest_ = false;
     }
 
     this(HttpServer owner, void delegate(ref Req, ref Resp) service) {
         this.service = service;
+        ownedWaitMutex = new Mutex;
+        ownedWaitCondition = new Condition(ownedWaitMutex);
         owner.bridges ~= this;
     }
 
@@ -174,10 +183,11 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         return true;
     }
 
-    // Task 5730 invariant: an owned submission keeps its request and service
-    // result alive past timeout; timeout/shutdown return separate values and
-    // never mutate the state tick() may still be filling. The controlled
-    // ordering and identity evidence is request_result_ownership_test.d.
+    // Tasks 5730/5780 invariant: each owned submission keeps request/result
+    // state alive past timeout, while its HTTP waiter blocks in a predicate
+    // loop on the one submit-time deadline; completion publishes before its
+    // notify, and shutdown notifies without waking SDL/the frame loop. The
+    // controlled ownership/wake evidence is request_result_ownership_test.d.
     OwnedResult submitOwned(Req request, Resp initialResult,
                             Resp timeoutResult, Resp stoppingResult,
                             Duration budget) {
@@ -205,21 +215,28 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 while (atomicLoad(holdOwnedWaitForTest_))
                     Thread.sleep(1.msecs);
             }
-            if (atomicLoad(call.finished) != 0) {
-                OwnedResult result;
-                result.result = call.result;
-                result.requestIdentity = call.requestIdentity;
-                result.resultIdentity = call.serviceResultIdentity;
-                result.kind = BridgeResultKind.completed;
-                return result;
+            synchronized (ownedWaitMutex) {
+                if (atomicLoad(call.finished) != 0) {
+                    OwnedResult result;
+                    result.result = call.result;
+                    result.requestIdentity = call.requestIdentity;
+                    result.resultIdentity = call.serviceResultIdentity;
+                    result.kind = BridgeResultKind.completed;
+                    return result;
+                }
+                if (atomicLoad(ownedStopping))
+                    return syntheticOwnedResult(call, stoppingResult,
+                                                BridgeResultKind.stopping);
+                immutable now = MonoTime.currTime;
+                if (now >= call.deadline)
+                    return syntheticOwnedResult(call, timeoutResult,
+                                                BridgeResultKind.timedOut);
+                version(unittest)
+                    atomicOp!"+="(ownedConditionWaitsForTest_, 1);
+                ownedWaitCondition.wait(call.deadline - now);
+                version(unittest)
+                    atomicOp!"+="(ownedConditionReturnsForTest_, 1);
             }
-            if (atomicLoad(ownedStopping))
-                return syntheticOwnedResult(call, stoppingResult,
-                                            BridgeResultKind.stopping);
-            if (MonoTime.currTime >= call.deadline)
-                return syntheticOwnedResult(call, timeoutResult,
-                                            BridgeResultKind.timedOut);
-            Thread.sleep(2.msecs);
         }
     }
 
@@ -228,7 +245,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     }
 
     override void notifyStopping() {
-        atomicStore(ownedStopping, true);
+        synchronized (ownedWaitMutex) {
+            atomicStore(ownedStopping, true);
+            ownedWaitCondition.notifyAll();
+        }
         synchronized (this) ownedPending = null;
     }
 
@@ -279,6 +299,22 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         bool ownedWaitReachedForTest() {
             return atomicLoad(ownedWaitReachedForTest_);
         }
+
+        long ownedConditionWaitsForTest() {
+            return atomicLoad(ownedConditionWaitsForTest_);
+        }
+
+        long ownedConditionReturnsForTest() {
+            return atomicLoad(ownedConditionReturnsForTest_);
+        }
+
+        void wakeOwnedWaiterForTest() {
+            synchronized (ownedWaitMutex) ownedWaitCondition.notifyAll();
+        }
+
+        void suppressOwnedCompletionNotifyForTest(bool suppress) {
+            atomicStore(suppressOwnedCompletionNotifyForTest_, suppress);
+        }
     }
 
     /// Main thread (called once per frame via HttpServer.tickAll()): runs
@@ -299,11 +335,20 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 traceOwned(BridgeResultKind.completed, owned,
                            owned.serviceResultIdentity, owned.result);
             }
-            // Owned publish contract (task 5730): service/trace writes the
-            // result before this seq-cst store, which stays the LAST statement
-            // in this branch; waiter reads only after observing it. Evidence:
+            // Owned publish contract (tasks 5730/5780): service/trace writes
+            // the result first; under the waiter mutex the seq-cst finished
+            // store then precedes notifyAll, so completion-before-wait and a
+            // concurrent waiter cannot lose the signal. Evidence:
             // request_result_ownership_test.d.
-            atomicStore(owned.finished, 1);
+            synchronized (ownedWaitMutex) {
+                atomicStore(owned.finished, 1);
+                version(unittest) {
+                    if (!atomicLoad(suppressOwnedCompletionNotifyForTest_))
+                        ownedWaitCondition.notifyAll();
+                } else {
+                    ownedWaitCondition.notifyAll();
+                }
+            }
         }
 
         immutable long sub = atomicLoad(submitted);
@@ -1481,6 +1526,22 @@ class HttpServer {
 
         public bool selectionOwnedWaitReachedForTest() {
             return selectionBridge.ownedWaitReachedForTest();
+        }
+
+        public long selectionOwnedConditionWaitsForTest() {
+            return selectionBridge.ownedConditionWaitsForTest();
+        }
+
+        public long selectionOwnedConditionReturnsForTest() {
+            return selectionBridge.ownedConditionReturnsForTest();
+        }
+
+        public void wakeSelectionOwnedWaiterForTest() {
+            selectionBridge.wakeOwnedWaiterForTest();
+        }
+
+        public void suppressSelectionOwnedCompletionNotifyForTest(bool suppress) {
+            selectionBridge.suppressOwnedCompletionNotifyForTest(suppress);
         }
     }
 
