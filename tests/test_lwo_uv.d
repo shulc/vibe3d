@@ -24,8 +24,20 @@
 // per-corner UVs round-trips WITHOUT any vertex-count change.
 
 import std.math   : fabs;
-import std.file   : remove, exists, getSize;
+import std.file   : remove, exists, getSize, write, readText, mkdirRecurse,
+                    rmdirRecurse, tempDir;
 import std.format : format;
+import std.path   : buildPath;
+import std.process : thisProcessID;
+import std.uuid   : randomUUID;
+import core.thread : Thread;
+import core.time   : MonoTime, msecs, seconds;
+
+version (Posix) {
+    import core.sys.posix.sys.types : pid_t;
+    import core.sys.posix.sys.wait : waitpid;
+    import core.sys.posix.unistd : fork, _exit;
+}
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir  : ImportedScene, ImportedPart, flattenToMesh;
@@ -130,7 +142,180 @@ private Mesh makeMixedKindUvMesh() {
     return m;
 }
 
-private string tmp(string name) { return "/tmp/vibe3d_lwouv_" ~ name; }
+private string newTmpRootPath() {
+    return buildPath(tempDir(), format("vibe3d-lwouv-%s-%d",
+        randomUUID().toString(), thisProcessID));
+}
+
+unittest {
+    assert(newTmpRootPath() != newTmpRootPath(),
+        "temp root must not derive from the PID alone");
+}
+
+private __gshared string gTmpRoot;
+
+private string tmp(string name) {
+    if (!gTmpRoot.length) {
+        gTmpRoot = newTmpRootPath();
+        mkdirRecurse(gTmpRoot);
+    }
+    return buildPath(gTmpRoot, name);
+}
+
+private void cleanupTmpRoot() nothrow {
+    const root = gTmpRoot;
+    gTmpRoot = null;
+    if (root.length && exists(root))
+        try rmdirRecurse(root); catch (Exception) {}
+}
+
+shared static ~this() { cleanupTmpRoot(); }
+
+version (Posix) {
+    private Mesh makeCollisionMesh(int id) {
+        auto m = makeQuadUvMesh();
+        const xShift = cast(float) (id * 10);
+        const uvShift = cast(float) id * 0.25f;
+        foreach (ref v; m.vertices) v.x += xShift;
+        auto map = m.meshMap(kUvMapName);
+        assert(map !is null);
+        foreach (ref value; map.data) value += uvShift;
+        return m;
+    }
+
+    private void assertCollisionMesh(const ref Mesh m, int id) {
+        assert(m.vertices.length == 4, "collision payload vertex count changed");
+        assert(m.faces.length == 1 && m.faces[0].length == 4,
+            "collision payload connectivity changed");
+        const xShift = cast(float) (id * 10);
+        const uvShift = cast(float) id * 0.25f;
+        foreach (uint c; 0 .. 4) {
+            const v = m.vertices[m.faces[0][c]];
+            auto uv = cornerUv(m, 0, c);
+            assert(uv.length == 2
+                    && feq(uv[0], v.x - xShift + uvShift)
+                    && feq(uv[1], v.y + uvShift),
+                format("collision payload %d corner %d mismatch: pos=(%g,%g) uv=%s",
+                       id, c, v.x, v.y, uv));
+        }
+    }
+
+    private void waitForCollisionFile(string path) {
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (!exists(path) && MonoTime.currTime < deadline)
+            Thread.sleep(5.msecs);
+        assert(exists(path), "collision barrier timed out waiting for " ~ path);
+    }
+
+    private int runCollisionChild(int id, string barrierDir) {
+        int result;
+        string path;
+        try {
+            path = tmp("collision.lwo");
+            write(buildPath(barrierDir, format("root-%d", id)), gTmpRoot);
+            if (exists(path)) remove(path);
+            auto payload = makeCollisionMesh(id);
+            exportLwo(payload, path);
+            assert(exists(path) && getSize(path) > 0,
+                format("collision payload %d was not written", id));
+            write(buildPath(barrierDir, format("ready-%d", id)), path);
+
+            waitForCollisionFile(buildPath(barrierDir, format("ready-%d", 1 - id)));
+
+            ImportedScene scene;
+            assert(sceneFromLwo(path, scene),
+                format("collision payload %d could not be read", id));
+            auto reloaded = flattenToMesh(scene);
+            assertCollisionMesh(reloaded, id);
+        } catch (Throwable t) {
+            try write(buildPath(barrierDir, format("error-%d", id)), t.toString());
+            catch (Throwable) {}
+            result = 1;
+        }
+
+        if (id == 0) {
+            cleanupTmpRoot();
+            try write(buildPath(barrierDir, "cleaned-0"), "done");
+            catch (Throwable) { result = 1; }
+        } else {
+            try {
+                waitForCollisionFile(buildPath(barrierDir, "cleaned-0"));
+                if (result == 0) {
+                    assert(exists(path),
+                        "worker 0 cleanup removed worker 1's LWO file");
+                    ImportedScene scene;
+                    assert(sceneFromLwo(path, scene),
+                        "worker 1 could not re-read its file after worker 0 cleanup");
+                    auto reloaded = flattenToMesh(scene);
+                    assertCollisionMesh(reloaded, id);
+                }
+            } catch (Throwable t) {
+                try write(buildPath(barrierDir, format("error-%d", id)), t.toString());
+                catch (Throwable) {}
+                result = 1;
+            }
+            cleanupTmpRoot();
+        }
+        return result;
+    }
+
+    private pid_t startCollisionChild(int id, string barrierDir) {
+        const pid = fork();
+        assert(pid >= 0, "fork failed for LWO collision worker");
+        if (pid == 0) _exit(runCollisionChild(id, barrierDir));
+        return pid;
+    }
+
+    private int waitCollisionChild(pid_t pid) {
+        int status;
+        assert(waitpid(pid, &status, 0) == pid, "waitpid failed for LWO collision worker");
+        return status;
+    }
+
+    private string collisionError(string barrierDir, int id) {
+        const path = buildPath(barrierDir, format("error-%d", id));
+        return exists(path) ? readText(path) : "no child diagnostic";
+    }
+
+    private string sequentialError(string barrierDir, int id) {
+        const path = buildPath(barrierDir, format("sequential-error-%d", id));
+        return exists(path) ? readText(path) : "no child diagnostic";
+    }
+
+    private int runSequentialChild(int id, string barrierDir) {
+        int result;
+        try {
+            const path = tmp("sequential.lwo");
+            write(buildPath(barrierDir, format("sequential-root-%d", id)), gTmpRoot);
+            if (id == 1) {
+                assert(!exists(path),
+                    "second sequential worker accepted the first invocation's leftover");
+            }
+            auto payload = makeCollisionMesh(id);
+            exportLwo(payload, path);
+            assert(exists(path) && getSize(path) > 0,
+                format("sequential payload %d was not written", id));
+            ImportedScene scene;
+            assert(sceneFromLwo(path, scene),
+                format("sequential payload %d could not be read", id));
+            auto reloaded = flattenToMesh(scene);
+            assertCollisionMesh(reloaded, id);
+        } catch (Throwable t) {
+            try write(buildPath(barrierDir, format("sequential-error-%d", id)), t.toString());
+            catch (Throwable) {}
+            result = 1;
+        }
+        if (id == 1) cleanupTmpRoot();
+        return result;
+    }
+
+    private pid_t startSequentialChild(int id, string barrierDir) {
+        const pid = fork();
+        assert(pid >= 0, "fork failed for sequential LWO worker");
+        if (pid == 0) _exit(runSequentialChild(id, barrierDir));
+        return pid;
+    }
+}
 
 // Export `m` to LWO, re-import via our own reader (sceneFromLwo + flattenToMesh).
 private Mesh exportReimport(const ref Mesh m, string name) {
@@ -144,7 +329,94 @@ private Mesh exportReimport(const ref Mesh m, string name) {
     ImportedScene s;
     const ok = sceneFromLwo(path, s);
     assert(ok, "sceneFromLwo failed for " ~ name);
-    return flattenToMesh(s);
+    assert(s.parts.length > 0 && s.parts[0].vertices.length > 0
+            && s.parts[0].faces.length > 0,
+        "LWO import floor: re-imported scene is empty for " ~ name);
+    auto mesh = flattenToMesh(s);
+    assert(mesh.vertices.length > 0 && mesh.faces.length > 0,
+        "LWO import floor: flattened round-trip mesh is empty for " ~ name);
+    return mesh;
+}
+
+version (Posix) unittest {
+    const barrierDir = buildPath(tempDir(),
+        "vibe3d-lwouv-collision-" ~ randomUUID().toString());
+    mkdirRecurse(barrierDir);
+    scope(exit) if (exists(barrierDir)) rmdirRecurse(barrierDir);
+
+    const first = startCollisionChild(0, barrierDir);
+    const second = startCollisionChild(1, barrierDir);
+    const firstStatus = waitCollisionChild(first);
+    const secondStatus = waitCollisionChild(second);
+
+    const firstRootMarker = buildPath(barrierDir, "root-0");
+    const secondRootMarker = buildPath(barrierDir, "root-1");
+    assert(exists(firstRootMarker),
+        format("collision worker 0 did not report its temp root (status=%d): %s",
+               firstStatus, collisionError(barrierDir, 0)));
+    assert(exists(secondRootMarker),
+        format("collision worker 1 did not report its temp root (status=%d): %s",
+               secondStatus, collisionError(barrierDir, 1)));
+    assert(exists(buildPath(barrierDir, "ready-0")),
+        format("collision worker 0 failed before completing its own LWO write "
+               ~ "(status=%d): %s", firstStatus,
+               collisionError(barrierDir, 0)));
+    assert(exists(buildPath(barrierDir, "ready-1")),
+        format("collision worker 1 failed before completing its own LWO write "
+               ~ "(status=%d): %s", secondStatus,
+               collisionError(barrierDir, 1)));
+    assert(firstStatus == 0 && secondStatus == 0,
+        format("LWO temp isolation collision after the write/read barrier: "
+               ~ "worker 0 status=%d: %s\nworker 1 status=%d: %s",
+               firstStatus, collisionError(barrierDir, 0),
+               secondStatus, collisionError(barrierDir, 1)));
+
+    const firstRoot = readText(firstRootMarker);
+    const secondRoot = readText(secondRootMarker);
+    assert(firstRoot.length > 0 && secondRoot.length > 0 && firstRoot != secondRoot,
+        format("concurrent workers shared a temp root: '%s' / '%s'",
+               firstRoot, secondRoot));
+    assert(!exists(firstRoot) && !exists(secondRoot),
+        "concurrent worker roots survived owner cleanup");
+
+    const sequentialFirst = startSequentialChild(0, barrierDir);
+    const sequentialFirstStatus = waitCollisionChild(sequentialFirst);
+    assert(sequentialFirstStatus == 0,
+        "first sequential LWO worker failed: "
+        ~ sequentialError(barrierDir, 0));
+
+    const sequentialFirstRootMarker = buildPath(
+        barrierDir, "sequential-root-0");
+    assert(exists(sequentialFirstRootMarker),
+        "first sequential worker did not report its temp root");
+    const sequentialFirstRoot = readText(sequentialFirstRootMarker);
+    assert(sequentialFirstRoot.length > 0,
+        "first sequential worker reported an empty temp root");
+    scope(exit) if (exists(sequentialFirstRoot))
+        rmdirRecurse(sequentialFirstRoot);
+    assert(exists(buildPath(sequentialFirstRoot, "sequential.lwo")),
+        "first sequential worker did not leave an LWO file for the leftover check");
+
+    const sequentialSecond = startSequentialChild(1, barrierDir);
+    const sequentialSecondStatus = waitCollisionChild(sequentialSecond);
+    assert(sequentialSecondStatus == 0,
+        "second sequential LWO worker failed: "
+        ~ sequentialError(barrierDir, 1));
+
+    const sequentialSecondRootMarker = buildPath(
+        barrierDir, "sequential-root-1");
+    assert(exists(sequentialSecondRootMarker),
+        "second sequential worker did not report its temp root");
+    const sequentialSecondRoot = readText(sequentialSecondRootMarker);
+    assert(sequentialSecondRoot.length > 0
+            && sequentialFirstRoot != sequentialSecondRoot,
+        format("sequential workers reused a temp root: '%s' / '%s'",
+               sequentialFirstRoot, sequentialSecondRoot));
+    assert(!exists(sequentialSecondRoot),
+        "second sequential worker root survived owner cleanup");
+    rmdirRecurse(sequentialFirstRoot);
+    assert(!exists(sequentialFirstRoot),
+        "parent cleanup left the first sequential worker root behind");
 }
 
 // ---------------------------------------------------------------------------

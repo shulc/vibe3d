@@ -23,8 +23,11 @@
 // degrades to a skip, not a suite failure.
 
 import std.math   : fabs;
-import std.file   : remove, exists;
+import std.file   : remove, exists, getSize, mkdirRecurse, rmdirRecurse, tempDir;
 import std.format : format;
+import std.path   : buildPath;
+import std.process : thisProcessID;
+import std.uuid   : randomUUID;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir       : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
@@ -117,7 +120,40 @@ private Mesh makeSeamNoUvMesh() {
     return flattenToMesh(s);
 }
 
-private string tmp(string name) { return "/tmp/vibe3d_uvexport_" ~ name; }
+private string newTmpRootPath() {
+    return buildPath(tempDir(), format("vibe3d-uvexport-%s-%d",
+        randomUUID().toString(), thisProcessID));
+}
+
+unittest {
+    assert(newTmpRootPath() != newTmpRootPath(),
+        "temp root must not derive from the PID alone");
+}
+
+private __gshared string gTmpRoot;
+
+private string tmp(string name) {
+    if (!gTmpRoot.length) {
+        gTmpRoot = newTmpRootPath();
+        mkdirRecurse(gTmpRoot);
+    }
+    return buildPath(gTmpRoot, name);
+}
+
+private void cleanupTmpRoot() nothrow {
+    const root = gTmpRoot;
+    gTmpRoot = null;
+    if (root.length && exists(root))
+        try rmdirRecurse(root); catch (Exception) {}
+}
+
+shared static ~this() { cleanupTmpRoot(); }
+
+private void requireAssimp() {
+    initAssimp();
+    assert(isAssimpAvailable(),
+        "Assimp availability floor: UV export cells must execute real export/import");
+}
 
 // Export `m` to `formatId`/`ext`, re-import (welds), return the reloaded mesh.
 private Mesh exportReimport(const ref Mesh m, string formatId, string ext) {
@@ -127,12 +163,19 @@ private Mesh exportReimport(const ref Mesh m, string formatId, string ext) {
 
     const ok = exportViaAssimp(m, path, formatId);
     assert(ok, "exportViaAssimp failed for " ~ formatId);
-    assert(exists(path), "no output file for " ~ formatId);
+    assert(exists(path) && getSize(path) > 0,
+        "Assimp export floor: no non-empty output file for " ~ formatId);
 
     ImportedScene s;
     const okIn = importViaAssimp(path, s);
     assert(okIn, "re-import failed for " ~ formatId);
-    return flattenToMesh(s);
+    assert(s.parts.length > 0 && s.parts[0].vertices.length > 0
+            && s.parts[0].faces.length > 0,
+        "Assimp import floor: re-imported scene is empty for " ~ formatId);
+    auto mesh = flattenToMesh(s);
+    assert(mesh.vertices.length > 0 && mesh.faces.length > 0,
+        "Assimp import floor: flattened round-trip mesh is empty for " ~ formatId);
+    return mesh;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +183,7 @@ private Mesh exportReimport(const ref Mesh m, string formatId, string ext) {
 // ---------------------------------------------------------------------------
 
 unittest {
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     auto orig = makeQuadUvMesh();
     assert(orig.meshMap(kUvMapName) !is null, "fixture must have a uv map");
@@ -171,8 +213,7 @@ unittest {
 // ---------------------------------------------------------------------------
 
 unittest {
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     auto baseline = makeSeamNoUvMesh();
     const weldedCount = baseline.vertices.length;
@@ -208,8 +249,7 @@ unittest {
 // ---------------------------------------------------------------------------
 
 unittest {
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     auto orig = makeSeamUvMesh();
 
@@ -242,14 +282,13 @@ unittest {
 // ---------------------------------------------------------------------------
 
 unittest {
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     auto orig = makeSeamUvMesh();
     Mesh rt;
     try {
         rt = exportReimport(orig, "fbx", ".fbx");
-    } catch (Throwable t) {
+    } catch (Exception) {
         // FBX UV round-trip is a nice-to-have; a libassimp quirk degrades to a
         // skip rather than failing the suite (plan R4 — XFAIL acceptable).
         return;
@@ -279,8 +318,7 @@ unittest {
 // ---------------------------------------------------------------------------
 
 unittest {
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     auto orig = makeSeamNoUvMesh();
     assert(orig.meshMap(kUvMapName) is null, "no-UV fixture must have no uv map");

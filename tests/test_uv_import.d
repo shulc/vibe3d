@@ -19,8 +19,11 @@
 // case here (the spike kept assimp-only in scope for Stage 2).
 
 import std.math   : fabs;
-import std.file   : write, remove, exists;
+import std.file   : write, remove, exists, mkdirRecurse, rmdirRecurse, tempDir;
 import std.format : format;
+import std.path   : buildPath;
+import std.process : thisProcessID;
+import std.uuid   : randomUUID;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir     : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
@@ -170,7 +173,40 @@ enum string seamNoUvObj =
     ~ "f 1 2 3 4\n"
     ~ "f 2 5 6 3\n";
 
-private string tmp(string name) { return "/tmp/vibe3d_uvtest_" ~ name; }
+private string newTmpRootPath() {
+    return buildPath(tempDir(), format("vibe3d-uvtest-%s-%d",
+        randomUUID().toString(), thisProcessID));
+}
+
+unittest {
+    assert(newTmpRootPath() != newTmpRootPath(),
+        "temp root must not derive from the PID alone");
+}
+
+private __gshared string gTmpRoot;
+
+private string tmp(string name) {
+    if (!gTmpRoot.length) {
+        gTmpRoot = newTmpRootPath();
+        mkdirRecurse(gTmpRoot);
+    }
+    return buildPath(gTmpRoot, name);
+}
+
+private void cleanupTmpRoot() nothrow {
+    const root = gTmpRoot;
+    gTmpRoot = null;
+    if (root.length && exists(root))
+        try rmdirRecurse(root); catch (Exception) {}
+}
+
+shared static ~this() { cleanupTmpRoot(); }
+
+private void requireAssimp() {
+    initAssimp();
+    assert(isAssimpAvailable(),
+        "Assimp availability floor: UV import cells must execute the real importer");
+}
 
 private Mesh importObj(string text, string name) {
     const path = tmp(name);
@@ -179,12 +215,17 @@ private Mesh importObj(string text, string name) {
     ImportedScene s;
     const ok = importViaAssimp(path, s);
     assert(ok, "importViaAssimp failed for " ~ name);
-    return flattenToMesh(s);
+    assert(s.parts.length > 0 && s.parts[0].vertices.length > 0
+            && s.parts[0].faces.length > 0,
+        "Assimp import floor: imported scene is empty for " ~ name);
+    auto mesh = flattenToMesh(s);
+    assert(mesh.vertices.length > 0 && mesh.faces.length > 0,
+        "Assimp import floor: flattened mesh is empty for " ~ name);
+    return mesh;
 }
 
 unittest {  // single quad with UV → "uv" map present, per-corner round-trip
-    initAssimp();
-    if (!isAssimpAvailable()) return;   // assimp unavailable: skip (shouldn't happen, static)
+    requireAssimp();
 
     auto m = importObj(quadUvObj, "quad.obj");
     assert(m.vertices.length == 4, format("quad should weld to 4 verts, got %d", m.vertices.length));
@@ -209,8 +250,7 @@ unittest {  // single quad with UV → "uv" map present, per-corner round-trip
 }
 
 unittest {  // GAP-4 seam: geometry welded to the no-UV count, per-corner UV differs
-    initAssimp();
-    if (!isAssimpAvailable()) return;
+    requireAssimp();
 
     // Baseline: the no-UV import welds the two quads to 6 distinct positions.
     auto baseline = importObj(seamNoUvObj, "seam_nouv.obj");
