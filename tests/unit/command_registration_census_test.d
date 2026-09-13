@@ -1,7 +1,7 @@
 // Every concrete `Command` subclass under source/commands/ is registered —
-// the REVERSE census of `source/registration.d` (task 4066, row 10).
+// the REVERSE census of the production registration modules (task 4066, row 10).
 //
-// WHAT THE CONTRACT IS. `registration.d` is the one place a wire id is bound
+// WHAT THE CONTRACT IS. The registration modules are where a wire id is bound
 // to a factory (`reg.commandFactories["…"] = () => cast(Command) new X(…)`),
 // and the FORWARD direction is already closed: `registerCommands` wraps the
 // finished dictionary with the selection-type provider, so a factory cannot
@@ -20,7 +20,7 @@
 // is `Command` or another class of the set, transitively (four abstract bases
 // live there: ByStatBase, ImageCommandBase, LayerCommandBase,
 // ViewportCommand), and X is not marked `abstract`. "Registered" means
-// `new X` appears in registration.d's CODE, blanked the same way. Four
+// `new X` appears in their CODE, blanked the same way. Four
 // concrete classes are built elsewhere on purpose; they are RECORDED below
 // with the file that builds them, and each row is checked against that file
 // so a row cannot outlive its reason.
@@ -194,7 +194,7 @@ unittest { // `subclass` / `new Xy` boundaries
 // (b) THE GATE, over the real tree.
 // ---------------------------------------------------------------------------
 
-/// Concrete Command subclasses built somewhere OTHER than registration.d, on
+/// Concrete Command subclasses built somewhere OTHER than the registrars, on
 /// purpose. Each row names the file that builds it; the gate checks that
 /// file still does, so a row whose reason went away turns red instead of
 /// quietly exempting a class nobody constructs any more.
@@ -217,12 +217,18 @@ private static immutable BuiltElsewhere[] kBuiltElsewhere = [
 ];
 
 unittest {
-    const regPath = buildPath(repoRoot, "source", "registration.d");
-    assert(exists(regPath) && isFile(regPath),
-        "the census cannot find " ~ regPath ~ " — it is measuring nothing");
-    const regCode = blankUnittestBodies(blankNonCode(readText(regPath)));
+    const regPaths = [
+        buildPath(repoRoot, "source", "registration.d"),
+        buildPath(repoRoot, "source", "file_io_registration.d"),
+    ];
+    string regCode;
+    foreach (path; regPaths) {
+        assert(exists(path) && isFile(path),
+            "the census cannot find " ~ path ~ " — it is measuring nothing");
+        regCode ~= blankUnittestBodies(blankNonCode(readText(path)));
+    }
     assert(regCode.length > 50_000,
-        format("registration.d blanked to only %d bytes — wrong file", regCode.length));
+        format("registration modules blanked to only %d bytes — wrong files", regCode.length));
 
     const decls   = scanCommandsTree(repoRoot);
     const derived = commandDerived(decls);
@@ -268,12 +274,12 @@ unittest {
         if (!recorded) unregistered ~= format("%s (%s:%d)", d.name, d.file, d.line);
     }
     assert(registered >= 190,
-        format("only %d concrete Command classes are `new`ed in registration.d "
+        format("only %d concrete Command classes are `new`ed in the registrars "
              ~ "(215 measured at task 4066) — the instantiation match is broken",
                registered));
 
     // The recorded rows are checked against their owning declaration, and
-    // against registration.d, so a row can neither rot nor shadow a real
+    // against the registrars, so a row can neither rot nor shadow a real
     // registration. The two merge constructors are part of the closed
     // population too: otherwise a same-file move could hide a displaced
     // external builder by keeping the raw class-name count unchanged.
@@ -315,7 +321,7 @@ unittest {
             row.name ~ " is recorded as built elsewhere but is no longer a concrete "
           ~ "Command subclass under source/commands — delete the row");
         assert(!instantiates(regCode, row.name),
-            row.name ~ " is recorded as built elsewhere but registration.d now "
+            row.name ~ " is recorded as built elsewhere but a registrar now "
           ~ "`new`s it — delete the row, the class is registered");
         bool hasBuilder;
         foreach (ref hit; builderHits)
@@ -356,7 +362,7 @@ unittest {
 
     assert(unregistered.length == 0,
         format("%d concrete Command subclass(es) under source/commands are "
-             ~ "instantiated by no factory in registration.d and recorded "
+             ~ "instantiated by no factory in the registration modules and recorded "
              ~ "nowhere: %s. A command nobody constructs is reachable by no id, "
              ~ "and both lanes stay green over it. Register it in the family it "
              ~ "belongs to, delete it, or — if it is a gesture record built by "

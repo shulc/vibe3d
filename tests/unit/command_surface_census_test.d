@@ -120,20 +120,29 @@ private string withoutYamlComments(string src)
     return result.idup;
 }
 
+private string registrationText()
+{
+    string result;
+    foreach (name; ["registration.d", "file_io_registration.d"]) {
+        const path = buildPath(repoRoot, "source", name);
+        assert(exists(path) && isFile(path),
+            "command surface census cannot find source/" ~ name);
+        result ~= readText(path);
+    }
+    return result;
+}
+
 private string[] registeredCommandIds()
 {
-    const path = buildPath(repoRoot, "source", "registration.d");
-    assert(exists(path) && isFile(path),
-        "command surface census cannot find source/registration.d");
-    const registrationText = readText(path);
+    const registration = registrationText();
     bool[string] seen;
-    foreach (m; matchAll(registrationText, registeredIdRe))
+    foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;
     foreach (expression; dynamicRegistrationExpressions)
-        assert(registrationText.count(expression) == 1,
+        assert(registration.count(expression) == 1,
             "dynamic command registration expression changed; update its named "
           ~ "id expansion: " ~ expression);
-    foreach (id; dynamicRegisteredCommandIds(registrationText))
+    foreach (id; dynamicRegisteredCommandIds(registration))
         seen[id] = true;
     string[] result;
     foreach (id; seen.byKey)
@@ -179,7 +188,7 @@ private bool[string] configuredSurfaceTokens()
     // needs to treat those generated command ids as surfaced.
     if (hasCombinedActionCenterProvider)
         foreach (id; dynamicRegisteredCommandIds(
-                readText(buildPath(repoRoot, "source", "registration.d"))))
+                registrationText()))
             if (id.startsWith("actr."))
                 result[id] = true;
     return result;

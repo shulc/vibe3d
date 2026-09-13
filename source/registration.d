@@ -131,8 +131,8 @@ import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverla
                                          ViewportWireAlpha;
 import commands.viewport.grid_steps   : ViewportGridSteps;
 import commands.viewport.master       : ViewportMaster;
-import commands.file.load;
-import commands.file.save;
+import file_io_registration : FileIoSessionRole, LiveFileViewModeRole,
+                              registerFileIoCommands;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -1044,6 +1044,9 @@ void registerCommands(EditorApp app) {
     registerPipeStageCommands(app);
     registerSelectionCommands(app);
     registerViewCommands(app);
+    registerFileIoCommands(app.reg(), FileIoSessionRole(app.sessionOwner),
+        LiveFileViewModeRole(app.cameraViewDg,
+                             app.sessionOwner.editModePtr()));
     registerFileCommands(app);
     registerMeshCommands(app);
     registerHistoryCommands(app);
@@ -1656,11 +1659,14 @@ private void registerViewCommands(EditorApp app) {
     }
 }
 
-/// File and document lifecycle — one family of the registration table (task 0722, audit
+/// File and document lifecycle that still needs application-owned callbacks — one family of the registration table (task 0722, audit
 /// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
 /// which keys are written is exactly what it was; and every key in the
 /// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
+/// not load-bearing between families either. Task 5790 moved only the
+/// load/open/save/saveAs/import/export factories to `file_io_registration`;
+/// `file.new` and quit stay here because their callbacks own app lifecycle.
+/// The `with` chain is
 /// reproduced verbatim rather than narrowed to what this family happens
 /// to use: narrowing it could silently re-point a bare identifier at a
 /// same-named EditorApp member.
@@ -1668,59 +1674,6 @@ private void registerFileCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
-    // File → Open (Ctrl+O): native-primary "All supported" dialog; a .v3d
-    // load becomes the current document. `file.load` is also the id the
-    // HTTP /api/command path drives via setPath(), so it must stay
-    // registered with the open framing (setPath bypasses the dialog).
-    reg.commandFactories["file.load"] = () {
-        auto c = new FileLoad(&mesh(), cameraView, editMode, &document());
-        c.configure(FileLoadMode.open);
-        return cast(Command) c;
-    };
-    reg.commandFactories["file.open"] = reg.commandFactories["file.load"];
-    // File → Save (Ctrl+S): write to the remembered .v3d path, else prompt.
-    reg.commandFactories["file.save"] = () {
-        auto c = new FileSave(&mesh(), cameraView, editMode, &document());
-        c.configure(FileSaveMode.save);
-        return cast(Command) c;
-    };
-    // File → Save As (Ctrl+Shift+S): always prompt, native .v3d.
-    reg.commandFactories["file.saveAs"] = () {
-        auto c = new FileSave(&mesh(), cameraView, editMode, &document());
-        c.configure(FileSaveMode.saveAs);
-        return cast(Command) c;
-    };
-    // Import ▸ X — single-format open dialog -> FileLoad (importSingle mode
-    // leaves the current document untitled). One id per interchange format.
-    //
-    // NOTE: a plain `foreach`-body closure would capture the loop variable by
-    // REFERENCE — in D every delegate would share one storage slot and see the
-    // LAST ext (.fbx), so every Import/Export item opened an FBX dialog. (The
-    // `immutable ext = importExt;` idiom does NOT create a fresh per-iteration
-    // binding in D.) Pass ext as a function parameter so each delegate closes
-    // over its own copy.
-    CommandFactory importFactory(string ext) {
-        return () {
-            auto c = new FileLoad(&mesh(), cameraView, editMode, &document());
-            c.configure(FileLoadMode.importSingle, ext);
-            return cast(Command) c;
-        };
-    }
-    foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"])
-        reg.commandFactories["file.import" ~ importExt] = importFactory(importExt);
-    // Export ▸ X — single-format save dialog -> FileSave (exportSingle mode
-    // leaves the current document path untouched). FBX writes via assimp's
-    // binary FBX exporter (unit-scale handled in io.scene_export). Same
-    // per-ext closure-capture care as the import loop above.
-    CommandFactory exportFactory(string ext) {
-        return () {
-            auto c = new FileSave(&mesh(), cameraView, editMode, &document());
-            c.configure(FileSaveMode.exportSingle, ext);
-            return cast(Command) c;
-        };
-    }
-    foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"])
-        reg.commandFactories["file.export" ~ exportExt] = exportFactory(exportExt);
     // "File → New" = empty scene. Wraps SceneReset with the
     // already-supported `setEmpty(true)` mode; undo restores
     // whatever was open before.

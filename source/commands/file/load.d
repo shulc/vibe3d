@@ -96,6 +96,9 @@ class FileLoad : Command {
         singleExt = ext;
     }
 
+    package FileLoadMode configuredMode() const { return mode; }
+    package string configuredExtension() const { return singleExt; }
+
     // Task 1520: the chooser lives in `io/file_dialog.d` now — one
     // implementation of the POSIX/Windows FilterItem split, `--test`
     // suppression and the four-way outcome. The `assert(result != Result.error)`

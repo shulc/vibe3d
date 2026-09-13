@@ -69,6 +69,9 @@ class FileSave : Command {
         singleExt = ext;
     }
 
+    package FileSaveMode configuredMode() const { return mode; }
+    package string configuredExtension() const { return singleExt; }
+
     // Task 1520: the chooser itself lives in `io/file_dialog.d`; this builds
     // the filter list and the default name for this mode.
     private PickResult runSaveDialog() {

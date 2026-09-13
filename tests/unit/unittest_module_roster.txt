@@ -7,6 +7,7 @@ bg_gpu_cache
 bvh_pick
 command
 command_history
+commands.file.file_io_registration_test
 commands.image.commands
 commands.layer.commands
 commands.layer.xform_edit
