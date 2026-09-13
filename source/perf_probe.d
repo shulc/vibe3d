@@ -1380,9 +1380,11 @@ __gshared FrameProbe g_frames;
 //     changing its call/vertex/alloc counts is invisible here BY CONSTRUCTION.
 //     That case is what the `perf` build exists for.
 //   * `allocBytes` is main-thread GC allocation for frame/draw work after the
-//     main-thread HTTP bridge drain; ImGui chrome is included. It has a nonzero
-//     floor. It is a DELTA instrument: the claim it supports is "this change
-//     added N bytes/frame", never "a frame should allocate less than N".
+//     main-thread HTTP bridge drain; ImGui chrome is included. `beginFrame`
+//     opens with the other frame counters, then app.d retakes this field's
+//     baseline after bridge service. It has a nonzero floor. It is a DELTA
+//     instrument: the claim it supports is "this change added N bytes/frame",
+//     never "a frame should allocate less than N".
 //
 // Cost in the default build: a `++` and a `+=` per GL draw submission (tens
 // per frame), one struct clear per frame, and two thread-local reads for the
@@ -1558,11 +1560,17 @@ struct FrameWorkProbe {
 
     // ---- frame lifecycle -------------------------------------------------
 
-    /// Start frame/draw accounting after app.d drains main-thread HTTP bridges.
-    /// The timing probe has already begun, so both records keep one frame ordinal.
+    /// Start a frame. Called from the top of app.d's main loop, beside
+    /// `g_frames.beginFrame()`.
     void beginFrame() {
         cur_ = FrameWork.init;
         backdropDepth_ = 0;
+        allocBase_ = allocatedNow();
+    }
+
+    /// Retake only the GC baseline after request-timed bridge service.
+    /// Work counters and the in-flight frame remain open and unchanged.
+    void rebaseAllocationWindow() {
         allocBase_ = allocatedNow();
     }
 
@@ -1711,8 +1719,9 @@ struct FrameWorkProbe {
     /// Called from the HTTP thread, so it can land mid-frame. Unlike
     /// `FrameProbe.reset` this DOES clear `cur_` — there is no elapsed-time
     /// base to corrupt here (the one base, `allocBase_`, is re-stamped in
-    /// `beginFrame`; a reset landing mid-frame at worst mis-attributes that
-    /// single frame's `allocBytes`, and tests reset while quiescent).
+    /// `beginFrame` and after bridge service; a reset landing mid-frame at
+    /// worst mis-attributes that single frame's `allocBytes`, and tests reset
+    /// while quiescent).
     void reset() {
         cur_ = FrameWork.init;
         last_ = FrameWork.init;

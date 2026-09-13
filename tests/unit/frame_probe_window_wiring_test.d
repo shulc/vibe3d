@@ -12,24 +12,30 @@ unittest {
     enum timingBegin = "g_frames.beginFrame();";
     enum bridgeDrain = "httpServer.tickAll();";
     enum allocationBegin = "g_fc.beginFrame();";
+    enum allocationRebase = "g_fc.rebaseAllocationWindow();";
     enum frameFinish = "frameRunner.finishFrame(";
 
     assert(app.count(timingBegin) == 1
         && app.count(bridgeDrain) == 1
         && app.count(allocationBegin) == 1
+        && app.count(allocationRebase) == 1
         && app.count(frameFinish) == 1,
         "frame allocation ordering witness requires one timing begin, bridge "
-        ~ "drain, allocation begin, and frame finish call in app.d");
+        ~ "drain, allocation begin, allocation rebase, and frame finish call "
+        ~ "in app.d");
 
     const timingAt = app.indexOf(timingBegin);
     const drainAt = app.indexOf(bridgeDrain);
     const allocationAt = app.indexOf(allocationBegin);
+    const rebaseAt = app.indexOf(allocationRebase);
     const finishAt = app.indexOf(frameFinish);
-    assert(timingAt < drainAt,
-        "main-thread bridge drain escaped the whole-frame timing window");
-    assert(drainAt < allocationAt,
-        "frame allocation probe begins before the main-thread bridge drain; "
-        ~ "request timing can make lastScene.allocBytes bimodal");
-    assert(allocationAt < finishAt,
-        "frame allocation probe must begin before FrameRunner closes it");
+    assert(timingAt < allocationAt && allocationAt < drainAt,
+        "main-thread bridge drain must retain its original frame/event order "
+        ~ "inside the open probes");
+    assert(drainAt < rebaseAt,
+        "frame allocation baseline was not retaken after the main-thread "
+        ~ "bridge drain; request timing can make lastScene.allocBytes bimodal");
+    assert(rebaseAt < finishAt,
+        "frame allocation baseline must be retaken before FrameRunner closes "
+        ~ "the probe");
 }

@@ -172,18 +172,24 @@ unittest { // toJson emits every pass and the three published records
     assert(j["lastScene"]["drawVerts"].integer == 440);
 }
 
-unittest { // allocBytes is wired to the real GC counter, not left at zero
-    // Deliberately the ONLY assertion made about allocBytes anywhere: that it
-    // responds to allocation at all. No threshold is asserted here or in the
-    // HTTP tests — see the FrameWorkProbe header on why it is a delta
-    // instrument and not a gate.
+unittest { // allocBytes tracks only allocations after an explicit rebase
     FrameWorkProbe fc;
     fc.beginFrame();
-    // Escape the optimizer: a heap array whose size is not known statically.
-    static size_t n = 4096;
-    auto junk = new ubyte[n];
-    junk[0] = 1;
+    // Escape the optimizer with heap arrays whose sizes are not compile-time
+    // constants. The larger first allocation is bridge-shaped work to exclude;
+    // the smaller second allocation proves the counter is still live.
+    static size_t excludedN = 65536;
+    static size_t includedN = 4096;
+    auto excluded = new ubyte[excludedN];
+    excluded[0] = 1;
+    fc.rebaseAllocationWindow();
+    auto included = new ubyte[includedN];
+    included[0] = 2;
     fc.endFrame();
-    assert(fc.last().allocBytes >= cast(long)n,
-           "allocBytes must track main-thread GC allocation");
+    assert(fc.last().allocBytes >= cast(long)includedN,
+           "allocBytes must track main-thread GC allocation after the rebase");
+    assert(fc.last().allocBytes < cast(long)excludedN,
+           "allocBytes retained allocation from before the explicit rebase");
+    assert(excluded[0] == 1 && included[0] == 2,
+           "allocation-window fixture buffers did not remain live");
 }

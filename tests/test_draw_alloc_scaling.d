@@ -47,10 +47,11 @@
 // WHAT COUNTS AS FRAME ALLOCATION (task 5752, revisiting task 5750).
 // `allocBytes` begins after the main-thread bridge drain: request-timed HTTP
 // work is not frame/draw work, and including it made a settled frame depend on
-// when a request arrived. The deterministic selection-projection allocation
-// cell is the witness for future read migrations. `/api/selection` stays in
-// `readNow()` as the selection-type witness; it no longer contaminates the
-// frame/draw allocation window.
+// when a request arrived. The selection-projection allocation cell witnesses
+// mesh-scaled temporary work in its empty-selection fixture; arbitrary work in
+// a newly bridged route remains outside that cell's scope. `/api/selection`
+// stays in `readNow()` as the selection-type witness; it no longer contaminates
+// the frame/draw allocation window.
 //
 // THE THRESHOLD IS 4096 AND MUST NOT BE RELAXED. That is one GC page. The
 // signal it has to separate from is 20 112 B at the smallest (Vertices) and
