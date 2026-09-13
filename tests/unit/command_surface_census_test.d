@@ -123,7 +123,8 @@ private string withoutYamlComments(string src)
 private string registrationText()
 {
     string result;
-    foreach (name; ["registration.d", "file_io_registration.d"]) {
+    foreach (name; ["registration.d", "file_io_registration.d",
+                    "history_macro_registration.d"]) {
         const path = buildPath(repoRoot, "source", name);
         assert(exists(path) && isFile(path),
             "command surface census cannot find source/" ~ name);

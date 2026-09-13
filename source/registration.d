@@ -133,6 +133,7 @@ import commands.viewport.grid_steps   : ViewportGridSteps;
 import commands.viewport.master       : ViewportMaster;
 import file_io_registration : FileIoSessionRole, LiveFileViewModeRole,
                               registerFileIoCommands;
+import history_macro_registration : registerHistoryCommands;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -216,15 +217,6 @@ import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
-import commands.history.undo : HistoryUndo;
-import commands.history.redo : HistoryRedo;
-import commands.history.show : HistoryShow;
-import commands.history.clear : HistoryClear;
-import commands.test_undo_flags : UndoSuppressNoop, UndoForceNoop;
-import commands.history.save_as_script : HistorySaveAsScript;
-import commands.macros.record : MacroRecord;
-import commands.macros.save_recorded : MacroSaveRecorded;
-import macro_recorder : MacroRecorder;
 import snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
@@ -294,7 +286,6 @@ import viewport : LayoutPreset;
 
 // Locally-scoped in app.d's main() (not top-level there).
 import document       : Document;
-import command_history : CommandHistory, HistoryFlags;
 import viewport        : ViewportManager;
 
 // AI Modeling Copilot (task 0402): version(WithAI)-only, mirroring app.d's
@@ -1027,8 +1018,8 @@ private void registerEditTools(EditorApp app) {
 /// + 10 &editMode sites) and Edit-class 2 (`&promoteItemType` ->
 /// `promoteItemType`, the one address-taken hook -- see task doc).
 void registerCommands(EditorApp app) {
-    // Task 0722 (audit §2C A9): eight family functions below, called in the
-    // order the flat list wrote them in. The task-0621 selection-type wrap
+    // Task 0722 (audit §2C A9): the family functions and narrow registrars
+    // below are called in the flat list's order. The task-0621 selection-type wrap
     // stays HERE and stays LAST -- it walks the FINISHED dictionary, so it
     // must run after every family. It also depends on app.d calling
     // registerTools BEFORE registerCommands, because ~13 tool-paired
@@ -1049,7 +1040,11 @@ void registerCommands(EditorApp app) {
                              app.sessionOwner.editModePtr()));
     registerFileCommands(app);
     registerMeshCommands(app);
-    registerHistoryCommands(app);
+    registerSceneLifecycleCommands(app);
+    registerHistoryCommands(app.reg(), FileIoSessionRole(app.sessionOwner),
+        LiveFileViewModeRole(app.cameraViewDg,
+                             app.sessionOwner.editModePtr()),
+        app.history, app.historyPanelState, app.macroRecorder);
     registerSelfTestCommands(app);
     // The same three-deep `with` the flat body had, for the same reason the
     // family functions keep it: identical name resolution, not a narrower one.
@@ -2051,15 +2046,11 @@ private void registerMeshCommands(EditorApp app) {
     }
 }
 
-/// Scene, history, undo and macro — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerHistoryCommands(EditorApp app) {
+/// Scene lifecycle commands retain their application-owned GPU, viewport and
+/// tool callbacks. Task 5810 moved only history/macro factories to the narrow
+/// registrar; evidence lives in history_macro_registration_test. The `with`
+/// chain stays verbatim so bare names cannot silently rebind.
+private void registerSceneLifecycleCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
@@ -2097,65 +2088,10 @@ private void registerHistoryCommands(EditorApp app) {
                          &editMode(), &cameraView(),
                          () => dropActiveTool(ToolTransition.sceneResetDrop)))
         .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["history.undo"] = () => cast(Command)
-        new HistoryUndo(&mesh(), cameraView, editMode, history);
-    reg.commandFactories["history.redo"] = () => cast(Command)
-        new HistoryRedo(&mesh(), cameraView, editMode, history);
-    reg.commandFactories["history.show"] = () => cast(Command)
-        new HistoryShow(&mesh(), cameraView, editMode,
-                        () { historyPanelState.visible =
-                                 !historyPanelState.visible; });
-    // Phase 3 of the history-panel design doc — backing
-    // commands for the panel's right-click context menu.
-    reg.commandFactories["history.clear"] = () => cast(Command)
-        new HistoryClear(&mesh(), cameraView, editMode,
-                         () { history.clear(); });
-    // Test-automation only: engage / release the history-service lockout (the
-    // hard gate that freezes record/undo/redo/fire — distinct from Suspend) so
-    // a test can assert that locked-out recording is a no-op and /api/undo/status
-    // reports lockout:true. Reuses HistoryClear's closure wrapper (SideEffect,
-    // unrecorded); not in any menu / UI.
-    reg.commandFactories["undo.lockout.on"] = () => cast(Command)
-        new HistoryClear(&mesh(), cameraView, editMode,
-            () { history.setLockout(true); });
-    reg.commandFactories["undo.lockout.off"] = () => cast(Command)
-        new HistoryClear(&mesh(), cameraView, editMode,
-            () { history.setLockout(false); });
-    // Test-automation only: explicit undoability-override probes. The first is a
-    // Model command that opts OUT (UndoSuppress) → no undo entry; the second is a
-    // SideEffect command that opts IN (UndoForce) → entry lands. Drives both
-    // override branches of isUndoable() through the normal dispatch path.
-    reg.commandFactories["undo.test.suppress"] = () => cast(Command)
-        new UndoSuppressNoop(&mesh(), cameraView, editMode);
-    reg.commandFactories["undo.test.force"] = () => cast(Command)
-        new UndoForceNoop(&mesh(), cameraView, editMode);
-    reg.commandFactories["history.saveAsScript"] = () => cast(Command)
-        new HistorySaveAsScript(&mesh(), cameraView, editMode,
-            () {
-                string[] lines;
-                // Lifecycle entries are visible history rows but are not
-                // registered as command factories and cannot be replayed.
-                // Keep the script export's independent replayability filter.
-                foreach (ref e; history.undoEntriesVisible()) {
-                    import argstring : serializeCommandLine;
-                    if (e.flags & HistoryFlags.ToolLifecycle) continue;
-                    lines ~= serializeCommandLine(e.commandName, e.args);
-                }
-                return lines;
-            });
-    // Phase 7 of the history-panel design doc — macro
-    // recorder commands backing the History panel's Rec/Stop/Save
-    // strip. Both commands route through the existing argstring
-    // dispatcher, so /api/command and the panel buttons share one
-    // path.
-    reg.commandFactories["macro.record"] = () => cast(Command)
-        new MacroRecord(&mesh(), cameraView, editMode, macroRecorder);
-    reg.commandFactories["macro.saveRecorded"] = () => cast(Command)
-        new MacroSaveRecorded(&mesh(), cameraView, editMode, macroRecorder);
     }
     }
     }
-}
+    }
 
 
 /// TASK 1410 — the deliberate-defect injector, registered ONLY in the four

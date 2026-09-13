@@ -266,7 +266,7 @@ private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerViewCommands", 1, "view commands"),
     LedgerRow("registerFileCommands", 1, "file commands"),
     LedgerRow("registerMeshCommands", 1, "mesh commands"),
-    LedgerRow("registerHistoryCommands", 1, "history commands"),
+    LedgerRow("registerSceneLifecycleCommands", 1, "scene lifecycle commands"),
     LedgerRow("registerSelfTestCommands", 1, "self-test commands"),
     LedgerRow("InputRouter.handleWindowEvent", 1, "window-event handler"),
     LedgerRow("InputRouter.handleMouseWheel", 1, "mouse-wheel handler"),

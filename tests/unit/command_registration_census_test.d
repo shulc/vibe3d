@@ -220,6 +220,7 @@ unittest {
     const regPaths = [
         buildPath(repoRoot, "source", "registration.d"),
         buildPath(repoRoot, "source", "file_io_registration.d"),
+        buildPath(repoRoot, "source", "history_macro_registration.d"),
     ];
     string regCode;
     foreach (path; regPaths) {

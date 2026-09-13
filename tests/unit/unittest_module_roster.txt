@@ -8,6 +8,7 @@ bvh_pick
 command
 command_history
 commands.file.file_io_registration_test
+commands.history.history_macro_registration_test
 commands.image.commands
 commands.layer.commands
 commands.layer.xform_edit
