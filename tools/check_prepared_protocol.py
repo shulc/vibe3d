@@ -12,7 +12,8 @@ import hashlib
 
 from prepared_writer_census import (scan as scan_writer_graph,
     canonical as canonical_writer_graph, _balanced as balanced_source,
-    _semantic_digest as semantic_digest, module_path)
+    _semantic_digest as semantic_digest, module_path,
+    persisted_manifest as persisted_writer_manifest)
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -171,6 +172,48 @@ for anchor_module, anchor_name in (
 
 WRITER_MANIFEST_PATH = ROOT / "tools/prepared_writer_manifest.json"
 
+WRITER_MANIFEST_SCHEMA = {
+    "bypasses": {("caller", "symbol")},
+    "factories": {
+        ("aggregate", "id", "product_types", "semantic_sha256", "symbol"),
+        ("aggregate", "id", "preset_bases", "product_types",
+         "semantic_sha256", "symbol"),
+    },
+    "hooks": {("aggregate", "module", "semantic_sha256", "signature", "symbol")},
+    "internal_publishers": {("line", "path", "semantic_sha256", "symbol")},
+    "lifecycle_classifier": {("line", "path", "semantic_sha256", "symbol")},
+    "lifecycle_products": {("admission", "aggregate", "module", "signature", "symbol")},
+    "params": {("aggregate", "module", "semantic_sha256", "signature", "symbol")},
+    "products": {("aggregate", "module", "signature", "symbol")},
+    "surfaces": {
+        ("aggregate", "classification", "module", "prepared_delegations",
+         "semantic_sha256", "symbol"),
+    },
+}
+
+def validate_writer_manifest_schema(manifest, label):
+    expected_sections = set(WRITER_MANIFEST_SCHEMA)
+    found_sections = set(manifest)
+    if found_sections != expected_sections:
+        fail(f"P1.0b.0 {label} section schema changed: "
+             f"missing={sorted(expected_sections-found_sections)} "
+             f"surplus={sorted(found_sections-expected_sections)}")
+    bypasses = manifest["bypasses"]
+    publishers = manifest["internal_publishers"]
+    if not isinstance(bypasses, list) or not bypasses:
+        fail(f"P1.0b.0 {label} bypass schema has no populated rows")
+    if not isinstance(publishers, list) or not publishers:
+        fail(f"P1.0b.0 {label} internal-publisher schema has no populated rows")
+    for section, expected_shapes in WRITER_MANIFEST_SCHEMA.items():
+        value = manifest[section]
+        rows = [value] if section == "lifecycle_classifier" else value
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            fail(f"P1.0b.0 {label} {section} schema is not a row collection")
+        found_shapes = {tuple(sorted(row)) for row in rows}
+        if found_shapes != expected_shapes:
+            fail(f"P1.0b.0 {label} {section} row schema changed: "
+                 f"expected={sorted(expected_shapes)} found={sorted(found_shapes)}")
+
 def writer_keys(rows):
     return [(r.get("module", "registration"), r["aggregate"], r["symbol"], r.get("signature", "factory"))
             for r in rows]
@@ -227,10 +270,13 @@ def validate_writer_graph(actual, expected):
         fail("P1.0b.0 direct-body/product census changed with names intact")
 
 WRITER_MANIFEST = json.loads(WRITER_MANIFEST_PATH.read_text())
+validate_writer_manifest_schema(WRITER_MANIFEST, "persisted writer manifest")
 try:
     CURRENT_WRITERS = scan_writer_graph(ROOT)
 except ValueError as error:
     fail(f"P1.0b.0 writer census could not resolve source identity: {error}")
+validate_writer_manifest_schema(
+    persisted_writer_manifest(CURRENT_WRITERS), "generated writer manifest")
 validate_writer_graph(CURRENT_WRITERS, WRITER_MANIFEST)
 
 # One real compiler-backed ownership/signature gate for every reviewed root and

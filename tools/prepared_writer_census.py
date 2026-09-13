@@ -341,7 +341,21 @@ def scan(root):
 def canonical(data):
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
+def persisted_manifest(data):
+    result = dict(data)
+    # Task 5830: a bypass's supported identity is caller + symbol. Its scan row
+    # keeps path/line for diagnostics, but those coordinates were never compared
+    # and therefore must not be promised by the canonical manifest. The path/line
+    # fields that ARE compared remain on internal publishers and the lifecycle
+    # classifier in check_prepared_protocol.py; evidence is the task 5830 card.
+    result["bypasses"] = [
+        {"caller": row["caller"], "symbol": row["symbol"]}
+        for row in data["bypasses"]
+    ]
+    return result
+
 if __name__ == "__main__":
     import sys
-    print(json.dumps(scan(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1]),
-                     indent=2, sort_keys=True))
+    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1]
+    scanned = scan(root)
+    print(json.dumps(persisted_manifest(scanned), indent=2, sort_keys=True))
