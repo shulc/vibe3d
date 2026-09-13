@@ -330,6 +330,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         void suppressOwnedCompletionNotifyForTest(bool suppress) {
             atomicStore(suppressOwnedCompletionNotifyForTest_, suppress);
         }
+
+        bool legacyPendingForTest() {
+            return atomicLoad(submitted) > atomicLoad(completed);
+        }
     }
 
     /// Main thread (called once per frame via HttpServer.tickAll()): runs
@@ -863,14 +867,15 @@ class HttpServer {
     private ImagePlaneProvider imagePlaneProvider;
 
     // ----- /api/undo/status provider ---------------------------------------
-    // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
-    // the history service — runs on the HTTP thread like historyProvider.
+    // Returns JSON {state, lockout, canUndo, canRedo}. Its complete encoder
+    // runs inside undoStatusBridge's main-thread service (task 5820).
     private alias UndoStatusProvider = string delegate();
     private UndoStatusProvider undoStatusProvider;
 
     // ----- /api/history/replay provider ------------------------------------
     // Returns the canonical argstring line for undoStack[index], or "" when
-    // the index is out of range. Runs on the HTTP thread (read-only snapshot).
+    // the index is out of range. Called only inside replayBridge's main-thread
+    // service, immediately before the same service dispatches the line.
     private alias ReplayProvider = string delegate(size_t index);
     private ReplayProvider replayProvider;
 
@@ -921,6 +926,11 @@ class HttpServer {
     struct HistoryResp { string result; string error; }
     private MainThreadBridge!(HistoryReq, HistoryResp) historyBridge;
 
+    struct UndoStatusReq  { }
+    struct UndoStatusResp { string result; string error; }
+    private MainThreadBridge!(UndoStatusReq, UndoStatusResp) undoStatusBridge;
+    private Duration undoStatusBudget_ = 5.seconds;
+
     struct PipeEvalReq  { }
     struct PipeEvalResp { string result; string error; }
     private MainThreadBridge!(PipeEvalReq, PipeEvalResp) pipeEvalBridge;
@@ -952,6 +962,19 @@ class HttpServer {
     struct CmdReq  { string id; string params; bool interactive; bool uiOrigin; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
+    // Task 5820: the pointer is non-null only inside executeCommand. It routes
+    // adapter query delivery to the current execution's owner; the legacy
+    // command response remains the explicitly named out-of-port remainder.
+    private string* commandResultSink_;
+
+    struct ReplayReq {
+        size_t index;
+        bool interactive;
+        bool uiOrigin;
+    }
+    struct ReplayResp { string error; string line; string result; }
+    private MainThreadBridge!(ReplayReq, ReplayResp) replayBridge;
+    private Duration replayBudget_ = 120.seconds;
 
     struct InjectLayerReq  { JSONValue params; }
     struct InjectLayerResp { string error; }
@@ -1147,6 +1170,18 @@ class HttpServer {
                 }
             }, "/api/history");
 
+        undoStatusBridge = new MainThreadBridge!(UndoStatusReq, UndoStatusResp)(this,
+            (ref UndoStatusReq req, ref UndoStatusResp resp) {
+                try {
+                    if (undoStatusProvider !is null)
+                        resp.result = undoStatusProvider();
+                    else
+                        resp.error = "undo status provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/undo/status");
+
         pipeEvalBridge = new MainThreadBridge!(PipeEvalReq, PipeEvalResp)(this,
             (ref PipeEvalReq req, ref PipeEvalResp resp) {
                 try {
@@ -1233,56 +1268,29 @@ class HttpServer {
 
         commandBridge = new MainThreadBridge!(CmdReq, CmdResp)(this,
             (ref CmdReq req, ref CmdResp resp) {
-                // Clear the query-result slot at entry: a write command
-                // leaves it empty so the HTTP thread emits the plain
-                // {"status":"ok"} body. A query command's handler calls
-                // setCmdResult() to repopulate it.
-                resp.result = "";
-                if (commandHandler is null) {
-                    resp.error = "command handler not set";
-                } else {
-                    // ---- Task 2070: the per-command GC bracket ----------
-                    //
-                    // WHY HERE AND NOT AT THE ROUTE. `GC.allocatedInCurrentThread`
-                    // is PER-THREAD, and `/api/command` arrives on the HTTP
-                    // background thread but does NOT run there: the route is
-                    // `Answered.mainThread`, so `route_apiCommand` only fills
-                    // `commandBridge.req`, bumps the submit epoch and SPINS
-                    // (`submitAndWait`), while THIS service body is invoked by
-                    // `MainThreadBridge.tick()` from the main loop. A bracket
-                    // taken at the route would read the HTTP thread's own
-                    // allocation — the request parse and the response buffer,
-                    // a few kB, stable across cases and completely unrelated
-                    // to the command. It would look entirely plausible while
-                    // measuring nothing, which is the failure this comment
-                    // exists to prevent someone re-introducing.
-                    //
-                    // Outermost in the scope so the window covers application
-                    // binding and adapter delivery too. `scope(exit)` keeps
-                    // the bracket intact across every return path.
-                    // `end()` runs on a throw as well — the catch below is
-                    // INSIDE it — so a failing command still publishes its
-                    // cost instead of leaving the previous command's figures
-                    // standing as if they were this one's.
-                    g_commandGc.begin();
-                    scope(exit) g_commandGc.end();
-                    try {
-                        // Task 1520: pick the adapter. THIS LAMBDA CATCHES,
-                        // which is precisely why no test here can observe the
-                        // real failure mode (an exception escaping an ImGui
-                        // draw). What it observes is the proxy "the UI adapter
-                        // did not throw" — sound because `uiCommandHandler`
-                        // enters the same application binding as panel delegates.
-                        if (req.uiOrigin && uiCommandHandler !is null)
-                            uiCommandHandler(req.id, req.params, req.interactive);
-                        else
-                            commandHandler(req.id, req.params, req.interactive);
-                        resp.error = "";
-                    } catch (Exception e) {
-                        resp.error = e.msg;
-                    }
-                }
+                executeCommand(req.id, req.params, req.interactive,
+                               req.uiOrigin, resp.result, resp.error);
             });
+
+        replayBridge = new MainThreadBridge!(ReplayReq, ReplayResp)(this,
+            (ref ReplayReq req, ref ReplayResp resp) {
+                try {
+                    string line = replayProvider(req.index);
+                    if (line.length == 0) {
+                        resp.error = "no entry at given index";
+                        return;
+                    }
+                    auto parsed = parseArgstring(line);
+                    if (parsed.isEmpty)
+                        throw new Exception("entry parsed as empty");
+                    resp.line = line;
+                    executeCommand(parsed.commandId, parsed.params.toString(),
+                                   req.interactive, req.uiOrigin,
+                                   resp.result, resp.error);
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/history/replay");
 
         injectLayerBridge = new MainThreadBridge!(InjectLayerReq, InjectLayerResp)(this,
             (ref InjectLayerReq req, ref InjectLayerResp resp) {
@@ -1511,6 +1519,63 @@ class HttpServer {
             });
     }
 
+    // Task 5820 invariant: both command entry services synchronously use this
+    // one policy port, so history resolution and replay dispatch share one
+    // main-thread service with no intervening queue/frame. The query sink and
+    // GC bracket cover binding plus adapter delivery and unwind after the
+    // closing brace on success or Exception. Evidence:
+    // history_replay_boundary_test.d.
+    private void executeCommand(string id, string params, bool interactive,
+                                bool uiOrigin, ref string result,
+                                ref string error) {
+        // Clear the query-result slot at entry: a write command leaves it
+        // empty so the HTTP thread emits the plain {"status":"ok"} body. A
+        // query command's adapter delivery calls setCmdResult() to repopulate
+        // this execution's result owner.
+        result = "";
+        auto previousResultSink = commandResultSink_;
+        commandResultSink_ = &result;
+        scope(exit) commandResultSink_ = previousResultSink;
+        if (commandHandler is null) {
+            error = "command handler not set";
+            return;
+        }
+
+        // ---- Task 2070: the per-command GC bracket ----------------------
+        //
+        // WHY HERE AND NOT AT THE ROUTE. `GC.allocatedInCurrentThread` is
+        // PER-THREAD, and `/api/command` arrives on the HTTP background thread
+        // but does NOT run there: the route is `Answered.mainThread`, so the
+        // route only fills a request, submits it and waits, while THIS port is
+        // invoked by `MainThreadBridge.tick()` from the main loop. A bracket
+        // taken at the route would read the HTTP thread's own allocation — the
+        // request parse and response buffer, a few kB, stable across cases and
+        // completely unrelated to the command. It would look plausible while
+        // measuring nothing, which is the failure this comment prevents.
+        //
+        // Outermost in the scope so the window covers application binding and
+        // adapter delivery too. `scope(exit)` keeps the bracket intact across
+        // every return path. `end()` runs on a throw as well — the catch below
+        // is INSIDE it — so a failing command still publishes its cost instead
+        // of leaving the previous command's figures standing as this one's.
+        g_commandGc.begin();
+        scope(exit) g_commandGc.end();
+        try {
+            // Task 1520: pick the adapter. THIS PORT CATCHES, which is why no
+            // test here observes an exception escaping an ImGui draw. It
+            // observes the proxy "the UI adapter did not throw" — sound because
+            // `uiCommandHandler` enters the same application binding as panel
+            // delegates. Null UI callback deliberately falls back to script.
+            if (uiOrigin && uiCommandHandler !is null)
+                uiCommandHandler(id, params, interactive);
+            else
+                commandHandler(id, params, interactive);
+            error = "";
+        } catch (Exception e) {
+            error = e.msg;
+        }
+    }
+
     /**
      * Set the detailed model data provider callback
      */
@@ -1547,6 +1612,14 @@ class HttpServer {
             return historyBridge.ownedTraceForTest();
         }
 
+        public auto undoStatusOwnedTraceForTest() {
+            return undoStatusBridge.ownedTraceForTest();
+        }
+
+        public auto replayOwnedTraceForTest() {
+            return replayBridge.ownedTraceForTest();
+        }
+
         public size_t selectionOwnedPendingForTest() {
             return selectionBridge.ownedPendingForTest();
         }
@@ -1559,8 +1632,50 @@ class HttpServer {
             return historyBridge.ownedPendingForTest();
         }
 
+        public size_t undoStatusOwnedPendingForTest() {
+            return undoStatusBridge.ownedPendingForTest();
+        }
+
+        public size_t replayOwnedPendingForTest() {
+            return replayBridge.ownedPendingForTest();
+        }
+
         public bool historyProviderPresentForTest() const {
             return historyProvider !is null;
+        }
+
+        public bool undoStatusProviderPresentForTest() const {
+            return undoStatusProvider !is null;
+        }
+
+        public bool replayProviderPresentForTest() const {
+            return replayProvider !is null;
+        }
+
+        public bool commandPendingForTest() {
+            return commandBridge.legacyPendingForTest();
+        }
+
+        public bool commandResultSinkActiveForTest() const {
+            return commandResultSink_ !is null;
+        }
+
+        public void installCommandResultSinkForTest(ref string result) {
+            commandResultSink_ = &result;
+        }
+
+        public void clearCommandResultSinkForTest() {
+            commandResultSink_ = null;
+        }
+
+        public void setReplayBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            replayBudget_ = budget;
+        }
+
+        public void setUndoStatusBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            undoStatusBudget_ = budget;
         }
 
         public void holdSelectionOwnedWaitForTest(bool held) {
@@ -1775,15 +1890,16 @@ class HttpServer {
     }
 
     /**
-     * Stash a forms-engine query (`?` read-back) result. Called by the command
-     * handler — which runs on the main thread inside the command bridge's
-     * service — when the dispatched command was a query. The blocked HTTP
-     * thread reads it back via the same epoch handshake once the bridge's
-     * completed epoch catches up. Has the same single-flight precondition
-     * documented on the CmdResp.result field above.
+     * Stash a forms-engine query (`?` read-back) result. Task 5820 routes an
+     * active execution into its scoped result owner; outside that port the
+     * legacy command response remains the named command-lifetime remainder.
+     * The fallback is not a claim that the legacy command race is fixed.
      */
     public void setCmdResult(string json) {
-        commandBridge.resp.result = json;
+        if (commandResultSink_ !is null)
+            *commandResultSink_ = json;
+        else
+            commandBridge.resp.result = json;
     }
 
     /**
@@ -1827,9 +1943,8 @@ class HttpServer {
     }
 
     /**
-     * Set the /api/undo/status JSON provider. Read-only snapshot of the
-     * history service ({state, lockout, canUndo, canRedo}); runs on the HTTP
-     * thread like the history provider.
+     * Set the /api/undo/status JSON provider. The complete read-only encoder
+     * runs from undoStatusBridge on the main thread (task 5820).
      */
     public void setUndoStatusProvider(UndoStatusProvider provider) {
         this.undoStatusProvider = provider;
@@ -1837,9 +1952,8 @@ class HttpServer {
 
     /**
      * Set the replay provider — returns the canonical argstring line for
-     * undoStack[index], or "" when the index is out of range. The provider
-     * runs on the HTTP thread and must be safe to call concurrently with the
-     * main thread (reading a snapshot is sufficient).
+     * undoStack[index], or "" when the index is out of range. replayBridge
+     * calls it on the main thread immediately before synchronous dispatch.
      */
     public void setReplayProvider(ReplayProvider provider) {
         this.replayProvider = provider;
@@ -3850,35 +3964,39 @@ class HttpServer {
     }
 
     private void route_apiUndoStatus(HttpRequest request, HttpResponse response) {
-        // Read-only undo-service status: {state, lockout, canUndo, canRedo}.
-        // Snapshot at request time on the HTTP thread (same safety contract
-        // as /api/history GET — read-only access to the history service).
-        //
-        // Task 0763 — CHECKED, not benign by default: `CommandHistory`
-        // (command_history.d) has no Mutex and no lock-free publish
-        // discipline. `undoStatusProvider` (http_providers.d) makes FIVE
-        // separate calls into it (`state()`, `lockedOut()`, `canUndo()`,
-        // `canRedo()`, `undoDepthCounts()`), and the main thread pushes/pops
-        // `undoStack`/`redoStack` on every command. Same hazard CLASS as
-        // `document.layers` before task 0612 marshaled /api/layers — real,
-        // not fixed here. Deferred rather than marshaled in this pass:
-        // unlike /api/frames/counts (measured, isolated, one call site),
-        // /api/selection and /api/history share the same unguarded
-        // `history`/`document.layers` state and are two of the most-hit
-        // endpoints in the whole test suite; marshaling one without the
-        // others leaves the same object read from both threads by a
-        // different door, and validating the change needs the FULL suite,
-        // not the narrow lanes this follow-up ran. See task 0950
-        // (doc/tasks/backlog/0950-*) for the grouped fix.
+        // Task 5820 invariant: the ready encoder runs once inside
+        // undoStatusBridge's main-thread service, so every depth, predicate and
+        // lockout field observes one service state. The owned deadline/error
+        // contract matches task 5800; evidence: history_replay_boundary_test.d.
+        response.headers["Content-Type"] = "application/json";
         if (undoStatusProvider is null) {
             response.statusCode = 200;
             response.body = `{"state":"invalid","lockout":false,`
                           ~ `"canUndo":false,"canRedo":false}`;
         } else {
-            response.statusCode = 200;
-            response.body = undoStatusProvider();
+            UndoStatusReq bridgeRequest = UndoStatusReq.init;
+            UndoStatusResp initialResult = UndoStatusResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            UndoStatusResp timeoutResult = UndoStatusResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            UndoStatusResp stoppingResult = UndoStatusResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "HTTP server stopping";
+            auto owned = undoStatusBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                undoStatusBudget_);
+            if (owned.result.error.length == 0) {
+                response.statusCode = 200;
+                response.body = owned.result.result;
+            } else {
+                response.statusCode = 500;
+                response.body =
+                    `{"error": "Failed to retrieve undo status", "message": "`
+                  ~ jsonEsc(owned.result.error) ~ `"}`;
+            }
         }
-        response.headers["Content-Type"] = "application/json";
     }
 
     private void route_apiHistory(HttpRequest request, HttpResponse response) {
@@ -3989,22 +4107,15 @@ class HttpServer {
     }
 
     private void route_apiHistoryReplay(HttpRequest request, HttpResponse response) {
-        // Re-execute the argstring of undoStack[index] against the current
-        // mesh state. Reuses the same main-thread bridge as /api/command —
-        // the result is a brand-new history entry; the original is untouched.
-        //
-        // Caveats (by design, not bugs):
-        //  - Replay executes against the CURRENT mesh/selection state, not
-        //    the state at the time the original command ran. If the original
-        //    bevel targeted edge 5 but the selection has since changed, the
-        //    replay hits the current selection.
-        //  - Selection state is not stored per entry; if the replayed command
-        //    depends on selection (e.g. vert.merge), the caller must re-select
-        //    before calling this endpoint.
+        // Task 5820 invariant: HTTP validates only the raw index and builds the
+        // wire response. replayBridge's owned main-thread service resolves that
+        // exact history row and immediately calls executeCommand, so current
+        // selection/mesh is used with no second queue or intervening frame.
+        // Evidence: history_replay_boundary_test.d.
+        response.headers["Content-Type"] = "application/json";
         if (replayProvider is null) {
             response.statusCode = 200;
             response.body = `{"status":"error","message":"replay provider not set"}`;
-            response.headers["Content-Type"] = "application/json";
         } else {
             try {
                 auto j = parseJSON(request.body);
@@ -4018,44 +4129,44 @@ class HttpServer {
                            : cast(long)j["index"].uinteger;
                 if (idx < 0) throw new Exception("'index' must be non-negative");
 
-                string line = replayProvider(cast(size_t)idx);
-                if (line.length == 0) {
+                ReplayReq bridgeRequest = ReplayReq.init;
+                bridgeRequest.index = cast(size_t) idx;
+                // Compatibility is the state of the legacy carrier's LAST
+                // ASSIGNMENTS. HTTP is its only writer in the serial accept
+                // loop; replay writes neither flag and its service reads only
+                // this request-owned copy, never a mutable borrow or a second
+                // independently maintained latch (task 5820).
+                bridgeRequest.interactive = commandBridge.req.interactive;
+                bridgeRequest.uiOrigin = commandBridge.req.uiOrigin;
+                ReplayResp initialResult = ReplayResp.init;
+                initialResult.error = "";
+                initialResult.line = "";
+                initialResult.result = "";
+                ReplayResp timeoutResult = ReplayResp.init;
+                timeoutResult.error = "timeout waiting for main thread";
+                timeoutResult.line = "";
+                timeoutResult.result = "";
+                ReplayResp stoppingResult = ReplayResp.init;
+                stoppingResult.error = "HTTP server stopping";
+                stoppingResult.line = "";
+                stoppingResult.result = "";
+                auto owned = replayBridge.submitOwned(
+                    bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                    replayBudget_);
+                if (owned.result.error.length == 0) {
                     response.statusCode = 200;
-                    response.body = `{"status":"error","message":"no entry at given index"}`;
+                    response.body = `{"status":"ok","line":"`
+                                  ~ jsonEsc(owned.result.line) ~ `"}`;
                 } else {
-                    // Parse the line and dispatch through the existing
-                    // main-thread bridge — identical path to argstring /api/command.
-                    auto parsed = parseArgstring(line);
-                    if (parsed.isEmpty)
-                        throw new Exception("entry parsed as empty");
-                    // NOTE: req.interactive is deliberately left untouched
-                    // here — the shared command bridge's req is a
-                    // PERSISTENT field, and history-replay inherits
-                    // whatever the previous dispatch left it at (exactly
-                    // as before this refactor).
-                    commandBridge.req.id     = parsed.commandId;
-                    commandBridge.req.params = parsed.params.toString();
-                    commandBridge.resp.error = "";
-                    if (!commandBridge.submitAndWait(kCommandBridgeMaxIters))
-                        commandBridge.resp.error = "timeout waiting for main thread";
-                    if (commandBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok","line":"`
-                                      ~ jsonEsc(line)
-                                      ~ `"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                      ~ jsonEsc(commandBridge.resp.error)
-                                      ~ `"}`;
-                    }
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                  ~ jsonEsc(owned.result.error) ~ `"}`;
                 }
             } catch (Exception e) {
                 response.statusCode = 200;
                 response.body = `{"status":"error","message":"`
                               ~ jsonEsc(e.msg) ~ `"}`;
             }
-            response.headers["Content-Type"] = "application/json";
         }
     }
 
@@ -4368,7 +4479,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/script",               "POST", Match.prefix, Answered.mainThread, "route_apiScript"),
     RouteSpec("/api/refire",               "POST", Match.exact,  Answered.mainThread, "route_apiRefire"),
     RouteSpec("/api/history/block",        "POST", Match.exact,  Answered.mainThread, "route_apiHistoryBlock"),
-    RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.httpThread, "route_apiUndoStatus"),
+    RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.mainThread, "route_apiUndoStatus"),
     RouteSpec("/api/history",              "GET",  Match.exact,  Answered.mainThread, "route_apiHistory"),
     RouteSpec("/api/trace",                "GET",  Match.exact,  Answered.httpThread, "route_apiTrace"),
     RouteSpec("/api/trace/reset",          "POST", Match.exact,  Answered.httpThread, "route_apiTraceReset"),

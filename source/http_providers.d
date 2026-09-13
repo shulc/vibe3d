@@ -2244,6 +2244,11 @@ private:
     version(unittest) {
         shared size_t historyProviderThreadForTest_ = 0;
         shared int historyProviderCallsForTest_ = 0;
+        shared size_t undoStatusProviderThreadForTest_ = 0;
+        shared int undoStatusProviderCallsForTest_ = 0;
+        shared size_t replayProviderThreadForTest_ = 0;
+        shared int replayProviderCallsForTest_ = 0;
+        string undoStatusFailureForTest_;
     }
 
 public:
@@ -2272,6 +2277,31 @@ public:
 
     string traceJson() {
         return stepTrace_ !is null ? stepTrace_.snapshotJson() : "[]";
+    }
+
+    private string undoStatusJson() {
+        string stateStr;
+        final switch (history_.state()) {
+            case UndoState.Active:  stateStr = "active";  break;
+            case UndoState.Suspend: stateStr = "suspend"; break;
+            case UndoState.Invalid: stateStr = "invalid"; break;
+        }
+        size_t modelDepth, uiDepth;
+        history_.undoDepthCounts(modelDepth, uiDepth);
+        JSONValue payload = JSONValue.emptyObject;
+        payload["state"]        = JSONValue(stateStr);
+        payload["lockout"]      = JSONValue(history_.lockedOut());
+        payload["canUndo"]      = JSONValue(history_.canUndo());
+        payload["canRedo"]      = JSONValue(history_.canRedo());
+        payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
+        payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
+        payload["canUndoModel"]       = JSONValue(history_.canUndoModel());
+        payload["canUndoUi"]          = JSONValue(history_.canUndoUi());
+        payload["toolLifecycleCount"] = JSONValue(
+            cast(long)history_.toolLifecycleCount());
+        payload["canUndoLifecycle"]   = JSONValue(
+            history_.canUndoLifecycle());
+        return payload.toString();
     }
 
     void armTrace() {
@@ -2305,37 +2335,33 @@ public:
         httpServer.setTraceResetHandler(() => armTrace());
         httpServer.setTraceDisarmHandler(() => disarmTrace());
 
-        // Read-only undo-service status for automation: {state, lockout,
-        // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
-        // This remains an HTTP-thread snapshot; task 0950 owns its races.
+        // Task 5820: the complete status encoder is invoked by the owned
+        // main-thread service, so all fields observe one history boundary.
+        // Thread/payload evidence: history_replay_boundary_test.d.
         httpServer.setUndoStatusProvider(() {
-            string stateStr;
-            final switch (history_.state()) {
-                case UndoState.Active:  stateStr = "active";  break;
-                case UndoState.Suspend: stateStr = "suspend"; break;
-                case UndoState.Invalid: stateStr = "invalid"; break;
+            version(unittest) {
+                import core.atomic : atomicOp, atomicStore;
+                import core.thread : Thread;
+                atomicStore(undoStatusProviderThreadForTest_,
+                    cast(size_t) cast(void*) Thread.getThis());
+                atomicOp!"+="(undoStatusProviderCallsForTest_, 1);
+                if (undoStatusFailureForTest_.length)
+                    throw new Exception(undoStatusFailureForTest_);
             }
-            size_t modelDepth, uiDepth;
-            history_.undoDepthCounts(modelDepth, uiDepth);
-            JSONValue payload = JSONValue.emptyObject;
-            payload["state"]        = JSONValue(stateStr);
-            payload["lockout"]      = JSONValue(history_.lockedOut());
-            payload["canUndo"]      = JSONValue(history_.canUndo());
-            payload["canRedo"]      = JSONValue(history_.canRedo());
-            payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
-            payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
-            payload["canUndoModel"]       = JSONValue(history_.canUndoModel());
-            payload["canUndoUi"]          = JSONValue(history_.canUndoUi());
-            payload["toolLifecycleCount"] = JSONValue(
-                cast(long)history_.toolLifecycleCount());
-            payload["canUndoLifecycle"]   = JSONValue(
-                history_.canUndoLifecycle());
-            return payload.toString();
+            return undoStatusJson();
         });
 
-        // Returns the canonical argstring line for undoStack[index], or "" when
-        // the index is out of range. Runs on the HTTP thread (read-only snapshot).
+        // Task 5820: this is the first history read in replay. The owned
+        // replay service calls it on the main thread and synchronously
+        // dispatches the returned line before leaving that service.
         httpServer.setReplayProvider((size_t i) {
+            version(unittest) {
+                import core.atomic : atomicOp, atomicStore;
+                import core.thread : Thread;
+                atomicStore(replayProviderThreadForTest_,
+                    cast(size_t) cast(void*) Thread.getThis());
+                atomicOp!"+="(replayProviderCallsForTest_, 1);
+            }
             return history_.undoEntryCommandLine(i);
         });
 
@@ -2362,6 +2388,30 @@ public:
         int historyProviderCallsForTest() {
             import core.atomic : atomicLoad;
             return atomicLoad(historyProviderCallsForTest_);
+        }
+
+        size_t undoStatusProviderThreadForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(undoStatusProviderThreadForTest_);
+        }
+
+        int undoStatusProviderCallsForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(undoStatusProviderCallsForTest_);
+        }
+
+        size_t replayProviderThreadForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(replayProviderThreadForTest_);
+        }
+
+        int replayProviderCallsForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(replayProviderCallsForTest_);
+        }
+
+        void setUndoStatusFailureForTest(string message) {
+            undoStatusFailureForTest_ = message;
         }
     }
 }

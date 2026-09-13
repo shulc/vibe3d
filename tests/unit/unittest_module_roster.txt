@@ -244,6 +244,7 @@ tests.unit.handle_pass_scope_test
 tests.unit.handles.gl_util_test
 tests.unit.harness_log_isolation_census_test
 tests.unit.history_http_adapter_test
+tests.unit.history_replay_boundary_test
 tests.unit.image_cache_test
 tests.unit.image_plane_test
 tests.unit.imgui_event_gate_test
