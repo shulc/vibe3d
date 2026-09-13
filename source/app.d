@@ -205,6 +205,7 @@ import ui.viewport_render : SceneInputs, SceneViewInputs,
     SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;
 import ui.history_panel : HistoryPanelState, HistoryPanelActions,
     bindHistoryPanelRead, bindHistoryPanelActions;
+import ui.item_rename : ItemRenameState;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -2966,15 +2967,10 @@ void main(string[] args) {
         });
     };
 
-    // Layers panel (layers Stage 4): rename-in-place state. `layerRenameIndex`
-    // is the layer index whose name is currently being edited inline (-1 = none,
-    // i.e. all rows show a plain label); `layerRenameBuf` is the null-terminated
-    // edit buffer fed to ImGui.InputText. Both reset when the edit commits or
-    // is cancelled. The panel is pure UI — every control dispatches a `layer.*`
-    // command through uiCommandDelegate, never mutating `document` directly.
-    int layerRenameIndex = -1;
-    char[256] layerRenameBuf;
-    layerRenameBuf[] = 0;
+    // One application-owned inline editor is shared by Layers and Images:
+    // both panels address the same document-layer index space. The owner keeps
+    // its fixed, null-terminated widget buffer across frames.
+    ItemRenameState itemRenameState;
 
     // Task 0232: Loop Slice Slider HUD marker drag-anchor. Persists across
     // frames while the marker InvisibleButton is held — mirrors the cross-
@@ -4329,8 +4325,6 @@ void main(string[] args) {
     app.hoveredFacePtr         = &ifs.hoveredFace;
     app.activePanelIdxPtr      = &activePanelIdx;
     app.activeToolIdPtr        = &activeToolId;
-    app.layerRenameIndexPtr    = &layerRenameIndex;
-    app.layerRenameBufPtr      = &layerRenameBuf;
     app.layoutPtr              = &layout;
     app.panelsPtr              = &panels;
     app.statusLineGroupsPtr    = &statusLineGroups;
@@ -5257,7 +5251,7 @@ void main(string[] args) {
         // it is always drawn (g_testMode false ⇒ guard passes).
         if (!command.g_testMode || g_layerListShown) {
             import ui.panels : drawLayerListPanel;
-            drawLayerListPanel(app);
+            drawLayerListPanel(app, itemRenameState);
         }
 
         // ---- Images (floating; task 0616 Ph4) ----
@@ -5267,7 +5261,7 @@ void main(string[] args) {
         // swallowing the synthetic viewport drags every existing test drives.
         if (!command.g_testMode || g_imageListShown) {
             import ui.panels : drawImageListPanel;
-            drawImageListPanel(app);
+            drawImageListPanel(app, itemRenameState);
         }
 
         // ---- Channels (dockable; task 0637) ----

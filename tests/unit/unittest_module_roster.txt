@@ -468,6 +468,7 @@ tests.unit.ui.guard_modal_state_test
 tests.unit.ui.history_panel_test
 tests.unit.ui.image_rows_test
 tests.unit.ui.imgui_tabbing_test
+tests.unit.ui.item_rename_state_test
 tests.unit.ui.item_rows_test
 tests.unit.ui.panels_test
 tests.unit.ui.transform_panel_widget_test

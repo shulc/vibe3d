@@ -72,6 +72,8 @@ import ui.availability : actionRefusal, recordDrawnButton;
 import ui.mode_popup : dynamicModeCheckedLabel, dynamicModePopupItems;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
+import ui.item_rename : ItemRenameState, ItemRenameExit,
+    bindItemRenameController;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
@@ -1009,8 +1011,8 @@ void drawAboutPanel(EditorApp app) {
 }
 
 // =============================================================================
-// Phase 4 -- drawLayerListPanel (document/layer/layerRenameIndex/
-// layerRenameBuf/formsPanel/formsInteractiveDispatch/runCommand -- runCommand
+// Phase 4 -- drawLayerListPanel (document/layer/itemRenameState/
+// formsPanel/formsInteractiveDispatch/runCommand -- runCommand
 // isn't actually read by this body, verbatim comment kept from the plan's own
 // wording; the panel dispatches through uiCommandDelegate only).
 // =============================================================================
@@ -1096,17 +1098,18 @@ void drawAboutPanel(EditorApp app) {
 // Visibility mirrors Tool Properties: always shown in a normal run; in
 // --test it is HIDDEN by default (so it cannot capture viewport drags) and
 // is only drawn when `ui.layerList show` set g_layerListShown.
-void drawLayerListPanel(EditorApp app) {
+void drawLayerListPanel(EditorApp app, ref ItemRenameState itemRenameState) {
     with (app) {
     import std.json : JSONValue;
     import std.conv : to;
-    import std.string : fromStringz;
     import ui.item_rows   : ItemRow, ItemGlyph, RowRole, RowColor, itemRowsInto,
                             kAddItemChoices, itemClickMode;
     import ui.item_glyphs : drawItemGlyph, drawEyeGlyph, drawRoleGlyph,
                             drawDisclosure, kGlyphCellRatio,
                             kGlyphRadiusRatio, kIndentRatio;
     import io.doc_state   : currentDocPath, docDirty;
+
+    auto rename = bindItemRenameController(itemRenameState, uiCommandDelegate);
 
     pushPanelChromeStyle();
     scope(exit) popPanelChromeStyle();
@@ -1416,8 +1419,7 @@ void drawLayerListPanel(EditorApp app) {
             }
 
             // ---- Name ----
-            immutable bool renaming = !r.isRoot && layerRenameIndex >= 0
-                && cast(size_t) layerRenameIndex == r.index;
+            immutable bool renaming = !r.isRoot && rename.activeFor(r.index);
             // The accent is for a row being READ; a row being EDITED reverts to
             // ink. The rename field sits on the pale beige FrameBg this chrome
             // pushes, and the accent orange on that is barely legible — the
@@ -1435,23 +1437,17 @@ void drawLayerListPanel(EditorApp app) {
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
                     ImGui.SetKeyboardFocusHere();
                 ImGui.SetNextItemWidth(140);
-                bool commit = ImGui.InputText("##rename", layerRenameBuf[],
+                bool commit = ImGui.InputText("##rename", rename.buffer,
                                   ImGuiInputTextFlags.EnterReturnsTrue);
                 bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
                 // Commit on Enter or when the field loses focus (click away).
                 if (!commit && !cancel && ImGui.IsItemDeactivatedAfterEdit())
                     commit = true;
-                if (commit) {
-                    string newName =
-                        cast(string) fromStringz(layerRenameBuf.ptr).dup;
-                    if (newName.length && uiCommandDelegate !is null)
-                        uiCommandDelegate("layer.rename",
-                            `{"index":` ~ to!string(r.index) ~ `,"name":`
-                            ~ JSONValue(newName).toString() ~ `}`);
-                    layerRenameIndex = -1;
-                } else if (cancel || ImGui.IsItemDeactivated()) {
-                    layerRenameIndex = -1;
-                }
+                const exit = commit ? ItemRenameExit.commit
+                    : cancel ? ItemRenameExit.cancel
+                    : ImGui.IsItemDeactivated() ? ItemRenameExit.deactivate
+                    : ItemRenameExit.none;
+                rename.finish(r.index, exit);
             } else {
                 // The name is the multi-select target, the rename opener and
                 // the drag-to-reorder handle. `selected` is passed FALSE: the
@@ -1493,16 +1489,11 @@ void drawLayerListPanel(EditorApp app) {
                             ~ mode ~ `}`);
                 }
                 if (dbl) {
-                    layerRenameIndex = cast(int) r.index;
-                    layerRenameBuf[] = 0;
                     // The RAW name, never the displayed one: seeding the
                     // editor with the "(unnamed)" placeholder means Enter
                     // renames the item to that literal, after which "no name"
                     // cannot be recovered (see `ItemRow.renameSeed`).
-                    auto src = r.renameSeed;
-                    size_t n = src.length < layerRenameBuf.length - 1
-                             ? src.length : layerRenameBuf.length - 1;
-                    layerRenameBuf[0 .. n] = src[0 .. n];
+                    rename.begin(r.index, r.renameSeed);
                 }
 
                 // ---- Drag-to-reorder ----
@@ -1797,12 +1788,13 @@ void drawLayerListPanel(EditorApp app) {
 // Visibility mirrors the Layers panel: always drawn in a normal run; in
 // --test HIDDEN by default (so it cannot swallow a synthetic viewport drag)
 // until `ui.imageList show`.
-void drawImageListPanel(EditorApp app) {
+void drawImageListPanel(EditorApp app, ref ItemRenameState itemRenameState) {
     with (app) {
     import std.json : JSONValue;
     import std.conv : to;
-    import std.string : fromStringz;
     import io.doc_state : currentDocPath;
+
+    auto rename = bindItemRenameController(itemRenameState, uiCommandDelegate);
 
     // Confirm-before-remove state. Function-local statics rather than
     // EditorApp fields: nothing outside this body reads them, and the panel is
@@ -1941,7 +1933,7 @@ void drawImageListPanel(EditorApp app) {
             }
             ImGui.SameLine();
 
-            if (layerRenameIndex == idx) {
+            if (rename.activeFor(r.index)) {
                 // Inline rename — `layer.rename`, which writes the item's
                 // display name and NOTHING on disk. There is deliberately no
                 // `image.rename`: a second command would be a second way to
@@ -1950,22 +1942,16 @@ void drawImageListPanel(EditorApp app) {
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
                     ImGui.SetKeyboardFocusHere();
                 ImGui.SetNextItemWidth(140);
-                bool commit = ImGui.InputText("##rename", layerRenameBuf[],
+                bool commit = ImGui.InputText("##rename", rename.buffer,
                                   ImGuiInputTextFlags.EnterReturnsTrue);
                 bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
                 if (!commit && !cancel && ImGui.IsItemDeactivatedAfterEdit())
                     commit = true;
-                if (commit) {
-                    string newName =
-                        cast(string) fromStringz(layerRenameBuf.ptr).dup;
-                    if (newName.length && uiCommandDelegate !is null)
-                        uiCommandDelegate("layer.rename",
-                            `{"index":` ~ to!string(idx) ~ `,"name":`
-                            ~ JSONValue(newName).toString() ~ `}`);
-                    layerRenameIndex = -1;
-                } else if (cancel || ImGui.IsItemDeactivated()) {
-                    layerRenameIndex = -1;
-                }
+                const exit = commit ? ItemRenameExit.commit
+                    : cancel ? ItemRenameExit.cancel
+                    : ImGui.IsItemDeactivated() ? ItemRenameExit.deactivate
+                    : ItemRenameExit.none;
+                rename.finish(r.index, exit);
             } else {
                 // Multi-select: plain click replaces the selection
                 // (`mode:set`), ctrl-click adds/removes (`mode:toggle`).
@@ -1984,8 +1970,6 @@ void drawImageListPanel(EditorApp app) {
                             ~ mode ~ `}`);
                 }
                 if (dbl) {
-                    layerRenameIndex = idx;
-                    layerRenameBuf[] = 0;
                     // `renameSeed`, not `name` (review S5). `name` is what the
                     // row DRAWS, and for an unnamed item that is the literal
                     // "(unnamed)" placeholder — seeding the editor with it
@@ -1994,10 +1978,7 @@ void drawImageListPanel(EditorApp app) {
                     // field) then shows an item genuinely called "(unnamed)".
                     // The two fields exist separately so a test can see the
                     // difference; see `ui/image_rows.d`.
-                    auto src = r.renameSeed;
-                    size_t n = src.length < layerRenameBuf.length - 1
-                             ? src.length : layerRenameBuf.length - 1;
-                    layerRenameBuf[0 .. n] = src[0 .. n];
+                    rename.begin(r.index, r.renameSeed);
                 }
             }
 

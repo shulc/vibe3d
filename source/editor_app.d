@@ -921,10 +921,6 @@ struct EditorApp {
     @property ref int activePanelIdx() { return *activePanelIdxPtr; }
     string* activeToolIdPtr;
     @property ref string activeToolId() { return *activeToolIdPtr; }
-    int* layerRenameIndexPtr;
-    @property ref int layerRenameIndex() { return *layerRenameIndexPtr; }
-    char[256]* layerRenameBufPtr;
-    @property ref char[256] layerRenameBuf() { return *layerRenameBufPtr; }
     Layout* layoutPtr;
     @property ref Layout layout() { return *layoutPtr; }
     // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --
