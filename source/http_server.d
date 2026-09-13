@@ -124,6 +124,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     private shared bool ownedStopping = false;
     private Mutex ownedWaitMutex;
     private Condition ownedWaitCondition;
+    private string ownedRoute;
 
     version(unittest) {
         struct OwnedTraceEntry {
@@ -141,8 +142,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         private shared bool suppressOwnedCompletionNotifyForTest_ = false;
     }
 
-    this(HttpServer owner, void delegate(ref Req, ref Resp) service) {
+    this(HttpServer owner, void delegate(ref Req, ref Resp) service,
+         string ownedRoute = "") {
         this.service = service;
+        this.ownedRoute = ownedRoute;
         ownedWaitMutex = new Mutex;
         ownedWaitCondition = new Condition(ownedWaitMutex);
         owner.bridges ~= this;
@@ -261,6 +264,15 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
 
     private OwnedResult syntheticOwnedResult(OwnedCall call, Resp value,
                                              BridgeResultKind kind) {
+        // Task 5800 observability invariant: every synthetic owned failure is
+        // named once at its shared source by route and kind. Behavioral bridge
+        // evidence remains in request_result_ownership_test.d; the log sink is
+        // intentionally not captured by that rig.
+        try {
+            import std.format : format;
+            logWarn("http", format("%s submitOwned synthesized %s result",
+                ownedRoute.length ? ownedRoute : Req.stringof, kind));
+        } catch (Exception) {}
         OwnedResult result;
         result.result = value;
         result.requestIdentity = call.requestIdentity;
@@ -1121,7 +1133,7 @@ class HttpServer {
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
-            });
+            }, "/api/selection");
 
         historyBridge = new MainThreadBridge!(HistoryReq, HistoryResp)(this,
             (ref HistoryReq req, ref HistoryResp resp) {
@@ -1133,7 +1145,7 @@ class HttpServer {
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
-            });
+            }, "/api/history");
 
         pipeEvalBridge = new MainThreadBridge!(PipeEvalReq, PipeEvalResp)(this,
             (ref PipeEvalReq req, ref PipeEvalResp resp) {
@@ -1426,7 +1438,7 @@ class HttpServer {
                         resp.error = e.msg;
                     }
                 }
-            });
+            }, "/api/layers");
 
         meshPlanesBridge = new MainThreadBridge!(MeshPlanesReq, MeshPlanesResp)(this,
             (ref MeshPlanesReq req, ref MeshPlanesResp resp) {

@@ -539,7 +539,16 @@ unittest { // production handler and RouteSpec agree on the owned main-thread do
     immutable submitCount = source.count("historyBridge.submitOwned(");
     assert(submitCount == 1,
         "5800 production wiring floor: expected one historyBridge.submitOwned call");
-    assert(source.canFind(
-        `RouteSpec("/api/history",              "GET",  Match.exact,  Answered.mainThread, "route_apiHistory")`),
+    immutable routeStart = source.indexOf(`RouteSpec("/api/history"`);
+    assert(routeStart >= 0,
+        "5800 route census floor: /api/history RouteSpec is absent");
+    immutable routeEnd = source.indexOf('\n', cast(size_t) routeStart);
+    assert(routeEnd > routeStart,
+        "5800 route census floor: /api/history RouteSpec has no complete line");
+    auto routeLine = source[routeStart .. routeEnd];
+    assert(routeLine.canFind(`"GET"`)
+        && routeLine.canFind("Match.exact")
+        && routeLine.canFind("Answered.mainThread")
+        && routeLine.canFind(`"route_apiHistory"`),
         "5800 route census: /api/history RouteSpec must claim mainThread");
 }
