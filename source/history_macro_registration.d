@@ -43,14 +43,17 @@ void registerHistoryCommands(ref Registry reg,
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
                          () { history.clear(); });
 
-    // Test-automation lockout and undoability probes remain on the same
-    // factories as the production dispatcher, but are absent from menus.
+    // Test-only lockout is the hard record/undo/redo/fire gate, distinct from
+    // Suspend, and /api/undo/status exposes it as lockout:true. HistoryClear's
+    // closure wrapper keeps these SideEffect commands unrecorded and out of UI.
     reg.commandFactories["undo.lockout.on"] = () => cast(Command)
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
                          () { history.setLockout(true); });
     reg.commandFactories["undo.lockout.off"] = () => cast(Command)
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
                          () { history.setLockout(false); });
+    // These probes drive both isUndoable() overrides through normal dispatch:
+    // the Model command opts out; the SideEffect command opts in.
     reg.commandFactories["undo.test.suppress"] = () => cast(Command)
         new UndoSuppressNoop(&session.activeMesh(), live.view(), live.mode);
     reg.commandFactories["undo.test.force"] = () => cast(Command)
@@ -60,6 +63,8 @@ void registerHistoryCommands(ref Registry reg,
         new HistorySaveAsScript(&session.activeMesh(), live.view(), live.mode,
             () {
                 string[] lines;
+                // Lifecycle rows have no registered factory and cannot replay,
+                // so script export keeps an independent replayability filter.
                 foreach (ref e; history.undoEntriesVisible()) {
                     if (e.flags & HistoryFlags.ToolLifecycle) continue;
                     lines ~= serializeCommandLine(e.commandName, e.args);

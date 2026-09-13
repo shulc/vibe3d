@@ -242,7 +242,8 @@ unittest { // raw command undo and panel cursor deliberately diverge live
     assert(panel.value == 2
         && panel.history.undoEntries().length == 2
         && panel.history.redoEntries().length == 0
-        && !panelTool.editOpen && panelTool.cancels == 1,
+        && !panelTool.editOpen && panelTool.cancels == 1
+        && panel.activeTool is panelTool,
         "5810 panel trajectory must cancel the live edit before stepping history");
 }
 
@@ -257,6 +258,13 @@ unittest { // production wiring, scope fences, and the single panel owner
     assert(registrar.count("EditorApp") == 0
         && registrar.count("editor_app") == 0,
         "5810 narrow-role witness: registrar imports or names EditorApp");
+    assert(registrar.count(
+            "new HistoryUndo(&session.activeMesh(), live.view(), live.mode, history)") == 1
+        && registrar.count(
+            "new HistoryRedo(&session.activeMesh(), live.view(), live.mode, history)") == 1
+        && registrar.count("EditSession") == 0
+        && registrar.count(".navigate(") == 0,
+        "5810 raw-door fence: history.undo/redo stopped stepping CommandHistory directly");
     assert(registrar.count("reg.commandFactories[") == 11,
         "5810 registrar id population changed from 11");
     assert(registrar.count("scene.reset") == 0
@@ -278,6 +286,7 @@ unittest { // production wiring, scope fences, and the single panel owner
     assert(callAt >= 0 && wrapperAt >= 0 && callAt < wrapperAt,
         "5810 LAST-wrapper ordering: history/macro registration moved after it");
     assert(app.count("new HistoryPanelState()") == 1
+        && registration.count("new HistoryPanelState()") == 0
         && registrar.count("new HistoryPanelState()") == 0,
         "5810 panel ownership witness: production gained a duplicate panel state");
 }

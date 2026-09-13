@@ -2091,7 +2091,7 @@ private void registerSceneLifecycleCommands(EditorApp app) {
     }
     }
     }
-    }
+}
 
 
 /// TASK 1410 — the deliberate-defect injector, registered ONLY in the four
