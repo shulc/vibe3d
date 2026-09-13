@@ -183,11 +183,14 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         return true;
     }
 
-    // Tasks 5730/5780 invariant: each owned submission keeps request/result
-    // state alive past timeout, while its HTTP waiter blocks in a predicate
-    // loop on the one submit-time deadline; completion publishes before its
-    // notify, and shutdown notifies without waking SDL/the frame loop. The
-    // controlled ownership/wake evidence is request_result_ownership_test.d.
+    // Tasks 5730/5780 invariant: one waiter mutex covers the finished check,
+    // wait, finished publication and notify around the submit-time deadline.
+    // Lock order is waiter mutex -> this monitor, never the reverse: synthetic
+    // results trace under `this`, so tick releases `this` before publication.
+    // On macOS druntime's timed Condition uses wall time; acceptable for this
+    // test-only server because MonoTime is rechecked after every return, though
+    // a backward clock step may extend one wait. Controlled evidence is in
+    // request_result_ownership_test.d; no SDL/frame wake is implied.
     OwnedResult submitOwned(Req request, Resp initialResult,
                             Resp timeoutResult, Resp stoppingResult,
                             Duration budget) {
@@ -342,12 +345,12 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
             // request_result_ownership_test.d.
             synchronized (ownedWaitMutex) {
                 atomicStore(owned.finished, 1);
-                version(unittest) {
-                    if (!atomicLoad(suppressOwnedCompletionNotifyForTest_))
-                        ownedWaitCondition.notifyAll();
-                } else {
+                bool suppress = false;
+                version(unittest)
+                    suppress = atomicLoad(
+                        suppressOwnedCompletionNotifyForTest_);
+                if (!suppress)
                     ownedWaitCondition.notifyAll();
-                }
             }
         }
 

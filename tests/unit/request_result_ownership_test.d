@@ -125,6 +125,7 @@ private TimeoutCadenceSample runTimeoutCadence(Duration wakeCadence) {
     server.start();
 
     auto reply = new AsyncHttpReply();
+    immutable started = MonoTime.currTime;
     auto client = startHttpGet(port, "/api/selection", reply);
     Thread waker = null;
     scope(exit) {
@@ -141,7 +142,6 @@ private TimeoutCadenceSample runTimeoutCadence(Duration wakeCadence) {
                      2.seconds),
         "5780 deadline setup: waiter never blocked on the condition");
 
-    immutable started = MonoTime.currTime;
     waker = new Thread({
         while (atomicLoad(keepWaking) && !atomicLoad(reply.done)) {
             Thread.sleep(wakeCadence);
@@ -193,10 +193,30 @@ unittest {
     assert(submitBody.canFind("ownedWaitCondition.wait(call.deadline - now)")
         && submitBody.canFind("for (;;)"),
         "5780 predicate wiring: submitOwned must wait in a deadline predicate loop");
+    immutable submitWaitLock = submitBody.indexOf(
+        "synchronized (ownedWaitMutex)");
+    immutable finishedCheck = submitBody.indexOf(
+        "if (atomicLoad(call.finished)");
+    assert(submitWaitLock >= 0 && finishedCheck > submitWaitLock,
+        "5780 waiter mutex predicate: finished must be checked under the same "
+        ~ "ownedWaitMutex used by Condition.wait");
     immutable publish = ownedTickBody.indexOf(
         "atomicStore(owned.finished, 1)");
     immutable notify = ownedTickBody.indexOf(
         "ownedWaitCondition.notifyAll()");
+    assert(occurrences(ownedTickBody,
+                       "ownedWaitCondition.notifyAll()") == 1,
+        "5780 shipped completion notify: unittest and production must share "
+        ~ "one notifyAll statement");
+    immutable publishLock = ownedTickBody.indexOf(
+        "synchronized (ownedWaitMutex)");
+    immutable publishLockEnd = ownedTickBody.indexOf(
+        "\n            }", publishLock);
+    assert(publishLock >= 0 && publishLockEnd > publishLock
+        && publish > publishLock && notify > publish
+        && notify < publishLockEnd,
+        "5780 completion mutex: finished publication and notifyAll must stay "
+        ~ "inside the same ownedWaitMutex scope");
     assert(publish >= 0 && notify > publish,
         "5780 publish order: completion must be published before notifyAll");
 }
