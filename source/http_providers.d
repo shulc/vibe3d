@@ -2240,6 +2240,10 @@ private:
     CommandHistory history_;
     EditSession session_;
     StepTrace stepTrace_;
+    version(unittest) {
+        shared size_t historyProviderThreadForTest_ = 0;
+        shared int historyProviderCallsForTest_ = 0;
+    }
 
 public:
     this(CommandHistory history, EditSession session, StepTrace stepTrace) {
@@ -2282,7 +2286,16 @@ public:
         httpServer.setJumpHandler((size_t target) {
             return history_.jumpToVisible(target);
         });
-        httpServer.setHistoryProvider(() => historyJson());
+        httpServer.setHistoryProvider(() {
+            version(unittest) {
+                import core.atomic : atomicOp, atomicStore;
+                import core.thread : Thread;
+                atomicStore(historyProviderThreadForTest_,
+                    cast(size_t) cast(void*) Thread.getThis());
+                atomicOp!"+="(historyProviderCallsForTest_, 1);
+            }
+            return historyJson();
+        });
 
         // GET /api/trace / POST /api/trace/reset — non-destructive per-step
         // capture. StepTrace owns the mutex shared by append and these reads /
@@ -2337,6 +2350,18 @@ public:
             else if (action == "end")  history_.blockEnd();
             else throw new Exception("invalid block action '" ~ action ~ "'");
         });
+    }
+
+    version(unittest) {
+        size_t historyProviderThreadForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(historyProviderThreadForTest_);
+        }
+
+        int historyProviderCallsForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(historyProviderCallsForTest_);
+        }
     }
 }
 

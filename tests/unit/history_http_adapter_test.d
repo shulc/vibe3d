@@ -1,15 +1,25 @@
 module tests.unit.history_http_adapter_test;
 
+import core.atomic : atomicLoad, atomicStore;
+import core.thread : Thread;
+import core.time : Duration, MonoTime, msecs, seconds;
 import command : CmdFlags, Command;
 import command_history : CommandHistory, HistoryEntry, HistoryFlags;
 import edit_session : EditSession;
 import editmode : EditMode;
+import http_server : BridgeResultKind, HttpServer;
 import http_providers : HistoryHttpAdapter;
 import mesh : Mesh;
 import params : Param;
 import step_trace : StepTrace;
+import std.algorithm : canFind, count;
 import std.conv : to;
+import std.file : readText;
 import std.json : JSONValue, parseJSON;
+import std.path : buildPath, dirName;
+import std.socket : InternetAddress, Socket, SocketOption,
+    SocketOptionLevel, TcpSocket;
+import std.string : indexOf, startsWith;
 import tool : Tool;
 import view : View;
 
@@ -19,9 +29,10 @@ private final class RowCommand : Command {
     private string value_;
     private CmdFlags flags_;
     private bool operationInverse_;
+    private string inverseFailure_;
 
     this(string wireName, string label, string value, CmdFlags flags,
-         bool operationInverse) {
+         bool operationInverse, string inverseFailure = "") {
         static Mesh mesh;
         static View view;
         super(&mesh, view, EditMode.Vertices);
@@ -30,12 +41,16 @@ private final class RowCommand : Command {
         value_ = value;
         flags_ = flags;
         operationInverse_ = operationInverse;
+        inverseFailure_ = inverseFailure;
     }
 
     override string name() const { return wireName_; }
     override string label() const { return label_; }
     override CmdFlags cmdFlags() const { return flags_; }
-    override bool isOperationInverse() const { return operationInverse_; }
+    override bool isOperationInverse() const {
+        if (inverseFailure_.length) throw new Exception(inverseFailure_);
+        return operationInverse_;
+    }
     override Param[] params() {
         return [Param.string_("value", "Value", &value_, "")];
     }
@@ -241,4 +256,290 @@ unittest { // nullable, armed and disarmed trace behavior is preserved
     present.disarmTrace();
     assert(!trace.armed() && parseJSON(present.traceJson()).array.length == 0,
         "history HTTP adapter trace disarm must clear and disarm capture");
+}
+
+private final class AsyncHistoryReply {
+    shared bool done = false;
+    string wire = "";
+    string failure = "";
+}
+
+private size_t threadIdentity() {
+    return cast(size_t) cast(void*) Thread.getThis();
+}
+
+private ushort freePort() {
+    auto probe = new TcpSocket();
+    scope(exit) probe.close();
+    probe.bind(new InternetAddress("127.0.0.1", cast(ushort) 0));
+    return (cast(InternetAddress) probe.localAddress).port;
+}
+
+private Thread startHistoryGet(ushort port, AsyncHistoryReply reply) {
+    auto client = new Thread({
+        try {
+            Socket socket = null;
+            foreach (_; 0 .. 200) {
+                try {
+                    socket = new TcpSocket();
+                    socket.connect(new InternetAddress("127.0.0.1", port));
+                    break;
+                } catch (Exception) {
+                    if (socket !is null) socket.close();
+                    socket = null;
+                    Thread.sleep(5.msecs);
+                }
+            }
+            if (socket is null)
+                throw new Exception("history server did not accept a connection");
+            scope(exit) socket.close();
+            socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO,
+                             10.seconds);
+            socket.send("GET /api/history HTTP/1.1\r\n"
+                      ~ "Host: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            ubyte[4096] buf;
+            for (;;) {
+                auto n = socket.receive(buf[]);
+                if (n <= 0) break;
+                reply.wire ~= cast(string) buf[0 .. n].idup;
+            }
+        } catch (Exception e) {
+            reply.failure = e.msg;
+        }
+        atomicStore(reply.done, true);
+    });
+    client.start();
+    return client;
+}
+
+private bool waitUntil(bool delegate() ready, Duration budget) {
+    immutable deadline = MonoTime.currTime + budget;
+    while (!ready()) {
+        if (MonoTime.currTime >= deadline) return false;
+        Thread.sleep(1.msecs);
+    }
+    return true;
+}
+
+private string responseBody(string wire) {
+    immutable split = wire.indexOf("\r\n\r\n");
+    assert(split >= 0,
+        "5800 HTTP reply has no header/body boundary: " ~ wire);
+    return wire[split + 4 .. $];
+}
+
+private void assertJsonResponse(AsyncHistoryReply reply, string status,
+                                JSONValue expected, string context) {
+    assert(reply.failure.length == 0,
+        context ~ " client failure: " ~ reply.failure);
+    assert(reply.wire.startsWith(status ~ "\r\n"),
+        context ~ " status changed: " ~ reply.wire);
+    assert(reply.wire.canFind("Content-Type: application/json\r\n"),
+        context ~ " content type changed: " ~ reply.wire);
+    assert(parseJSON(responseBody(reply.wire)) == expected,
+        context ~ " parsed JSON changed: " ~ responseBody(reply.wire));
+}
+
+unittest { // populated real handler uses the production adapter callback on tick
+    auto history = new CommandHistory();
+    addRows(history, "undo", false);
+    addRows(history, "redo", true);
+    foreach (_; 0 .. 4)
+        assert(history.undo(), "5800 populated setup undo must succeed");
+    assert(history.undoEntriesVisible().length == 4
+        && history.redoEntriesVisible().length == 4,
+        "5800 populated source floor: both history stacks need four rows");
+
+    Tool active;
+    auto session = new EditSession(() => active, history, () {});
+    auto adapter = new HistoryHttpAdapter(history, session, null);
+    auto expectedPayload = parseJSON(adapter.historyJson());
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    adapter.wire(server);
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    auto reply = new AsyncHistoryReply();
+    auto client = startHistoryGet(port, reply);
+    scope(exit) if (client.isRunning) client.join();
+    immutable tickThread = threadIdentity();
+    assert(tickThread != 0,
+        "5800 success tick floor: independently known tick identity is zero");
+    assert(waitUntil(() => server.historyOwnedPendingForTest() == 1
+                          || atomicLoad(reply.done), 2.seconds),
+        "5800 success handler floor: real history request reached no handler");
+    if (server.historyOwnedPendingForTest() == 1) server.tickAll();
+    assert(waitUntil(() => atomicLoad(reply.done), 2.seconds),
+        "5800 success completion floor: serviced history request did not reply");
+    client.join();
+
+    auto payload = parseJSON(responseBody(reply.wire));
+    auto undoRows = payload["undo"].array;
+    auto redoRows = payload["redo"].array;
+    assert(undoRows.length == 4 && redoRows.length == 4,
+        "5800 success data floor: real handler needs non-empty undo and redo");
+    assert(adapter.historyProviderCallsForTest() == 1,
+        "5800 success callback floor: production provider callback must run once");
+    assert(adapter.historyProviderThreadForTest() == tickThread,
+        "5800 thread identity: production history-provider callback did not "
+        ~ "run on the independently known tick thread");
+    auto undo = undoRows[3];
+    auto redo = redoRows[3];
+    assert(undo["label"] != redo["label"]
+        && undo["args"] != redo["args"]
+        && undo["flags"] != redo["flags"]
+        && undo["runId"] != redo["runId"]
+        && undo["tweakGen"] != redo["tweakGen"],
+        "5800 parsed payload: undo/redo refire rows must differ in label, "
+        ~ "args, flags, runId and tweakGeneration");
+    assertJsonResponse(reply, "HTTP/1.1 200 OK", expectedPayload,
+                       "5800 populated success");
+}
+
+unittest { // null provider remains an immediate real-handler success
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    assert(!server.historyProviderPresentForTest(),
+        "5800 null floor: history provider must be absent before the request");
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    auto reply = new AsyncHistoryReply();
+    auto client = startHistoryGet(port, reply);
+    scope(exit) if (client.isRunning) client.join();
+    assert(waitUntil(() => atomicLoad(reply.done), 2.seconds),
+        "5800 null fallback floor: absent provider did not reply immediately");
+    client.join();
+    assert(server.historyOwnedPendingForTest() == 0
+        && server.historyOwnedTraceForTest().length == 0,
+        "5800 null immediacy floor: fallback must not submit bridge work");
+    assertJsonResponse(reply, "HTTP/1.1 200 OK",
+        parseJSON(`{"undo":[],"redo":[]}`), "5800 null fallback");
+}
+
+unittest { // provider exception is caught by the history service
+    enum failure = `history provider sentinel "<&>" failure`;
+    auto history = new CommandHistory();
+    record(history, new RowCommand("throwing.history", "Throwing history",
+        "exception-arg", CmdFlags.Model, false, failure));
+    assert(history.undoEntriesVisible().length == 1,
+        "5800 exception source floor: throwing history row was not recorded");
+    Tool active;
+    auto session = new EditSession(() => active, history, () {});
+    auto adapter = new HistoryHttpAdapter(history, session, null);
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    adapter.wire(server);
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    auto reply = new AsyncHistoryReply();
+    auto client = startHistoryGet(port, reply);
+    scope(exit) if (client.isRunning) client.join();
+    assert(waitUntil(() => server.historyOwnedPendingForTest() == 1,
+                     2.seconds),
+        "5800 exception submission floor: request was not queued");
+    server.tickAll();
+    assert(waitUntil(() => atomicLoad(reply.done), 2.seconds),
+        "5800 exception completion floor: caught provider failure did not reply");
+    client.join();
+    assert(adapter.historyProviderCallsForTest() == 1,
+        "5800 exception provider floor: production callback was not reached");
+    JSONValue expected = JSONValue.emptyObject;
+    expected["error"] = JSONValue("Failed to retrieve history");
+    expected["message"] = JSONValue(failure);
+    assertJsonResponse(reply, "HTTP/1.1 500 Internal Server Error", expected,
+                       "5800 provider exception");
+}
+
+unittest { // no-service request owns a real five-second timeout result
+    auto history = new CommandHistory();
+    addRows(history, "timeout", false);
+    Tool active;
+    auto session = new EditSession(() => active, history, () {});
+    auto adapter = new HistoryHttpAdapter(history, session, null);
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    adapter.wire(server);
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+
+    auto reply = new AsyncHistoryReply();
+    immutable started = MonoTime.currTime;
+    auto client = startHistoryGet(port, reply);
+    scope(exit) if (client.isRunning) client.join();
+    assert(waitUntil(() => server.historyOwnedPendingForTest() == 1,
+                     2.seconds),
+        "5800 timeout submission floor: real request was not submitted");
+    client.join(); // deliberately no tickAll: only the deadline may answer
+    immutable elapsed = MonoTime.currTime - started;
+    auto trace = server.historyOwnedTraceForTest();
+    assert(trace.length == 2
+        && trace[0].kind == BridgeResultKind.submitted
+        && trace[1].kind == BridgeResultKind.timedOut
+        && trace[0].requestIdentity == trace[1].requestIdentity,
+        "5800 timeout submission floor: owned trace needs submit then timeout");
+    assert(adapter.historyProviderCallsForTest() == 0,
+        "5800 timeout service floor: provider ran without a service tick");
+    assert(elapsed >= 5.seconds && elapsed < 9.seconds,
+        "5800 timeout deadline floor: five-second submit deadline did not expire");
+    JSONValue expected = JSONValue.emptyObject;
+    expected["error"] = JSONValue("Failed to retrieve history");
+    expected["message"] = JSONValue("timeout waiting for main thread");
+    assertJsonResponse(reply, "HTTP/1.1 500 Internal Server Error", expected,
+                       "5800 no-service timeout");
+}
+
+unittest { // shutdown uses the route-specific caller-owned error envelope
+    auto history = new CommandHistory();
+    Tool active;
+    auto session = new EditSession(() => active, history, () {});
+    auto adapter = new HistoryHttpAdapter(history, session, null);
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    adapter.wire(server);
+    server.markProvidersWired();
+    server.tickAll();
+    server.start();
+
+    auto reply = new AsyncHistoryReply();
+    auto client = startHistoryGet(port, reply);
+    scope(exit) {
+        if (server.running) server.stop();
+        if (client.isRunning) client.join();
+    }
+    assert(waitUntil(() => server.historyOwnedPendingForTest() == 1,
+                     2.seconds),
+        "5800 shutdown submission floor: real request was not submitted");
+    server.stop();
+    client.join();
+    assert(adapter.historyProviderCallsForTest() == 0,
+        "5800 shutdown service floor: provider ran without a service tick");
+    JSONValue expected = JSONValue.emptyObject;
+    expected["error"] = JSONValue("Failed to retrieve history");
+    expected["message"] = JSONValue("HTTP server stopping");
+    assertJsonResponse(reply, "HTTP/1.1 500 Internal Server Error", expected,
+                       "5800 server stopping");
+}
+
+unittest { // production handler and RouteSpec agree on the owned main-thread door
+    immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable source = readText(buildPath(root, "source", "http_server.d"));
+    assert(!source.canFind("historyBridge.submitAndWait"),
+        "5800 surface coexistence: historyBridge must not use submitAndWait");
+    immutable submitCount = source.count("historyBridge.submitOwned(");
+    assert(submitCount == 1,
+        "5800 production wiring floor: expected one historyBridge.submitOwned call");
+    assert(source.canFind(
+        `RouteSpec("/api/history",              "GET",  Match.exact,  Answered.mainThread, "route_apiHistory")`),
+        "5800 route census: /api/history RouteSpec must claim mainThread");
 }

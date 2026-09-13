@@ -81,9 +81,9 @@ unittest { // endpoint responses plus a real geometry undo/redo round-trip
 
     auto afterUndo = getJson("/api/history");
     assert(afterUndo["undo"].array.length == 0,
-        "history HTTP adapter post-undo undo stack must be empty");
+        "5800 reset -> edit -> undo -> GET ordering: undo stack must be empty");
     assert(afterUndo["redo"].array.length == 1,
-        "history HTTP adapter HTTP population floor: expected 1 redo row");
+        "5800 reset -> edit -> undo -> GET ordering floor: expected 1 redo row");
     auto redoRow = afterUndo["redo"].array[0];
     assert(redoRow["command"].str == "mesh.subdivide",
         "history HTTP adapter redo serialized the wrong source row");

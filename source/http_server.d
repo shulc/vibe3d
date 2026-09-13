@@ -905,6 +905,10 @@ class HttpServer {
     private MainThreadBridge!(SelectionReq, SelectionResp) selectionBridge;
     private int selectionBridgeMaxIters_ = 2500;
 
+    struct HistoryReq  { }
+    struct HistoryResp { string result; string error; }
+    private MainThreadBridge!(HistoryReq, HistoryResp) historyBridge;
+
     struct PipeEvalReq  { }
     struct PipeEvalResp { string result; string error; }
     private MainThreadBridge!(PipeEvalReq, PipeEvalResp) pipeEvalBridge;
@@ -1114,6 +1118,18 @@ class HttpServer {
                         resp.result = selectionDataProvider();
                     else
                         resp.error = "Selection data provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        historyBridge = new MainThreadBridge!(HistoryReq, HistoryResp)(this,
+            (ref HistoryReq req, ref HistoryResp resp) {
+                try {
+                    if (historyProvider !is null)
+                        resp.result = historyProvider();
+                    else
+                        resp.error = "history provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -1515,12 +1531,24 @@ class HttpServer {
             return layersBridge.ownedTraceForTest();
         }
 
+        public auto historyOwnedTraceForTest() {
+            return historyBridge.ownedTraceForTest();
+        }
+
         public size_t selectionOwnedPendingForTest() {
             return selectionBridge.ownedPendingForTest();
         }
 
         public size_t layersOwnedPendingForTest() {
             return layersBridge.ownedPendingForTest();
+        }
+
+        public size_t historyOwnedPendingForTest() {
+            return historyBridge.ownedPendingForTest();
+        }
+
+        public bool historyProviderPresentForTest() const {
+            return historyProvider !is null;
         }
 
         public void holdSelectionOwnedWaitForTest(bool held) {
@@ -1760,11 +1788,7 @@ class HttpServer {
     /// the walk. Runs on main thread via the same sync bridge as undo/redo.
     public void setJumpHandler(JumpHandler handler) { this.jumpHandler = handler; }
 
-    /**
-     * Set the /api/history JSON provider. Snapshot-at-request-time; runs
-     * on the HTTP thread — provider must be safe to call concurrently with
-     * apply/revert (or the caller must own a quick mutex).
-     */
+    /** Set the /api/history JSON provider, invoked by its main-thread bridge. */
     public void setHistoryProvider(HistoryProvider provider) {
         this.historyProvider = provider;
     }
@@ -3846,19 +3870,37 @@ class HttpServer {
     }
 
     private void route_apiHistory(HttpRequest request, HttpResponse response) {
-        // Task 0763 — see route_apiUndoStatus above: `historyProvider` walks
-        // `history.undoEntriesVisible()` and `.redoEntriesVisible()`, two
-        // separate reads of the same unguarded `CommandHistory` the main
-        // thread mutates on every command. Same hazard, same deferral (task
-        // 0950); not fixed here.
+        // Task 5800 invariant: the adapter's two stack walks execute only in
+        // historyBridge's main-thread service; null remains an immediate 200,
+        // while owned timeout/shutdown and caught provider exceptions share
+        // the chosen JSON 500 envelope. Evidence: history_http_adapter_test.d.
+        response.headers["Content-Type"] = "application/json";
         if (historyProvider is null) {
             response.statusCode = 200;
             response.body = `{"undo":[],"redo":[]}`;
         } else {
-            response.statusCode = 200;
-            response.body = historyProvider();
+            HistoryReq bridgeRequest = HistoryReq.init;
+            HistoryResp initialResult = HistoryResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            HistoryResp timeoutResult = HistoryResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            HistoryResp stoppingResult = HistoryResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "HTTP server stopping";
+            auto owned = historyBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                5.seconds);
+            if (owned.result.error.length == 0) {
+                response.statusCode = 200;
+                response.body = owned.result.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to retrieve history\", \"message\": \""
+                              ~ jsonEsc(owned.result.error) ~ "\"}";
+            }
         }
-        response.headers["Content-Type"] = "application/json";
     }
 
     private void route_apiTrace(HttpRequest request, HttpResponse response) {
@@ -4315,7 +4357,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/refire",               "POST", Match.exact,  Answered.mainThread, "route_apiRefire"),
     RouteSpec("/api/history/block",        "POST", Match.exact,  Answered.mainThread, "route_apiHistoryBlock"),
     RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.httpThread, "route_apiUndoStatus"),
-    RouteSpec("/api/history",              "GET",  Match.exact,  Answered.httpThread, "route_apiHistory"),
+    RouteSpec("/api/history",              "GET",  Match.exact,  Answered.mainThread, "route_apiHistory"),
     RouteSpec("/api/trace",                "GET",  Match.exact,  Answered.httpThread, "route_apiTrace"),
     RouteSpec("/api/trace/reset",          "POST", Match.exact,  Answered.httpThread, "route_apiTraceReset"),
     RouteSpec("/api/trace/disarm",         "POST", Match.exact,  Answered.httpThread, "route_apiTraceDisarm"),
