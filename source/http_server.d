@@ -188,8 +188,8 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     // Lock order is waiter mutex -> this monitor, never the reverse: synthetic
     // results trace under `this`, so tick releases `this` before publication.
     // On macOS druntime's timed Condition uses wall time; acceptable for this
-    // test-only server because MonoTime is rechecked after every return, though
-    // a backward clock step may extend one wait. Controlled evidence is in
+    // opt-in HTTP surface because MonoTime is rechecked after every return,
+    // though a backward clock step may extend one wait. Controlled evidence is
     // request_result_ownership_test.d; no SDL/frame wake is implied.
     OwnedResult submitOwned(Req request, Resp initialResult,
                             Resp timeoutResult, Resp stoppingResult,
