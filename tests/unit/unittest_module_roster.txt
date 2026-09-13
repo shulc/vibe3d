@@ -230,6 +230,7 @@ tests.unit.fixture_parameters_census_test
 tests.unit.fixture_provenance_census_test
 tests.unit.fixtures
 tests.unit.flip_and_spin_delta_test
+tests.unit.frame_probe_window_wiring_test
 tests.unit.frame_runner_finish_test
 tests.unit.gang_mixed_test
 tests.unit.gc_instrument_test

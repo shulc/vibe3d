@@ -4748,10 +4748,18 @@ void main(string[] args) {
         // the FIRST statement of the loop body; endFrame (below, before the
         // present/flush conditional) closes it. No-op in the default build.
         g_frames.beginFrame();
-        // Always-on work counters (perf_probe.d FrameWorkProbe). Paired with
-        // g_frames deliberately: same frame boundary, so a `perf`-build
-        // timing and a default-build count describe the SAME frame and can be
-        // put side by side without an alignment argument.
+
+        // Frame-allocation boundary (task 5752): drain main-thread bridges
+        // after whole-frame timing begins but before the frame/draw work probe,
+        // so request timing cannot make `lastScene.allocBytes` bimodal. The
+        // production ordering is pinned by
+        // tests/unit/frame_probe_window_wiring_test.d; the projection cell in
+        // tests/unit/selection_projection_test.d remains the allocation witness.
+        if (httpServer.running) httpServer.tickAll();
+
+        // Always-on frame/draw work counters (perf_probe.d FrameWorkProbe).
+        // They retain the timing probe's frame ordinal but intentionally start
+        // after request-timed bridge work.
         g_fc.beginFrame();
 
         // Perf: events phase — playback tick + HTTP event-player drain +
@@ -4772,8 +4780,8 @@ void main(string[] args) {
             // tests/test_hide_geometry_pick.d's edge-lasso row from the
             // preview's 12 edges into the cage's 16.
             //
-            // `httpServer.tickAll()` is DELIBERATELY OUTSIDE the gate. It
-            // drains every registered main-thread bridge by construction
+            // The `httpServer.tickAll()` drain above is DELIBERATELY OUTSIDE
+            // the gate. It drains every registered main-thread bridge by construction
             // (http_server.d, the bridges self-register), so gating it would
             // take `/api/reset` — the harness's only recovery lever — and
             // `/api/subpatch/preview`, which has to be able to answer
@@ -4794,7 +4802,6 @@ void main(string[] args) {
             // in a release/no-http run, where no thread ever posts requests.
             if (httpServer.running) {
                 if (!scriptedInputHeld) httpServer.tickEventPlayer();
-                httpServer.tickAll();
             }
 
             // Task 1670 — THE DIAGNOSED SEAM, and the only place this stall

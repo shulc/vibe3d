@@ -1379,10 +1379,10 @@ __gshared FrameProbe g_frames;
 //   * Nothing about time spent inside a phase. A pass that got slower without
 //     changing its call/vertex/alloc counts is invisible here BY CONSTRUCTION.
 //     That case is what the `perf` build exists for.
-//   * `allocBytes` is main-thread GC allocation for the whole frame, ImGui
-//     chrome included. It has a nonzero floor. It is a DELTA instrument: the
-//     claim it supports is "this change added N bytes/frame", never "a frame
-//     should allocate less than N".
+//   * `allocBytes` is main-thread GC allocation for frame/draw work after the
+//     main-thread HTTP bridge drain; ImGui chrome is included. It has a nonzero
+//     floor. It is a DELTA instrument: the claim it supports is "this change
+//     added N bytes/frame", never "a frame should allocate less than N".
 //
 // Cost in the default build: a `++` and a `+=` per GL draw submission (tens
 // per frame), one struct clear per frame, and two thread-local reads for the
@@ -1489,7 +1489,7 @@ struct FrameWork {
                               /// panel is closed, which is what makes "the
                               /// panel costs nothing when it is not open" a
                               /// measurement rather than a claim (task 1100).
-    long allocBytes;          /// main-thread GC bytes allocated during the frame
+    long allocBytes;          /// main-thread GC bytes in the frame/draw window
     long drawCalls;           /// sum over pass[].calls
     long drawVerts;           /// sum over pass[].verts
     PassCount[DrawPass.max + 1] pass;
@@ -1558,8 +1558,8 @@ struct FrameWorkProbe {
 
     // ---- frame lifecycle -------------------------------------------------
 
-    /// Start a frame. Called from the top of app.d's main loop, beside
-    /// `g_frames.beginFrame()`.
+    /// Start frame/draw accounting after app.d drains main-thread HTTP bridges.
+    /// The timing probe has already begun, so both records keep one frame ordinal.
     void beginFrame() {
         cur_ = FrameWork.init;
         backdropDepth_ = 0;

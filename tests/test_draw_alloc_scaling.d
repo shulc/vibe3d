@@ -44,16 +44,13 @@
 // ImGui floor that has nothing to do with this task, and a threshold on the
 // absolute number would be a number nobody can defend six months from now.
 //
-// WHAT COUNTS AS FRAME ALLOCATION (task 5750). `allocBytes` brackets the whole
-// main-loop frame, so an HTTP read marshalled to and serviced on the main
-// thread inside that bracket DOES count. This is intentional: moving work into
-// the measured frame can introduce a mesh-scaled allocation even when the draw
-// calls themselves are unchanged. This slope test catches such a migration only
-// when frames per request is low; the deterministic witness is the selection-
-// projection allocation cell.
-// `/api/selection` therefore stays in `readNow()` as the selection-type witness;
-// its projection must avoid whole-mesh temporaries instead of escaping the
-// frame measurement.
+// WHAT COUNTS AS FRAME ALLOCATION (task 5752, revisiting task 5750).
+// `allocBytes` begins after the main-thread bridge drain: request-timed HTTP
+// work is not frame/draw work, and including it made a settled frame depend on
+// when a request arrived. The deterministic selection-projection allocation
+// cell is the witness for future read migrations. `/api/selection` stays in
+// `readNow()` as the selection-type witness; it no longer contaminates the
+// frame/draw allocation window.
 //
 // THE THRESHOLD IS 4096 AND MUST NOT BE RELAXED. That is one GC page. The
 // signal it has to separate from is 20 112 B at the smallest (Vertices) and

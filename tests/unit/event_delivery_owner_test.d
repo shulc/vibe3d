@@ -88,23 +88,27 @@ unittest // frame order and the deliberately source-level HTTP-off cell
     const nativePoll = requiredAt(mainBody, "while (SDL_PollEvent(&event))");
     const momentum = requiredAt(mainBody, "if (ifs.anySpinning)");
 
-    const runningGuard = bodyAt(mainBody, "if (httpServer.running)");
+    const runningGuard = bodyAt(mainBody, "if (httpServer.running) {");
     assert(runningGuard.indexOf("httpServer.tickEventPlayer()") >= 0
-        && runningGuard.indexOf("httpServer.tickAll()") >= 0,
-        "5170 HTTP-running guard no longer owns replay and bridge service");
+        && runningGuard.indexOf("httpServer.tickAll()") < 0,
+        "5170 HTTP-running guards no longer separate replay from the "
+        ~ "pre-probe bridge drain");
     assert(runningGuard.indexOf("ai3dController.drain") < 0
         && runningGuard.indexOf("pollWorker") < 0
         && runningGuard.indexOf("pollInstall") < 0
         && runningGuard.indexOf("tickRemeshJob") < 0,
         "5170 HTTP-off gate: async AI/remesh work moved inside httpServer.running");
 
-    assert(cliReplay < httpReplay && httpReplay < tickAll && tickAll < stall
+    assert(tickAll < cliReplay && cliReplay < httpReplay && httpReplay < stall
         && stall < aiDrain && aiDrain < pollWorker && pollWorker < pollInstall
         && pollInstall < remesh && remesh < nativePoll && nativePoll < momentum,
-        "5170 frame order changed: CLI replay -> HTTP replay -> tickAll -> "
+        "5170 frame order changed: tickAll -> CLI replay -> HTTP replay -> "
         ~ "stall -> AI drain -> worker/install -> remesh -> native poll -> momentum");
     assert(mainBody.count("httpServer.tickAll()") == 1,
         "5170 tickAll contract changed from exactly once per frame");
+    assert(mainBody.count(
+        "if (httpServer.running) httpServer.tickAll();") == 1,
+        "5752 bridge drain must stay in its pre-probe HTTP-running guard");
 
     assert(runningGuard.indexOf(
         "if (!scriptedInputHeld) httpServer.tickEventPlayer()") >= 0,
