@@ -1077,8 +1077,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 modal("ai3d.generate",  ai3dModalOpen);
                 modal("ai3d.install",   ai3dInstallConfirmOpen);
                 modal("mesh.remesh",    remeshModalOpen);
-                modal("discard.confirm", discardConfirmOpen);
-                modal("command.notice", noticeOpen);
+                modal("discard.confirm",
+                      guardModalState.discardConfirmOpen);
+                modal("command.notice", guardModalState.noticeOpen);
                 ib.put("]}");
                 inputJson = ib.data;
             }

@@ -11,6 +11,7 @@ import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
+import ui.guard_modal_state : GuardModalState;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
 import prefs;
@@ -2670,6 +2671,7 @@ void main(string[] args) {
         () => activeTool !is null, &dropActiveTool);
     ApplicationCommandBinding commandBinding;
     GuardedActionController guardController;
+    auto guardModalState = new GuardModalState();
 
     // Phase 7: macro recorder captures successful command lines
     // (via history.onRecord delegate) when active. Survives undo /
@@ -3025,18 +3027,9 @@ void main(string[] args) {
     // slot: the guard now covers file.new / file.open / file.import.* / quit
     // through the single `runUiCommand` point, and a second modal entry would
     // have asked twice AND kept the guard at two places.
-    // The two booleans below belong only to the modal's ImGui open handshake.
-    // The pending command and its settle state are application-owned by
-    // GuardedActionController (task 5640).
-    bool   discardConfirmOpen;
-    bool   discardConfirmPending;
-    // Command-failure notice (task 0616 review B1). Same pendingOpen→OpenPopup
-    // convention. `noticeText` is built by ui.command_notice.commandNoticeText,
-    // which is also what decides whether there IS a notice — a command that
-    // declined without a reason (a cancelled file dialog) stays silent.
-    string noticeText;
-    bool   noticeOpen;
-    bool   noticePending;
+    // The popup handshake storage now lives in the per-application
+    // GuardModalState above. The pending command and its settle state remain
+    // application-owned by GuardedActionController (task 5640).
     string lastWindowTitle;
     string ai3dPickedImagePath;
     char[256] ai3dWorkerUrlBuf;
@@ -3470,9 +3463,9 @@ void main(string[] args) {
     app.remeshRefs.remeshLastErrorPtr        = &remeshLastError;
     app.remeshRefs.remeshLastSummaryPtr      = &remeshLastSummary;
 
-    // Phase-B pointer wiring for drawAi3dModal/drawRemeshModal/
-    // drawQuitGuardModal. HistoryPanelState above owns the fourth panel's
-    // form storage. ai3dWorkerManager is assigned exactly once (~1179).
+    // Phase-B pointer wiring for drawAi3dModal/drawRemeshModal.
+    // HistoryPanelState and GuardModalState own the other panel storage;
+    // ai3dWorkerManager is assigned exactly once (~1179).
     app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
     app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
     app.ai3dWorkerNextHealthProbePtr  = &ai3dWorkerNextHealthProbe;
@@ -3484,11 +3477,7 @@ void main(string[] args) {
     app.remeshTargetQuadsPtr          = &remeshTargetQuads;
     app.remeshAdaptivityPtr           = &remeshAdaptivity;
     app.remeshSharpEdgePtr            = &remeshSharpEdge;
-    app.discardConfirmOpenPtr         = &discardConfirmOpen;
-    app.discardConfirmPendingPtr      = &discardConfirmPending;
-    app.noticeTextPtr                 = &noticeText;
-    app.noticeOpenPtr                 = &noticeOpen;
-    app.noticePendingPtr              = &noticePending;
+    app.guardModalState               = guardModalState;
     app.history         = history;
     app.vpm             = vpm;
     app.litShader       = litShader;
@@ -4078,9 +4067,7 @@ void main(string[] args) {
         // leaving the popup live cost nothing; now `?origin=ui` drives exactly
         // that path, and an unanswerable modal would wedge the harness.
         if (command.g_testMode) return;
-        noticeText    = text;
-        noticeOpen    = true;
-        noticePending = true;
+        guardModalState.publishNotice(text);
     }
 
     void raiseCommandNotice(Command cmd) {
@@ -4402,7 +4389,6 @@ void main(string[] args) {
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
         commandBinding.invokeUiCommand(c, m, id);
-    app.guardController      = guardController;
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
     app.activateToolById     = cast(void delegate(string))&activateToolById;
     // NOT a bare same-arity cast like its neighbours above: buildToolVts
@@ -5250,9 +5236,9 @@ void main(string[] args) {
         drawRemeshModal(app);
 
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
-        // Moved VERBATIM to ui/panels.d's drawQuitGuardModal (app.d decomp,
-        // phase B; same `with (app)` seam as the 0419 panels).
-        drawQuitGuardModal(app);
+        // The panel receives only its stable handshake state, the window gate
+        // and the existing application policy owner.
+        drawQuitGuardModal(guardModalState, testMode, guardController);
 
         drawStatusBar(app);
 

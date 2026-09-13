@@ -287,6 +287,8 @@ import forms_render;
 import layer_params   : LayerPropsProvider, itemPropsTarget;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
+import ui.guard_modal_state : GuardModalState;
+import guarded_action_controller : GuardedActionController;
 
 version (WithAI) import commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
 version (WithAI) {
@@ -3133,14 +3135,15 @@ void drawStatusBar(EditorApp app) {
 //   drawQuitGuardModal       -- was app.d ~5980-6034 ("Unsaved-changes quit
 //                               guard + confirmation modal")
 //   drawCommandHistoryPanel  -- was app.d ~6304-6651 ("Command History")
-// The first three retain the original EditorApp seam. Their only body edits
+// The first two retain the original EditorApp seam. Their only body edits
 // vs the pre-move text are Edit-class-2 address-of sites (precedent:
 // registration.d's &promoteItemType): ImGui's SliderInt/SliderFloat/Checkbox
 // take a raw pointer, and `&prop` on a @property ref field yields the property
 // FUNCTION's address, so these widget calls read the `namePtr` storage field:
 //   &ai3dMaxFaces -> ai3dMaxFacesPtr, &remeshTargetQuads ->
 //   remeshTargetQuadsPtr, &remeshAdaptivity -> remeshAdaptivityPtr,
-//   &remeshSharpEdge -> remeshSharpEdgePtr.
+//   &remeshSharpEdge -> remeshSharpEdgePtr. drawQuitGuardModal now receives
+// only its per-application state, test-mode gate and existing guard controller.
 // Command History now has an owned form state plus narrow read/action roles;
 // its visible drawing remains an ImGui adapter around HistoryPanelController.
 // =========================================================================
@@ -3483,8 +3486,37 @@ void drawRemeshModal(EditorApp app) {
     }
 }
 
-void drawQuitGuardModal(EditorApp app) {
-    with (app) {
+version (unittest) {
+    struct GuardModalDrawSnapshot {
+        size_t discardOpenCalls;
+        ImVec2 saveMin;
+        ImVec2 saveMax;
+        ImVec2 discardMin;
+        ImVec2 discardMax;
+    }
+
+    private __gshared GuardModalDrawSnapshot g_guardModalDrawSnapshot;
+
+    GuardModalDrawSnapshot guardModalDrawSnapshot() {
+        return g_guardModalDrawSnapshot;
+    }
+
+    void resetGuardModalDrawSnapshot() {
+        g_guardModalDrawSnapshot = GuardModalDrawSnapshot.init;
+    }
+}
+
+private void cancelGuardPopup(GuardModalState state,
+                              GuardedActionController guardController) {
+    guardController.answerCancel();
+    state.closeDiscard();
+}
+
+void drawQuitGuardModal(GuardModalState state, bool testMode,
+                        GuardedActionController guardController) {
+    assert(state !is null, "quit guard modal requires panel state");
+    assert(guardController !is null, "quit guard modal requires guard policy");
+    with (state) {
         // ---- Unsaved-work prompt (task 0434's form, task 1521's scope) ----
         //
         // THE MODAL ENTRY THAT USED TO LIVE HERE IS GONE. Until task 1521 this
@@ -3498,23 +3530,26 @@ void drawQuitGuardModal(EditorApp app) {
         //
         // Three buttons, not two (owner-directed): "Yes/No" cannot tell
         // "throw the work away" from "I changed my mind".
-        if (!testMode && guardController.awaitingAnswer
-            && !discardConfirmOpen) {
-            discardConfirmOpen = true;
-            discardConfirmPending = true;
-        }
+        requestDiscardOpen(testMode, guardController.awaitingAnswer);
         if (discardConfirmOpen) {
-            if (discardConfirmPending) {
+            if (consumeDiscardOpen()) {
                 ImGui.OpenPopup("Unsaved Changes");
-                discardConfirmPending = false;
+                version (unittest) ++g_guardModalDrawSnapshot.discardOpenCalls;
             }
-            if (ImGui.BeginPopupModal("Unsaved Changes", null,
+            bool popupOpen = discardConfirmOpen;
+            if (ImGui.BeginPopupModal("Unsaved Changes", &popupOpen,
                                       ImGuiWindowFlags.AlwaysAutoResize)) {
                 // TextUnformatted: the text carries a command LABEL, which can
                 // contain a "%" (a file name), and this is the overload that
                 // takes no format string.
-                if (!guardController.awaitingAnswer) {
-                    discardConfirmOpen = false;
+                if (!popupOpen) {
+                    cancelGuardPopup(state, guardController);
+                    ImGui.CloseCurrentPopup();
+                } else if (ImGui.IsKeyPressed(ImGuiKey.Escape)) {
+                    cancelGuardPopup(state, guardController);
+                    ImGui.CloseCurrentPopup();
+                } else if (!guardController.awaitingAnswer) {
+                    closeDiscard();
                     ImGui.CloseCurrentPopup();
                 } else {
                     ImGui.TextUnformatted(guardController.promptText);
@@ -3525,19 +3560,26 @@ void drawQuitGuardModal(EditorApp app) {
                     // dirty and aborts the discard.
                     if (ImGui.Button("Save")) {
                         guardController.answerSave();
-                        discardConfirmOpen = false;
+                        closeDiscard();
                         ImGui.CloseCurrentPopup();
+                    }
+                    version (unittest) {
+                        g_guardModalDrawSnapshot.saveMin = ImGui.GetItemRectMin();
+                        g_guardModalDrawSnapshot.saveMax = ImGui.GetItemRectMax();
                     }
                     ImGui.SameLine();
                     if (ImGui.Button("Discard")) {
                         guardController.answerDiscard();
-                        discardConfirmOpen = false;
+                        closeDiscard();
                         ImGui.CloseCurrentPopup();
+                    }
+                    version (unittest) {
+                        g_guardModalDrawSnapshot.discardMin = ImGui.GetItemRectMin();
+                        g_guardModalDrawSnapshot.discardMax = ImGui.GetItemRectMax();
                     }
                     ImGui.SameLine();
                     if (ImGui.Button("Cancel")) {
-                        guardController.answerCancel();
-                        discardConfirmOpen = false;
+                        cancelGuardPopup(state, guardController);
                         ImGui.CloseCurrentPopup();
                     }
                 }
@@ -3545,8 +3587,7 @@ void drawQuitGuardModal(EditorApp app) {
             } else {
                 // Closed via ESC / [X] — same semantics as Cancel: the held
                 // action is DROPPED, never performed.
-                guardController.answerCancel();
-                discardConfirmOpen = false;
+                cancelGuardPopup(state, guardController);
             }
         }
 
@@ -3567,24 +3608,29 @@ void drawQuitGuardModal(EditorApp app) {
         // also writes the text to `GET /api/ui/policy` — so what a test can
         // read is the same string the user would have been shown.
         if (noticeOpen) {
-            if (noticePending) {
+            if (consumeNoticeOpen()) {
                 ImGui.OpenPopup("Command Failed");
-                noticePending = false;
             }
-            if (ImGui.BeginPopupModal("Command Failed", null,
+            bool popupOpen = noticeOpen;
+            if (ImGui.BeginPopupModal("Command Failed", &popupOpen,
                                       ImGuiWindowFlags.AlwaysAutoResize)) {
                 // TextUnformatted, not TextDisabled/Text: the reason carries a
                 // user-supplied FILE PATH, and this is the overload that takes
                 // no format string at all.
-                ImGui.TextUnformatted(noticeText);
-                ImGui.Separator();
-                if (ImGui.Button("OK")) {
-                    noticeOpen = false;
+                if (!popupOpen) {
+                    closeNotice();
                     ImGui.CloseCurrentPopup();
+                } else {
+                    ImGui.TextUnformatted(noticeText);
+                    ImGui.Separator();
+                    if (ImGui.Button("OK")) {
+                        closeNotice();
+                        ImGui.CloseCurrentPopup();
+                    }
                 }
                 ImGui.EndPopup();
             } else {
-                noticeOpen = false;   // closed via ESC / [X]
+                closeNotice();   // closed via ESC / [X]
             }
         }
     }

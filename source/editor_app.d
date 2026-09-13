@@ -23,7 +23,7 @@ import std.json : JSONValue, JSONType;
 import http_server;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome;
-import guarded_action_controller : GuardedActionController;
+import ui.guard_modal_state : GuardModalState;
 import ui.history_panel : HistoryPanelState;
 import log : logInfo, logWarn, logError;
 import prefs;
@@ -1019,7 +1019,6 @@ struct EditorApp {
     /// Task 1520/1521 — the guarded UI policy reached through the application
     /// command binding, including window-close dispatch from InputRouter.
     UiRunOutcome delegate(Command, RecordMode, string) runUiCommand;
-    GuardedActionController guardController;
     bool delegate(string)       tryOpenArgsDialog;
     void delegate(string)       activateToolById;
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
@@ -1111,24 +1110,10 @@ struct EditorApp {
     float* remeshSharpEdgePtr;
     @property ref float remeshSharpEdge() { return *remeshSharpEdgePtr; }
 
-    // ---- quit guard + confirmation modal ----
-    // Task 1521 — the generic unsaved-work prompt (was 0434's quit-only pair).
-    bool* discardConfirmOpenPtr;
-    @property ref bool discardConfirmOpen() { return *discardConfirmOpenPtr; }
-    bool* discardConfirmPendingPtr;
-    @property ref bool discardConfirmPending() { return *discardConfirmPendingPtr; }
-
-    // ---- command-failure notice (task 0616 review B1) ----
-    // The text a declining command asked to be shown, and the same
-    // pendingOpen → OpenPopup latch every other modal here uses. Empty text
-    // means no notice; see `ui/command_notice.d` for why a reasonless decline
-    // is deliberately silent.
-    string* noticeTextPtr;
-    @property ref string noticeText() { return *noticeTextPtr; }
-    bool* noticeOpenPtr;
-    @property ref bool noticeOpen() { return *noticeOpenPtr; }
-    bool* noticePendingPtr;
-    @property ref bool noticePending() { return *noticePendingPtr; }
+    // ---- quit guard + command-failure notice ----
+    // Stable class reference shared with the panel and HTTP diagnostic. The
+    // five mutable handshake fields live in GuardModalState, not EditorApp.
+    GuardModalState guardModalState;
 
     bool delegate(bool) navHistory;
 }
