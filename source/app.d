@@ -12,6 +12,7 @@ import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoo
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
+import layout_reset_action : LayoutResetAction, seedDefaultLayoutIfMissing;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
 import prefs;
@@ -447,14 +448,6 @@ import editor_app : installSnapState;
 // Module-level globals (interactive-session state; never read by --test)
 // ---------------------------------------------------------------------------
 
-// g_layoutIniPathZ/g_forceLayoutReseed relocated to editor_app.d (task 0419
-// Б1 -- written/read by the UI-panel block now in source/ui/panels.d;
-// imported back below since both also have call/use sites here, in the
-// startup ImGui.IniFilename wiring and the Reset-Layout-consuming NewFrame
-// preamble). Public `__gshared` there -- the panel writes them directly as
-// globals, not through ctx.
-import editor_app : g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReloadPathZ;
-
 /// Task 0211 seed-guard primary discriminator. Computed ONCE at startup
 /// (before `io.IniFilename` is assigned — see the `!command.g_testMode`
 /// branch below), true iff no layout ini exists yet at the current
@@ -465,12 +458,6 @@ import editor_app : g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReload
 /// in-frame DockBuilder node lifecycle. Stays false in `--test` (that branch
 /// never touches this global; io.IniFilename is forced null there).
 private __gshared bool g_seedFreshLayout = false;
-
-// g_pendingLayoutReloadPathZ/seedDefaultLayoutIfMissing relocated to
-// editor_app.d too (task 0419 Б1; g_pendingLayoutReloadPathZ is already
-// imported above alongside its siblings). seedDefaultLayoutIfMissing also
-// has a call site here, in the startup ImGui.IniFilename wiring.
-import editor_app : seedDefaultLayoutIfMissing;
 
 import viewport : LayoutPreset;
 
@@ -1443,6 +1430,15 @@ void main(string[] args) {
     IMGUI_CHECKVERSION();
     ImGui.CreateContext();
     ImGuiIO* io = &ImGui.GetIO();
+    bool restoreDefaultLayout(string path) {
+        return seedDefaultLayoutIfMissing(path);
+    }
+    void loadDefaultLayout(string path) {
+        ImGui.LoadIniSettingsFromDisk(path);
+    }
+    auto layoutResetAction = new LayoutResetAction(
+        &g_prefs, command.g_testMode,
+        &restoreDefaultLayout, &loadDefaultLayout);
     io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;  // Phase 0b
     // In --test mode, disable ImGui's on-disk layout persistence. The .ini
@@ -1457,13 +1453,12 @@ void main(string[] args) {
     // Layout ini: versioned file in the user config dir for interactive
     // sessions; strictly null in --test regardless of VIBE3D_CONFIG_DIR
     // (that env var gates prefs, but ini must stay null for byte-identity
-    // across parallel workers). g_layoutIniPathZ keeps the char* alive for
+    // across parallel workers). LayoutResetAction keeps the char* alive for
     // the full lifetime of the ImGui context (ImGui stores the raw pointer).
     if (command.g_testMode) {
         io.IniFilename = null;
     } else {
         import prefs : prefsDir, layoutIniPath, kLayoutIniVersion;
-        import std.string : toStringz;
         auto iniDir = prefsDir();
         bool iniDirOk = false;
         try { import std.file : mkdirRecurse; mkdirRecurse(iniDir); iniDirOk = true; }
@@ -1484,8 +1479,8 @@ void main(string[] args) {
             // programmatic seed. Non-destructive — only fires when the
             // user has no layout ini of their own yet at this path.
             seedDefaultLayoutIfMissing(userIniPath);
-            g_layoutIniPathZ = userIniPath.toStringz;
-            io.IniFilename   = g_layoutIniPathZ;
+            layoutResetAction.bindLayoutIniPath(userIniPath);
+            io.IniFilename = layoutResetAction.iniFilename();
             // MINOR 4: sweep old-version ini files (best-effort, non-fatal).
             try {
                 import std.file : dirEntries, SpanMode, remove;
@@ -4904,21 +4899,11 @@ void main(string[] args) {
             // the pending buffer inside step()).
         }
 
-        // Deferred layout-ini reload (Reset Layout button): pulls the
-        // just-re-copied shipped default bytes into ImGui's LIVE in-memory
-        // settings, so this session's own eventual autosave (or the
-        // shutdown save at DestroyContext) reflects the shipped default
-        // instead of re-persisting whatever dock arrangement was live
-        // before the reset. Must run strictly BEFORE ImGui.NewFrame() —
-        // LoadIniSettingsFromDisk is unsafe once a frame is in progress
-        // (between NewFrame/EndFrame); the button handler itself runs
-        // mid-frame, so it only sets the flag and this is where it's
-        // actually consumed, exactly once.
-        if (g_pendingLayoutReloadPathZ !is null) {
-            import std.string : fromStringz;
-            ImGui.LoadIniSettingsFromDisk(cast(string) fromStringz(g_pendingLayoutReloadPathZ));
-            g_pendingLayoutReloadPathZ = null;
-        }
+        // Reset Layout authors only a pending request in the panel's frame.
+        // The owner consumes it here, before NewFrame, because the ini loader
+        // is unsafe while a frame is in progress (task 5850; evidence:
+        // viewport_props_roles_test).
+        layoutResetAction.reloadBeforeFrame();
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -4993,7 +4978,7 @@ void main(string[] args) {
             //    ADDS a seed, it can never fire against a valid saved
             //    layout, so it does not reintroduce the in-frame-ordering
             //    fragility rejected for the "GetNode is null" discriminator.
-            //  - `g_forceLayoutReseed`: explicit Reset Layout action,
+            //  - LayoutResetAction's fallback: explicit Reset Layout action,
             //    independent of the process-lifetime `dockLayoutDone` latch.
             static bool dockLayoutDone = false;
             bool restoredDockspaceIsEmpty = false;
@@ -5001,11 +4986,11 @@ void main(string[] args) {
                 auto rootNode = ImGui.DockBuilderGetNode(dockspaceId);
                 restoredDockspaceIsEmpty = rootNode !is null && ImGuiDockNode_IsEmpty(rootNode);
             }
+            const forceLayoutReseed = layoutResetAction.consumeFallbackReseed();
             bool doSeed = (!dockLayoutDone && g_seedFreshLayout)
-                       || g_forceLayoutReseed
+                       || forceLayoutReseed
                        || restoredDockspaceIsEmpty;
             if (doSeed) {
-                if (g_forceLayoutReseed) g_forceLayoutReseed = false;
                 dockLayoutDone = true;
                 ImGui.DockBuilderRemoveNode(dockspaceId);
                 // AddNode(id, 0) creates the node; the per-frame DockSpace(id,…)
@@ -5321,7 +5306,9 @@ void main(string[] args) {
         // Hidden in --test by default; opt-in via `ui.viewportProps show`.
         if (!command.g_testMode || g_viewportPropsShown) {
             import ui.panels : drawViewportPropsPanel;
-            drawViewportPropsPanel(app);
+            import ui.viewport_props_role : ViewportPropertiesReadRole;
+            drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
+                                   uiCommandDelegate, layoutResetAction);
         }
 
         // ---- About (floating; task 0641) ----

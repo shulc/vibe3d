@@ -471,6 +471,7 @@ tests.unit.ui.imgui_tabbing_test
 tests.unit.ui.item_rows_test
 tests.unit.ui.panels_test
 tests.unit.ui.transform_panel_widget_test
+tests.unit.ui.viewport_props_roles_test
 tests.unit.undo_hatch_removed_census_test
 tests.unit.undo_parity_l0_test
 tests.unit.undo_parity_l10_test

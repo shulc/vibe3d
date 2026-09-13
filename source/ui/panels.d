@@ -288,6 +288,9 @@ import layer_params   : LayerPropsProvider, itemPropsTarget;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 import ui.guard_modal_state : GuardModalState;
+import ui.viewport_props_role : ViewportCommandDispatch,
+    ViewportPropertiesReadRole;
+import layout_reset_action : LayoutResetAction;
 import guarded_action_controller : GuardedActionController;
 
 version (WithAI) import commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
@@ -303,8 +306,7 @@ version (WithAI) {
 // -- see its own "Task 0419" doc comment for the full rationale on each).
 import editor_app : EditorApp, Layout, OverlayMode,
     kAiToggleAvailable, kGenerateAiAvailable,
-    buildItemFrame, seedDefaultLayoutIfMissing,
-    g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReloadPathZ;
+    buildItemFrame;
 
 // =============================================================================
 // Phase 1 -- pure helpers (no EditorApp / no `with(app)`; param-less or
@@ -675,27 +677,81 @@ void drawTabPanel(EditorApp app) {
 }
 
 // =============================================================================
-// Phase 3 -- drawViewportPropsPanel (cameraView/vpm/layout/formsPanel/
-// formsInteractiveDispatch, plus the Б1 layout-cluster --
-// g_layoutIniPathZ/g_forceLayoutReseed/g_pendingLayoutReloadPathZ/
-// seedDefaultLayoutIfMissing -- already relocated to editor_app.d in
-// Phase 1 and imported above; this phase is just the verbatim body move).
+// Phase 3 -- drawViewportPropsPanel (task 0419's original body move).
 // =============================================================================
 
 // -------------------------------------------------------------------------
 // Viewport Properties panel
 // -------------------------------------------------------------------------
-// Dockable panel that reflects and drives the active cell's Independence
-// flags (indCenter / indScale / indRotate) and Master selector.  Every
-// interaction dispatches through uiCommandDelegate (same path as
-// /api/command) — the panel NEVER mutates vpm directly.  Also hosts the
-// Reset Layout button.
+// Dockable panel whose active-cell independence, display and master controls
+// read a fresh projection each draw and dispatch changes through the application
+// command path. Reset Layout likewise calls its application-owned action, so the
+// drawer owns no viewport/prefs/ini mutation storage (task 5850; evidence:
+// viewport_props_roles_test).
 //
 // Visibility: always shown in interactive mode; hidden in --test by default
 // (opt-in via `ui.viewportProps show` + g_viewportPropsShown) so synthetic
 // viewport drags can never be captured by it.
-void drawViewportPropsPanel(EditorApp app) {
-    with (app) {
+version (unittest) {
+    struct ViewportPropsDrawSnapshot {
+        int activeId;
+        int displayStyle;
+        ImVec2 centerMin;
+        ImVec2 centerMax;
+        ImVec2 masterMin;
+        ImVec2 masterMax;
+        ImVec2[5] masterOptionMin; // group + cells; valid while cellCount <= 4
+        ImVec2[5] masterOptionMax;
+        ImVec2 resetMin;
+        ImVec2 resetMax;
+    }
+
+    // Test instrumentation only: mutable process-wide state intentionally
+    // survives ImGui contexts; the fixed option arrays support cellCount <= 4.
+    private __gshared ViewportPropsDrawSnapshot g_viewportPropsDrawSnapshot;
+
+    ViewportPropsDrawSnapshot viewportPropsDrawSnapshot() {
+        return g_viewportPropsDrawSnapshot;
+    }
+
+    void resetViewportPropsDrawSnapshot() {
+        g_viewportPropsDrawSnapshot = ViewportPropsDrawSnapshot.init;
+    }
+    private void recordViewportPropsProjection(int activeId, int style) {
+        g_viewportPropsDrawSnapshot.activeId = activeId;
+        g_viewportPropsDrawSnapshot.displayStyle = style;
+    }
+    private void recordViewportPropsCenter() {
+        g_viewportPropsDrawSnapshot.centerMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.centerMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsMaster() {
+        g_viewportPropsDrawSnapshot.masterMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.masterMax = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsMasterOption(int index) {
+        g_viewportPropsDrawSnapshot.masterOptionMin[index] = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.masterOptionMax[index] = ImGui.GetItemRectMax();
+    }
+    private void recordViewportPropsReset() {
+        g_viewportPropsDrawSnapshot.resetMin = ImGui.GetItemRectMin();
+        g_viewportPropsDrawSnapshot.resetMax = ImGui.GetItemRectMax();
+    }
+} else {
+    private void recordViewportPropsProjection(int, int) {}
+    private void recordViewportPropsCenter() {}
+    private void recordViewportPropsMaster() {}
+    private void recordViewportPropsMasterOption(int) {}
+    private void recordViewportPropsReset() {}
+}
+
+void drawViewportPropsPanel(ViewportPropertiesReadRole viewportRead,
+                            ViewportCommandDispatch dispatch,
+                            LayoutResetAction resetLayout) {
+    assert(dispatch !is null,
+        "viewport properties panel requires command dispatch");
+    assert(resetLayout !is null,
+        "viewport properties panel requires reset-layout action");
     import commands.ui.viewport_props : g_viewportPropsShown;
     import std.json : JSONValue;
     import std.conv : to;
@@ -704,7 +760,9 @@ void drawViewportPropsPanel(EditorApp app) {
     scope(exit) popPanelChromeStyle();
     scope(exit) ImGui.End();
     if (ImGui.Begin("Viewport Properties")) {
-        auto v = vpm.views[vpm.activeId];
+        auto v = viewportRead.project();
+        recordViewportPropsProjection(v.activeId,
+            cast(int)v.display.active.style);
 
         // Layout switcher: Single / 2-split H / 2-split V / Quad.
         // Highlights the active preset; each button fires viewport.layout.
@@ -718,11 +776,11 @@ void drawViewportPropsPanel(EditorApp app) {
                  LayoutPreset.SplitV, LayoutPreset.Quad];
             foreach (i; 0 .. 4) {
                 if (i > 0) ImGui.SameLine();
-                bool cur = (vpm.layout == lblVals[i]);
+                bool cur = (v.layout == lblVals[i]);
                 if (cur) ImGui.PushStyleColor(ImGuiCol.Button,
                                               ImVec4(0.30f, 0.45f, 0.65f, 1.0f));
-                if (ImGui.Button(lblNames[i]) && uiCommandDelegate !is null)
-                    uiCommandDelegate("viewport.layout",
+                if (ImGui.Button(lblNames[i]))
+                    dispatch("viewport.layout",
                         positionalPayload([lblIds[i]]));
                 if (cur) ImGui.PopStyleColor(1);
             }
@@ -732,20 +790,22 @@ void drawViewportPropsPanel(EditorApp app) {
         ImGui.SeparatorText("Active Cell Independence");
 
         bool ic = v.indCenter;
-        if (ImGui.Checkbox("Center", &ic) && uiCommandDelegate !is null)
-            uiCommandDelegate("viewport.indCenter",
+        const centerChanged = ImGui.Checkbox("Center", &ic);
+        recordViewportPropsCenter();
+        if (centerChanged)
+            dispatch("viewport.indCenter",
                                   ic ? `{"value":"yes"}` : `{"value":"no"}`);
 
         ImGui.SameLine();
         bool isc = v.indScale;
-        if (ImGui.Checkbox("Scale", &isc) && uiCommandDelegate !is null)
-            uiCommandDelegate("viewport.indScale",
+        if (ImGui.Checkbox("Scale", &isc))
+            dispatch("viewport.indScale",
                                   isc ? `{"value":"yes"}` : `{"value":"no"}`);
 
         ImGui.SameLine();
         bool ir = v.indRotate;
-        if (ImGui.Checkbox("Rotate", &ir) && uiCommandDelegate !is null)
-            uiCommandDelegate("viewport.indRotate",
+        if (ImGui.Checkbox("Rotate", &ir))
+            dispatch("viewport.indRotate",
                                   ir ? `{"value":"yes"}` : `{"value":"no"}`);
 
         // Display: surface style + wireframe overlay, for the ACTIVE cell.
@@ -784,9 +844,8 @@ void drawViewportPropsPanel(EditorApp app) {
                                  displayStyleLabel(kDisplayStyleOrder[si]))) {
                 foreach (i, sv; kDisplayStyleOrder) {
                     bool sel = (i == si);
-                    if (ImGui.Selectable(displayStyleLabel(sv), sel)
-                        && uiCommandDelegate !is null)
-                        uiCommandDelegate("viewport.displayStyle",
+                    if (ImGui.Selectable(displayStyleLabel(sv), sel))
+                        dispatch("viewport.displayStyle",
                             positionalPayload([displayStyleId(sv)]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -806,8 +865,8 @@ void drawViewportPropsPanel(EditorApp app) {
             if (ImGui.BeginCombo("##vpWireOverlay", wireLabels[wi])) {
                 foreach (i, wl; wireLabels) {
                     bool sel = (i == wi);
-                    if (ImGui.Selectable(wl, sel) && uiCommandDelegate !is null)
-                        uiCommandDelegate("viewport.wireOverlay",
+                    if (ImGui.Selectable(wl, sel))
+                        dispatch("viewport.wireOverlay",
                             positionalPayload([wireIds[i]]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -824,9 +883,8 @@ void drawViewportPropsPanel(EditorApp app) {
                 // thrown command from a drag of a UI slider.
                 if (wa < 0.0f) wa = 0.0f;
                 if (wa > 1.0f) wa = 1.0f;
-                if (uiCommandDelegate !is null)
-                    uiCommandDelegate("viewport.wireAlpha",
-                        positionalPayload([format("%.6f", wa)]));
+                dispatch("viewport.wireAlpha",
+                    positionalPayload([format("%.6f", wa)]));
             }
         }
 
@@ -861,9 +919,8 @@ void drawViewportPropsPanel(EditorApp app) {
             if (ImGui.BeginCombo("##vpGridSteps", rungLabel(g_viewGrid.rungMask))) {
                 foreach (m; kGridMaskMin .. kGridMaskMax + 1) {
                     bool sel = (m == g_viewGrid.rungMask);
-                    if (ImGui.Selectable(rungLabel(m), sel)
-                        && uiCommandDelegate !is null)
-                        uiCommandDelegate("viewport.gridSteps",
+                    if (ImGui.Selectable(rungLabel(m), sel))
+                        dispatch("viewport.gridSteps",
                             positionalPayload([format("%d", m)]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -877,16 +934,22 @@ void drawViewportPropsPanel(EditorApp app) {
         int mid = v.masterId;
         string masterLabel = mid < 0 ? "Group master" : "Cell " ~ to!string(mid);
         ImGui.SetNextItemWidth(-1.0f);
-        if (ImGui.BeginCombo("##vpMaster", masterLabel)) {
+        const masterOpen = ImGui.BeginCombo("##vpMaster", masterLabel);
+        recordViewportPropsMaster();
+        if (masterOpen) {
             bool grpSel = (mid < 0);
-            if (ImGui.Selectable("Group master", grpSel) && uiCommandDelegate !is null)
-                uiCommandDelegate("viewport.master", positionalPayload(["-1"]));
+            const groupChanged = ImGui.Selectable("Group master", grpSel);
+            recordViewportPropsMasterOption(0);
+            if (groupChanged)
+                dispatch("viewport.master", positionalPayload(["-1"]));
             if (grpSel) ImGui.SetItemDefaultFocus();
-            foreach (ci; 0 .. vpm.cellCount) {
+            foreach (ci; 0 .. v.cellCount) {
                 bool csel = (mid == ci);
                 string clabel = "Cell " ~ to!string(ci);
-                if (ImGui.Selectable(clabel, csel) && uiCommandDelegate !is null)
-                    uiCommandDelegate("viewport.master",
+                const cellChanged = ImGui.Selectable(clabel, csel);
+                recordViewportPropsMasterOption(ci + 1);
+                if (cellChanged)
+                    dispatch("viewport.master",
                         positionalPayload([to!string(ci)]));
                 if (csel) ImGui.SetItemDefaultFocus();
             }
@@ -896,57 +959,9 @@ void drawViewportPropsPanel(EditorApp app) {
         // Reset Layout button
         ImGui.Dummy(ImVec2(0, 2));
         ImGui.Separator();
-        if (ImGui.Button("Reset Layout")) {
-            // The shipped default ini is Single (only Viewport##0), so
-            // mirror the persisted cell preset too — otherwise a Quad
-            // user hitting Reset Layout would restore the shipped dock
-            // arrangement but keep g_prefs.viewportLayout == Quad, and a
-            // later clean-shutdown save would silently resurrect the
-            // stale multi-cell preset on the next launch. Mirrors the
-            // same assignment in the onViewportReset delegates (file.new
-            // / scene.reset) below.
-            g_prefs.viewportLayout = LayoutPreset.Single;
-            // Remove the persisted ini, then immediately re-seed it from
-            // the shipped default (config/default_layout.ini — the
-            // user's confirmed arrangement) via the same first-run copy
-            // helper. Without this, ImGui's ~5s autosave timer (or the
-            // save-on-shutdown at DestroyContext) would overwrite the
-            // freshly-copied file with the programmatic DockBuilder
-            // rebuild below before the NEXT launch ever sees it — so we
-            // pull the shipped bytes into the LIVE in-memory settings
-            // now (deferred to just before the next NewFrame — see
-            // g_pendingLayoutReloadPathZ) so this session's own eventual
-            // autosave/shutdown-save also reflects the shipped default,
-            // not the programmatic seed. The programmatic DockBuilder
-            // reseed (g_forceLayoutReseed) becomes a FALLBACK, used only
-            // when no shipped default could be re-copied (e.g. running
-            // from a location where config/default_layout.ini isn't
-            // found).
-            bool restored = false;
-            if (!command.g_testMode && g_layoutIniPathZ !is null) {
-                import std.string : fromStringz;
-                string p = cast(string) fromStringz(g_layoutIniPathZ);
-                try {
-                    import std.file : remove, exists;
-                    if (exists(p)) remove(p);
-                } catch (Exception) {}
-                if (seedDefaultLayoutIfMissing(p)) {
-                    // Defer the reload: this button handler runs
-                    // mid-frame (between NewFrame/EndFrame), and
-                    // ImGui.LoadIniSettingsFromDisk documents that as
-                    // unsafe. g_pendingLayoutReloadPathZ is consumed
-                    // once, right before the next NewFrame().
-                    g_pendingLayoutReloadPathZ = g_layoutIniPathZ;
-                    restored = true;
-                }
-            }
-            // Fallback only: no shipped default was available to
-            // re-copy, so fall back to the bare programmatic seed for
-            // THIS session (still won't persist past the ini-autosave,
-            // but there is no better default to persist).
-            g_forceLayoutReseed = !restored;
-        }
-    }
+        const resetPressed = ImGui.Button("Reset Layout");
+        recordViewportPropsReset();
+        if (resetPressed) resetLayout.authorReset();
     }
 }
 

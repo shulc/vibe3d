@@ -322,8 +322,8 @@ struct Ai3dModalState {
 
 // ---------------------------------------------------------------------------
 // Task 0419 (campaign 0407 §V1.2, UI-panel decomposition) relocations --
-// these five items were module-scope (or main()-local) in app.d and are
-// moved here VERBATIM for the same reason Ai3dModalState was in 0415: the
+// these surviving items were module-scope (or main()-local) in app.d and were
+// moved here for the same reason Ai3dModalState was in 0415: the
 // UI-panel block moving to source/ui/panels.d references them, and a
 // `private` module-scoped symbol or a main()-local type isn't nameable from
 // another module. app.d imports all of them back (`import editor_app : ...`)
@@ -604,52 +604,6 @@ void installSnapState(EditorApp app)
 /// Scratch for `installSnapState`'s item-frame loop. Main-thread only (the
 /// frame loop is its sole caller) and never escapes: see the note at its use.
 private ItemSnapFrame[] g_itemFrameScratch;
-
-/// Backing storage for the versioned imgui.ini path. ImGui stores the raw
-/// char* without copying, so the string must outlive the context. Set once
-/// before the first NewFrame; null in --test (byte-identity contract).
-public __gshared const(char)* g_layoutIniPathZ = null;
-
-/// Set true by the Reset Layout button to force a full dock-tree reseed on
-/// the next frame, independently of the process-lifetime dockLayoutDone flag.
-/// Fallback-only: the button sets this iff the shipped default could NOT be
-/// re-copied (see seedDefaultLayoutIfMissing), so the programmatic
-/// DockBuilder rebuild is the last resort rather than the default reset path.
-public __gshared bool g_forceLayoutReseed = false;
-
-/// Set by the Reset Layout button after a successful re-copy of the shipped
-/// default ini. Consumed once, right before the next `ImGui.NewFrame()`, via
-/// `ImGui.LoadIniSettingsFromDisk` -- NOT called inline from the button
-/// handler because that runs mid-frame (between NewFrame/EndFrame), which the
-/// ini loader documents as unsafe.
-public __gshared const(char)* g_pendingLayoutReloadPathZ = null;
-
-/// Thin app-layer wrapper over `prefs.seedLayoutIniIfMissing` (the tested
-/// unit -- see its unittests in prefs.d) that fixes the source path to the
-/// shipped default panel layout, `config/default_layout.ini` (the user's
-/// confirmed arrangement). NEVER overwrites an existing user ini. Returns
-/// true iff a copy actually happened (i.e. the shipped default is now the
-/// content at `userIniPath`).
-/// Interactive-session only -- callers gate on !testMode.
-bool seedDefaultLayoutIfMissing(string userIniPath) {
-    import std.file : exists;
-    string defaultPath = "config/default_layout.ini";
-    if (!exists(defaultPath)) {
-        // cwd-relative shipped default not found -- e.g. a system install
-        // (/usr/bin/vibe3d) launched from an arbitrary cwd. Fall back to
-        // resolving alongside the executable itself. (The macOS .app bundle
-        // case is unaffected: useAppBundleResourceCwd() already chdirs into
-        // Resources/ at startup, so the cwd-relative path above resolves
-        // there directly and this fallback never triggers.)
-        try {
-            import std.file : thisExePath;
-            import std.path : buildPath, dirName;
-            string exeRelative = buildPath(thisExePath().dirName, "config", "default_layout.ini");
-            if (exists(exeRelative)) defaultPath = exeRelative;
-        } catch (Exception) {}
-    }
-    return prefs.seedLayoutIniIfMissing(defaultPath, userIniPath);
-}
 
 // ---------------------------------------------------------------------------
 // Nested-accessor delegate aliases (category "б" in the task plan): lazy,
@@ -990,8 +944,7 @@ struct EditorApp {
     //      main()'s local `testMode` and `command.g_testMode` are ALWAYS
     //      assigned together (app.d ~1075/1077, never diverge) -- reading
     //      through `command.g_testMode` directly removes a LATE-wiring step
-    //      and matches the panel block's own qualified read at
-    //      `!command.g_testMode` (drawViewportPropsPanel's Reset Layout). ----
+    //      and matches the remaining panel block's qualified reads. ----
     @property ref bool testMode() { return command.g_testMode; }
 
     // ---- (в) by-value: class-ref/pointer/delegate locals assigned EXACTLY
