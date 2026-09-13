@@ -5,6 +5,8 @@
 // claimed by this rig.
 module sdl.vibe3d_frame_finish_witness;
 
+import core.time : Duration, MonoTime;
+
 import sdl.timer;
 import sdl.video;
 
@@ -15,6 +17,10 @@ struct FrameFinishSdlCallSnapshot {
     bool swapWindowMismatch;
     size_t delayCallbackCalls;
     uint delayMilliseconds;
+    /// Wall time spent INSIDE the forwarded `SDL_Delay`, measured around that
+    /// one call and nothing else. See `observeDelay` for why the measurement
+    /// has to sit here rather than around the frame.
+    Duration delayForwardElapsed;
 }
 
 private alias SwapPointer = typeof(_SDL_GL_SwapWindow);
@@ -37,7 +43,21 @@ private extern(C) void observeSwap(SDL_Window* window) nothrow @nogc {
 private extern(C) void observeDelay(uint milliseconds) nothrow @nogc {
     ++g_snapshot.delayCallbackCalls;
     g_snapshot.delayMilliseconds = milliseconds;
+    // The forwarded sleep is timed HERE, around this single call, because the
+    // error of a sleep is ONE-SIDED: the OS may overrun the requested delay,
+    // never undercut it. So "elapsed >= requested" holds under any scheduling
+    // load, and dropping the forward below leaves ~0.
+    //
+    // The first version of this cell instead subtracted two whole-frame
+    // timings (hidden minus normal). That threw the one-sided property away:
+    // both terms carry their own frame work, and on a loaded CI runner the
+    // NORMAL row measured 8.355 ms against the hidden row's 4.289 ms, so the
+    // difference went NEGATIVE and the gate failed on a correct tree. A
+    // difference of two noisy measurements cannot judge a quantity smaller
+    // than that noise.
+    const started = MonoTime.currTime;
     g_originalDelay(milliseconds);
+    g_snapshot.delayForwardElapsed = MonoTime.currTime - started;
 }
 
 /// Install after loadSDL, while both real loader pointers are populated.

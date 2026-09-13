@@ -102,11 +102,7 @@ private int overlayPixelPopulation(int width, int height) {
     return result;
 }
 
-private void assertLowLevelDelay(const FrameFinishSdlCallSnapshot calls,
-                                 Duration normalElapsed,
-                                 Duration hiddenTestElapsed,
-                                 bool sawNormalTiming,
-                                 bool sawHiddenTestTiming) {
+private void assertLowLevelDelay(const FrameFinishSdlCallSnapshot calls) {
     assert(calls.delayCallbackCalls > 0,
         "LOW-LEVEL SDL DELAY CALLBACK FLOOR: observer never ran");
     assert(calls.delayCallbackCalls == 1
@@ -114,13 +110,16 @@ private void assertLowLevelDelay(const FrameFinishSdlCallSnapshot calls,
         format("LOW-LEVEL SDL DELAY CALL: callbacks=%d delayMs=%d; "
              ~ "expected one SDL_Delay loader-pointer call with 4 ms",
                calls.delayCallbackCalls, calls.delayMilliseconds));
-    assert(sawNormalTiming && sawHiddenTestTiming,
-        "LOW-LEVEL SDL DELAY TIMING FLOOR: normal/hidden finish was not timed");
-    const delayEffect = hiddenTestElapsed - normalElapsed;
-    assert(delayEffect >= 2.msecs,
-        format("LOW-LEVEL SDL DELAY EFFECT: hidden=%s normal=%s delta=%s; "
-             ~ "expected SDL_Delay(4) to add at least 2 ms",
-               hiddenTestElapsed, normalElapsed, delayEffect));
+    // Delegation is witnessed by the sleep's OWN duration, measured inside the
+    // observer around the forwarded call alone (witness.observeDelay). The
+    // floor is 2 ms against a requested 4 because a sleep may overrun but
+    // never undercut, so load can only push this number UP. The earlier form
+    // differenced two whole-frame timings and reddened on a correct tree the
+    // first time CI ran it.
+    assert(calls.delayForwardElapsed >= 2.msecs,
+        format("LOW-LEVEL SDL DELAY FORWARD: the forwarded SDL_Delay(4) took "
+             ~ "%s; expected at least 2 ms, so the loader pointer was not "
+             ~ "actually called", calls.delayForwardElapsed));
 }
 
 private void assertLowLevelSwap(const FrameFinishSdlCallSnapshot calls,
@@ -344,8 +343,7 @@ void runFrameRunnerFinishWitness() {
     const calls = frameFinishSdlCallSnapshot();
     AssertError delayFailure;
     AssertError swapFailure;
-    try assertLowLevelDelay(calls, normalElapsed, hiddenTestElapsed,
-                            sawNormalTiming, sawHiddenTestTiming);
+    try assertLowLevelDelay(calls);
     catch (AssertError error) delayFailure = error;
     try assertLowLevelSwap(calls, window);
     catch (AssertError error) swapFailure = error;
@@ -357,11 +355,15 @@ void runFrameRunnerFinishWitness() {
             throw delayFailure;
         throw swapFailure;
     }
+    // The whole-frame timings stay in the DIAGNOSTIC line and are deliberately
+    // not asserted on: they carry each row's own frame work, which on a loaded
+    // runner swamps a 4 ms sleep. `delayForward` is the number the cell judges.
     writefln("[frame-finish-low-level] swap callbacks=%d mismatch=%s "
-           ~ "delay callbacks=%d delayMs=%d normal=%s hidden=%s",
+           ~ "delay callbacks=%d delayMs=%d delayForward=%s "
+           ~ "frame(normal=%s hidden=%s, diagnostic only)",
         calls.swapCallbackCalls, calls.swapWindowMismatch,
         calls.delayCallbackCalls, calls.delayMilliseconds,
-        normalElapsed, hiddenTestElapsed);
+        calls.delayForwardElapsed, normalElapsed, hiddenTestElapsed);
 }
 
 unittest {

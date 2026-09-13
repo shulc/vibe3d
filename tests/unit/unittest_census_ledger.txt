@@ -212,3 +212,13 @@ drop 0 6 4560 the Smooth observer keeps its callback-time purity assertions in t
 # stated property: onStageConfigChanged receives no provider, so its call graph
 # cannot reach either ProbeStage.slotEpoch or the ProbeStage trace.
 drop 0 3 5610 compatibility stage changes have no provider through which the removed stage epoch/trace checks could vary
+
+# Task 5900 replaced the SDL delay-effect check. The old form asserted on the
+# DIFFERENCE of two whole-frame timings, plus a floor that both frames had been
+# timed at all; the new form asserts on the forwarded sleep's own duration,
+# measured inside the observer. That retires the two-frame floor -- the frame
+# timings are now diagnostic only and nothing judges them -- so two asserts
+# become one. The old pair could not come out right: both terms carry their own
+# frame work, and on the CI runner the NORMAL row measured 8.355 ms against the
+# hidden row's 4.289 ms, driving the difference negative on a correct tree.
+drop 0 1 5900 the two-frame timing floor guarded a difference that no longer exists; the forwarded sleep is now timed in place, where a sleep's one-sided error makes the floor sound
