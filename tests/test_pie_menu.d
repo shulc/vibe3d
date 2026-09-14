@@ -156,6 +156,10 @@ size_t historyLen() {
     return getJson("/api/history")["undo"].array.length;
 }
 
+JSONValue inputContext() {
+    return getJson("/api/input/context");
+}
+
 size_t selectedFaceCount() {
     return getJson("/api/selection")["selectedFaces"].array.length;
 }
@@ -224,27 +228,44 @@ unittest {  // 2. releasing the chord DISMISSES — even aimed straight at a wed
     assert(pieWedgesDrawn() == 0, "clicking a wedge must close the ring");
 }
 
-unittest {  // 3. Esc dismisses: no action, no history entry
+unittest {  // 3. Esc dismisses the pie before the editor ladder sees it
     resetScene();
+    runCmd("tool.set TransformMove on");
     immutable before = historyLen();
 
+    // Play A leaves the chord held so the between-play read proves the pie
+    // really opened before Escape is sent.
     play([
         evMotion(PIE_CX, PIE_CY),
         evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
         evMotion(PIE_CX, PIE_CY - AIM),                 // aimed at Top...
+    ]);
+    assert(pieWedgesDrawn() == 8, "setup: Ctrl+Space must draw eight wedges");
+
+    // Play B is the priority observation: the pie closes, but the armed tool
+    // survives because the editor ladder must not receive this Escape.
+    play([
         evKeyDown(SYM_ESCAPE, SCAN_ESCAPE, 0),          // ...but dismissed
         evKeyUp(SYM_ESCAPE, SCAN_ESCAPE, 0),
+    ]);
+    assert(pieWedgesDrawn() == 0, "Esc must close the ring");
+    assert(inputContext()["tool"].str == "TransformMove",
+        "pie-owned Escape reached the editor ladder and dropped TransformMove");
+
+    // Play C releases the already-closed chord and must remain inert.
+    play([
         evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),      // the trailing release
                                                         // of an already-closed
                                                         // ring must be harmless
     ]);
 
-    assert(pieWedgesDrawn() == 0, "Esc must close the ring");
     assert(cameraPreset() == "Perspective",
         "a dismissed pie must not run the wedge it was aimed at, got " ~ cameraPreset());
     assert(historyLen() == before,
         "opening and dismissing a menu is not an edit — history grew from "
         ~ before.to!string ~ " to " ~ historyLen().to!string);
+    assert(inputContext()["tool"].str == "TransformMove",
+        "the trailing pie-chord release must not drop TransformMove");
 }
 
 unittest {  // 4. the input grab: an open ring eats the click that would pick

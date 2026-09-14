@@ -2419,6 +2419,38 @@ void main(string[] args) {
             s.reset();
     }
 
+    bool pipeHoldsTask() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        import toolpipe.stages.axis : AxisStage;
+        import toolpipe.stages.falloff : FalloffStage;
+        import toolpipe.stages.constrain : ConstrainStage;
+        if (g_pipeCtx is null) return false;
+        foreach (s; g_pipeCtx.pipeline.allMut()) {
+            if (auto ac = cast(ActionCenterStage)s) {
+                if (ac.mode != ActionCenterStage.Mode.None) return true;
+            } else if (auto axis = cast(AxisStage)s) {
+                if (axis.mode != AxisStage.Mode.None) return true;
+            } else if (auto fo = cast(FalloffStage)s) {
+                if (!fo.isPrimary() || fo.isActive()) return true;
+            } else if (auto cons = cast(ConstrainStage)s) {
+                if (cons.enabled) return true;
+            }
+        }
+        return false;
+    }
+
+    void clearPipeTasks() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stage : ToolSwitchTransient;
+        import commands.falloff : removeStackedFalloffs;
+        if (g_pipeCtx is null) return;
+        foreach (s; g_pipeCtx.pipeline.allMut())
+            if (cast(ToolSwitchTransient)s)
+                s.reset();
+        removeStackedFalloffs();
+    }
+
     // Sticky tool-option defaults: on a CLEAN tool drop (dropActiveTool
     // with a known preset id), snapshot the dropped tool's TOOL-LEVEL params
     // into g_prefs.toolDefaults[presetId], so the next activation of that
@@ -3517,6 +3549,8 @@ void main(string[] args) {
     app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;
     app.onActiveLayerChanged = onActiveLayerChanged;
     app.resetAllPipeStages   = cast(void delegate())&resetAllPipeStages;
+    app.pipeHoldsTask        = cast(bool delegate())&pipeHoldsTask;
+    app.clearPipeTasks       = cast(void delegate())&clearPipeTasks;
 
     // `move` / `rotate` / `scale` build XfrmTransformTool with the
     // matching T/R/S single-flag preset — they share one engine, like

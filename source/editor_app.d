@@ -895,6 +895,8 @@ struct EditorApp {
     void delegate(EditMode)     switchGeometryType;
     void delegate(size_t, size_t) onActiveLayerChanged;
     void delegate()             resetAllPipeStages;
+    bool delegate()             pipeHoldsTask;
+    void delegate()             clearPipeTasks;
 
     // =========================================================================
     // Task 0419 (campaign 0407 §V1.2): 30 new members backing the UI-panel

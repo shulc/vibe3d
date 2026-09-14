@@ -158,7 +158,7 @@ private immutable SiteCount[] kSites = [
     SiteCount("interactiveArm",         1, "toolHost.activate"),
     SiteCount("replayArm",              1, "the lifecycle restore delegate inside armPreparedTool"),
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
-    SiteCount("explicitDrop",           2, "toolHost.deactivate and the Space key"),
+    SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
     SiteCount("replayDrop",             1, "the lifecycle re-drop delegate inside armPreparedTool"),
     SiteCount("selTypeFlipDrop",        2, "both B2 front-flip funnels"),
@@ -258,18 +258,18 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 28,
-        format("task 4053: the site ledger now sums to %s, recorded 28 — say in "
+    assert(total == 29,
+        format("task 4053: the site ledger now sums to %s, recorded 29 — say in "
                ~ "the commit which sites arrived or left", total));
 
-    // And the total DECOMPOSES, which is what keeps 28 from being a number
+    // And the total DECOMPOSES, which is what keeps 29 from being a number
     // with no structure:
-    //     22  dropActiveTool(ToolTransition.…) calls
+    //     23  dropActiveTool(ToolTransition.…) calls
     //   +  4  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
-    //   = 28
+    //   = 29
     // This is not a restatement of the scan above: that one counts MENTIONS,
     // so a transition named only in a comment would satisfy it. These two
     // count CALLS, and the arithmetic closing is what says the 26 wired rows
@@ -284,7 +284,7 @@ unittest {
     // the MENTION scan, whose `shutdownDrop` row is TWO hits of which one IS a
     // comment — masking there would break the row it is meant to count.
     //
-    // Read 2026-09-05: masking moves no number on this tree — 22 and 4 both
+    // Read 2026-09-14: masking moves no number on this tree — 23 and 4 both
     // ways — so it is a change of INSTRUMENT, not of ledger.
     size_t dropCalls, armCalls;
     foreach (f; files) {
@@ -293,9 +293,9 @@ unittest {
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
-    assert(dropCalls == 22 && armCalls == 4,
+    assert(dropCalls == 23 && armCalls == 4,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 22 and 4. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 23 and 4. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,

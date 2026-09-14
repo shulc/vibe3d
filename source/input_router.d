@@ -92,7 +92,8 @@ import eventlog             : EventLogger, setOverrideMouse;
 import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
 import operator             : VectorStack;
 import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
-import seltype              : SelType, currentSelType, viewportPickType;
+import seltype              : SelType, currentSelType, selTypeToken,
+                              viewportPickType;
 import editmode             : EditMode;
 import viewport             : Viewport3D, ViewportManager;
 // Task 0781 step 2c -- what the MOTION handler reaches beyond the two
@@ -497,9 +498,9 @@ struct InputRouter {
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         with (app) {
-            // Keyboard priority (task 5911; escape_ladder_test EL-b): the pie
-            // grab and focused text field run before this door; an Escape popup
-            // gate runs here before tools, then YAML and inline editor handling.
+            // Keyboard priority (task 5911; escape_ladder_test EL-b): pie grab,
+            // focused text field, popup gate, armed tool (no Esc consumer), YAML
+            // (no Escape/Space row), then the inline escape ladder.
             if (kev.keysym.sym == SDLK_ESCAPE &&
                 !escapeReachesEditor(imguiPopupOpen())) return;
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
@@ -515,7 +516,6 @@ struct InputRouter {
             string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
             if (canon.length > 0) {
                 import input_context : currentInputContext;
-                import seltype       : selTypeToken;
                 auto ictx = currentInputContext(
                     selTypeToken(currentSelType(selTypeOrder)), activeToolId);
                 immutable int bi = resolveBinding(shortcuts.bindings, canon,
@@ -650,21 +650,21 @@ struct InputRouter {
                     recLog.close();
                     logInfo("rec", "stopped");
                     break;
-                // Esc no longer quits — Ctrl+Q (file.quit) is the canonical
-                // exit shortcut now. Leaving Esc unbound here means the key
-                // falls through to the global / tool handlers (e.g. cancel
-                // an in-progress lasso, deselect, …) instead of killing the
-                // session by accident.
+                case SDLK_ESCAPE:
+                    escapeLadder();
+                    break;
                 case SDLK_SPACE:
-                    // Space drops an active tool; with no tool it cycles the
-                    // geometry mode. Route the cycle through the selection-type
-                    // funnel so selTypeOrder + the currentTypeChanged signal stay in
-                    // sync (the cycle always flips the front, hence always notes a
-                    // current-type change; the tool is already null so the in-funnel
-                    // tool-drop is a no-op).
-                    if (activeTool) dropActiveTool(ToolTransition.explicitDrop);
-                    else switchGeometryType(
+                    // Item-mode Space is the same measured ladder as Escape;
+                    // outside item mode it keeps the geometry cycle behavior.
+                    if (currentSelType(selTypeOrder) == SelType.Item) {
+                        if (escapeReachesEditor(imguiPopupOpen()))
+                            escapeLadder();
+                    } else if (activeTool) {
+                        dropActiveTool(ToolTransition.explicitDrop);
+                    } else {
+                        switchGeometryType(
                         cast(EditMode)((cast(int)editMode + 1) % 3));
+                    }
                     break;
                 case SDLK_TAB: {
                     // Toggle subpatch flag. Scope is MODE-AWARE (parity): the face
@@ -695,6 +695,45 @@ struct InputRouter {
                     break;
                 default: break;
             }
+        }
+    }
+
+    void escapeLadder() {
+        import input_context : EscapeRung, escapeRungFor;
+
+        app.mesh.syncSelection();
+        const cur = currentSelType(app.selTypeOrder);
+        bool hasCurrent;
+        switch (cur) {
+            case SelType.Vertex:  hasCurrent = app.mesh.hasAnySelectedVertices(); break;
+            case SelType.Edge:    hasCurrent = app.mesh.hasAnySelectedEdges();    break;
+            case SelType.Polygon: hasCurrent = app.mesh.hasAnySelectedFaces();    break;
+            case SelType.Item:    hasCurrent = app.document.firstSelectedItem !is null; break;
+            default: assert(0, "unknown selection type in escape ladder");
+        }
+        const itemsSelected = app.document.firstSelectedItem !is null;
+
+        final switch (escapeRungFor(app.activeTool !is null,
+                                   app.pipeHoldsTask(), hasCurrent,
+                                   cur == SelType.Item, itemsSelected)) {
+            case EscapeRung.dropTool:
+                app.dropActiveTool(ToolTransition.explicitDrop);
+                break;
+            case EscapeRung.clearPipe:
+                app.clearPipeTasks();
+                break;
+            case EscapeRung.dropCurrentType:
+                if (cur == SelType.Item)
+                    runCommandWithArgs("layer.select", "mode:clear");
+                else
+                    runCommandWithArgs("select.drop", selTypeToken(cur));
+                break;
+            case EscapeRung.dropItems:
+                runCommandWithArgs("layer.select", "mode:clear");
+                app.promoteGeometryType(app.editMode);
+                break;
+            case EscapeRung.nothing:
+                break;
         }
     }
 

@@ -90,7 +90,7 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
     assert(json["selectedFaces"].array.length == 0, "selectedFaces should be empty");
 }
 
-unittest { // ESC clears selection in the current edit mode via select.drop shortcut
+unittest { // The empty-pipe Esc ladder clears selection in the current type.
     waitPlayerIdle();
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 

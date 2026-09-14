@@ -1,5 +1,26 @@
 module input_context;
 
+enum EscapeRung : ubyte {
+    dropTool,
+    clearPipe,
+    dropCurrentType,
+    dropItems,
+    nothing,
+}
+
+/// The escape ladder is a strict first-match ratchet: one press performs at
+/// most one rung, and a later rung is reachable only when every earlier one is
+/// empty (task 5911; toolcards/tool_drop_pipe_stages/findings.md rounds 2-3).
+EscapeRung escapeRungFor(bool toolArmed, bool pipeHoldsTask,
+                         bool currentTypeHasSelection, bool currentTypeIsItem,
+                         bool itemsSelected) pure nothrow @safe @nogc {
+    if (toolArmed) return EscapeRung.dropTool;
+    if (pipeHoldsTask) return EscapeRung.clearPipe;
+    if (currentTypeHasSelection) return EscapeRung.dropCurrentType;
+    if (!currentTypeIsItem && itemsSelected) return EscapeRung.dropItems;
+    return EscapeRung.nothing;
+}
+
 // ---------------------------------------------------------------------------
 // The context a chord is pressed IN (task 1810).
 //

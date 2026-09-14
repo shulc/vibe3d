@@ -88,6 +88,7 @@ select.byStat.polygon | code-ui: Statistics polygon rows dispatch the command di
 select.byStat.vertex | code-ui: Statistics vertex rows dispatch the command directly
 select.byTag | code-ui: Statistics part and material rows dispatch the command directly
 select.delete | api-only: compatibility alias of the configured mesh.delete command
+select.drop | code-ui: the Esc ladder dispatches it directly
 select.element | no-ui-yet: user-facing element selection operation has no action
 select.remove | api-only: compatibility alias of the configured mesh.remove command
 select.typeFrom | code-ui: selection-conversion popup dispatches the command directly

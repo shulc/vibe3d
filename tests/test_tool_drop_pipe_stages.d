@@ -6,6 +6,7 @@ module test_tool_drop_pipe_stages;
 import drag_helpers : buildDragLog, playAndWait;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
+import tool_drop_pipe_stages_helpers : applyHistoryDelta;
 import std.algorithm : sort;
 import std.array : appender;
 import std.format : format;
@@ -103,21 +104,6 @@ private JSONValue historyState() {
     foreach (key; ["modelDepth", "uiDepth", "toolLifecycleCount", "undo", "redo"])
         out_[key] = s[key];
     return JSONValue(out_);
-}
-
-private JSONValue applyHistoryDelta(string id, JSONValue before,
-                                    JSONValue delta) {
-    assert(delta.type == JSONType.object,
-        id ~ ": Phase-5 historyDelta must be an object");
-    JSONValue[string] wanted = before.object.dup;
-    foreach (key, amount; delta.object) {
-        assert((key in before.object) !is null,
-            id ~ ": historyDelta names an unknown history field " ~ key);
-        assert(amount.type == JSONType.integer,
-            id ~ ": historyDelta values must be integers");
-        wanted[key] = before[key].integer + amount.integer;
-    }
-    return JSONValue(wanted);
 }
 
 private struct Mismatch {
@@ -647,6 +633,11 @@ unittest {
     assert(executed.length == 58,
         format("executed %s Phase-5 cells (48 Phase-3b + 10 Phase-5)",
             executed.length));
+    // Measured population literal (see test_escape_ladder's twin): the
+    // compared == expected pair below is an identity of compareExpected.
+    assert(expectedLeaves == 1149,
+        format("drop comparison population changed: %s leaves, expected 1149",
+            expectedLeaves));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("comparison leaf floor: compared=%s expected=%s",
             comparedLeaves, expectedLeaves));

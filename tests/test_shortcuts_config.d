@@ -49,8 +49,7 @@ unittest {
     assert(neutral.commandIdByCanon["ctrl+q"] == "file.quit");
     assert(neutral.byCommandId["tool.release"].toCanonical() == "q");
     assert(neutral.commandIdByCanon["q"] == "tool.release");
-    assert(neutral.byCommandId["select.drop"].toCanonical() == "escape");
-    assert(neutral.commandIdByCanon["escape"] == "select.drop");
+    assertNoLadderBinding(neutral, "neutral");
 }
 
 unittest {
@@ -59,6 +58,19 @@ unittest {
     assert(macos.commandIdByCanon["cmd+q"] == "file.quit");
     assert(macos.byCommandId["tool.release"].toCanonical() == "q");
     assert(macos.commandIdByCanon["q"] == "tool.release");
-    assert(macos.byCommandId["select.drop"].toCanonical() == "escape");
-    assert(macos.commandIdByCanon["escape"] == "select.drop");
+    assertNoLadderBinding(macos, "macOS");
+}
+
+private void assertNoLadderBinding(ShortcutTable shortcuts, string label) {
+    size_t scopedPieRows, qRows;
+    foreach (binding; shortcuts.bindings) {
+        assert(binding.canon != "escape" && binding.canon != "space",
+            label ~ " shortcut map must leave Escape and bare Space to the inline ladder");
+        if (binding.scoped_ && binding.canon == "ctrl+space") ++scopedPieRows;
+        if (binding.canon == "q") ++qRows;
+    }
+    assert(scopedPieRows >= 1,
+        label ~ " shortcut census found no scoped Ctrl+Space row");
+    assert(qRows >= 1,
+        label ~ " shortcut census found no Q row");
 }
