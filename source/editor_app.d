@@ -736,8 +736,10 @@ struct EditorApp {
     // second of M-INV's two consumers.
     bool* gpuUploadedPreviewPtr;
     @property ref bool gpuUploadedPreview() { return *gpuUploadedPreviewPtr; }
+    // Task 5970: activeTool is intentionally by value; only main()'s drop/arm
+    // doors write the pointer-backed pair. Witness: tests/unit/active_tool_accessor_readonly_test.d.
     Tool* activeToolPtr;
-    @property ref Tool activeTool() { return *activeToolPtr; }
+    @property Tool activeTool() { return *activeToolPtr; }
     bool* runningPtr;
     @property ref bool running() { return *runningPtr; }
     // Close-requested flag (task 0434): the file.quit factory sets this instead
@@ -921,8 +923,9 @@ struct EditorApp {
     @property ref int hoveredFace() { return *hoveredFacePtr; }
     int* activePanelIdxPtr;
     @property ref int activePanelIdx() { return *activePanelIdxPtr; }
+    // By value; see the activeTool invariant above.
     string* activeToolIdPtr;
-    @property ref string activeToolId() { return *activeToolIdPtr; }
+    @property string activeToolId() { return *activeToolIdPtr; }
     Layout* layoutPtr;
     @property ref Layout layout() { return *layoutPtr; }
     // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --

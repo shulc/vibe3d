@@ -1,7 +1,8 @@
 // Regression test for task 0415 (campaign 0407 §B.V1 step 1, Phase 2 step 0)
 // silent-bug #2: `activeTool` in the EditorApp ctx bag threaded through
 // registration.d's registerCommands MUST be pointer-backed
-// (`Tool* activeToolPtr` + `@property ref`), never a plain by-value
+// (`Tool* activeToolPtr` + a `@property` accessor that dereferences it on
+// every read), never a plain by-value
 // `Tool activeTool` field snapshotting whatever was active at ctx-assembly
 // time (always null, since the ctx is assembled early in main() before any
 // tool has ever been activated).

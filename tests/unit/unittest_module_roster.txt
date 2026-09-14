@@ -134,6 +134,7 @@ stat_rows_test
 symmetry
 tests.unit.accept_recorded_edit_test
 tests.unit.action_center_menu_composition_test
+tests.unit.active_tool_accessor_readonly_test
 tests.unit.ai.advisor_test
 tests.unit.ai.analysis_test
 tests.unit.ai.debug_trace_test
