@@ -1,5 +1,6 @@
-// Preset-owned pipe stages must disappear through the production drop doors,
-// while user-owned stages and the snap toggle survive (task 5911, Phase 2).
+// Preset-owned pipe stages must disappear through the production drop doors;
+// a displacing user pick keeps the preset's other stages, while loose mode
+// writes release only their own claim (task 5911, Phase 3).
 module test_tool_drop_pipe_stages;
 
 import drag_helpers : buildDragLog, playAndWait;
@@ -272,13 +273,15 @@ unittest {
         "C6g/switch", "X2/space", "X2off/space", "U1inv/space",
         "S_vert/space", "S_edge/space",
         "C0/q", "C1/q", "C6g/q", "X2/q", "X2off/q", "U1inv/q",
+        "C5/space-statusbar", "C5/space-preset", "C5b/space",
+        "X1p/space", "L1/space", "L2/space", "L3/space",
     ];
     string[] executed;
     size_t comparedLeaves, expectedLeaves;
     Mismatch[] mismatches;
 
     foreach (cell; fx["cells"].array) {
-        if (cell["file"].str != "drop" || cell["phase"].integer > 2 ||
+        if (cell["file"].str != "drop" || cell["phase"].integer > 3 ||
             cell["port_status"].str != "implemented") continue;
         const id = cell["id"].str;
         const kind = cell["kind"].str;
@@ -335,6 +338,13 @@ unittest {
             assert(extent[0] > -0.25001 && extent[0] < -0.24999 &&
                    extent[1] > 0.74999 && extent[1] < 0.75001,
                 format("%s: panel edit premise x extent %s", id, extent));
+        } else if (("whileArmed" in cell.object) !is null) {
+            const beforeChoiceHistory = historyState();
+            foreach (step; cell["whileArmed"].array) cmd(step.str);
+            assertExpected(id, "rechosen", cell["expect"]["rechosen"],
+                readState());
+            assertExpected(id, "rechosen history", beforeChoiceHistory,
+                historyState());
         }
         if (id == "C8/space") {
             const beforeVerts = vertexImage();
@@ -443,14 +453,14 @@ unittest {
     gotIds.sort;
     wantIds.sort;
     assert(gotIds == wantIds,
-        format("Phase-2 id floor failed: want %s got %s",
+        format("Phase-3 id floor failed: want %s got %s",
             wantIds.join(","), gotIds.join(",")));
-    assert(executed.length == 30, format("executed %s Phase-2 cells", executed.length));
+    assert(executed.length == 37, format("executed %s Phase-3 cells", executed.length));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("comparison leaf floor: compared=%s expected=%s",
             comparedLeaves, expectedLeaves));
     foreach (cell; fx["cells"].array)
-        if (cell["file"].str == "drop" && cell["phase"].integer <= 2 &&
+        if (cell["file"].str == "drop" && cell["phase"].integer <= 3 &&
             cell["port_status"].str == "implemented")
             assert(cell["expect"]["after"].object.length > 0,
                 cell["id"].str ~ ": implemented after is empty");

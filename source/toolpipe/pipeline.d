@@ -183,7 +183,7 @@ public:
     /// Mutable view of the registered stages — used by SceneReset to
     /// call `reset()` on every stage in one pass without going through
     /// per-TaskCode lookups.
-    Stage[] allMut() {
+    Stage[] allMut() nothrow @nogc {
         return stages_;
     }
 
@@ -316,6 +316,25 @@ void resetToolSwitchTransientStages(ref Pipeline p) {
     foreach (s; p.allMut())
         if (auto r = cast(ToolSwitchTransient)s)
             r.resetTransient();
+}
+
+/// Record a user write against preset ownership. A locking displacement keeps
+/// every other claimed stage as a user choice; a loose write only releases its
+/// own claim (task 5911, witnessed by pipe_preset_claim_test U-c/U-f).
+void noteUserStageChoice(ref Pipeline p, Stage target, bool locking) nothrow {
+    import toolpipe.stage : PresetClaimable;
+    auto chosen = cast(PresetClaimable)target;
+    if (chosen is null) return;
+
+    if (locking && chosen.presetClaimed()) {
+        foreach (stage; p.allMut()) {
+            if (stage is target) continue;
+            if (auto sibling = cast(PresetClaimable)stage)
+                if (sibling.presetClaimed())
+                    sibling.promoteClaimToUserChoice();
+        }
+    }
+    chosen.dropPresetClaim();
 }
 
 // ---------------------------------------------------------------------------

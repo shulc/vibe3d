@@ -5,7 +5,7 @@ import mesh;
 import view;
 import editmode;
 
-import toolpipe.pipeline           : g_pipeCtx;
+import toolpipe.pipeline           : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stages.actcenter   : ActionCenterStage;
 import toolpipe.stages.axis        : AxisStage;
 import toolpipe.stage              : TaskCode;
@@ -57,6 +57,7 @@ class ActrPresetCommand : Command {
         // so the explicit `actr.*` setting survives the next tool.set call
         // (resetTransientPipeStages skips locked stages).
         if (ac !is null) {
+            noteUserStageChoice(g_pipeCtx.pipeline, ac, true);
             ac.setUserMode(acenMode_);
             // Verify the mode was accepted by reading back.
             import std.algorithm : canFind;
@@ -68,6 +69,7 @@ class ActrPresetCommand : Command {
                     name() ~ ": ACEN stage rejected mode '" ~ acenMode_ ~ "'");
         }
         if (ax !is null) {
+            noteUserStageChoice(g_pipeCtx.pipeline, ax, true);
             ax.setUserMode(axisMode_);
             bool accepted = false;
             foreach (kv; ax.listAttrs())

@@ -6,7 +6,7 @@ import view;
 import editmode;
 import commands.tool.host : ToolHost;
 
-import toolpipe.pipeline : g_pipeCtx;
+import toolpipe.pipeline : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stage    : Stage;
 import params : Param, paramToJson, wireArgs;
 
@@ -116,6 +116,16 @@ class ToolPipeAttrCommand : Command {
             throw new Exception(
                 "tool.pipe.attr: stage '" ~ stageId_ ~ "' rejected attr '"
                 ~ attrName_ ~ "' = '" ~ attrValue_ ~ "'");
+
+        if (attrName_ == "type") {
+            import toolpipe.stages.falloff : FalloffStage;
+            if (cast(FalloffStage)matched !is null)
+                noteUserStageChoice(g_pipeCtx.pipeline, matched,
+                    attrValue_ != "none");
+        } else if ((stageId_ == "actionCenter" || stageId_ == "axis") &&
+                   attrName_ == "mode") {
+            noteUserStageChoice(g_pipeCtx.pipeline, matched, false);
+        }
 
         // A user-driven falloff TYPE change (the status-bar Falloff pulldown
         // fires `tool.pipe.attr falloff type <X>`) locks the stage so it

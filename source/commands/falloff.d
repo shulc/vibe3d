@@ -7,7 +7,7 @@ import editmode;
 import commands.tool.host : ToolHost;
 import params : Param, wireArgs;
 
-import toolpipe.pipeline         : g_pipeCtx;
+import toolpipe.pipeline         : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stages.falloff   : FalloffStage;
 import toolpipe.stage            : TaskCode;
 
@@ -74,6 +74,7 @@ class FalloffPresetCommand : Command {
             throw new Exception(
                 name() ~ ": falloff stage rejected type '" ~ typeName_ ~ "'");
 
+        noteUserStageChoice(g_pipeCtx.pipeline, fo, typeName_ != "none");
 
         // Explicit user selection → lock the falloff so it survives a tool
         // switch (reference parity). Selecting `none` clears the lock. Preset-bundled
