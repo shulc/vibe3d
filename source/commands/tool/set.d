@@ -90,3 +90,28 @@ class ToolSetCommand : Command {
         return true;
     }
 }
+
+/// Drops whichever tool is armed through the ordinary explicit-drop door.
+/// With no active tool this is a true no-op, so it cannot clear an unlocked
+/// pipe stage as `tool.set <id> off` does (task 5911; fixture C0/q).
+class ToolReleaseCommand : Command {
+    private ToolHost toolHost;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
+        super(mesh, view, editMode);
+        this.toolHost = host;
+    }
+
+    override string name()  const { return "tool.release"; }
+    override string label() const { return "Release Tool"; }
+
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    protected override bool applyImpl() {
+        if (toolHost.getActiveTool is null ||
+            toolHost.getActiveTool() is null)
+            return true;
+        toolHost.deactivate();
+        return true;
+    }
+}

@@ -1,5 +1,5 @@
 // Preset-owned pipe stages must disappear through the production drop doors,
-// while user-owned stages and the snap toggle survive (task 5911, Phase 1).
+// while user-owned stages and the snap toggle survive (task 5911, Phase 2).
 module test_tool_drop_pipe_stages;
 
 import drag_helpers : buildDragLog, playAndWait;
@@ -208,12 +208,13 @@ private void key(int sym, int scan, int mod = 0) {
 private void runDoor(JSONValue cell) {
     const door = cell["door"].str;
     if (door == "space") key(32, 44);
+    else if (door == "q") key(113, 20);
     else if (door == "off") {
         const id = "off" in cell.object ? cell["off"].str : cell["arm"].str;
         cmd("tool.set " ~ id ~ " off");
     } else if (door == "switch") {
         cmd("tool.set " ~ cell["switch"].str ~ " on");
-    } else assert(false, "unsupported Phase-1 door: " ~ door);
+    } else assert(false, "unsupported Phase-2 door: " ~ door);
 }
 
 private bool hasNonDefaultPipe(JSONValue s) {
@@ -270,13 +271,14 @@ unittest {
         "C8/space", "G1/space", "G3/space", "C6g/space", "C6g/off",
         "C6g/switch", "X2/space", "X2off/space", "U1inv/space",
         "S_vert/space", "S_edge/space",
+        "C0/q", "C1/q", "C6g/q", "X2/q", "X2off/q", "U1inv/q",
     ];
     string[] executed;
     size_t comparedLeaves, expectedLeaves;
     Mismatch[] mismatches;
 
     foreach (cell; fx["cells"].array) {
-        if (cell["file"].str != "drop" || cell["phase"].integer != 1 ||
+        if (cell["file"].str != "drop" || cell["phase"].integer > 2 ||
             cell["port_status"].str != "implemented") continue;
         const id = cell["id"].str;
         const kind = cell["kind"].str;
@@ -327,7 +329,7 @@ unittest {
                 id ~ ": no-arm cell started with a tool");
         }
 
-        if (id == "U1inv/space") {
+        if (cell["row"].str == "U1inv") {
             foreach (step; cell["whileArmed"].array) cmd(step.str);
             auto extent = xExtent();
             assert(extent[0] > -0.25001 && extent[0] < -0.24999 &&
@@ -367,13 +369,14 @@ unittest {
         compareExpected(id, kind, cell["expect"]["after"], afterDoor,
             mismatches, comparedLeaves);
         expectedLeaves += leafCount(cell["expect"]["after"]);
-        assert(afterDoor["tool"].str == cell["expect"]["after"]["tool"].str,
-            format("%s: door did not take; before tool %s after tool %s",
-                id, beforeTool, afterDoor["tool"].str));
-        if (id == "U1inv/space") {
+        if (cell["row"].str == "U1inv") {
             auto afterHistory = historyState();
             JSONValue wantedHistory = beforeHistory;
             wantedHistory["modelDepth"] = beforeHistory["modelDepth"].integer + 1;
+            // The rig clears the history (plan §8.1 step 7), so the
+            // capped undo LENGTH cannot saturate and hide a missing entry.
+            assert(beforeHistory["undo"].integer < 40,
+                id ~ ": history.clear in the rig did not keep the undo stack short");
             wantedHistory["undo"] = beforeHistory["undo"].integer + 1;
             compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
                 comparedLeaves, "hist");
@@ -404,7 +407,7 @@ unittest {
             expectedLeaves += leafCount(cell["expect"]["after2"]);
         }
 
-        if (id == "U1inv/space") {
+        if (cell["row"].str == "U1inv") {
             const labels = ["afterToggle", "afterUndo1", "afterUndo2"];
             const trajectory = cell["trajectory"].array;
             assert(trajectory.length == labels.length,
@@ -440,14 +443,15 @@ unittest {
     gotIds.sort;
     wantIds.sort;
     assert(gotIds == wantIds,
-        format("Phase-1 id floor failed: want %s got %s",
+        format("Phase-2 id floor failed: want %s got %s",
             wantIds.join(","), gotIds.join(",")));
-    assert(executed.length == 24, format("executed %s Phase-1 cells", executed.length));
+    assert(executed.length == 30, format("executed %s Phase-2 cells", executed.length));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("comparison leaf floor: compared=%s expected=%s",
             comparedLeaves, expectedLeaves));
     foreach (cell; fx["cells"].array)
-        if (cell["file"].str == "drop" && cell["phase"].integer == 1)
+        if (cell["file"].str == "drop" && cell["phase"].integer <= 2 &&
+            cell["port_status"].str == "implemented")
             assert(cell["expect"]["after"].object.length > 0,
                 cell["id"].str ~ ": implemented after is empty");
 

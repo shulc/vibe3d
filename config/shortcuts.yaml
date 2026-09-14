@@ -36,6 +36,7 @@ commands:
   mesh.paste:            "Ctrl+V"           # ref: ctrl-v
   mesh.cut:              "Ctrl+X"           # ref: ctrl-x
   tool.reset:            "Ctrl+D"           # ref: ctrl-d
+  tool.release:          Q
   history.undo:          "Ctrl+Z"
   history.redo:          "Ctrl+Shift+Z"
   mesh.delete:           Delete

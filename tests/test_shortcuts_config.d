@@ -47,6 +47,8 @@ unittest {
     auto neutral = loadShortcuts("config/shortcuts.yaml");
     assert(neutral.byCommandId["file.quit"].toCanonical() == "ctrl+q");
     assert(neutral.commandIdByCanon["ctrl+q"] == "file.quit");
+    assert(neutral.byCommandId["tool.release"].toCanonical() == "q");
+    assert(neutral.commandIdByCanon["q"] == "tool.release");
     assert(neutral.byCommandId["select.drop"].toCanonical() == "escape");
     assert(neutral.commandIdByCanon["escape"] == "select.drop");
 }
@@ -55,6 +57,8 @@ unittest {
     auto macos = loadShortcuts("config/shortcuts_macos.yaml");
     assert(macos.byCommandId["file.quit"].toCanonical() == "cmd+q");
     assert(macos.commandIdByCanon["cmd+q"] == "file.quit");
+    assert(macos.byCommandId["tool.release"].toCanonical() == "q");
+    assert(macos.commandIdByCanon["q"] == "tool.release");
     assert(macos.byCommandId["select.drop"].toCanonical() == "escape");
     assert(macos.commandIdByCanon["escape"] == "select.drop");
 }

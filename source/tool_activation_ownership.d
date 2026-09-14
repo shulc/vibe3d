@@ -35,8 +35,9 @@ enum ToolTransition : ubyte {
     replayArm,
     /// `tool.reset` (Ctrl+D) rebuilding the same id at declared defaults.
     resetRearm,
-    /// `tool.set <id> off`, and Space with a tool armed — the user drops the
-    /// tool outright, with the document and the primary layer untouched.
+    /// `tool.set <id> off`, `tool.release` (Q), and Space with a tool armed —
+    /// the user drops the tool outright, with the document and primary layer
+    /// untouched.
     explicitDrop,
     /// `activateToolById` with the id that is already active (the toggle).
     sameIdToggleDrop,

@@ -219,7 +219,7 @@ import commands.scene.reset;
 import commands.scene.load_mesh;
 import snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
-import commands.tool.set      : ToolSetCommand;
+import commands.tool.set      : ToolReleaseCommand, ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr;
 import commands.tool.do_apply : ToolDoApplyCommand;
@@ -1109,6 +1109,8 @@ private void registerToolLifecycleCommands(EditorApp app) {
     with (remeshRefs) {
     reg.commandFactories["tool.set"] = () => cast(Command)
         new ToolSetCommand(&mesh(), cameraView, editMode, toolHost);
+    reg.commandFactories["tool.release"] = () => cast(Command)
+        new ToolReleaseCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.attr"] = () => cast(Command)
         new ToolAttrCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.doApply"] = () => cast(Command)

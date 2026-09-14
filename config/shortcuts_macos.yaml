@@ -36,6 +36,7 @@ commands:
   mesh.paste:            "Cmd+V"            # ref: ctrl-v → Cmd on macOS
   mesh.cut:              "Cmd+X"            # ref: ctrl-x → Cmd on macOS
   tool.reset:            "Cmd+D"            # ref: ctrl-d → Cmd on macOS
+  tool.release:          Q
   history.undo:          "Cmd+Z"
   history.redo:          "Cmd+Shift+Z"
   mesh.delete:           Backspace
