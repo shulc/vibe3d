@@ -139,7 +139,8 @@ import ai.interaction_log   : makeAiInteractionLogRecord;
 // `aimPie`/`closePie` (the modal grab at the top of `processEvent`) and
 // `ai.element_candidates` gained `publishElementCandidates` (the two picker
 // bodies' publish). None of them imports this module back.
-import imgui_event_gate     : feedImGui, keyBelongsToEditor;
+import imgui_event_gate     : feedImGui, keyBelongsToEditor,
+                              imguiPopupOpen, escapeReachesEditor;
 import item_pick            : ItemHit;
 import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
 
@@ -496,10 +497,11 @@ struct InputRouter {
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         with (app) {
-            // Active tool gets first dibs on key events. Tools that handle keys
-            // (e.g. PenTool's Enter/Backspace/Esc) return true to consume; tools
-            // that don't override onKeyDown fall through to the default false
-            // and the rest of the handler runs as before.
+            // Keyboard priority (task 5911; escape_ladder_test EL-b): the pie
+            // grab and focused text field run before this door; an Escape popup
+            // gate runs here before tools, then YAML and inline editor handling.
+            if (kev.keysym.sym == SDLK_ESCAPE &&
+                !escapeReachesEditor(imguiPopupOpen())) return;
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
             if (activeTool && activeTool.onKeyDown(kev, vts)) return;
 

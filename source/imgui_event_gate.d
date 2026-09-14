@@ -59,6 +59,21 @@ module imgui_event_gate;
 import bindbc.sdl;
 import imgui_impl_sdl2 : ImGui_ImplSDL2_ProcessEvent;
 
+private extern (C) bool igIsPopupOpen_Str(const(char)* strId, int flags)
+    nothrow @nogc;
+
+// The linked cimgui 1.92.8 expects 3072; the D shim's stale 384 crashes this
+// query (task 5911; tests/unit/escape_ladder_test.d EL-d0/EL-d).
+enum int kCimguiAnyPopup = (1 << 10) | (1 << 11);
+
+bool imguiPopupOpen() nothrow @nogc {
+    return igIsPopupOpen_Str(null, kCimguiAnyPopup);
+}
+
+bool escapeReachesEditor(bool popupOpen) pure nothrow @nogc {
+    return !popupOpen;
+}
+
 /// Should this SDL event be handed to ImGui's SDL2 backend?
 ///
 /// Pure and free of ImGui state on purpose: the whole rule is a property of the

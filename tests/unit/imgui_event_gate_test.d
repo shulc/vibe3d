@@ -1,4 +1,4 @@
-// Both rules of `imgui_event_gate` as a table, plus the two checks that keep
+// The rules of `imgui_event_gate` as a table, plus the two checks that keep
 // them reachable from `app.d` (task 1850).
 //
 // The rules are the two halves of one contract: `goesToImGui` (blocks A–E)
@@ -21,7 +21,8 @@
 module tests.unit.imgui_event_gate_test;
 
 import bindbc.sdl;
-import imgui_event_gate : goesToImGui, keyBelongsToEditor;
+import imgui_event_gate : goesToImGui, keyBelongsToEditor,
+                          escapeReachesEditor;
 
 private SDL_Event keyEvent(uint type, SDL_Keycode sym, ushort mod = 0) {
     SDL_Event ev;
@@ -156,6 +157,12 @@ unittest {
                "only KEYDOWN/KEYUP are withheld while a field is edited — no "
                ~ "mouse, window or text-input event may be swallowed");
     }
+}
+
+unittest {
+    // ── H ── An open popup owns Escape; otherwise the editor keeps it.
+    assert(!escapeReachesEditor(true));
+    assert(escapeReachesEditor(false));
 }
 
 unittest {
