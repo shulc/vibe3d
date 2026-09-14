@@ -40,6 +40,8 @@
 //      commit -> undo -> pre-commit (8v/6f) -> re-arm (same edge, still
 //      selected — MeshSnapshot restores selection) -> re-commit -> back to
 //      the SAME post-commit geometry (12v/10f) as the first commit.
+//   5. RMB while armed cancels the live cut back to 8v/6f without touching
+//      the undo ledger or dropping the active tool.
 // Standard cube fixture from /api/reset (8 verts, 6 quad faces, ±0.5 each
 // axis). Seed edge (0,1) (verts (-0.5,-0.5,-0.5)-(0.5,-0.5,-0.5)) is the same
 // belt edge used by tests/test_loop_slice_tool.d T1 / test_loop_slice_v2.d;
@@ -187,6 +189,13 @@ void clickLoopSlice(bool includeUp) {
     if (includeUp)
         log ~= "\n" ~ format(`{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY);
     playAndSettle(log);
+}
+
+void clickRight() {
+    playAndSettle(viewportLine() ~ "\n"
+        ~ format(`{"t":10.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`, CX, CY) ~ "\n"
+        ~ format(`{"t":30.000,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY) ~ "\n"
+        ~ format(`{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY));
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +391,42 @@ unittest {
     assert(depthAfterRecommit == depthAfterCommit,
         "round-trip: re-commit must restore the undo ledger to the first commit's depth, went "
         ~ depthAfterCommit.to!string ~ " (first commit) vs " ~ depthAfterRecommit.to!string ~ " (re-commit)");
+
+    deactivateLoopSlice();
+}
+
+// ---------------------------------------------------------------------------
+// 5. RMB cancel: an armed live cut is discarded without consuming committed
+//    history. The tool remains active, idled for another cut.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    int ei = seedEdgeIndex();
+    postSelect("edges", [ei]);
+    activateLoopSlice();
+
+    clickLoopSlice(true);
+    auto armed = toolState();
+    assert(toolIsActive(armed), "RMB cancel premise: tool must be active");
+    assert(armed["armed"].type == JSONType.true_,
+        "RMB cancel premise: live cut must be armed");
+    auto live = model();
+    assert(vertCount(live) == 12 && faceCount(live) == 10,
+        "RMB cancel premise: expected live 12v/10f cut");
+    long depthBefore = undoModelDepth();
+
+    clickRight();
+
+    auto cancelled = toolState();
+    assert(toolIsActive(cancelled),
+        "RMB cancel must not drop the active Loop Slice tool");
+    assert(cancelled["armed"].type == JSONType.false_,
+        "RMB cancel must return Loop Slice to its idle state");
+    auto restored = model();
+    assert(vertCount(restored) == 8 && faceCount(restored) == 6,
+        "RMB cancel must restore the 8v/6f baseline");
+    assert(undoModelDepth() == depthBefore,
+        "RMB cancel must not touch the committed undo ledger");
 
     deactivateLoopSlice();
 }

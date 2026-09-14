@@ -85,7 +85,7 @@
     {"id":"SD-5first/flat","row":"U29first_flat","rig":"first2","door":"mode:flat","phase":"4b","port_status":"implemented","kind":"parity","expect":{"mesh":{"v":26,"e":48,"f":26},"cornerHistogram":{"2":2,"4":24},"splitShared":true,"splitAt":[-0.5,0,-0.5],"endpoints":[[-0.5,-0.5,-0.5],[-0.5,0.5,-0.5]]}},
     {"id":"SD-5last/smooth","row":"U29last_smooth","rig":"edge2","door":"mode:smooth","phase":"4b","port_status":"implemented","kind":"parity","expect":{"mesh":{"v":26,"e":48,"f":26},"cornerHistogram":{"2":2,"4":24},"splitShared":true}},
     {"id":"SD-5first/smooth","row":"U29first_smooth","rig":"first2","door":"mode:smooth","phase":"4b","port_status":"implemented","kind":"parity","expect":{"mesh":{"v":26,"e":48,"f":26},"cornerHistogram":{"2":2,"4":24},"splitShared":true}},
-    {"id":"SD-5","row":"P1","rig":"pen2","door":"api","phase":"5","port_status":"planned","kind":"parity","expect":{"status":"ok","mesh":{"v":29,"e":50,"f":26},"undoLabels":["Pen Polygon","mesh.subdivide"]}}
+    {"id":"SD-5","row":"P1","rig":"pen2","door":"api","phase":"5","port_status":"implemented","kind":"parity","expect":{"status":"ok","mesh":{"v":29,"e":50,"f":26},"tool":"","undoLabels":["Pen Polygon","mesh.subdivide"]}}
   ],
   "not_ported": [
     {"row":"S1/4th, S4n/4th, S4t/4th","reason":"no fourth subdivision method"},

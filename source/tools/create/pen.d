@@ -332,7 +332,10 @@ version(unittest) unittest {
 //   Drawing ── LMB-click ─→ Drawing (append vertex on the locked plane)
 //   Drawing ── double-click / Enter ─→ commit n-gon (n ≥ 3); back to Idle
 //   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
-//   Drawing ── RMB / Ctrl+Z / tool drop ─→ cancel (drop buffer); back to Idle
+//   Drawing ── tool drop (n ≥ 2) ─→ commit; back to Idle
+//   Drawing ── Ctrl+Z (n ≥ 2) ─→ cancel points and drop tool; back to Idle
+//   Drawing ── Ctrl+Z (n = 1) ─→ undo the entry below; keep stroke and tool
+//   Drawing ── RMB ─→ cancel points; tool remains active in Idle
 //
 // In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
 // ToolHandles arbiter (Test pass) flips the single cursor-over vertex to
@@ -1368,9 +1371,10 @@ private:
         foreach (i, ref h; vertHandlers) h.pos = toWorldP(vertices_[i]);
     }
 
-    // Minimum vertex count for a commit. Default polygon mode needs ≥3
-    // (a triangle); Make Quads needs ≥4 (one full quad in the strip; the
-    // first two anchor verts alone don't yet form a face).
+    // Minimum vertex count for Enter and for the preview. Default polygon
+    // mode needs ≥3 (a triangle); Make Quads needs ≥4 (one full quad in the
+    // strip; the first two anchor verts alone don't yet form a face). Tool
+    // drop uses minDropCommitVerts() below.
     size_t minCommitVerts() const {
         return params_.makeQuads ? 4 : 3;
     }

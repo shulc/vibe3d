@@ -569,6 +569,14 @@ private void pen3(string id) {
     assert(hist().length == 0, id ~ ": live pen wrote history before its door");
 }
 
+private void pen2(string id) {
+    resetCube(id);
+    ok("tool.set \"pen\" on 0", id);
+    play(click(100, 425, 250) ~ "\n" ~ click(200, 525, 250), id);
+    assert(counts(model()) == "8/12/6", id ~ ": live pen wrote before its door");
+    assert(hist().length == 0, id ~ ": live pen wrote history before its door");
+}
+
 private void selectFace(int fi, string id) {
     ok("select.element polygon set " ~ fi.to!string, id);
     assert(sel() == [fi], id ~ ": face-selection floor failed");
@@ -595,14 +603,14 @@ private void verifyFixture(JSONValue fx) {
         "SD-U30", "SD-U30/flat", "SD-W/flat", "SD-W/smooth", "SD-P",
         "SD-P/tab", "SD-Ps", "SD-Ps/tab", "SD-Psb", "SD-X",
         "SD-5last", "SD-5first", "SD-5last/flat", "SD-5first/flat",
-        "SD-5last/smooth", "SD-5first/smooth"];
-    auto wantPlanned = ["SD-5"];
+        "SD-5last/smooth", "SD-5first/smooth", "SD-5"];
+    string[] wantPlanned;
     executed.sort; planned.sort; wantExecuted.sort; wantPlanned.sort;
     assert(executed == wantExecuted, "executed fixture id set changed");
     assert(planned == wantPlanned, "planned fixture id set changed");
-    assert(executed.length == 31 && planned.length == 1
+    assert(executed.length == 32 && planned.length == 0
            && fx["cells"].array.length == 32,
-           "fixture population must be 31 executed + 1 planned = 32");
+           "fixture population must be 32 executed + 0 planned = 32");
 }
 
 unittest {
@@ -996,6 +1004,30 @@ unittest {
                 " shared=", splitSharedRead(m).toString);
     }
 
+    pen2("SD-5");
+    key(32, 44, "SD-5/drop");
+    assert(counts(model()) == "10/13/7",
+        "SD-5: Space did not commit the two-point pen face");
+    assert(getJson("/api/input/context")["tool"].str.length == 0,
+        "SD-5: Space did not drop the pen tool");
+    auto sd5PenHistory = hist();
+    assert(sd5PenHistory.labels == ["Pen Polygon"],
+        "SD-5: Space did not record exactly the pen commit");
+    auto sd5 = cmdJson(`{"id":"mesh.subdivide"}`);
+    auto sd5Model = model();
+    auto sd5History = hist();
+    JSONValue[] sd5Labels;
+    foreach (label; sd5History.labels) sd5Labels ~= JSONValue(label);
+    JSONValue[string] sd5Got;
+    sd5Got["status"] = sd5["status"];
+    sd5Got["mesh"] = meshRead(sd5Model);
+    sd5Got["tool"] = getJson("/api/input/context")["tool"];
+    sd5Got["undoLabels"] = JSONValue(sd5Labels);
+    compareCell(bad, fx, "SD-5", JSONValue(sd5Got));
+    writeln("SD-5 parity status=", sd5["status"].str,
+            " mesh=", counts(sd5Model), " tool=",
+            sd5Got["tool"].toString, " labels=", sd5History.labels);
+
     foreach (ext; ["obj", "lwo", "glb"]) {
         auto id = "SD-X/" ~ ext; free2(id);
         auto path = tmp(randomUUID().toString ~ "." ~ ext);
@@ -1016,8 +1048,7 @@ unittest {
         writeln(id, " census mesh=", counts(m));
     }
 
-    writeln("SD-FIXTURE executed=31 planned=1 total=32");
-    writeln("SKIP planned SD-5");
+    writeln("SD-FIXTURE executed=32 planned=0 total=32");
     foreach (line; bad) writeln("RED ", line);
     assert(bad.length == 0,
         format("short-face table has %d red row(s); see RED lines above", bad.length));

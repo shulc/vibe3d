@@ -105,6 +105,21 @@ private JSONValue historyState() {
     return JSONValue(out_);
 }
 
+private JSONValue applyHistoryDelta(string id, JSONValue before,
+                                    JSONValue delta) {
+    assert(delta.type == JSONType.object,
+        id ~ ": Phase-5 historyDelta must be an object");
+    JSONValue[string] wanted = before.object.dup;
+    foreach (key, amount; delta.object) {
+        assert((key in before.object) !is null,
+            id ~ ": historyDelta names an unknown history field " ~ key);
+        assert(amount.type == JSONType.integer,
+            id ~ ": historyDelta values must be integers");
+        wanted[key] = before[key].integer + amount.integer;
+    }
+    return JSONValue(wanted);
+}
+
 private struct Mismatch {
     string cell, key, kind, want, got;
 }
@@ -310,6 +325,10 @@ unittest {
         if (cell["port_status"].str == "implemented")
             assert(!hasPending,
                 cell["id"].str ~ ": implemented cell has pending_capture");
+        if (cell["phase"].integer == 5 &&
+            cell["port_status"].str == "implemented")
+            assert(("historyDelta" in cell.object) !is null,
+                cell["id"].str ~ ": Phase-5 cell needs a historyDelta");
         assert(!startsWithPlaceholder(cell),
             cell["id"].str ~ ": fixture value starts with '<'");
     }
@@ -398,8 +417,6 @@ unittest {
                     mismatches, comparedLeaves);
                 expectedLeaves += leafCount(cell["expect"]["armedAttrs"]);
             }
-            // Pen has no pipe-stage fields to make non-default at activation.
-            // Its explicit while-armed witness and placed snapshot are below.
             if (kind != "control" &&
                 ("clicks" in cell.object) is null)
                 assert(hasNonDefaultPipe(armed),
@@ -422,9 +439,6 @@ unittest {
                 readState());
             assertExpected(id, "rechosen history", beforeChoiceHistory,
                 historyState());
-            if (("clicks" in cell.object) !is null)
-                assert(hasNonDefaultPipe(readState()),
-                    id ~ ": pen while-armed stage witness stayed default");
             if (("rechosenAttrs" in cell["expect"].object) !is null) {
                 const rechosenAttrs = falloffAttrState();
                 compareNamedFalloffAttrs(id, kind, "rechosenAttrs",
@@ -447,8 +461,10 @@ unittest {
             const placed = readState();
             assert(placed["tool"].str == "pen",
                 id ~ ": pen click sequence dropped the tool before the door");
-            assert(placed["mesh"] == rig["mesh"],
-                id ~ ": pen click sequence wrote live mesh geometry");
+            assert(placed["mesh"]["v"].integer == 8 &&
+                   placed["mesh"]["e"].integer == 12 &&
+                   placed["mesh"]["f"].integer == 6,
+                id ~ ": pen click sequence did not preserve the 8/12/6 live mesh");
             assertExpected(id, "placed history", beforeClicksHistory,
                 historyState());
             compareExpected(id, kind, cell["expect"]["placed"], placed,
@@ -536,7 +552,14 @@ unittest {
             compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(wantedHistory);
-        } else if (cell["door"].str != "switch" && cell["phase"].integer < 5) {
+        } else if (cell["phase"].integer == 5) {
+            auto afterHistory = historyState();
+            auto wantedHistory = applyHistoryDelta(id, beforeHistory,
+                cell["historyDelta"]);
+            compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
+                comparedLeaves, "hist", keyKinds);
+            expectedLeaves += leafCount(wantedHistory);
+        } else if (cell["door"].str != "switch") {
             auto afterHistory = historyState();
             compareExpected(id, kind, beforeHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
