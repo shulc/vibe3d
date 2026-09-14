@@ -272,6 +272,52 @@ unittest { // faceted subdivide leaves it alone instead of doubling a corner
     }
 }
 
+unittest { // smooth subdivision follows emitted-face origins past a short face
+    auto cube = makeCube();
+    Mesh m;
+    m.vertices = cube.vertices.dup;
+    m.vertices ~= [Vec3(3, 0, 0), Vec3(4, 0, 0)];
+    m.addFace([8u, 9u]);
+    foreach (face; cube.faces)
+        m.addFace(face.dup);
+    m.buildLoops();
+
+    auto withShort = new bool[](m.faces.length);
+    withShort[0] = true;
+    withShort[2] = true; // cube's z=+0.5 quad follows the short face
+    auto control = new bool[](m.faces.length);
+    control[2] = true;
+
+    auto got = smoothSubdivide(m, withShort);
+    auto gotFlat = facetedSubdivide(m, withShort);
+    auto controlGot = smoothSubdivide(m, control);
+    auto controlFlat = facetedSubdivide(m, control);
+
+    foreach (vi; 0u .. 4u) {
+        assert(got.vertices[vi] == m.vertices[vi],
+            format("U-W1: z=-0.5 corner %d moved because the preceding "
+                 ~ "two-corner face displaced the emitted-face walk: %s -> %s",
+                   vi, m.vertices[vi], got.vertices[vi]));
+        assert(controlGot.vertices[vi] == m.vertices[vi],
+            format("U-W1 floor: control z=-0.5 corner %d moved: %s -> %s",
+                   vi, m.vertices[vi], controlGot.vertices[vi]));
+    }
+
+    size_t gotMoved;
+    foreach (vi; 0 .. got.vertices.length)
+        if (got.vertices[vi] != gotFlat.vertices[vi])
+            ++gotMoved;
+    assert(gotMoved >= 1,
+        "U-W1 floor: the short-face run must relax at least one vertex");
+
+    size_t controlMoved;
+    foreach (vi; 0 .. controlGot.vertices.length)
+        if (controlGot.vertices[vi] != controlFlat.vertices[vi])
+            ++controlMoved;
+    assert(controlMoved >= 1,
+        "U-W1 floor: the control selected surface must relax at least one vertex");
+}
+
 unittest { // an edge extrude does not annihilate a bystanding two-corner face
     // A cube with a standing [6,7] face, extruding the very edge that face
     // stands on. `faceIndices` in the side-face rewrite is EVERY face, so the

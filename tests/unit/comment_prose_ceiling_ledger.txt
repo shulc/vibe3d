@@ -116,7 +116,7 @@ allow source/commands/mesh/split_edge.d 4
 allow source/commands/mesh/split_face.d 5
 allow source/commands/mesh/stroke_extrude.d 5
 allow source/commands/mesh/subdivide.d 8
-allow source/commands/mesh/subdivide_faceted.d 7
+allow source/commands/mesh/subdivide_faceted.d 8
 allow source/commands/mesh/subpatch_toggle.d 5
 allow source/commands/mesh/sweep.d 4
 allow source/commands/mesh/symmetrize.d 7

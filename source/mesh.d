@@ -15264,6 +15264,16 @@ Mesh subdivideCube(int levels) {
 
 
 
+/// Task 1290's arity rule, reused by task 5911 Phase 4a: true exactly when a
+/// masked cage face is refined as a surface. Short faces stay legal without
+/// activating edges, booking centroids, or joining the surface relax set;
+/// the task-1290 two-corner cell, SD-smooth, and U-W1 pin those false results.
+bool facetedRefinesSurface(ref const Mesh m, const bool[] faceMask, size_t fi)
+    pure nothrow @nogc
+{
+    return fi < faceMask.length && faceMask[fi] && m.faces[fi].length >= 3;
+}
+
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
 /// is true is split into n quads using its centroid and edge midpoints — no
 /// vertex smoothing, unlike Catmull-Clark. Non-selected faces sharing an edge
@@ -15271,20 +15281,11 @@ Mesh subdivideCube(int levels) {
 /// the mesh manifold (no T-junctions). `faceMask` may be shorter than
 /// m.faces.length — missing entries are treated as false. If no face is
 /// selected the mesh is returned topologically unchanged.
-Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
+Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
+                      uint[]* faceOriginOut = null) {
     uint nV = cast(uint)m.vertices.length;
     uint nF = cast(uint)m.faces.length;
     uint nE = cast(uint)m.edges.length;
-
-    // Task 1290 (P3): a face with fewer than three corners is never a
-    // subdivision candidate — see the emit loop below for what the two arms
-    // did to one. Declining it HERE as well as there is what keeps the
-    // vertex budget honest: this same predicate gates edge activation and
-    // centroid allocation, so a 2-corner face no longer books a midpoint and
-    // a centroid that nothing then references.
-    bool isSelected(size_t fi) {
-        return fi < faceMask.length && faceMask[fi] && m.faces[fi].length >= 3;
-    }
 
     // Map edge key → index in m.edges.
     uint[ulong] edgeLookup;
@@ -15296,7 +15297,7 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     // face by itself never activates its edges.
     bool[] edgeActive = new bool[](nE);
     foreach (fi, face; m.faces) {
-        if (!isSelected(fi)) continue;
+        if (!facetedRefinesSurface(m, faceMask, fi)) continue;
         uint len = cast(uint)face.length;
         foreach (i; 0 .. len) {
             uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
@@ -15312,7 +15313,7 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     foreach (ei; 0 .. nE) if (edgeActive[ei]) {
         edgeMidIdx[ei] = outVCount++;
     }
-    foreach (fi; 0 .. nF) if (isSelected(fi)) {
+    foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
         faceCentroidIdx[fi] = outVCount++;
     }
 
@@ -15324,7 +15325,7 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
         Vec3 b = m.vertices[m.edges[ei][1]];
         result.vertices[edgeMidIdx[ei]] = (a + b) * 0.5f;
     }
-    foreach (fi; 0 .. nF) if (isSelected(fi)) {
+    foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
         result.vertices[faceCentroidIdx[fi]] = m.faceCentroid(cast(uint)fi);
     }
 
@@ -15355,7 +15356,7 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
             outFaceOrigin ~= cast(uint)fi;
             continue;
         }
-        if (isSelected(fi)) {
+        if (facetedRefinesSurface(m, faceMask, fi)) {
             uint cIdx = faceCentroidIdx[fi];
             foreach (i; 0 .. len) {
                 uint vi0  = face[i];
@@ -15385,6 +15386,8 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     }
 
     result.buildLoops();
+    if (faceOriginOut !is null)
+        *faceOriginOut = outFaceOrigin;
 
     // Hide (task 0632): the rebuild used to DROP the Hide bit outright — the
     // result is a freshly constructed Mesh and nothing copied `faceMarks`
@@ -15460,42 +15463,33 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
 /// Under a full mask every vert is incident to a new sub-face, so the relax
 /// set equals all non-boundary verts — reproduces the closed-cube analytic
 /// golden: corner ≈ 5/12 ≈ 0.41667.
-Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask)
+Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask,
+                     uint[]* faceOriginOut = null)
 {
     uint nFOrig = cast(uint)m.faces.length;
-
-    bool isSelected(size_t fi) {
-        return fi < faceMask.length && faceMask[fi];
-    }
 
     // If nothing is selected, facetedSubdivide returns the mesh topologically
     // unchanged and the relax set is empty — return early.
     bool hadAny = false;
-    foreach (fi; 0 .. nFOrig) if (isSelected(fi)) { hadAny = true; break; }
+    foreach (fi; 0 .. nFOrig)
+        if (facetedRefinesSurface(m, faceMask, fi)) { hadAny = true; break; }
     if (!hadAny)
-        return facetedSubdivide(m, faceMask);
+        return facetedSubdivide(m, faceMask, faceOriginOut);
 
-    Mesh sub = facetedSubdivide(m, faceMask);
+    uint[] origin;
+    Mesh sub = facetedSubdivide(m, faceMask, &origin);
+    if (faceOriginOut !is null)
+        *faceOriginOut = origin;
 
     // -----------------------------------------------------------------------
     // Build the relax set: verts incident to ≥1 newly-created sub-face.
     // A sub-face is "new" when it came from a *selected* input face.
-    // Replay the same emit-cursor walk used by the selection rebuild so that
-    // the "new" designation is derived the same way as in runFacetedFamily.
+    // The kernel's origin record is the authority: one entry per emitted face,
+    // independent of source-face arity and of whether that face was refined.
     // -----------------------------------------------------------------------
     bool[] faceIsNew = new bool[](sub.faces.length);
-    {
-        size_t cursor = 0;
-        foreach (fi; 0 .. nFOrig) {
-            bool sel      = isSelected(fi);
-            size_t emitted = sel ? m.faces[fi].length : 1;
-            foreach (j; 0 .. emitted) {
-                if (sel && cursor < faceIsNew.length)
-                    faceIsNew[cursor] = true;
-                ++cursor;
-            }
-        }
-    }
+    foreach (k, parentFi; origin)
+        faceIsNew[k] = facetedRefinesSurface(m, faceMask, parentFi);
 
     bool[] relaxable = new bool[](sub.vertices.length);
     foreach (fi; 0 .. sub.faces.length) {

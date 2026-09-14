@@ -10,7 +10,7 @@ import change_bus : MeshEditScope;
 
 /// Shared kernel dispatcher for the faceted family (flat and smooth modes).
 /// Runs `facetedSubdivide` (smooth=false) or `smoothSubdivide` (smooth=true),
-/// then rebuilds the post-op face selection using the same emit-cursor walk
+/// then rebuilds the post-op face selection from the kernel's origin record
 /// and publishes the Geometry change-bus notification.
 /// Snapshot capture is the caller's responsibility; the display refresh is
 /// bus-driven (the main loop's flush site consumes the Geometry flag
@@ -24,9 +24,6 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     bool hadSelection = polygonMode && mesh.hasAnySelectedFaces();
     auto prevSelectedFaces = polygonMode
         ? mesh.selectedFaces.dup : null;
-    auto prevFaceVertCounts = new size_t[](mesh.faces.length);
-    foreach (fi; 0 .. mesh.faces.length)
-        prevFaceVertCounts[fi] = mesh.faces[fi].length;
     // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
     // (task 0613, S5; see the helper's doc comment in mesh.d). This is the
     // operand-exclusion half of task 0632: a hidden face is never in the
@@ -59,22 +56,15 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     // still found by `close()`. A `batchDepth_` FIELD on `Mesh` would have
     // been zeroed by this very line.
     auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);
-    *mesh = smooth ? smoothSubdivide(*mesh, mask) : facetedSubdivide(*mesh, mask);
+    uint[] origin;
+    *mesh = smooth ? smoothSubdivide(*mesh, mask, &origin)
+                   : facetedSubdivide(*mesh, mask, &origin);
     mesh.resetSelection();
-    // Rebuild the output selection: each selected cage face produced
-    // len(fi) sub-quads (one per corner); unselected faces produced 1 face
-    // (possibly widened). Walk the cursor to re-select the children.
-    size_t cursor = 0;
-    foreach (fi; 0 .. prevSelectedFaces.length) {
-        bool wasSelected = prevSelectedFaces[fi];
-        bool splitsHere  = fi < mask.length && mask[fi];
-        size_t emitted   = splitsHere ? prevFaceVertCounts[fi] : 1;
-        foreach (j; 0 .. emitted) {
-            if (wasSelected && cursor < mesh.faces.length)
-                mesh.selectFace(cast(int)cursor);
-            ++cursor;
-        }
-    }
+    // Task 5911 Phase 4a: selection follows what the kernel actually emitted,
+    // not a replayed arity estimate; SD-W pins the bystanding-face boundary.
+    foreach (k, parentFi; origin)
+        if (parentFi < prevSelectedFaces.length && prevSelectedFaces[parentFi])
+            mesh.selectFace(cast(int) k);
     // Change-notification (Stage 1): faceted kernel REPLACED the whole mesh
     // (new verts AND faces). No version bump: the `*mesh = ...` swap reset the
     // version counters to 0; the bus only needs the class so caches rebuild.
@@ -126,4 +116,3 @@ class SubdivideFaceted : Command, Operator {
         snap.restore(*mesh);
     }
 }
-
