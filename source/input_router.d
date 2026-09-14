@@ -122,6 +122,7 @@ import symmetry_pick        : symmetricSelectVertex, symmetricSelectEdge,
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.select.loop    : SelectLoop;
 import commands.select.connect : SelectConnect;
+import commands.mesh.subpatch_toggle : skipsSubpatchToggle;
 import ai.element_candidates : collectElementCandidates,
                                resolveElementCandidateDecision,
                                publishElementCandidates;
@@ -679,6 +680,7 @@ struct InputRouter {
                     foreach (fi; 0 .. mesh.faces.length) {
                         if (scoped && !mesh.isFaceSelected(fi))
                             continue;
+                        if (skipsSubpatchToggle(mesh, fi)) continue;
                         mesh.setSubpatch(fi, !mesh.isFaceSubpatch(fi));
                     }
                     break;

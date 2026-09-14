@@ -47,8 +47,8 @@ import mesh;
 import math;
 
 /// Connected-component BFS seeded at `seedVi`, over the CSR vert→vert
-/// adjacency (relation D, edge-based) — same provider as smooth.d /
-/// smoothSubdivide. Returns an order-independent visited set (`true` for
+/// adjacency (relation D, edge-based) — same provider as smooth.d. Returns
+/// an order-independent visited set (`true` for
 /// every vertex reachable from the seed), so (unlike the two smooth
 /// kernels) the CSR neighbor order carries no bit-stability requirement
 /// here.

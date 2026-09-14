@@ -108,8 +108,9 @@ class Subdivide : Command, Operator {
             // batch on the refusal path too, for a frame that has nothing to
             // stamp.
             // `catmullClarkOsd` returns `Mesh.init` (empty) when OSD can't
-            // build a topology — a degenerate marked face, or an
-            // all-degenerate/empty subset. Without this guard the
+            // build a topology — a degenerate (zero-area / collinear / fewer
+            // than three distinct corners) marked face, or an operand with
+            // nothing to refine or split. Without this guard the
             // unconditional `*mesh = sub` below would WIPE the mesh on a
             // GIGO input; treat it as a clean no-op instead (mirrors
             // `commands/mesh/make_polygon.d`'s reject-is-a-no-op idiom).

@@ -1,6 +1,4 @@
-// Task 5911, Phase 4a: short-face census plus the two emitted-origin walks.
-// The default subdivision refusal remains the recorded baseline in this phase;
-// Phase 4b owns the split and the subpatch-toggle skip.
+// Task 5911, Phase 4b: short-face split, emitted-origin, relax, and toggle laws.
 
 import core.thread : Thread;
 import core.time : msecs;
@@ -15,7 +13,7 @@ import std.math : fabs;
 import std.path : buildPath;
 import std.process : thisProcessID;
 import std.stdio : writeln;
-import std.string : startsWith;
+import std.string : split, startsWith;
 import std.uuid : randomUUID;
 
 void main() {}
@@ -220,6 +218,13 @@ private void compareExpected(string id, JSONValue want, JSONValue got,
         }
         return;
     }
+    if (want.type == JSONType.array && got.type == JSONType.array
+        && want.array.length == got.array.length) {
+        foreach (i, value; want.array)
+            compareExpected(id, value, got.array[i], rows, comparedLeaves,
+                prefix ~ "[" ~ i.to!string ~ "]");
+        return;
+    }
     ++comparedLeaves;
     if (want != got)
         rows ~= Mismatch(id, prefix, want.toString, got.toString);
@@ -233,7 +238,8 @@ private JSONValue activeExpected(JSONValue c) {
     const baseKey = status == "census" ? "census" : "expect";
     assert(baseKey in c && c[baseKey].type == JSONType.object,
            c["id"].str ~ ": missing active " ~ baseKey ~ " object");
-    foreach (key, value; c[baseKey].object) out_[key] = value;
+    foreach (key, value; c[baseKey].object)
+        if (key != "tolerance") out_[key] = value;
 
     if ("key_kinds" in c) foreach (key, kind; c["key_kinds"].object) {
         if (status == "census" && kind.str != "census") {
@@ -304,6 +310,88 @@ private JSONValue shortFacesRead(JSONValue m) {
     }
     out_.sort!((a, b) => a.toString < b.toString);
     return JSONValue(out_);
+}
+
+private long splitVertex(JSONValue m) {
+    JSONValue[] shorts;
+    foreach (face; m["faces"].array) if (face.array.length == 2) shorts ~= face;
+    if (shorts.length != 2) return -1;
+    foreach (a; shorts[0].array) foreach (b; shorts[1].array)
+        if (number(a) == number(b)) return number(a);
+    return -1;
+}
+
+private bool surfaceUses(JSONValue m, long vi) {
+    foreach (face; m["faces"].array) if (face.array.length >= 3)
+        if (face.array.canFind(JSONValue(vi))) return true;
+    return false;
+}
+
+private JSONValue splitAtRead(JSONValue m) {
+    const s = splitVertex(m);
+    return s < 0 ? JSONValue(null) : m["vertices"].array[cast(size_t)s];
+}
+
+private JSONValue splitSharedRead(JSONValue m) {
+    const s = splitVertex(m);
+    return JSONValue(s >= 0 && surfaceUses(m, s));
+}
+
+private JSONValue shortVertexListsRead(JSONValue m) {
+    JSONValue[] out_;
+    foreach (face; m["faces"].array) if (face.array.length == 2) out_ ~= face;
+    return JSONValue(out_);
+}
+
+private JSONValue shortEndpointsRead(JSONValue m) {
+    const s = splitVertex(m);
+    JSONValue[] out_;
+    foreach (face; m["faces"].array) if (face.array.length == 2)
+        foreach (vi; face.array) if (number(vi) != s)
+            out_ ~= m["vertices"].array[cast(size_t)number(vi)];
+    if (s < 0) {
+        out_.length = 0;
+        foreach (face; m["faces"].array) if (face.array.length == 2)
+            foreach (vi; face.array)
+                out_ ~= m["vertices"].array[cast(size_t)number(vi)];
+    }
+    out_.sort!((a,b) => a.toString < b.toString);
+    return JSONValue(out_);
+}
+
+private JSONValue holdersOfPair(JSONValue m, long a, long b) {
+    JSONValue[] holders;
+    foreach (face; m["faces"].array) {
+        if (face.array.length < 3 || !face.array.canFind(JSONValue(a))
+            || !face.array.canFind(JSONValue(b))) continue;
+        JSONValue[string] holder;
+        holder["vertices"] = face;
+        holder["corners"] = JSONValue(cast(long)face.array.length);
+        holders ~= JSONValue(holder);
+    }
+    return JSONValue(holders);
+}
+
+private bool prefixEqual(JSONValue got, JSONValue control) {
+    foreach (key; ["vertices", "edges", "faces"])
+        foreach (i, v; control[key].array)
+            if (i >= got[key].array.length || got[key].array[i] != v) return false;
+    return true;
+}
+
+private bool nearRead(JSONValue got, JSONValue want, double tolerance) {
+    if (got.type == JSONType.array && want.type == JSONType.array) {
+        if (got.array.length != want.array.length) return false;
+        foreach (i, value; want.array)
+            if (!nearRead(got.array[i], value, tolerance)) return false;
+        return true;
+    }
+    if ((got.type == JSONType.float_ || got.type == JSONType.integer
+         || got.type == JSONType.uinteger)
+        && (want.type == JSONType.float_ || want.type == JSONType.integer
+            || want.type == JSONType.uinteger))
+        return fabs(decimal(got) - decimal(want)) <= tolerance;
+    return got == want;
 }
 
 private JSONValue indexedPositions(JSONValue m, JSONValue keys) {
@@ -446,7 +534,10 @@ private void loadV3d(JSONValue fx, string rig, string id) {
     ok("select.typeFrom polygon", id);
     ok("select.drop polygon", id);
     auto loaded = model();
-    assert(counts(loaded) == "8/13/7", id ~ ": v3d rig topology floor failed");
+    assert(loaded["vertexCount"].integer == 8
+        && loaded["faceCount"].integer == 7
+        && (rig == "first2" || loaded["edgeCount"].integer == 13),
+        id ~ ": v3d rig topology floor failed");
     assert(flagsRead(flags(loaded)) == fx["rig_v3d"][rig]["faceSubpatch"],
            id ~ ": v3d rig isSubpatch floor failed: "
            ~ flagsRead(flags(loaded)).toString);
@@ -502,15 +593,16 @@ private void verifyFixture(JSONValue fx) {
         "SD-T", "SD-T/flat", "SD-2c", "SD-2c/flat", "SD-2g",
         "SD-2g/flat", "SD-flat", "SD-smooth", "SD-adj", "SD-adj/flat",
         "SD-U30", "SD-U30/flat", "SD-W/flat", "SD-W/smooth", "SD-P",
-        "SD-P/tab", "SD-Ps", "SD-Ps/tab", "SD-Psb", "SD-X"];
-    auto wantPlanned = ["SD-5last", "SD-5first", "SD-5last/flat",
-        "SD-5first/flat", "SD-5last/smooth", "SD-5first/smooth", "SD-5"];
+        "SD-P/tab", "SD-Ps", "SD-Ps/tab", "SD-Psb", "SD-X",
+        "SD-5last", "SD-5first", "SD-5last/flat", "SD-5first/flat",
+        "SD-5last/smooth", "SD-5first/smooth"];
+    auto wantPlanned = ["SD-5"];
     executed.sort; planned.sort; wantExecuted.sort; wantPlanned.sort;
     assert(executed == wantExecuted, "executed fixture id set changed");
     assert(planned == wantPlanned, "planned fixture id set changed");
-    assert(executed.length == 25 && planned.length == 7
+    assert(executed.length == 31 && planned.length == 1
            && fx["cells"].array.length == 32,
-           "fixture population must be 25 executed + 7 planned = 32");
+           "fixture population must be 31 executed + 1 planned = 32");
 }
 
 unittest {
@@ -525,23 +617,29 @@ unittest {
     compareExpected("SD-FIXTURE-EDIT-SELF-CHECK", selfWant, selfGot,
                     selfRows, selfLeaves);
     assert(selfRows.length == 1 && selfRows[0].cell == "SD-FIXTURE-EDIT-SELF-CHECK"
-           && selfRows[0].key == "isSubpatch1" && selfLeaves == 1,
+           && selfRows[0].key == "isSubpatch1[0]" && selfLeaves == 1,
            "fixture-edit self-check must name the changed fixture key");
 
     foreach (spec; [["SD-R/api", "free"], ["SD-R/api-diag", "diag"]]) {
+        resetCube(spec[0] ~ "/prefix");
+        ok(`{"id":"mesh.subdivide"}`, spec[0] ~ "/prefix");
+        auto prefixControl = model();
         if (spec[1] == "free") free2(spec[0]); else diagonal2(spec[0]);
         auto before = modelSig(model()); auto h0 = hist();
         auto r = cmdJson(`{"id":"mesh.subdivide"}`); auto h1 = hist();
         auto after = model();
         JSONValue[string] got;
         got["status"] = r["status"];
-        got["message"] = r["message"];
+        if ("message" in r) got["message"] = r["message"];
         got["modelUnchanged"] = JSONValue(modelSig(after) == before);
         got["undoDelta"] = JSONValue(h1.length - h0.length);
         got["mesh"] = meshRead(after);
         got["cornerHistogram"] = histogramRead(after);
         got["shortFaces"] = shortFacesRead(after);
         got["selected"] = selectedRead(sel());
+        got["prefix"] = JSONValue(prefixEqual(after, prefixControl));
+        got["splitShared"] = splitSharedRead(after);
+        got["splitAt"] = splitAtRead(after);
         compareCell(bad, fx, spec[0], JSONValue(got));
         writeln(spec[0], " census status=", r["status"].str,
                 " answer=", r.toString, " undoDelta=", h1.length - h0.length,
@@ -571,6 +669,7 @@ unittest {
     keyGot["modelUnchanged"] = JSONValue(modelSig(model()) == keyBefore);
     keyGot["undoDelta"] = JSONValue(keyH1.length - keyH0.length);
     keyGot["mesh"] = meshRead(model());
+    keyGot["status"] = JSONValue(modelSig(model()) == keyBefore ? "error" : "ok");
     compareCell(bad, fx, "SD-R/key", JSONValue(keyGot));
     writeln("SD-R/key census modelUnchanged=", modelSig(model()) == keyBefore,
             " undoDelta=", keyH1.length - keyH0.length);
@@ -663,6 +762,16 @@ unittest {
     gGot["cornerHistogram"] = histogramRead(model());
     gGot["shortFaces"] = shortFacesRead(model());
     gGot["selected"] = selectedRead(sel());
+    bool selectedAreShort = sel().length == 2;
+    foreach (fi; sel()) selectedAreShort = selectedAreShort
+        && model()["faces"].array[fi].array.length == 2;
+    gGot["selectedAreTheShortFaces"] = JSONValue(selectedAreShort ? 2L : 0L);
+    bool cubeUnchanged = true;
+    auto gAfter = model();
+    foreach (i; 0 .. 10)
+        if (gAfter["vertices"].array[i] != parseJSON(gBefore.split("|")[0]).array[i])
+            cubeUnchanged = false;
+    gGot["cubeVerticesUnchanged"] = JSONValue(cubeUnchanged);
     compareCell(bad, fx, "SD-2g", JSONValue(gGot));
     writeln("SD-2g census status=", gR["status"].str, " undoDelta=", gH1.length-gH0.length);
 
@@ -718,6 +827,14 @@ unittest {
         got["repeatedCorner"] = JSONValue(cast(long) repeatedCornerFaces(m));
         got["shortFaces"] = shortFacesRead(m);
         got["holdersOfPair"] = holdersOfShortPair(m);
+        got["endpoints"] = shortEndpointsRead(m);
+        const sv = splitVertex(m);
+        bool endpointsRefined = sv < 0;
+        foreach (face; m["faces"].array) if (face.array.length == 2)
+            foreach (vi; face.array)
+                endpointsRefined = endpointsRefined
+                    && surfaceUses(m, number(vi));
+        got["shortFaceEndpointsAreRefinedCorners"] = JSONValue(endpointsRefined);
         got["selected"] = selectedRead(selected);
         got["selectedCount"] = JSONValue(cast(long) selected.length);
         got["shortFaceSelected"] = JSONValue(shortSelected);
@@ -742,7 +859,20 @@ unittest {
         got["mesh"] = meshRead(m);
         got["cornerHistogram"] = histogramRead(m);
         got["selected"] = selectedRead(sel());
-        got["holdersOfPair"] = holdersOfShortPair(m);
+        got["holdersOfPair"] = holdersOfPair(m, 0, 3);
+        got["shortFaceVertexLists"] = shortVertexListsRead(m);
+        got["splitAt"] = splitAtRead(m);
+        got["splitShared"] = splitSharedRead(m);
+        auto beforeModel = parseJSON(before.split("|")[0]);
+        bool vertsPrefix = true;
+        foreach (i, v; beforeModel.array)
+            if (m["vertices"].array[i] != v) vertsPrefix = false;
+        got["verticesPrefixUnchanged"] = JSONValue(vertsPrefix ? 8L : 0L);
+        bool facesPrefix = true;
+        auto beforeFaces = parseJSON(before.split("|")[2]);
+        foreach (i; 0 .. 6)
+            if (m["faces"].array[i] != beforeFaces.array[i]) facesPrefix = false;
+        got["facesPrefixUnchanged"] = JSONValue(facesPrefix ? 6L : 0L);
         compareCell(bad, fx, id, JSONValue(got));
         writeln(id, " census status=", r["status"].str, " mesh=", counts(m),
                 " selected=", sel(), " undoDelta=", h1.length-h0.length);
@@ -834,6 +964,38 @@ unittest {
     compareCell(bad, fx, "SD-Psb", JSONValue(sbGot));
     writeln("SD-Psb census flags1=", sb1, " flags2=", sb2);
 
+    foreach (id; ["SD-5last", "SD-5first", "SD-5last/flat",
+                  "SD-5first/flat", "SD-5last/smooth", "SD-5first/smooth"]) {
+        if (id.canFind("first")) loadV3d(fx, "first2", id);
+        else edge2(id);
+        string request = `{"id":"mesh.subdivide"}`;
+        if (id.canFind("/flat"))
+            request = `{"id":"mesh.subdivide","params":{"mode":"flat"}}`;
+        else if (id.canFind("/smooth"))
+            request = `{"id":"mesh.subdivide","params":{"mode":"smooth"}}`;
+        auto r = cmdJson(request);
+        auto m = model();
+        JSONValue[string] got;
+        got["status"] = r["status"];
+        got["mesh"] = meshRead(m);
+        got["cornerHistogram"] = histogramRead(m);
+        got["splitShared"] = splitSharedRead(m);
+        got["splitAt"] = splitAtRead(m);
+        auto c = cell(fx, id);
+        if ("endpoints" in c["expect"]) {
+            auto actual = shortEndpointsRead(m);
+            if ("tolerance" in c["expect"]
+                && nearRead(actual, c["expect"]["endpoints"],
+                            decimal(c["expect"]["tolerance"])))
+                actual = c["expect"]["endpoints"];
+            got["endpoints"] = actual;
+        }
+        compareCell(bad, fx, id, JSONValue(got));
+        writeln(id, " parity status=", r["status"].str,
+                " mesh=", counts(m), " split=", splitAtRead(m).toString,
+                " shared=", splitSharedRead(m).toString);
+    }
+
     foreach (ext; ["obj", "lwo", "glb"]) {
         auto id = "SD-X/" ~ ext; free2(id);
         auto path = tmp(randomUUID().toString ~ "." ~ ext);
@@ -854,10 +1016,8 @@ unittest {
         writeln(id, " census mesh=", counts(m));
     }
 
-    writeln("SD-FIXTURE executed=25 planned=7 total=32");
-    foreach (id; ["SD-5last", "SD-5first", "SD-5last/flat",
-                  "SD-5first/flat", "SD-5last/smooth", "SD-5first/smooth", "SD-5"])
-        writeln("SKIP planned ", id);
+    writeln("SD-FIXTURE executed=31 planned=1 total=32");
+    writeln("SKIP planned SD-5");
     foreach (line; bad) writeln("RED ", line);
     assert(bad.length == 0,
         format("short-face table has %d red row(s); see RED lines above", bad.length));

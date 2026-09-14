@@ -4162,9 +4162,9 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
     // so a new write cannot hide inside a number that merely did not change.
     string firstHit;
     immutable size_t raw = countRawPositionWrites(src, firstHit);
-    assert(raw == 32,
+    assert(raw == 33,
         format("source/mesh.d holds %d raw position write(s) under §5.7's "
-             ~ "predicate, expected 32. First hit: `%s`.\n"
+             ~ "predicate, expected 33. First hit: `%s`.\n"
              ~ "  THIS IS A `kAllow` TOTAL, NOT A CLEAN ZERO, and the file is "
              ~ "the one place where that is right: the 46 are the position "
              ~ "DOORS themselves (`setVertexPositions` ×2, `addVertex`), the "
@@ -4187,6 +4187,9 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
              ~ "a fixture builder is not. Not one production write moved; the "
              ~ "three-row retired/replacement pair above is untouched and "
              ~ "still pins every live-subject site.\n"
+             ~ "  Task 5911 adds one constructed-result write for a fresh "
+             ~ "two-corner-face midpoint inside `facetedSubdivide`; it fills "
+             ~ "the pre-sized output mesh and never touches the live subject.\n"
              ~ "  A NEW raw write here must be classified in the SAME commit: if "
              ~ "it is on a mesh the caller has just constructed, say so and move "
              ~ "this number; if it is on the live subject, it belongs behind "

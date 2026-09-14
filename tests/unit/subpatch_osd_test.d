@@ -4,7 +4,8 @@
 module tests.unit.subpatch_osd_test;
 import std.conv : to;
 
-import std.math : sqrt;
+import std.algorithm : canFind;
+import std.math : fabs, sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, MapKind;
 import osd.c;
@@ -332,6 +333,255 @@ unittest {
     assert(cage.mutationVersion == mutVerBefore,
         "rebuildIfStale must not mutate the CAGE's mutationVersion — only "
         ~ "the preview's own internal mesh may bump its own version");
+}
+
+private Mesh sdLastCage(uint a = 0, uint b = 3) {
+    Mesh cage = makeCube();
+    cage.addFace([a, b]);
+    cage.buildLoops();
+    return cage;
+}
+
+private Mesh sdFirstCage() {
+    Mesh cube = makeCube();
+    Mesh cage;
+    cage.vertices = cube.vertices.dup;
+    cage.addFace([0u, 3u]);
+    foreach (face; cube.faces) cage.addFace(face.dup);
+    cage.buildLoops();
+    return cage;
+}
+
+private uint sdSharedShortVertex(ref const Mesh m) {
+    const(uint)[][] shortFaces;
+    foreach (face; m.faces) if (face.length == 2) shortFaces ~= face;
+    assert(shortFaces.length == 2, "expected exactly two short output faces");
+    foreach (a; shortFaces[0]) foreach (b; shortFaces[1])
+        if (a == b) return a;
+    assert(false, "the two short output faces must share their split vertex");
+}
+
+private bool sdSurfaceUses(ref const Mesh m, uint vi) {
+    foreach (face; m.faces) if (face.length >= 3)
+        foreach (c; face) if (c == vi) return true;
+    return false;
+}
+
+private size_t sdRepeatedCornerFaces(ref const Mesh m) {
+    size_t n;
+    foreach (face; m.faces) {
+        uint[] seen;
+        bool repeated;
+        foreach (vi; face) {
+            if (seen.canFind(vi)) repeated = true;
+            seen ~= vi;
+        }
+        if (repeated) ++n;
+    }
+    return n;
+}
+
+private uint[2] sdShortEndpoints(ref const Mesh m, uint split) {
+    uint[] endpoints;
+    foreach (face; m.faces) if (face.length == 2)
+        foreach (vi; face) if (vi != split) endpoints ~= vi;
+    assert(endpoints.length == 2,
+        "expected two non-shared endpoints across the short halves");
+    return [endpoints[0], endpoints[1]];
+}
+
+private uint sdFiveCornerBetween(ref const Mesh m, uint a, uint b,
+                                 out size_t holders) {
+    uint between = uint.max;
+    foreach (face; m.faces) if (face.length == 5
+            && face.canFind(a) && face.canFind(b)) {
+        ++holders;
+        foreach (i, vi; face) {
+            immutable uint prev = face[(i + face.length - 1) % face.length];
+            immutable uint next = face[(i + 1) % face.length];
+            if ((prev == a && next == b) || (prev == b && next == a))
+                between = vi;
+        }
+    }
+    return between;
+}
+
+// Task 5911 U-SD1: a free short face is split after an otherwise byte-stable
+// full OpenSubdiv result.
+unittest {
+    g_osdWholeShortEdgeLookupBuilds = 0;
+    Mesh controlCage = makeCube();
+    Mesh control = catmullClarkOsd(controlCage);
+    assert(g_osdWholeShortEdgeLookupBuilds == 0,
+        "U-SD1 performance floor: a short-free whole mesh built the short-face edge lookup");
+    assert(control.vertices.length == 26 && control.edges.length == 48
+        && control.faces.length == 24);
+
+    Mesh cage = makeCube();
+    cage.vertices ~= [Vec3(2, 0, 0), Vec3(3, 0, 0)];
+    cage.addFace([8u, 9u]);
+    uint[] origin;
+    Mesh r = catmullClarkOsd(cage, null, &origin);
+    assert(g_osdWholeShortEdgeLookupBuilds == 1,
+        "U-SD1 counter control: the short-face edge lookup did not run for a short face");
+    assert(r.vertices[0 .. 26] == control.vertices);
+    assert(r.edges[0 .. 48] == control.edges);
+    assert(r.faces[0 .. 24] == control.faces);
+    assert(origin[0 .. 24] == [0u,0,0,0, 1,1,1,1, 2,2,2,2,
+                               3,3,3,3, 4,4,4,4, 5,5,5,5]);
+    assert(r.vertices.length == 29 && r.edges.length == 50 && r.faces.length == 26);
+    assert(r.vertices[26 .. 29] == [Vec3(2,0,0), Vec3(3,0,0), Vec3(2.5f,0,0)]);
+    assert(r.faces[24 .. 26] == [[26u,28u], [28u,27u]]);
+    assert(origin[24 .. 26] == [6u,6u]);
+}
+
+// U-SD1s: an unmarked free short face survives the selective arm unchanged.
+unittest {
+    Mesh base = makeCube();
+    bool[] baseMask = new bool[](6); baseMask[0] = true;
+    Mesh control = catmullClarkOsd(base, baseMask);
+    Mesh cage = base;
+    cage.vertices ~= [Vec3(2,0,0), Vec3(3,0,0)];
+    cage.addFace([8u,9u]); cage.buildLoops();
+    bool[] mask = new bool[](7); mask[0] = true;
+    Mesh r = catmullClarkOsd(cage, mask);
+    assert(r.vertices[0 .. control.vertices.length] == control.vertices);
+    assert(r.edges[0 .. control.edges.length] == control.edges);
+    assert(r.faces[0 .. control.faces.length] == control.faces);
+    assert(r.vertices.length == 15 && r.edges.length == 21 && r.faces.length == 10);
+    assert(r.faces[$-1] == [13u,14u]);
+    assert(r.vertices[13] == Vec3(2,0,0) && r.vertices[14] == Vec3(3,0,0));
+}
+
+// U-SD1u: short faces do not force a fully marked surface through stitching.
+unittest {
+    Mesh controlCage = makeCube();
+    Mesh control = catmullClarkOsd(controlCage);
+    Mesh cage = makeCube();
+    cage.vertices ~= [Vec3(2,0,0), Vec3(3,0,0)];
+    cage.addFace([8u,9u]);
+    bool[] mask = [true,true,true,true,true,true,false];
+    Mesh r = catmullClarkOsd(cage, mask);
+    assert(r.vertices[0 .. 26] == control.vertices);
+    assert(r.edges[0 .. 48] == control.edges,
+        "U-SD1u: short faces must not select the stitched edge-order arm");
+    assert(r.faces[0 .. 24] == control.faces);
+    assert(r.vertices.length == 28 && r.edges.length == 49 && r.faces.length == 25);
+    assert(r.faces[$-1] == [26u,27u]);
+}
+
+// U-SD2: an unmarked short face on a refined edge stays unwidened.
+unittest {
+    Mesh cage = sdLastCage();
+    bool[] mask = new bool[](7); mask[0] = true;
+    Mesh r = catmullClarkOsd(cage, mask);
+    assert(sdRepeatedCornerFaces(r) == 0,
+        "U-SD2: selective subdivision emitted a face with a repeated corner");
+    assert(r.faces[$-1].length == 2,
+        "U-SD2: selective subdivision widened or duplicated the short face");
+}
+
+// U-SD3: full refinement reuses only an edge point visited before the short face.
+unittest {
+    Mesh lCage = sdLastCage();
+    Mesh fCage = sdFirstCage();
+    assert(lCage.faces[$-1].length == 2 && fCage.faces[0].length == 2);
+    Mesh l = catmullClarkOsd(lCage);
+    Mesh f = catmullClarkOsd(fCage);
+    uint ls = sdSharedShortVertex(l), fs = sdSharedShortVertex(f);
+    assert(l.vertices.length == 26 && l.edges.length == 48 && l.faces.length == 26,
+        "U-SD3 L: later short face must reuse the refined edge point (26/48/26)");
+    assert(sdSurfaceUses(l, ls));
+    assert(l.vertices[ls] == Vec3(-0.375f,0,-0.375f));
+    assert(f.vertices.length == 27 && f.edges.length == 50 && f.faces.length == 26,
+        "U-SD3 F: earlier short face must keep a fresh point (27/50/26)");
+    assert(!sdSurfaceUses(f, fs));
+    assert(f.vertices[fs] == Vec3(-0.5f,0,-0.5f));
+    auto le = sdShortEndpoints(l, ls), fe = sdShortEndpoints(f, fs);
+    assert(l.vertices[le[0]] == f.vertices[fe[0]]
+        && l.vertices[le[1]] == f.vertices[fe[1]]);
+    assert(fabs(l.vertices[le[0]].x + 0.277778f) < 1e-5f
+        && fabs(l.vertices[le[0]].y + 0.277778f) < 1e-5f
+        && fabs(l.vertices[le[0]].z + 0.277778f) < 1e-5f
+        && fabs(l.vertices[le[1]].x + 0.277778f) < 1e-5f
+        && fabs(l.vertices[le[1]].y - 0.277778f) < 1e-5f
+        && fabs(l.vertices[le[1]].z + 0.277778f) < 1e-5f,
+        "U-SD3: refined endpoints drifted from the captured ±0.277778 values: "
+        ~ l.vertices[le[0]].to!string ~ " / " ~ l.vertices[le[1]].to!string);
+}
+
+// U-SD3s: the same visit-order rule is active in the selective arm.
+unittest {
+    Mesh fCage = sdFirstCage();
+    bool[] fm = new bool[](7); fm[0] = true; fm[1] = true;
+    uint[] fo;
+    Mesh f = catmullClarkOsd(fCage, fm, &fo);
+    uint fs = sdSharedShortVertex(f);
+    auto fEndpoints = sdShortEndpoints(f, fs);
+    size_t fHolders;
+    uint fBetween = sdFiveCornerBetween(f, fEndpoints[0], fEndpoints[1], fHolders);
+    assert(fHolders == 1 && fBetween != uint.max,
+        "U-SD3s F floor: exactly one five-corner face must hold both endpoints");
+    assert(f.vertices.length == 14 && f.edges.length == 22 && f.faces.length == 11,
+        "U-SD3s F must keep its fresh selective split (14/22/11)");
+    assert(fo[$-2 .. $] == [0u,0u] && !sdSurfaceUses(f, fs));
+    size_t fBitEqualOthers;
+    foreach (vi, p; f.vertices) if (vi != fs && p == f.vertices[fs])
+        ++fBitEqualOthers;
+    assert(fs != fBetween && f.vertices[fs] == f.vertices[fBetween]
+        && fBitEqualOthers == 1,
+        "U-SD3s F census: the fresh split must be the sole bit-equal twin of the holder point");
+
+    Mesh lCage = sdLastCage();
+    bool[] lm = new bool[](7); lm[0] = true; lm[6] = true;
+    uint[] lo;
+    Mesh l = catmullClarkOsd(lCage, lm, &lo);
+    uint ls = sdSharedShortVertex(l);
+    auto lEndpoints = sdShortEndpoints(l, ls);
+    size_t lHolders;
+    uint lBetween = sdFiveCornerBetween(l, lEndpoints[0], lEndpoints[1], lHolders);
+    assert(lHolders == 1 && lBetween != uint.max,
+        "U-SD3s L floor: exactly one five-corner face must hold both endpoints");
+    assert(l.vertices.length == 13 && l.edges.length == 20 && l.faces.length == 11,
+        "U-SD3s L must reuse the selective boundary point (13/20/11)");
+    assert(lo[$-2 .. $] == [6u,6u]);
+    assert(ls == lBetween && sdSurfaceUses(l, ls)
+        && l.vertices[ls] == Vec3(-0.5f,0,-0.5f));
+}
+
+// U-SD4: separate short faces on one free pair keep separate split vertices.
+unittest {
+    Mesh cage = makeCube();
+    cage.vertices ~= [Vec3(2,0,0), Vec3(3,0,0)];
+    cage.faces ~= [[8u,9u], [8u,9u]];
+    cage.rebuildEdgesFromFaces(); cage.buildLoops();
+    Mesh r = catmullClarkOsd(cage);
+    assert(r.vertices.length == 30 && r.edges.length == 52 && r.faces.length == 28,
+        "U-SD4: equal-position short splits stay distinct (30/52/28)");
+    assert(r.vertices[28] == Vec3(2.5f,0,0) && r.vertices[29] == Vec3(2.5f,0,0));
+    assert(r.faces[$-4 .. $] == [[26u,28u],[28u,27u],[26u,29u],[29u,27u]]);
+}
+
+// U-SD6/U-SD6b: with no selected surface, split without widening its holders.
+unittest {
+    Mesh free = makeCube();
+    free.vertices ~= [Vec3(2,0,0), Vec3(3,0,0)]; free.addFace([8u,9u]);
+    bool[] fm = new bool[](7); fm[6] = true;
+    uint[] fo;
+    Mesh fr = catmullClarkOsd(free, fm, &fo);
+    assert(fr.vertices.length == 11 && fr.edges.length == 14 && fr.faces.length == 8,
+        "U-SD6: short-only selection must split (11/14/8)");
+    assert(fr.vertices[0 .. 10] == free.vertices && fo == [0u,1,2,3,4,5,6,6]);
+
+    Mesh edge = sdLastCage();
+    assert(edge.vertices.length == 8 && edge.edges.length == 12 && edge.faces.length == 7);
+    uint[] eo;
+    Mesh er = catmullClarkOsd(edge, fm, &eo);
+    assert(er.vertices.length == 9 && er.edges.length == 14 && er.faces.length == 8,
+        "U-SD6b: short-only edge selection must split without widening (9/14/8)");
+    assert(er.vertices[0 .. 8] == edge.vertices && er.faces[0 .. 6] == edge.faces[0 .. 6]);
+    assert(er.vertices[8] == Vec3(-0.5f,0,-0.5f) && !sdSurfaceUses(er, 8));
+    assert(eo == [0u,1,2,3,4,5,6,6]);
 }
 
 // ---------------------------------------------------------------------------

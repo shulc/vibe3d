@@ -333,7 +333,7 @@ class MeshSmooth : Command, Operator, IFalloffAware,
         }
 
         // Neighbour lists — CSR vert→vert adjacency (relation D, edge-based,
-        // both directions), shared with smoothSubdivide / updateConnectMask.
+        // both directions), shared with updateConnectMask.
         // Per-vertex order is proven identical to the old inline
         // `foreach (e; mesh.edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
         // build (mesh.d Stage-0 parity unittest), which the float-sum

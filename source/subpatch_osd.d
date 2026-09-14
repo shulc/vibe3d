@@ -27,6 +27,9 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 /// context and segfault.
 __gshared bool g_osdGpuEnabled = false;
 
+version (unittest)
+    __gshared size_t g_osdWholeShortEdgeLookupBuilds;
+
 // ---------------------------------------------------------------------------
 // Subpatch depth policy (task 1374, phase 1).
 //
@@ -536,10 +539,94 @@ private bool isDegenerateSubdivFace_(ref const Mesh cage, size_t fi) {
     return len < 1e-6f;
 }
 
-/// Returns `Mesh.init` when OSD can't build a topology (degenerate
-/// input or empty subset), or when any marked face is itself degenerate
-/// (zero-area / collinear / <3 distinct corners) — reject-whole rather
-/// than risk emitting coincident verts from a bad face.
+private void rebuildEdgesByFaceWalk_(ref Mesh result) {
+    result.edges.length = 0;
+    uint[ulong] edgeLookup;
+    foreach (face; result.faces) {
+        foreach (i; 0 .. face.length) {
+            immutable uint a = face[i];
+            immutable uint b = face[(i + 1) % face.length];
+            immutable ulong key = edgeKey(a, b);
+            if (key !in edgeLookup) {
+                result.edges ~= [a, b];
+                edgeLookup[key] = cast(uint)(result.edges.length - 1);
+            }
+        }
+    }
+}
+
+private void stampShortFace_(ref Mesh result, ref const Mesh cage,
+                             size_t fi, uint[] face,
+                             uint[]* faceOriginOut) {
+    result.faces ~= face;
+    result.faceMarks.length = result.faces.length;
+    result.setFaceSubpatch(result.faces.length - 1,
+                           cage.isFaceSubpatch(fi));
+    result.setFaceHiddenBit(result.faces.length - 1,
+                            cage.isFaceHidden(fi));
+    result.faceMaterial ~= fi < cage.faceMaterial.length
+        ? cage.faceMaterial[fi] : 0u;
+    if (faceOriginOut !is null)
+        (*faceOriginOut) ~= cast(uint)fi;
+}
+
+private void emitShortCageFaces_(ref Mesh result, ref const Mesh cage,
+                                 const(int)[] shortFaces,
+                                 const bool[] faceMask, int[] cageToNew,
+                                 const int[ulong] firstSurfaceVisitor,
+                                 const uint[ulong] osdEdgePointOfPair,
+                                 uint[]* faceOriginOut) {
+    int mapCorner(uint c) {
+        if (cageToNew[c] == -1) {
+            cageToNew[c] = cast(int)result.vertices.length;
+            result.vertices ~= cage.vertices[c];
+        }
+        return cageToNew[c];
+    }
+
+    foreach (fiRaw; shortFaces) {
+        immutable size_t fi = cast(size_t)fiRaw;
+        const(uint)[] face = cage.faces[fi];
+        immutable bool marked = faceMask.length == 0
+            || (fi < faceMask.length && faceMask[fi]);
+        if (marked && face.length == 2 && face[0] != face[1]) {
+            immutable uint a = cast(uint)mapCorner(face[0]);
+            immutable uint b = cast(uint)mapCorner(face[1]);
+            immutable ulong key = edgeKey(face[0], face[1]);
+            uint s;
+            // Task 5911 rounds 4/5 measured the order law at the registry's
+            // visit: reuse only a surface edge registered before this short
+            // face. The frozen order-pair cells are U-SD3 and U-SD3s.
+            if (auto g = key in firstSurfaceVisitor) {
+                if (*g < fi) {
+                    auto ep = key in osdEdgePointOfPair;
+                    assert(ep !is null,
+                        "a visited surface edge must have an OpenSubdiv point");
+                    s = *ep;
+                } else {
+                    s = cast(uint)result.vertices.length;
+                    result.vertices ~= cage.vertices[face[0]]
+                        + (cage.vertices[face[1]] - cage.vertices[face[0]]) * 0.5f;
+                }
+            } else {
+                s = cast(uint)result.vertices.length;
+                result.vertices ~= cage.vertices[face[0]]
+                    + (cage.vertices[face[1]] - cage.vertices[face[0]]) * 0.5f;
+            }
+            stampShortFace_(result, cage, fi, [a, s], faceOriginOut);
+            stampShortFace_(result, cage, fi, [s, b], faceOriginOut);
+        } else {
+            uint[] remapped = new uint[](face.length);
+            foreach (i, c; face)
+                remapped[i] = cast(uint)mapCorner(c);
+            stampShortFace_(result, cage, fi, remapped, faceOriginOut);
+        }
+    }
+}
+
+/// Returns `Mesh.init` when OSD can't build a topology, when the mask has
+/// neither a refinable surface nor a marked two-corner line, or when a marked
+/// surface face is degenerate (zero-area / collinear / repeated corners).
 ///
 /// Corner-provenance (task 0901, `CornerDrop.SubpatchCage` / `SubdivideNoLaw`):
 /// verified NOT APPLICABLE. `cage` is `ref const` — the language forbids
@@ -555,9 +642,10 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     immutable int nf = cast(int)cage.faces.length;
     if (nv == 0 || nf == 0) return Mesh.init;
 
-    // Detect selection mode: are ALL faces (effectively) marked?
+    // Detect selection mode: are all refinable surface faces marked?
     bool anyUnmarked = false;
     foreach (fi; 0 .. nf) {
+        if (cage.faces[fi].length < 3) continue;
         immutable bool marked =
             (faceMask.length == 0)
             || ((fi < faceMask.length) && faceMask[fi]);
@@ -570,12 +658,17 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     cageToSub[] = -1;
     int[] subToCage;
     int[] markedFaceIndices;     // cage face idx of each sub-cage face
+    int[] shortFaces;
     int   subNumVerts    = 0;
     int   subTotalIndices = 0;
     foreach (fi; 0 .. nf) {
         immutable bool marked =
             (faceMask.length == 0)
             || ((fi < faceMask.length) && faceMask[fi]);
+        if (cage.faces[fi].length < 3) {
+            shortFaces ~= cast(int)fi;
+            continue;
+        }
         if (!marked) continue;
         // Reject-whole: a degenerate marked face refuses the entire
         // subdivide rather than emit coincident verts from a bad input
@@ -593,7 +686,44 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         }
     }
     immutable int subNumFaces = cast(int)markedFaceIndices.length;
-    if (subNumFaces == 0) return Mesh.init;
+    Mesh result;
+    if (subNumFaces == 0) {
+        bool hasMarkedLine;
+        foreach (fiRaw; shortFaces) {
+            immutable size_t fi = cast(size_t)fiRaw;
+            immutable bool marked = faceMask.length == 0
+                || (fi < faceMask.length && faceMask[fi]);
+            const face = cage.faces[fi];
+            if (marked && face.length == 2 && face[0] != face[1]) {
+                hasMarkedLine = true;
+                break;
+            }
+        }
+        if (!hasMarkedLine) return Mesh.init;
+
+        result.vertices = cage.vertices.dup;
+        int[] cageToNew = new int[](nv);
+        foreach (i; 0 .. nv) cageToNew[i] = i;
+        if (faceOriginOut !is null) (*faceOriginOut).length = 0;
+        foreach (fi; 0 .. nf) {
+            if (cage.faces[fi].length < 3) continue;
+            result.faces ~= cage.faces[fi].dup;
+            result.faceMarks.length = result.faces.length;
+            result.setFaceSubpatch(result.faces.length - 1,
+                                   cage.isFaceSubpatch(fi));
+            result.setFaceHiddenBit(result.faces.length - 1,
+                                    cage.isFaceHidden(fi));
+            result.faceMaterial ~= fi < cage.faceMaterial.length
+                ? cage.faceMaterial[fi] : 0u;
+            if (faceOriginOut !is null)
+                (*faceOriginOut) ~= cast(uint)fi;
+        }
+        int[ulong] noVisitors;
+        uint[ulong] noEdgePoints;
+        emitShortCageFaces_(result, cage, shortFaces, faceMask, cageToNew,
+                            noVisitors, noEdgePoints, faceOriginOut);
+        rebuildEdgesByFaceWalk_(result);
+    } else {
 
     int[] sfvc = new int[](subNumFaces);
     int[] sfvi = new int[](subTotalIndices);
@@ -619,6 +749,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     auto osd = osdc_topology_create(
         subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1);
     if (osd is null) return Mesh.init;
+    // This fires at the enclosing `else` block's closing brace below.
     scope (exit) osdc_topology_destroy(osd);
 
     immutable int limitV   = osdc_topology_limit_vert_count(osd);
@@ -636,7 +767,49 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     Vec3[] osdVerts = new Vec3[](limitV);
     osdc_evaluate(osd, cageXyz.ptr, cast(float*)osdVerts.ptr);
 
-    Mesh result;
+    bool needsShortTables;
+    foreach (fiRaw; shortFaces) {
+        immutable size_t fi = cast(size_t)fiRaw;
+        const face = cage.faces[fi];
+        immutable bool marked = faceMask.length == 0
+            || (fi < faceMask.length && faceMask[fi]);
+        if (marked && face.length == 2 && face[0] != face[1]) {
+            needsShortTables = true;
+            break;
+        }
+    }
+
+    int[ulong] firstSurfaceVisitor;
+    uint[ulong] osdEdgePointOfPair;
+    if (needsShortTables) {
+        foreach (fiRaw; markedFaceIndices) {
+            immutable size_t fi = cast(size_t)fiRaw;
+            const face = cage.faces[fi];
+            foreach (i; 0 .. face.length) {
+                immutable ulong key = edgeKey(face[i], face[(i + 1) % face.length]);
+                if (key !in firstSurfaceVisitor)
+                    firstSurfaceVisitor[key] = cast(int)fi;
+            }
+        }
+    }
+
+    int[] inEdgeVerts;
+    int[] inEdgeChildren;
+    if (anyUnmarked || needsShortTables) {
+        immutable int inEdges = osdc_topology_input_edge_count(osd);
+        inEdgeVerts = new int[](2 * inEdges);
+        inEdgeChildren = new int[](inEdges);
+        osdc_topology_input_edges(osd, inEdgeVerts.ptr);
+        osdc_topology_input_edge_children(osd, inEdgeChildren.ptr);
+        if (needsShortTables) {
+            foreach (se; 0 .. inEdges) {
+                immutable uint cv0 = subToCage[inEdgeVerts[2*se + 0]];
+                immutable uint cv1 = subToCage[inEdgeVerts[2*se + 1]];
+                osdEdgePointOfPair[edgeKey(cv0, cv1)] =
+                    cast(uint)inEdgeChildren[se];
+            }
+        }
+    }
 
     if (!anyUnmarked) {
         // Full refinement — OSD's output IS the result mesh.
@@ -690,6 +863,35 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
                 result.faceMaterial[k] = cage.faceMaterial[cageFi];
         }
+        if (shortFaces.length != 0) {
+            int[] cageToNew = new int[](nv);
+            cageToNew[] = -1;
+            foreach (osdIdx, origin; vertOriginsRaw) {
+                if (origin < 0) continue;
+                immutable int cageVi = subToCage[origin];
+                if (cageToNew[cageVi] == -1)
+                    cageToNew[cageVi] = cast(int)osdIdx;
+            }
+            immutable size_t shortFaceBegin = result.faces.length;
+            emitShortCageFaces_(result, cage, shortFaces, faceMask, cageToNew,
+                                firstSurfaceVisitor, osdEdgePointOfPair,
+                                faceOriginOut);
+            version (unittest) ++g_osdWholeShortEdgeLookupBuilds;
+            uint[ulong] resultEdgeLookup;
+            foreach (ei, e; result.edges)
+                resultEdgeLookup[edgeKey(e[0], e[1])] = cast(uint)ei;
+            foreach (face; result.faces[shortFaceBegin .. $]) {
+                foreach (i; 0 .. face.length) {
+                    immutable uint a = face[i];
+                    immutable uint b = face[(i + 1) % face.length];
+                    immutable ulong key = edgeKey(a, b);
+                    if (key !in resultEdgeLookup) {
+                        result.edges ~= [a, b];
+                        resultEdgeLookup[key] = cast(uint)(result.edges.length - 1);
+                    }
+                }
+            }
+        }
     } else {
         // ---- Selective: stitch OSD output with un-marked cage faces.
         //
@@ -738,14 +940,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         //    walk OSD's input-edge list (sub-cage edges), pair the
         //    endpoint cage verts via subToCage, look up the cage
         //    edge through cage.edgeIndexMap.
-        immutable int inEdges = osdc_topology_input_edge_count(osd);
-        int[] inEdgeVerts    = new int[](2 * inEdges);
-        int[] inEdgeChildren = new int[](inEdges);
-        osdc_topology_input_edges          (osd, inEdgeVerts.ptr);
-        osdc_topology_input_edge_children  (osd, inEdgeChildren.ptr);
-
         uint[uint] cageEdgeToOsdEdgePt;   // cage edge idx → OSD limit vert
-        foreach (se; 0 .. inEdges) {
+        foreach (se; 0 .. inEdgeChildren.length) {
             uint cv0 = subToCage[inEdgeVerts[2*se + 0]];
             uint cv1 = subToCage[inEdgeVerts[2*se + 1]];
             if (auto p = edgeKey(cv0, cv1) in cage.edgeIndexMap) {
@@ -795,6 +991,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
                 (fi < faceMask.length) && faceMask[fi];
             if (marked) continue;
             const(uint)[] face = cage.faces[fi];
+            if (face.length < 3) continue;
             uint[] widened;
             foreach (i; 0 .. face.length) {
                 uint v0 = face[i];
@@ -827,22 +1024,11 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
                 (*faceOriginOut) ~= cast(uint)fi;
         }
 
-        // 5. Rebuild edges via dedup'd face-edge walk (vibe3d's
-        //    addFace pattern). OSD's limit-edges array only covers
-        //    the refined subset; widened un-marked faces add edges
-        //    that aren't in OSD's view.
-        uint[ulong] edgeLookup;
-        foreach (face; result.faces) {
-            foreach (i; 0 .. face.length) {
-                uint a = face[i];
-                uint b = face[(i + 1) % face.length];
-                ulong key = edgeKey(a, b);
-                if (key !in edgeLookup) {
-                    result.edges ~= [a, b];
-                    edgeLookup[key] = cast(uint)(result.edges.length - 1);
-                }
-            }
-        }
+        emitShortCageFaces_(result, cage, shortFaces, faceMask, cageToNew,
+                            firstSurfaceVisitor, osdEdgePointOfPair,
+                            faceOriginOut);
+        rebuildEdgesByFaceWalk_(result);
+    }
     }
 
     // Selection masks sized to the new mesh; rebuild loops; bump

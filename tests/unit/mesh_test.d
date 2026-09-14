@@ -711,7 +711,7 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
 
     unittest { // Stage-0 parity golden (0190): providers == old inline builders;
                // CSR order == inline edge-based order (bit-stability guard for
-               // smooth.d / smoothSubdivide / updateConnectMask, Stage 3).
+               // smooth.d / updateConnectMask, Stage 3).
         Mesh m = makeCube();
 
         // --- relation A: edge→edges-sharing-a-vertex, element-wise + per-edge order.
@@ -747,7 +747,7 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
         // `foreach (e; edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
         // order, PER VERTEX. This is the SOLE runtime guarantee (not just a
         // proof-by-inspection) that Stage 3's swap of smooth.d /
-        // smoothSubdivide / updateConnectMask's inline vert-neighbor build
+        // updateConnectMask's inline vert-neighbor build
         // for `vertexAdjacencyCSR` is bit-identical: float sums accumulate
         // in iteration order, so ORDER (not merely the neighbor SET) must
         // match exactly, or the smoothed positions diverge in the last bit.
@@ -1347,6 +1347,54 @@ unittest { // smoothSubdivide: cube → same topology as faceted; corners ≈ 0.
             && fabs(fabs(v.z) - 5.0f/12.0f) < 1e-4f,
             "smoothSubdivide: cage corner should relax to ≈ ±5/12 ≈ ±0.41667");
     }
+}
+
+unittest { // U-SD9: short faces take no part in the smooth relax
+    import std.conv : to;
+    Mesh cube = makeCube();
+    bool[] full6 = new bool[](6); full6[] = true;
+    Mesh flat = facetedSubdivide(cube, full6);
+    Mesh control = smoothSubdivide(cube, full6);
+    assert(control.vertices.length == 26);
+    size_t moved;
+    foreach (i; 0 .. 26) if (control.vertices[i] != flat.vertices[i]) ++moved;
+    assert(moved == 20, "U-SD9 floor: the control relax must move 20 of 26 vertices");
+
+    Mesh edge = makeCube(); edge.addFace([0u,3u]); edge.buildLoops();
+    size_t edgeShortBefore;
+    foreach (face; edge.faces) if (face.length == 2) ++edgeShortBefore;
+    assert(edgeShortBefore == 1);
+    bool[] full7 = new bool[](7); full7[] = true;
+    Mesh er = smoothSubdivide(edge, full7);
+    assert(er.vertices.length == 26);
+    const(uint)[][] edgeShorts;
+    foreach (face; er.faces) if (face.length == 2) edgeShorts ~= face;
+    assert(edgeShorts.length == 2);
+    uint es = edgeShorts[0][0] == edgeShorts[1][0]
+        || edgeShorts[0][0] == edgeShorts[1][1]
+        ? edgeShorts[0][0] : edgeShorts[0][1];
+    bool edgeShared;
+    foreach (face; er.faces) if (face.length >= 3)
+        foreach (vi; face) if (vi == es) edgeShared = true;
+    size_t edgeDiff;
+    foreach (i; 0 .. 26) if (er.vertices[i] != control.vertices[i]) ++edgeDiff;
+    assert(edgeShared && edgeDiff == 0,
+        "U-SD9 cage E: surface-edge short darts changed "
+        ~ edgeDiff.to!string ~ " control positions; vertex 0 is "
+        ~ er.vertices[0].to!string ~ ", control " ~ control.vertices[0].to!string);
+
+    Mesh diagonal = makeCube(); diagonal.addFace([0u,6u]); diagonal.buildLoops();
+    Mesh dr = smoothSubdivide(diagonal, full7);
+    const(uint)[][] diagonalShorts;
+    foreach (face; dr.faces) if (face.length == 2) diagonalShorts ~= face;
+    assert(diagonalShorts.length == 2 && dr.vertices.length == 27);
+    assert(dr.vertices[26] == Vec3(0,0,0));
+    size_t diagonalDiff;
+    foreach (i; 0 .. 26) if (dr.vertices[i] != control.vertices[i]) ++diagonalDiff;
+    assert(diagonalDiff == 0,
+        "U-SD9 cage D: a short-only diagonal added neighbours to "
+        ~ diagonalDiff.to!string ~ " control positions; vertex 0 is "
+        ~ dr.vertices[0].to!string ~ ", control " ~ control.vertices[0].to!string);
 }
 
 unittest { // edgeLoopRing: valence-3 cube degenerates to the seed-edge fallback

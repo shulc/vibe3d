@@ -181,6 +181,35 @@ unittest { // the spine cannot be reported smooth
     assert(!sharp[rim].interior, "a rim edge must stay a boundary edge");
 }
 
+unittest { // smoothSubdivide golden for the three-quad non-manifold fan
+    import std.math : fabs;
+    Mesh cage = nmdThreeQuadFan();
+    bool[] mask = new bool[](cage.faces.length); mask[] = true;
+    Mesh got = smoothSubdivide(cage, mask);
+    const(Vec3)[] expected = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+        Vec3(1,-1,0), Vec3(0,-1,0), Vec3(1,0,1), Vec3(0,0,1),
+        Vec3(0.5f,0,0), Vec3(1,0.5f,0), Vec3(0.5f,1,0),
+        Vec3(0,0.5f,0), Vec3(0,-0.5f,0), Vec3(0.5f,-1,0),
+        Vec3(1,-0.5f,0), Vec3(1,0,0.5f), Vec3(0.5f,0,1),
+        Vec3(0,0,0.5f), Vec3(0.5f,0.5f,0),
+        Vec3(0.5f,-0.5f,0), Vec3(0.5f,0,0.5f),
+    ];
+    assert(got.vertices.length == 21 && got.edges.length == 32
+        && got.faces.length == 12,
+        format("non-manifold smooth golden: want 21/32/12, got %d/%d/%d",
+            got.vertices.length, got.edges.length, got.faces.length));
+    assert(got.vertices.length == expected.length);
+    foreach (i, want; expected) {
+        Vec3 have = got.vertices[i];
+        assert(fabs(have.x - want.x) < 1e-4f
+            && fabs(have.y - want.y) < 1e-4f
+            && fabs(have.z - want.z) < 1e-4f,
+            format("non-manifold smooth golden vertex %d: want %s, got %s",
+                i, want, have));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // P1 — the only state corruption: dissolving a 3-face edge
 // ---------------------------------------------------------------------------
@@ -241,7 +270,7 @@ unittest { // …and the ordinary two-face dissolve is untouched by that gate
 // P3 — a two-corner face is legal state and must survive the kernels
 // ---------------------------------------------------------------------------
 
-unittest { // faceted subdivide leaves it alone instead of doubling a corner
+unittest { // faceted subdivide splits a selected short face without widening its holder
     foreach (selectTwoCorner; [true, false]) {
         auto m = nmdQuadPlusTwoCornerFace();
         auto faceMask = new bool[](m.faces.length);
@@ -265,10 +294,31 @@ unittest { // faceted subdivide leaves it alone instead of doubling a corner
                            f, selectTwoCorner));
             }
         }
-        assert(twoCorner == 1,
-            format("the two-corner face must survive as exactly one "
-                 ~ "two-corner face (selected=%s); found %d",
-                   selectTwoCorner, twoCorner));
+        assert(twoCorner == (selectTwoCorner ? 2 : 1),
+            format("SD-U30/flat and SD-adj/flat require the selected short "
+                 ~ "face to split and the unselected one to stay whole "
+                 ~ "(selected=%s); found %d", selectTwoCorner, twoCorner));
+        if (selectTwoCorner) {
+            size_t surfaceCount;
+            const(uint)[] surface;
+            foreach (f; sub.faces) if (f.length >= 3) {
+                ++surfaceCount;
+                surface = f;
+            }
+            assert(surfaceCount == 1 && surface.length == 4
+                && surface == [0u,1u,2u,3u],
+                "SD-U30/flat: selecting the short face must not widen its quad");
+            assert(sub.vertices.length == 5 && sub.vertices[4] == Vec3(0.5f,0,0));
+            assert(!surface.canFind(4u),
+                "SD-U30/flat: the fresh split vertex must not enter the quad");
+        } else {
+            const(uint)[] shortFace;
+            foreach (f; sub.faces) if (f.length == 2) shortFace = f;
+            assert(shortFace == [0u,1u],
+                "SD-adj/flat: an unselected short face stays on its endpoints");
+            assert(sub.vertices.length == 9,
+                "SD-adj/flat: the selected quad books four edges and a centroid");
+        }
     }
 }
 
@@ -316,6 +366,100 @@ unittest { // smooth subdivision follows emitted-face origins past a short face
             ++controlMoved;
     assert(controlMoved >= 1,
         "U-W1 floor: the control selected surface must relax at least one vertex");
+}
+
+unittest { // U-SD5: flat subdivision shares by pair identity in either face order
+    Mesh cube = makeCube();
+    Mesh[2] cages;
+    cages[0] = cube;
+    cages[0].addFace([0u,3u]);
+    cages[0].buildLoops();
+    cages[1].vertices = cube.vertices.dup;
+    cages[1].addFace([0u,3u]);
+    foreach (face; cube.faces) cages[1].addFace(face.dup);
+    cages[1].buildLoops();
+
+    foreach (ci; 0 .. cages.length) {
+        bool[] mask = new bool[](cages[ci].faces.length); mask[] = true;
+        uint[] origin;
+        Mesh r = facetedSubdivide(cages[ci], mask, &origin);
+        assert(origin.length == r.faces.length,
+            "U-SD5: every emitted face must have one origin");
+        assert(r.vertices.length == 26 && r.edges.length == 48 && r.faces.length == 26,
+            format("U-SD5 cage %d: want 26/48/26, got %d/%d/%d", ci,
+                r.vertices.length, r.edges.length, r.faces.length));
+        const(uint)[][] shorts;
+        foreach (face; r.faces) if (face.length == 2) shorts ~= face;
+        assert(shorts.length == 2);
+        uint s = shorts[0][0] == shorts[1][0] || shorts[0][0] == shorts[1][1]
+            ? shorts[0][0] : shorts[0][1];
+        assert(shorts[1].canFind(s));
+        bool shared_;
+        foreach (face; r.faces) if (face.length >= 3 && face.canFind(s)) shared_ = true;
+        assert(shared_ && r.vertices[s] == Vec3(-0.5f,0,-0.5f));
+        assert(r.vertices[0] == cages[ci].vertices[0]
+            && r.vertices[3] == cages[ci].vertices[3]);
+    }
+}
+
+unittest { // U-W1b: a free short face stays exact through smooth subdivision
+    Mesh cage = makeCube();
+    cage.vertices ~= [Vec3(3,0,0), Vec3(4,0,0)];
+    cage.addFace([8u,9u]); cage.buildLoops();
+    bool[] mask = new bool[](7); mask[6] = true;
+    Mesh r = smoothSubdivide(cage, mask);
+    const(uint)[][] shorts;
+    foreach (face; r.faces) if (face.length == 2) shorts ~= face;
+    assert(shorts.length == 2);
+    Vec3[] points;
+    foreach (face; shorts) foreach (vi; face)
+        if (!points.canFind(r.vertices[vi])) points ~= r.vertices[vi];
+    assert(points.length == 3 && points.canFind(Vec3(3,0,0))
+        && points.canFind(Vec3(3.5f,0,0)) && points.canFind(Vec3(4,0,0)));
+}
+
+unittest { // U-W1c: a selected short face cannot enlarge the smooth relax set
+    Mesh cage = makeCube(); cage.addFace([0u,3u]); cage.buildLoops();
+    bool[] mask = new bool[](7); mask[1] = true; mask[6] = true;
+    Mesh r = smoothSubdivide(cage, mask);
+    assert(r.vertices[0 .. 4] == cage.vertices[0 .. 4],
+        format("U-W1c: unselected corners moved; vertex 0 %s -> %s",
+            cage.vertices[0], r.vertices[0]));
+    size_t shortCount;
+    foreach (face; r.faces) if (face.length == 2) ++shortCount;
+    assert(shortCount == 2, "U-W1c floor: the selected short face must split");
+
+    bool[] controlMask = new bool[](7); controlMask[1] = true;
+    Mesh control = smoothSubdivide(cage, controlMask);
+    assert(control.vertices[0 .. 4] == cage.vertices[0 .. 4]);
+    bool moved;
+    foreach (i; 0 .. cage.vertices.length)
+        if (control.vertices[i] != cage.vertices[i]) moved = true;
+    assert(moved, "U-W1c floor: the selected surface must still relax");
+}
+
+unittest { // U-SD8: a diagonal split is not welded to an equal-position centroid
+    Mesh cage;
+    cage.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    cage.faces = [[0u,1u,2u,3u], [0u,2u]];
+    cage.rebuildEdgesFromFaces(); cage.buildLoops(); cage.resetSelection();
+    bool[] mask = [true, true];
+    immutable uint diagonalEdge = cage.edgeIndex(0,2);
+    assert(diagonalEdge != uint.max, "U-SD8 floor: diagonal pair must be an edge");
+    bool pairActive;
+    foreach (fi, face; cage.faces) if (mask[fi] && face.length >= 3)
+        foreach (i; 0 .. face.length)
+            if (edgeKey(face[i], face[(i + 1) % face.length]) == edgeKey(0,2))
+                pairActive = true;
+    assert(!pairActive,
+        "U-SD8 floor: no selected surface face may activate the diagonal pair");
+    Mesh r = facetedSubdivide(cage, mask);
+    assert(r.vertices.length == 10 && r.edges.length == 14 && r.faces.length == 6,
+        format("U-SD8: scoped identity sharing must keep 10/14/6, got %d/%d/%d",
+            r.vertices.length, r.edges.length, r.faces.length));
+    assert(r.vertices[8] == Vec3(0.5f,0.5f,0)
+        && r.vertices[9] == Vec3(0.5f,0.5f,0));
+    assert(r.faces[$-2 .. $] == [[0u,9u], [9u,2u]]);
 }
 
 unittest { // an edge extrude does not annihilate a bystanding two-corner face

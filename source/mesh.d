@@ -15305,9 +15305,11 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
         }
     }
 
-    // Output vertex layout: [original] [edge midpoints] [selected centroids].
+    // Output vertex layout:
+    // [original] [edge midpoints] [selected centroids] [short midpoints].
     uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
     uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
+    uint[] shortMidIdx     = new uint[](nF);  shortMidIdx[]     = uint.max;
 
     uint outVCount = nV;
     foreach (ei; 0 .. nE) if (edgeActive[ei]) {
@@ -15315,6 +15317,14 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
     }
     foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
         faceCentroidIdx[fi] = outVCount++;
+    }
+    foreach (fi; 0 .. nF) {
+        const face = m.faces[fi];
+        immutable bool marked = fi < faceMask.length && faceMask[fi];
+        if (!marked || face.length != 2 || face[0] == face[1]) continue;
+        auto p = edgeKey(face[0], face[1]) in edgeLookup;
+        if (p is null || !edgeActive[*p])
+            shortMidIdx[fi] = outVCount++;
     }
 
     Mesh result;
@@ -15328,6 +15338,12 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
     foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
         result.vertices[faceCentroidIdx[fi]] = m.faceCentroid(cast(uint)fi);
     }
+    foreach (fi; 0 .. nF) if (shortMidIdx[fi] != uint.max) {
+        const face = m.faces[fi];
+        Vec3 a = m.vertices[face[0]];
+        Vec3 b = m.vertices[face[1]];
+        result.vertices[shortMidIdx[fi]] = a + (b - a) * 0.5f;
+    }
 
     uint[ulong] resultEdgeLookup;
     // Hide (task 0632): the cage face every output face came from, recorded as
@@ -15338,22 +15354,23 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
     outFaceOrigin.reserve(m.faces.length);
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
-        // Task 1290 (P3): a face with fewer than three corners is legal state
-        // (the kernel's arity floor is two — Edge Extend and `.v3d` both
-        // produce one) and has NO subdivision. Both arms below assume the ring
-        // visits each of its edges once, which a 2-ring does not: the selected
-        // arm resolves `eFwd` and `eBack` to the SAME edge and emitted
-        // `[v0, mid, c, mid]` — a quad with a repeated corner, of zero area,
-        // twice (measured: `[0,1]` came back as `[0,4,5,4]` + `[1,4,5,4]`,
-        // with the midpoint and the centroid at the identical position); the
-        // widen arm spliced the one midpoint in twice and grew an UNSELECTED
-        // `[0,1]` to `[0,4,1,4]`. Pass it through untouched instead — it keeps
-        // its identity, its arity and its corner count, and it can still be
-        // hidden/selected/materialled like any other face because the origin
-        // array below is still appended in lockstep.
+        // Task 5911. A marked two-corner face splits through the active edge
+        // point when a surface face owns that pair, otherwise through a fresh
+        // midpoint. Other short faces keep their arity and corner order.
         if (len < 3) {
-            result.addFaceFast(resultEdgeLookup, face.dup);
-            outFaceOrigin ~= cast(uint)fi;
+            immutable bool marked = fi < faceMask.length && faceMask[fi];
+            if (marked && len == 2 && face[0] != face[1]) {
+                auto p = edgeKey(face[0], face[1]) in edgeLookup;
+                immutable uint s = p !is null && edgeActive[*p]
+                    ? edgeMidIdx[*p] : shortMidIdx[fi];
+                result.addFaceFast(resultEdgeLookup, [face[0], s]);
+                outFaceOrigin ~= cast(uint)fi;
+                result.addFaceFast(resultEdgeLookup, [s, face[1]]);
+                outFaceOrigin ~= cast(uint)fi;
+            } else {
+                result.addFaceFast(resultEdgeLookup, face.dup);
+                outFaceOrigin ~= cast(uint)fi;
+            }
             continue;
         }
         if (facetedRefinesSurface(m, faceMask, fi)) {
@@ -15498,28 +15515,35 @@ Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask,
             relaxable[vi] = true;
     }
 
-    // Pin boundary verts (loop.twin == ~0u) to prevent border collapse on
-    // open meshes. facetedSubdivide already called buildLoops() on sub.
-    foreach (ref l; sub.loops) {
-        if (l.twin == uint.max) {
-            if (l.vert < relaxable.length)
-                relaxable[l.vert] = false;
-            uint nxt = sub.loops[l.next].vert;
-            if (nxt < relaxable.length)
-                relaxable[nxt] = false;
-        }
-    }
+    // Task 5911. A face with fewer than three corners takes no part in the
+    // relax: its darts do not make an edge a rim or non-manifold, and its
+    // edges give no neighbours. Cell U-SD9 in tests/unit/mesh_test.d.
+    uint[] surfaceDarts = new uint[](sub.edges.length);
+    foreach (li, ref l; sub.loops)
+        if (sub.faces[l.face].length >= 3 && sub.loopEdge[li] != uint.max)
+            ++surfaceDarts[sub.loopEdge[li]];
 
-    // Neighbor lists — CSR vert→vert adjacency (relation D, edge-based, both
-    // directions), same provider as smooth.d / updateConnectMask. Per-vertex
-    // order is proven identical to the old inline
-    // `foreach (e; sub.edges) { neighbors[e0]~=e1; neighbors[e1]~=e0; }`
-    // build (Stage-0 parity unittest above), which the float-sum averaging
-    // below depends on for bit-identical results. `sub` is a mutable local
-    // (fresh from facetedSubdivide), so the non-const CSR call is legal.
-    const(size_t)[] adjOff;
-    const(uint)[]   adjNbrs;
-    sub.vertexAdjacencyCSR(adjOff, adjNbrs);
+    foreach (ei, e; sub.edges)
+        if (surfaceDarts[ei] == 1 || surfaceDarts[ei] >= 3) {
+            relaxable[e[0]] = false;
+            relaxable[e[1]] = false;
+        }
+
+    // Surface-only CSR, retaining edge-index order so a mesh without short
+    // faces accumulates every floating-point neighbour sum identically.
+    size_t[] adjOff = new size_t[](sub.vertices.length + 1);
+    foreach (ei, e; sub.edges) if (surfaceDarts[ei] >= 1) {
+        ++adjOff[e[0] + 1];
+        ++adjOff[e[1] + 1];
+    }
+    foreach (vi; 1 .. adjOff.length)
+        adjOff[vi] += adjOff[vi - 1];
+    uint[] adjNbrs = new uint[](adjOff[$ - 1]);
+    size_t[] cursor = adjOff.dup;
+    foreach (ei, e; sub.edges) if (surfaceDarts[ei] >= 1) {
+        adjNbrs[cursor[e[0]]++] = e[1];
+        adjNbrs[cursor[e[1]]++] = e[0];
+    }
 
     // One Jacobi Laplacian pass (λ = 0.5): read from `prev`, write to `cur`.
     Vec3[] prev = sub.vertices.dup;

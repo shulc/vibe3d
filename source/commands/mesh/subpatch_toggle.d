@@ -8,6 +8,13 @@ import editmode;
 import seltype : SelType;
 import change_bus : MeshEditScope;
 
+// Task 5911. A face with fewer than three corners is never made subpatch; one
+// that already is becomes plain like any other face, in the same press.
+// Fixture `tests/fixtures/subdivide_short_face.json` cells SD-P, SD-Ps, SD-Psb.
+bool skipsSubpatchToggle(ref const Mesh m, size_t fi) {
+    return m.faces[fi].length < 3 && !m.isFaceSubpatch(fi);
+}
+
 /// Mirror of the Tab-key handler in app.d: toggles isSubpatch on selected
 /// faces; if nothing is selected, inverts the flag on every face. Exposed as
 /// a Command so it can be invoked through /api/command in tests and through
@@ -94,6 +101,7 @@ class SubpatchToggle : Command, Operator {
         foreach (fi; 0 .. mesh.faces.length) {
             if (scoped && !(fi < selView.length && selView[fi]))
                 continue;
+            if (skipsSubpatchToggle(*mesh, fi)) continue;
             bool cur = fi < subView.length && subView[fi];
             mesh.setSubpatch(fi, !cur);
         }
