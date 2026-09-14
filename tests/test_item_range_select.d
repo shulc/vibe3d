@@ -33,12 +33,12 @@
 // Why the anchor is `firstSelectedItem` and not something else — READ, not
 // guessed
 // ---------------------------------------------------------------------------
-// The reference's tree-view API has NO range mode. `ILxTreeView::Select(mode)`
-// takes exactly `PRIMARY` / `ADD` / `REMOVE` / `CLEAR`, with `BATCH_BEGIN` /
-// `BATCH_END` around a group. So a Shift+click there is a PRIMARY on the anchor
+// The reference's tree-view API has NO range mode. Its row-select call takes
+// exactly four modes (primary / add / remove / clear), with a batch begin /
+// end pair around a group. So a Shift+click there is a PRIMARY on the anchor
 // followed by an ADD per row — which means (a) the range REPLACES the selection
 // rather than unioning into it, and (b) the anchor is whichever row last took
-// `SELECT_PRIMARY`, i.e. after any range it is the FIRST element of the
+// the primary mode, i.e. after any range it is the FIRST element of the
 // selection. R3 is the row that pins exactly that.
 //
 // ---------------------------------------------------------------------------

@@ -472,7 +472,7 @@
     "view": "front orthographic, ortho scale 32",
     "px_per_metre": 32.0,
     "calibration": "a 1 m reference quad moved a known 10 m in X -> 320.00 px; null control (move back to 0) -> zero changed pixels",
-    "pixel_size_meaning": "ILxView3D::PixelSize() read 0.03125 = 1/32, i.e. metres per pixel in an ortho view, exactly 1 / the SetScale argument",
+    "pixel_size_meaning": "the viewport's metres-per-pixel query read 0.03125 = 1/32, i.e. metres per pixel in an ortho view, exactly 1 / the ortho scale",
     "gate": "the reference's own documented worked example, 512 px at 10 mm -> 5.12 m, reproduced to +0.16 px before any case was scored"
   },
   "law": {
