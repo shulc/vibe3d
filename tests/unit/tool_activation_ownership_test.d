@@ -88,6 +88,58 @@ unittest {
         assert(isArm(t) == (activationDoorFor(t) == ActivationDoor.preparedArm));
 }
 
+unittest { // T-4f: every arm transition has one explicit pipe scope.
+    size_t visited;
+    foreach (t; EnumMembers!ToolTransition) {
+        if (!isArm(t)) continue;
+        ++visited;
+        final switch (t) {
+            case ToolTransition.commandArm:
+            case ToolTransition.interactiveArm:
+                assert(pipeArmScopeFor(t, false) == PipeArmScope.presetArm &&
+                       pipeArmScopeFor(t, true) == PipeArmScope.presetArm,
+                    "T-4f: a fresh arm lost the preset scope");
+                break;
+            case ToolTransition.replayArm:
+                assert(pipeArmScopeFor(t, false) == PipeArmScope.replayRestore &&
+                       pipeArmScopeFor(t, true) == PipeArmScope.replayRestore,
+                    "T-4f: replay lost the restore scope");
+                break;
+            case ToolTransition.resetRearm:
+                assert(pipeArmScopeFor(t, false) == PipeArmScope.presetArm &&
+                       pipeArmScopeFor(t, true) == PipeArmScope.keepPipe,
+                    "T-4f: reset must distinguish another id from the active id");
+                break;
+            case ToolTransition.explicitDrop:
+            case ToolTransition.sameIdToggleDrop:
+            case ToolTransition.replayDrop:
+            case ToolTransition.selTypeFlipDrop:
+            case ToolTransition.activeLayerChangedDrop:
+            case ToolTransition.documentReplaceDisarm:
+            case ToolTransition.sceneResetDrop:
+            case ToolTransition.meshRebuildDrop:
+            case ToolTransition.commandPreApplyDrop:
+            case ToolTransition.editCancelDrop:
+            case ToolTransition.panelDrop:
+            case ToolTransition.shutdownDrop:
+                assert(0, "T-4f: a drop passed the isArm filter");
+        }
+    }
+    assert(visited == 4,
+        format("T-4f: visited %s arm transitions, expected 4", visited));
+
+    const app = maskComments(readText(repoRoot ~ "/source/app.d"));
+    const anchor = app.indexOf(
+        "void armPreparedTool(ToolTransition why, string id,");
+    assert(anchor >= 0, "T-4f: armPreparedTool anchor vanished");
+    const body_ = bodyAt(app, app.indexOf("{", anchor));
+    assert(body_.length > 100,
+        "T-4f: armPreparedTool body census would scan nothing");
+    assert(occurrences(body_,
+               "pipeArmScopeFor(why, id == activeToolId)") == 1,
+        "T-4f: armPreparedTool must call the transition scope table exactly once");
+}
+
 /// The recorded per-transition SITE census, read 2026-09-05 over `source/**`
 /// with the table's own file excluded. It is a COUNT and not an existence
 /// check, and that distinction is the whole row: twelve drops share ONE door,

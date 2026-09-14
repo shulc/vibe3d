@@ -8,7 +8,8 @@ import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
-import tool_activation_ownership : ToolTransition, ActivationDoor, activationDoorFor;
+import tool_activation_ownership : ToolTransition, ActivationDoor,
+    activationDoorFor, pipeArmScopeFor;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -3581,7 +3582,8 @@ void main(string[] args) {
                     throw e;
                 }
             },
-            () { dropActiveTool(ToolTransition.replayDrop); }, lifecycleReplay);
+            () { dropActiveTool(ToolTransition.replayDrop); }, lifecycleReplay,
+            pipeArmScopeFor(why, id == activeToolId));
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");

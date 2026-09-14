@@ -146,6 +146,41 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
     }
 }
 
+/// Task 5911, "re-arm doors after a break": fresh user arms install every slot
+/// written by the preset. Lifecycle replay installs every unlocked written
+/// slot and yields each user-locked written slot independently; a same-id reset
+/// keeps the whole pipe, while resetting to another id is a real switch.
+/// Evidence: `toolcards/tool_drop_pipe_stages/findings.md`, ROUND 7/8. The
+/// design and door matrix are in `doc/tool_drop_pipe_stages_plan.md`.
+enum PipeArmScope : ubyte { presetArm, replayRestore, keepPipe }
+
+PipeArmScope pipeArmScopeFor(ToolTransition t, bool rearmsActiveId)
+        pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+            return PipeArmScope.presetArm;
+        case ToolTransition.replayArm:
+            return PipeArmScope.replayRestore;
+        case ToolTransition.resetRearm:
+            return rearmsActiveId ? PipeArmScope.keepPipe
+                                  : PipeArmScope.presetArm;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.panelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop has no pipe arm scope");
+    }
+}
+
 /// True when the transition publishes a NEW active tool. Kept beside the table
 /// so "is this an arm?" has one answer too.
 bool isArm(ToolTransition t) pure nothrow @safe @nogc {

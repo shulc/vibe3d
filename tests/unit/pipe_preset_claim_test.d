@@ -4,7 +4,9 @@
 module tests.unit.pipe_preset_claim_test;
 
 import prepared_pipe_activation : PreparedPipeActivationOwner;
+import pipe_gizmo_host : PipeGizmoHost;
 import registry : PreparedPipeAttrs;
+import tool_activation_ownership : PipeArmScope;
 import toolpipe.pipeline : Pipeline, noteUserStageChoice;
 import toolpipe.stage : PresetClaimable;
 import math : Pin, Vec3;
@@ -307,6 +309,83 @@ unittest { // U-e-axis: both axis claim sites are independently observable.
         "U-e-axis final claim was not installed");
     assert(!rig.axis.userLocked,
         "U-e-axis preset inherited the user lock");
+}
+
+unittest { // U-g: replay yields each written user-locked stage independently.
+    auto rig = claimRig();
+    rig.acen.setUserMode("local");
+    PreparedPipeActivationOwner.prepare(rig.pipeline,
+        ["falloff": ["type": "linear"]], null,
+        PipeArmScope.presetArm).install();
+    rig.falloff.start = Vec3(9, 8, 7);
+    rig.axis.mode = AxisStage.Mode.World;
+
+    PreparedPipeAttrs attrs = [
+        "actionCenter": ["mode": "element"],
+        "falloff": ["type": "radial"],
+    ];
+    PreparedPipeActivationOwner.prepare(rig.pipeline, attrs, null,
+        PipeArmScope.replayRestore).install();
+
+    assert(rig.acen.mode == ActionCenterStage.Mode.Local &&
+           rig.acen.userLocked && !rig.acen.presetClaimed(),
+        "U-g step 1: replay overwrote or claimed the locked action centre");
+    assert(rig.falloff.type == FalloffType.Radial &&
+           rig.falloff.presetClaimed() && !rig.falloff.userLocked &&
+           rig.falloff.start == FalloffConfig.init.start,
+        "U-g step 2: replay failed to install the unlocked falloff from a clean image");
+    assert(rig.axis.mode == AxisStage.Mode.None,
+        "U-g step 3: replay failed to reset the unwritten loose axis");
+}
+
+unittest { // U-h: same-id reset keeps every pipe stage but cancels its gizmo.
+    auto rig = claimRig();
+    PreparedPipeAttrs attrs = [
+        "actionCenter": ["mode": "element"],
+        "falloff": ["type": "element"],
+    ];
+    PreparedPipeActivationOwner.prepare(rig.pipeline, attrs, null,
+        PipeArmScope.presetArm).install();
+    rig.falloff.pickedRadius = 0.5f;
+    rig.axis.mode = AxisStage.Mode.World;
+    rig.constrain.enabled = true;
+
+    const acenMode = rig.acen.mode;
+    const acenLocked = rig.acen.userLocked;
+    const acenClaimed = rig.acen.presetClaimed();
+    const acenEpoch = rig.acen.slotEpoch;
+    const axisMode = rig.axis.mode;
+    const axisLocked = rig.axis.userLocked;
+    const axisClaimed = rig.axis.presetClaimed();
+    const axisEpoch = rig.axis.slotEpoch;
+    const constrainImage = rig.constrain.capturePreparedCompositionProjection();
+    const constrainEpoch = rig.constrain.slotEpoch;
+    const falloffImage = rig.falloff.config;
+    const falloffLocked = rig.falloff.userLocked;
+    const falloffClaimed = rig.falloff.presetClaimed();
+    const falloffEpoch = rig.falloff.slotEpoch;
+
+    auto gizmoHost = new PipeGizmoHost();
+    PreparedPipeActivationOwner.prepare(rig.pipeline, attrs, gizmoHost,
+        PipeArmScope.keepPipe).install();
+
+    assert(rig.acen.mode == acenMode && rig.acen.userLocked == acenLocked &&
+           rig.acen.presetClaimed() == acenClaimed &&
+           rig.acen.slotEpoch == acenEpoch &&
+           rig.axis.mode == axisMode && rig.axis.userLocked == axisLocked &&
+           rig.axis.presetClaimed() == axisClaimed &&
+           rig.axis.slotEpoch == axisEpoch &&
+           rig.constrain.matchesPreparedCompositionProjection(constrainImage) &&
+           rig.constrain.slotEpoch == constrainEpoch &&
+           rig.falloff.config == falloffImage &&
+           rig.falloff.userLocked == falloffLocked &&
+           rig.falloff.presetClaimed() == falloffClaimed &&
+           rig.falloff.slotEpoch == falloffEpoch &&
+           rig.falloff.pickedRadius == 0.5f &&
+           rig.axis.mode == AxisStage.Mode.World && rig.constrain.enabled,
+        "U-h step 1: keepPipe changed a transient pipe field");
+    assert(gizmoHost.preparedCancelCountForTest == 1,
+        "U-h step 2: keepPipe did not perform exactly one gizmo cancel");
 }
 
 unittest { // Empty claimable-stage maps are refused without live mutation.

@@ -1208,20 +1208,20 @@
   ],
   "internal_publishers": [
     {
-      "line": 95,
+      "line": 96,
       "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "da1314da712e594420189099f3b677091afe4c8eb6687311f5ce9dfd5d9bea5f",
+      "semantic_sha256": "8ce8b6f1672ab6fe3fe51465df2a096851fc74092639833588367acf1b3df27a",
       "symbol": "prepareArm"
     },
     {
-      "line": 235,
+      "line": 237,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
     }
   ],
   "lifecycle_classifier": {
-    "line": 88,
+    "line": 89,
     "path": "source/prepared_tool_transition.d",
     "semantic_sha256": "8b3434f51d4a90920cdb8eba029153f4425023f0c12e8579572efd5eed4c2c79",
     "symbol": "toolArmEmitsLifecycle"

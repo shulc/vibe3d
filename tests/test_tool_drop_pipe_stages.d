@@ -134,7 +134,8 @@ private bool startsWithPlaceholder(JSONValue value) {
 private void compareExpected(string cell, string kind, JSONValue want,
                              JSONValue got, ref Mismatch[] rows,
                              ref size_t comparedLeaves,
-                             string prefix = "") {
+                             string prefix = "",
+                             JSONValue keyKinds = JSONValue.init) {
     if (want.type == JSONType.object) {
         if (got.type != JSONType.object) {
             comparedLeaves += leafCount(want);
@@ -150,11 +151,22 @@ private void compareExpected(string cell, string kind, JSONValue want,
                 continue;
             }
             compareExpected(cell, kind, value, *found, rows,
-                comparedLeaves, path);
+                comparedLeaves, path, keyKinds);
         }
         return;
     }
     ++comparedLeaves;
+    if (keyKinds.type == JSONType.object) {
+        string key = prefix;
+        auto selected = key in keyKinds.object;
+        if (selected is null && key.startsWith("hist."))
+            selected = "hist.*" in keyKinds.object;
+        if (selected is null) {
+            const dot = key.indexOf('.');
+            if (dot >= 0) selected = key[cast(size_t)dot + 1 .. $] in keyKinds.object;
+        }
+        if (selected !is null) kind = selected.str;
+    }
     if (want != got)
         rows ~= Mismatch(cell, prefix, kind, want.toString, got.toString);
 }
@@ -186,6 +198,17 @@ private void compareFalloffAttrs(string cell, string kind, JSONValue want,
             rows ~= Mismatch(cell, key, kind, "<missing>", value.toString);
 }
 
+private void compareNamedFalloffAttrs(string cell, string kind, string label,
+                                      JSONValue want, JSONValue got,
+                                      JSONValue keyKinds,
+                                      ref Mismatch[] rows,
+                                      ref size_t comparedLeaves) {
+    assert(want.type == JSONType.object && want.object.length > 0,
+        cell ~ ": " ~ label ~ " must name falloff attrs");
+    compareExpected(cell, kind, want, got, rows, comparedLeaves,
+        label, keyKinds);
+}
+
 private void assertFalloffGeometryFloor(string cell, string label,
                                         JSONValue attrs, JSONValue keys) {
     assert(attrs.type == JSONType.object && attrs.object.length > 0,
@@ -209,6 +232,21 @@ private void key(int sym, int scan, int mod = 0) {
 private void runDoor(JSONValue cell) {
     const door = cell["door"].str;
     if (door == "space") key(32, 44);
+    else if (door == "ctrld") key(100, 7, 64);
+    else if (door == "ctrld-other")
+        cmd("tool.reset " ~ cell["switch"].str);
+    else if (door == "switchUndo" || door == "switchUndoRedo") {
+        const before = readState();
+        cmd("tool.set " ~ cell["switch"].str ~ " on");
+        const switched = readState();
+        assert(switched["tool"].str == cell["switch"].str,
+            cell["id"].str ~ ": switch premise did not arm the requested tool");
+        assert(switched["toolLifecycleCount"].integer ==
+               before["toolLifecycleCount"].integer + 1,
+            cell["id"].str ~ ": switch premise did not add one lifecycle entry");
+        key(122, 29, 64);
+        if (door == "switchUndoRedo") key(122, 29, 65);
+    }
     else if (door == "q") key(113, 20);
     else if (door == "off") {
         const id = "off" in cell.object ? cell["off"].str : cell["arm"].str;
@@ -225,6 +263,14 @@ private bool hasNonDefaultPipe(JSONValue s) {
 
 private string vertexImage() { return getJson("/api/model")["vertices"].toString; }
 
+private JSONValue toolAttr(string tool, string attr) {
+    auto answer = postJson("/api/command",
+        "tool.attr " ~ tool ~ " " ~ attr ~ " ?");
+    assert(answer["status"].str == "ok",
+        format("tool attr read %s.%s failed: %s", tool, attr, answer.toString));
+    return answer["value"];
+}
+
 private double[2] xExtent() {
     auto verts = getJson("/api/model")["vertices"].array;
     assert(verts.length > 0, "x-extent requires a populated mesh");
@@ -239,7 +285,7 @@ private double[2] xExtent() {
 
 unittest {
     const fx = fixture();
-    assert(fx["cells"].array.length == 68,
+    assert(fx["cells"].array.length == 79,
         format("fixture cell census changed: %s", fx["cells"].array.length));
 
     foreach (cell; fx["cells"].array) {
@@ -275,6 +321,9 @@ unittest {
         "C0/q", "C1/q", "C6g/q", "X2/q", "X2off/q", "U1inv/q",
         "C5/space-statusbar", "C5/space-preset", "C5b/space",
         "X1p/space", "L1/space", "L2/space", "L3/space",
+        "C5r/ctrld", "C5u/undo", "C5ur/redo", "U0/undo", "K0/ctrld",
+        "B1g/ctrld", "B2g/space", "C4e/space", "K1/ctrld-other",
+        "C5re/space", "C5bre/space",
     ];
     string[] executed;
     size_t comparedLeaves, expectedLeaves;
@@ -285,6 +334,9 @@ unittest {
             cell["port_status"].str != "implemented") continue;
         const id = cell["id"].str;
         const kind = cell["kind"].str;
+        JSONValue keyKinds;
+        if (("key_kinds" in cell.object) !is null)
+            keyKinds = cell["key_kinds"];
         const geometryRearm = ("geometryKeys" in cell.object) !is null;
         const rowsBefore = mismatches.length;
         executed ~= id;
@@ -321,8 +373,14 @@ unittest {
                 }
             } else {
                 compareExpected(id, kind, cell["expect"]["armed"], armed,
-                    mismatches, comparedLeaves, "armed");
+                    mismatches, comparedLeaves, "armed", keyKinds);
                 expectedLeaves += leafCount(cell["expect"]["armed"]);
+            }
+            if (("armedAttrs" in cell["expect"].object) !is null) {
+                compareNamedFalloffAttrs(id, kind, "armedAttrs",
+                    cell["expect"]["armedAttrs"], falloffAttrState(), keyKinds,
+                    mismatches, comparedLeaves);
+                expectedLeaves += leafCount(cell["expect"]["armedAttrs"]);
             }
             if (kind != "control")
                 assert(hasNonDefaultPipe(armed),
@@ -345,6 +403,16 @@ unittest {
                 readState());
             assertExpected(id, "rechosen history", beforeChoiceHistory,
                 historyState());
+            if (("rechosenAttrs" in cell["expect"].object) !is null) {
+                const rechosenAttrs = falloffAttrState();
+                compareNamedFalloffAttrs(id, kind, "rechosenAttrs",
+                    cell["expect"]["rechosenAttrs"], rechosenAttrs, keyKinds,
+                    mismatches, comparedLeaves);
+                expectedLeaves += leafCount(cell["expect"]["rechosenAttrs"]);
+                foreach (name, value; cell["expect"]["rechosenAttrs"].object)
+                    assert(value != cell["expect"]["armedAttrs"][name],
+                        id ~ ": armed and rechosen attrs must differ at " ~ name);
+            }
         }
         if (id == "C8/space") {
             const beforeVerts = vertexImage();
@@ -374,11 +442,32 @@ unittest {
                 format("%s: before door want tool %s got %s",
                     id, cell["arm"].str, beforeTool));
 
+        JSONValue resetBefore;
+        if (("resetWitness" in cell.object) !is null) {
+            resetBefore = toolAttr(cell["arm"].str,
+                cell["resetWitness"]["attr"].str);
+            assert(resetBefore == cell["resetWitness"]["before"],
+                id ~ ": reset witness premise is false");
+        }
+
         runDoor(cell);
         const afterDoor = readState();
         compareExpected(id, kind, cell["expect"]["after"], afterDoor,
-            mismatches, comparedLeaves);
+            mismatches, comparedLeaves, "", keyKinds);
         expectedLeaves += leafCount(cell["expect"]["after"]);
+        if (("afterAttrs" in cell["expect"].object) !is null) {
+            compareNamedFalloffAttrs(id, kind, "afterAttrs",
+                cell["expect"]["afterAttrs"], falloffAttrState(), keyKinds,
+                mismatches, comparedLeaves);
+            expectedLeaves += leafCount(cell["expect"]["afterAttrs"]);
+        }
+        if (("resetWitness" in cell.object) !is null) {
+            const resetAfter = toolAttr(cell["arm"].str,
+                cell["resetWitness"]["attr"].str);
+            compareExpected(id, kind, cell["resetWitness"]["after"], resetAfter,
+                mismatches, comparedLeaves, "resetWitness", keyKinds);
+            ++expectedLeaves;
+        }
         if (cell["row"].str == "U1inv") {
             auto afterHistory = historyState();
             JSONValue wantedHistory = beforeHistory;
@@ -389,13 +478,28 @@ unittest {
                 id ~ ": history.clear in the rig did not keep the undo stack short");
             wantedHistory["undo"] = beforeHistory["undo"].integer + 1;
             compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
-                comparedLeaves, "hist");
+                comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(wantedHistory);
         } else if (cell["door"].str != "switch") {
             auto afterHistory = historyState();
             compareExpected(id, kind, beforeHistory, afterHistory, mismatches,
-                comparedLeaves, "hist");
+                comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(beforeHistory);
+        }
+
+        if (("rearm" in cell.object) !is null) {
+            const preLifecycleCount = afterDoor["toolLifecycleCount"].integer;
+            cmd("tool.set " ~ cell["rearm"].str ~ " on");
+            const rearmed = readState();
+            assert(rearmed["tool"].str == cell["arm"].str,
+                format("%s: rearm did not restore tool %s; got %s",
+                    id, cell["arm"].str, rearmed["tool"].str));
+            assert(rearmed["toolLifecycleCount"].integer ==
+                   preLifecycleCount + 1,
+                id ~ ": rearm did not add exactly one lifecycle entry");
+            compareExpected(id, kind, cell["expect"]["rearmed"], rearmed,
+                mismatches, comparedLeaves, "rearmed", keyKinds);
+            expectedLeaves += leafCount(cell["expect"]["rearmed"]);
         }
 
         if (geometryRearm) {
@@ -413,8 +517,14 @@ unittest {
             key(32, 44);
             afterSecond = readState();
             compareExpected(id, kind, cell["expect"]["after2"], afterSecond,
-                mismatches, comparedLeaves);
+                mismatches, comparedLeaves, "after2", keyKinds);
             expectedLeaves += leafCount(cell["expect"]["after2"]);
+            if (("after2Attrs" in cell["expect"].object) !is null) {
+                compareNamedFalloffAttrs(id, kind, "after2Attrs",
+                    cell["expect"]["after2Attrs"], falloffAttrState(), keyKinds,
+                    mismatches, comparedLeaves);
+                expectedLeaves += leafCount(cell["expect"]["after2Attrs"]);
+            }
         }
 
         if (cell["row"].str == "U1inv") {
@@ -455,7 +565,9 @@ unittest {
     assert(gotIds == wantIds,
         format("Phase-3 id floor failed: want %s got %s",
             wantIds.join(","), gotIds.join(",")));
-    assert(executed.length == 37, format("executed %s Phase-3 cells", executed.length));
+    assert(executed.length == 48,
+        format("executed %s Phase-3b cells (37 Phase-3 + 11 Phase-3b)",
+            executed.length));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("comparison leaf floor: compared=%s expected=%s",
             comparedLeaves, expectedLeaves));

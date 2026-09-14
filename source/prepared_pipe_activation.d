@@ -10,6 +10,7 @@ import toolpipe.stages.constrain : ConstrainStage,
     PreparedConstrainCompositionProjection;
 import toolpipe.stages.falloff : FalloffStage, PreparedFalloffAutoFit;
 import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
+import tool_activation_ownership : PipeArmScope;
 
 /// Owner-held prepared image for the universal tool-switch pipe prefix.
 /// References stay inside this final owner; no reference enters the closed
@@ -48,12 +49,15 @@ private:
     bool falloffTransparent_;
     string acenWire_, axisWire_, falloffTypeWire_, falloffShapeWire_;
     PreparedFalloffAutoFit falloffAutoFit_;
+    PipeArmScope armScope_;
 
 public:
     static PreparedPipeActivationOwner prepare(ref Pipeline pipeline,
                                                 in PreparedPipeAttrs attrs,
-                                                PipeGizmoHost gizmoHost = null) {
+                                                PipeGizmoHost gizmoHost = null,
+                                                PipeArmScope armScope = PipeArmScope.presetArm) {
         auto result = new PreparedPipeActivationOwner();
+        result.armScope_ = armScope;
         result.gizmoHost_ = gizmoHost;
         result.acen_ = cast(ActionCenterStage)pipeline.findById("actionCenter");
         result.axis_ = cast(AxisStage)pipeline.findById("axis");
@@ -153,6 +157,18 @@ public:
             default: throw new Exception("unsupported prepared pipe preset stage");
             }
         }
+        final switch (armScope) {
+            case PipeArmScope.presetArm:
+                break;
+            case PipeArmScope.replayRestore:
+                if (result.acen_.userLocked) result.hasAcen_ = false;
+                if (result.axis_.userLocked) result.hasAxis_ = false;
+                if (result.falloff_.userLocked) result.hasFalloff_ = false;
+                break;
+            case PipeArmScope.keepPipe:
+                result.hasAcen_ = result.hasAxis_ = result.hasFalloff_ = false;
+                break;
+        }
         if (result.hasFalloff_)
             result.falloffAutoFit_ = result.falloff_
                 .prepareAutoFitForActivation(result.falloffType_);
@@ -176,6 +192,7 @@ public:
 
     void install() nothrow {
         if (gizmoHost_ !is null) gizmoHost_.cancelDrag();
+        if (armScope_ == PipeArmScope.keepPipe) return;
         if (hasAcen_) acen_.claimForPreset();
         if (hasAxis_) axis_.claimForPreset();
         if (hasFalloff_) falloff_.claimForPreset();

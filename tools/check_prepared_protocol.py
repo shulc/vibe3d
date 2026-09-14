@@ -1510,7 +1510,7 @@ prepare_body = transition[prepare_open:balanced_source(transition, prepare_open)
 for required in (
         "prepareStickyToolDefaults(candidate, id)",
         "injectPreparedParamsInto(candidate.params(), namedArgs)",
-        "preparePipeActivation(pipeline, pipeAttrs, gizmoHost)",
+        "preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope)",
         "outgoingDoor.prepareDoorDeactivate",
         "incomingDoor.prepareDoorActivate",
         "paramDoor.prepareDoorParamChanged",

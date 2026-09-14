@@ -20,6 +20,7 @@ import editmode : EditMode;
 import edit_session : LifecycleUndoEmitter;
 import tool_presets : prepareStickyToolDefaults;
 import toolpipe.pipeline : Pipeline;
+import tool_activation_ownership : PipeArmScope;
 
 /// Actual candidate lifetime owner. Tool references do not enter the prepared
 /// effect algebra; the transaction exchanges them only through this owner.
@@ -99,7 +100,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         ulong threadIdentity, ulong contextIdentity, Mesh* mesh, ref View view,
         EditMode editMode, string retainedOldId,
         void delegate(string) activateById, void delegate() deactivate,
-        bool lifecycleReplay = false) {
+        bool lifecycleReplay = false,
+        PipeArmScope pipeScope = PipeArmScope.presetArm) {
     if (factory is null || id.length == 0 || history is null ||
         observers is null || layer is null || gizmoHost is null)
         throw new Exception("prepared tool arm requires complete owners");
@@ -134,7 +136,7 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
 
     result.pipe_ = new PreparedRecordContext(null, observers);
     result.pipe_.setResourceIdentity(threadIdentity, contextIdentity);
-    if (!result.pipe_.preparePipeActivation(pipeline, pipeAttrs, gizmoHost) ||
+    if (!result.pipe_.preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope) ||
         !result.pipe_.markNoHistoryInstall())
         throw new Exception("prepared tool arm refused pipe activation");
 

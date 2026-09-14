@@ -87,6 +87,7 @@ import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import prepared_pipe_activation : PreparedPipeActivationOwner;
+import tool_activation_ownership : PipeArmScope;
 import prepared_box_param : PreparedBoxParamOwner;
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
@@ -1346,9 +1347,11 @@ public:
     /// exact semantic position in the unified activation journal.
     bool preparePipeActivation(ref Pipeline pipeline,
                                in PreparedPipeAttrs attrs,
-                               PipeGizmoHost gizmoHost = null) {
+                               PipeGizmoHost gizmoHost = null,
+                               PipeArmScope pipeScope = PipeArmScope.presetArm) {
         if (!begun_ || validated_Once) return false;
-        auto owner = PreparedPipeActivationOwner.prepare(pipeline, attrs, gizmoHost);
+        auto owner = PreparedPipeActivationOwner.prepare(
+            pipeline, attrs, gizmoHost, pipeScope);
         resources_.reserve(1 + resources_.length);
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.PipeActivationState;
