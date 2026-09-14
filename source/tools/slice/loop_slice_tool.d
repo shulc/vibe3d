@@ -1012,7 +1012,7 @@ public:
         if (!active) return;
         // An armed standing preview must never be silently wiped by a
         // resync — the only authorized way to end one is commit/cancel
-        // (Enter/Esc/RMB/tool-drop), or the navHistory chokepoint's own
+        // (Enter/RMB/Ctrl+Z/tool-drop), or the navHistory chokepoint's own
         // cancelUncommittedEdit() call, which always runs BEFORE this could
         // be reached for an armed session (see app.d's navHistory). This
         // guard is defence in depth: it should never actually trigger.
@@ -1500,27 +1500,22 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         scrubbing_ = false;
         // Model B: mouse-up no longer commits — the preview STAYS armed
-        // until Enter (commit) or Esc/RMB (cancel). If the last rebuildCut()
-        // somehow failed to build (should not happen — a valid seed always
-        // builds), fail safe by cancelling rather than leaving a bogus
-        // armed-but-empty state.
+        // until Enter (commit), RMB or Ctrl+Z (cancel), or a tool drop. If
+        // the last rebuildCut() somehow failed to build (should not happen —
+        // a valid seed always builds), fail safe by cancelling rather than
+        // leaving a bogus armed-but-empty state.
         if (!built_) cancelLiveEdit();
         return true;
     }
 
-    // Commit (Enter/Return) / cancel (Esc) the standing preview. RMB is
-    // already handled in onMouseButtonDown for the "held mouse" path; this
-    // covers the keyboard path, which is how a scrub-free arm (HUD/panel-only
-    // scrubbing, mouse never held) gets committed.
+    // Enter/Return commits the standing preview. RMB and Ctrl+Z own cancel;
+    // keyboard handling keeps the scrub-free arm committable without taking Esc.
     override bool onKeyDown(ref const SDL_KeyboardEvent e, ref VectorStack vts) {
         if (!active || !armed_) return false;
         switch (e.keysym.sym) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
                 commitEdit();
-                return true;
-            case SDLK_ESCAPE:
-                cancelLiveEdit();
                 return true;
             default:
                 return false;

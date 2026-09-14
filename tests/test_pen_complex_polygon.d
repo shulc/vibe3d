@@ -1,7 +1,7 @@
 // Pen complex-polygon test (Stage E1 of doc/test_coverage_plan.md).
 //
 // test_primitive_pen.d already covers triangles, quads, pentagons,
-// single-Backspace + Enter, Esc cancel, and multi-polygon sessions.
+// single-Backspace + Enter, RMB cancel, and multi-polygon sessions.
 // This file fills three remaining gaps:
 //
 //   1. >5-vert polygon — 6-click hexagon commits as one 6-gon.
@@ -57,7 +57,6 @@ void waitPlaybackFinish() {
 
 // Pixel coords assume the recorded 650×544 viewport; EventPlayer rescales.
 enum SDLK_RETURN    = 13;
-enum SDLK_ESCAPE    = 27;
 enum SDLK_BACKSPACE = 8;
 enum string LOG_HEADER =
     `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n"
@@ -144,15 +143,15 @@ unittest { // 6 clicks + Backspace × 2 + Enter commits a 4-gon
         face.length.to!string ~ "-gon");
 }
 
-unittest { // Esc + redraw in the same Pen session works
+unittest { // RMB + redraw in the same Pen session works
     resetEmpty();
     activatePen();
-    // First polygon: 3 clicks + Esc — cancelled.
+    // First polygon: 3 clicks + RMB — cancelled.
     string log = LOG_HEADER ~ "\n"
         ~ clickAt(100, 425, 250) ~ "\n"
         ~ clickAt(200, 525, 250) ~ "\n"
         ~ clickAt(300, 475, 350) ~ "\n"
-        ~ keyDown(400, SDLK_ESCAPE) ~ "\n"
+        ~ `{"t":400,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":475,"y":300,"clicks":1,"mod":0}` ~ "\n"
         // Second polygon: 3 clicks + Enter — commits a triangle.
         ~ clickAt(500, 425, 250) ~ "\n"
         ~ clickAt(600, 525, 250) ~ "\n"

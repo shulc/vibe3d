@@ -199,8 +199,8 @@ version(unittest) unittest {
     auto shortLayer = new Layer; GpuMesh shortGpu;
     auto shortPen = new PenTool(() => &shortLayer.meshRef(), &shortGpu,
         LitShader.init); shortPen.state = PenState.Drawing;
-    shortPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0)];
-    shortPen.params_.currentPoint = 1; shortPen.previewGpu.faceVao = 81;
+    shortPen.vertices_ = [Vec3(0,0,0)];
+    shortPen.params_.currentPoint = 0; shortPen.previewGpu.faceVao = 81;
     SnapResult shortSnap; shortSnap.snapped = true; shortSnap.targetIndex = 8;
     shortPen.lastSnap = shortSnap; publishLastSnap(shortSnap);
     auto shortContext = new PreparedRecordContext(new CommandHistory(),
@@ -216,6 +216,33 @@ version(unittest) unittest {
         shortPen.state == PenState.Idle && shortPen.vertices_.length == 0 &&
         shortPen.lastSnap == SnapResult.init &&
         shortContext.installTraceForTest() == [8,2,7,6,2]);
+
+    auto edgeLayer = new Layer; GpuMesh edgeGpu;
+    auto edgePen = new PenTool(() => &edgeLayer.meshRef(), &edgeGpu,
+        LitShader.init); edgePen.state = PenState.Drawing;
+    edgePen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0)];
+    edgePen.params_.currentPoint = 1; edgePen.previewGpu.faceVao = 86;
+    edgePen.frame.toWorld = [1,0,0,0, 0,1,0,0,
+                             0,0,1,0, 0,0,0,1];
+    auto edgeHistory = new CommandHistory();
+    auto edgeView = new View(0,0,1,1);
+    edgePen.setGestureBindings(edgeHistory, () => new MeshSessionEdit(
+        &edgeLayer.meshRef(), edgeView, EditMode.Vertices,
+        "test.pen", "Pen Polygon"));
+    auto edgeContext = new PreparedRecordContext(edgeHistory,
+        new RecordObserverHub()); edgeContext.setResourceIdentity(7,11);
+    auto edgeEffect = edgePen.prepareDeactivate(edgeContext, edgeLayer,
+        GpuUploadOwner.fakeForTest(&edgeGpu),
+        GpuUploadOwner.fakeForTest(&edgeGpu),
+        GpuUploadOwner.fakeForTest(edgePen.preparedPreviewGpu()),
+        GpuResourceOwner.fakeForTest(edgePen.preparedPreviewGpu()),
+        new BoxHandlerBatchResourceOwner(edgePen.vertHandlers, 7, 11), null);
+    assert(edgeEffect.resourceAccepted && edgeEffect.historyAccepted &&
+        edgeLayer.meshRef().faces.length == 0 && edgeContext.validate());
+    edgeContext.install();
+    edgeHistory.undoDepthCounts(modelDepth, uiDepth);
+    assert(edgeLayer.meshRef().faces.length == 1 &&
+        edgeLayer.meshRef().faces[0].length == 2 && modelDepth == 1);
 
     auto mutationLayer = new Layer; GpuMesh mutationGpu;
     auto mutationPen = new PenTool(() => &mutationLayer.meshRef(), &mutationGpu,
@@ -305,7 +332,7 @@ version(unittest) unittest {
 //   Drawing ── LMB-click ─→ Drawing (append vertex on the locked plane)
 //   Drawing ── double-click / Enter ─→ commit n-gon (n ≥ 3); back to Idle
 //   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
-//   Drawing ── Esc / RMB ─→ cancel (drop buffer); back to Idle
+//   Drawing ── RMB / Ctrl+Z / tool drop ─→ cancel (drop buffer); back to Idle
 //
 // In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
 // ToolHandles arbiter (Test pass) flips the single cursor-over vertex to
@@ -652,7 +679,7 @@ public:
         image.expectedLastSnap = lastSnap;
         image.expectedMeshChanged = meshChanged;
         image.willCommit = state == PenState.Drawing &&
-            vertices_.length >= (params_.makeQuads ? 4 : 3);
+            vertices_.length >= minDropCommitVerts();
         return image;
     }
     final bool preparedDeactivateStateMatches(
@@ -784,7 +811,7 @@ public:
 
     override void deactivate() {
         // If a valid sequence is pending, commit it on deactivate.
-        if (state == PenState.Drawing && vertices_.length >= minCommitVerts()) {
+        if (state == PenState.Drawing && vertices_.length >= minDropCommitVerts()) {
             commitPolygonWithUndo();
         } else {
             cancelPolygon();
@@ -1025,12 +1052,6 @@ public:
                 }
                 return false;
 
-            case SDLK_ESCAPE:
-                // Always consume Esc while pen is active so the app's
-                // SDLK_ESCAPE → quit fallback doesn't fire mid-edit.
-                if (state == PenState.Drawing) cancelPolygon();
-                return true;
-
             default:
                 return false;
         }
@@ -1104,7 +1125,7 @@ public:
         if (state == PenState.Idle)
             ImGui.TextDisabled("Click in viewport to start a polygon.");
         else
-            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Backspace to undo • Esc / RMB to cancel");
+            ImGui.TextDisabled("Click to add vertices • Enter / dbl-click to close • Backspace to undo • RMB to cancel");
     }
 
 private:
@@ -1215,11 +1236,10 @@ private:
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
-    // Commit guard mirror (deactivate() :225): a pending polygon commits only
-    // while Drawing with enough verts to close (>= minCommitVerts). A short
-    // in-progress stroke would be discarded, not committed, so it reports false.
+    // Commit guard mirror: a pending polygon commits on drop once it forms an
+    // edge (>= minDropCommitVerts); shorter strokes are discarded.
     public override bool hasUncommittedEdit() const {
-        return state == PenState.Drawing && vertices_.length >= minCommitVerts();
+        return state == PenState.Drawing && vertices_.length >= minDropCommitVerts();
     }
     // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears
     // the preview / vert handlers, records nothing).
@@ -1355,6 +1375,12 @@ private:
         return params_.makeQuads ? 4 : 3;
     }
 
+    // A drop keeps any sequence that already forms a polygon edge; Enter still
+    // needs a closable face. Task 5911; fixture row E5pen2.
+    size_t minDropCommitVerts() const {
+        return params_.makeQuads ? 4 : 2;
+    }
+
     // Apply Pen-local guide constraints: straightLine / worldAxis / rightAngle.
     //
     // Anchor = prior vertex (vertices_[$-1]), direction from the prior segment
@@ -1462,7 +1488,7 @@ private:
     }
 
     void commitPolygonWithUndo() {
-        if (state != PenState.Drawing || vertices_.length < minCommitVerts()) return;
+        if (state != PenState.Drawing || vertices_.length < minDropCommitVerts()) return;
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
         commitPolygon();
         if (history !is null && gestureFactory !is null && pre.filled) {

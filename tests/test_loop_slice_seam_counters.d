@@ -502,6 +502,6 @@ unittest {
       ~ "batch must be the outermost open on its frame (task 1903 §2.3 rule 2).");
 
     // Leave the tool in a clean state for whatever runs next.
-    playAndSettle(format(`{"t":0.000,"type":"SDL_KEYDOWN","sym":27,"scan":0,"mod":0,"repeat":0}`));
+    playAndSettle(format(`{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":29,"mod":64,"repeat":0}`));
     cmd("tool.set mesh.loopSliceTool off");
 }

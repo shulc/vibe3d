@@ -40,10 +40,6 @@
 //      commit -> undo -> pre-commit (8v/6f) -> re-arm (same edge, still
 //      selected — MeshSnapshot restores selection) -> re-commit -> back to
 //      the SAME post-commit geometry (12v/10f) as the first commit.
-//   5. Regression guard: Esc-cancel is untouched by this fix (LoopSliceTool's
-//      onKeyDown consumes Escape directly, before navHistory is ever
-//      reached) — still cancels the live preview without dropping the tool.
-//
 // Standard cube fixture from /api/reset (8 verts, 6 quad faces, ±0.5 each
 // axis). Seed edge (0,1) (verts (-0.5,-0.5,-0.5)-(0.5,-0.5,-0.5)) is the same
 // belt edge used by tests/test_loop_slice_tool.d T1 / test_loop_slice_v2.d;
@@ -164,7 +160,6 @@ void playKey(int sym, int mod = 0) {
 }
 
 enum SDLK_RETURN  = 13;
-enum SDLK_ESCAPE  = 27;
 enum SDLK_z       = 122;
 enum KMOD_LCTRL   = 64;
 
@@ -387,41 +382,6 @@ unittest {
     assert(depthAfterRecommit == depthAfterCommit,
         "round-trip: re-commit must restore the undo ledger to the first commit's depth, went "
         ~ depthAfterCommit.to!string ~ " (first commit) vs " ~ depthAfterRecommit.to!string ~ " (re-commit)");
-
-    deactivateLoopSlice();
-}
-
-// ---------------------------------------------------------------------------
-// 5. Regression guard: Esc-cancel is untouched by the task 0400 fix.
-//    LoopSliceTool.onKeyDown() consumes SDLK_ESCAPE directly and calls
-//    cancelLiveEdit() BEFORE the event ever reaches app.d's navHistory()
-//    chokepoint (handleKeyDown gives the active tool first dibs on key
-//    events) — so this path never touched survivesEditCancel() either
-//    before or after the fix. Still cancels without dropping the tool.
-// ---------------------------------------------------------------------------
-unittest {
-    resetCube();
-    int ei = seedEdgeIndex();
-    postSelect("edges", [ei]);
-    activateLoopSlice();
-
-    clickLoopSlice(true);
-    auto stArmed = toolState();
-    assert(stArmed["armed"].type == JSONType.true_, "arm click must set armed_=true");
-
-    long depthBefore = undoModelDepth();
-
-    playKey(SDLK_ESCAPE);
-
-    auto stCancelled = toolState();
-    assert(toolIsActive(stCancelled), "Esc-cancel must not drop the tool (unchanged pre/post 0400)");
-    assert(stCancelled["armed"].type == JSONType.false_, "Esc must clear armed_");
-
-    auto m1 = model();
-    assert(vertCount(m1) == 8 && faceCount(m1) == 6, "Esc-cancel must revert to the pre-arm baseline");
-
-    long depthAfter = undoModelDepth();
-    assert(depthAfter == depthBefore, "Esc-cancel must record no undo entry");
 
     deactivateLoopSlice();
 }

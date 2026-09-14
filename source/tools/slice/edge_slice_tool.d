@@ -929,9 +929,6 @@ public:
             case SDLK_KP_ENTER:
                 commitChain();
                 return true;
-            case SDLK_ESCAPE:
-                cancelLiveEdit();
-                return true;
             default:
                 return false;
         }

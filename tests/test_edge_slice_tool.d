@@ -43,9 +43,9 @@
 //   13. F2 deactivate-commit (picker-free, objection 5): `chainArm` arms a
 //      chain without committing; `tool.set ... off` (deactivate) must commit
 //      the baked chain as ONE undo entry rather than discarding it.
-//   14. F2 mid-chain cancel (picker-free): `chainArm` arms a chain; a
-//      synthetic SDL_KEYDOWN ESCAPE must unwind the WHOLE chain back to the
-//      base mesh with NO undo entry recorded.
+//   14. F2 mid-chain cancel (picker-free): `chainArm` arms a chain; RMB must
+//      unwind the WHOLE chain back to the base mesh with NO undo entry and
+//      without dropping the tool.
 //
 // Task 0303 (fuzz-found — doApply/commitChain corrupt the mesh on a failed
 // chain that reuses a shared corner) — RE-DERIVED by the mesh-robustness
@@ -823,9 +823,8 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // 14. F2 mid-chain cancel (picker-free): `chainArm` arms a chain (baking it
-//     onto the live mesh, per the mutate/revert preview model); a synthetic
-//     SDL_KEYDOWN ESCAPE must unwind the WHOLE chain back to the base mesh
-//     with NO undo entry recorded.
+//     onto the live mesh, per the mutate/revert preview model); RMB must
+//     unwind the WHOLE chain back to the base mesh with NO undo entry.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -844,7 +843,10 @@ unittest {
         "chainArm must bake the chain onto the live mesh before cancel");
 
     auto r = postCmd("/api/play-events",
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":27,"scan":0,"mod":0,"repeat":0}`);
+        `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50,"type":"SDL_MOUSEMOTION","x":475,"y":300,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":55,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":475,"y":300,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":60,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":475,"y":300,"clicks":1,"mod":0}`);
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
     bool finished = false;
     foreach (_; 0 .. 200) {
@@ -852,15 +854,17 @@ unittest {
         if (s["finished"].type == JSONType.true_) { finished = true; break; }
         Thread.sleep(50.msecs);
     }
-    assert(finished, "synthetic Escape replay did not finish within 10s");
+    assert(finished, "synthetic RMB replay did not finish within 10s");
     Thread.sleep(150.msecs);
 
     auto m1 = model();
-    assert(vertCount(m1) == 8, "Escape mid-chain must unwind the whole chain back to base");
-    assert(faceCount(m1) == 6, "Escape mid-chain must unwind the whole chain back to base");
+    assert(vertCount(m1) == 8, "RMB mid-chain must unwind the whole chain back to base");
+    assert(faceCount(m1) == 6, "RMB mid-chain must unwind the whole chain back to base");
 
     auto st = getJson("/api/tool/state");
     assert(st["armed"].type == JSONType.false_, "cancel must clear armed_");
+    assert(getJson("/api/input/context")["tool"].str == "mesh.edgeSliceTool",
+        "RMB cancel must leave Edge Slice active");
 
     long depthAfter = undoModelDepth();
     assert(depthAfter == depthBefore,

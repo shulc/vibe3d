@@ -229,6 +229,16 @@ private void key(int sym, int scan, int mod = 0) {
     settle();
 }
 
+private void click(int x, int y) {
+    const log =
+        `{"t":0.000,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
+        format(`{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`, x, y) ~ "\n" ~
+        format(`{"t":55.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n" ~
+        format(`{"t":60.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n";
+    playAndWait(log);
+    settle();
+}
+
 private void runDoor(JSONValue cell) {
     const door = cell["door"].str;
     if (door == "space") key(32, 44);
@@ -248,12 +258,15 @@ private void runDoor(JSONValue cell) {
         if (door == "switchUndoRedo") key(122, 29, 65);
     }
     else if (door == "q") key(113, 20);
+    else if (door == "ctrlz") key(122, 29, 64);
+    else if (door == "reset") cmd("scene.reset");
+    else if (door == "toolreset") cmd("tool.reset");
     else if (door == "off") {
         const id = "off" in cell.object ? cell["off"].str : cell["arm"].str;
         cmd("tool.set " ~ id ~ " off");
     } else if (door == "switch") {
         cmd("tool.set " ~ cell["switch"].str ~ " on");
-    } else assert(false, "unsupported Phase-2 door: " ~ door);
+    } else assert(false, "unsupported drop door: " ~ door);
 }
 
 private bool hasNonDefaultPipe(JSONValue s) {
@@ -324,13 +337,16 @@ unittest {
         "C5r/ctrld", "C5u/undo", "C5ur/redo", "U0/undo", "K0/ctrld",
         "B1g/ctrld", "B2g/space", "C4e/space", "K1/ctrld-other",
         "C5re/space", "C5bre/space",
+        "E5pen2/space", "E5pen2/q", "E5pen2/off", "E5pen2/switch",
+        "E5pen2/ctrlz", "E5pen2/reset", "E5pen2/toolreset",
+        "E5pen1/space", "E5pen1/ctrlz", "E5pen3/space",
     ];
     string[] executed;
     size_t comparedLeaves, expectedLeaves;
     Mismatch[] mismatches;
 
     foreach (cell; fx["cells"].array) {
-        if (cell["file"].str != "drop" || cell["phase"].integer > 3 ||
+        if (cell["file"].str != "drop" || cell["phase"].integer > 5 ||
             cell["port_status"].str != "implemented") continue;
         const id = cell["id"].str;
         const kind = cell["kind"].str;
@@ -382,7 +398,10 @@ unittest {
                     mismatches, comparedLeaves);
                 expectedLeaves += leafCount(cell["expect"]["armedAttrs"]);
             }
-            if (kind != "control")
+            // Pen has no pipe-stage fields to make non-default at activation.
+            // Its explicit while-armed witness and placed snapshot are below.
+            if (kind != "control" &&
+                ("clicks" in cell.object) is null)
                 assert(hasNonDefaultPipe(armed),
                     id ~ ": non-control arm has no non-default stage read");
         } else {
@@ -403,6 +422,9 @@ unittest {
                 readState());
             assertExpected(id, "rechosen history", beforeChoiceHistory,
                 historyState());
+            if (("clicks" in cell.object) !is null)
+                assert(hasNonDefaultPipe(readState()),
+                    id ~ ": pen while-armed stage witness stayed default");
             if (("rechosenAttrs" in cell["expect"].object) !is null) {
                 const rechosenAttrs = falloffAttrState();
                 compareNamedFalloffAttrs(id, kind, "rechosenAttrs",
@@ -413,6 +435,25 @@ unittest {
                     assert(value != cell["expect"]["armedAttrs"][name],
                         id ~ ": armed and rechosen attrs must differ at " ~ name);
             }
+        }
+        if (("clicks" in cell.object) !is null) {
+            const beforeClicksHistory = historyState();
+            foreach (point; cell["clicks"].array) {
+                assert(point.array.length == 2,
+                    id ~ ": every click must carry x and y");
+                click(cast(int)point.array[0].integer,
+                      cast(int)point.array[1].integer);
+            }
+            const placed = readState();
+            assert(placed["tool"].str == "pen",
+                id ~ ": pen click sequence dropped the tool before the door");
+            assert(placed["mesh"] == rig["mesh"],
+                id ~ ": pen click sequence wrote live mesh geometry");
+            assertExpected(id, "placed history", beforeClicksHistory,
+                historyState());
+            compareExpected(id, kind, cell["expect"]["placed"], placed,
+                mismatches, comparedLeaves, "placed", keyKinds);
+            expectedLeaves += leafCount(cell["expect"]["placed"]);
         }
         if (id == "C8/space") {
             const beforeVerts = vertexImage();
@@ -451,7 +492,22 @@ unittest {
         }
 
         runDoor(cell);
-        const afterDoor = readState();
+        auto afterDoor = readState();
+        if (cell["door"].str == "reset") {
+            auto disarmRead = getJson("/api/tool/disarm");
+            JSONValue[string] disarm;
+            disarm["hadTool"] = disarmRead["hadTool"];
+            disarm["cancelSteps"] = disarmRead["cancelSteps"];
+            afterDoor["disarm"] = JSONValue(disarm);
+
+            auto undoRows = getJson("/api/history")["undo"].array;
+            assert(undoRows.length == 1,
+                format("%s: reset census needs exactly one undo label, got %s",
+                    id, undoRows.length));
+            const label = undoRows[0]["label"].str;
+            afterDoor["undoLabelPrefix"] = label.length >= 5
+                ? JSONValue(label[0 .. 5]) : JSONValue(label);
+        }
         compareExpected(id, kind, cell["expect"]["after"], afterDoor,
             mismatches, comparedLeaves, "", keyKinds);
         expectedLeaves += leafCount(cell["expect"]["after"]);
@@ -480,7 +536,7 @@ unittest {
             compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(wantedHistory);
-        } else if (cell["door"].str != "switch") {
+        } else if (cell["door"].str != "switch" && cell["phase"].integer < 5) {
             auto afterHistory = historyState();
             compareExpected(id, kind, beforeHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
@@ -563,16 +619,16 @@ unittest {
     gotIds.sort;
     wantIds.sort;
     assert(gotIds == wantIds,
-        format("Phase-3 id floor failed: want %s got %s",
+        format("Phase-5 id floor failed: want %s got %s",
             wantIds.join(","), gotIds.join(",")));
-    assert(executed.length == 48,
-        format("executed %s Phase-3b cells (37 Phase-3 + 11 Phase-3b)",
+    assert(executed.length == 58,
+        format("executed %s Phase-5 cells (48 Phase-3b + 10 Phase-5)",
             executed.length));
     assert(comparedLeaves == expectedLeaves && comparedLeaves > 0,
         format("comparison leaf floor: compared=%s expected=%s",
             comparedLeaves, expectedLeaves));
     foreach (cell; fx["cells"].array)
-        if (cell["file"].str == "drop" && cell["phase"].integer <= 3 &&
+        if (cell["file"].str == "drop" && cell["phase"].integer <= 5 &&
             cell["port_status"].str == "implemented")
             assert(cell["expect"]["after"].object.length > 0,
                 cell["id"].str ~ ": implemented after is empty");

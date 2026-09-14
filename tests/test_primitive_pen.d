@@ -3,14 +3,14 @@
 // Pen has no headless apply path (interactive only) so the test exercises
 // the full event-driven flow: activate the tool via tool.set, play a
 // recorded SDL event log (LMB clicks at calibrated viewport pixels +
-// Enter / Backspace / Esc), then read /api/model and /api/selection back
+// Enter / Backspace / RMB), then read /api/model and /api/selection back
 // to verify topology.
 //
 // Per doc/pen_plan.md, 6.9.0 covers:
 //   • LMB click adds a vertex to the in-progress polygon
 //   • Enter (or double-click) commits when ≥3 verts → n-gon face
 //   • Backspace pops the last vertex
-//   • Esc / RMB cancels the in-progress sequence
+//   • RMB cancels the in-progress sequence
 //   • Construction plane locked at the first click
 //
 // Coordinates assume the recorded VIEWPORT (150,28 650x544) — EventPlayer
@@ -64,7 +64,6 @@ void waitForPlaybackFinish() {
 
 // SDL keycodes (from SDL_keycode.h).
 enum SDLK_RETURN    = 13;
-enum SDLK_ESCAPE    = 27;
 enum SDLK_BACKSPACE = 8;
 
 // Compose a click sequence (motion + LMB-down + LMB-up at given pixel).
@@ -208,10 +207,10 @@ unittest { // 4 clicks + Backspace + Enter → triangle
 }
 
 // -------------------------------------------------------------------------
-// 5. Esc cancels — no commit.
+// 5. RMB cancels — no commit.
 // -------------------------------------------------------------------------
 
-unittest { // 4 clicks + Esc → empty mesh
+unittest { // 4 clicks + RMB → empty mesh
     resetEmpty();
     activatePen();
     string log = LOG_HEADER ~ "\n"
@@ -219,23 +218,23 @@ unittest { // 4 clicks + Esc → empty mesh
         ~ clickAt(200, 525, 250) ~ "\n"
         ~ clickAt(300, 525, 350) ~ "\n"
         ~ clickAt(400, 425, 350) ~ "\n"
-        ~ keyDown(500, SDLK_ESCAPE);
+        ~ `{"t":500,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":475,"y":300,"clicks":1,"mod":0}`;
     playEvents(log);
     waitForPlaybackFinish();
     deactivateTool();
 
     auto m = getJson("/api/model");
     assert(m["vertices"].array.length == 0,
-        "esc cancel: expected empty mesh, got "
+        "RMB cancel: expected empty mesh, got "
         ~ m["vertices"].array.length.to!string ~ " verts");
     assert(m["faces"].array.length == 0);
 }
 
 // -------------------------------------------------------------------------
-// 6. Below minimum (2 clicks + Enter) — Enter is a no-op, no commit.
+// 6. Below minimum (2 clicks + Enter) — Enter is a no-op; drop keeps the edge.
 // -------------------------------------------------------------------------
 
-unittest { // 2 clicks + Enter → still empty (need ≥3 for a polygon)
+unittest { // 2 clicks + Enter → empty until the tool drops
     resetEmpty();
     activatePen();
     string log = LOG_HEADER ~ "\n"
@@ -244,12 +243,19 @@ unittest { // 2 clicks + Enter → still empty (need ≥3 for a polygon)
         ~ keyDown(300, SDLK_RETURN);
     playEvents(log);
     waitForPlaybackFinish();
-    deactivateTool();
 
-    auto m = getJson("/api/model");
-    assert(m["vertices"].array.length == 0,
+    auto beforeDrop = getJson("/api/model");
+    assert(beforeDrop["vertices"].array.length == 0,
         "2 verts + Enter: should not commit, got "
-        ~ m["vertices"].array.length.to!string ~ " verts");
+        ~ beforeDrop["vertices"].array.length.to!string ~ " verts");
+
+    deactivateTool();
+    auto afterDrop = getJson("/api/model");
+    assert(afterDrop["vertices"].array.length == 2,
+        "dropping a 2-point pen must keep both vertices");
+    assert(afterDrop["faces"].array.length == 1 &&
+           afterDrop["faces"].array[0].array.length == 2,
+        "dropping a 2-point pen must keep one 2-corner polygon");
 }
 
 // -------------------------------------------------------------------------
