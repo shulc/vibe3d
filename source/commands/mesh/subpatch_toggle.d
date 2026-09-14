@@ -15,10 +15,9 @@ bool skipsSubpatchToggle(ref const Mesh m, size_t fi) {
     return m.faces[fi].length < 3 && !m.isFaceSubpatch(fi);
 }
 
-/// Mirror of the Tab-key handler in app.d: toggles isSubpatch on selected
-/// faces; if nothing is selected, inverts the flag on every face. Exposed as
-/// a Command so it can be invoked through /api/command in tests and through
-/// future UI buttons without duplicating the logic.
+/// Command-side twin of `input_router.d`'s Tab case: toggle selected faces, or
+/// all faces when unscoped. A plain short face is skipped; a marked short face
+/// becomes plain. Task 5911; fixture subdivide_short_face.json SD-P/SD-Ps.
 /// PERMANENTLY DENSE — task 1903 Stage L0, owner's ruling of 2026-08-27.
 ///
 /// THE DECISION. `origSubpatch` stays a whole-array `dup` of `isSubpatch[]`
@@ -79,7 +78,7 @@ class SubpatchToggle : Command, Operator {
         // TYPE-AWARE scope (parity): the persisted face selection is honored
         // ONLY while the CURRENT selection type is Polygon. In edge/vertex
         // mode a stale face selection is ignored and the toggle applies to
-        // the WHOLE model (matches the reference editor, which drops the
+        // the WHOLE model (matches the reference, which drops the
         // polygon selection's authority outside polygon mode). Whole-model
         // also when nothing is face-selected in polygon mode.
         //
@@ -89,7 +88,7 @@ class SubpatchToggle : Command, Operator {
         // the pre-switch geometry type, so with an item selected after a
         // polygon selection the old `editMode == Polygons` read scoped the
         // toggle to faces the user could no longer see selected. Reading the
-        // current type makes this line agree with app.d's Tab handler, which
+        // current type makes this line agree with input_router.d's Tab case, which
         // has always asked `currentSelType(selTypeOrder) == SelType.Polygon`
         // — the two spellings of the same toggle now answer identically in
         // every mode, item included.

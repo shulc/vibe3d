@@ -304,9 +304,8 @@ public:
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
-    // Commit guard mirror: deactivate() (:196) records exactly when
-    // `active && built && (extrude_ != 0 || width_ != 0)`, so that IS the
-    // "would a commit fire now" predicate.
+    // This exact predicate is also deactivate's commit gate. Task 0388;
+    // edge_extrude_tool_test.d.
     public override bool hasUncommittedEdit() const {
         return active && built && (extrude_ != 0.0f || width_ != 0.0f);
     }

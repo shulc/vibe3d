@@ -2419,6 +2419,9 @@ void main(string[] args) {
             s.reset();
     }
 
+    // The pipe rung owns ACEN/AXIS/WGHT/CONS only. Global snap, its pipe node,
+    // symmetry, workplane and path stay outside this predicate/reset; those
+    // omissions are captured by task 5911 rounds 2 E2 and 3 R1.
     bool pipeHoldsTask() {
         import toolpipe.pipeline : g_pipeCtx;
         import toolpipe.stages.actcenter : ActionCenterStage;

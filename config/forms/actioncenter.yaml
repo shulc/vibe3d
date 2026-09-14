@@ -19,17 +19,11 @@
 # active tool and NOT by form id. The stage section appears under whichever
 # tool's properties when the actionCenter stage is enabled.
 #
-# userLocked semantics: this dropdown is the GRANULAR ACEN-only control. Its
-# write path (`tool.pipe.attr actionCenter mode <tag>` → setAttr → applySetAttr)
-# is the SAME wire the granular status-bar Center submenu uses and does NOT set
-# userLocked — deliberately. The wire cannot lock, because tool PRESETS apply
-# their action-center mode through the very same Stage.setAttr (see
-# source/tool_presets.d): if setAttr locked, every tool activation would pin the
-# mode and defeat resetTransientPipeStages. A mode that must survive tool
-# switches is set via the toolbar / status-bar `actr.<mode>` presets, which call
-# ActionCenterStage.setUserMode() (the only path that sets userLocked). Within a
-# single tool session the panel pick persists normally; only a tool switch
-# re-applies the active preset's mode.
+# This granular mode write is LOOSE: it releases only this stage's preset
+# claim, locks nothing and promotes no sibling, so the armed preset's other
+# stages still leave with the tool and this value is reset by the next drop or
+# arm. A mode that must survive is picked through the `actr.<mode>` presets,
+# which lock. Task 5911; fixture tool_drop_pipe_stages.json L1-L3.
 
 forms:
   - id: toolprops.actioncenter

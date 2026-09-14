@@ -654,8 +654,9 @@ struct InputRouter {
                     escapeLadder();
                     break;
                 case SDLK_SPACE:
-                    // Item-mode Space is the same measured ladder as Escape;
-                    // outside item mode it keeps the geometry cycle behavior.
+                    // Item mode uses the Esc ladder; component mode drops an
+                    // armed tool, otherwise cycles geometry mode. Task 5911;
+                    // tool_drop_pipe_stages.json E7a/E7b, S_vert/S_edge.
                     if (currentSelType(selTypeOrder) == SelType.Item) {
                         if (escapeReachesEditor(imguiPopupOpen()))
                             escapeLadder();

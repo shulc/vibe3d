@@ -469,8 +469,8 @@ public:
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
-    // Commit guard mirror: deactivate() commits exactly when `willCommit`
-    // (:1918) is true. The compound guard is NOT `state != Idle` — a height
+    // This is the same compound predicate used by deactivate; it is NOT
+    // `state != Idle` — a height
     // drag with sub-epsilon height (|currentHeight()| <= 1e-5) commits nothing
     // even though state != Idle, so it must report no uncommitted edit.
     public override bool hasUncommittedEdit() const {

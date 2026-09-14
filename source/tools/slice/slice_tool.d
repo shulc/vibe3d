@@ -418,7 +418,8 @@ Vec3[4] sliceOverlayQuad(Vec3 p, Vec3 dir, Vec3 perp,
 // two ends, along `dir`), so the CROSS-`perp` extent is deliberately biased
 // larger: it unions the mesh, then guarantees a half-span of a full along-extent
 // on each side (⇒ cross span ≥ 2× along) plus a generous overhang, netting a
-// cross span ≥ 3× along > along. `p` is the plane through-point (= start).
+// cross span at least three times the along span. `p` is the plane
+// through-point (= start).
 //
 // `ms` (task 0619, §1.2) is the LAYER TRANSFORM of the mesh being scanned.
 // `p`/`dir`/`perp`/`start`/`end` are WORLD constructs (the drawn line and the

@@ -66,7 +66,7 @@ is editable numerically. Ctrl-click a Create button for a unit-sized instance.
 | **Capsule** | `prim.capsule` | Cylinder with proportional hemispherical end-caps; collapses cleanly to a sphere when the caps consume the full length. |
 | **Torus** | `prim.torus` | Quad-only torus with major / minor radius and major / minor segment counts. |
 | **Arc** | `prim.arc` | Open arc / ring segment — radius, start / end angle, segments. |
-| **Pen** | `pen` | Click-to-place vertex tool for building polygons / line strips / quad strips on the construction work-plane. Any committed point is numerically editable. |
+| **Pen** | `pen` | Click-to-place vertex tool for building polygons / line strips / quad strips on the construction work-plane. Any committed point is numerically editable. A dropped 2-point sequence becomes a 2-vertex polygon; RMB cancels. |
 | **Vertex** | `prim.vertex` | Place a single vertex. |
 
 ### Vertex tools
@@ -114,9 +114,9 @@ is editable numerically. Ctrl-click a Create button for a unit-sized instance.
 
 | Command | ID | Hotkey | Description |
 |---|---|---|---|
-| **Subdivide** | `mesh.subdivide` | `D` | Catmull-Clark subdivision, applied immediately. |
+| **Subdivide** | `mesh.subdivide` | `D` | Catmull-Clark subdivision, applied immediately. A selected two-point polygon is split in two. The split point is the neighbouring face's edge point when that face is refined too (in the default mode only when that face comes first; in Flat and Smooth always), else the midpoint. An unselected one is left alone, and splitting one never changes the faces around it. |
 | **Faceted** | `mesh.subdivide_faceted` | `Shift+D` | Linear (faceted) subdivision. |
-| **Subpatch** | `mesh.subpatch_toggle` | `Tab` | Toggle live subpatch (subdivision-surface) preview on the selected faces. |
+| **Subpatch** | `mesh.subpatch_toggle` | `Tab` | Toggle live subpatch (subdivision-surface) preview on the selected faces. A two-point polygon is never made subpatch; one that is becomes plain. |
 | **Clean Up** · **Fix Orientation** | `mesh.cleanup` · `mesh.fixOrientation` | — | Remove degenerate geometry; unify face winding. |
 | **Remesh (Quad)** | `mesh.remesh.open` | — | Retopologize into quads via an external helper (see note below). |
 
@@ -208,7 +208,8 @@ Alt-click for granular options.
 | Edges mode | `2` |
 | Polygons mode | `3` |
 | Items mode | `5` |
-| Cycle mode | `Space` |
+| Drop tool / cycle mode; in item mode, the Esc ladder | `Space` |
+| Drop active tool | `Q` |
 | Move / Rotate / Scale | `W` / `E` / `R` |
 | Transform (T+R+S) | `Y` |
 | Element Move | `T` |
@@ -217,7 +218,10 @@ Alt-click for granular options.
 | Mirror Tool | `Shift+V` |
 | Loop Slice / Slice | `Alt+C` / `Shift+C` |
 | Reset active tool | `Ctrl+D` |
-| Cancel / clear active tool | `Esc` |
+| Drop tool → clear pipe → drop current selection → drop items; closes an open menu; does nothing under a dialog | `Esc` |
+
+With no tool armed, Esc also clears a locked action centre, axis, falloff, or
+constraint at the pipe rung. Ctrl+Z does not restore those stage settings.
 
 ### Selection
 
@@ -232,7 +236,7 @@ Alt-click for granular options.
 | More / Less | Up / Down |
 | Loop / Ring | `L` / Alt + `L` |
 | Between | Shift + `G` |
-| Drop selection | `Esc` |
+| Drop current selection after the tool and pipe rungs | `Esc` |
 
 #### Items mode
 

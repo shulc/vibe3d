@@ -330,12 +330,12 @@ version(unittest) unittest {
 //                                  locked from the camera-most-facing world
 //                                  plane via pickMostFacingPlane)
 //   Drawing ── LMB-click ─→ Drawing (append vertex on the locked plane)
-//   Drawing ── double-click / Enter ─→ commit n-gon (n ≥ 3); back to Idle
+//   Drawing ── double-click / Enter ─→ commit a face from 3+ points; Idle
 //   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
 //   Drawing ── tool drop (n ≥ 2) ─→ commit; back to Idle
 //   Drawing ── Ctrl+Z (n ≥ 2) ─→ cancel points and drop tool; back to Idle
 //   Drawing ── Ctrl+Z (n = 1) ─→ undo the entry below; keep stroke and tool
-//   Drawing ── RMB ─→ cancel points; tool remains active in Idle
+//   Drawing ── RMB ─→ cancel points when no active falloff owns RMB; tool stays
 //
 // In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
 // ToolHandles arbiter (Test pass) flips the single cursor-over vertex to
@@ -1239,8 +1239,8 @@ private:
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
-    // Commit guard mirror: a pending polygon commits on drop once it forms an
-    // edge (>= minDropCommitVerts); shorter strokes are discarded.
+    // A pending sequence is drop-committable once it forms an edge; this same
+    // predicate also hides the live edge overlay. Task 5911; fixture P1/P2/P3.
     public override bool hasUncommittedEdit() const {
         return state == PenState.Drawing && vertices_.length >= minDropCommitVerts();
     }

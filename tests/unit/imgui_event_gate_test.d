@@ -1,13 +1,5 @@
-// The rules of `imgui_event_gate` as a table, plus the two checks that keep
-// them reachable from `app.d` (task 1850).
-//
-// The rules are the two halves of one contract: `goesToImGui` (blocks A–E)
-// keeps a bare Tab PRESS away from ImGui's focus walk, and
-// `keyBelongsToEditor` (blocks F–G) keeps every key away from the editor while
-// a text field is being edited — the half that stops a Tab typed into a filter
-// box from toggling subpatch. The second is load-bearing BECAUSE of the first:
-// once the press no longer reaches ImGui, the focus cannot walk off the field
-// by itself, so nothing else stands between that Tab and `mesh.setSubpatch`.
+// Tables the event gate's two routing halves (A–G) and the popup-stack query
+// contract (H), plus reachability checks from input_router.d. Tasks 1850/5911.
 //
 // Each group is its OWN `unittest` block on purpose: druntime stops a module at
 // its first failed assertion, and this file has to survive several separate

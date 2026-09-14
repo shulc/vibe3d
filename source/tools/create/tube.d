@@ -174,7 +174,8 @@ void buildTube(Mesh* dst, const ref TubeParams p)
 //   DrawingHeight -> HeightSet (LMB up)
 //   HeightSet -> DrawingInner (LMB drag -> sets innerRadius)
 //   DrawingInner -> InnerSet (LMB up)
-//   Right-click / Esc from any state -> Idle
+//   Right-click from any state -> Idle; Esc drops the tool through the editor
+//   ladder (task 5911; tests/test_escape_ladder.d).
 //
 // Headless path (applyHeadless, inherited default) bypasses the state
 // machine and appends directly from current params_ via buildInto().

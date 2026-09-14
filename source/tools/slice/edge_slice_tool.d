@@ -1410,7 +1410,7 @@ private:
 
     void cancelLiveEdit() {
         // Restores chainBefore_ — the WHOLE chain, never a per-segment
-        // baseline — so Esc/RMB/redo-cancel unwinds every baked segment.
+        // baseline — so RMB/Ctrl+Z/redo-cancel unwinds every baked segment.
         // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (armedKey_.matches(*mesh) && chainBefore_.filled) chainBefore_.restore(*mesh);
         dropArmedPreview();

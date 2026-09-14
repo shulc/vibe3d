@@ -1,59 +1,7 @@
-/// The single door from SDL's event queue into ImGui's SDL2 backend, and the
-/// one rule that door enforces (task 1850).
-///
-/// THE RULE, in one sentence: a `SDL_KEYDOWN` for `SDLK_TAB` is handed to ImGui
-/// only when ImGui would NOT turn it into a keyboard-focus move — that is, only
-/// with Ctrl or Alt held; every other Tab press stops here and belongs to the
-/// editor alone, while `SDL_KEYUP` is ALWAYS handed over.
-///
-/// WHY. Tab is the editor's subpatch toggle. ImGui's focus walk consumes it too,
-/// so one press did two things at once: it toggled the subpatch flag AND crept
-/// the keyboard focus one widget along inside whatever panel had nav focus.
-/// The owner asked for the second half to go away.
-///
-/// WHY NOT A CONFIG FLAG. `ImGuiConfigFlags.NavEnableKeyboard` is not the
-/// switch: imgui's comment at its own compute site says the tabbing request is
-/// ALWAYS ENABLED whatever that flag is set to, and the flag only widens WHICH
-/// widgets the walk may stop on. The real switch is a context field the binding
-/// does not expose. Measured rather than taken on trust:
-/// `tests/unit/ui/imgui_tabbing_test.d` drives a headless ImGui context with
-/// the flag both ways and watches Tab move the focus in both.
-///
-/// WHY THE CTRL/ALT CARVE-OUT IS EXACTLY THE RIGHT SIZE. ImGui's tabbing
-/// request is raised only when neither Ctrl nor Alt is down; with Ctrl held the
-/// very same key is a DIFFERENT consumer — the docked-window switcher, which is
-/// live here because docking is enabled. So this predicate suppresses precisely
-/// the presses that would move the focus and nothing else: Ctrl+Tab keeps
-/// switching windows exactly as it does today.
-///
-/// WHY THERE IS NO `WantTextInput` CARVE-OUT, although "let Tab through while a
-/// text field is being edited, so it can walk to the next field" is the obvious
-/// refinement. It reopens the reported bug one keypress later. With
-/// `NavEnableKeyboard` the walk stops on EVERY item, not only inputable ones, so
-/// the first Tab out of a focused field parks on the button or checkbox next to
-/// it and `io.WantTextInput` goes false; the SECOND Tab would then be suppressed
-/// from ImGui while the `io.WantTextInput` gate below (`keyBelongsToEditor`,
-/// consulted from the same dispatcher) no longer swallowed it
-/// — and it would reach the subpatch toggle while the user is navigating a
-/// panel. Nothing is lost in the typing case: that gate (which sits BELOW this
-/// door and does not depend on it) already keeps every key away from the editor
-/// while a field is being edited, so Tab inside a text field is simply inert —
-/// and that gate is `keyBelongsToEditor` at the bottom of this module, tabled
-/// alongside this rule.
-///
-/// WHY `SDL_KEYUP` IS UNCONDITIONAL. A gate that suppressed the release too
-/// would leave ImGui believing Tab is still held; `IsKeyPressed(Tab, …Repeat…)`
-/// would then keep firing and the focus would walk on its own, with no user
-/// touching the keyboard. Forwarding a release ImGui never saw a press for is
-/// free — ImGui filters a key event that does not change the key's state.
-///
-/// ONE SIDE EFFECT, RECORDED SO IT IS NOT REDISCOVERED THE HARD WAY: the SDL2
-/// backend refreshes `io.KeyCtrl` / `KeyShift` / `KeyAlt` from `keysym.mod`
-/// inside the same branch that handles the key itself, so a suppressed Tab press
-/// also skips that refresh. Harmless in practice — every modifier press and
-/// release carries its own event, and the Tab release is always forwarded — but
-/// a session whose first event after regaining focus is a bare Tab sees ImGui's
-/// modifier state one event stale.
+/// Owns the SDL-to-ImGui key gates: bare Tab presses stay editor-side while
+/// releases and Ctrl/Alt chords reach ImGui; focused text fields retain key
+/// events; the popup query exposes the previous rendered frame to the Esc
+/// ladder. Tasks 1850/5911; tests/unit/imgui_event_gate_test.d.
 module imgui_event_gate;
 
 import bindbc.sdl;
@@ -66,6 +14,9 @@ private extern (C) bool igIsPopupOpen_Str(const(char)* strId, int flags)
 // query (task 5911; tests/unit/escape_ladder_test.d EL-d0/EL-d).
 enum int kCimguiAnyPopup = (1 << 10) | (1 << 11);
 
+/// Requires a current ImGui context and a between-frames call (after Render,
+/// before NewFrame); it reads the popup stack retained from the last frame.
+/// Task 5911; imgui_event_gate_test.d group H.
 bool imguiPopupOpen() nothrow @nogc {
     return igIsPopupOpen_Str(null, kCimguiAnyPopup);
 }

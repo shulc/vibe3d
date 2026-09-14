@@ -420,9 +420,8 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
-    // Commit guard mirror: commitNow() early-returns unless `dirty` (:365), and
-    // deactivate() is the only commit site, so `dirty` IS the "would commit now"
-    // predicate.
+    // `dirty` is the single commit predicate used by commitNow and deactivate.
+    // Task 0388; command_wrapper_test.d.
     public override bool hasUncommittedEdit() const { return dirty; }
 
     // Framework "apply and continue" (task 0461, Shift+click) — task 0678 T7:

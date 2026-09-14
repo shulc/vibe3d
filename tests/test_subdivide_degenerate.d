@@ -1,5 +1,6 @@
-// Tests for mesh.subdivide (Catmull-Clark via catmullClarkOsd) against
-// degenerate input (mesh-robustness batch, fuzz-found).
+// Tests for mesh.subdivide against zero-area/collinear surface faces
+// (mesh-robustness batch, fuzz-found). Short-face behavior is covered by
+// test_subdivide_short_face.d.
 //
 // A zero-area / collinear marked face used to either (a) get silently fed
 // into OSD as-is (risking coincident verts / NaNs in the refined output), or
@@ -8,11 +9,9 @@
 // the caller (`commands/mesh/subdivide.d`) used to assign straight into
 // `*mesh` with NO guard, WIPING the live mesh (0 verts, 0 faces).
 //
-// The fix: `catmullClarkOsd` rejects the WHOLE refine (returns `Mesh.init`)
-// as soon as any marked face is degenerate (reject-whole, not per-face
-// skip); the caller now guards that empty result and treats it as a clean
-// no-op instead of assigning it into `*mesh`. Both the "one bad face poisons
-// a normal mesh" case and the "every face is bad" wipe case are covered here.
+// Any marked zero-area/collinear surface face refuses the operation; the
+// caller guards the empty result as a clean no-op. Both the mixed and all-bad
+// cases are pinned here.
 
 import http_client : testBaseUrl, postRaw;
 import http_command_helpers : commandBody;
@@ -71,7 +70,7 @@ unittest { // MixedMeshDegenerateFaceRejectsWhole
     assert(before["faces"].array.length == 2, "BEFORE: expected 2 faces");
 
     // No selection (Vertices mode after load) => refine whole mesh, which
-    // includes the degenerate triangle. Reject-whole must leave the mesh
+    // includes the degenerate triangle. Refusal must leave the mesh
     // byte-identical to the injected input (clean no-op).
     string raw = postCommandRaw(`{"id":"mesh.subdivide"}`);
 

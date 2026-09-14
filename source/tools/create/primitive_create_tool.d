@@ -914,9 +914,8 @@ public:
 
     protected override bool isIdle() const { return state == RadialState.Idle; }
     protected override bool showHandles() const { return state >= RadialState.BaseSet; }
-    // Commit guard mirror of every pre-refactor group's deactivate()/
-    // hasUncommittedEdit(): compound, NOT `state != Idle` — a sub-epsilon
-    // height drag commits nothing.
+    // Shared create-tool commit predicate: compound, NOT `state != Idle` — a
+    // sub-epsilon height drag commits nothing. Task 0407; primitive tests.
     protected override bool willCommit() const {
         return (state == RadialState.BaseSet)
             || (state >= RadialState.DrawingHeight && currentHeight() > 1e-5f);

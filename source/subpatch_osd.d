@@ -624,9 +624,10 @@ private void emitShortCageFaces_(ref Mesh result, ref const Mesh cage,
     }
 }
 
-/// Returns `Mesh.init` when OSD can't build a topology, when the mask has
-/// neither a refinable surface nor a marked two-corner line, or when a marked
-/// surface face is degenerate (zero-area / collinear / repeated corners).
+/// Returns `Mesh.init` when OSD cannot build topology, when the mask has no
+/// refinable surface or marked two-corner line, or when a marked refinable
+/// face is zero-area/collinear. Short faces use
+/// their separate split/pass-through law. Task 5911; subdivide_short_face.json.
 ///
 /// Corner-provenance (task 0901, `CornerDrop.SubpatchCage` / `SubdivideNoLaw`):
 /// verified NOT APPLICABLE. `cage` is `ref const` — the language forbids
@@ -670,11 +671,9 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             continue;
         }
         if (!marked) continue;
-        // Reject-whole: a degenerate marked face refuses the entire
-        // subdivide rather than emit coincident verts from a bad input
-        // (out of scope: partial skip-face refine — see mesh-robustness
-        // plan). The caller (`commands.mesh.subdivide`) treats an empty
-        // result as a clean no-op.
+        // Any invalid marked refinable face refuses this operation; the caller
+        // treats the empty result as a clean no-op. Short faces took their
+        // separate branch above. Task 5911; test_subdivide_degenerate.d.
         if (isDegenerateSubdivFace_(cage, fi)) return Mesh.init;
         markedFaceIndices ~= cast(int)fi;
         subTotalIndices  += cast(int)cage.faces[fi].length;

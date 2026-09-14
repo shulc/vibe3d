@@ -76,10 +76,10 @@ class FalloffPresetCommand : Command {
 
         noteUserStageChoice(g_pipeCtx.pipeline, fo, typeName_ != "none");
 
-        // Explicit user selection → lock the falloff so it survives a tool
-        // switch (reference parity). Selecting `none` clears the lock. Preset-bundled
-        // falloffs set their type via Stage.setAttr directly (not this command),
-        // so they never lock and stay transient.
+        // A direct type choice locks the stage until `none`. If the armed preset
+        // had claimed it, the pick breaks that preset: its other claimed stages
+        // become user choices (C5b); an unclaimed slot breaks nothing (X1p).
+        // Task 5911; fixture tool_drop_pipe_stages.json.
         fo.userLocked = (typeName_ != "none");
 
         // Mid-session immediacy: if a tool already has a live evaluation

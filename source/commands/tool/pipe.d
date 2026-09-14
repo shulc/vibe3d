@@ -127,11 +127,11 @@ class ToolPipeAttrCommand : Command {
             noteUserStageChoice(g_pipeCtx.pipeline, matched, false);
         }
 
-        // A user-driven falloff TYPE change (the status-bar Falloff pulldown
-        // fires `tool.pipe.attr falloff type <X>`) locks the stage so it
-        // survives a tool switch — reference parity (2026-06-16). type=none clears
-        // the lock. Preset-bundle config applies via Stage.setAttr DIRECTLY (not
-        // through this command), so it never locks and stays transient.
+        // A falloff TYPE write here locks the stage until `none`; if the armed
+        // preset had claimed it, the preset breaks (its other claimed stages
+        // become user choices, C5b; an unclaimed slot breaks nothing, X1p). An
+        // action-centre/axis MODE write is loose (L1-L3). Task 5911; fixture
+        // tool_drop_pipe_stages.json.
         if (attrName_ == "type") {
             import toolpipe.stages.falloff : FalloffStage;
             if (auto fo = cast(FalloffStage) matched)

@@ -209,8 +209,9 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // `seeds_[]` and immediately materialises the default-position cut) →
 // SCRUB (mesh drag / HUD marker / panel edit, all converging on
 // `scrubPosition()`) → COMMIT (Enter, or tool-drop while armed+built, one
-// `MeshSessionEdit` undo entry, then RE-ARMS) → CANCEL (Esc/RMB, restores
-// `before_`, no undo entry). See doc/loop_slice_slider_hud_impl_plan.md for
+// `MeshSessionEdit` undo entry, then RE-ARMS) → CANCEL (RMB/Ctrl+Z restores
+// `before_`, no undo entry). Esc drops the armed tool through the editor
+// ladder. Task 5911; see doc/loop_slice_slider_hud_impl_plan.md for
 // the full mechanism-by-mechanism rationale (write-point redo invalidation
 // — task 0429, superseding the plan's navHistory redo-cancel —
 // scene.reset's `dropArmedPreview()` call and the `armedKey_`

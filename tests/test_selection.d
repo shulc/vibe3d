@@ -90,7 +90,7 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
     assert(json["selectedFaces"].array.length == 0, "selectedFaces should be empty");
 }
 
-unittest { // The empty-pipe Esc ladder clears selection in the current type.
+unittest { // Esc rung 3 drops only the current geometry selection (task 5911).
     waitPlayerIdle();
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
