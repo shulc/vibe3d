@@ -10,7 +10,8 @@ import document : primaryModelSpace;
 import mesh : Mesh, MapDomain, layerBBoxMinMax;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
-import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient;
+import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient,
+                           PresetClaimable;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
@@ -142,7 +143,7 @@ private static immutable IntEnumEntry[] shapeEntries = [
 //   `in`           : float, custom-shape tangent at t=0
 //   `out`          : float, custom-shape tangent at t=1
 // ---------------------------------------------------------------------------
-class FalloffStage : Stage, Operator, ToolSwitchTransient {
+class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     // Config field-set (type/shape/start/end/center/size/normal/pickedRadius/
     // connect/elementMode/steps/anchorRing/screenCx/…/mapName) — the SAME
     // struct FalloffPacket embeds, so evaluate()/snapshotConfigToPacket()/
@@ -163,6 +164,19 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // this flag, and so stays transient (resets on the next tool switch).
     // Cleared by reset() (full reset / SceneReset) and by selecting type=none.
     bool userLocked = false;
+    // Task 5911: preset ownership is distinct from a durable user choice.
+    private bool presetClaimed_ = false;
+
+    override bool presetClaimed() const nothrow @nogc { return presetClaimed_; }
+    override void claimForPreset() nothrow {
+        presetClaimed_ = true;
+        userLocked = false;
+    }
+    override void promoteClaimToUserChoice() nothrow {
+        userLocked = true;
+        presetClaimed_ = false;
+    }
+    override void dropPresetClaim() nothrow { presetClaimed_ = false; }
     // NOTE: the Element-falloff sphere RADIUS (wire attr `dist`), the
     // Selection "Steps" BFS-hop count, the Connected-Elements `connect` gate,
     // the Element pick-type `elementMode`, and the raw picked `anchorRing`
@@ -362,6 +376,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         connectMask.length   = 0;
         anchorPos_.length    = 0;
         userLocked   = false;   // full reset clears the user-lock (SceneReset)
+        presetClaimed_ = false;
         vertexMapWeights_.length = 0;
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
@@ -381,6 +396,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
     void installPreparedTransientReset() nothrow {
         if (userLocked) return;
+        presetClaimed_ = false;
         config = FalloffConfig.init;
         loopRing_.length = 0;
         connectMask_.length = 0;
@@ -1671,7 +1687,9 @@ private:
     public PreparedFalloffAutoFit prepareAutoFitForActivation(FalloffType nextType) {
         PreparedFalloffAutoFit fit;
         fit.type = nextType;
-        if (userLocked || mesh_ is null) return fit;
+        // Task 5911: a preset-written stage starts clean; round-6 evidence:
+        // toolcards/tool_drop_pipe_stages/findings.md § ROUND 6.
+        if (mesh_ is null) return fit;
         if (nextType != FalloffType.Linear &&
             nextType != FalloffType.Radial &&
             nextType != FalloffType.Cylinder)
@@ -1722,7 +1740,7 @@ private:
     /// Commit a previously prepared activation fit without allocating or
     /// consulting mutable scene state.
     public void installPreparedAutoFit(in PreparedFalloffAutoFit fit) nothrow @nogc {
-        if (!fit.applies || fit.type != type || userLocked) return;
+        if (!fit.applies || fit.type != type) return;
         final switch (type) {
             case FalloffType.Linear:
                 start = fit.start;

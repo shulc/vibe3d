@@ -24,15 +24,19 @@ private:
 
     ActionCenterStage.Mode acenBefore_;
     bool acenLockedBefore_;
+    // Task 5911: claim bits are part of the prepared image's stale witness.
+    bool acenClaimedBefore_;
     uint acenEpochBefore_;
     AxisStage.Mode axisBefore_;
     bool axisLockedBefore_;
+    bool axisClaimedBefore_;
     uint axisEpochBefore_;
     PreparedConstrainCompositionProjection constrainBefore_;
     FalloffType falloffTypeBefore_;
     FalloffShape falloffShapeBefore_;
     ElementMode falloffModeBefore_;
     bool falloffTransparentBefore_, falloffLockedBefore_;
+    bool falloffClaimedBefore_;
     uint falloffEpochBefore_;
 
     bool hasAcen_, hasAxis_, hasFalloff_;
@@ -61,9 +65,11 @@ public:
 
         result.acenBefore_ = result.acen_.mode;
         result.acenLockedBefore_ = result.acen_.userLocked;
+        result.acenClaimedBefore_ = result.acen_.presetClaimed();
         result.acenEpochBefore_ = result.acen_.slotEpoch;
         result.axisBefore_ = result.axis_.mode;
         result.axisLockedBefore_ = result.axis_.userLocked;
+        result.axisClaimedBefore_ = result.axis_.presetClaimed();
         result.axisEpochBefore_ = result.axis_.slotEpoch;
         result.constrainBefore_ = result.constrain_.capturePreparedCompositionProjection();
         result.falloffTypeBefore_ = result.falloff_.type;
@@ -71,6 +77,7 @@ public:
         result.falloffModeBefore_ = result.falloff_.elementMode;
         result.falloffTransparentBefore_ = result.falloff_.transparent;
         result.falloffLockedBefore_ = result.falloff_.userLocked;
+        result.falloffClaimedBefore_ = result.falloff_.presetClaimed();
         result.falloffEpochBefore_ = result.falloff_.slotEpoch;
 
         result.acenMode_ = result.acen_.userLocked
@@ -89,22 +96,33 @@ public:
         foreach (stageId, stageAttrs; attrs) {
             switch (stageId) {
             case "actionCenter":
+                result.hasAcen_ = true;
+                result.acenMode_ = ActionCenterStage.Mode.None;
                 foreach (name, value; stageAttrs) {
                     if (name != "mode" || !ActionCenterStage.parsePreparedMode(value, result.acenMode_))
                         throw new Exception("invalid prepared action-center preset attr");
-                    result.hasAcen_ = true;
                     result.acenWire_ = value.idup;
                 }
+                if (result.acenWire_.length == 0)
+                    throw new Exception("prepared action-center preset requires mode");
                 break;
             case "axis":
+                result.hasAxis_ = true;
+                result.axisMode_ = AxisStage.Mode.None;
                 foreach (name, value; stageAttrs) {
                     if (name != "mode" || !AxisStage.parsePreparedMode(value, result.axisMode_))
                         throw new Exception("invalid prepared axis preset attr");
-                    result.hasAxis_ = true;
                     result.axisWire_ = value.idup;
                 }
+                if (result.axisWire_.length == 0)
+                    throw new Exception("prepared axis preset requires mode");
                 break;
             case "falloff":
+                result.hasFalloff_ = true;
+                result.falloffType_ = FalloffType.None;
+                result.falloffShape_ = FalloffShape.Linear;
+                result.falloffMode_ = ElementMode.Auto;
+                result.falloffTransparent_ = false;
                 foreach (name, value; stageAttrs) {
                     switch (name) {
                     case "type":
@@ -131,7 +149,6 @@ public:
                     throw new Exception("prepared falloff preset requires type");
                 result.falloffShapeWire_ =
                     FalloffStage.preparedShapeWire(result.falloffShape_).idup;
-                result.hasFalloff_ = true;
                 break;
             default: throw new Exception("unsupported prepared pipe preset stage");
             }
@@ -144,18 +161,24 @@ public:
 
     bool validate() const nothrow @nogc {
         return acen_.mode == acenBefore_ && acen_.userLocked == acenLockedBefore_ &&
+            acen_.presetClaimed() == acenClaimedBefore_ &&
             acen_.slotEpoch == acenEpochBefore_ && axis_.mode == axisBefore_ &&
             axis_.userLocked == axisLockedBefore_ && axis_.slotEpoch == axisEpochBefore_ &&
+            axis_.presetClaimed() == axisClaimedBefore_ &&
             constrain_.matchesPreparedCompositionProjection(constrainBefore_) &&
             falloff_.type == falloffTypeBefore_ && falloff_.shape == falloffShapeBefore_ &&
             falloff_.elementMode == falloffModeBefore_ &&
             falloff_.transparent == falloffTransparentBefore_ &&
             falloff_.userLocked == falloffLockedBefore_ &&
+            falloff_.presetClaimed() == falloffClaimedBefore_ &&
             falloff_.slotEpoch == falloffEpochBefore_;
     }
 
     void install() nothrow {
         if (gizmoHost_ !is null) gizmoHost_.cancelDrag();
+        if (hasAcen_) acen_.claimForPreset();
+        if (hasAxis_) axis_.claimForPreset();
+        if (hasFalloff_) falloff_.claimForPreset();
         acen_.installPreparedTransientReset();
         axis_.installPreparedTransientReset();
         constrain_.installPreparedTransientReset();
@@ -167,6 +190,9 @@ public:
                 falloffMode_, falloffTransparent_, falloffTypeWire_, falloffShapeWire_);
             falloff_.installPreparedAutoFit(falloffAutoFit_);
         }
+        if (hasAcen_) acen_.claimForPreset();
+        if (hasAxis_) axis_.claimForPreset();
+        if (hasFalloff_) falloff_.claimForPreset();
     }
 }
 

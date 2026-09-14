@@ -8,7 +8,8 @@ import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
 import mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;
 import seltype : SelType;
-import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient;
+import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient,
+                           PresetClaimable;
 import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
@@ -89,7 +90,7 @@ __gshared ulong g_acenBboxMembershipRebuilds;
 // 7.2a implements Auto + Select + SelectAuto only — Origin is trivial
 // (constant), the others land in subsequent subphases.
 // ---------------------------------------------------------------------------
-class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
+class ActionCenterStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     // Phase 1 of doc/operator_refactor_plan.md: persistent packet for
     // VectorStack publishing. Updated in evaluate(VectorStack) from the
     // ToolState result of the legacy evaluate path.
@@ -363,6 +364,19 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
     // resetTransientPipeStages skips stages with userLocked=true so
     // an explicit `actr.local` (or any other actr.*) survives tool.set.
     bool userLocked = false;
+    // Task 5911: preset ownership is distinct from a durable user choice.
+    private bool presetClaimed_ = false;
+
+    override bool presetClaimed() const nothrow @nogc { return presetClaimed_; }
+    override void claimForPreset() nothrow {
+        presetClaimed_ = true;
+        userLocked = false;
+    }
+    override void promoteClaimToUserChoice() nothrow {
+        userLocked = true;
+        presetClaimed_ = false;
+    }
+    override void dropPresetClaim() nothrow { presetClaimed_ = false; }
 
 private:
     // Stage holds direct refs to the live mesh + edit mode; re-evaluating
@@ -553,6 +567,7 @@ public:
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
         userLocked       = false;
+        presetClaimed_   = false;
         cancelFrozen     = false;
         cancelSnap       = Pin.init;
         cancelElementSnap = Pin.init;
@@ -602,6 +617,7 @@ public:
 
     void installPreparedTransientReset() nothrow {
         if (userLocked) return;
+        presetClaimed_    = false;
         mode              = Mode.None;
         userPin           = Pin.init;
         // elementPin deliberately survives tool switches (task 1530).

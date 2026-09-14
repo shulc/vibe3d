@@ -235,7 +235,7 @@ unittest { // all and only the 11 size-bearing shipped presets are covered
     }
 }
 
-unittest { // an explicitly chosen falloff retains user-authored geometry
+unittest { // a displacing preset does not inherit user-authored geometry
     buildRig();
     selectVertices("[]");
     cmd("falloff.linear");
@@ -243,9 +243,24 @@ unittest { // an explicitly chosen falloff retains user-authored geometry
     cmd(`tool.pipe.attr falloff end "6,5,4"`);
     cmd("tool.set xfrm.taper on");
     auto attrs = falloffAttrs();
+    assert(near(vec3(attrs["start"]), [1.0f, 2.0f, -1.0f]) &&
+           near(vec3(attrs["end"]), [5.0f, 2.0f, -1.0f]) &&
+           !near(vec3(attrs["start"]), [9.0f, 8.0f, 7.0f]) &&
+           !near(vec3(attrs["end"]), [6.0f, 5.0f, 4.0f]),
+        "a displacing preset must start from the clean taper image");
+}
+
+unittest { // an unwritten locked falloff remains ours until card 5914
+    buildRig();
+    selectVertices("[]");
+    cmd("falloff.linear");
+    cmd(`tool.pipe.attr falloff start "9,8,7"`);
+    cmd(`tool.pipe.attr falloff end "6,5,4"`);
+    cmd("tool.set TransformMove on");
+    auto attrs = falloffAttrs();
     assert(near(vec3(attrs["start"]), [9.0f, 8.0f, 7.0f]) &&
            near(vec3(attrs["end"]), [6.0f, 5.0f, 4.0f]),
-        "userLocked falloff geometry was overwritten by tool activation");
+        "KNOWN divergence (round 6 F2): card 5914 will flip this census on purpose");
 }
 
 unittest { // axisless sizing writes every vanished extent as exact zero

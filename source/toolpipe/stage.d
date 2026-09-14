@@ -311,6 +311,18 @@ interface ToolSwitchTransient {
     void resetTransient();
 }
 
+// A preset claim marks exactly the transient stage slots written by the armed
+// preset. The claim clears an inherited user lock, travels with that preset
+// value, and is cleared by either reset path; a later user-choice promotion is
+// the only operation that turns it back into durable session state. Task 5911;
+// the public law is pinned by tests/fixtures/tool_drop_pipe_stages.json.
+interface PresetClaimable {
+    bool presetClaimed() const nothrow @nogc;
+    void claimForPreset() nothrow;
+    void promoteClaimToUserChoice() nothrow;
+    void dropPresetClaim() nothrow;
+}
+
 // ---------------------------------------------------------------------------
 // Convenience: a "no-op" placeholder stage. Useful as a default insert
 // for a task slot before a concrete stage is registered, and as a smoke

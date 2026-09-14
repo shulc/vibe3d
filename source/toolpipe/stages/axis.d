@@ -8,7 +8,8 @@ import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrix
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype : SelType;
-import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient;
+import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient,
+                           PresetClaimable;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
@@ -46,7 +47,7 @@ import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
 // -1 in 7.2 — populated when an axis-locked tool needs the principal
 // axis index (out of scope for 7.2).
 // ---------------------------------------------------------------------------
-class AxisStage : Stage, Operator, ToolSwitchTransient {
+class AxisStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     // Phase 1 of doc/operator_refactor_plan.md.
     private AxisPacket _publishedPacket;
 
@@ -222,6 +223,19 @@ class AxisStage : Stage, Operator, ToolSwitchTransient {
     // userLocked: true when mode was set by an explicit `actr.*` command
     // (ActrPresetCommand). resetTransientPipeStages skips locked stages.
     bool userLocked  = false;
+    // Task 5911: preset ownership is distinct from a durable user choice.
+    private bool presetClaimed_ = false;
+
+    override bool presetClaimed() const nothrow @nogc { return presetClaimed_; }
+    override void claimForPreset() nothrow {
+        presetClaimed_ = true;
+        userLocked = false;
+    }
+    override void promoteClaimToUserChoice() nothrow {
+        userLocked = true;
+        presetClaimed_ = false;
+    }
+    override void dropPresetClaim() nothrow { presetClaimed_ = false; }
 
 private:
     // Cached upstream view + workplane — Auto mode in absence of an
@@ -291,6 +305,7 @@ public:
         manualFwd   = Vec3(0, 0, 1);
         axIndex     = -1;
         userLocked  = false;
+        presetClaimed_ = false;
         publishState();
     }
 
@@ -304,6 +319,7 @@ public:
 
     void installPreparedTransientReset() nothrow {
         if (userLocked) return;
+        presetClaimed_ = false;
         mode        = Mode.None;
         manualRight = Vec3(1, 0, 0);
         manualUp    = Vec3(0, 1, 0);

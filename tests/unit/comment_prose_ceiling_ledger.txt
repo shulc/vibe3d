@@ -9,8 +9,8 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 533
-task-citation-lines 5110
-citing-files 404
+task-citation-lines 5116
+citing-files 405
 long-comment-runs 279
 files-with-long-runs 148
 
@@ -290,6 +290,7 @@ allow source/pie_state.d 1
 allow source/pipe_gizmo_host.d 4
 allow source/plane_bytes.d 1
 allow source/prefs.d 31
+allow source/prepared_pipe_activation.d 1
 allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 3
@@ -325,11 +326,11 @@ allow source/toolpipe/obbox.d 2
 allow source/toolpipe/package.d 1
 allow source/toolpipe/packets.d 11
 allow source/toolpipe/pipeline.d 8
-allow source/toolpipe/stage.d 10
-allow source/toolpipe/stages/actcenter.d 57
-allow source/toolpipe/stages/axis.d 15
+allow source/toolpipe/stage.d 11
+allow source/toolpipe/stages/actcenter.d 58
+allow source/toolpipe/stages/axis.d 16
 allow source/toolpipe/stages/constrain.d 8
-allow source/toolpipe/stages/falloff.d 32
+allow source/toolpipe/stages/falloff.d 34
 allow source/toolpipe/stages/path.d 1
 allow source/toolpipe/stages/snap.d 12
 allow source/toolpipe/stages/symmetry.d 15
