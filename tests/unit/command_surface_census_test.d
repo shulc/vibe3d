@@ -62,7 +62,16 @@ private string[] quotedValuesBetween(string src, string anchor, string terminato
 private string[] dynamicRegisteredCommandIds(string registrationText)
 {
     string[] result;
-    foreach (m; matchAll(registrationText, actrPresetRe))
+    const codeOnly = blankNonCode(registrationText);
+    const withComments = blankNonCode(registrationText, true);
+    assert(codeOnly.length == registrationText.length
+        && withComments.length == registrationText.length,
+        "D comment projections changed registration text length");
+    auto commentsBlanked = registrationText.dup;
+    foreach (i; 0 .. commentsBlanked.length)
+        if (codeOnly[i] != withComments[i] && commentsBlanked[i] != '\n')
+            commentsBlanked[i] = ' ';
+    foreach (m; matchAll(commentsBlanked, actrPresetRe))
         result ~= "actr." ~ m[1].idup;
     assert(result.length >= 11,
         format("only %d action-center command registrations were expanded; expected at least 11",

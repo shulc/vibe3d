@@ -232,12 +232,12 @@ unittest {
 //     (task 4066, row 9).
 // ---------------------------------------------------------------------------
 //
-// `registration.d` wraps each registration family in `with (app) { … }` — the
-// 315 factory lambdas inside read bare EditorApp names through it, and its
+// `registration.d` wraps its remaining broad registration families in
+// `with (app) { … }` — their factory lambdas read bare EditorApp names through it, and its
 // header says so — and `input_router.d` opens it in three handlers, each with
 // a comment on the `buildToolVts` rebinding hazard beside it. Those blocks are
 // deliberate. What this row refuses is a FOURTH input_router block or a
-// fourteenth registration one born without anyone deciding: the failure mode
+// twelfth registration one born without anyone deciding: the failure mode
 // is the one described at the top of this file, a bare name that silently
 // REBINDS to an `EditorApp` member of the same spelling, and it is invisible
 // at the point of introduction. So the set is enumerated, not merely
@@ -260,7 +260,6 @@ private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
     LedgerRow("registerCommands", 1, "top-level command registrations"),
     LedgerRow("registerItemCommands", 1, "item commands"),
-    LedgerRow("registerPipeStageCommands", 1, "pipe-stage commands"),
     LedgerRow("registerViewCommands", 1, "view commands"),
     LedgerRow("registerFileCommands", 1, "file commands"),
     LedgerRow("registerMeshCommands", 1, "mesh commands"),
@@ -323,8 +322,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 15)
-        problems ~= format("\n    with(app) population — recorded 15, scanner "
+    if (ledgerHits.length != 14)
+        problems ~= format("\n    with(app) population — recorded 14, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

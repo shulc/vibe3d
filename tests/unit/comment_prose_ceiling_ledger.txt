@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 541
+source-files 542
 task-citation-lines 5138
-citing-files 413
+citing-files 414
 long-comment-runs 276
 files-with-long-runs 147
 
@@ -289,6 +289,7 @@ allow source/perf_probe.d 47
 allow source/pie_geometry.d 1
 allow source/pie_menus.d 1
 allow source/pie_state.d 1
+allow source/pipe_command_registration.d 1
 allow source/pipe_gizmo_host.d 4
 allow source/plane_bytes.d 1
 allow source/prefs.d 31
@@ -297,7 +298,7 @@ allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 3
 allow source/record_observer_hub.d 1
-allow source/registration.d 59
+allow source/registration.d 58
 allow source/registry.d 7
 allow source/remesh/region_stitch.d 2
 allow source/remesh/remesh_job.d 15

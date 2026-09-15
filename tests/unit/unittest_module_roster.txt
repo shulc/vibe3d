@@ -187,6 +187,7 @@ tests.unit.commands.mesh.smooth_result_builder_test
 tests.unit.commands.mesh.split_edge_provenance_test
 tests.unit.commands.mesh.symmetrize_test
 tests.unit.commands.mesh.symmetry_delta_test
+tests.unit.commands.pipe_command_registration_test
 tests.unit.commands.select.loop_test
 tests.unit.commands.select.selection_command_registration_test
 tests.unit.commands.test_undo_flags_test

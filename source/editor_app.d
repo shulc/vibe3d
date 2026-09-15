@@ -753,7 +753,6 @@ struct EditorApp {
     // ---- (а) pointer-backed, wired AFTER the ToolHost block in main()
     //      (Span A precedes ToolHost's declaration and never touches it) ----
     ToolHost* toolHostPtr;
-    @property ref ToolHost toolHost() { return *toolHostPtr; }
 
     // ---- modal clusters (grouped sub-structs, see above) ----
     Ai3dModalRefs   ai3dRefs;

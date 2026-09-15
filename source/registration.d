@@ -115,6 +115,7 @@ import commands.viewport.master       : ViewportMaster;
 import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import pipe_command_registration : registerPipeStageCommands;
 import selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
@@ -206,12 +207,7 @@ import commands.layer.commands : LayerAttr;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
-import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
-                                  FalloffAutoSizeCommand;
 import commands.path.define    : PathDefineCommand;
-import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
-                                WorkplaneRotateCommand, WorkplaneOffsetCommand,
-                                WorkplaneAlignToSelectionCommand;
 import command;
 import registry;
 import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -971,8 +967,7 @@ private void registerEditTools(EditorApp app) {
 
 
 /// Registers the remaining `reg.commandFactories[id]` entries — tool.*,
-/// ui.*, layer.*, ai3d.*, workplane.*, actr.*, falloff.*, select.*, mesh.*,
-/// history.*, and macro.*.
+/// ui.*, layer.*, ai3d.*, select.*, mesh.*, history.*, and macro.*.
 ///
 /// Families that still need broad EditorApp state retain their local
 /// `with (app)` bodies. Extracted families instead receive explicit live
@@ -995,7 +990,9 @@ void registerCommands(EditorApp app) {
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         app.toolHostPtr);
     registerItemCommands(app);
-    registerPipeStageCommands(app);
+    registerPipeStageCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        app.toolHostPtr);
     registerSelectionCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         SelectionTypeDoors(app.sessionOwner.editModePtr(),
@@ -1208,114 +1205,6 @@ private void registerItemCommands(EditorApp app) {
                 ai3dController.probeHealth(
                     workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
             });
-    }
-    }
-    }
-    }
-}
-
-/// Workplane, action centre and falloff — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerPipeStageCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-
-    // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
-    // in the global tool pipe.
-    reg.commandFactories["workplane.reset"] = () => cast(Command)
-        new WorkplaneResetCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["workplane.edit"] = () => cast(Command)
-        new WorkplaneEditCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["workplane.rotate"] = () => cast(Command)
-        new WorkplaneRotateCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["workplane.offset"] = () => cast(Command)
-        new WorkplaneOffsetCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["workplane.alignToSelection"] = () => cast(Command)
-        new WorkplaneAlignToSelectionCommand(&mesh(), cameraView, editMode);
-
-    // Phase 7.2f: actr.<mode> — combined presets that flip ACEN + AXIS
-    // stages atomically. Granular tool.pipe.attr
-    // forms remain available for mix-and-match. Mappings per
-    // phase7_2_plan.md §"Canonical user commands".
-    {
-        import commands.actr : ActrPresetCommand;
-        // (preset, acenMode, axisMode) tuples.
-        static struct Preset { string name; string acen; string axis; }
-        immutable Preset[] presets = [
-            Preset("auto",       "auto",       "auto"),
-            Preset("select",     "select",     "select"),
-            Preset("selectauto", "selectauto", "selectauto"),
-            Preset("element",    "element",    "element"),
-            Preset("local",      "local",      "local"),
-            Preset("origin",     "origin",     "world"),    // axis at origin = world
-            Preset("screen",     "screen",     "screen"),
-            Preset("border",     "border",     "select"),   // border edges + selection-aligned axis
-            Preset("none",       "none",       "none"),     // "(none)" — drops both, world fallback
-            Preset("pivot",      "pivot",      "pivot"),    // 0082: item pivot
-            Preset("parent",     "parent",     "parent"),   // 0082: parent item frame
-        ];
-        // IIFE capture by value — the bare-foreach + lambda pattern
-        // closes over the loop variable by reference in D, so without
-        // this all 8 factories would end up calling with the LAST
-        // iteration's mode strings.
-        Command delegate() makeFactory(string nm, string a, string x) {
-            return () => cast(Command)
-                new ActrPresetCommand(&mesh(), cameraView, editMode, nm, a, x);
-        }
-        foreach (p; presets) {
-            reg.commandFactories["actr." ~ p.name] =
-                makeFactory(p.name, p.acen, p.axis);
-        }
-    }
-
-    // Bare named falloff sub-tools: falloff.<type> sets the falloff (WGHT)
-    // stage's `type` and keeps the active transform tool (NOT a tool that
-    // replaces the active tool, NOT a transform bundle). Same write path as
-    // the status-bar Falloff pulldown (`tool.pipe.attr falloff type <type>`),
-    // so state publication + live re-eval side-effects are identical. The two
-    // BUNDLE presets falloff.element / falloff.selection
-    // (base xfrm.transform + pipe.falloff.type) live in config/tool_presets.yaml
-    // and stay separate.
-    {
-        import commands.falloff : FalloffPresetCommand,
-                                   FalloffAddCommand, FalloffRemoveCommand,
-                                   FalloffClearCommand,
-                                   FalloffAutoSizeCommand, FalloffReverseCommand;
-        // IIFE capture by value — same closure-over-loop-variable trap the
-        // actr.* block above documents.
-        Command delegate() makeFalloffFactory(string ty) {
-            return () => cast(Command)
-                new FalloffPresetCommand(&mesh(), cameraView, editMode, toolHost, ty);
-        }
-        static immutable string[] falloffTypes =
-            ["linear", "radial", "cylinder", "screen", "lasso", "vertexMap"];
-        foreach (ty; falloffTypes)
-            reg.commandFactories["falloff." ~ ty] = makeFalloffFactory(ty);
-
-        // Multi-falloff stacking verbs (Phase 4): add/remove/clear extra
-        // falloff instances. `falloff.add <type>` / `falloff.remove <id>`
-        // take a positional arg wired in injectToolCommandPositional below.
-        reg.commandFactories["falloff.add"] = () => cast(Command)
-            new FalloffAddCommand(&mesh(), cameraView, editMode, toolHost);
-        reg.commandFactories["falloff.remove"] = () => cast(Command)
-            new FalloffRemoveCommand(&mesh(), cameraView, editMode, toolHost);
-        reg.commandFactories["falloff.clear"] = () => cast(Command)
-            new FalloffClearCommand(&mesh(), cameraView, editMode, toolHost);
-
-        // Falloff form action buttons: `falloff.autosize` (axisless fit),
-        // `falloff.autosize <axis>` (Linear X/Y/Z fit), and `falloff.reverse`
-        // (swap start/end). The optional axis is wired below.
-        reg.commandFactories["falloff.autosize"] = () => cast(Command)
-            new FalloffAutoSizeCommand(&mesh(), cameraView, editMode, toolHost);
-        reg.commandFactories["falloff.reverse"] = () => cast(Command)
-            new FalloffReverseCommand(&mesh(), cameraView, editMode, toolHost);
     }
     }
     }
