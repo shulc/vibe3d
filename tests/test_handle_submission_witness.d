@@ -72,12 +72,19 @@ private JSONValue passAdvance(long n, string what) {
     JSONValue current;
     foreach (_; 0 .. 200) {
         current = snap();
-        if (generation(current) >= first + n) return current;
+        // lastScene.seq 1 is the frame the HTTP-thread reset may have landed
+        // inside (cells bumped before it are lost, passes after it counted);
+        // seq >= 2 began after the reset returned and only grows from here.
+        if (generation(current) >= first + n
+            && number(current["lastScene"]["seq"], "lastScene.seq") >= 2)
+            return current;
         Thread.sleep(2.msecs);
     }
     assert(false, format("%s: handle-pass generation did not advance by %d "
-                         ~ "after 200 polls (from %d to %d)",
-                         what, n, first, generation(current)));
+                         ~ "with a post-reset scene frame after 200 polls "
+                         ~ "(from %d to %d, lastScene.seq=%d)",
+                         what, n, first, generation(current),
+                         number(current["lastScene"]["seq"], "lastScene.seq")));
 }
 
 private JSONValue frameAdvance(long n, string what) {
