@@ -55,8 +55,8 @@ public:
         import std.file : exists, remove;
         import viewport : LayoutPreset;
 
-        // Same persisted/live mirror as registration.d's file.new and
-        // scene.reset onViewportReset delegates; the rationale lives there.
+        // Same persisted/live mirror as SceneResetEffects.resetViewport;
+        // the rationale lives there.
         prefs_.viewportLayout = LayoutPreset.Single;
         bool restored;
         if (!testMode_ && layoutIniPath_.length != 0) {

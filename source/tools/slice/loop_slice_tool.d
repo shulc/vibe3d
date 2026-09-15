@@ -885,9 +885,10 @@ public:
         // commit point. A mid-scrub interruption, or an armed-but-unbuilt
         // edge case, cancels instead. Both commitEdit()/cancelLiveEdit()
         // self-guard against a mesh swapped out from under us (see their
-        // bodies) — but scene.reset/file.new calls `dropArmedPreview()`
-        // explicitly before this ever runs, so `armed_` is already false at
-        // that remaining document-replace site and this branch is a no-op.
+        // bodies). Both reset doors drop the tool earlier, at the scene
+        // reset's disarm step, before the mesh is replaced; `file.new`'s
+        // `dropArmedPreview()` is only a fallback, and the guards cover the
+        // reset callback being reused without that disarm step.
         if (active && armed_) {
             if (built_) commitEdit();
             else        cancelLiveEdit();

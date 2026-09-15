@@ -2543,8 +2543,8 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     Thread.sleep(600.msecs);
 
     // --- The reset that makes the NEXT toggle a genuine miss. -----------
-    // scene.reset's hook (source/registration.d) runs
-    // deactivate() -> SubpatchPreview.dropTopologyCache(), which drops
+    // SceneResetEffects.resetToolEffects runs deactivate() then
+    // SubpatchPreview.dropTopologyCache(), which drops
     // both cache layers and leaves the scratch buffers hot. Note that WITHOUT
     // destroyCache() this is not merely weaker, it is wrong: the topology key
     // hashes only the cage's (topology, level, sharpness) tuple, so resetting

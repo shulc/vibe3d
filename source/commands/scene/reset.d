@@ -18,13 +18,12 @@ import params : Param, wireArgs;
 class SceneReset : Command {
     private EditMode*        editModePtr;
     private void delegate()  onResetTool;
-    // Viewport reset (V3): mirrors onResetTool exactly — an optional,
+    // Viewport reset (V3): pairs with onResetTool as a separate optional,
     // nullable delegate fired at the point the old direct `viewPtr.reset()`
-    // used to run. Wired by BOTH the `file.new` and `scene.reset` app
-    // factories to `() => vpm.resetToDefault()`, so every dispatch path
-    // (menu, keyboard shortcut, HTTP `/api/command`) resets the viewport
-    // uniformly with no per-site hook or command-id dispatch logic. Null in
-    // headless/unit construction (no-op).
+    // used to run. Both factories bind it to
+    // `SceneResetEffects.resetViewport`, so every dispatch path resets the
+    // viewport uniformly without per-site effect copies. Null in headless/unit
+    // construction (no-op).
     private void delegate()  onViewportReset;
     // Document handle (layers Stage 2): reset collapses the document to EXACTLY
     // one default layer. Optional — null in unit/headless construction, where

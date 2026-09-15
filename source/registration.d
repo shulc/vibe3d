@@ -193,6 +193,7 @@ import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
+import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
@@ -429,6 +430,12 @@ version (unittest)
 Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
     registerTransformTools(app);
     return app.reg.toolFactories[key]();
+}
+
+version (unittest)
+void registerSceneResetFamiliesForTest(EditorApp app, SceneResetEffects resetEffects) {
+    registerFileCommands(app, resetEffects);
+    registerSceneLifecycleCommands(app, resetEffects);
 }
 
 /// Generator-preview and topology tools — one family of the registration table (task 0722, audit
@@ -997,9 +1004,11 @@ void registerCommands(EditorApp app) {
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()));
-    registerFileCommands(app);
+    registerFileCommands(app, SceneResetEffects(app.vpm, app.subpatchPreviewPtr,
+        &g_prefs, app.dropActiveTool, app.resetAllPipeStages));
     registerMeshCommands(app);
-    registerSceneLifecycleCommands(app);
+    registerSceneLifecycleCommands(app, SceneResetEffects(app.vpm, app.subpatchPreviewPtr,
+        &g_prefs, app.dropActiveTool, app.resetAllPipeStages));
     registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()),
@@ -1323,7 +1332,7 @@ private void registerViewCommands(EditorApp app) {
 /// reproduced verbatim rather than narrowed to what this family happens
 /// to use: narrowing it could silently re-point a bare identifier at a
 /// same-named EditorApp member.
-private void registerFileCommands(EditorApp app) {
+private void registerFileCommands(EditorApp app, SceneResetEffects resetEffects) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
@@ -1343,53 +1352,14 @@ private void registerFileCommands(EditorApp app) {
                                      // ever reused without that seam; in that
                                      // case they must still precede the
                                      // generic drop below, which here is
-                                     // dropActiveTool(sceneResetDrop).
+                                     // resetEffects.resetToolEffects().
                                      if (auto lst = cast(LoopSliceTool) activeTool)
                                          lst.dropArmedPreview();
                                      if (auto est = cast(EdgeSliceTool) activeTool)
                                          est.dropArmedPreview();
-                                     dropActiveTool(ToolTransition.sceneResetDrop);
-                                     resetAllPipeStages();
-                                     // A reset is a clean slate: force the
-                                     // subpatch preview OFF so a leftover
-                                     // `active` preview cannot carry into the
-                                     // fresh scene and turn tool-side cage
-                                     // uploads into stray mutationVersion bumps
-                                     // (see SubpatchPreview.deactivate).
-                                     subpatchPreview.deactivate();
-                                     // ... and drop the LRU(2) OSD topology
-                                     // cache too (task 1374). deactivate()
-                                     // clears the LAYER-2 key
-                                     // (reusablePreviewKey/Ready) but not this
-                                     // one; the reasons this is wanted on a
-                                     // reset — memory, and making the next Tab
-                                     // a genuine miss for `tab-cold` — are on
-                                     // OsdAccel.destroyCache.
-                                     //
-                                     // UNWITNESSED, DELIBERATELY SO: this CALL
-                                     // LINE is exercised by nothing. /api/reset
-                                     // routes to the `scene.reset` factory
-                                     // below, and no test or perf scenario
-                                     // drives `file.new` — deleting this line
-                                     // reddens nothing anywhere. Acceptable
-                                     // because the BODY is shared with
-                                     // `scene.reset` (SubpatchPreview.
-                                     // dropTopologyCache, mesh.d), which the
-                                     // perf lane's F-I8 does witness, so what
-                                     // is uncovered is one call, not a policy.
-                                     // Said here rather than left implied: the
-                                     // day File→New grows an HTTP route, drive
-                                     // this too.
-                                     subpatchPreview.dropTopologyCache();
+                                     resetEffects.resetToolEffects();
                                  },
-                                 () {
-                                     vpm.resetToDefault();
-                                     // Mirror the live reset (always Single)
-                                     // into prefs so a clean-shutdown save
-                                     // doesn't persist a stale multi-cell
-                                     // preset from before this reset.
-                                     g_prefs.viewportLayout = LayoutPreset.Single;
-                                 });
+                                 () => resetEffects.resetViewport());
         c.setDocument(&document());
         c.setEmpty(true);
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
@@ -1708,35 +1678,16 @@ private void registerMeshCommands(EditorApp app) {
 /// tool callbacks. Task 5810 moved only history/macro factories to the narrow
 /// registrar; evidence lives in history_macro_registration_test. The `with`
 /// chain stays verbatim so bare names cannot silently rebind.
-private void registerSceneLifecycleCommands(EditorApp app) {
+private void registerSceneLifecycleCommands(EditorApp app,
+        SceneResetEffects resetEffects) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
     reg.commandFactories["scene.reset"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                        &editMode(),
-                       () {
-                           dropActiveTool(ToolTransition.sceneResetDrop);
-                           resetAllPipeStages();
-                           // Clean slate: force the subpatch preview OFF (see
-                           // SubpatchPreview.deactivate / the scene.reset hook).
-                           subpatchPreview.deactivate();
-                           // ... and free the LRU(2) OSD topology cache, which
-                           // deactivate() does not touch (task 1374). THIS is
-                           // the witnessed copy: /api/reset routes here, so the
-                           // perf lane's `tab-cold` scenario drives it and F-I8
-                           // goes red if the body stops dropping the cache
-                           // (mutation M5 in the task file).
-                           subpatchPreview.dropTopologyCache();
-                       },
-                       () {
-                           vpm.resetToDefault();
-                           // Mirror the live reset (always Single) into
-                           // prefs so a clean-shutdown save doesn't persist
-                           // a stale multi-cell preset from before this
-                           // reset.
-                           g_prefs.viewportLayout = LayoutPreset.Single;
-                       });
+                       () => resetEffects.resetToolEffects(),
+                       () => resetEffects.resetViewport());
         c.setDocument(&document());
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));
         return cast(Command) c;

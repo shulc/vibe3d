@@ -596,7 +596,7 @@ public:
     /// Discard the standing preview WITHOUT touching the mesh or recording
     /// anything to history. Safe to call even when nothing is armed, and safe
     /// to call after scene.reset has already swapped the underlying mesh — see
-    /// that document-replace call site in app.d.
+    /// the defensive `file.new` callback in registration.d.
     public void dropArmedPreview() {
         armed_         = false;
         scrubbing_     = false;
