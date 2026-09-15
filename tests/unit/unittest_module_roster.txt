@@ -256,6 +256,7 @@ tests.unit.handles.gl_util_test
 tests.unit.harness_log_isolation_census_test
 tests.unit.history_http_adapter_test
 tests.unit.history_replay_boundary_test
+tests.unit.idle_handle_pose_census_test
 tests.unit.image_cache_test
 tests.unit.image_plane_test
 tests.unit.imgui_event_gate_test
@@ -477,6 +478,7 @@ tests.unit.tools.transform.item_xform_kernels_test
 tests.unit.tools.transform.transform_test
 tests.unit.tools.transform.xform_kernels_test
 tests.unit.trackball_test
+tests.unit.transform_compose_order_test
 tests.unit.transform_history_ownership_census_test
 tests.unit.transform_input_bank_census_test
 tests.unit.ui.availability_test

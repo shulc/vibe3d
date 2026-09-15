@@ -168,6 +168,19 @@ private Vec3 axisFor(size_t vi, int axisIdx,
     return ap.fwd[cid];
 }
 
+/// The unified transform's per-run fold (task 6207; doc/measured_laws.md §2).
+float[16] composeRunMatrix(bool hasT, const float[16] tr,
+                           bool hasR, const float[16] rot,
+                           bool hasS, const float[16] scaleLin)
+    pure nothrow @nogc @safe
+{
+    float[16] result = identityMatrix;
+    if (hasT) result = tr;
+    if (hasR) result = matMul4(rot, result);
+    if (hasS) result = matMul4(scaleLin, result);
+    return result;
+}
+
 private void axesFor(size_t vi,
                      TransformTool.ClusterAxes ap,
                      TransformTool.ClusterPivots cp,

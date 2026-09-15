@@ -148,7 +148,8 @@ import tools.transform.morph_route : MorphRoute, defaultStored;
 import tools.transform.xform_kernels :
     applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
-    BlendMode;
+    BlendMode,
+    composeRunMatrix;
 import command_history : CommandHistory, PreparedHistoryKind;
 import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
@@ -1458,7 +1459,7 @@ public:
         // different phases of one frame: app.d ticks the tool right after the
         // event drain, then builds the whole ImGui panel section, and only
         // then runs the N-cell FBO loop that calls `draw()`. The gizmo pose
-        // (`setSharedGizmoPose(queryActionCenter(vts), ...)`, the bottom of
+        // (`setSharedGizmoPose(idleHandleCentre(vts), ...)`, the bottom of
         // this method) was already written in the FIRST phase while
         // `cachedSubjType_` was still written in the SECOND — so for the
         // whole ImGui section the tool's two resident records of "what am I
@@ -1746,7 +1747,7 @@ public:
         else if (activeDrag is scaleSub)
             setSharedGizmoPose(scaleSub.handler.center, vts);
         else
-            setSharedGizmoPose(actionCenter, vts);
+            setSharedGizmoPose(idleHandleCentre(vts), vts);
         syncGpuMatrix();
     }
 
@@ -1770,7 +1771,7 @@ public:
         if (activeDrag is moveSub) image.center = moveSub.handler.center;
         else if (activeDrag is rotateSub) image.center = rotateSub.handler.center;
         else if (activeDrag is scaleSub) image.center = scaleSub.handler.center;
-        else image.center = queryActionCenter(vts);
+        else image.center = idleHandleCentre(vts);
         renderBasis(image.basisX, image.basisY, image.basisZ, vts);
         image.expectedGpuMatrix = gpuMatrix;
         image.nextGpuMatrix = projectedGpuMatrix(image.writeGpuMatrix);
@@ -2260,7 +2261,7 @@ public:
         else if (activeDrag is scaleSub)
             setSharedGizmoPose(scaleSub.handler.center, vts);
         else
-            setSharedGizmoPose(queryActionCenter(vts), vts);
+            setSharedGizmoPose(idleHandleCentre(vts), vts);
 
         // Cross-bank single-winner hover/capture (two-pass hit-test → draw):
         // ONE shared arbiter over the falloff handles (registered first =

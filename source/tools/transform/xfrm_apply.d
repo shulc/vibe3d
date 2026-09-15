@@ -617,30 +617,32 @@ mixin template XfrmApplyImpl() {
                              Vec3 rx, Vec3 ry, Vec3 rz,
                              Vec3 ax, Vec3 ay, Vec3 az,
                              Vec3 tx, Vec3 ty, Vec3 tz) {
-            float[16] M = identityMatrix;
+            float[16] tr = identityMatrix;
             if (hasT)
-                M = translationMatrix(tx * run.t.x
-                                    + ty * run.t.y
-                                    + tz * run.t.z);    // T (rightmost)
+                tr = translationMatrix(tx * run.t.x
+                                     + ty * run.t.y
+                                     + tz * run.t.z);
+            float[16] rotLin = identityMatrix;
             if (flagR) {
                 if (useRotM) {
-                    M = matMul4(rotM, M);   // world rotation matrix (truth)
+                    rotLin = rotM;
                 } else {
                     void rot(Vec3 axis, float deg) {
                         if (deg == 0) return;
-                        M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
-                                        deg * cast(float)(PI / 180.0)), M);
+                        rotLin = matMul4(
+                            pivotRotationMatrix(Vec3(0, 0, 0), axis,
+                                deg * cast(float)(PI / 180.0)), rotLin);
                     }
                     rot(rx, headlessRotate.x);
                     rot(ry, headlessRotate.y);
                     rot(rz, headlessRotate.z);
                 }
             }
+            float[16] scaleLin = identityMatrix;
             if (hasS)
-                M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), ax, ay, az,
-                                                  run.s.x, run.s.y,
-                                                  run.s.z), M);   // S (leftmost)
-            return M;
+                scaleLin = pivotScaleMatrixBasis(Vec3(0, 0, 0), ax, ay, az,
+                                                  run.s.x, run.s.y, run.s.z);
+            return composeRunMatrix(hasT, tr, flagR, rotLin, hasS, scaleLin);
         }
 
         // P-F Phase 2 — the GLOBAL fold's TRANSLATE term projects the run-absolute

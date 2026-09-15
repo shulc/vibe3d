@@ -20,6 +20,16 @@ module tools.transform.xfrm_handles;
 /// silently WINS over one of the same name mixed in. Never leave a copy behind.
 
 mixin template XfrmHandlesImpl() {
+    /// Idle T-only handles follow the translated run centre (task 6207).
+    private Vec3 idleHandleCentre(ref VectorStack vts) {
+        immutable Vec3 acen = queryActionCenter(vts);
+        if (!flagT || flagR || flagS || !runFrameValid) return acen;
+        return runFrameOrigin
+             + runFrameR * run.t.x
+             + runFrameU * run.t.y
+             + runFrameF * run.t.z;
+    }
+
     private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
         Vec3 bX, bY, bZ;
         renderBasis(bX, bY, bZ, vts);

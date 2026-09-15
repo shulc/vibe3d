@@ -1,0 +1,41 @@
+{
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-09-15",
+    "harness": "private transform-handle capture harness",
+    "task": "6207 phase 0",
+    "notes": "The handle observations are captured; expected vectors in this public fixture are recomputed from the captured composition law."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "item_move_only",
+        "drove": [{"op": "transform", "values": {"translate_x": [0.5]}}]
+      },
+      {
+        "cell": "composite_phase_1a",
+        "drove": [{"op": "transform", "values": {"translate_x": [0.5]}}]
+      }
+    ]
+  },
+  "law": {
+    "centre": [0.0, 0.0, 0.0],
+    "translate": [0.5, 0.0, 0.0]
+  },
+  "limits": {
+    "position": 0.00001,
+    "separation": 0.4
+  },
+  "item_move_only": {
+    "expected_handle": [0.5, 0.0, 0.0]
+  },
+  "composite_phase_1a": {
+    "expected_handle": [0.0, 0.0, 0.0]
+  }
+}
