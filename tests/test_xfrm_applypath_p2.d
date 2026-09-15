@@ -19,7 +19,7 @@
 //       full-fold value is the reference-faithful re-grade.
 //
 // Both run against unchanged production assumptions otherwise; the contract
-// test test_xfrm_fold_multibank.d (headless S·R·T) stays green alongside.
+// test test_xfrm_fold_multibank.d (headless T·S·R) stays green alongside.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -97,7 +97,7 @@ void selectAll8() {
 // Bare Transform preset, no falloff / no symmetry, pivot pinned at the WORLD
 // ORIGIN (ACEN.Origin). Origin removes the per-frame pivot-drift confound of
 // ACEN.Auto (whose bbox centre moves as the mesh deforms), so a move-then-
-// rotate and a rotate-then-move sequence fold S·R·T about the SAME fixed point
+// rotate and a rotate-then-move sequence fold T·S·R about the SAME fixed point
 // and the order-independence assertion is exact, not approximate.
 void setupTransformOriginAll() {
     cmd("tool.set Transform on");
@@ -115,7 +115,7 @@ void setupTransformOriginAll() {
 //     drags in the OPPOSITE order in ONE session. Under the composed fold the
 //     held bank flows in from the run baseline (NOT a per-gesture re-baseline),
 //     so the two orderings must produce IDENTICAL geometry (composeFor folds a
-//     fixed S·R·T regardless of gesture order). Pre-Phase-2 these diverged.
+//     fixed T·S·R regardless of gesture order). Pre-Phase-2 these diverged.
 // ---------------------------------------------------------------------------
 double[3][8] runMoveThenRotate() {
     drainAndReset();
@@ -230,13 +230,11 @@ unittest {
 // attribute, which is the half of the law that still re-grades.
 // ---------------------------------------------------------------------------
 
-// Expected composed T·R of a cube vertex about the origin for TX=0.5, RZ=90°.
-//   T: +X by 0.5         (x+0.5, y, z)
-//   R: RZ=90 about origin (x,y)->(-y,x)
+// Expected composed T·R of a cube vertex about the origin for TX=0.5, RZ=90°:
+// rotate first, then add the unrotated translation.
 double[3] expectedTR(double[3] v) {
-    double tx = v[0] + 0.5, ty = v[1], tz = v[2];
-    double rx = -ty, ry = tx, rz = tz;
-    return [rx, ry, rz];
+    double rx = -v[1], ry = v[0], rz = v[2];
+    return [rx + 0.5, ry, rz];
 }
 // Expected TRANSLATE-ONLY (the pre-Phase-2 ARM-1 re-grade that DROPPED the
 // held rotate). Used only to prove the new result is NOT this.

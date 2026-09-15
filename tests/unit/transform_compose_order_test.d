@@ -10,7 +10,7 @@ private bool near(float a, float b, float tolerance = 1e-5f)
     return fabs(a - b) <= tolerance;
 }
 
-unittest // The run fold retains the pre-6207 order during phase 1a.
+unittest // The run fold applies linear factors before translation.
 {
     immutable Vec3 centre = Vec3(-1.2f, 0, 1.2f);
     immutable Vec3 point = Vec3(0, 0, -1.2f);
@@ -37,12 +37,15 @@ unittest // The run fold retains the pre-6207 order during phase 1a.
             "6207 translate-only fold must equal T");
 
     const actual = composeRunMatrix(true, tr, true, rot, true, scaleLin);
-    const expected = matMul4(scaleLin, matMul4(rot, tr));
-    foreach (i; 0 .. 16)
-        assert(near(actual[i], expected[i]),
-            "6207 phase 1a fold must compose S*(R*T)");
-
     const mapped = centre + applyAffine(actual, point - centre);
-    assert((mapped - centre).length > 0.5f,
-        "6207 compose witness must exercise the affine map");
+    const expectedMapped = Vec3(2.658846f, 0, -1.017691f);
+    assert(near(mapped.x, expectedMapped.x)
+        && near(mapped.y, expectedMapped.y)
+        && near(mapped.z, expectedMapped.z),
+        "6207 composition law requires c + T + S*R*(p-c)");
+
+    const translatedFirst = matMul4(scaleLin, matMul4(rot, tr));
+    const rival = centre + applyAffine(translatedFirst, point - centre);
+    assert((mapped - rival).length > 0.25f,
+        "6207 compose witness must separate translation-left from translation-right");
 }

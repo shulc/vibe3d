@@ -175,9 +175,9 @@ float[16] composeRunMatrix(bool hasT, const float[16] tr,
     pure nothrow @nogc @safe
 {
     float[16] result = identityMatrix;
-    if (hasT) result = tr;
-    if (hasR) result = matMul4(rot, result);
+    if (hasR) result = rot;
     if (hasS) result = matMul4(scaleLin, result);
+    if (hasT) result = matMul4(tr, result);
     return result;
 }
 

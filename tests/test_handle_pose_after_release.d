@@ -1,5 +1,5 @@
-// Transform handles expose the translated run centre after an idle T-only
-// apply. The composite cell deliberately retains its earlier pose in phase 1a.
+// Transform handles expose the translated run centre after an idle apply,
+// including presets whose linear banks are enabled.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -69,16 +69,18 @@ unittest // T-only item pose is c + T, with no subject gate.
     command("tool.set TransformMove off");
 }
 
-unittest // The composite pose flips in phase 1b, not in phase 1a.
+unittest // Composite handles obey the same H=c+T pose law.
 {
     const data = fixture();
     const centre = vectorAt(data["law"]["centre"]);
     const delta = vectorAt(data["law"]["translate"]);
-    const expected = vectorAt(data["composite_phase_1a"]["expected_handle"]);
+    const expected = centre + delta;
     const tolerance = cast(float)data["limits"]["position"].floating;
     const separation = cast(float)data["limits"]["separation"].floating;
     assert((centre + delta - centre).length > separation,
-        "6207 composite witness needs a visible future pose change");
+        "6207 composite witness needs a visible pose change");
+    assert(near(expected, vectorAt(data["composite_phase_1b"]["expected_handle"]), tolerance),
+        "6207 composite fixture must encode H=c+T");
 
     postJson("/api/command", commandBody("scene.reset"));
     command("actr.origin");
@@ -86,6 +88,6 @@ unittest // The composite pose flips in phase 1b, not in phase 1a.
     command("tool.attr Transform TX 0.5");
     command("tool.doApply");
     assert(near(gizmoCentre(), expected, tolerance),
-        "6207 phase 1a composite handle must stay at C until phase 1b");
+        "6207 composite handle must be H=c+T after apply");
     command("tool.set Transform off");
 }

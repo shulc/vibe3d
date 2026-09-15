@@ -443,30 +443,48 @@ unittest { // Bare Transform: rotate then move must not re-apply the rotation.
     }
 }
 
-unittest { // T→R→S chain order: TX=0.5 first translates v6 to
-           // (1.0, 0.5, 0.5). Then RY=90° about ACEN.Auto bbox of the
-           // post-T selection (the bbox now centres on v6's NEW
-           // position — pivot snapshot is taken BEFORE the chain
-           // starts, so pivot stays at the ORIGINAL bbox centre).
-           // Verify the chain ordering by checking the final
-           // position is what T-first-then-R-about-original-pivot
-           // predicts.
+unittest { // T+R through the numeric door, with two off-centre vertices.
+           // Expectation comes directly from p' = c + R(p-c) + T.
     postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform TX 0.5");
     cmd("tool.attr xfrm.transform RY 90");
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6,7]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
-    // Pivot = v6's ORIGINAL position = (0.5, 0.5, 0.5). After TX=0.5:
-    // v6 → (1.0, 0.5, 0.5). Rotate 90° around Y about pivot
-    // (0.5, 0.5, 0.5): relative pos = (0.5, 0, 0); Y-rotation 90°
-    // sends +X → +Z and +Z → -X, so (0.5, 0, 0) → (0, 0, -0.5);
-    // final = pivot + (0, 0, -0.5) = (0.5, 0.5, 0.0).
-    assert(approxEq(verts[6][0], 0.5, 1e-4)
-        && approxEq(verts[6][1], 0.5, 1e-4)
-        && approxEq(verts[6][2], 0.0, 1e-4),
-        "T→R chain: expected v6 at (0.5,0.5,0.0); got "
-        ~ verts[6][0].to!string ~ "," ~ verts[6][1].to!string
-        ~ "," ~ verts[6][2].to!string);
+    immutable double[3] centre = [0.0, 0.5, 0.5];
+    auto tr = getJson("/api/toolpipe/eval")["transform"];
+    double number(JSONValue v) {
+        return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
+    }
+    foreach (k; 0 .. 3)
+        assert(approxEq(number(tr["runFrameOrigin"].array[k]), centre[k], 1e-5),
+            "6207 run origin must equal the rig-derived bbox centre");
+    assert(approxEq(number(tr["runFrameRight"].array[0]), 1, 1e-6)
+        && approxEq(number(tr["runFrameUp"].array[1]), 1, 1e-6)
+        && approxEq(number(tr["runFrameFwd"].array[2]), 1, 1e-6),
+        "6207 numeric witness requires the world run frame");
+
+    immutable double[3] translate = [0.5, 0.0, 0.0];
+    foreach (vi; [6, 7]) {
+        immutable double[3] point = vi == 6
+            ? [0.5, 0.5, 0.5] : [-0.5, 0.5, 0.5];
+        immutable double dx = point[0] - centre[0];
+        immutable double dz = point[2] - centre[2];
+        immutable double[3] rotated = [dz, point[1] - centre[1], -dx];
+        immutable double[3] expected = [centre[0] + rotated[0] + translate[0],
+                                        centre[1] + rotated[1] + translate[1],
+                                        centre[2] + rotated[2] + translate[2]];
+        immutable double[3] rival = [centre[0] + dz,
+                                     centre[1] + rotated[1],
+                                     centre[2] - (dx + translate[0])];
+        assert(sqrt((expected[0]-rival[0])^^2
+                  + (expected[1]-rival[1])^^2
+                  + (expected[2]-rival[2])^^2) > 0.5,
+            "6207 rig must separate translation-left from translation-right");
+        foreach (k; 0 .. 3)
+            assert(approxEq(verts[vi][k], expected[k], 1e-5),
+                "6207 T+R law: v" ~ vi.to!string ~ " expected "
+                ~ expected.to!string ~ "; got " ~ verts[vi].to!string);
+    }
 }

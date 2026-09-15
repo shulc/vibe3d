@@ -19,8 +19,16 @@
         "drove": [{"op": "transform", "values": {"translate_x": [0.5]}}]
       },
       {
-        "cell": "composite_phase_1a",
+        "cell": "composite_phase_1b",
         "drove": [{"op": "transform", "values": {"translate_x": [0.5]}}]
+      },
+      {
+        "cell": "composition_law",
+        "drove": [{"op": "formula-check", "values": {"case_count": [6]}}]
+      },
+      {
+        "cell": "item_translate_then_scale",
+        "drove": [{"op": "formula-check", "values": {"translate_x": [0.5], "uniform_scale": [1.5]}}]
       }
     ]
   },
@@ -35,7 +43,71 @@
   "item_move_only": {
     "expected_handle": [0.5, 0.0, 0.0]
   },
-  "composite_phase_1a": {
-    "expected_handle": [0.0, 0.0, 0.0]
+  "composite_phase_1b": {
+    "expected_handle": [0.5, 0.0, 0.0]
+  },
+  "composition": [
+    {
+      "name": "translate_then_rotate",
+      "centre": [-1.200000048, 0.0, 1.200000048],
+      "translation": [0.5, 0.0, 0.0],
+      "rotation_y_degrees": -30.0,
+      "scale": [1.0, 1.0, 1.0],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[0.339230478, 0.0, 1.800000072], [1.378461003, 0.0, 2.400000095]]
+    },
+    {
+      "name": "rotate_then_translate_along_drawn_arrow",
+      "centre": [-1.200000048, 0.0, 1.200000048],
+      "translation": [0.433012702, 0.0, 0.25],
+      "rotation_y_degrees": -30.0,
+      "scale": [1.0, 1.0, 1.0],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[0.272243172, 0.0, 2.050000191], [1.311473727, 0.0, 2.650000095]]
+    },
+    {
+      "name": "rotate_then_numeric_translate",
+      "centre": [-1.200000048, 0.0, 1.200000048],
+      "translation": [0.5, 0.0, 0.0],
+      "rotation_y_degrees": -30.0,
+      "scale": [1.0, 1.0, 1.0],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[0.339230478, 0.0, 1.800000072], [1.378461003, 0.0, 2.400000095]]
+    },
+    {
+      "name": "translate_then_uniform_scale",
+      "centre": [-1.200000048, 0.0, 1.200000048],
+      "translation": [0.5, 0.0, 0.0],
+      "rotation_y_degrees": 0.0,
+      "scale": [1.5, 1.5, 1.5],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[1.100000024, 0.0, 1.200000048], [2.900000095, 0.0, 1.200000048]]
+    },
+    {
+      "name": "uniform_scale_then_translate",
+      "centre": [-1.200000048, 0.0, 1.200000048],
+      "translation": [0.5, 0.0, 0.0],
+      "rotation_y_degrees": 0.0,
+      "scale": [1.5, 1.5, 1.5],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[1.100000024, 0.0, 1.200000048], [2.900000095, 0.0, 1.200000048]]
+    },
+    {
+      "name": "origin_translate_then_rotate",
+      "centre": [0.0, 0.0, 0.0],
+      "translation": [0.5, 0.0, 0.0],
+      "rotation_y_degrees": -30.0,
+      "scale": [1.0, 1.0, 1.0],
+      "points": [[0.0, 0.0, 1.200000048], [1.200000048, 0.0, 1.200000048]],
+      "expected": [[-0.100000024, 0.0, 1.039230585], [0.939230502, 0.0, 1.639230609]]
+    }
+  ],
+  "item_translate_then_scale": {
+    "point": [-0.35, 0.0, 0.45],
+    "centre": [0.0, 0.0, 0.0],
+    "translation": [0.5, 0.0, 0.0],
+    "scale": [1.5, 1.5, 1.5],
+    "expected_position": [-0.025, 0.0, 0.675],
+    "expected_handle": [0.5, 0.0, 0.0]
   }
 }

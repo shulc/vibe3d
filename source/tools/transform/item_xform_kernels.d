@@ -117,13 +117,8 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
     immutable bool rotIdentity   = rGesture == identityMatrix;
     immutable bool scaleIdentity = sFactor.x == 1 && sFactor.y == 1 && sFactor.z == 1;
 
-    // The <<star>> de-rotation: the frozen frame expands tLocal into ONE
-    // world-space delta, added AFTER the rotate term (never composed THROUGH
-    // rGesture) — so a held rotation from THIS SAME gesture never re-rotates
-    // a held translate (the reference bug this guards against on the vertex
-    // side: [[project_rotate_then_move_frame_bug]]). A held SCALE, unlike
-    // rotate, DOES reach this delta — see the position-law comment below,
-    // where `worldDelta` is folded into `combined` before scale is applied.
+    // The frozen frame expands tLocal into one world-space delta. It is added
+    // after the complete linear fold, so neither rotation nor scale reaches it.
     immutable Vec3 worldDelta = Vec3(
         iX.x*tLocal.x + iY.x*tLocal.y + iZ.x*tLocal.z,
         iX.y*tLocal.x + iY.y*tLocal.y + iZ.y*tLocal.z,
@@ -151,30 +146,13 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
         // reintroduce exactly the drift R15 exists to prevent.
         immutable Vec3 P = applyAffine(base.composedMatrix(), base.pivot);
 
-        // Position law — mirrors the VERTEX fold's own composed chain
-        // (xfrm_transform.d's `composeFor`: M = S.R.T, T RIGHTMOST i.e.
-        // applied first) rather than three independent per-bank formulas,
-        // because that chain has an observable cross-bank interaction this
-        // kernel must reproduce for a composed run: a held SCALE multiplies
-        // a held TRANSLATE too (S is the OUTERMOST operation). Concretely,
-        // for a vertex v about pivot c: result = c + S.(R.(v-c) + worldDelta)
-        // — the vertex path's own de-rotation (xfrm_transform.d's "TRANSLATE
-        // TERM DE-ROTATION, invariant *") makes the T contribution equal
-        // worldDelta UN-rotated before S is applied to the sum. Evaluated at
-        // v == the item's own world pivot (rel == P-centreWorld, which is
-        // exactly zero for Phase 3's primary-only case, L1): the ROTATE term
-        // vanishes regardless of order (R.0 == 0), so the only run-visible
-        // interaction is T-then-S — reproduced exactly here. R-then-S order
-        // is UNMEASURED and unobservable at Phase 3 for the same reason
-        // (rel == 0 either way) — see the R+S exclusion in
-        // test_item_drag_law_parity.d.
+        // Position law mirrors the vertex fold: rotate and scale the offset
+        // from the run centre, then add worldDelta. For the primary item the
+        // offset is exactly zero, but keeping the full expression also covers
+        // every other selected item in the same run.
         immutable Vec3 rel = P - centreWorld;
         Vec3 afterR = rel;
         if (!rotIdentity) afterR = applyAffine(rGesture, rel);   // rGesture: zero translation, so this is R.rel
-
-        immutable Vec3 combined = Vec3(afterR.x + worldDelta.x,
-                                        afterR.y + worldDelta.y,
-                                        afterR.z + worldDelta.z);
 
         // A held rGesture==I (a pure translate/scale gesture) must leave rot
         // bit-identical to the baseline — NOT round-tripped through
@@ -186,17 +164,11 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
             ? base.rot
             : eulerZYXFromMatrix(matMul4(rGesture, matrixFromEulerZYX(base.rot)));
 
-        // Scale is the OUTERMOST operation (S.R.T): it scales the WHOLE
-        // combined (rotated-offset + translate) vector, along the FROZEN
-        // FRAME axes — the same axes the same-index rule (L4) keys off. The
-        // pivot for this scale is the ORIGIN (not centreWorld): `combined`
-        // is already expressed as an offset FROM centreWorld, so scaling it
-        // about the origin and adding centreWorld back (below) is exactly
-        // "scale about centreWorld", one fewer subtraction than passing
-        // centreWorld into scaleAlongBasis a second time.
-        immutable Vec3 scaledCombined = scaleIdentity
-            ? combined
-            : scaleAlongBasis(combined, Vec3(0, 0, 0), iX, iY, iZ,
+        // Scale the rotated relative position, then add translation. Translation
+        // is outside the linear fold and is therefore never scaled (task 6207).
+        immutable Vec3 scaledRelative = scaleIdentity
+            ? afterR
+            : scaleAlongBasis(afterR, Vec3(0, 0, 0), iX, iY, iZ,
                                sFactor.x, sFactor.y, sFactor.z);
 
         // L4 — the SAME-INDEX rule, capture-verified at 30/60/90 degrees
@@ -211,9 +183,9 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
             clampedScaleComponent(base.scl.y, sFactor.y),
             clampedScaleComponent(base.scl.z, sFactor.z));
 
-        immutable Vec3 Pfinal = Vec3(centreWorld.x + scaledCombined.x,
-                                      centreWorld.y + scaledCombined.y,
-                                      centreWorld.z + scaledCombined.z);
+        immutable Vec3 Pfinal = Vec3(centreWorld.x + scaledRelative.x + worldDelta.x,
+                                      centreWorld.y + scaledRelative.y + worldDelta.y,
+                                      centreWorld.z + scaledRelative.z + worldDelta.z);
 
         ItemXform next;
         next.pivot = base.pivot;   // the pivot channel is never written by a gesture
@@ -253,15 +225,8 @@ version (unittest) {
 }
 
 
-// T+S composed in ONE gesture: SCALE is the OUTERMOST operation in the
-// vertex fold's own chain (composeFor: M = S.R.T), so a held scale
-// multiplies a held translate's world-space delta too. This test locks in
-// that cross-bank interaction: Pfinal must equal centre + S.worldDelta, NOT
-// centre + worldDelta (the simpler, WRONG law an earlier draft of this
-// kernel shipped — see the position-law comment above `rel` in
-// applyGestureToItems). Default pivot=(0,0,0) rig so P == centreWorld
-// exactly (Phase 3, L1), which is what makes the rotate term vanish and
-// isolates the T-then-S interaction cleanly.
+// T+S composed in one gesture: translation is outside scale, so S does not
+// multiply the world-space delta. The default pivot isolates that interaction.
 unittest {
     auto l = new Layer();
     l.xform.pos = Vec3(0, 0, 0);
@@ -276,11 +241,10 @@ unittest {
         Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
         tLocal, identityMatrix, sFactor);
 
-    // worldDelta == tLocal under the world default frame; expected pos is
-    // centre + sFactor (componentwise) * worldDelta, i.e. (8, 3, -1).
-    Vec3 expected = Vec3(8, 3, -1);
+    // worldDelta == tLocal under the world default frame.
+    Vec3 expected = Vec3(2, 3, -1);
     assert(vecClose(l.xform.pos, expected, 1e-5f),
-           "a held scale must multiply a held translate's world delta (S.R.T chain)");
+           "6207 item law: scale must not multiply translation");
     assert(vecClose(l.xform.scl, sFactor, 1e-6f));
 }
 
@@ -493,9 +457,7 @@ unittest {
          ~ "would be the WRONG order for a world-frame gesture");
 }
 
-// Translate-after-rotate is UN-ROTATED (the <<star>> de-rotation): with a held
-// rGesture, tLocal must move the item by the frame expansion of tLocal alone,
-// NOT by rGesture applied to that delta.
+// With a held rotation, translation remains outside the linear fold.
 unittest {
     import math : pivotRotationMatrix;
     import std.math : PI;
@@ -511,8 +473,7 @@ unittest {
         Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
         tLocal, rg, Vec3(1,1,1));
 
-    // Un-rotated expectation: pos moves by exactly tLocal expanded through
-    // the WORLD frame (5,0,0) — NOT rg*(5,0,0) == (0,5,0).
+    // Formula expectation: pos moves by tLocal expanded through the world frame.
     assert(vecClose(l.xform.pos, Vec3(5, 0, 0), 1e-4f),
            "translate held with a gesture rotation must NOT be re-rotated");
 }

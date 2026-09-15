@@ -394,7 +394,7 @@ allow source/tools/edit/vertex_extrude_tool.d 9
 allow source/tools/slice/edge_slice_tool.d 33
 allow source/tools/slice/loop_slice_tool.d 91
 allow source/tools/slice/slice_tool.d 90
-allow source/tools/transform/item_xform_kernels.d 2
+allow source/tools/transform/item_xform_kernels.d 3
 allow source/tools/transform/morph_route.d 4
 allow source/tools/transform/move.d 6
 allow source/tools/transform/relocate_plane.d 2
@@ -405,7 +405,7 @@ allow source/tools/transform/xform_kernels.d 8
 allow source/tools/transform/xfrm_apply.d 19
 allow source/tools/transform/xfrm_handles.d 6
 allow source/tools/transform/xfrm_item.d 8
-allow source/tools/transform/xfrm_transform.d 81
+allow source/tools/transform/xfrm_transform.d 80
 allow source/tsan_preinit.d 1
 allow source/ui/availability.d 1
 allow source/ui/button_face.d 1

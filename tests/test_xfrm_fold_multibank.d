@@ -6,7 +6,7 @@
 // PIN the all-three-banks-simultaneous composed-fold contract HEADLESS: drive a
 // `Transform`-preset op with Translate, Rotate, AND Scale all non-identity in
 // ONE evaluate (via `tool.attr` + `tool.doApply`, NOT gizmo drags) and assert
-// the resulting geometry equals the composed S·R·T fold computed from the known
+// the resulting geometry equals the composed T·S·R fold computed from the known
 // cube verts. This locks WHAT a later live-path rewire must preserve when it
 // routes the live drag through the same fold. The test passes on UNCHANGED
 // production code (it pins existing behavior — the panel / headless apply path
@@ -43,7 +43,7 @@
 //     = `tool.attr Transform RZ 30` via `tool.beginSession` — the PANEL path
 //     (already folds T·R today), assert is a DELTA (rotate moved v6 off
 //     v6BeforeRot). Ctrl+Z asserts compare against RECORDED v6AfterRot / pristine
-//     corner, never a computed S·R·T. No assert pins progressive-mutation order.
+//     corner, never a computed T·S·R. No assert pins progressive-mutation order.
 //   * tests/test_relocate_boundary_rs.d — NO flip. SINGLE-mode only
 //     (TransformScale S-only, TransformRotate R-only). No cross-bank composition
 //     within any run; each relocate-boundary second gesture is a fresh undo run
@@ -63,16 +63,10 @@
 //     target for the rewire phase (the ungated re-grade path), recorded here. No
 //     action this phase.
 //
-// Step 2 — reference apply ORDER (S·R·T vs T·R·S): UNVERIFIED-pending-capture.
-//   A live reference capture is DEFERRED. The composed matrix is S·R·T (T applied
-//   first / rightmost, then R, then S, all about the pivot). The fold-invariant
-//   fallback this phase relies on is gesture-ORDER independence: writing the
-//   three bank attrs in any order produces the IDENTICAL composed geometry
-//   (asserted below). That proves order-INDEPENDENCE, NOT that S·R·T is the
-//   reference engine's chosen order. If a future capture contradicts S·R·T, that
-//   correction belongs to the fold-math layer downstream, not to a routing
-//   change — this fixture pins the CURRENT composed contract, whatever order it
-//   embodies.
+// Step 2 — captured apply order.
+//   Translation is leftmost and therefore outside both linear factors. With a
+//   uniform scale the R/S order commutes; the non-uniform scale-axis question is
+//   deliberately outside this phase.
 //
 // =====================================================================
 // PHASE 1 — headless multi-bank fold fixture
@@ -80,7 +74,7 @@
 // Drive Translate + Rotate + Scale all non-identity simultaneously through the
 // headless apply path (`tool.attr Transform TX/RZ/SX` + `tool.doApply`, which
 // runs applyHeadless → applyTRS with the preset flags all true) and assert the
-// composed result equals the manual S·R·T of the known cube verts.
+// composed result equals the manual T·S·R of the known cube verts.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -166,21 +160,16 @@ void setupTransformAllSelected() {
     selectAll8();
 }
 
-// Expected S·R·T of a cube vertex about the ORIGIN pivot, for the fixed
+// Expected T·S·R of a cube vertex about the origin pivot, for the fixed
 // fixture values TX=0.5, RZ=90°, SX=2.0 (R/S/T defaults elsewhere = identity).
 //   T:  +X by 0.5            (v - 0) + (0.5,0,0)
 //   R:  RZ=90° about origin  (x,y) -> (-y, x)   (z unchanged)
-//   S:  SX=2 about origin    x *= 2
-// Applied in the order T (rightmost), then R, then S — i.e. M = S·R·T, so the
-// vertex flows T -> R -> S.
-double[3] expectedSRT(double[3] v) {
-    // T
-    double tx = v[0] + 0.5, ty = v[1], tz = v[2];
-    // R (RZ=90: x,y -> -y, x)
-    double rx = -ty, ry = tx, rz = tz;
-    // S (SX=2)
-    double sx = rx * 2.0, sy = ry, sz = rz;
-    return [sx, sy, sz];
+//   S:  uniform 2 about origin
+// Applied as M = T·S·R: rotate, scale, then add translation.
+double[3] expectedTSR(double[3] v) {
+    double sx = 2.0 * v[0], sy = 2.0 * v[1], sz = 2.0 * v[2];
+    double rx = -sy, ry = sx, rz = sz;
+    return [rx + 0.5, ry, rz];
 }
 
 // Pristine cube vertex positions (mesh.makeCube order).
@@ -197,10 +186,10 @@ immutable double[3][8] CUBE = [
 
 // ---------------------------------------------------------------------------
 // (1) Multi-bank composed-fold contract: T+R+S all non-identity in one evaluate
-//     equals the manual S·R·T of every cube vertex.
+//     equals the manual T·S·R of every cube vertex.
 //
 //     This is the existing-behavior contract a later live-path rewire must
-//     preserve: applyHeadless -> applyTRS composes one S·R·T matrix from the
+//     preserve: applyHeadless -> applyTRS composes one T·S·R matrix from the
 //     three headless* fields gated by the preset flags (all true under
 //     `Transform`). PASSES on unchanged production code.
 // ---------------------------------------------------------------------------
@@ -211,23 +200,26 @@ unittest {
     cmd("tool.attr Transform TX 0.5");
     cmd("tool.attr Transform RZ 90");
     cmd("tool.attr Transform SX 2.0");
+    cmd("tool.attr Transform SY 2.0");
+    cmd("tool.attr Transform SZ 2.0");
     cmd("tool.doApply");
 
     foreach (vi; 0 .. 8) {
         auto got = vertexAt(vi);
-        auto want = expectedSRT(CUBE[vi]);
+        auto want = expectedTSR(CUBE[vi]);
         foreach (k; 0 .. 3)
             assert(approxEq(got[k], want[k]),
-                "multi-bank S·R·T contract: v" ~ vi.to!string ~ " component "
+                "multi-bank T·S·R contract: v" ~ vi.to!string ~ " component "
                 ~ k.to!string ~ " got " ~ got[k].to!string ~ " want "
                 ~ want[k].to!string);
     }
 
-    // Spot-pin v6 explicitly so a regression reads clearly:
-    //   v6 = (0.5,0.5,0.5) -> T (1.0,0.5,0.5) -> R (-0.5,1.0,0.5) -> S (-1.0,1.0,0.5)
+    // Spot-pin v6 explicitly from T·S·R:
+    //   v6 = (0.5,0.5,0.5) -> R (-0.5,0.5,0.5)
+    //      -> S (-1,1,1) -> T (-0.5,1,1).
     auto v6 = vertexAt(6);
-    assert(approxEq(v6[0], -1.0) && approxEq(v6[1], 1.0) && approxEq(v6[2], 0.5),
-        "multi-bank S·R·T contract: v6 expected (-1.0, 1.0, 0.5); got ("
+    assert(approxEq(v6[0], -0.5) && approxEq(v6[1], 1.0) && approxEq(v6[2], 1.0),
+        "multi-bank T·S·R law: v6 expected (-0.5, 1.0, 1.0); got ("
         ~ v6[0].to!string ~ "," ~ v6[1].to!string ~ "," ~ v6[2].to!string ~ ")");
 
     cmd("tool.set Transform off");
@@ -238,7 +230,7 @@ unittest {
 // (2) Order independence (the fold-invariant fallback for the UNVERIFIED apply
 //     order, Phase 0 step 2): writing the three bank attrs in the REVERSE order
 //     (S, then R, then T) yields the IDENTICAL composed geometry. composeFor
-//     composes a fixed S·R·T regardless of attr-write order, so attr ordering
+//     composes a fixed T·S·R regardless of attr-write order, so attr ordering
 //     must not change the result.
 // ---------------------------------------------------------------------------
 unittest {
@@ -246,6 +238,8 @@ unittest {
     setupTransformAllSelected();
 
     // Reverse attr-write order vs. test (1).
+    cmd("tool.attr Transform SZ 2.0");
+    cmd("tool.attr Transform SY 2.0");
     cmd("tool.attr Transform SX 2.0");
     cmd("tool.attr Transform RZ 90");
     cmd("tool.attr Transform TX 0.5");
@@ -253,7 +247,7 @@ unittest {
 
     foreach (vi; 0 .. 8) {
         auto got = vertexAt(vi);
-        auto want = expectedSRT(CUBE[vi]);
+        auto want = expectedTSR(CUBE[vi]);
         foreach (k; 0 .. 3)
             assert(approxEq(got[k], want[k]),
                 "order-independence: reverse attr-write order must produce the "

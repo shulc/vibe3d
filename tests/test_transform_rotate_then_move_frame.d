@@ -1,28 +1,7 @@
 // test_transform_rotate_then_move_frame.d
-// Task 0032: translate-basis de-rotation for rotate-then-move geometry alignment.
-// Plan: doc/transform_rotate_then_move_frame_plan.md
-//
-// RED test (Stage 0): the primary bug unittest demonstrates the divergence
-// (cos of geometry delta vs world delta ≈ 0.29 pre-fix for scenario (a)).
-// After Stage 1 (applyFold translate-basis de-rotation), all assertions become
-// GREEN (cos > 0.99). The two control unittests pass both before and after.
-//
-// Bug summary: in ONE Transform session (falloff OFF, default Auto/None ACEN),
-// rotate then move → committed geometry translates by run.r · worldDelta (the
-// held rotation applied to the cursor delta), while the move handle/arrows stay
-// world-aligned. The geometry detaches from the handle by the held angle.
-//
-// Fix (applyFold): build a TRANSLATE-ONLY de-rotated triple
-//   tdX/tdY/tdZ = run.rᵀ · inputBasis
-// where inputBasis = frame.valid ? frame.axes : runFrame, passed to
-// composeFor's translate axes. sX=tX (scale) is UNCHANGED.
-//
-// OUT OF SCOPE: ACEN=Element rotate→move is intentionally NOT asserted with
-// cos > 0.99. Element never settles a frame (frame.valid stays false) and the
-// move projects onto a live, per-frame-drifting element basis, so a residual
-// skew predates this fix. The de-rotation strictly improves Element (removes
-// the dominant run.r term) but cannot make it exact — closing that is a
-// separate task. The cases here cover the world-input bug + scale isolation.
+// Rotate-then-move geometry alignment. Translation is the leftmost affine
+// factor, and a real move uses one shared decision to re-express its scalar in
+// the frozen run frame and to follow the basis drawn for that gesture.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -198,15 +177,14 @@ void dragXArrowSingleVert6(Vec3 piv, int px,
 }
 
 // ---------------------------------------------------------------------------
-// PRIMARY (RED pre-fix, GREEN post-fix):
+// PRIMARY:
 // Scenario (a): view-ring rotate on a single off-axis vertex, then X-arrow move
 // in the SAME session. The geometry delta must be COLLINEAR with the handle's
 // world-X direction (cos > 0.99).
 //
-// Pre-fix: cos ≈ 0.29 (~73° off) because applyFold builds
-//   M = run.r · T(worldDelta) → net translate = run.r · worldDelta.
-// Post-fix: applyFold de-rotates the translate basis:
-//   tdX = run.rᵀ · inputBasis → M = run.r · T(run.rᵀ · worldDelta) = T(worldDelta).
+// The move drain re-expresses the drawn-axis scalar in the frozen run frame,
+// while the fold applies translation after rotation. Geometry therefore follows
+// the drawn arrow exactly.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -244,9 +222,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// GREEN CONTROL — pure move-X with NO prior rotate: cos must already be ≈ 1.
-// Verifies the assertion is not vacuously true and that a fresh move is
-// byte-identical to the pre-fix path (run.r == I → de-rotation is a no-op).
+// GREEN CONTROL — pure move-X with no prior rotate remains collinear.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -273,17 +249,12 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// BLOCKER-2 CONTROL — pure scale (fresh session): scale basis must be correct.
-//
-// The fix introduces tdX/tdY/tdZ as a SEPARATE translate-only triple; it does
-// not touch tX/tY/tZ, so sX=tX (scale capture at applyFold:4624) is unchanged.
+// SCALE CONTROL — pure scale (fresh session): scale basis stays unchanged.
 // This control runs a Scale-only gesture on all 8 verts and checks that the
 // centroid vertex (index 6 at 0.5,0.5,0.5 — offset from origin) moves FURTHER
 // from origin after a uniform-grow drag. The fix must leave this byte-identical
-// to the pre-fix behavior (de-rotation gate: flagR && !runRotIsIdentity() does
-// NOT fire for a pure scale run with no rotation held → tdX=tX, no-op).
-// Intra-session rotate→scale coverage: sX=tX reads the UNMODIFIED tX/tY/tZ
-// regardless of tdX/tdY/tdZ, so the scale basis is byte-stable post-fix.
+// from origin after a uniform-grow drag. The phase-1b change does not alter
+// the scale-axis choice.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();

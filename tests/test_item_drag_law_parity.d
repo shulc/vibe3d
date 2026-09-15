@@ -1,6 +1,6 @@
 // Task 0614 Phase 3 — the anti-drift proof, and the strongest single check
 // in this task: the item drag obeys the SAME LAW as the vertex drag (frozen
-// frame, the star de-rotation, fold order), not a parallel re-implementation
+// frame, translation outside the linear fold, fold order), not a parallel re-implementation
 // that happens to agree on paper.
 //
 // Method: the SAME gesture is applied twice — once against a VERTEX subject
@@ -12,11 +12,8 @@
 // Single-bank and T+S cases drive the gesture via tool.attr + tool.doApply
 // (the headless entry point, which funnels through the identical applyTRS
 // this task's drag path uses per doc/item_mode_transform_plan.md §(b)). T+R
-// composition specifically needs a REAL DRAG instead — see the comment at
-// checkComposedParityDrag for why: the vertex fold's translate-term
-// de-rotation is gated on `activeDrag is moveSub` and simply does not fire
-// for a headless call, so a headless T+R reproduction is not testing the
-// same law a drag exercises.
+// composition specifically needs a REAL DRAG so the shared move re-expression
+// and handle-following decision is exercised on both subjects.
 //
 // R16 (the vacuity hazard): the two runs do NOT share a centre by default
 // (vertex ⇒ selection centroid, item ⇒ item world pivot) — pinned here via
@@ -177,8 +174,7 @@ unittest { checkParity("non-uniform S", "scale",  [["SX", "2.0"], ["SY", "0.5"]]
 // is a headless-path artefact, not a composed-run law, so this helper sets
 // BOTH attrs before the one doApply that actually represents "T and R both
 // held in one gesture". Valid for T+S (no rotation involved, so no
-// de-rotation gate to trip) — see the T+R note below for why that pairing
-// needs a different mechanism.
+// move-frame decision to exercise) — see the T+R note below.
 void applyComposed(string[][] firstAttrs, string[][] secondAttrs)
 {
     cmd("tool.set xfrm.transform on");
@@ -221,23 +217,9 @@ unittest {
     checkComposedParity("T+S in one run", [["TX", "1.0"]], [["SX", "2.0"]]);
 }
 
-// -----------------------------------------------------------------------
-// T+R composition needs a REAL DRAG, not tool.doApply. The vertex fold's
-// TRANSLATE-TERM DE-ROTATION (xfrm_transform.d's invariant *) is gated on
-// `activeDrag is moveSub` — it exists ONLY for a live gizmo drag; the
-// comment there says so explicitly: "In the panel/headless path ... run.t
-// is a direct panel value ... M = run.r . T(worldDelta) which is the
-// correct T-before-R chain semantics for numeric TX/RY attrs" — i.e. a
-// headless T+R composes WITHOUT de-rotation (translate gets rotated too),
-// while a REAL DRAG composes WITH it (translate stays world-aligned
-// regardless of the held rotation). This item kernel always de-rotates
-// (matching the DRAG convention, per doc/item_mode_transform_plan.md
-// §(c)) — so comparing it against a HEADLESS vertex run picks the WRONG
-// reference and fails for a reason that has nothing to do with the law
-// under test (confirmed empirically while writing this file: a headless
-// T+R run lands at a measurably different point than a dragged one). Both
-// runs below therefore use two REAL drags in one activation instead.
-// -----------------------------------------------------------------------
+// T+R uses two real drags in one activation. That is the path where a move is
+// decomposed through the drawn frame and re-expressed into the frozen run frame;
+// the item and vertex subjects must still implement the same final formula.
 
 void dragMoveXOnce(Viewport vp, int pixels) {
     Vec3 pivot = Vec3(0, 0, 0);   // identity xform in both runs here
@@ -302,10 +284,8 @@ unittest {
     });
 }
 unittest {
-    // The case objection 1 named: rotate-then-move in one run must NOT
-    // re-rotate the translate (the star de-rotation) — this is the ONE case
-    // that is meaningless without a real drag, since the de-rotation gate
-    // this is proving is drag-only by construction.
+    // Rotate-then-move must keep translation outside the linear fold while the
+    // drawn-axis scalar is re-expressed through the shared run-frame decision.
     checkComposedParityDrag("rotate-then-move in one run", (Viewport vp) {
         dragRotateXOnce(vp, 80);
         dragMoveXOnce(vp, 40);

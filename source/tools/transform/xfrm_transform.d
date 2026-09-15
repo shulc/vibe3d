@@ -44,11 +44,11 @@ import mesh_gpu : GpuUploadOwner;
 //   re-center) fire idempotently when none of the sub-tools
 //   short-circuit, which is fine — they all see the same cursor.
 //
-// Headless `applyHeadless` runs the T → R → S chain through
+// Headless `applyHeadless` runs the composed R → S → T map through
 // xform_kernels directly, NOT through the sub-tools — keeps the
 // chain monotonic with respect to a single captured pivot /
 // falloff snapshot, in the documented xfrm.transform order
-// (T → R → S).
+// (`M = T·S·R`).
 
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 private struct XfrmPreparedState {
@@ -2653,19 +2653,9 @@ public:
         // (frame.settled, selection/mode unchanged), source B0 from `frame` even
         // when runFrameValid. This corrects the rendered arrow/ring orientation.
         //
-        // NOTE (task 0032, plan invariant ★): the claim that the apply path
-        // "already lands worldDelta" held only for the ROTATED-INPUT case
-        // (the selection-derived axis modes — Select/Local, and SelectAuto until
-        // its frame was corrected to the auto one — where the move projects onto
-        // run.r·B0 and the fold's run.r cancels it). The set is whatever
-        // `AxisStage.modeTracksSelection` returns, read below; this note names
-        // the modes only to say which case the 0032 claim covered.
-        // For the WORLD-INPUT case (Auto/None ACEN
-        // where the rotate settles WORLD frame into `frame`, giving inputBasis=B0
-        // and run.t=worldDelta), the old apply path yielded M=run.r·T(worldDelta)
-        // — a rotated geometry delta. The `applyFold` translate de-rotation fix
-        // (tdX/tdY/tdZ = run.rᵀ·inputBasis) corrects this for ALL configs;
-        // render-only here remains the correct locus for the b0X/b0Y/b0Z source.
+        // The run fold keeps translation outside its linear R/S factors. This
+        // method therefore only chooses the render/input frame; the move drain
+        // re-expresses its scalar into the frozen run frame when needed.
         Vec3 b0X, b0Y, b0Z;
         if (frame.valid) {
             // Persisted rotated frame — render it whether or not runFrame is valid
@@ -3580,6 +3570,7 @@ public:
         bool rebake = !runBaselineValid
                    || (bank == DragBank.Rotate && rotateRunNeedsRebake());
         if (rebake) {
+            if (runBaselineValid) runFrameValid = false;
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
@@ -4104,9 +4095,32 @@ public:
                 // the drain is a no-op on those.
                 Vec3 pending = moveSub.pendingTranslateDelta;
                 moveSub.pendingTranslateDelta = Vec3(0, 0, 0);
+                immutable bool tInRunFrame = flagR && !runRotIsIdentity()
+                    && runFrameValid
+                    && !(queryClusterPivots(vts).active
+                      && queryClusterAxes(vts).active);
+                immutable Vec3 decomposed = pending;
+                if (tInRunFrame) {
+                    Vec3 dX, dY, dZ;
+                    if (moveCenterBoxDragActive()) {
+                        dX = moveSub.inputBasisX;
+                        dY = moveSub.inputBasisY;
+                        dZ = moveSub.inputBasisZ;
+                    } else {
+                        dX = moveSub.inAxisX();
+                        dY = moveSub.inAxisY();
+                        dZ = moveSub.inAxisZ();
+                    }
+                    immutable Vec3 world = dX * pending.x
+                                               + dY * pending.y
+                                               + dZ * pending.z;
+                    pending = Vec3(dot(world, runFrameR),
+                                   dot(world, runFrameU),
+                                   dot(world, runFrameF));
+                }
                 // Apply-path Phase 2: update ONLY this bank's attr. The held
                 // R/S run-absolutes are NOT zeroed — they compose into the fold
-                // via `applyTRS`'s preset flags (composeFor folds T·R·S from one
+                // via `applyTRS`'s preset flags (composeFor folds T·S·R from one
                 // run baseline). Pre-Phase-2 this drain force-zeroed R/S so the
                 // single-bank `applyTRSForBank(Move)` saw only translate.
                 run.t = run.t + pending;
@@ -4127,10 +4141,14 @@ public:
                 Vec3 eX, eY, eZ;
                 if (moveCenterBoxDragActive()) {
                     eX = moveSub.inputBasisX; eY = moveSub.inputBasisY; eZ = moveSub.inputBasisZ;
+                } else if (tInRunFrame) {
+                    eX = moveSub.inAxisX(); eY = moveSub.inAxisY(); eZ = moveSub.inAxisZ();
                 } else {
                     eX = moveSub.handler.axisX; eY = moveSub.handler.axisY; eZ = moveSub.handler.axisZ;
                 }
-                Vec3 worldStep = eX * pending.x + eY * pending.y + eZ * pending.z;
+                Vec3 worldStep = eX * decomposed.x
+                               + eY * decomposed.y
+                               + eZ * decomposed.z;
                 accumulatedWorldDelta = accumulatedWorldDelta + worldStep;
 
                 // Single per-frame mesh mutation through applyTRS with the
@@ -4413,15 +4431,9 @@ public:
                 // owner's trace shows: the dragged axis alone moving, by an
                 // order of magnitude per sample, with sign flips.
                 //
-                // Deliberately NOT done by freezing the pivot inside `applyTRS`
-                // (`runFrameValid ? runFrameOrigin : queryActionCenter`): that
-                // moves the pivot for EVERY caller — the item branch, the
-                // headless numeric path, and the panel path on a MIXED T+R+S
-                // preset, where :3741/:3778 pass `true` only for a pure preset.
-                // The flag keeps the radius at "the scale drag", and it is the
-                // more faithful mechanism besides: the reference rolls the
-                // geometry back before EVERY tool evaluation, so its whole pipe
-                // reads pre-gesture positions, not just its pivot.
+                // Composite interactive runs also freeze the pivot inside
+                // applyTRS. Item folding already uses runFrameOrigin, and the
+                // one-shot numeric path is excluded by headlessApplyActive_.
                 applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                          /*samplePipeFromBaseline=*/true);
                 // P-F Phase 3a (MAJOR-4) — the own-bank fast-path
@@ -5073,6 +5085,8 @@ public:
         // Without this, a headless apply following a drag would evaluate from
         // that drag's start position and overwrite its delta.
         morphRunValid_ = false;
+        headlessApplyActive_ = true;
+        scope (exit) headlessApplyActive_ = false;
         return applyTRS(mesh.vertices.dup);
     }
 
@@ -7105,6 +7119,7 @@ private:
     // change vertex count, so a same-length-but-stale baseline must be
     // distinguished from a fresh-run one, which length alone cannot do.
     bool runBaselineValid = false;
+    bool headlessApplyActive_ = false;
 
 
     // P-F (run-absolute panel) — the FROZEN per-run gizmo frame. Lifetime is

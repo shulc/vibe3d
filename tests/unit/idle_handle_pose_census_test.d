@@ -26,8 +26,8 @@ unittest // Every idle publication uses the one translated-centre helper.
         "6207 prepared update tail must use idleHandleCentre");
     assert(handles.count("private Vec3 idleHandleCentre(") == 1,
         "6207 idleHandleCentre must have one definition");
-    assert(handles.count("if (!flagT || flagR || flagS || !runFrameValid) return acen;") == 1,
-        "6207 phase 1a idle pose gate changed");
+    assert(handles.count("if (!flagT || !runFrameValid) return acen;") == 1,
+        "6207 composite idle pose gate changed");
     const idleBegin = handles.indexOf("private Vec3 idleHandleCentre(");
     const idleEnd = handles.indexOf("private void setSharedGizmoPose(");
     assert(idleBegin >= 0 && idleEnd > idleBegin,

@@ -185,7 +185,7 @@ private void drivePart(string bank, int part, long wantedUndo,
 private void driveMove(long wantedUndo) {
     // Global part 3 is the compact Transform Move centre box. Its free-plane
     // drag keeps the live-drag fold identical to the later idle fold even with
-    // a held rotation (the axis-arrow path has a drag-only de-rotation term).
+    // a held rotation (the axis-arrow path re-expresses T in the run frame).
     drivePart("move", 3, wantedUndo, 52, -31);
 }
 
@@ -489,6 +489,15 @@ CharacterizationResult characterizeCompositeSampling(string finalBank) {
     result.baselineError = maxDiff(actual, baselineCandidate,
                                    result.baselineErrorVertex,
                                    result.baselineErrorComponent);
+    size_t invariantVertex;
+    string invariantComponent;
+    immutable double invariantError = maxDiff(actual, expectedBroad,
+        invariantVertex, invariantComponent);
+    assert(result.liveError > 1e-3,
+        "6207 characterization rig must distinguish the live-pipe candidate");
+    assert(invariantError <= 1e-5,
+        format("6207 composite re-grade changed the frozen map: error=%g at v%d.%s",
+               invariantError, invariantVertex, invariantComponent));
     writefln("[composite %s] baselinePivot=%s livePivot=%s gap=%g at v%d.%s "
            ~ "liveError=%g baselineError=%g baselinePositions=%s livePositions=%s",
              finalBank, baselinePivot, livePivot, result.candidateGap,

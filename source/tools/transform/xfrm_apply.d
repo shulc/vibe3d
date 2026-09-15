@@ -28,7 +28,7 @@ mixin template XfrmApplyImpl() {
     // through here. Absolute-from-baseline: the caller supplies the
     // pre-chain vertex array (e.g. drag-down snapshot for live drags,
     // current `mesh.vertices.dup` for the one-shot numeric path) and
-    // `applyTRS` rebuilds `mesh.vertices` from it (T → R → S, using
+    // `applyTRS` rebuilds `mesh.vertices` from it (R → S → T, using
     // `run.t` / `headlessRotate` / `run.s` as
     // attributes).
     //
@@ -83,6 +83,13 @@ mixin template XfrmApplyImpl() {
         void restoreBaseline() {
             restoreBaselinePrefix(mesh.vertices, baseline);
         }
+
+        // A mixed run replays the whole pipe from its frozen source and folds
+        // about the run centre. A one-shot numeric apply owns a fresh baseline
+        // and deliberately keeps its existing live-pipe behaviour (task 6207).
+        immutable bool compositeRun = flagT && (flagR || flagS)
+            && runBaselineValid && !headlessApplyActive_;
+        if (compositeRun) samplePipeFromBaseline = true;
 
         if (samplePipeFromBaseline) {
             restoreBaseline();
@@ -148,8 +155,9 @@ mixin template XfrmApplyImpl() {
         // sets runFrameValid=true on the only path where it was false, so
         // asserting it afterward is a tautology that can never catch a bug.
         freezeRunFrameIfNeeded(pivot, bX, bY, bZ);
+        if (compositeRun && runFrameValid) pivot = runFrameOrigin;
 
-        // MS-4.3/4.4 — canonical-matrix FOLD. The whole T->R->S chain is composed
+        // MS-4.3/4.4 — canonical-matrix FOLD. The whole R->S->T map is composed
         // into ONE pivot-relative matrix (per cluster in the ACEN.Local case) and
         // applied through a SINGLE `applyXformMatrix` call, blended toward identity
         // per vertex by ONE falloff weight at the BASELINE position — see
@@ -174,15 +182,15 @@ mixin template XfrmApplyImpl() {
                               || run.s.y != 1
                               || run.s.z != 1);
 
-            // MS-4.3/4.4 — fold: compose T->R->S into ONE pivot-relative matrix
+            // MS-4.3/4.4 — fold: compose R->S->T into ONE pivot-relative matrix
             // (per cluster in the ACEN.Local case) and apply it once with ONE
             // baseline-position weight (the reference model, validated in
             // MS-4.1/4.2 globally and the per-cluster translate-weighting captured
             // in per_cluster_translate_falloff_bug). Only the dormant pow-scale
             // path falls through to the legacy per-pass chain below (no matrix
-            // form, F2). At w==1 the fold is bit-equivalent to the chain (same
-            // factor order), so the w==1 suite gates the compose; under fractional
-            // falloff the fold is the validated change.
+            // form, F2). That dormant non-unit-pass path intentionally retains
+            // its earlier order; the canonical fold is gated directly by its
+            // composition-law witnesses.
             float passesS = dragFalloff.compoundPasses > 0.0f
                           ? dragFalloff.compoundPasses : 1.0f;
             bool powScale = hasS && fabs(passesS - 1.0f) > 1e-4f;
@@ -555,7 +563,7 @@ mixin template XfrmApplyImpl() {
         mesh.publishConfinedChange(MeshEditScope.Position);
     }
 
-    // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole T->R->S chain into
+    // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole R->S->T map into
     // ONE pivot-relative matrix per moving set and applies it through a SINGLE
     // `applyXformMatrix` call, blended toward identity per vertex by ONE falloff
     // weight evaluated at the BASELINE position. This is what MS-4.1/4.2 proved
@@ -564,11 +572,8 @@ mixin template XfrmApplyImpl() {
     // confirm it reproduces multi-axis rotation + combined T+R+S exactly, where
     // the prior per-pass sequential blend diverged 0.02-0.03.
     //
-    // Order (matches the legacy pass order T -> R.x -> R.y -> R.z -> view -> S,
-    // so at w==1 this is BIT-EQUIVALENT to the per-pass chain — the existing
-    // w==1 multi-pass suite is the compose-correctness gate): with each factor
-    // origin-fixing (R/S built around Vec3(0)) and T the basis-space delta,
-    //   M = S . (view . Rz . Ry . Rx) . T,
+    // Order: with each linear factor origin-fixing and T the basis-space delta,
+    //   M = T . S . (view . Rz . Ry . Rx),
     // and applyXformMatrix re-applies `pivot` as `pivot + blend(M)*(v - pivot)`.
     //
     // Per-cluster (ACEN.Local): each cluster composes the SAME chain in ITS OWN
@@ -585,7 +590,7 @@ mixin template XfrmApplyImpl() {
                    bool hasT, bool hasS,
                    Vec3 viewAxis, float viewAngleDeg) {
         import std.math : PI;
-        // Compose S·R·T. R/S use the rotate/scale frame (ax/ay/az); the TRANSLATE
+        // Compose T·S·R. R/S use the rotate/scale frame (ax/ay/az); the TRANSLATE
         // term uses its OWN basis (tx/ty/tz) so P-F can project the run-absolute
         // run.t along the FROZEN run-frame (the global path) while the
         // scale term keeps its per-frame / per-cluster frame untouched. For the
@@ -694,79 +699,13 @@ mixin template XfrmApplyImpl() {
             sX = frame.right; sY = frame.up; sZ = frame.axis;
         }
 
-        // MATRIX-AS-TRUTH — the GLOBAL rotate factor is `run.r` directly (the
-        // run's world-space accumulated rotation, composed about the real frozen
-        // ring axes at the drain; the view-ring is already folded into it). It is an
-        // ORIGIN-fixed world rotation; composeFor multiplies it into the S·R·T fold
-        // and applyXformMatrix re-applies the pivot as `pivot + M·(v - pivot)`. No
-        // per-axis Euler rebuild, no rotate-frame argument, no frame re-interpretation
-        // (the matrix already encodes the rotation about the physical ring axes —
-        // fixing the prior euler-as-truth basis bug on a non-world global basis).
-        //
-        // The APPLY PIVOT stays the LIVE `pivot` (= queryActionCenter sampled from
-        // the frozen baseline via samplePipeFromBaseline). It is ALREADY stable for
-        // the run on the global path (b6d1be4: rotate value edits read a stable pivot
-        // from the baseline; with the baseline frozen all-run the sampled pivot
-        // equals runFrameOrigin every frame). Keeping the live pivot avoids perturbing
-        // the SHARED-fold Move/Scale terms.
-
-        // TRANSLATE-TERM DE-ROTATION (task 0032, plan invariant ★):
-        //
-        // The fold builds M = run.r · T(applyBasis · run.t). For geometry to track
-        // the rendered arrow/handle, net Δ must equal worldDelta. The move decomposed
-        //   run.t = inputBasisᵀ · worldDelta
-        // where `inputBasis` is EXACTLY what beginMoveDragSession pushed via
-        // setWrapperInputFrame (`:2059-2060`):
-        //   inputBasis = frame.valid ? (frame.right, frame.up, frame.axis) : runFrame
-        //
-        // Substituting into net Δ = run.r · applyBasis · inputBasisᵀ · worldDelta:
-        //   applyBasis = run.rᵀ · inputBasis   (★ the fix)
-        // This lands net Δ = worldDelta whenever applyFold's inputBasis read matches
-        // the basis the move actually decomposed against — world-input (Auto/None
-        // ACEN where frame settles WORLD), rotated-input (axis=Select settles
-        // run.r·B0, giving applyBasis=B0 so double-correction cannot occur), and
-        // run.r==I (tdX/tdY/tdZ = inputBasis = tX/tY/tZ, byte-identical).
-        //
-        // EXCEPTION (pre-existing, not fully closed here): ACEN=Element never settles
-        // a frame (acenSettleAllowed() false ⇒ frame.valid false), so this reads
-        // `runFrame` (frozen at rotate-start) while the Element move projects onto a
-        // LIVE element basis that drifts per-frame. A residual skew remains — but the
-        // fix strictly IMPROVES it (it removes the dominant run.r term), so Element
-        // rotate→move is closer to the handle than before, just not exact. Closing
-        // that residual is out of scope (it predates this fix).
-        //
-        // The de-rotation is TRANSLATE-ONLY: tdX/tdY/tdZ is a SEPARATE triple;
-        // tX/tY/tZ (and sX=tX above) are NOT modified, so the scale term is
-        // byte-stable (BLOCKER 2). The gate `flagR && !runRotIsIdentity()` is a
-        // no-op shortcut for the identity case; the algebra self-corrects without it.
-        // center-box free-plane drag (dragAxis 3) is excluded — its decompose and
-        // re-expand share the live basis, so the round-trip already cancels.
-        //
-        // SCOPE: the fix applies ONLY when an active move DRAG produced run.t via
-        // the inputBasis decomposition (`:779-782` in move.d). In the panel/headless
-        // path (tool.attr TX + RY, tool.doApply) `run.t` is a direct panel value in
-        // the tX/tY/tZ basis — no decomposition, no de-rotation needed. The gate
-        // `activeDrag is moveSub` distinguishes the two: live drag = true, panel =
-        // false. (Panel path: `applyBasis = tX` → `M = run.r · T(worldDelta)` which
-        // is the correct T-before-R chain semantics for numeric TX/RY attrs.)
-        Vec3 tdX = tX, tdY = tY, tdZ = tZ;   // translate axes for composeFor
-        if (activeDrag is moveSub
-                && flagR && !runRotIsIdentity() && !moveCenterBoxDragActive()) {
-            // inputBasis = what beginMoveDragSession pushed (`:2059-2060`)
-            Vec3 ibX = frame.valid ? frame.right : tX;
-            Vec3 ibY = frame.valid ? frame.up    : tY;
-            Vec3 ibZ = frame.valid ? frame.axis  : tZ;
-            // applyBasis = run.rᵀ · inputBasis
-            import math : transformPoint;
-            float[16] rT = transpose3x3(run.r);
-            tdX = transformPoint(rT, ibX);
-            tdY = transformPoint(rT, ibY);
-            tdZ = transformPoint(rT, ibZ);
-        }
+        // MATRIX-AS-TRUTH — run.r is the origin-fixed world rotation. The
+        // caller has already selected the run pivot, and the fold applies
+        // T·S·R around that point; translation stays outside R and S.
 
         float[16] M = composeFor(/*useRotM=*/true, run.r,
                                  Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
-                                 sX, sY, sZ, tdX, tdY, tdZ);
+                                 sX, sY, sZ, tX, tY, tZ);
 
         // WORLD -> LAYER (task 0649). Everything above composed in the space
         // the pipe publishes in; everything below writes `mesh.vertices`,
