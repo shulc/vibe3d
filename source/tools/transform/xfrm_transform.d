@@ -149,7 +149,8 @@ import tools.transform.xform_kernels :
     applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
     BlendMode,
-    composeRunMatrix;
+    composeRunMatrix,
+    runScaleAxes;
 import command_history : CommandHistory, PreparedHistoryKind;
 import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;

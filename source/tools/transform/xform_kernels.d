@@ -181,6 +181,30 @@ float[16] composeRunMatrix(bool hasT, const float[16] tr,
     return result;
 }
 
+/// Scale axes obey the task-6207 fold invariant captured in toolcard phases
+/// 0b/0c: a held rotation carries the run frame, otherwise a settled gizmo
+/// frame wins, and a fresh run uses its frozen frame.
+void runScaleAxes(bool settled, Vec3 fR, Vec3 fU, Vec3 fA,
+                  bool hasR, const float[16] rot,
+                  Vec3 mR, Vec3 mU, Vec3 mF,
+                  out Vec3 sX, out Vec3 sY, out Vec3 sZ)
+    pure nothrow @nogc @safe
+{
+    if (hasR) {
+        sX = applyAffine(rot, mR);
+        sY = applyAffine(rot, mU);
+        sZ = applyAffine(rot, mF);
+    } else if (settled) {
+        sX = fR;
+        sY = fU;
+        sZ = fA;
+    } else {
+        sX = mR;
+        sY = mU;
+        sZ = mF;
+    }
+}
+
 private void axesFor(size_t vi,
                      TransformTool.ClusterAxes ap,
                      TransformTool.ClusterPivots cp,

@@ -58,8 +58,9 @@ unittest // The composite fold has one production door and one shared frame rule
         "6207 handle following must use the move input axes under the shared decision");
     assert(hostFlat.count("if(runBaselineValid)runFrameValid=false;") == 1,
         "6207 local rebake must invalidate the frozen frame once");
-    assert(apply.count("frame.valid") == 1,
-        "6207 phase 1b must leave the scale-axis path unchanged");
+    assert(apply.count("runScaleAxes(frame.valid,") == 1
+        && apply.count("if (frame.valid)") == 0,
+        "6207 scale axes must pass through the one shared branch rule");
     assert(itemCaller.count("applyGestureToItems(") == 1
         && itemKernel.count("applyGestureToItems(") >= 2,
         "6207 item composition must keep one production caller");

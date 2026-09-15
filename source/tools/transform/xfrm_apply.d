@@ -660,44 +660,9 @@ mixin template XfrmApplyImpl() {
         Vec3 tY = runFrameValid ? runFrameU : bY;
         Vec3 tZ = runFrameValid ? runFrameF : bZ;
 
-        // SCALE-AXIS CHAIN (same fix class as the rotate-axis chain d4e0ea0 and
-        // the translate frozen-frame above) — the GLOBAL fold's SCALE term must
-        // use a FROZEN basis, NOT the live currentBasis (bX/bY/bZ).
-        // pivotScaleMatrixBasis scales `run.s` along the axes it is handed, and a
-        // single-axis scale (e.g. SZ) deforms the selection's bbox aspect ratio,
-        // so the live world-snapped select-derived basis (axis.d
-        // computeSelectionBboxBasis: `right` = world axis of largest in-plane
-        // bbox extent) SWAPS its largest-extent axis as the drag crosses an
-        // extent tie and swaps BACK — the apply axis OSCILLATES A->B->A within
-        // one drag (the user-found scale-after-rotate flip).
-        //
-        // SOURCE — mirror renderBasis (~1017) and the input channel
-        // (beginScaleDragSession): when a prior same-session gesture left a
-        // persisted gizmo frame (frame.settled && acenSettleAllowed), source the
-        // scale axes from the unified `frame` DIRECTLY, not from runFrame. The run
-        // frame is frozen at the run's FIRST applyTRS, but a chained scale REUSES the
-        // prior (e.g. rotate) gesture's still-open run (noteRunBank consolidates
-        // history but does NOT resetRun), so runFrame holds that run's ORIGINAL
-        // world-snapped frame — `frame` carries the rotated frame the displayed
-        // boxes + the input projection already use. Scaling along `frame` (=
-        // run.r·world) composes with the held `run.r` in composeFor as
-        // M = S(frame)·run.r: at run.s=I, M = run.r (held rotation only); as
-        // run.s grows the extra scale is along the DISPLAYED rotated axis — no
-        // double-count (S composes with run.r, it does not replace or re-rotate
-        // it). For a FRESH first gesture (frame.settled==false) this falls back
-        // to the frozen runFrame == the gesture-start currentBasis, so a
-        // non-flipping drag is geometry-identical to the old live read and differs
-        // ONLY on the flip frames it suppresses. Uniform-disc scale (run.s
-        // isotropic) is rotation-invariant ⇒ frozen vs live is a no-op there. The
-        // per-cluster (ACEN.Local) path below keeps its own per-cluster axes
-        // (Local never chains — acenSettleAllowed excludes it).
-        Vec3 sX = tX, sY = tY, sZ = tZ;
-        // Gesture-frame unification — the chained scale axes read the unified
-        // `frame` (the single source of truth). `frame.valid` IS `frame.settled &&
-        // acenSettleAllowed()` by construction.
-        if (frame.valid) {
-            sX = frame.right; sY = frame.up; sZ = frame.axis;
-        }
+        Vec3 sX, sY, sZ;
+        runScaleAxes(frame.valid, frame.right, frame.up, frame.axis,
+                     flagR, run.r, tX, tY, tZ, sX, sY, sZ);
 
         // MATRIX-AS-TRUTH — run.r is the origin-fixed world rotation. The
         // caller has already selected the run pivot, and the fold applies
