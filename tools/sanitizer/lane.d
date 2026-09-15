@@ -2432,7 +2432,8 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/trace/reset", "POST", `{}`),
     SweepRoute("/api/history/jump", "POST", `{}`),
     SweepRoute("/api/history/replay", "POST", `{}`),
-    SweepRoute("/api/play-events", "POST", `{}`),
+    SweepRoute("/api/play-events", "POST",
+               `{"t":0,"type":"SDL_EVENT","sdl_type":32768}`),
 ];
 
 /// The declared set, parsed out of the source. Compared with kSweepRoutes as a

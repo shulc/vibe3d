@@ -1,7 +1,9 @@
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.algorithm;
 import std.stdio;
+import core.thread : Thread;
+import core.time : msecs;
 
 /**
  * Comprehensive test suite for the play-events HTTP endpoint
@@ -23,6 +25,10 @@ unittest { // Test 2: Valid mouse click sequence
         `{"t":200.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":150,"y":250,"clicks":1,"mod":0}`;
 
     assert(curlPost(testData) == 200);
+    // WHEN: before cell 3 posts garbage. D1 keeps a rejected load side-effect
+    // free, so the three-event click must finish instead of relying on cell 3
+    // to cancel its tail.
+    waitPlaybackFinished(3);
 }
 
 unittest { // Test 3: Invalid JSON format
@@ -53,4 +59,17 @@ int curlGet() {
     http.url = testBaseUrl() ~ "/api/play-events";
     http.perform();
     return http.statusLine.code;
+}
+
+void waitPlaybackFinished(size_t expectedTotal) {
+    foreach (_; 0 .. 400) {
+        auto status = getJson("/api/play-events/status");
+        if (status["finished"].boolean) {
+            assert(status["total"].integer == cast(long)expectedTotal,
+                "play-events cell 2 population changed before cell 3");
+            return;
+        }
+        Thread.sleep(25.msecs);
+    }
+    assert(false, "play-events cell 2 did not finish before invalid cell 3");
 }

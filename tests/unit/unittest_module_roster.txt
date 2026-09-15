@@ -224,6 +224,7 @@ tests.unit.edge_vertex_map_rows_test
 tests.unit.edit_session_test
 tests.unit.escape_ladder_test
 tests.unit.event_delivery_owner_test
+tests.unit.eventlog_parser_test
 tests.unit.eventlog_test
 tests.unit.face_reindex_arming_test
 tests.unit.facing_mirror_determinant_test

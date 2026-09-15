@@ -1846,7 +1846,7 @@ class HttpServer {
     public void setTestMode(bool enabled) { testMode = enabled; }
 
     /// Enable fast-forward replay on the HTTP-driven event player (--perf
-    /// mode). EventPlayer.load() preserves this flag across /api/play-events
+    /// mode). EventPlayer.begin() preserves this flag across /api/play-events
     /// requests, so it only needs setting once at startup.
     public void setPlayerFastForward(bool enabled) {
         eventPlayer.fastForward = enabled;
@@ -4172,8 +4172,7 @@ class HttpServer {
 
     private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
         // Task 0763 — the second of 0611's two named HTTP-thread writers.
-        // `eventPlayer.load()` mutates `entries` in place
-        // (`entries.length = 0` then repeated `~=`) directly on the HTTP
+        // A valid request still installs `entries` directly on the HTTP
         // thread, unsynchronized, while the main thread's `tickEventPlayer()`
         // reads `entries[idx]` every frame. Unlike a scalar counter this is
         // a dynamic array: a torn read of the slice header (ptr+length) is
@@ -4193,17 +4192,23 @@ class HttpServer {
         // to mainThread — a route-table + wire-timing change needing the
         // full suite, not this follow-up's narrow lanes. Grouped with
         // /api/selection and /api/history under task 0950.
+        //
+        // Validation is now a preparation step: a 400 returns before any
+        // EventPlayer method can replace playback or inherited remap state.
         if (!testMode) {
             response.statusCode = 403;
             response.body = `{"error":"play-events is only available in --test mode"}`;
             response.headers["Content-Type"] = "application/json";
-        } else if (eventPlayer.load(request.body) && eventPlayer.entries.length > 0) {
-            response.statusCode = 200;
-            response.body = `{"status": "success", "message": "Events loaded successfully"}`;
-            response.headers["Content-Type"] = "application/json";
         } else {
-            response.statusCode = 400;
-            response.body = `{"status": "error", "message": "Failed to parse events"}`;
+            auto parsed = parseEventLog(request.body);
+            if (!parsed.accepted()) {
+                response.statusCode = 400;
+                response.body = `{"status": "error", "message": "Failed to parse events"}`;
+            } else {
+                eventPlayer.begin(parsed.log);
+                response.statusCode = 200;
+                response.body = `{"status": "success", "message": "Events loaded successfully"}`;
+            }
             response.headers["Content-Type"] = "application/json";
         }
     }

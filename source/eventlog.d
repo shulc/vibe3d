@@ -1,6 +1,7 @@
 module eventlog;
 
 import bindbc.sdl;
+import std.exception : assumeUnique;
 import std.json;
 import std.stdio : File;
 
@@ -126,6 +127,29 @@ struct ViewportMeta {
     bool  valid;
 }
 
+/// One parsed, replayable event. Kept outside EventPlayer so parsing can build
+/// an owned log without borrowing or mutating a player.
+struct EventLogEntry { double timeMs; SDL_Event event; SDL_Keymod mod; }
+
+/// Validated JSON-lines input. The entry backing store is immutable after the
+/// parser transfers its only mutable reference into this value.
+struct ParsedEventLog {
+    immutable(EventLogEntry)[] entries;
+    ViewportMeta viewport;
+    size_t skipped;
+}
+
+/// A rejected parse still carries its locally parsed metadata for diagnostics,
+/// but callers must not apply any of it unless accepted is true.
+struct EventLogParseResult {
+    ParsedEventLog log;
+    string error;
+
+    bool accepted() const pure nothrow @safe @nogc {
+        return error.length == 0;
+    }
+}
+
 private __gshared ViewportMeta g_replayCurrentViewport;
 
 /// Tell the EventPlayer what the runtime viewport looks like right now.
@@ -241,9 +265,138 @@ struct EventLogger {
 // EventPlayer — replays a recorded JSON Lines event log file
 // ---------------------------------------------------------------------------
 
+/// Parse a JSON Lines log without touching EventPlayer or SDL state. Invalid
+/// lines remain skippable, but a body with no playable events is rejected.
+EventLogParseResult parseEventLog(string data) {
+    import std.string : splitLines;
+
+    EventLogEntry[] entries;
+    ViewportMeta viewport;
+    size_t skipped;
+
+    foreach (raw; data.splitLines()) {
+        string line = cast(string)raw.idup;
+        while (line.length && (line[$-1] == '\r' || line[$-1] == '\n' || line[$-1] == ' '))
+            line = line[0..$-1];
+        if (line.length == 0) continue;
+
+        JSONValue obj;
+        try { obj = parseJSON(line); }
+        catch (JSONException) { ++skipped; continue; }
+
+        double t;
+        try {
+            if (obj["t"].type == JSONType.integer)       t = cast(double)obj["t"].integer;
+            else if (obj["t"].type == JSONType.uinteger) t = cast(double)obj["t"].uinteger;
+            else                                         t = obj["t"].floating;
+        } catch (Exception) { ++skipped; continue; }
+
+        string typeName;
+        try { typeName = obj["type"].str; }
+        catch (Exception) { ++skipped; continue; }
+
+        SDL_Event e;
+        // OPTIONAL `ts` — the SDL timestamp the replayed event carries
+        // (task 0582). Absent on every log written so far and on everything
+        // the recorder writes, in which case it stays 0, exactly as before.
+        //
+        // It exists because `t` is a SCHEDULE and a timestamp is a
+        // MEASUREMENT, and one handler needs the second: the trackball's
+        // release momentum is the last step's arc divided by the interval
+        // between the last two motion events. `t` cannot answer that —
+        // playback dispatches every DUE event in one frame, so the interval
+        // a handler could measure for itself is a frame boundary, i.e. a
+        // property of how loaded the machine is. With `ts` absent all
+        // replayed events share the stamp 0, and the momentum rule's own
+        // guard ("two events sharing a timestamp leave no spin") applies —
+        // a replay of a log that never recorded when things happened
+        // reports, correctly, that it does not know.
+        //
+        // Deliberately NOT written by `EventLogger`: nothing recorded today
+        // would consume it, and starting to emit it would make every future
+        // recording's replay newly time-sensitive to serve a gesture that
+        // ships off. The recorder can start writing it the day a recorded
+        // session has to reproduce a flick.
+        e.common.timestamp = cast(uint)_jsonGet(obj, "ts", 0);
+        switch (typeName) {
+            case "VIEWPORT":
+                viewport.vpX  = cast(int)_jsonGet(obj, "vpX");
+                viewport.vpY  = cast(int)_jsonGet(obj, "vpY");
+                viewport.vpW  = cast(int)_jsonGet(obj, "vpW");
+                viewport.vpH  = cast(int)_jsonGet(obj, "vpH");
+                try { viewport.fovY = cast(float)obj["fovY"].floating; }
+                catch (Exception) { viewport.fovY = 0.7853982f; }
+                viewport.valid = true;
+                continue;
+            case "SDL_QUIT":
+                e.type = SDL_QUIT;
+                break;
+            case "SDL_KEYDOWN", "SDL_KEYUP":
+                e.type = typeName == "SDL_KEYDOWN" ? SDL_KEYDOWN : SDL_KEYUP;
+                e.key.keysym.sym      = cast(SDL_Keycode)(_jsonGet(obj, "sym"));
+                e.key.keysym.scancode = cast(SDL_Scancode)(_jsonGet(obj, "scan"));
+                e.key.keysym.mod      = cast(SDL_Keymod)(_jsonGet(obj, "mod"));
+                e.key.repeat          = cast(ubyte)(_jsonGet(obj, "repeat"));
+                break;
+            case "SDL_MOUSEBUTTONDOWN", "SDL_MOUSEBUTTONUP":
+                e.type          = typeName == "SDL_MOUSEBUTTONDOWN"
+                                ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                e.button.button = cast(ubyte)(_jsonGet(obj, "btn",    1));
+                e.button.x      = cast(int)  (_jsonGet(obj, "x"));
+                e.button.y      = cast(int)  (_jsonGet(obj, "y"));
+                e.button.clicks = cast(ubyte)(_jsonGet(obj, "clicks", 1));
+                e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
+                                ? SDL_PRESSED : SDL_RELEASED;
+                entries ~= EventLogEntry(t, e,
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")));
+                continue;
+            case "SDL_MOUSEMOTION":
+                e.type         = SDL_MOUSEMOTION;
+                e.motion.x     = cast(int)(_jsonGet(obj, "x"));
+                e.motion.y     = cast(int)(_jsonGet(obj, "y"));
+                e.motion.xrel  = cast(int)(_jsonGet(obj, "xrel"));
+                e.motion.yrel  = cast(int)(_jsonGet(obj, "yrel"));
+                e.motion.state = cast(uint)(_jsonGet(obj, "state"));
+                entries ~= EventLogEntry(t, e,
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")));
+                continue;
+            case "SDL_MOUSEWHEEL":
+                e.type    = SDL_MOUSEWHEEL;
+                e.wheel.x = cast(int)(_jsonGet(obj, "x"));
+                e.wheel.y = cast(int)(_jsonGet(obj, "y"));
+                break;
+            case "SDL_WINDOWEVENT":
+                e.type         = SDL_WINDOWEVENT;
+                e.window.event = cast(ubyte)(_jsonGet(obj, "sub"));
+                e.window.data1 = cast(int)  (_jsonGet(obj, "w"));
+                e.window.data2 = cast(int)  (_jsonGet(obj, "h"));
+                break;
+            case "SDL_TEXTINPUT":
+                e.type = SDL_TEXTINPUT;
+                break;
+            default:
+                if (typeName == "SDL_EVENT")
+                    e.type = cast(uint)(_jsonGet(obj, "sdl_type"));
+                else {
+                    ++skipped;
+                    continue;
+                }
+                break;
+        }
+
+        entries ~= EventLogEntry(t, e);
+    }
+
+    EventLogParseResult result;
+    result.log = ParsedEventLog(entries.assumeUnique, viewport, skipped);
+    if (result.log.entries.length == 0)
+        result.error = "event log contains no playable events";
+    return result;
+}
+
 struct EventPlayer {
-    struct Entry { double timeMs; SDL_Event event; SDL_Keymod mod; }
-    Entry[] entries;
+    alias Entry = EventLogEntry;
+    immutable(Entry)[] entries;
     size_t  idx;
     ulong   startCounter;
     ulong   freq;
@@ -326,7 +479,16 @@ struct EventPlayer {
     // Returns true on success.
     bool open(string path) {
         import std.file;
-        try { return load(readText(path)); }
+        try {
+            auto parsed = parseEventLog(readText(path));
+            if (!parsed.accepted) {
+                import std.stdio : stderr;
+                stderr.writeln(parsed.error);
+                return true;
+            }
+            begin(parsed.log);
+            return true;
+        }
         catch (Exception) {
             import log : logWarn;
             import std.format : format;
@@ -337,119 +499,20 @@ struct EventPlayer {
     }
 
     bool load(string data) {
-        import std.string : splitLines;
-        entries.length = 0;
+        auto parsed = parseEventLog(data);
+        if (!parsed.accepted) return false;
+        begin(parsed.log);
+        return true;
+    }
 
-        foreach (raw; data.splitLines()) {
-            string line = cast(string)raw.idup;
-            while (line.length && (line[$-1] == '\r' || line[$-1] == '\n' || line[$-1] == ' '))
-                line = line[0..$-1];
-            if (line.length == 0) continue;
-
-            JSONValue obj;
-            try { obj = parseJSON(line); }
-            catch (JSONException) { continue; }
-
-            double t;
-            try {
-                if (obj["t"].type == JSONType.integer)       t = cast(double)obj["t"].integer;
-                else if (obj["t"].type == JSONType.uinteger) t = cast(double)obj["t"].uinteger;
-                else                                         t = obj["t"].floating;
-            } catch (Exception) { continue; }
-
-            string typeName;
-            try { typeName = obj["type"].str; } catch (Exception) { continue; }
-
-            SDL_Event e;
-            // OPTIONAL `ts` — the SDL timestamp the replayed event carries
-            // (task 0582). Absent on every log written so far and on everything
-            // the recorder writes, in which case it stays 0, exactly as before.
-            //
-            // It exists because `t` is a SCHEDULE and a timestamp is a
-            // MEASUREMENT, and one handler needs the second: the trackball's
-            // release momentum is the last step's arc divided by the interval
-            // between the last two motion events. `t` cannot answer that —
-            // playback dispatches every DUE event in one frame, so the interval
-            // a handler could measure for itself is a frame boundary, i.e. a
-            // property of how loaded the machine is. With `ts` absent all
-            // replayed events share the stamp 0, and the momentum rule's own
-            // guard ("two events sharing a timestamp leave no spin") applies —
-            // a replay of a log that never recorded when things happened
-            // reports, correctly, that it does not know.
-            //
-            // Deliberately NOT written by `EventLogger`: nothing recorded today
-            // would consume it, and starting to emit it would make every future
-            // recording's replay newly time-sensitive to serve a gesture that
-            // ships off. The recorder can start writing it the day a recorded
-            // session has to reproduce a flick.
-            e.common.timestamp = cast(uint)_jsonGet(obj, "ts", 0);
-            switch (typeName) {
-                case "VIEWPORT":
-                    // Meta line — store and skip; not an SDL event.
-                    recordedViewport.vpX  = cast(int)_jsonGet(obj, "vpX");
-                    recordedViewport.vpY  = cast(int)_jsonGet(obj, "vpY");
-                    recordedViewport.vpW  = cast(int)_jsonGet(obj, "vpW");
-                    recordedViewport.vpH  = cast(int)_jsonGet(obj, "vpH");
-                    try { recordedViewport.fovY = cast(float)obj["fovY"].floating; }
-                    catch (Exception) { recordedViewport.fovY = 0.7853982f; }
-                    recordedViewport.valid = true;
-                    continue;
-                case "SDL_QUIT":
-                    e.type = SDL_QUIT;
-                    break;
-                case "SDL_KEYDOWN", "SDL_KEYUP":
-                    e.type = typeName == "SDL_KEYDOWN" ? SDL_KEYDOWN : SDL_KEYUP;
-                    e.key.keysym.sym      = cast(SDL_Keycode)(_jsonGet(obj, "sym"));
-                    e.key.keysym.scancode = cast(SDL_Scancode)(_jsonGet(obj, "scan"));
-                    e.key.keysym.mod      = cast(SDL_Keymod)(_jsonGet(obj, "mod"));
-                    e.key.repeat          = cast(ubyte)(_jsonGet(obj, "repeat"));
-                    break;
-                case "SDL_MOUSEBUTTONDOWN", "SDL_MOUSEBUTTONUP":
-                    e.type          = typeName == "SDL_MOUSEBUTTONDOWN"
-                                    ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-                    e.button.button = cast(ubyte)(_jsonGet(obj, "btn",    1));
-                    e.button.x      = cast(int)  (_jsonGet(obj, "x"));
-                    e.button.y      = cast(int)  (_jsonGet(obj, "y"));
-                    e.button.clicks = cast(ubyte)(_jsonGet(obj, "clicks", 1));
-                    e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
-                                    ? SDL_PRESSED : SDL_RELEASED;
-                    entries ~= Entry(t, e, cast(SDL_Keymod)(_jsonGet(obj, "mod")));
-                    continue;
-                case "SDL_MOUSEMOTION":
-                    e.type         = SDL_MOUSEMOTION;
-                    e.motion.x     = cast(int)(_jsonGet(obj, "x"));
-                    e.motion.y     = cast(int)(_jsonGet(obj, "y"));
-                    e.motion.xrel  = cast(int)(_jsonGet(obj, "xrel"));
-                    e.motion.yrel  = cast(int)(_jsonGet(obj, "yrel"));
-                    e.motion.state = cast(uint)(_jsonGet(obj, "state"));
-                    entries ~= Entry(t, e, cast(SDL_Keymod)(_jsonGet(obj, "mod")));
-                    continue;
-                case "SDL_MOUSEWHEEL":
-                    e.type    = SDL_MOUSEWHEEL;
-                    e.wheel.x = cast(int)(_jsonGet(obj, "x"));
-                    e.wheel.y = cast(int)(_jsonGet(obj, "y"));
-                    break;
-                case "SDL_WINDOWEVENT":
-                    e.type         = SDL_WINDOWEVENT;
-                    e.window.event = cast(ubyte)(_jsonGet(obj, "sub"));
-                    e.window.data1 = cast(int)  (_jsonGet(obj, "w"));
-                    e.window.data2 = cast(int)  (_jsonGet(obj, "h"));
-                    break;
-                case "SDL_TEXTINPUT":
-                    e.type = SDL_TEXTINPUT;
-                    break;
-                default:
-                    if (typeName == "SDL_EVENT") {
-                        e.type = cast(uint)(_jsonGet(obj, "sdl_type"));
-                    } else {
-                        continue; // unknown — skip
-                    }
-                    break;
-            }
-
-            entries ~= Entry(t, e);
-        }
-
+    /// Install one already-validated log. A log with no VIEWPORT row keeps the
+    /// previous remap, preserving the legacy inheritance contract.
+    void begin(ParsedEventLog log)
+    in (log.entries.length > 0)
+    {
+        entries = log.entries;
+        if (log.viewport.valid)
+            recordedViewport = log.viewport;
         startCounter = _perfCounter();
         freq         = _perfFreq();
         active       = entries.length > 0;
@@ -460,9 +523,7 @@ struct EventPlayer {
             import std.format : format;
             logInfo("eventlog", format("EventPlayer: loaded %d events", entries.length));
         }
-        return true;
     }
-
     // Remap (x, y) from the recorded viewport into the current one.
     // No-op if either viewport is unknown (legacy logs without meta).
     private void remapPixel(ref int x, ref int y) const {
@@ -795,15 +856,17 @@ unittest { // EventPlayer.tick: its sink receives every due motion with current 
     p.freq         = 1000;
     p.idx          = 0;
 
+    EventPlayer.Entry[] entries;
     foreach (i; 0 .. 3) {
         SDL_Event e;
         e.type = SDL_MOUSEMOTION;
         e.motion.x = 100 + cast(int)i;
         e.motion.y = 200 + cast(int)i;
-        p.entries ~= EventPlayer.Entry(1.0, e,
+        entries ~= EventPlayer.Entry(1.0, e,
             cast(SDL_Keymod)(i == 0 ? KMOD_SHIFT
                                     : (i == 1 ? KMOD_CTRL : KMOD_ALT)));
     }
+    p.entries = entries.assumeUnique;
 
     int sinkCalls;
     int[] seenX;
