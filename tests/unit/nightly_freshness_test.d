@@ -239,10 +239,16 @@ unittest
 // ---------------------------------------------------------------------------
 unittest
 {
+    import std.process : ProcessException;
     import std.stdio : stderr;
 
-    auto probe = execute(["gh", "--version"]);
-    if (probe.status != 0) {
+    // `execute` THROWS when the executable is not on PATH instead of returning
+    // a non-zero status, so the skip must catch it: a status check alone made
+    // "no gh on this host" a red module rather than the skip it announces.
+    int probeStatus;
+    try probeStatus = execute(["gh", "--version"]).status;
+    catch (ProcessException) probeStatus = -1;
+    if (probeStatus != 0) {
         stderr.writeln("nightly_freshness_test: SKIPPED live smoke — `gh` is not "
             ~ "on PATH on this host. The offline-seam block above already proved "
             ~ "the comparison/witness; this block additionally proves the real "
