@@ -912,6 +912,7 @@ class HttpServer {
     struct ModelReq  { int layer = -1; bool detailed; }
     struct ModelResp { string result; string error; }
     private MainThreadBridge!(ModelReq, ModelResp) modelBridge;
+    private Duration modelBudget_ = 5.seconds;
 
     // Task 0950 item F — /api/selection has its OWN bridge. The provider
     // walks Document.layers and resolves the active mesh, both main-thread
@@ -1091,38 +1092,17 @@ class HttpServer {
     struct AiAnalyzeResp { string result; string error; }
     private MainThreadBridge!(AiAnalyzeReq, AiAnalyzeResp) aiAnalyzeBridge;
 
-    // GET /api/tool/handles — own bridge/epoch pair (MUST NOT share any other
-    // bridge's, same rule as pathBridge/toolpipeBridge above). The
-    // null-provider case is decided on the HTTP thread (200 {"handles":null}),
-    // so this bridge's service only ever runs when the provider is set.
-    //
-    // WHY THIS IS MARSHALED AND NOT SERVED FROM THE HTTP THREAD — the handle
-    // registry is not a resident structure that can be read at any time. It is
-    // REBUILT FROM EMPTY on every interactive draw of the owner cell:
-    // `ToolHandles.begin()` truncates the entry list and the register pass
-    // immediately refills it (handles/arbiter.d, and the two call sites in
-    // tools/transform/xfrm_transform.d). A lock-free read from the HTTP thread
-    // therefore has two distinct failure modes, and both were live:
-    //
-    //   1. TORN — the read lands between `begin()` and the last `add()` and
-    //      observes an empty or half-filled parts array for a tool that has
-    //      handles.
-    //   2. STALE — no interactive draw has happened yet SINCE the state the
-    //      caller just changed. A test that POSTs `tool.set` and then GETs this
-    //      endpoint is asking about a registry that does not exist until the
-    //      next draw builds it, so it reads the previous tool's parts, or none.
-    //
-    // Mode 2 is the one that broke CI. It is invisible on a fast desktop, where
-    // a frame lands inside the POST/GET round-trip, and reproducible on a
-    // loaded software-GL host, where it does not. Marshaling fixes both at
-    // once: the service body runs on the main thread, so nothing can be
-    // observed mid-rebuild, and the epoch handshake cannot be satisfied until
-    // the main loop has come round again — which, since a command POST is
-    // drained by that same loop one pass earlier, guarantees the registry was
-    // rebuilt by a draw that saw the caller's change.
+    // Task 5950 invariant: this bridge is constructed, and so ticked, before
+    // the command bridge. A
+    // command answered earlier in the same tickAll pass can be followed by a
+    // GET queued mid-pass while a later owned bridge (replay or layers) is
+    // serviced; that GET waits for the next pass, after draw rebuilt the
+    // registry. Evidence: tests.unit.model_handles_owned_transport_test and
+    // tests/test_model_handles_owned_route.d.
     struct ToolHandlesReq  { }
     struct ToolHandlesResp { string result; string error; }
     private MainThreadBridge!(ToolHandlesReq, ToolHandlesResp) toolHandlesBridge;
+    private Duration toolHandlesBudget_ = 5.seconds;
 
     public this(ushort port = 8080) {
         this.port = port;
@@ -1144,7 +1124,7 @@ class HttpServer {
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
-            });
+            }, "/api/model");
 
         selectionBridge = new MainThreadBridge!(SelectionReq, SelectionResp)(this,
             (ref SelectionReq req, ref SelectionResp resp) {
@@ -1216,7 +1196,7 @@ class HttpServer {
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
-            });
+            }, "/api/tool/handles");
 
         aiAnalyzeBridge = new MainThreadBridge!(AiAnalyzeReq, AiAnalyzeResp)(this,
             (ref AiAnalyzeReq req, ref AiAnalyzeResp resp) {
@@ -1600,6 +1580,24 @@ class HttpServer {
             selectionBridgeMaxIters_ = maxIters;
         }
 
+        public void setModelBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            modelBudget_ = budget;
+        }
+
+        public void setToolHandlesBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            toolHandlesBudget_ = budget;
+        }
+
+        public auto modelOwnedTraceForTest() {
+            return modelBridge.ownedTraceForTest();
+        }
+
+        public auto toolHandlesOwnedTraceForTest() {
+            return toolHandlesBridge.ownedTraceForTest();
+        }
+
         public auto selectionOwnedTraceForTest() {
             return selectionBridge.ownedTraceForTest();
         }
@@ -1622,6 +1620,14 @@ class HttpServer {
 
         public size_t selectionOwnedPendingForTest() {
             return selectionBridge.ownedPendingForTest();
+        }
+
+        public size_t modelOwnedPendingForTest() {
+            return modelBridge.ownedPendingForTest();
+        }
+
+        public size_t toolHandlesOwnedPendingForTest() {
+            return toolHandlesBridge.ownedPendingForTest();
         }
 
         public size_t layersOwnedPendingForTest() {
@@ -1700,6 +1706,18 @@ class HttpServer {
 
         public void suppressSelectionOwnedCompletionNotifyForTest(bool suppress) {
             selectionBridge.suppressOwnedCompletionNotifyForTest(suppress);
+        }
+
+        public size_t toolHandlesBridgeTickIndexForTest() const {
+            foreach (i, bridge; bridges)
+                if (bridge is toolHandlesBridge) return i;
+            return size_t.max;
+        }
+
+        public size_t commandBridgeTickIndexForTest() const {
+            foreach (i, bridge; bridges)
+                if (bridge is commandBridge) return i;
+            return size_t.max;
         }
     }
 
@@ -2378,24 +2396,31 @@ class HttpServer {
             response.statusCode = 500;
             response.body = "{\"error\": \"Model data provider not set\"}";
         } else {
-            // ?layer=N selects a layer (default -1 → active). The
-            // layer-aware provider (when set) handles it on the main thread.
-            modelBridge.req.layer    = parseQueryInt(request.path, "layer", -1);
-            // Marshal the serialisation onto the main thread (via the
-            // bridge's tick) so the provider never walks the mesh
-            // mid-mutation (torn read).
-            modelBridge.req.detailed = (detailedModelDataProvider !is null);
-            modelBridge.resp.result  = "";
-            modelBridge.resp.error   = "";
-            if (!modelBridge.submitAndWait())
-                modelBridge.resp.error = "timeout waiting for main thread";
-            if (modelBridge.resp.error.length == 0) {
+            // Each GET owns its layer request and result through a
+            // late service completion. The real-route isolation evidence is
+            // tests.unit.model_handles_owned_transport_test.
+            ModelReq bridgeRequest = ModelReq.init;
+            bridgeRequest.layer = parseQueryInt(request.path, "layer", -1);
+            bridgeRequest.detailed = (detailedModelDataProvider !is null);
+            ModelResp initialResult = ModelResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            ModelResp timeoutResult = ModelResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            ModelResp stoppingResult = ModelResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "timeout waiting for main thread";
+            auto owned = modelBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                modelBudget_);
+            if (owned.result.error.length == 0) {
                 response.statusCode = 200;
-                response.body = modelBridge.resp.result;
+                response.body = owned.result.result;
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
-                               ~ jsonEsc(modelBridge.resp.error) ~ "\"}";
+                               ~ jsonEsc(owned.result.error) ~ "\"}";
             }
         }
     }
@@ -2436,11 +2461,9 @@ class HttpServer {
     }
 
     private void route_apiToolHandles(HttpRequest request, HttpResponse response) {
-        // Task 0234; marshaled onto the main thread by 0563. The registry
-        // this serializes is rebuilt from empty on every interactive draw,
-        // so it can be read neither concurrently nor before the draw that
-        // builds it — see the toolHandlesBridge declaration for the two
-        // failure modes that forced this.
+        // The owned GET cannot share result storage with a timed-out
+        // call and retains the bridge phase documented at its declaration.
+        // Evidence: tests.unit.model_handles_owned_transport_test.
         response.headers["Content-Type"] = "application/json";
         if (toolHandlesDataProvider is null) {
             // Preserve the pre-marshaling null-provider contract exactly:
@@ -2449,17 +2472,26 @@ class HttpServer {
             response.statusCode = 200;
             response.body = `{"handles":null}`;
         } else {
-            toolHandlesBridge.resp.result = "";
-            toolHandlesBridge.resp.error  = "";
-            if (!toolHandlesBridge.submitAndWait())
-                toolHandlesBridge.resp.error = "timeout waiting for main thread";
-            if (toolHandlesBridge.resp.error.length == 0) {
+            ToolHandlesReq bridgeRequest = ToolHandlesReq.init;
+            ToolHandlesResp initialResult = ToolHandlesResp.init;
+            initialResult.result = "";
+            initialResult.error = "";
+            ToolHandlesResp timeoutResult = ToolHandlesResp.init;
+            timeoutResult.result = "";
+            timeoutResult.error = "timeout waiting for main thread";
+            ToolHandlesResp stoppingResult = ToolHandlesResp.init;
+            stoppingResult.result = "";
+            stoppingResult.error = "timeout waiting for main thread";
+            auto owned = toolHandlesBridge.submitOwned(
+                bridgeRequest, initialResult, timeoutResult, stoppingResult,
+                toolHandlesBudget_);
+            if (owned.result.error.length == 0) {
                 response.statusCode = 200;
-                response.body = toolHandlesBridge.resp.result;
+                response.body = owned.result.result;
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
-                               jsonEsc(toolHandlesBridge.resp.error) ~ "\"}";
+                               jsonEsc(owned.result.error) ~ "\"}";
             }
         }
     }

@@ -177,6 +177,24 @@ unittest {
     assert(occurrences(source, "layersBridge.submitOwned(") == 1,
         "5730 production wiring: route_apiLayers must contain the one "
         ~ "layersBridge.submitOwned call; the helper alone is not evidence");
+    assert(occurrences(source, "modelBridge.submitAndWait") == 0,
+        "5950 surface coexistence: modelBridge must not use submitAndWait");
+    assert(occurrences(source, "modelBridge.submitOwned(") == 1,
+        "5950 production wiring: route_apiModel must contain one owned submit");
+    assert(occurrences(source, "toolHandlesBridge.submitAndWait") == 0,
+        "5950 surface coexistence: toolHandlesBridge must not use submitAndWait");
+    assert(occurrences(source, "toolHandlesBridge.submitOwned(") == 1,
+        "5950 production wiring: route_apiToolHandles must contain one owned submit");
+    assert(occurrences(source, "modelBridge.req") == 0
+        && occurrences(source, "modelBridge.resp") == 0,
+        "5950 model storage: route_apiModel must not use shared request/result slots");
+    assert(occurrences(source, "toolHandlesBridge.resp") == 0,
+        "5950 handles storage: route_apiToolHandles must not use its shared result slot");
+    assert(source.canFind(
+            `RouteSpec("/api/model",                "",     Match.prefix, Answered.mainThread, "route_apiModel")`)
+        && source.canFind(
+            `RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles")`),
+        "5950 routing contract: model and handles must remain main-thread routes");
 
     immutable submitStart = source.indexOf("OwnedResult submitOwned(");
     immutable submitEnd = source.indexOf("override void notifyStarted()",
