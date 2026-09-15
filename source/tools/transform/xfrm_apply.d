@@ -84,9 +84,9 @@ mixin template XfrmApplyImpl() {
             restoreBaselinePrefix(mesh.vertices, baseline);
         }
 
-        // A mixed run replays the whole pipe from its frozen source and folds
-        // about the run centre. A one-shot numeric apply owns a fresh baseline
-        // and deliberately keeps its existing live-pipe behaviour (task 6207).
+        // A mixed interactive run replays the pipe from its frozen source and
+        // folds about the run centre. A one-shot numeric apply owns a fresh
+        // baseline and deliberately samples the current pipe (task 6207).
         immutable bool compositeRun = flagT && (flagR || flagS)
             && runBaselineValid && !headlessApplyActive_;
         if (compositeRun) samplePipeFromBaseline = true;
@@ -100,9 +100,9 @@ mixin template XfrmApplyImpl() {
 
         // Value-edit reEvaluate semantics are revert-then-rerun: for those paths,
         // geometry-derived ACEN/AXIS state must be sampled from the baseline, not
-        // from the previous preview result. Live drags and their undo/resync hooks
-        // keep the historical live-pipe sampling because their action-center pins
-        // and soft-pins deliberately reflect the current gesture/run state.
+        // from the previous preview result. Composite live drags use that same
+        // frozen sample through `compositeRun`; pure-bank drags retain their
+        // historical caller-selected sampling.
         Vec3 pivot = queryActionCenter(vts);
         auto cp    = queryClusterPivots(vts);
         auto ap    = queryClusterAxes(vts);

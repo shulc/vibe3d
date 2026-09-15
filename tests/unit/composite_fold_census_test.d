@@ -45,8 +45,8 @@ unittest // The composite fold has one production door and one shared frame rule
         "6207 composite run must sample its baseline");
     assert(applyFlat.count("if(compositeRun&&runFrameValid)pivot=runFrameOrigin;") == 1,
         "6207 composite run must pivot on its frozen centre");
-    assert(hostFlat.count("headlessApplyActive_=true;") == 1,
-        "6207 headless apply exclusion changed");
+    assert(hostFlat.count("headlessApplyActive_=true;scope(exit)headlessApplyActive_=false;returnapplyTRS(mesh.vertices.dup);") == 1,
+        "6207 headless apply exclusion tail changed");
 
     assert(host.count("tInRunFrame") == 3,
         "6207 T re-expression and handle following must share one decision");
