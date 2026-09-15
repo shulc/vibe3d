@@ -1583,18 +1583,16 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
         // /api/tool/handles is itself MARSHALED now (toolHandlesBridge,
         // task 0563 — the handle registry is rebuilt every draw), and the
         // snap/constrain providers do NOT marshal: they run on the HTTP
-        // thread and call pipeline.evaluate() there. Only /api/tool/state
-        // is still a direct read, and only because it reads resident
-        // per-tool fields.
+        // thread and call pipeline.evaluate() there. Task 5940 marshals
+        // /api/tool/state through an owned request while retaining its live
+        // per-tool read at service time.
         httpServer.setToolHandlesDataProvider(() {
             import std.json : JSONValue;
             JSONValue root = JSONValue.emptyObject;
             root["handles"] = activeTool is null ? JSONValue(null) : activeTool.toolHandlesJson();
             return root.toString();
         });
-        httpServer.setToolStateDataProvider(() {
-            return activeTool is null ? "{}" : activeTool.toolStateJson().toString();
-        });
+        new ToolStateHttpAdapter(() => activeTool).wire(httpServer);
         httpServer.setRecordedEventsProvider(() {
             import std.file : exists, readText;
             if (!exists("recording.jsonl")) return null;
@@ -1604,6 +1602,52 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
         // stages currently registered with the global pipe (task FOURCC,
         // id, ordinal, enabled flag, plus per-stage attrs from
         // listAttrs).
+    }
+}
+
+// `/api/tool/state` reads the active slot at owned-service time. This narrow
+// adapter owns neither the tool nor a state copy; task 5940's route test pins
+// that the production callback runs on the tick thread.
+final class ToolStateHttpAdapter {
+private:
+    Tool delegate() activeTool_;
+    version(unittest) {
+        shared size_t providerThreadForTest_;
+        shared int providerCallsForTest_;
+    }
+
+public:
+    this(Tool delegate() activeTool) {
+        assert(activeTool !is null, "ToolStateHttpAdapter requires a live slot");
+        activeTool_ = activeTool;
+    }
+
+    string read() {
+        version(unittest) {
+            import core.atomic : atomicOp, atomicStore;
+            import core.thread : Thread;
+            atomicStore(providerThreadForTest_,
+                cast(size_t) cast(void*) Thread.getThis());
+            atomicOp!"+="(providerCallsForTest_, 1);
+        }
+        auto active = activeTool_();
+        return active is null ? "{}" : active.toolStateJson().toString();
+    }
+
+    void wire(HttpServer server) {
+        server.setToolStateDataProvider(&read);
+    }
+
+    version(unittest) {
+        size_t providerThreadForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(providerThreadForTest_);
+        }
+
+        int providerCallsForTest() {
+            import core.atomic : atomicLoad;
+            return atomicLoad(providerCallsForTest_);
+        }
     }
 }
 

@@ -392,33 +392,12 @@ unittest {
     buildRig();
     script("tool.set move");
 
-    // SETTLE, then read BOTH preconditions off ONE snapshot. Neither half is
-    // decoration; both were MEASURED, by widening the two windows of the frame
-    // that separate `tool.set` from the tool's resident state being current
-    // (app.d: event drain → activeTool.update() → the whole ImGui section →
-    // the FBO loop's activeTool.draw()). /api/tool/state is a DIRECT read of
-    // those fields on the HTTP thread, so a reply can land inside either gap:
-    //
-    //   * arming .. update()  — the tool is armed but has never been ticked,
-    //     so `pivot` is the fresh tool's un-posed (0,0,0). That is what the
-    //     bounded poll below absorbs; it is the SAME hazard, and the same
-    //     remedy, that `gizmoCentreSettled`'s own doc comment states — this
-    //     read was simply the one post-`tool.set` read in this file that
-    //     still read once and hoped.
-    //   * update() .. draw()  — `pivot` is already on the item while
-    //     `subject` still reads the freshly-constructed tool's default.
-    //     THAT was the CI-only failure of this very assertion (run
-    //     31246967466): the gizmo precondition passed and the subject
-    //     precondition failed, on the line below it. Fixed in the PRODUCT
-    //     (xfrm_transform.d's update() now refreshes the cached subject type
-    //     alongside the gizmo pose, so the two can no longer disagree); the
-    //     single-snapshot read here is what makes this case stop DEPENDING on
-    //     that, because two separate GETs re-open the seam by construction.
-    //
-    // Nothing is weakened: the poll hands back the last value it saw and the
-    // asserts below are the original ones, on the original numbers, with the
-    // original messages — a genuinely wrong subject still fails, on the real
-    // value, after at most a second.
+    // SETTLE, then read BOTH preconditions off ONE snapshot. Task 5940 moved
+    // /api/tool/state onto tickAll on the main thread, so the resident fields
+    // cannot tear across update/draw. The bounded poll remains for commands
+    // whose visible effect needs a later main-loop pass; the two fields below
+    // are still read from one response so they name one service boundary. A
+    // genuinely wrong subject still fails on the real value after the settle.
     Vec3 wantPivot = Vec3(cast(float)RIG_PIVOT_X, cast(float)RIG_PIVOT_Y,
                           cast(float)RIG_PIVOT_Z);
     gizmoCentreSettled("precondition", wantPivot);

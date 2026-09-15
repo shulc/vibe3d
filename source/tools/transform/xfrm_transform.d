@@ -1467,14 +1467,11 @@ public:
         // (every `tool.set` builds a FRESH tool — the arm door replaces the
         // old one — so the default is what a newly-armed tool starts from).
         //
-        // That is observable, and it was measured: GET /api/tool/state is a
-        // DIRECT read of these fields on the HTTP thread (http_providers.d's
-        // setToolStateDataProvider — no main-thread marshalling, by design,
-        // "because it reads resident per-tool fields"), so a read landing in
-        // that window answers `pivot` = the item pivot and `subject` =
-        // "component" in ONE response — a self-contradicting snapshot. That
-        // is a CI-only failure of tests/test_item_panel_gizmo_sync.d's case 2
-        // on a loaded host, reproduced 15/15 by widening the update→draw gap.
+        // That was observable before task 5940: GET /api/tool/state read these
+        // fields directly on the HTTP thread, so a read in that window could
+        // combine the updated pivot with the old subject. The route now serves
+        // the same resident fields from tickAll on the main thread; keeping
+        // both writes in update still makes each served snapshot coherent.
         //
         // The packet is the same one `draw()` reads (app.d's `buildToolVts`
         // publishes `currentSelType(selTypeOrder)`), and panels.d guarantees

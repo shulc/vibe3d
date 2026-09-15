@@ -10,6 +10,7 @@ import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
 import std.string : indexOf;
+import tests.unit.census_symbols : blankNonCode;
 
 private final class AsyncHttpReply {
     shared bool done = false;
@@ -96,6 +97,23 @@ private size_t occurrences(string source, string needle) {
         from = hit + needle.length;
     }
     return result;
+}
+
+private string bodyAt(string code, string marker) {
+    immutable at = code.indexOf(marker);
+    assert(at >= 0, "5940 census missing marker " ~ marker);
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "5940 census marker has no body " ~ marker);
+    immutable begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "5940 census body is unterminated " ~ marker);
+    return null;
 }
 
 private struct TimeoutCadenceSample {
@@ -237,6 +255,38 @@ unittest {
         ~ "inside the same ownedWaitMutex scope");
     assert(publish >= 0 && notify > publish,
         "5780 publish order: completion must be published before notifyAll");
+
+    immutable httpCode = blankNonCode(source);
+    assert(occurrences(httpCode, "toolStateBridge.submitAndWait") == 0,
+        "5940 surface coexistence: toolStateBridge must not use submitAndWait");
+    assert(occurrences(httpCode, "toolStateBridge.submitOwned(") == 1,
+        "5940 production route must contain exactly one toolStateBridge.submitOwned call");
+    assert(occurrences(httpCode, "toolStateDataProvider()") == 1,
+        "5940 provider ownership: only the main-thread service may invoke toolStateDataProvider");
+    immutable routeBody = bodyAt(httpCode,
+        "private void route_apiToolState(HttpRequest request, HttpResponse response)");
+    assert(!routeBody.canFind("toolStateDataProvider()"),
+        "5940 route ownership: the HTTP handler must not invoke the provider directly");
+    immutable selectionAt = httpCode.indexOf("selectionBridge = new");
+    immutable toolStateAt = httpCode.indexOf("toolStateBridge = new");
+    immutable historyAt = httpCode.indexOf("historyBridge = new");
+    immutable commandAt = httpCode.indexOf("commandBridge = new");
+    assert(selectionAt >= 0 && toolStateAt > selectionAt
+        && historyAt > toolStateAt && commandAt > historyAt,
+        "5940 bridge construction order must be selection -> tool-state -> history -> command");
+    immutable routeRow = source.indexOf(
+        `RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.mainThread, "route_apiToolState")`);
+    assert(routeRow >= 0,
+        "5940 route table must classify exact GET /api/tool/state as main-thread answered");
+
+    immutable providers = readText(buildPath(root, "source", "http_providers.d"));
+    immutable providerCode = blankNonCode(providers);
+    immutable wireBody = bodyAt(providerCode,
+        "private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,");
+    assert(occurrences(wireBody, "new ToolStateHttpAdapter(") == 1,
+        "5940 production provider wiring must construct exactly one ToolStateHttpAdapter");
+    assert(occurrences(providerCode, "toolStateJson(") == 1,
+        "5940 provider ownership: ToolStateHttpAdapter.read must be the sole toolStateJson caller");
 }
 
 unittest {

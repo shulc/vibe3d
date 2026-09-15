@@ -482,8 +482,8 @@ class HttpServer {
     // read-only test-introspection endpoints, and neither MUTATES anything
     // (no g_pipeCtx cache write, unlike /api/toolpipe/eval or /api/snap).
     //
-    // They no longer share a thread contract, and the difference is not
-    // arbitrary — it follows the lifetime of what each one reads:
+    // Both are marshaled onto the main thread, for different reasons and with
+    // phase contracts that follow the lifetime of what each one reads:
     //
     //   * /api/tool/handles is MARSHALED onto the main thread
     //     (toolHandlesBridge, task 0563). The handle registry is not resident
@@ -492,14 +492,10 @@ class HttpServer {
     //     honour — there is no moment at which the list is both complete and
     //     guaranteed to describe the caller's most recent change. See the
     //     bridge declaration below.
-    //   * /api/tool/state is still served straight from the HTTP thread. Its
-    //     provider reads RESIDENT per-tool transient fields, which are not
-    //     torn down per frame, so the original quiescence contract (tests
-    //     probe between play-events settles, never mid-drag) still holds for
-    //     it. Note it inherits the weaker half of the problem regardless: a
-    //     read issued immediately after a mutating POST may still observe
-    //     pre-change values, because nothing forces a main-loop pass in
-    //     between. Marshal it too if that ever shows up as a flake.
+    //   * /api/tool/state is MARSHALED onto the main thread too (task 5940).
+    //     Its resident fields are read at service time, during the ordinary
+    //     tickAll before the tool update; there is deliberately no readiness
+    //     barrier or parallel snapshot. Evidence: tool_state_owned_route_test.
     //
     // Do not serve a tool-state read from the HTTP thread if answering it
     // would require mutating shared state, or if what it reads is rebuilt
@@ -923,6 +919,11 @@ class HttpServer {
     private MainThreadBridge!(SelectionReq, SelectionResp) selectionBridge;
     private int selectionBridgeMaxIters_ = 2500;
 
+    struct ToolStateReq  { }
+    struct ToolStateResp { string result; string error; bool failed; }
+    private MainThreadBridge!(ToolStateReq, ToolStateResp) toolStateBridge;
+    private Duration toolStateBudget_ = 5.seconds;
+
     struct HistoryReq  { }
     struct HistoryResp { string result; string error; }
     private MainThreadBridge!(HistoryReq, HistoryResp) historyBridge;
@@ -1137,6 +1138,17 @@ class HttpServer {
                     resp.error = e.msg;
                 }
             }, "/api/selection");
+
+        toolStateBridge = new MainThreadBridge!(ToolStateReq, ToolStateResp)(this,
+            (ref ToolStateReq req, ref ToolStateResp resp) {
+                try {
+                    resp.result = toolStateDataProvider !is null
+                        ? toolStateDataProvider() : "{}";
+                } catch (Exception e) {
+                    resp.failed = true;
+                    resp.error = e.msg;
+                }
+            }, "/api/tool/state");
 
         historyBridge = new MainThreadBridge!(HistoryReq, HistoryResp)(this,
             (ref HistoryReq req, ref HistoryResp resp) {
@@ -1602,6 +1614,10 @@ class HttpServer {
             return selectionBridge.ownedTraceForTest();
         }
 
+        public auto toolStateOwnedTraceForTest() {
+            return toolStateBridge.ownedTraceForTest();
+        }
+
         public auto layersOwnedTraceForTest() {
             return layersBridge.ownedTraceForTest();
         }
@@ -1628,6 +1644,10 @@ class HttpServer {
 
         public size_t toolHandlesOwnedPendingForTest() {
             return toolHandlesBridge.ownedPendingForTest();
+        }
+
+        public size_t toolStateOwnedPendingForTest() {
+            return toolStateBridge.ownedPendingForTest();
         }
 
         public size_t layersOwnedPendingForTest() {
@@ -1684,6 +1704,15 @@ class HttpServer {
             undoStatusBudget_ = budget;
         }
 
+        public void setToolStateBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            toolStateBudget_ = budget;
+        }
+
+        public void wakeToolStateOwnedWaiterForTest() {
+            toolStateBridge.wakeOwnedWaiterForTest();
+        }
+
         public void holdSelectionOwnedWaitForTest(bool held) {
             selectionBridge.holdOwnedWaitForTest(held);
         }
@@ -1711,6 +1740,12 @@ class HttpServer {
         public size_t toolHandlesBridgeTickIndexForTest() const {
             foreach (i, bridge; bridges)
                 if (bridge is toolHandlesBridge) return i;
+            return size_t.max;
+        }
+
+        public size_t toolStateBridgeTickIndexForTest() const {
+            foreach (i, bridge; bridges)
+                if (bridge is toolStateBridge) return i;
             return size_t.max;
         }
 
@@ -2497,19 +2532,26 @@ class HttpServer {
     }
 
     private void route_apiToolState(HttpRequest request, HttpResponse response) {
-        // Task 0234. Same read-only / no-lock contract as /api/tool/handles.
+        // Task 5940: the owned service reads the live slot on the main thread
+        // during tickAll, without waiting for a later tool update or draw.
         response.headers["Content-Type"] = "application/json";
         if (toolStateDataProvider is null) {
             response.statusCode = 200;
             response.body = `{}`;
         } else {
-            try {
+            auto owned = toolStateBridge.submitOwned(
+                ToolStateReq.init,
+                ToolStateResp("", "", false),
+                ToolStateResp("", "timeout waiting for main thread", true),
+                ToolStateResp("", "HTTP server stopping", true),
+                toolStateBudget_);
+            if (!owned.result.failed && owned.result.error.length == 0) {
                 response.statusCode = 200;
-                response.body = toolStateDataProvider();
-            } catch (Exception e) {
+                response.body = owned.result.result;
+            } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
-                               jsonEsc(e.msg) ~ "\"}";
+                               jsonEsc(owned.result.error) ~ "\"}";
             }
         }
     }
@@ -4466,7 +4508,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/model",                "",     Match.prefix, Answered.mainThread, "route_apiModel"),
     RouteSpec("/api/selection",            "",     Match.exact,  Answered.mainThread, "route_apiSelection"),
     RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
-    RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
+    RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.mainThread, "route_apiToolState"),
     RouteSpec("/api/tool/disarm",          "GET",  Match.exact,  Answered.httpThread, "route_apiToolDisarm"),
     RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
     RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.httpThread, "route_apiUiPolicy"),

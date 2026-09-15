@@ -2506,27 +2506,13 @@ void main(string[] args) {
     auto recordObserverHub = new RecordObserverHub();
 
     // -------------------------------------------------------------------------
-    // Task 1670 — POSE THE FRESH TOOL AT ARM TIME, and task 4053 — WHO does it.
-    //
-    // INVARIANT: when an arm returns, the fresh tool's resident pose is already
-    // valid. `/api/tool/state` is answered STRAIGHT OFF THE HTTP THREAD from
-    // those resident fields, so a read served between the command bridge
-    // draining `tool.set` and that frame reaching `activeTool.update(vts)` used
-    // to report the constructor default — one `(0,0,0)` gizmo centre in 689
-    // tests on the nightly sanitizer lane, where software GL stretches the
-    // frame wide enough to hit a window that is sub-millisecond on hardware GL.
-    // Marshalling the ROUTE would not have closed it: a read can be picked up
-    // by a later bridge in the SAME `tickAll` pass and answered ahead of the
-    // tick regardless.
-    //
-    // 1670 closed it with an `armedToolPoseHook` delegate called from the arm
-    // branch of `setActiveTool`. That branch became unreachable at commit
-    // 7844bfee, when both public arm doors moved to `armPreparedTool`, and the
-    // hook went with it — task 4053 deleted the orphan. The invariant is now
-    // discharged by `PreparedToolPoseDoorClient.prepareDoorInitialPose`, fed
-    // the same `ifs.buildToolVts` packet inside `prepareArm`; the products
-    // without that door are the ones whose `update` is `Tool.update`'s exact
-    // no-op, which is the census P1.0b closed.
+    // Task 1670's arm-time pose invariant no longer holds: task 5940 measured
+    // that prepareDoorInitialPose reaches an inactive prepared tool, so its
+    // update is inert and the fresh resident pivot remains the constructor
+    // value until the normal frame update. `/api/tool/state` now reads through
+    // an owned bridge in tickAll; it adds no readiness barrier and therefore
+    // reports whichever resident state exists between finished event handlers.
+    // The inert initial-pose door is backlog 6111, outside this transport slice.
 
     // Task 1670 — the instrument that makes the window above a DETERMINISTIC
     // cell instead of a lottery. Repetition is not an instrument here: 40 idle
@@ -4825,11 +4811,11 @@ void main(string[] args) {
             }
 
             // Task 1670 — THE DIAGNOSED SEAM, and the only place this stall
-            // is consumed. The command bridge has just drained: if that batch
-            // held a `tool.set`, a tool is armed and its reply is already on
-            // the wire, while this frame has NOT yet reached
-            // `activeTool.update(vts)` far below. That gap is where a
-            // `/api/tool/state` read used to see an un-posed tool.
+            // is consumed. The command bridge may just have armed a tool,
+            // while this frame has NOT yet reached `activeTool.update(vts)`.
+            // Since task 5940, `/api/tool/state` joins the same tickAll before
+            // this seam; a sequential arm then read is serviced in a later
+            // pass, after the arm frame has had a chance to update the tool.
             //
             // Inert unless VIBE3D_STALL_PRE_TOOL_TICK_MS is set (asserted in
             // source/frame_stall.d), and when set it fires ONCE per arm — a

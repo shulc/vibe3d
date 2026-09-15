@@ -6,8 +6,10 @@ module frame_stall;
 /// WHY THIS IS PRODUCT CODE AND NOT A PATCH THAT GETS REVERTED (task 1670).
 /// The defect this exists for is a sub-millisecond window between the HTTP
 /// command bridge draining a `tool.set` and the same frame reaching
-/// `activeTool.update(vts)`. A read of `/api/tool/state` landing inside it
-/// answers the constructor default of a tool that has never been ticked. It
+/// `activeTool.update(vts)`. Before task 5940, an HTTP-thread read of
+/// `/api/tool/state` landing inside it answered the constructor default. The
+/// route now joins tickAll, so a sequential read waits for a later service
+/// pass; the stall remains the named instrument for this frame seam. It
 /// opened ONCE in 689 tests on the nightly runner (software GL, six workers)
 /// and NEVER on this host: 40 idle repetitions and 30 under six-way load
 /// produced zero failures. So repetition is not an instrument here, and a

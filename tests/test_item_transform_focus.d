@@ -118,25 +118,11 @@ double[3] actionCentre() {
 /// The gizmo centre with a BOUNDED SETTLE — at most 1 s, 40 x 25 ms, the same
 /// shape as `gizmoCentreSettled` in tests/test_item_panel_gizmo_sync.d.
 ///
-/// WHY THIS IS THE SECOND LAYER AND NOT THE FIX (task 1670). `/api/tool/state`
-/// is answered straight off the HTTP thread from the tool's resident fields,
-/// so a read issued the instant after `tool.set` returns can land before the
-/// frame loop has ticked the tool. That is a PRODUCT hazard, it was fixed in
-/// the product (the prepared arm poses the fresh tool before it returns —
-/// `PreparedToolPoseDoorClient.prepareDoorInitialPose`, called from
-/// `prepareArm`; task 1670's `armedToolPoseHook` did this until 4053 deleted
-/// it with the legacy arm branch), and a settle alone would have hidden it:
-/// the poll would simply have waited out the wrong answer and gone green over
-/// a race every other consumer of
-/// that route still had. The sibling fix on 2026-08-08 landed both halves for
-/// the same reason, and this is the matching pair.
-///
-/// So the settle earns its place only as insurance against the OTHER sources
-/// of staleness on this route (a command whose effect needs a main-loop pass),
-/// and it is deliberately NOT used by T-X7, whose whole subject is the value
-/// at the instant of arming. Nothing is weakened here either: the poll hands
-/// back the last value it saw and the caller's own assertion, on the caller's
-/// own numbers, still runs on it.
+/// Since task 5940 the route is served from the main-thread tickAll before the
+/// tool update. A sequential arm then read reaches the next service pass after
+/// the arm frame's update; the poll remains only for other command effects that
+/// need later passes. It hands back the last real snapshot for the caller's
+/// own assertion rather than manufacturing readiness inside the endpoint.
 double[3] toolPivot(double[3] want, double eps = 1e-4) {
     import core.thread : Thread;
     import core.time   : dur;
@@ -245,50 +231,32 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// T-X7 — THE TOOL IS POSED BY THE TIME `tool.set` RETURNS.
+// T-X7 — THE TOOL AND PIPE AGREE BETWEEN FINISHED EVENT HANDLERS.
 //
-// The two channels onto one quantity must agree in the instant right after
-// arming: the tool's own resident pivot (`/api/tool/state`, answered straight
-// off the HTTP thread from `moveSub.handler.center`) and the pipe's action
-// centre (`/api/toolpipe/eval`, evaluated on the main thread from the stage).
-//
-// WHAT THIS CATCHES, and why the suite had no cell for it. `activate()` poses
-// nothing, and the pose's only writer used to be the top of `update()`/
-// `draw()` — so between the command bridge draining `tool.set` at the top of
-// the frame and that same frame reaching `activeTool.update(vts)`, the tool
-// held its constructor's `Vec3(0,0,0)` and the route reported it. The window
-// is sub-millisecond on hardware GL: it opened ONCE in 689 tests on the
-// nightly runner under software GL and never once in 70 deliberate attempts
-// here. Repetition cannot test it. What CAN is this comparison, because it
-// asserts the invariant the fix establishes — the two channels agree at the
-// instant of arming — rather than waiting for the race to show itself.
-//
-// SO IT IS READ ONCE, IN THIS ORDER, AND ON PURPOSE. The tool-state read is
-// the EARLY channel (HTTP thread, no main-loop pass needed) and goes first;
-// the eval read is marshalled onto the main thread and can only be later. No
-// settle: `toolPivot`'s bounded poll exists for the other rows, and using it
-// here would poll away exactly the state this row is about.
+// The command bridge installs the tool in one tickAll pass. Its ordinary
+// update then runs before a sequential `/api/tool/state` request can be
+// serviced by the next pass. Task 5940 deliberately adds no readiness barrier:
+// this row pins agreement between the resident pivot and the pipe centre at a
+// read between finished event handlers, not the known-inert initial-pose door
+// (backlog 6111).
 //
 // THE DEGENERACY GUARD IS NOT DECORATION. "Two channels agree" is satisfied by
 // both reading (0,0,0), which is precisely the shape of the defect, so a
 // fixture whose action centre sat at the origin would pass this row on the
 // broken product. `planeFixture` puts it at (4.25, 1.5, -2) and the guard
 // asserts that it did — the comparison is only evidence while the agreed
-// value is one the un-ticked tool could not have produced.
+// value is distinct from the constructor default.
 //
 // `subject` is the second, independent witness of the same tick. It is
 // `cachedSubjType_`, refreshed from the same packet the pose is derived from,
-// and a pre-tick read answers "component" — the constructor's `SelType.Vertex`
-// — while the document is in Item selection. One snapshot, two fields, one
-// cause; if only one of them is wrong the fix has come apart in a way worth
-// knowing about separately.
+// and must agree with the item-mode fixture in the same served snapshot.
 // ---------------------------------------------------------------------------
 unittest {
     planeFixture();
     cmd("tool.set move on");
     scope (exit) cmd("tool.set move off");
 
-    auto st   = toolState();          // early channel, one read, no settle
+    auto st   = toolState();          // served between finished event handlers
     auto piv  = pivotOf(st);
     auto acen = actionCentre();       // late channel, main-thread marshalled
 
@@ -301,28 +269,14 @@ unittest {
 
     assert(approx(piv[0], acen[0]) && approx(piv[1], acen[1])
         && approx(piv[2], acen[2]),
-        format("T-X7: the instant `tool.set` returns, the tool's own pivot and "
+        format("T-X7: between finished event handlers, the tool's own pivot and "
              ~ "the pipe's action centre must be the SAME point. tool "
-             ~ "(%.4f, %.4f, %.4f) vs pipe (%.4f, %.4f, %.4f).\n"
-             ~ "  A tool pivot of (0,0,0) against a non-zero pipe centre is "
-             ~ "the signature: the tool was read before it was ever ticked. "
-             ~ "`tool.set` builds a FRESH tool, `activate()` poses nothing, "
-             ~ "and the prepared arm's initial-pose door — "
-             ~ "`PreparedToolPoseDoorClient.prepareDoorInitialPose`, fed the "
-             ~ "tool-vts packet inside `prepareArm` — is what closes that. "
-             ~ "If that door is gone, unwired, or moved after the pose is "
-             ~ "read, this is what "
-             ~ "you get. Reproduce it deterministically: set "
-             ~ "VIBE3D_STALL_PRE_TOOL_TICK_MS=250 (source/frame_stall.d) and "
-             ~ "the window this row aims at is wide open.",
+             ~ "(%.4f, %.4f, %.4f) vs pipe (%.4f, %.4f, %.4f).",
                piv[0], piv[1], piv[2], acen[0], acen[1], acen[2]));
 
     assert(st["subject"].str == "item",
-        "T-X7: …and the same tick must have refreshed the cached subject "
-        ~ "type. \"component\" here is the freshly built tool's constructor "
-        ~ "default (SelType.Vertex) on a document that is in ITEM selection — "
-        ~ "the same un-ticked tool the pivot assertion above describes, seen "
-        ~ "through a second field of the same snapshot. got " ~ st.toString);
+        "T-X7: the served snapshot must also carry the item subject refreshed "
+        ~ "by that update. got " ~ st.toString);
 }
 
 // ---------------------------------------------------------------------------
