@@ -1,426 +1,425 @@
 module test_pie_menu;
 
-
+import core.thread : Thread;
+import core.time : dur;
+import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
-// Task 1800 — the pie (radial) menu, driven end to end through the real SDL
-// event router (`/api/play-events`), never through a shortcut of its own.
-//
-// THE LAW UNDER TEST (owner's call 2026-08-23, matching the reference): the
-// ring is HELD OPEN by the chord, and only a CLICK selects. Releasing the
-// chord dismisses it and never runs anything, however it was aimed.
-//
-// Five cases, and each is written so that the BROKEN behaviour it guards
-// against would show up as a different observable, not as a missing one:
-//
-//   1. HOLD + CLICK — chord down, aim north, click, then release. Asserts the
-//      CAMERA moved to the clicked wedge's view. "The ring opened" is not the
-//      claim; "the wedge the direction picked is the one that ran" is.
-//   2. RELEASE DISMISSES — the discriminating case for the law above. The
-//      chord is released while the ring is AIMED SQUARELY AT A WEDGE, and
-//      nothing may run. An implementation that fires on release passes every
-//      other case in this file and fails only this one.
-//   3. ESC — dismisses with no camera change and no history entry.
-//   4. INPUT GRAB — a click that WOULD select a polygon (proved first, with the
-//      identical event log and no menu open) selects nothing while the ring is
-//      up, and fires the wedge instead. Without the control click this case
-//      could pass over a pixel that never hit geometry at all.
-//   5. AUTO-REPEAT — the chord is still held after a wedge was clicked, so the
-//      OS keeps repeating it. The ring must stay closed; a missing guard pops
-//      it straight back up under the cursor.
-//
-// Coordinates: the fixture header declares the same viewport rect every other
-// event fixture here uses, and the aim offsets are CARDINAL (straight up,
-// straight right). The player remaps replayed pixels between the recorded and
-// live viewport by ndc, which rescales x only — a cardinal aim survives that,
-// a diagonal one would skew.
-
-import http_client : testBaseUrl, getJson, postJson;
-import std.net.curl;
-import std.json;
-import std.conv   : to;
+import std.conv : to;
 import std.format : format;
+import std.json : JSONType;
+import std.process : environment;
+import std.math : fabs, sqrt;
+import drag_helpers : Vec3, fetchCamera, viewportFromCamera, projectToWindow,
+    fetchHandlePart, vertexPos;
 
 void main() {}
 
-// ---- SDL constants used by the synthetic logs ------------------------------
-enum SYM_SPACE   = 32;            // SDLK_SPACE
-enum SCAN_SPACE  = 44;            // SDL_SCANCODE_SPACE
-enum SYM_ESCAPE  = 27;            // SDLK_ESCAPE
-enum SCAN_ESCAPE = 41;            // SDL_SCANCODE_ESCAPE
-enum MOD_LCTRL   = 64;            // KMOD_LCTRL
+enum CX = 475, CY = 330, AIM = 80;
+enum SYM_LCTRL = 1073742048;
+enum HEADER = `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}`;
 
-// Where the ring is opened, and the aim offsets. `AIM` clears the dead zone
-// (22 px) and stays inside the outer radius (108 px).
-enum PIE_CX = 475;
-enum PIE_CY = 330;
-enum AIM    = 80;
-
-// A pixel over the default cube's front face with the default camera.
-// POLYGON mode, not vertex: a face is a big target, so the control click below
-// is about the GRAB and not about hitting a 5-pixel vertex dot.
-// (`GET /api/pick?x=475&y=300` answers faceIndex 1 on this scene.)
-enum PICK_X = 475;
-enum PICK_Y = 300;
-
-enum EVENT_HEADER =
-    `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}`;
-
-// ---- HTTP helpers (same shape as tests/test_numpad_view.d) -----------------
-
-
-void runCmd(string line) {
-    auto r = postJson("/api/command", line);
-    assert(r["status"].str == "ok" || r["status"].str == "success",
-        "/api/command '" ~ line ~ "' failed: " ~ r.toString);
+bool cell(string name) {
+    auto only = environment.get("VIBE3D_PIE_CELL", "");
+    return only.length == 0 || only == name;
 }
 
-void waitPlayerIdle() {
-    import core.thread : Thread;
-    import core.time   : dur;
-    for (int i = 0; i < 200; ++i) {
-        auto s = parseJSON(get(testBaseUrl() ~ "/api/play-events/status"));
-        auto f = "finished" in s;
-        if (f is null || f.type != JSONType.FALSE) {
-            Thread.sleep(dur!"msecs"(120));
+void cmd(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+           line ~ " failed: " ~ r.toString);
+}
+
+void play(string[] events) {
+    string log = HEADER ~ "\n";
+    foreach (e; events) log ~= e ~ "\n";
+    auto r = postJson("/api/play-events", log);
+    assert(r["status"].str == "success", r.toString);
+    for (int i; i < 300; ++i) {
+        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) {
+            Thread.sleep(dur!"msecs"(35));
             return;
         }
         Thread.sleep(dur!"msecs"(10));
     }
+    assert(false, "playback did not finish");
 }
 
-void waitPlayback() {
-    import core.thread : Thread;
-    import core.time   : dur;
-    for (int i = 0; i < 200; ++i) {
-        auto s = getJson("/api/play-events/status");
-        if (s["finished"].type == JSONType.TRUE) {
-            Thread.sleep(dur!"msecs"(150));
-            return;
-        }
-        Thread.sleep(dur!"msecs"(20));
-    }
-    assert(false, "play-events did not finish within 4 s");
+string motion(int x, int y, int t = 5, int state = 0, int mod = 0) {
+    return format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":%d,"mod":%d}`,
+                  t, x, y, state, mod);
 }
-
-void play(string[] lines) {
-    string log = EVENT_HEADER ~ "\n";
-    foreach (l; lines) log ~= l ~ "\n";
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "/api/play-events failed: " ~ r.toString);
-    waitPlayback();
+string dragMotion(int x, int y, int xrel, int yrel, int t, int mod = 0) {
+    return format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":%d}`,
+                  t, x, y, xrel, yrel, mod);
 }
-
-// ---- event-line builders ---------------------------------------------------
-int g_t = 0;
-int nextT() { g_t += 20; return g_t; }
-
-string evMotion(int x, int y) {
-    return format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`,
-                  nextT(), x, y);
+string keyDown(int sym, int scan, int mod, uint ts, int repeat = 0, int t = 10) {
+    return format(`{"t":%d,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%d,"repeat":%d,"ts":%u}`,
+                  t, sym, scan, mod, repeat, ts);
 }
-string evKeyDown(int sym, int scan, int mod, int repeat = 0) {
-    return format(`{"t":%d,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%d,"repeat":%d}`,
-                  nextT(), sym, scan, mod, repeat);
+string keyUp(int sym, int scan, int mod, uint ts, int t = 20,
+             int focus = 1) {
+    return format(`{"t":%d,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%d,"repeat":0,"ts":%u,"focus":%d}`,
+                  t, sym, scan, mod, ts, focus);
 }
-string evKeyUp(int sym, int scan, int mod) {
-    return format(`{"t":%d,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%d,"repeat":0}`,
-                  nextT(), sym, scan, mod);
+string button(int btn, bool down, int x, int y, int t = 20, int mod = 0) {
+    return format(`{"t":%d,"type":"SDL_MOUSEBUTTON%s","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%d}`,
+                  t, down ? "DOWN" : "UP", btn, x, y, mod);
 }
-string evClickDown(int x, int y) {
-    return format(`{"t":%d,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
-                  nextT(), x, y);
-}
-string evClickUp(int x, int y) {
-    return format(`{"t":%d,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
-                  nextT(), x, y);
-}
-
-// ---- readbacks -------------------------------------------------------------
-
-/// How many wedges did the last drawn frame put on screen? 0 = no ring.
-/// Reads the SAME per-frame record the side panel and status bar write to,
-/// under source "pie".
-int pieWedgesDrawn() {
-    auto j = getJson("/api/buttons/availability");
-    int n = 0;
-    foreach (b; j["buttons"].array)
-        if (b["source"].str == "pie") ++n;
-    return n;
-}
-
-string cameraPreset() {
-    return getJson("/api/camera?viewport=0")["viewPreset"].str;
-}
-
-size_t historyLen() {
-    return getJson("/api/history")["undo"].array.length;
-}
-
-JSONValue inputContext() {
-    return getJson("/api/input/context");
-}
-
-size_t selectedFaceCount() {
-    return getJson("/api/selection")["selectedFaces"].array.length;
+string wheel(int y, int t = 20) {
+    return format(`{"t":%d,"type":"SDL_MOUSEWHEEL","x":0,"y":%d}`, t, y);
 }
 
 void resetScene() {
-    waitPlayerIdle();
-    postJson("/api/command", commandBody("scene.reset", "{}"));
-    runCmd("prim.cube");
-    runCmd("viewport.view Perspective");
-    runCmd("select.typeFrom polygon");
+    cmd(commandBody("scene.reset", "{}"));
+    cmd("prim.cube");
+    cmd("viewport.view Perspective");
+    cmd("select.typeFrom polygon");
+}
+void openAndAim(int x, int y) {
+    play([motion(CX, CY, 1), keyDown(32, 44, 64, 1000, 0, 2), motion(x, y, 3)]);
+    assert(getJson("/api/pie")["open"].boolean, "setup: pie did not open");
+}
+string preset() { return getJson("/api/camera?viewport=0")["viewPreset"].str; }
+size_t historyLen() { return getJson("/api/history")["undo"].array.length; }
+string tool() { return getJson("/api/input/context")["tool"].str; }
+
+unittest { // L4: DOWN is inert; left UP executes the stored hover
+    if (!cell("L4")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    play([button(1, true, CX + AIM, CY)]);
+    assert(getJson("/api/pie")["open"].boolean && preset() == "Perspective");
+    play([button(1, false, CX + AIM, CY)]);
+    assert(!getJson("/api/pie")["open"].boolean && preset() == "Right");
 }
 
-// ===========================================================================
-
-unittest {  // 1. hold the chord, aim north, CLICK ⇒ the north wedge runs
-    resetScene();
-    assert(cameraPreset() == "Perspective", "setup: camera should start Perspective");
-
-    play([
-        evMotion(PIE_CX, PIE_CY),                       // where the ring opens
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),    // Ctrl+Space, held
-        evMotion(PIE_CX, PIE_CY - AIM),                 // aim straight up
-        evClickDown(PIE_CX, PIE_CY - AIM),              // click WHILE held
-        evClickUp(PIE_CX, PIE_CY - AIM),
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),      // let go afterwards
-    ]);
-
-    // Slot 0 is noon and config/pies.yaml puts "Top" there.
-    assert(cameraPreset() == "Top",
-        "clicking the noon wedge must run Top, got " ~ cameraPreset());
-    assert(pieWedgesDrawn() == 0, "running a wedge must close the ring");
+unittest { // L5: right UP executes
+    if (!cell("L5")) return;
+    resetScene(); openAndAim(CX, CY + AIM);
+    play([button(3, true, CX, CY + AIM), button(3, false, CX, CY + AIM, 21)]);
+    assert(preset() == "Bottom", "L5 right release did not run Bottom");
 }
 
-unittest {  // 2. releasing the chord DISMISSES — even aimed straight at a wedge
+unittest { // L6: middle UP executes
+    if (!cell("L6")) return;
+    resetScene(); openAndAim(CX - AIM, CY);
+    play([button(2, true, CX - AIM, CY), button(2, false, CX - AIM, CY, 21)]);
+    assert(preset() == "Left", "L6 middle release did not run Left");
+}
+
+unittest { // L7: release in the dead zone closes without side effects
+    if (!cell("L7")) return;
+    resetScene(); immutable before = historyLen(); openAndAim(CX, CY);
+    play([button(1, true, CX, CY), button(1, false, CX, CY, 21)]);
+    assert(preset() == "Perspective" && historyLen() == before
+           && !getJson("/api/pie")["open"].boolean);
+}
+
+unittest { // L8: UP coordinates do not re-aim
+    if (!cell("L8")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    play([button(1, true, CX + AIM, CY), button(1, false, CX, CY - AIM, 21)]);
+    assert(preset() == "Right", "L8 release coordinates re-aimed the pie");
+}
+
+unittest { // L9: wheel is swallowed while open
+    if (!cell("L9")) return;
     resetScene();
+    play([motion(CX, CY), wheel(3), wheel(3, 30)]);
+    assert(getJson("/api/camera?viewport=0")["distance"].floating != 3.0,
+           "L9 control wheel did not zoom");
+    resetScene(); openAndAim(CX, CY);
+    play([wheel(3), wheel(3, 30)]);
+    assert(getJson("/api/camera?viewport=0")["distance"].floating == 3.0
+           && getJson("/api/pie")["open"].boolean, "L9 wheel leaked through pie");
+    play([button(1, false, CX, CY)]);
+}
+
+unittest { // L10: a bound key down is swallowed; its later up closes
+    if (!cell("L10")) return;
+    resetScene(); openAndAim(CX, CY);
+    play([keyDown(119, 26, 0, 1200)]); // W -> move
+    assert(getJson("/api/pie")["open"].boolean && tool() != "move",
+        "L10 bound W keydown escaped the modal pie");
+    play([keyUp(119, 26, 0, 1300)]);
+    assert(!getJson("/api/pie")["open"].boolean && tool() != "move",
+        "L10 W release did not close inertly");
+}
+
+unittest { // L11: held chord release runs from event time in one <=20ms play
+    if (!cell("L11")) return;
+    resetScene();
+    play([motion(CX, CY, 1), keyDown(32, 44, 64, 1000, 0, 2),
+          motion(CX, CY - AIM, 3), keyUp(32, 44, 64, 1300, 20)]);
+    assert(preset() == "Top" && !getJson("/api/pie")["open"].boolean);
+}
+
+unittest { // L12: releasing Ctrl first runs; tail Space repeats are inert
+    if (!cell("L12")) return;
+    resetScene(); cmd("tool.set TransformMove on"); openAndAim(CX - AIM, CY);
     immutable before = historyLen();
-
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-        evMotion(PIE_CX, PIE_CY - AIM),                 // squarely on the Top wedge
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),      // let go WITHOUT clicking
-    ]);
-
-    assert(cameraPreset() == "Perspective",
-        "a release must never select — the ring was aimed at Top and the camera "
-        ~ "went to " ~ cameraPreset());
-    assert(pieWedgesDrawn() == 0, "the ring lives only while the chord is held");
-    assert(historyLen() == before,
-        "a dismissed menu is not an edit — history grew from " ~ before.to!string
-        ~ " to " ~ historyLen().to!string);
-
-    // ...and the ring, held open again, still selects by CLICK — this half also
-    // pins that index 2 is east.
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-        evMotion(PIE_CX + AIM, PIE_CY),                 // aim east
-        evClickDown(PIE_CX + AIM, PIE_CY),
-        evClickUp(PIE_CX + AIM, PIE_CY),
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-    ]);
-
-    assert(cameraPreset() == "Right",
-        "slot 2 is east and config/pies.yaml puts Right there, got " ~ cameraPreset());
-    assert(pieWedgesDrawn() == 0, "clicking a wedge must close the ring");
+    play([keyUp(SYM_LCTRL, 224, 64, 1300)]);
+    assert(preset() == "Left");
+    play([keyDown(32, 44, 0, 1500, 1), keyDown(32, 44, 0, 1540, 1, 20)]);
+    assert(!getJson("/api/pie")["open"].boolean && preset() == "Left"
+           && historyLen() == before && tool() == "TransformMove");
 }
 
-unittest {  // 3. Esc dismisses the pie before the editor ladder sees it
+unittest { // L13: a foreign special-key release commits the hover
+    if (!cell("L13")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    play([keyDown(9, 43, 0, 1150), keyUp(9, 43, 0, 1300, 20)]); // Tab
+    assert(preset() == "Right" && !getJson("/api/pie")["open"].boolean);
+}
+
+unittest { // L13b: a printable letter release also commits the hover
+    if (!cell("L13b")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    play([keyDown(97, 4, 0, 1150), keyUp(97, 4, 0, 1300, 20)]);
+    assert(preset() == "Right" && !getJson("/api/pie")["open"].boolean,
+        "L13b letter release did not run the hovered pie");
+}
+
+unittest { // L14: Escape down is modal; Escape up commits
+    if (!cell("L14")) return;
+    resetScene(); cmd("tool.set TransformMove on"); openAndAim(CX, CY + AIM);
+    play([keyDown(27, 41, 0, 1200)]);
+    assert(getJson("/api/pie")["open"].boolean && tool() == "TransformMove");
+    play([keyUp(27, 41, 0, 1300)]);
+    assert(preset() == "Bottom" && tool() == "TransformMove");
+}
+
+unittest { // L15/L15b: tap stays open; a later special-key UP runs
+    if (!cell("L15")) return;
     resetScene();
-    runCmd("tool.set TransformMove on");
+    play([motion(CX, CY, 1), keyDown(32, 44, 64, 1000, 0, 2),
+          motion(CX + AIM, CY, 3), keyUp(32, 44, 64, 1012, 400)]);
+    assert(getJson("/api/pie")["open"].boolean
+           && getJson("/api/pie")["boxes"].array.length == 7);
+    play([keyDown(1073741886, 62, 0, 1200),
+          keyUp(1073741886, 62, 0, 1300, 20)]); // F5
+    assert(preset() == "Right" && !getJson("/api/pie")["open"].boolean);
+}
+
+unittest { // L16: held release in the dead zone runs nothing
+    if (!cell("L16")) return;
+    resetScene(); immutable before = historyLen(); openAndAim(CX, CY);
+    play([keyUp(32, 44, 64, 1300)]);
+    assert(preset() == "Perspective" && historyLen() == before
+           && !getJson("/api/pie")["open"].boolean);
+}
+
+unittest { // L17/L25: repeat and fresh keydown are swallowed while open
+    if (!cell("L17")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    auto before = getJson("/api/pie");
+    play([keyDown(32, 44, 64, 1100, 1), keyDown(32, 44, 64, 1140, 1, 20),
+          keyDown(32, 44, 64, 1180, 0, 30)]);
+    auto after = getJson("/api/pie");
+    assert(after["open"].boolean && after["cx"].integer == before["cx"].integer
+           && after["cy"].integer == before["cy"].integer
+           && after["hover"].integer == before["hover"].integer);
+    play([button(1, false, CX + AIM, CY)]);
+}
+
+unittest { // L18/L18c: mouse close latches repeats and tail releases
+    if (!cell("L18")) return;
+    resetScene(); openAndAim(CX, CY - AIM);
+    play([button(1, true, CX, CY - AIM), button(1, false, CX, CY - AIM, 21)]);
+    assert(preset() == "Top" && !getJson("/api/pie")["open"].boolean);
     immutable before = historyLen();
-
-    // Play A leaves the chord held so the between-play read proves the pie
-    // really opened before Escape is sent.
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-        evMotion(PIE_CX, PIE_CY - AIM),                 // aimed at Top...
-    ]);
-    assert(pieWedgesDrawn() == 8, "setup: Ctrl+Space must draw eight wedges");
-
-    // Play B is the priority observation: the pie closes, but the armed tool
-    // survives because the editor ladder must not receive this Escape.
-    play([
-        evKeyDown(SYM_ESCAPE, SCAN_ESCAPE, 0),          // ...but dismissed
-        evKeyUp(SYM_ESCAPE, SCAN_ESCAPE, 0),
-    ]);
-    assert(pieWedgesDrawn() == 0, "Esc must close the ring");
-    assert(inputContext()["tool"].str == "TransformMove",
-        "pie-owned Escape reached the editor ladder and dropped TransformMove");
-
-    // Play C releases the already-closed chord and must remain inert.
-    play([
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),      // the trailing release
-                                                        // of an already-closed
-                                                        // ring must be harmless
-    ]);
-
-    assert(cameraPreset() == "Perspective",
-        "a dismissed pie must not run the wedge it was aimed at, got " ~ cameraPreset());
-    assert(historyLen() == before,
-        "opening and dismissing a menu is not an edit — history grew from "
-        ~ before.to!string ~ " to " ~ historyLen().to!string);
-    assert(inputContext()["tool"].str == "TransformMove",
-        "the trailing pie-chord release must not drop TransformMove");
+    play([keyDown(32, 44, 64, 1500, 1), keyDown(32, 44, 64, 1540, 1, 20),
+          keyDown(32, 44, 64, 1580, 1, 30)]);
+    assert(!getJson("/api/pie")["open"].boolean);
+    play([keyUp(32, 44, 64, 1700), keyUp(SYM_LCTRL, 224, 0, 1720, 20)]);
+    assert(preset() == "Top" && historyLen() == before);
 }
 
-unittest {  // 4. the input grab: an open ring eats the click that would pick
+unittest { // L18b: foreign special-key close latches chord repeats
+    if (!cell("L18b")) return;
+    resetScene(); openAndAim(CX + AIM, CY);
+    play([keyDown(9, 43, 0, 1150), keyUp(9, 43, 0, 1300, 20)]);
+    assert(preset() == "Right");
+    play([keyDown(32, 44, 64, 1500, 1), keyDown(32, 44, 64, 1540, 1, 20)]);
+    assert(!getJson("/api/pie")["open"].boolean && preset() == "Right");
+}
+
+unittest { // L18d: mouse-close latch swallows an unrelated W autorepeat
+    if (!cell("L18d")) return;
+    resetScene(); cmd("tool.set move off");
+    assert(tool() != "move", "L18d setup left move active");
+    openAndAim(CX, CY);
+    play([button(1, true, CX, CY), button(1, false, CX, CY, 21)]);
+    assert(!getJson("/api/pie")["open"].boolean && tool() != "move",
+        "L18d mouse release did not close inertly");
+    play([keyDown(119, 26, 0, 1500, 1)]);
+    assert(tool() != "move", "L18d post-close W autorepeat activated move");
+    play([keyDown(119, 26, 0, 1540, 0)]);
+    assert(tool() == "move", "L18d fresh W control did not activate move");
+    cmd("tool.set move off");
+}
+
+unittest { // L19: the modal press/release cannot reach picking
+    if (!cell("L19")) return;
     resetScene();
-
-    // CONTROL — the same click, with no menu up, MUST select a vertex.
-    // Without this half, case 4 would also pass over empty background.
-    play([
-        evMotion(PICK_X, PICK_Y),
-        evClickDown(PICK_X, PICK_Y),
-        evClickUp(PICK_X, PICK_Y),
-    ]);
-    assert(selectedFaceCount() == 1,
-        "control: clicking " ~ PICK_X.to!string ~ "," ~ PICK_Y.to!string
-        ~ " must pick a polygon, got " ~ selectedFaceCount().to!string
-        ~ " — the fixture cannot show the grab if the pixel hits nothing");
-
-    runCmd("select.drop");
-    assert(selectedFaceCount() == 0, "setup: selection cleared");
-
-    // Open the ring so that the pick pixel lands on a wedge (it is AIM px
-    // north of the centre, i.e. the noon wedge, outside the dead zone).
-    // NO release in this batch: the chord stays held across both of them, the
-    // way a hand holds it — the ring exists only for as long as it is down.
-    play([
-        evMotion(PICK_X, PICK_Y + AIM),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-    ]);
-    assert(pieWedgesDrawn() == 8, "setup: the ring must be up for this case");
-
-    play([
-        evMotion(PICK_X, PICK_Y),
-        evClickDown(PICK_X, PICK_Y),
-        evClickUp(PICK_X, PICK_Y),
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),      // the hand lets go last
-    ]);
-
-    assert(selectedFaceCount() == 0,
-        "an open pie is modal: the click must not reach picking, but "
-        ~ selectedFaceCount().to!string ~ " polygons got selected");
-    assert(cameraPreset() == "Top",
-        "...and it must reach the WEDGE instead — expected the noon wedge to "
-        ~ "have run, got camera " ~ cameraPreset());
-
-    runCmd("viewport.view Perspective");
+    play([motion(CX, 300), button(1, true, CX, 300), button(1, false, CX, 300, 21)]);
+    assert(getJson("/api/selection")["selectedFaces"].array.length == 1,
+           "L19 control click missed the cube");
+    cmd("select.drop");
+    openAndAim(CX, 300);
+    play([button(1, true, CX, 300), button(1, false, CX, 300, 21)]);
+    assert(getJson("/api/selection")["selectedFaces"].array.length == 0,
+           "L19 pie press leaked to picking");
 }
 
-unittest {  // 5. the chord is still held after the click — auto-repeat must not
-            //    pop the ring back up
+unittest { // L22: focus loss closes without running the hovered item
+    if (!cell("L22")) return;
+    resetScene(); openAndAim(CX, CY - AIM);
+    play([keyUp(32, 44, 64, 1300, 20, 0),
+          keyUp(SYM_LCTRL, 224, 0, 1300, 20, 0),
+          `{"t":20,"type":"SDL_WINDOWEVENT","sub":13}`]);
+    assert(!getJson("/api/pie")["open"].boolean && preset() == "Perspective",
+        "L22 focus-reset keyups ran the hovered pie before focus loss");
+}
+
+unittest { // L22b: the same focused releases are genuine and run the item
+    if (!cell("L22b")) return;
+    resetScene(); openAndAim(CX, CY - AIM);
+    play([keyUp(32, 44, 64, 1300, 20, 1),
+          keyUp(SYM_LCTRL, 224, 0, 1300, 20, 1),
+          `{"t":20,"type":"SDL_WINDOWEVENT","sub":13}`]);
+    assert(!getJson("/api/pie")["open"].boolean && preset() == "Top",
+        "L22b focused release did not run the hovered pie");
+}
+
+unittest { // Ctrl-sync: the consumed Ctrl-first release still reaches ImGui
+    if (!cell("Ctrl-sync")) return;
+    resetScene(); openAndAim(CX - AIM, CY);
+    assert(getJson("/api/pie")["imguiCtrl"].boolean,
+        "Ctrl-sync setup did not raise ImGui Ctrl");
+    play([keyUp(SYM_LCTRL, 224, 0, 1300, 20, 1)]);
+    auto after = getJson("/api/pie");
+    assert(!after["open"].boolean && preset() == "Left",
+        "Ctrl-sync control release did not close and run");
+    assert(!after["imguiCtrl"].boolean,
+        "Ctrl-sync closing release left ImGui Ctrl held");
+}
+
+unittest { // ImGui-reset: replay focus loss and automation reset release Ctrl
+    if (!cell("ImGui-reset")) return;
     resetScene();
+    play([keyDown(SYM_LCTRL, 224, 64, 1000)]);
+    assert(getJson("/api/pie")["imguiCtrl"].boolean,
+        "ImGui-reset setup did not raise Ctrl before focus loss");
+    play([`{"t":20,"type":"SDL_WINDOWEVENT","sub":13}`]);
+    assert(!getJson("/api/pie")["imguiCtrl"].boolean,
+        "ImGui-reset replayed focus loss left Ctrl held");
 
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-        evMotion(PIE_CX, PIE_CY - AIM),
-        evClickDown(PIE_CX, PIE_CY - AIM),
-        evClickUp(PIE_CX, PIE_CY - AIM),                // wedge runs, ring closes
-    ]);
-    assert(cameraPreset() == "Top", "setup: the click must have run the noon wedge");
-    assert(pieWedgesDrawn() == 0,   "setup: the ring must be closed after the click");
-
-    // The key is STILL physically down, so the OS keeps sending it. Nothing is
-    // swallowing these now (the grab only runs while a ring is up), and each
-    // one dispatches `ui.pie` unless the repeat flag is honoured.
-    play([
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL, /*repeat=*/1),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL, /*repeat=*/1),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL, /*repeat=*/1),
-    ]);
-
-    assert(pieWedgesDrawn() == 0,
-        "auto-repeat of a held chord must not re-open the ring, but "
-        ~ pieWedgesDrawn().to!string ~ " wedges are on screen");
-
-    play([ evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL) ]);
-    assert(pieWedgesDrawn() == 0, "and it stays closed after the release");
-
-    runCmd("viewport.view Perspective");
+    play([`{"t":20,"type":"SDL_WINDOWEVENT","sub":12}`,
+          keyDown(SYM_LCTRL, 224, 64, 2000, 0, 21)]);
+    assert(getJson("/api/pie")["imguiCtrl"].boolean,
+        "ImGui-reset setup did not re-raise Ctrl before reset");
+    cmd(commandBody("scene.reset", "{}"));
+    Thread.sleep(dur!"msecs"(35));
+    assert(!getJson("/api/pie")["imguiCtrl"].boolean,
+        "ImGui-reset scene reset left replayed Ctrl held");
 }
 
-/// Is the wedge with no label recorded as inert?
-bool emptySlotRecordedDisabled() {
-    foreach (b; getJson("/api/buttons/availability")["buttons"].array)
-        if (b["source"].str == "pie" && b["label"].str.length == 0)
-            return b["disabled"].type == JSONType.TRUE;
-    return false;
+unittest { // RV2P1: a fresh press after release sees the already-closed pie
+    if (!cell("RV2P1")) return;
+    resetScene(); cmd("tool.set move off");
+    assert(tool() != "move", "RV2P1 setup left move active");
+    openAndAim(CX, CY - AIM);
+    play([keyUp(32, 44, 64, 1300, 20),
+          keyDown(119, 26, 0, 1310, 0, 20)]);
+    assert(preset() == "Top" && !getJson("/api/pie")["open"].boolean,
+        "RV2P1 control: key-up did not close and run");
+    assert(tool() == "move",
+        "RV2P1 same-batch fresh W press was swallowed by the closing pie");
+    cmd("tool.set move off");
 }
 
-unittest {  // 6. the reserved EMPTY slot occupies its place and does nothing
-            //
-            // WHAT THIS CASE DOES *NOT* TEST, said plainly because the mutation
-            // drill caught me claiming otherwise: it does NOT exercise
-            // `pieFireHovered`'s `if (btn.disabled) return`. An empty slot
-            // carries `Action.init` — kind `tool`, empty id — so a fire would
-            // dispatch `activateToolById("")`, which does nothing. "Refused"
-            // and "fired a no-op" are the same observation BY CONSTRUCTION, and
-            // deleting that guard leaves every assertion here green (measured).
-            //
-            // What it DOES pin: the NW direction maps to the empty slot and not
-            // to a neighbour's command — rotate the slot mapping by one and
-            // this reddens with a camera change.
+unittest { // RV2P2: later motion/release cannot change the release-time hover
+    if (!cell("RV2P2")) return;
+    resetScene(); openAndAim(CX, CY - AIM);
+    play([keyUp(32, 44, 64, 1300, 20), motion(CX + AIM, CY, 20),
+          button(1, false, CX + AIM, CY, 20)]);
+    assert(!getJson("/api/pie")["open"].boolean,
+        "RV2P2 control: pie did not close");
+    assert(preset() == "Top",
+        "RV2P2 same-batch mouse release ran re-aimed slot " ~ preset());
+}
+
+unittest { // RV3P4: scene reset clears a close latch created by an open pie
+    if (!cell("RV3P4")) return;
+    resetScene(); openAndAim(CX, CY);
+    cmd(commandBody("scene.reset", "{}"));
+    cmd("tool.set move off");
+    assert(!getJson("/api/pie")["open"].boolean && tool() != "move",
+        "RV3P4 reset did not close the setup pie");
+    play([keyDown(119, 26, 0, 6000, 1)]);
+    assert(tool() == "move",
+        "RV3P4 reset leaked the prior pie's post-close latch");
+    cmd("tool.set move off");
+}
+
+unittest { // L20: the modal drag cannot orbit the camera
+    if (!cell("L20")) return;
     resetScene();
-    immutable before = historyLen();
-
-    // NW = slot 7 of 8, i.e. up-and-left of the centre.
-    enum int D = 56;                       // clears the 22 px dead zone on both
-                                           // axes, well inside the outer radius
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-        evMotion(PIE_CX - D, PIE_CY - D),  // aim NW
-        evClickDown(PIE_CX - D, PIE_CY - D),
-        evClickUp(PIE_CX - D, PIE_CY - D),
-        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-    ]);
-
-    // It is a slot, not a gap: the menu still has eight wedges, which is what
-    // keeps Top/Right/Bottom/Left on their compass points. Then it closed
-    // without running anything.
-    assert(cameraPreset() == "Perspective",
-        "clicking the reserved empty slot must run nothing, camera went to "
-        ~ cameraPreset());
-    assert(historyLen() == before,
-        "...and record nothing: history grew from " ~ before.to!string
-        ~ " to " ~ historyLen().to!string);
-    assert(pieWedgesDrawn() == 0, "the click still dismisses the ring");
+    immutable before = getJson("/api/camera?viewport=0")["azimuth"].floating;
+    play([motion(CX, CY, 1), button(1, true, CX, CY, 2, 256),
+          dragMotion(CX + 20, CY, 20, 0, 3, 256),
+          button(1, false, CX + 20, CY, 4, 256)]);
+    immutable changed = getJson("/api/camera?viewport=0")["azimuth"].floating;
+    assert(fabs(changed - before) > 1e-4, "L20 control orbit did not move camera");
+    resetScene(); openAndAim(CX, CY);
+    immutable guarded = getJson("/api/camera?viewport=0")["azimuth"].floating;
+    play([button(1, true, CX, CY, 2, 256),
+          dragMotion(CX + 15, CY, 15, 0, 3, 256),
+          button(1, false, CX + 15, CY, 4, 256)]);
+    immutable after = getJson("/api/camera?viewport=0")["azimuth"].floating;
+    assert(fabs(after - guarded) < 1e-6 && !getJson("/api/pie")["open"].boolean,
+           "L20 pie drag leaked to camera orbit");
 }
 
-unittest {  // 6b. the empty slot is CLASSIFIED inert, which is what greys it and
-            //     what keeps it out of the hover highlight
-    resetScene();
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-    ]);
-    immutable inert = emptySlotRecordedDisabled();
-    play([ evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL) ]);
+unittest { // L21: the modal drag cannot reach an armed move handle
+    if (!cell("L21")) return;
+    void setupMove() {
+        resetScene();
+        cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
+        auto r = postJson("/api/script", "tool.set move");
+        assert(r["status"].str == "ok", r.toString);
+        Thread.sleep(dur!"msecs"(150));
+    }
+    setupMove();
+    double hx, hy; bool found;
+    fetchHandlePart(0, hx, hy, found);
+    assert(found, "L21 move-handle control has no part 0");
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    float sx0, sy0, sx1, sy1;
+    assert(projectToWindow(Vec3(0.5f, 0.5f, 0.5f), vp, sx0, sy0));
+    assert(projectToWindow(Vec3(1.5f, 0.5f, 0.5f), vp, sx1, sy1));
+    immutable double len = sqrt((sx1 - sx0) * (sx1 - sx0) + (sy1 - sy0) * (sy1 - sy0));
+    immutable int dx = cast(int)(15.0 * (sx1 - sx0) / len);
+    immutable int dy = cast(int)(15.0 * (sy1 - sy0) / len);
+    immutable int x0 = cast(int)hx, y0 = cast(int)hy;
+    auto pre = vertexPos(6);
+    play([motion(x0, y0, 1), button(1, true, x0, y0, 2),
+          dragMotion(x0 + dx, y0 + dy, dx, dy, 3),
+          button(1, false, x0 + dx, y0 + dy, 4)]);
+    auto moved = vertexPos(6);
+    assert(fabs(moved[0] - pre[0]) > 1e-4, "L21 control move drag had no effect");
 
-    assert(inert,
-        "the unlabelled wedge must be drawn as disabled — that flag is what "
-        ~ "denies it the hover highlight and the refusal path; an empty label "
-        ~ "alone would leave a live, nameless, clickable wedge");
-}
-
-unittest {  // 7. ...and the slot really is DRAWN, all eight of them
-    resetScene();
-    play([
-        evMotion(PIE_CX, PIE_CY),
-        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
-    ]);
-    auto n = pieWedgesDrawn();
-    play([ evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL) ]);
-
-    assert(n == 8,
-        "the empty slot is still a slot — eight wedges, not seven, got "
-        ~ n.to!string ~ ". Seven would divide the circle by 51.4° and put "
-        ~ "Bottom 25° off south.");
+    setupMove();
+    fetchHandlePart(0, hx, hy, found);
+    assert(found);
+    auto held = vertexPos(6);
+    immutable int px = cast(int)hx, py = cast(int)hy;
+    play([motion(px, py, 1), keyDown(32, 44, 64, 1000, 0, 2)]);
+    assert(getJson("/api/pie")["open"].boolean, "L21 pie did not open over handle");
+    play([button(1, true, px, py, 2), dragMotion(px + dx, py + dy, dx, dy, 3),
+          button(1, false, px + dx, py + dy, 4)]);
+    auto after = vertexPos(6);
+    foreach (i; 0 .. 3)
+        assert(fabs(after[i] - held[i]) < 1e-6, "L21 pie drag moved selected vertex");
 }

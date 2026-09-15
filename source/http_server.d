@@ -2803,6 +2803,19 @@ class HttpServer {
         }
     }
 
+    private void route_apiPie(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        try {
+            import ui.pie_record : pieFrameJson;
+            response.statusCode = 200;
+            response.body = pieFrameJson();
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to retrieve pie frame\", \"message\": \"" ~
+                            jsonEsc(e.msg) ~ "\"}";
+        }
+    }
+
     private void route_apiLayers(HttpRequest request, HttpResponse response) {
         // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
         // straight from the HTTP thread on the grounds that "tests are
@@ -4591,6 +4604,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
     RouteSpec("/api/input/context",        "GET",  Match.prefix, Answered.httpThread, "route_apiInputContext"),
     RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.httpThread, "route_apiStats"),
+    RouteSpec("/api/pie",                  "GET",  Match.exact,  Answered.httpThread, "route_apiPie"),
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
     RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),
     RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),

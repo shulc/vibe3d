@@ -9,7 +9,7 @@ import http_command_helpers : commandBody;
 // cursor". Both halves are driven through the real SDL router, and the pixel
 // is literally identical between them — only the panel's presence changes.
 //
-// Four cases:
+// Five cases:
 //   1. the readback — `/api/input/context` reports the zone AND which binding
 //      wins, with its weight. Without this a test can only see the effect, and
 //      "the scoped row won" would be indistinguishable from "the global row
@@ -19,6 +19,7 @@ import http_command_helpers : commandBody;
 //   4. regression — an UNSCOPED chord (W = Move) still fires from inside a
 //      panel's zone. Flattening the three legacy sections into the scoped
 //      table must not have made any of them zone-sensitive.
+//   5. Space changes selection mode once; repeat keydowns do not cycle it.
 
 import http_client : testBaseUrl, getJson, postJson;
 import std.net.curl;
@@ -93,13 +94,15 @@ string evMotion(int x, int y) {
     return format(`{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`,
                   nextT(), x, y);
 }
-string evKeyDown(int sym, int scan, int mod) {
-    return format(`{"t":%d,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%d,"repeat":0}`,
-                  nextT(), sym, scan, mod);
+string evKeyDown(int sym, int scan, int mod, int repeat = 0) {
+    immutable int t = nextT();
+    return format(`{"t":%d,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%d,"repeat":%d,"ts":%d}`,
+                  t, sym, scan, mod, repeat, t * 10);
 }
 string evKeyUp(int sym, int scan, int mod) {
-    return format(`{"t":%d,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%d,"repeat":0}`,
-                  nextT(), sym, scan, mod);
+    immutable int t = nextT();
+    return format(`{"t":%d,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%d,"repeat":0,"ts":%d}`,
+                  t, sym, scan, mod, t * 10);
 }
 
 /// The labels of every wedge the last drawn frame put on screen — i.e. WHICH
@@ -205,8 +208,8 @@ unittest {  // 2. the chord over the viewport opens the viewport menu
     auto labels = pieLabels();
     releaseChord();
 
-    assert(labels.length == 8,
-        "the viewport menu has 8 wedges, got " ~ labels.length.to!string);
+    assert(labels.length == 7,
+        "the viewport menu has 7 drawn boxes, got " ~ labels.length.to!string);
     assert(labels[0] == "Top" && labels[2] == "Right",
         "expected the viewport menu, got " ~ labels.to!string);
 }
@@ -249,4 +252,25 @@ unittest {  // 4. an UNSCOPED binding stays zone-blind
 
     assert(activeTool() == "move",
         "W must arm Move from any zone, got '" ~ activeTool() ~ "'");
+}
+
+unittest {  // 5. plain Space is one-shot across key-repeat
+    resetScene();
+    runCmd("select.typeFrom polygon");
+    assert(activeTool().length == 0,
+        "setup: Space must reach the mode-cycle arm, not an active tool");
+    assert(getJson("/api/selection")["mode"].str == "polygons",
+        "setup: expected polygon mode before Space");
+
+    // Four repeats deliberately do not alias the three-mode cycle.
+    play([
+        evKeyDown(SYM_SPACE, SCAN_SPACE, 0),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, 0, 1),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, 0, 1),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, 0, 1),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, 0, 1),
+    ]);
+
+    assert(getJson("/api/selection")["mode"].str == "vertices",
+        "Space autorepeat changed selection mode more than once");
 }

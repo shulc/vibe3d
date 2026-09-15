@@ -4,6 +4,8 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import input_zones : publishZone;
 
+enum ImVec4 kChromeText = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+
 // The editor's panel chrome: grey bg, black border, beige/blue button
 // palette, black text, flat frames. Call BEFORE `ImGui.Begin` and pair with
 // popPanelChromeStyle() AFTER `ImGui.End`.
@@ -13,7 +15,6 @@ void pushPanelChromeStyle() {
     ImVec4 btnBg   = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);   // tool beige
     ImVec4 btnHov  = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);
     ImVec4 btnAct  = ImVec4(1.0f,   1.0f,   1.0f,   1.0f);
-    ImVec4 black   = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
     ImVec4 grabLo  = ImVec4(0.45f,  0.45f,  0.45f,  1.0f);
     ImVec4 grabHi  = ImVec4(0.20f,  0.20f,  0.20f,  1.0f);
 
@@ -22,7 +23,7 @@ void pushPanelChromeStyle() {
     ImGui.PushStyleColor(ImGuiCol.TitleBg,          winBg);
     ImGui.PushStyleColor(ImGuiCol.TitleBgActive,    winBg);
     ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, winBg);
-    ImGui.PushStyleColor(ImGuiCol.Text,             black);
+    ImGui.PushStyleColor(ImGuiCol.Text,             kChromeText);
     ImGui.PushStyleColor(ImGuiCol.Button,           btnBg);
     ImGui.PushStyleColor(ImGuiCol.ButtonHovered,    btnHov);
     ImGui.PushStyleColor(ImGuiCol.ButtonActive,     btnAct);
@@ -31,7 +32,7 @@ void pushPanelChromeStyle() {
     ImGui.PushStyleColor(ImGuiCol.FrameBgActive,    btnAct);
     ImGui.PushStyleColor(ImGuiCol.SliderGrab,       grabLo);
     ImGui.PushStyleColor(ImGuiCol.SliderGrabActive, grabHi);
-    ImGui.PushStyleColor(ImGuiCol.CheckMark,        black);
+    ImGui.PushStyleColor(ImGuiCol.CheckMark,        kChromeText);
     // Dropdown / combo popups open INSIDE this chrome inherit its black Text,
     // but PopupBg defaults to the dark StyleColorsDark value → black-on-dark,
     // unreadable. Match PopupBg to the field background (btnBg) so an open

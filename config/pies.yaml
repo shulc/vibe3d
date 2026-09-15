@@ -3,8 +3,8 @@
 # One menu = an id, a title and an ORDERED list of at most 8 items. The index
 # in `items:` IS the compass direction: item 0 sits at twelve o'clock and the
 # rest follow clockwise (item 1 = NE, 2 = E, 3 = SE, 4 = S, 5 = SW, 6 = W,
-# 7 = NW for a full 8; with fewer items the circle is divided evenly, still
-# starting at noon). Reorder the list and you move the wedges.
+# 7 = NW. Fewer items leave the later compass slots empty; they do not re-space.
+# Reorder the list and you move the boxes. The title is metadata, not drawn.
 #
 # An item is a BUTTON — exactly the schema config/buttons.yaml and
 # config/statusline.yaml use (`label` + `action` + optional `checked` /
@@ -49,12 +49,11 @@ menus:
 
   # Item / layer operations. Bound to the SAME chord as the menu above, scoped
   # to the Items panel — see the `bindings:` block in config/shortcuts.yaml.
-  # Four items, so the circle is divided into quarters: index 0 is still noon
-  # and the rest still run clockwise, they are just 90° apart instead of 45°.
+  # Four items occupy the first four fixed slots: N, NE, E and SE.
   - id: layers
     title: Items
     items:
       - { label: "Add",       action: { kind: command, id: layer.add } }        # N
-      - { label: "Duplicate", action: { kind: command, id: layer.duplicate } }  # E
-      - { label: "Delete",    action: { kind: command, id: layer.delete } }     # S
-      - { label: "Rename…",   action: { kind: command, id: layer.rename } }     # W
+      - { label: "Duplicate", action: { kind: command, id: layer.duplicate } }  # NE
+      - { label: "Delete",    action: { kind: command, id: layer.delete } }     # E
+      - { label: "Rename…",   action: { kind: command, id: layer.rename } }     # SE

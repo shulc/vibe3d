@@ -78,7 +78,7 @@ import tool_activation_ownership : ToolTransition;
 
 import bindbc.sdl;
 import bindbc.opengl;
-import editor_app : EditorApp, Layout;
+import editor_app : EditorApp, Layout, kGenerateAiAvailable;
 import command_history : RecordMode;
 // Task 0781 step 2a -- what the two keyboard handlers reach that EditorApp
 // does not carry. All of these were already module-level names in main()'s
@@ -88,7 +88,7 @@ import command_history : RecordMode;
 // below); the rest are the free functions and __gshared state the moved
 // bodies call by their own names.
 import input_frame_state    : InputFrameState, DragMode;
-import eventlog             : EventLogger, setOverrideMouse;
+import eventlog             : EventLogger, setOverrideMouse, noteEventStamp;
 import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
 import operator             : VectorStack;
 import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
@@ -104,7 +104,8 @@ import viewport             : Viewport3D, ViewportManager;
 import math                 : Viewport, Vec3, ModelSpace, projectionSpace,
                               projectToWindow, pointInPolygon2D, frontFacingLocal;
 import d_imgui.imgui_h      : ImVec2;
-import pie_state            : g_pie, armPie, aimPie, closePie;
+import pie_state            : g_pie, closePie, PieKeyUp, pieKeyUpEffect;
+import pie_geometry         : PIE_SLOTS, pieHoverAt;
 import handles.gizmo_metrics : stepGizmoHandleScale;
 import log                  : logInfo;
 // Task 0781 step 2d -- what the PRESS/RELEASE pair reaches beyond the three
@@ -136,8 +137,7 @@ import ai.interaction_log   : makeAiInteractionLogRecord;
 // module, because the dispatcher lives here); `item_pick` is only
 // `pickItemUnderCursor`'s return type; `RecordMode` is the command/history
 // policy used by `runUiCommand`, and `Layout` is `applyWindowMetrics`' first.
-// `pie_state` gained
-// `aimPie`/`closePie` (the modal grab at the top of `processEvent`) and
+// `pie_state` supplies the modal state/close seam and
 // `ai.element_candidates` gained `publishElementCandidates` (the two picker
 // bodies' publish). None of them imports this module back.
 import imgui_event_gate     : feedImGui, keyBelongsToEditor,
@@ -446,8 +446,7 @@ struct InputRouter {
 
     // ---- Task 0781 step 2a: the two KEYBOARD handlers ------------------
     //
-    // `pieArmIfOpened` + `handleKeyDown` + `handleKeyUp`, relocated from
-    // nested functions of the same names in app.d's main(). Bodies are
+    // `handleKeyDown` + `handleKeyUp`, relocated from app.d's main(). Bodies are
     // verbatim; the only edits are the free-name resolution this seam always
     // costs (main() locals -> InputRouter fields / `with (app)` EditorApp
     // fields) and the ONE binding below that `with (app)` would otherwise
@@ -476,25 +475,9 @@ struct InputRouter {
     // tests/test_subpatch_tab_toggle.d posts a synthesised SDLK_TAB keydown
     // and asserts the resulting per-face subpatch flags -- the SDLK_TAB
     // branch; tests/test_pie_menu.d drives the pie chord and its release --
-    // the shortcut-table + `pieArmIfOpened` path. So a mutation that no-ops
+    // the shortcut-table path. So a mutation that no-ops
     // this handler is caught by value; see the task Log for the exact
     // assertion each one reddened with.
-
-    // Task 1800 — if the command this keypress just ran put a pie menu up,
-    // remember the chord that did it, so that RELEASING that chord dismisses
-    // the ring (and so that releasing any OTHER key does not). This is the only
-    // place the keysym is known: the binding reaches the command through
-    // `runCommandWithArgs`, which carries an argstring and no key. A pie opened
-    // any other way (an `/api/command ui.pie` from a test, a button) stays
-    // unarmed and simply waits for the click.
-    //
-    // `g_pie.armedKey == 0` is what makes this "did THIS press open it": a
-    // press arriving while a ring is already up never reaches here — the grab
-    // in `processEvent` swallows it.
-    void pieArmIfOpened(ref SDL_KeyboardEvent kev) {
-        if (g_pie.open && g_pie.armedKey == 0)
-            armPie(cast(uint) kev.keysym.sym, cast(ushort) kev.keysym.mod);
-    }
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         with (app) {
@@ -528,15 +511,9 @@ struct InputRouter {
                   }
                   if (bnd.kind == BindingKind.command) {
                     auto id = &bnd.id;
-                    // AUTO-REPEAT MUST NOT RE-OPEN A PIE (task 1800). The ring is
-                    // held-open: it closes when the chord is released, and it also
-                    // closes the moment a wedge is clicked — while the chord is
-                    // still physically down. From that instant the OS keeps sending
-                    // this same chord as repeats, and each one would dispatch
-                    // `ui.pie` again and pop the ring straight back up under the
-                    // cursor. While the ring IS open no repeat gets this far (the
-                    // grab in `processEvent` swallows every keydown), so this guard
-                    // covers exactly the window between "closed" and "released".
+                    // A mouse or unrelated-key release can close the pie while
+                    // its opening chord remains held. Ignore that chord's repeats;
+                    // the modal grip owns repeats while the pie itself is open.
                     if (*id == "ui.pie" && kev.repeat != 0) return;
                     // Interactive history nav (Ctrl+Z / Ctrl+Shift+Z) goes through
                     // the navHistory chokepoint so an active tool with an open live
@@ -551,12 +528,10 @@ struct InputRouter {
                     // with them injected — no args dialog.
                     if (bnd.args.length > 0) {
                         runCommandWithArgs(*id, bnd.args);
-                        pieArmIfOpened(kev);
                         return;
                     }
                     if (!tryOpenArgsDialog(*id))
                         runCommand(reg.commandFactories[*id]());
-                    pieArmIfOpened(kev);
                     return;
                   }
                   {
@@ -654,6 +629,9 @@ struct InputRouter {
                     escapeLadder();
                     break;
                 case SDLK_SPACE:
+                    // Space is not a repeatable command; in particular, a pie gesture
+                    // that releases Ctrl first must not cycle selection mode.
+                    if (kev.repeat != 0) break;
                     // Item mode uses the Esc ladder; component mode drops an
                     // armed tool, otherwise cycles geometry mode. Task 5911;
                     // tool_drop_pipe_stages.json E7a/E7b, S_vert/S_edge.
@@ -1824,43 +1802,60 @@ struct InputRouter {
         g_hoveredFace   = ifs.hoveredFace;
     }
 
-    void pieFireHovered() {
+    void pieFireSlot(string menuId, int slot) {
         import pie_menus       : findPieMenu;
-        import ui.availability : actionRefusal;
         import ui.panels       : dispatchAction;
 
-        auto m    = findPieMenu(g_pie.menuId);
-        int  slot = g_pie.hover;
+        auto m = findPieMenu(menuId);
         closePie();
         if (m is null || slot < 0 || slot >= cast(int) m.items.length) return;
 
         auto btn = m.items[slot];
-        if (btn.disabled) return;
-        if (actionRefusal(app.reg, btn.action, app.document.hasEditTarget(),
-                          app.activeToolId).length > 0) return;
         dispatchAction(app, btn.action);
     }
 
-    // Is `sym` one of the modifier keys the opening chord required? Releasing
-    // EITHER half of "Ctrl+Space" ends the gesture — a user who lets go of
-    // Ctrl first has finished aiming just as much as one who lets go of Space.
-    static bool pieChordModifier(SDL_Keycode sym, ushort mods) {
-        switch (sym) {
-            case SDLK_LCTRL:  case SDLK_RCTRL:  return (mods & KMOD_CTRL)  != 0;
-            case SDLK_LSHIFT: case SDLK_RSHIFT: return (mods & KMOD_SHIFT) != 0;
-            case SDLK_LALT:   case SDLK_RALT:   return (mods & KMOD_ALT)   != 0;
-            case SDLK_LGUI:   case SDLK_RGUI:   return (mods & KMOD_GUI)   != 0;
-            default: return false;
-        }
+    void pieFireHovered() {
+        pieFireSlot(g_pie.menuId, g_pie.hover);
     }
 
-    bool processEvent(SDL_Event* ev) {
-        evLog.log(*ev);
+    bool[PIE_SLOTS] pieLiveMask() {
+        import pie_menus : findPieMenu, isPieHole;
+        import ui.availability : buttonUnavailable;
+        bool[PIE_SLOTS] live;
+        auto menu = findPieMenu(g_pie.menuId);
+        if (menu is null) return live;
+        foreach (i, ref item; menu.items) {
+            if (i >= PIE_SLOTS || isPieHole(item)) continue;
+            live[i] = !buttonUnavailable(app.reg, item,
+                app.document.hasEditTarget(), app.activeToolId, app.editMode,
+                kGenerateAiAvailable).disabled;
+        }
+        return live;
+    }
+
+    bool processEvent(SDL_Event* ev, bool eventWindowFocused) {
+        // The producer supplies focus as explicit event metadata: live input
+        // samples SDL_GetKeyboardFocus at dispatch, while replay uses the bit
+        // captured in the log. It is deliberately not stored in SDL padding.
+        evLog.log(*ev, eventWindowFocused);
+        noteEventStamp(ev.common.timestamp);
         bool isF1orF2 = ev.type == SDL_KEYDOWN &&
             (ev.key.keysym.sym == SDLK_F1 || ev.key.keysym.sym == SDLK_F2);
-        if (!isF1orF2) recLog.log(*ev);
+        if (!isF1orF2) recLog.log(*ev, eventWindowFocused);
 
-        // ---- Pie menu input grab (task 1800) ----------------------------
+        bool pieConsumedKeyUp;
+
+        // A closed pie still owns autorepeat/text generated by the gesture.
+        // A genuine next key press ends the latch and is dispatched normally.
+        if (g_pie.swallowRemainder) {
+            if (ev.type == SDL_TEXTINPUT) return true;
+            if (ev.type == SDL_KEYDOWN) {
+                if (ev.key.repeat != 0) return true;
+                g_pie.swallowRemainder = false;
+            }
+        }
+
+        // ---- Pie menu input grab (task 6208) ----------------------------
         //
         // BEFORE ImGui and before every gate below, because an open pie is
         // MODAL and is anchored wherever the chord was pressed — which may be
@@ -1869,9 +1864,15 @@ struct InputRouter {
         // would otherwise see the press under the ring and fire on release.
         // The event is still LOGGED above, so a replay reproduces the gesture.
         if (g_pie.open) {
-            switch (ev.type) {
+            if (ev.type == SDL_WINDOWEVENT &&
+                ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                closePie();
+                // Continue to ImGui so its backend clears held-key state too.
+            } else switch (ev.type) {
                 case SDL_MOUSEMOTION:
-                    aimPie(ev.motion.x, ev.motion.y);
+                    g_pie.hover = pieHoverAt(ev.motion.x - g_pie.cx,
+                                             ev.motion.y - g_pie.cy,
+                                             g_pie.unitH, pieLiveMask());
                     return true;
                 case SDL_MOUSEBUTTONDOWN:
                     // Swallowed; the wedge runs on the RELEASE half of the
@@ -1879,39 +1880,25 @@ struct InputRouter {
                     // the wedge the ring was visibly highlighting.
                     return true;
                 case SDL_MOUSEBUTTONUP:
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
-                        aimPie(ev.button.x, ev.button.y);
-                        pieFireHovered();
-                    } else {
-                        closePie();
-                    }
+                    pieFireHovered();
+                    return true;
+                case SDL_MOUSEWHEEL:
+                case SDL_TEXTINPUT:
                     return true;
                 case SDL_KEYUP:
-                    // RELEASING THE CHORD DISMISSES — it never selects. The
-                    // ring lives exactly as long as the chord is held down,
-                    // and the only thing that runs a wedge is a CLICK while it
-                    // is up (owner's call 2026-08-23, matching the reference).
-                    //
-                    // Either half of the chord ends it: a user who lets go of
-                    // Ctrl first has stopped holding "Ctrl+Space" just as much
-                    // as one who lets go of Space.
-                    //
-                    // `armedKey == 0` — a ring opened by something other than a
-                    // chord (`/api/command ui.pie …`) — has no chord to
-                    // release, so no key release may close it; it waits for the
-                    // click or for Esc.
-                    if (g_pie.armedKey != 0 &&
-                        (ev.key.keysym.sym == g_pie.armedKey ||
-                         pieChordModifier(ev.key.keysym.sym, g_pie.armedMods)))
-                        closePie();
-                    return true;
+                    final switch (pieKeyUpEffect(g_pie.openStamp,
+                                                  ev.key.timestamp)) {
+                        case PieKeyUp.stay:
+                            pieConsumedKeyUp = true;
+                            break;
+                        case PieKeyUp.closeAndRun:
+                            if (eventWindowFocused) pieFireHovered();
+                            else closePie();
+                            pieConsumedKeyUp = true;
+                            break;
+                    }
+                    break;
                 case SDL_KEYDOWN:
-                    if (ev.key.keysym.sym == SDLK_ESCAPE) { closePie(); return true; }
-                    // Every other key is swallowed while the ring is up: it
-                    // is a menu, not an overlay. The opening chord's own auto-
-                    // repeat lands here too and stops here, so a held chord
-                    // cannot re-dispatch `ui.pie` and drag the ring along
-                    // under the cursor.
                     return true;
                 default: break;
             }
@@ -1927,6 +1914,7 @@ struct InputRouter {
         // carve-out, are in `source/imgui_event_gate.d`; do not re-inline this
         // call, a unittest scans `source/` for a second caller.
         feedImGui(ev);
+        if (pieConsumedKeyUp) return true;
 
         // Route through viewportInputAllowed() so mouse events over the docked
         // "Viewport" window still reach 3D picking/orbit (objection 1 fix).

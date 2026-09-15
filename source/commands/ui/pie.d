@@ -66,10 +66,10 @@ final class UiPieCommand : Command {
             return false;
         }
 
-        import eventlog : queryMouse;
+        import eventlog : queryMouse, queryEventStamp;
         int mx, my;
         queryMouse(mx, my);
-        openPie(m.id, mx, my, cast(int) m.items.length);
+        openPie(m.id, mx, my, queryEventStamp());
         return true;
     }
 }

@@ -283,7 +283,7 @@ Group[] loadStatusLine(string path) {
 // ---------------------------------------------------------------------------
 // PieMenu — one radial menu (task 1800).
 //
-// Deliberately NOT a new item schema: a wedge is a `Button`, parsed by the very
+// Deliberately NOT a new item schema: a pie item is a `Button`, parsed by the very
 // `parseButton` the side panel and the status bar already use, so every action
 // kind, `checked:`, `disable:` and modifier variant behaves identically on all
 // three surfaces and there is exactly one place where a button's YAML is
@@ -292,7 +292,7 @@ Group[] loadStatusLine(string path) {
 // ---------------------------------------------------------------------------
 struct PieMenu {
     string   id;       // referenced by `ui.pie <id>` and by the shortcut binding
-    string   title;    // drawn in the middle of the ring
+    string   title;    // metadata only; the pie surface does not draw it
     Button[] items;    // index == slot, 0 = twelve o'clock, clockwise
 }
 
@@ -354,13 +354,8 @@ PieMenu[] loadPies(string path) {
             //
             //   - { empty: true }
             //
-            // The wedge is drawn and holds its place in the circle, and nothing
-            // else: no label, no action, no hover, no click. It exists because
-            // the index in `items:` IS the compass direction — with seven
-            // wedges the circle divides by 51.4° and Bottom lands 25° off
-            // south, so a menu that is one item short of eight would silently
-            // re-aim every wedge below the gap. Holding the slot keeps Top
-            // north, Right east, Bottom south and Left west exactly.
+            // The slot holds its fixed compass index and nothing else: no box,
+            // label, action, hover, or click. Later slots never re-space.
             //
             // Deliberately NOT spelled as a disabled button with an empty label
             // and a dummy action: an empty slot has no action to name, and

@@ -159,6 +159,7 @@ tests.unit.backdrop_size_law_test
 tests.unit.base_revert_flag_test
 tests.unit.bg_gpu_cache_wiring_test
 tests.unit.binding_resolve_test
+tests.unit.button_face_test
 tests.unit.bvh_pick_test
 tests.unit.byte_size_test
 tests.unit.camera_stamp_test
@@ -229,6 +230,7 @@ tests.unit.edge_vertex_map_rows_test
 tests.unit.edit_session_test
 tests.unit.escape_ladder_test
 tests.unit.event_delivery_owner_test
+tests.unit.event_key_stamp_test
 tests.unit.eventlog_parser_test
 tests.unit.eventlog_test
 tests.unit.face_reindex_arming_test
@@ -371,7 +373,9 @@ tests.unit.perf_lane_health_test
 tests.unit.perf_lock_test
 tests.unit.perf_probe_test
 tests.unit.perf_vslast_gate_test
-tests.unit.pie_geometry_test
+tests.unit.pie_key_release_law_test
+tests.unit.pie_layout_law_test
+tests.unit.pie_wiring_census_test
 tests.unit.pies_config_test
 tests.unit.pipe_preset_claim_test
 tests.unit.plane_dump_test

@@ -106,15 +106,16 @@ unittest // frame order and the deliberately source-level HTTP-off cell
     assert(mainBody.count("httpServer.tickAll()") == 1,
         "5170 tickAll contract changed from exactly once per frame");
 
-    assert(runningGuard.indexOf(
-        "if (!scriptedInputHeld) httpServer.tickEventPlayer()") >= 0,
-        "5170 scripted-input hold no longer blocks only HTTP replay");
+    const replayHeld = bodyAt(runningGuard, "if (!scriptedInputHeld) {");
+    assert(replayHeld.indexOf("httpServer.tickEventPlayer()") >= 0,
+        "5170 scripted-input hold no longer blocks HTTP replay");
     assert(runningGuard.indexOf(
         "if (!scriptedInputHeld) httpServer.tickAll()") < 0,
         "5170 scripted-input hold incorrectly blocks HTTP reset/status recovery");
 
     const pollBody = bodyAt(mainBody, "while (SDL_PollEvent(&event))");
-    assert(pollBody.indexOf("router.processEvent(&event)") >= 0,
+    assert(pollBody.indexOf("router.processEvent(") >= 0
+        && pollBody.indexOf("SDL_GetKeyboardFocus() == window") >= 0,
         "5170 native poll no longer converges on InputRouter.processEvent");
 }
 
@@ -122,7 +123,8 @@ unittest // SDL_QUIT is accepted through the router's true tail
 {
     const router = blankNonCode(readText(
         buildPath(repoRoot, "source", "input_router.d")));
-    const process = bodyAt(router, "bool processEvent(SDL_Event* ev)");
+    const process = bodyAt(router,
+        "bool processEvent(SDL_Event* ev, bool eventWindowFocused)");
     const quitAt = requiredAt(process, "case SDL_QUIT:");
     const nextAt = requiredAt(process, "case SDL_WINDOWEVENT:");
     enforce(quitAt < nextAt, "SDL_QUIT arm no longer precedes SDL_WINDOWEVENT");

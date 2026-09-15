@@ -48,6 +48,14 @@ unittest {  // the shipped config loads, and the compass order is what it claims
     assert(vp.items[7].label.length == 0, "slot 7 (NW) is the reserved empty slot");
     assert(vp.items[7].disabled, "...and it must be inert, not merely unlabelled");
 
+    PieMenu* layers = null;
+    foreach (ref m; menus) if (m.id == "layers") layers = &m;
+    assert(layers !is null && layers.items.length == 4);
+    assert(layers.items[0].label == "Add",       "layers slot 0 is north");
+    assert(layers.items[1].label == "Duplicate", "layers slot 1 is north-east");
+    assert(layers.items[2].label == "Delete",    "layers slot 2 is east");
+    assert(layers.items[3].label == "Rename…",   "layers slot 3 is south-east");
+
     // Every OTHER wedge carries a real, dispatchable action — not a popup
     // (refused below) and not a blank label.
     foreach (i, ref it; vp.items) {

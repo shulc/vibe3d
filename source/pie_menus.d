@@ -10,7 +10,7 @@ module pie_menus;
 // — the same shape `config/tool_presets.yaml` and friends already have.
 // ---------------------------------------------------------------------------
 
-import buttonset : PieMenu;
+import buttonset : PieMenu, Button;
 
 private __gshared PieMenu[] g_menus;
 
@@ -29,4 +29,8 @@ PieMenu* findPieMenu(string id) {
     foreach (ref m; g_menus)
         if (m.id == id) return &m;
     return null;
+}
+
+bool isPieHole(ref const Button button) {
+    return button.label.length == 0;
 }

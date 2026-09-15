@@ -154,7 +154,7 @@ unittest { // U1: POST blocks until acceptance on the tickAll thread
     scope(exit) clearEventPlayerControlsForTest();
     immutable port = freePort();
     auto server = new HttpServer(port);
-    server.setEventPlayerSink((SDL_Event*) {});
+    server.setEventPlayerSink((SDL_Event*, bool) {});
     startReady(server);
     auto reply = new Reply();
     auto client = startRequest(port, "POST", "/api/play-events", bLog(), reply);
@@ -214,7 +214,7 @@ unittest { // U2: status waits behind a sink and then observes one state
     auto accepted = requestAndTick(server, port, "POST", "/api/play-events", log);
     assert(jsonReply(accepted, "HTTP/1.1 200 OK", "U2 load")["generation"].integer == 1,
         "U2 populated load generation changed");
-    server.setEventPlayerSink((SDL_Event* event) {
+    server.setEventPlayerSink((SDL_Event* event, bool) {
         atomicOp!"+="(delivered, 1);
         if (event.type == SDL_MOUSEMOTION && atomicLoad(delivered) == 1) {
             atomicStore(sinkEntered, true);
@@ -275,7 +275,7 @@ unittest { // U3: acceptance frame cannot deliver a t=0 event
     shared size_t delivered;
     immutable port = freePort();
     auto server = new HttpServer(port);
-    server.setEventPlayerSink((SDL_Event*) { atomicOp!"+="(delivered, 1); });
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
     startReady(server);
     scope(exit) if (server.running) server.stop();
     auto accepted = requestAndTick(server, port, "POST", "/api/play-events", bLog());
@@ -293,7 +293,7 @@ unittest { // U4: the playback clock starts at main-thread acceptance
     shared size_t delivered;
     immutable port = freePort();
     auto server = new HttpServer(port);
-    server.setEventPlayerSink((SDL_Event*) { atomicOp!"+="(delivered, 1); });
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
     startReady(server);
     scope(exit) if (server.running) server.stop();
     auto reply = new Reply();
@@ -326,7 +326,7 @@ unittest { // U5: a new accepted generation replaces A without duplicates
     int[] deliveredX;
     immutable port = freePort();
     auto server = new HttpServer(port);
-    server.setEventPlayerSink((SDL_Event* event) {
+    server.setEventPlayerSink((SDL_Event* event, bool) {
         deliveredTypes ~= cast(int)event.type;
         if (event.type == SDL_MOUSEMOTION) deliveredX ~= event.motion.x;
     });
@@ -365,7 +365,7 @@ unittest { // U6: invalid and empty bodies leave active A untouched
     shared size_t delivered;
     immutable port = freePort();
     auto server = new HttpServer(port);
-    server.setEventPlayerSink((SDL_Event*) { atomicOp!"+="(delivered, 1); });
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
     startReady(server);
     scope(exit) if (server.running) server.stop();
     auto a = requestAndTick(server, port, "POST", "/api/play-events", aLog());
@@ -409,7 +409,7 @@ unittest { // U7: a timed-out load is refused when serviced later
     immutable port = freePort();
     auto server = new HttpServer(port);
     server.setPlayEventsBudgetForTest(100.msecs);
-    server.setEventPlayerSink((SDL_Event*) { atomicOp!"+="(delivered, 1); });
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
     startReady(server);
     auto reply = new Reply();
     auto client = startRequest(port, "POST", "/api/play-events", bLog(), reply);

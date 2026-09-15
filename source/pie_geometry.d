@@ -1,69 +1,64 @@
 module pie_geometry;
 
-// ---------------------------------------------------------------------------
-// Pie-menu geometry — pure functions, no ImGui, no state (task 1800).
-//
-// A pie menu is `n` equal wedges around the point where it opened. Slot 0 is
-// centred on TWELVE O'CLOCK and the rest follow CLOCKWISE, so a slot's centre
-// angle is `i * 2π/n` measured from straight up, turning right.
-//
-// Why clockwise-from-noon and not something else: it is the only reading of
-// the reference's shipped 8-item viewport pie (Top, Perspective, Right, Front,
-// Bottom, Back, Left, Maximize) under which all four axis views land on their
-// own compass point — Top north, Right east, Bottom south, Left west. Read
-// anti-clockwise the same list puts "Right" in the west. That is a DEDUCTION
-// from the shipped order, not a measurement of the drawn menu; the task card
-// records it as such.
-//
-// Screen axes: `dy` grows DOWNWARD (SDL / ImGui convention), so "up" is a
-// NEGATIVE dy. Every function here takes screen-space deltas and the sign is
-// pinned by tests/unit/pie_geometry_test.d rather than by this comment.
-// ---------------------------------------------------------------------------
+// Eight fixed compass slots, box placement and angular hover; task/evidence: doc/tasks/work/6208-pie-menu-reference-parity.md.
 
 import std.math : atan2, sqrt, PI, sin, cos, floor;
 
-/// Radius (in pixels, from the centre) inside which no slot is selected.
-/// A pie opened by a chord starts with the cursor exactly at the centre, so
-/// the dead zone is what makes "opened but nothing chosen yet" a representable
-/// state — and it is the same state a tap-and-release lands in.
-enum float PIE_DEAD_ZONE_PX = 22.0f;
+/// A pie always owns the eight compass slots, even when some are holes.
+enum int PIE_SLOTS = 8;
 
-/// Which slot does the direction (`dx`, `dy`) from the pie centre select?
-///
-/// Returns `-1` when the cursor is inside `deadZonePx` of the centre (nothing
-/// selected) or when `n <= 0`. Otherwise `0 .. n-1`, slot 0 centred straight
-/// up and numbering clockwise.
-int sectorAt(float dx, float dy, int n, float deadZonePx = PIE_DEAD_ZONE_PX) {
-    if (n <= 0) return -1;
-
-    immutable float r = sqrt(dx * dx + dy * dy);
-    if (r <= deadZonePx) return -1;
-
-    // Angle clockwise from straight up. Screen dy points down, so "up" is
-    // -dy; atan2(dx, -dy) is 0 at noon, +π/2 at 3 o'clock (dx > 0), i.e.
-    // already turning clockwise on screen.
-    float a = atan2(dx, -dy);
-    if (a < 0) a += 2 * PI;
-
-    // Slot i owns [i*w - w/2, i*w + w/2); shifting by half a slot before the
-    // divide puts the boundary, not the centre, on the integer edges.
-    immutable float w = 2 * PI / n;
-    int slot = cast(int) floor((a + w * 0.5f) / w);
-    if (slot >= n) slot -= n;     // the wrap of the half-slot shift
-    if (slot < 0)  slot += n;
-    return slot;
+struct PieBoxTL {
+    int x;
+    int y;
 }
 
-/// Centre angle of slot `i`, clockwise radians from straight up.
-float slotCenterAngle(int i, int n) {
-    if (n <= 0) return 0.0f;
-    return cast(float)(i * 2 * PI / n);
+/// Top-left of one fixed slot, relative to the point where the pie opened.
+PieBoxTL pieBoxTopLeft(int slot, int unitH, int boxW) {
+    assert(slot >= 0 && slot < PIE_SLOTS);
+    immutable int radius = 2 * unitH;
+    immutable int neX = (radius / 2 - boxW / 2)
+        > cast(int)floor(radius / 3.5)
+        ? radius / 2 - boxW / 2
+        : cast(int)floor(radius / 3.5);
+    immutable int neY = cast(int)floor(-radius / 2.0 - 0.75 * unitH);
+    immutable int seY = cast(int)floor(radius / 2 - unitH / 2
+                                      + 0.25 * unitH);
+    int swX = -radius / 2 - boxW / 2;
+    if (swX + boxW > -radius / 3.5)
+        swX = cast(int)floor(-radius / 3.5 - boxW);
+
+    switch (slot) {
+        case 0: return PieBoxTL(-boxW / 2, -radius - unitH);
+        case 1: return PieBoxTL(neX, neY);
+        case 2: return PieBoxTL(radius, -unitH / 2);
+        case 3: return PieBoxTL(neX, seY);
+        case 4: return PieBoxTL(-boxW / 2, radius);
+        case 5: return PieBoxTL(swX, seY);
+        case 6: return PieBoxTL(-radius - boxW, -unitH / 2);
+        case 7: return PieBoxTL(swX, neY);
+        default: assert(false);
+    }
 }
 
-/// Unit direction of slot `i`'s centre in SCREEN space (y down), so a caller
-/// can place a label at `centre + dir * radius` without redoing the sign.
-void slotCenterDir(int i, int n, out float dx, out float dy) {
-    immutable float a = slotCenterAngle(i, n);
-    dx =  cast(float) sin(a);
-    dy = -cast(float) cos(a);
+/// Fixed-slot angular hover. `live` suppresses holes and unavailable items.
+int pieHoverAt(int dx, int dy, int unitH,
+               const bool[PIE_SLOTS] live) {
+    immutable double distance = sqrt(cast(double)dx * dx
+                                   + cast(double)dy * dy);
+    if (cast(int)distance < unitH) return -1;
+
+    double angle = atan2(cast(double)dx, cast(double)-dy);
+    if (angle < 0.0) angle += 2.0 * PI;
+    immutable int slot = cast(int)floor((angle + PI / 8.0) / (PI / 4.0))
+                             % PIE_SLOTS;
+    if (slot < 0 || slot >= PIE_SLOTS) return -1;
+    return live[slot] ? slot : -1;
+}
+
+/// Unit screen-space direction of a fixed compass slot, for the hub tick.
+void pieSlotDir(int slot, out float ux, out float uy) {
+    assert(slot >= 0 && slot < PIE_SLOTS);
+    immutable double angle = slot * PI / 4.0;
+    ux = cast(float)sin(angle);
+    uy = -cast(float)cos(angle);
 }

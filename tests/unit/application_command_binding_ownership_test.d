@@ -32,11 +32,13 @@ private size_t uiResetCalls;
 private size_t aiTraceResetCalls;
 private size_t parkMouseCalls;
 private size_t closePieCalls;
+private size_t clearInputKeysCalls;
 
 private void resetUiRecordProbe() { ++uiResetCalls; }
 private void clearAiTraceProbe() { ++aiTraceResetCalls; }
 private void parkMouseProbe() { ++parkMouseCalls; }
 private void closePieProbe() { ++closePieCalls; }
+private void clearInputKeysProbe() { ++clearInputKeysCalls; }
 
 private AutomationResetHook resetHook(void function() hook) {
     static if (is(AutomationResetHook == void function())) {
@@ -209,6 +211,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     aiTraceResetCalls = 0;
     parkMouseCalls = 0;
     closePieCalls = 0;
+    clearInputKeysCalls = 0;
 
     auto history = new CommandHistory();
     Tool activeTool;
@@ -259,7 +262,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
             resetHook(&resetUiRecordProbe),
             resetHook(&clearAiTraceProbe),
             resetHook(&parkMouseProbe),
-            resetHook(&closePieProbe)));
+            resetHook(&closePieProbe),
+            resetHook(&clearInputKeysProbe)));
     adapter.wire();
 
     // Seed a real pending guard, then drive scene.reset through the UI door.
@@ -285,7 +289,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     assert(trace.snapshotJson() != "[]"
         && pipeGizmo.preparedCancelCountForTest() == pipeBeforeUi
         && aiState.enabled
-        && aiTraceResetCalls == 0 && parkMouseCalls == 0 && closePieCalls == 0,
+        && aiTraceResetCalls == 0 && parkMouseCalls == 0 && closePieCalls == 0
+        && clearInputKeysCalls == 0,
         "adapter UI scene.reset incorrectly ran automation-after");
 
     // Successful script reset runs before and then the complete after policy.
@@ -308,7 +313,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         "adapter script scene.reset did not run automation-before");
     assert(pipeGizmo.preparedCancelCountForTest() == pipeBeforeScript + 1
         && !aiState.enabled
-        && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1,
+        && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1
+        && clearInputKeysCalls == 1,
         "successful script scene.reset did not run the complete automation-after policy");
     assert(trace.snapshotJson() == "[]",
         "successful script scene.reset left non-empty automation trace state");
@@ -343,7 +349,8 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     assert(trace.snapshotJson() != "[]"
         && pipeGizmo.preparedCancelCountForTest() == pipeBeforeRefusal
         && aiState.enabled
-        && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1,
+        && aiTraceResetCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1
+        && clearInputKeysCalls == 1,
         "refused script scene.reset incorrectly ran automation-after");
 
     resetSucceeds = true;
@@ -370,6 +377,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     const aiTraceBeforeNonTest = aiTraceResetCalls;
     const parkBeforeNonTest = parkMouseCalls;
     const pieBeforeNonTest = closePieCalls;
+    const inputBeforeNonTest = clearInputKeysCalls;
     auto nonTestResult = adapter.dispatchScript("scene.reset", "", false);
     assert(nonTestResult.outcome == CommandInvocationOutcome.applied,
         "non-test scene.reset did not apply");
@@ -380,6 +388,7 @@ unittest { // command adapter owns reset policy without an EditorApp capture
         && aiState.enabled
         && aiTraceResetCalls == aiTraceBeforeNonTest
         && parkMouseCalls == parkBeforeNonTest
-        && closePieCalls == pieBeforeNonTest,
+        && closePieCalls == pieBeforeNonTest
+        && clearInputKeysCalls == inputBeforeNonTest,
         "non-test scene.reset incorrectly ran automation-after");
 }

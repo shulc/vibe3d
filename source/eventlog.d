@@ -93,7 +93,7 @@ private int _pushEvent(SDL_Event* e) {
 // instead of pushing to SDL's queue. The delegate should perform the
 // equivalent of one SDL_PollEvent iteration (ImGui filter + switch
 // case + handler dispatch).
-alias ImmediateEventSink = void delegate(SDL_Event*);
+alias ImmediateEventSink = void delegate(SDL_Event*, bool windowFocused);
 
 // Mouse position source — overridden during event playback so that
 // SDL_GetMouseState()-based picking uses replayed coordinates.
@@ -148,6 +148,16 @@ void queryMouse(out int mx, out int my) {
     else _getMouseState(&mx, &my);
 }
 
+private __gshared uint g_eventStamp;
+
+void noteEventStamp(uint stamp) {
+    g_eventStamp = stamp;
+}
+
+uint queryEventStamp() {
+    return g_eventStamp;
+}
+
 // ---------------------------------------------------------------------------
 // Viewport metadata for layout-/aspect-independent event playback.
 //
@@ -166,7 +176,14 @@ struct ViewportMeta {
 
 /// One parsed, replayable event. Kept outside EventPlayer so parsing can build
 /// an owned log without borrowing or mutating a player.
-struct EventLogEntry { double timeMs; SDL_Event event; SDL_Keymod mod; }
+struct EventLogEntry {
+    double timeMs;
+    SDL_Event event;
+    SDL_Keymod mod;
+    // Explicit replay metadata, not an SDL padding field. Old logs default to
+    // focused so adding the field preserves their release meaning (task 6208).
+    bool windowFocused = true;
+}
 
 /// Validated JSON-lines input. The entry backing store is immutable after the
 /// parser transfers its only mutable reference into this value.
@@ -242,7 +259,7 @@ struct EventLogger {
         active = false;
     }
 
-    void log(ref const SDL_Event e) {
+    void log(ref const SDL_Event e, bool windowFocused = true) {
         if (!active) return;
         double t = cast(double)(_perfCounter() - startCounter)
                  / cast(double)freq * 1000.0;
@@ -251,14 +268,23 @@ struct EventLogger {
                 file.writefln(`{"t":%.3f,"type":"SDL_QUIT"}`, t);
                 break;
             case SDL_KEYDOWN:
-            case SDL_KEYUP:
-                file.writefln(`{"t":%.3f,"type":"%s","sym":%d,"scan":%d,"mod":%u,"repeat":%d}`,
+                file.writefln(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%u,"repeat":%d,"ts":%u}`,
                     t,
-                    e.type == SDL_KEYDOWN ? "SDL_KEYDOWN" : "SDL_KEYUP",
                     e.key.keysym.sym,
                     cast(int)e.key.keysym.scancode,
                     cast(uint)e.key.keysym.mod,
-                    cast(int)e.key.repeat);
+                    cast(int)e.key.repeat,
+                    e.key.timestamp);
+                break;
+            case SDL_KEYUP:
+                file.writefln(`{"t":%.3f,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%u,"repeat":%d,"ts":%u,"focus":%d}`,
+                    t,
+                    e.key.keysym.sym,
+                    cast(int)e.key.keysym.scancode,
+                    cast(uint)e.key.keysym.mod,
+                    cast(int)e.key.repeat,
+                    e.key.timestamp,
+                    windowFocused ? 1 : 0);
                 break;
             case SDL_MOUSEBUTTONDOWN:
             case SDL_MOUSEBUTTONUP:
@@ -333,9 +359,8 @@ EventLogParseResult parseEventLog(string data) {
         catch (Exception) { ++skipped; continue; }
 
         SDL_Event e;
-        // OPTIONAL `ts` — the SDL timestamp the replayed event carries
-        // (task 0582). Absent on every log written so far and on everything
-        // the recorder writes, in which case it stays 0, exactly as before.
+        immutable bool windowFocused = _jsonGet(obj, "focus", 1) != 0;
+        // OPTIONAL `ts` — the SDL timestamp the replayed event carries.
         //
         // It exists because `t` is a SCHEDULE and a timestamp is a
         // MEASUREMENT, and one handler needs the second: the trackball's
@@ -349,11 +374,8 @@ EventLogParseResult parseEventLog(string data) {
         // a replay of a log that never recorded when things happened
         // reports, correctly, that it does not know.
         //
-        // Deliberately NOT written by `EventLogger`: nothing recorded today
-        // would consume it, and starting to emit it would make every future
-        // recording's replay newly time-sensitive to serve a gesture that
-        // ships off. The recorder can start writing it the day a recorded
-        // session has to reproduce a flick.
+        // EventLogger writes it for keys so pie release timing replays from
+        // event time; older logs and other event kinds retain the zero default.
         e.common.timestamp = cast(uint)_jsonGet(obj, "ts", 0);
         switch (typeName) {
             case "VIEWPORT":
@@ -385,7 +407,7 @@ EventLogParseResult parseEventLog(string data) {
                 e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
                                 ? SDL_PRESSED : SDL_RELEASED;
                 entries ~= EventLogEntry(t, e,
-                    cast(SDL_Keymod)(_jsonGet(obj, "mod")));
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")), windowFocused);
                 continue;
             case "SDL_MOUSEMOTION":
                 e.type         = SDL_MOUSEMOTION;
@@ -395,7 +417,7 @@ EventLogParseResult parseEventLog(string data) {
                 e.motion.yrel  = cast(int)(_jsonGet(obj, "yrel"));
                 e.motion.state = cast(uint)(_jsonGet(obj, "state"));
                 entries ~= EventLogEntry(t, e,
-                    cast(SDL_Keymod)(_jsonGet(obj, "mod")));
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")), windowFocused);
                 continue;
             case "SDL_MOUSEWHEEL":
                 e.type    = SDL_MOUSEWHEEL;
@@ -421,7 +443,7 @@ EventLogParseResult parseEventLog(string data) {
                 break;
         }
 
-        entries ~= EventLogEntry(t, e);
+        entries ~= EventLogEntry(t, e, cast(SDL_Keymod)0, windowFocused);
     }
 
     EventLogParseResult result;
@@ -652,7 +674,7 @@ struct EventPlayer {
             }
             if (immediateSink_ !is null) {
                 immutable bool isMotion = e.type == SDL_MOUSEMOTION;
-                immediateSink_(&e);
+                immediateSink_(&e, entry.windowFocused);
                 if (isMotion) ++immediateMotions_;
             } else {
                 _pushEvent(&e);
@@ -908,11 +930,13 @@ unittest { // EventPlayer.tick: its sink receives every due motion with current 
     int sinkCalls;
     int[] seenX;
     SDL_Keymod[] seenMods;
-    p.setImmediateSink((SDL_Event* delivered) {
+    p.setImmediateSink((SDL_Event* delivered, bool windowFocused) {
         int mx, my;
         queryMouse(mx, my);
         assert(mx == delivered.motion.x && my == delivered.motion.y,
             "5170 replay sink observed stale mouse state");
+        assert(windowFocused,
+            "5170 legacy replay entry did not default to focused");
         ++sinkCalls;
         seenX ~= delivered.motion.x;
         seenMods ~= _getModState();

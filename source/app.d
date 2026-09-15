@@ -22,7 +22,8 @@ import sdl_error : sdlError;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import imgui_impl_sdl2;
-import imgui_event_gate : feedImGui, keyBelongsToEditor;
+import imgui_event_gate : clearImGuiInputKeysForAutomation, feedImGui,
+    keyBelongsToEditor;
 import imgui_impl_opengl3;
 import nfde;
 
@@ -213,7 +214,7 @@ import shortcuts;
 import buttonset;
 // Pie menus (task 1800): state + aim live in their own module so the command,
 // the event pump and the drawer all read one place.
-import pie_state : g_pie, openPie, closePie, aimPie, armPie;
+import pie_state : g_pie, openPie, closePie, resetPieForAutomation;
 import ai.debug_trace : clearLatestAiDebugTraces, latestHandleDebugTraceJson;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
@@ -815,6 +816,30 @@ void drawPerfHud() {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+
+private bool liveKeyEventWindowFocused(SDL_Window* window)
+{
+    if (SDL_GetKeyboardFocus() != window) return false;
+
+    immutable int queuedCount = SDL_PeepEvents(
+        null, 0, SDL_PEEKEVENT, SDL_WINDOWEVENT, SDL_WINDOWEVENT);
+    if (queuedCount < 0) return false;
+    if (queuedCount == 0) return true;
+
+    auto queued = new SDL_Event[cast(size_t) queuedCount];
+    immutable int copied = SDL_PeepEvents(
+        queued.ptr, queuedCount, SDL_PEEKEVENT,
+        SDL_WINDOWEVENT, SDL_WINDOWEVENT);
+    if (copied < 0) return false;
+
+    immutable uint ownWindowId = SDL_GetWindowID(window);
+    foreach (ref event; queued[0 .. cast(size_t) copied]) {
+        if (event.window.windowID == ownWindowId
+            && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+            return false;
+    }
+    return true;
+}
 
 void main(string[] args) {
     // FIRST, before any subsystem can build a shader or a handle: record which
@@ -4467,7 +4492,8 @@ void main(string[] args) {
             &resetUiPolicyRecord,
             &clearLatestAiDebugTraces,
             &parkOverrideMouse,
-            &closePie));
+            &resetPieForAutomation,
+            &clearImGuiInputKeysForAutomation));
     wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;
@@ -4587,8 +4613,7 @@ void main(string[] args) {
         ifs.useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
     }
 
-    // Task 0781 step 2a -- `pieArmIfOpened`, `handleKeyDown` and
-    // `handleKeyUp` (237 lines together) moved to InputRouter
+    // Task 0781 step 2a -- `handleKeyDown` and `handleKeyUp` moved to InputRouter
     // (source/input_router.d), bodies verbatim, for the same reason
     // `handleWindowEvent`/`handleMouseWheel` already live there.
     // `processEvent`'s SDL_KEYDOWN / SDL_KEYUP cases below now call
@@ -4731,8 +4756,7 @@ void main(string[] args) {
     // -------------------------------------------------------------------------
 
     // Task 0781 step 2e -- THE DISPATCHER MOVED. `processEvent` (the SDL-event
-    // switch), `pieFireHovered` and `pieChordModifier` (its two pie-menu
-    // helpers, called from nowhere else) are now InputRouter methods
+    // switch) and `pieFireHovered` are now InputRouter methods
     // (source/input_router.d). That closes step 2: all seven handlers plus the
     // dispatcher are one object's, and main() reaches the input path through
     // exactly two call sites, both spelled `router.processEvent(...)` -- the
@@ -4749,8 +4773,15 @@ void main(string[] args) {
     // Both replay producers borrow the same immediate-delivery capability from
     // the composition root. Their EventPlayer instances own the references;
     // callers that install no sink keep EventPlayer's SDL-queue fallback.
-    ImmediateEventSink replaySink = (SDL_Event* ev) {
-        if (!router.processEvent(ev)) running = false;
+    ImmediateEventSink replaySink = (SDL_Event* ev, bool windowFocused) {
+        // Replayed keyboard and focus events are real ImGui inputs too; the
+        // SDL backend rejects window id 0, so bind them to this window.
+        immutable uint windowId = SDL_GetWindowID(window);
+        if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP)
+            ev.key.windowID = windowId;
+        else if (ev.type == SDL_WINDOWEVENT)
+            ev.window.windowID = windowId;
+        if (!router.processEvent(ev, windowFocused)) running = false;
     };
     evPlay.setImmediateSink(replaySink);
     httpServer.setEventPlayerSink(replaySink);
@@ -4800,12 +4831,18 @@ void main(string[] args) {
             // the overdue events fire in a burst right after it.
             immutable bool scriptedInputHeld = subpatchPreview.scriptedInputHeld();
             // ---- Playback: push due events before polling ----
-            if (!scriptedInputHeld) { if (playbackMode) evPlay.tick(); }
+            if (!scriptedInputHeld) {
+                if (playbackMode) {
+                    evPlay.tick();
+                }
+            }
             // httpServer is always constructed now; only drain the request queues
             // when the listener is actually up (start() called). Skipped entirely
             // in a release/no-http run, where no thread ever posts requests.
             if (httpServer.running) {
-                if (!scriptedInputHeld) httpServer.tickEventPlayer();
+                if (!scriptedInputHeld) {
+                    httpServer.tickEventPlayer();
+                }
                 httpServer.tickAll();
 
                 // Allocation window (task 5752): retain the established event
@@ -4870,7 +4907,10 @@ void main(string[] args) {
                   || event.type == SDL_MOUSEBUTTONUP
                   || event.type == SDL_MOUSEWHEEL))
                     continue;
-                if (!router.processEvent(&event)) {
+                immutable bool eventWindowFocused = event.type == SDL_KEYUP
+                    ? liveKeyEventWindowFocused(window)
+                    : SDL_GetKeyboardFocus() == window;
+                if (!router.processEvent(&event, eventWindowFocused)) {
                     running = false;
                     break;
                 }
@@ -5266,15 +5306,11 @@ void main(string[] args) {
         // Drawn LAST of the button surfaces because it sits over all of them.
         {
             import ui.pie_render   : drawPieMenu;
-            import ui.availability : actionRefusal, recordDrawnButton;
+            import ui.availability : buttonUnavailable;
             drawPieMenu((ref Button b) {
-                string why = b.disabled
-                    ? ""
-                    : actionRefusal(reg, b.action, document.hasEditTarget(),
-                                    activeToolId);
-                recordDrawnButton("pie", b.label, b.action.kind, b.action.id,
-                                  b.disabled || why.length > 0, why);
-                return why;
+                return buttonUnavailable(reg, b, document.hasEditTarget(),
+                                         activeToolId, editMode,
+                                         kGenerateAiAvailable);
             });
         }
 

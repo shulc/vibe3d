@@ -70,7 +70,7 @@ import shader;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
-import ui.availability : actionRefusal, recordDrawnButton;
+import ui.availability : actionRefusal, buttonUnavailable, recordDrawnButton;
 import ui.mode_popup : dynamicModeCheckedLabel, dynamicModePopupItems;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
@@ -255,6 +255,8 @@ import registry;
 import shortcuts;
 import buttonset;
 import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle, publishPanelZone;
+import ui.button_face : kButtonBarPadding, styledButtonPalette,
+    drawButtonOutlineRect, drawRaisedBevelRect, drawEngravedLabel;
 import ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
@@ -322,11 +324,7 @@ void drawButtonOutline() {
     auto dl = ImGui.GetWindowDrawList();
     ImVec2 rmin = ImGui.GetItemRectMin();
     ImVec2 rmax = ImGui.GetItemRectMax();
-    uint c = IM_COL32(0, 0, 0, 255);
-    dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmax.x, rmin.y), c);  // top
-    dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmin.x, rmax.y), c);  // left
-    dl.AddLine(ImVec2(rmin.x, rmax.y), ImVec2(rmax.x, rmax.y), c);  // bottom
-    dl.AddLine(ImVec2(rmax.x, rmin.y), ImVec2(rmax.x, rmax.y), c);  // right
+    drawButtonOutlineRect(dl, rmin, rmax);
 }
 
 // Raised bevel drawn as `thickness` concentric rings just
@@ -336,16 +334,7 @@ void drawRaisedBevel(uint light, uint dark, bool pressed = false,
     auto dl = ImGui.GetWindowDrawList();
     ImVec2 rmin = ImGui.GetItemRectMin();
     ImVec2 rmax = ImGui.GetItemRectMax();
-    uint tl = pressed ? dark  : light;
-    uint br = pressed ? light : dark;
-    foreach (i; 0 .. thickness) {
-        float x0 = rmin.x + 1.0f + i, y0 = rmin.y + 1.0f + i;
-        float x1 = rmax.x - 2.0f - i, y1 = rmax.y - 2.0f - i;
-        dl.AddLine(ImVec2(x0, y0), ImVec2(x1, y0), tl);
-        dl.AddLine(ImVec2(x0, y0), ImVec2(x0, y1), tl);
-        dl.AddLine(ImVec2(x0, y1), ImVec2(x1, y1), br);
-        dl.AddLine(ImVec2(x1, y0), ImVec2(x1, y1), br);
-    }
+    drawRaisedBevelRect(dl, rmin, rmax, light, dark, pressed, thickness);
 }
 
 // The editor's button chrome: beige palette for tools, pale blue for commands;
@@ -353,35 +342,19 @@ void drawRaisedBevel(uint light, uint dark, bool pressed = false,
 // Returns true when the button is clicked this frame.
 bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
                         ImVec2 size, bool disabled = false) {
-    ImVec4 bgNormal, bgHover;
-    uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
-    if (isCommand) {
-        bgNormal    = ImVec4(0.635f, 0.686f, 0.749f, 1.0f);  // (162,175,191)
-        bgHover     = ImVec4(0.698f, 0.749f, 0.812f, 1.0f);  // (178,191,207)
-        bevelLightN = IM_COL32(206, 219, 235, 255);
-        bevelDarkN  = IM_COL32(143, 156, 172, 255);
-        bevelLightH = IM_COL32(222, 235, 251, 255);
-        bevelDarkH  = IM_COL32(159, 172, 188, 255);
-    } else {
-        bgNormal    = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);  // (181,181,167)
-        bgHover     = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
-        bevelLightN = IM_COL32(225, 225, 211, 255);
-        bevelDarkN  = IM_COL32(162, 162, 148, 255);
-        bevelLightH = IM_COL32(241, 241, 227, 255);
-        bevelDarkH  = IM_COL32(178, 178, 164, 255);
-    }
+    auto palette = styledButtonPalette(isCommand);
 
     ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     // Disabled buttons keep the normal bg / bevel but freeze hover
     // and active responses (disabled rows don't visually react to
     // the cursor at all).
     if (disabled) {
-        ImGui.PushStyleColor(ImGuiCol.Button,        bgNormal);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, bgNormal);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive,  bgNormal);
+        ImGui.PushStyleColor(ImGuiCol.Button,        palette.bgNormal);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, palette.bgNormal);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive,  palette.bgNormal);
     } else {
-        ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
+        ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : palette.bgNormal);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : palette.bgHover);
         ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
     }
     ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
@@ -401,8 +374,8 @@ bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
     drawButtonOutline();
     if (!on && !held) {
         bool hov = !disabled && ImGui.IsItemHovered();
-        drawRaisedBevel(hov ? bevelLightH : bevelLightN,
-                        hov ? bevelDarkH  : bevelDarkN,
+        drawRaisedBevel(hov ? palette.bevelLightH : palette.bevelLightN,
+                        hov ? palette.bevelDarkH  : palette.bevelDarkN,
                         false);
     }
 
@@ -416,11 +389,7 @@ bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
         ImVec2 ts   = ImGui.CalcTextSize(label);
         ImVec2 tp   = ImVec2(rmin.x + 6.0f,
                              rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
-        uint shadowCol = IM_COL32(245, 245, 231, 200);
-        uint textCol   = IM_COL32( 95,  90,  78, 255);
-        ImGui.GetWindowDrawList().AddText(ImVec2(tp.x + 1, tp.y + 1),
-                                          shadowCol, label);
-        ImGui.GetWindowDrawList().AddText(tp, textCol, label);
+        drawEngravedLabel(ImGui.GetWindowDrawList(), tp, label);
     }
 
     if (shortcut.length > 0) {
@@ -529,7 +498,7 @@ void drawSectionHeader(string title) {
 // Begin for button-only panels; skip for Tool Properties so inputs keep
 // normal spacing. Pair with popButtonBarStyle().
 void pushButtonBarStyle() {
-    ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(6, 5));
+    ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, kButtonBarPadding);
     ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 0));
 }
 
@@ -1409,11 +1378,6 @@ void drawSidePanel(EditorApp app) {
             // edit mode. `btn.disabled` (explicit YAML flag) wins
             // when set. Script / popup actions aren't checked —
             // their target isn't a single id.
-            bool modeBlocked = false;
-            if (action.kind == ActionKind.command)
-                modeBlocked = reg.isModeBlocked("command", action.id, editMode);
-            else if (action.kind == ActionKind.tool)
-                modeBlocked = reg.isModeBlocked("tool", action.id, editMode);
             // "Generate 3D…" (ai3d.generate.open, task 0404 follow-up):
             // TRELLIS is Linux-only and requires WithAI — grey the entry
             // rather than hide it on every other build (see
@@ -1426,10 +1390,11 @@ void drawSidePanel(EditorApp app) {
             // which reads what the command/tool itself declared — the same
             // answer `activateToolById` and `Command.apply()` refuse on. No
             // list of ids is consulted anywhere on this path.
-            string unavailWhy = actionRefusal(reg, action,
-                                              document.hasEditTarget(), activeToolId);
-            bool effDisabled = btn.disabled || modeBlocked || aiGateBlocked
-                            || unavailWhy.length > 0;
+            auto unavailable = buttonUnavailable(reg, btn,
+                document.hasEditTarget(), activeToolId, editMode,
+                kGenerateAiAvailable);
+            string unavailWhy = unavailable.why;
+            bool effDisabled = unavailable.disabled;
             recordDrawnButton("side", label, action.kind, action.id,
                               effDisabled, unavailWhy);
             if (renderStyledButton(label, sc, on, isCommand,

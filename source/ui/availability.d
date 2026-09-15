@@ -30,7 +30,8 @@ module ui.availability;
 // to stop calling.
 // ---------------------------------------------------------------------------
 
-import buttonset : Action, ActionKind;
+import buttonset : Action, ActionKind, Button;
+import editmode  : EditMode;
 import registry  : Registry;
 
 // ---------------------------------------------------------------------------
@@ -83,6 +84,26 @@ string actionRefusal(ref Registry reg, ref const Action a,
         case ActionKind.popup:
             return "";
     }
+}
+
+struct ButtonUnavailable {
+    bool disabled;
+    string why;
+}
+
+ButtonUnavailable buttonUnavailable(ref Registry reg, ref const Button btn,
+        bool hasEditTarget, string activeToolId, EditMode editMode,
+        bool aiGenerateAvailable) {
+    bool modeBlocked;
+    if (btn.action.kind == ActionKind.command)
+        modeBlocked = reg.isModeBlocked("command", btn.action.id, editMode);
+    else if (btn.action.kind == ActionKind.tool)
+        modeBlocked = reg.isModeBlocked("tool", btn.action.id, editMode);
+    immutable bool aiGateBlocked = btn.action.kind == ActionKind.command
+        && btn.action.id == "ai3d.generate.open" && !aiGenerateAvailable;
+    string why = actionRefusal(reg, btn.action, hasEditTarget, activeToolId);
+    return ButtonUnavailable(btn.disabled || modeBlocked || aiGateBlocked
+                             || why.length > 0, why);
 }
 
 // ---------------------------------------------------------------------------

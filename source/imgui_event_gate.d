@@ -5,8 +5,19 @@
 module imgui_event_gate;
 
 import bindbc.sdl;
+import d_imgui.imgui_cimgui : igGetIO_Nil;
 import imgui_impl_sdl2 : ImGui_ImplSDL2_ProcessEvent;
 import imgui_flag_boundary : anyPopupOpen;
+
+// The linked cimgui archive exports this stock ImGuiIO method even though the
+// curated D wrapper does not declare it. Test automation must start from a
+// released keyboard just as a newly focused editor does (task 6208).
+extern(C) nothrow @nogc void ImGuiIO_ClearInputKeys(void* self);
+
+void clearImGuiInputKeysForAutomation() nothrow @nogc
+{
+    ImGuiIO_ClearInputKeys(igGetIO_Nil());
+}
 
 /// Requires a current ImGui context and a between-frames call (after Render,
 /// before NewFrame); it reads the popup stack retained from the last frame.
