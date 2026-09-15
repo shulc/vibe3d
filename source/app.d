@@ -4409,6 +4409,8 @@ void main(string[] args) {
     auto toolPropertiesRoles = bindToolPropertiesPanel(commandBinding,
         formsPanel, session,
         toolHost.getActiveTool, toolHost.getActiveToolId);
+    import ui.image_list_panel : bindImageListPanel;
+    auto imageListRoles = bindImageListPanel(sessionOwner, commandBinding);
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
@@ -5296,8 +5298,9 @@ void main(string[] args) {
         // `ui.imageList show` — so a second floating window cannot start
         // swallowing the synthetic viewport drags every existing test drives.
         if (!command.g_testMode || g_imageListShown) {
-            import ui.panels : drawImageListPanel;
-            drawImageListPanel(app, itemRenameState);
+            import ui.image_list_panel : drawImageListPanel;
+            drawImageListPanel(imageListRoles.read, imageListRoles.actions,
+                               itemRenameState);
         }
 
         // ---- Channels (dockable; task 0637) ----

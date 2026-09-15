@@ -213,9 +213,10 @@ unittest { // production passes one owner and both panel writers consume it
     const root = repositoryRoot();
     const app = blankNonCode(readText(root.buildPath("source", "app.d")));
     const editor = blankNonCode(readText(root.buildPath("source", "editor_app.d")));
-    const panels = blankNonCode(readText(root.buildPath("source", "ui", "panels.d")));
     const layerPanel = blankNonCode(readText(root.buildPath(
         "source", "ui", "layer_list_panel.d")));
+    const imagePanel = blankNonCode(readText(root.buildPath(
+        "source", "ui", "image_list_panel.d")));
     const state = blankNonCode(readText(root.buildPath("source", "ui", "item_rename.d")));
 
     assert(app.count("ItemRenameState itemRenameState;") == 1,
@@ -227,20 +228,21 @@ unittest { // production passes one owner and both panel writers consume it
     assert(flatApp.count(
         "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, itemRenameState);") == 1,
         "5880 Layers wiring: Layers no longer receives main's itemRenameState owner");
-    assert(app.count("drawImageListPanel(app, itemRenameState);") == 1,
+    assert(flatApp.count(
+        "drawImageListPanel(imageListRoles.read, imageListRoles.actions, itemRenameState);") == 1,
         "5880 cross-panel wiring: Images no longer receives the same ItemRenameState owner");
 
     const layersBody = bodyAt(layerPanel,
         "void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,");
-    const imagesBody = bodyAt(panels,
-        "void drawImageListPanel(EditorApp app, ref ItemRenameState itemRenameState)");
+    const imagesBody = bodyAt(imagePanel,
+        "void drawImageListPanel(ImageListReadRole read, ImageListActions actions,");
     assert(layersBody.canFind(
             "bindItemRenameController(itemRenameState,\n                                           actions.commandDispatch())")
         && layersBody.canFind("rename.begin(r.index, r.renameSeed);")
         && layersBody.canFind("rename.finish(r.index, exit);"),
         "5880 Layers writer: rename open/exit stopped using the shared owner");
     assert(imagesBody.canFind(
-            "bindItemRenameController(itemRenameState, uiCommandDelegate)")
+            "bindItemRenameController(itemRenameState, dispatch)")
         && imagesBody.canFind("rename.begin(r.index, r.renameSeed);")
         && imagesBody.canFind("rename.finish(r.index, exit);"),
         "5880 Images writer: rename open/exit stopped using the shared owner, so its visible name cannot change");

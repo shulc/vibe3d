@@ -85,11 +85,14 @@ unittest { // every used flag crosses one int(void) accessor and one D funnel
             "beginPanelContextMenu(\"hist-panel-ctx\")") == 1
         && countOccurrences(panels,
             "beginItemContextMenu(\"hist-row-ctx\")") == 1
-        && countOccurrences(panels, "inputTextSubmitOnEnter(") == 2,
+        && countOccurrences(panels, "inputTextSubmitOnEnter(") == 1,
         "flag-boundary census: production history/rename consumers left the funnel");
     const layerList = readText(buildPath(sourceRoot, "ui", "layer_list_panel.d"));
     assert(countOccurrences(layerList, "inputTextSubmitOnEnter(") == 1,
         "flag-boundary census: the Layers rename field left the funnel");
+    const imageList = readText(buildPath(sourceRoot, "ui", "image_list_panel.d"));
+    assert(countOccurrences(imageList, "inputTextSubmitOnEnter(") == 1,
+        "flag-boundary census: the Images rename field left the funnel");
 
     const runner = readText(buildPath(repoRoot, "run_test.d"));
     assert(runner.canFind("g_compileFlags ~= gather(\"dflags\"")

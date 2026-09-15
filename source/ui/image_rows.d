@@ -4,16 +4,14 @@ module ui.image_rows;
 // Task 0616 Ph4 — the Images panel's ROW MODEL.
 //
 // WHY THIS MODULE EXISTS AT ALL, rather than the strings being built inline in
-// `drawImageListPanel`: an ImGui panel body is not observable headlessly. An
-// assertion written against the draw call can only ever say "the function ran",
-// which is the inert-assertion shape this task has been caught by repeatedly.
-// So the panel is split in two:
+// `drawImageListPanel`: the row model keeps data shaping separate from ImGui
+// placement. So the panel is split in two:
 //
 //   * this module answers "WHAT would the panel draw" — pure, allocation-only,
 //     no ImGui, no globals (the document path is a PARAMETER, not a call to
 //     `currentDocPath()`), and therefore fully assertable by in-module tests;
-//   * `ui/panels.d`'s `drawImageListPanel` answers "where on screen", which is
-//     the part no test here claims to cover.
+//   * `ui/image_list_panel.d`'s `drawImageListPanel` consumes those rows and
+//     owns widget placement and interaction.
 //
 // Everything the reference's measured list shows, and nothing it does not:
 // see `doc/tasks/0616-evidence/clip_panel_shape.md` for the measurement and
@@ -59,7 +57,8 @@ module ui.image_rows;
 // cutting and not`, and concluded a cache in front of it "would be pure
 // liability". The harness behind that number drove `imageRowsInto`, and
 // `imageRowsInto` does not call `elideEnd`: the PANEL does, once per row,
-// immediately after the row build (`ui/panels.d`, line 2 of the name cell).
+// immediately after the row build (`ui/image_list_panel.d`, line 2 of the
+// name cell).
 // So the cutting and the non-cutting build both read 0 for the same reason —
 // neither ran the function — and re-running the harness reproduced the zero
 // and looked like corroboration.
@@ -918,7 +917,7 @@ version (unittest) {
 // three different anchors, which is why it is reused rather than replaced.
 // ===========================================================================
 
-/// The budget R11 measures at, and the panel's own FLOOR (`ui/panels.d`:
+/// R11's budget and the panel's own FLOOR (`ui/image_list_panel.d`:
 /// `budget = b < 8 ? 8 : b`).
 ///
 /// EIGHT RATHER THAN THE DEFAULT SIXTEEN, and the choice is the whole point of
@@ -935,7 +934,7 @@ version (unittest) private enum size_t kMeasureBudget = 8;
 //
 // A FRAME IS TWO STEPS, and this test measures both: `imageRowsInto` builds
 // the rows, then the panel cuts each row's path text to the width it has
-// (`elidedPathText`, once per row, `ui/panels.d` line 2 of the name cell).
+// (`elidedPathText`, per row; `ui/image_list_panel.d`, name-cell line 2).
 // Measuring only the first is how the module header came to state `elideEnd`'s
 // cost as a measured zero — the harness never called it, so the cutting and
 // the non-cutting build agreed, and the agreement read as corroboration.

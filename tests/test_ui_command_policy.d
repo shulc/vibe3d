@@ -9,12 +9,10 @@
 // binding with different explicit contexts; only the HTTP adapter turns a
 // script-origin refusal into an exception.
 //
-// UNWITNESSED, AND ACCEPTED AS DEBT: the shipped panel call site
-// (`ui/panels.d`'s "Load…" button). `tests/events/` holds 22 logs and not one
-// clicks a panel button — they are camera, lasso, selection and numpad — so
-// there is no cheap precedent for driving a panel press from an event log.
-// The crash itself was reproduced by hand instead, twice, on an unmodified
-// build (see the task card's Лог).
+// The widget test runs the real `ui/image_list_panel.d` panel and binder against
+// a harness-built binding and guard. The `app.d` wiring is checked by the source
+// census; this HTTP test keeps the independent adapter-policy witness and
+// process-survival check.
 
 import http_client : testBaseUrl, getJson;
 import http_command_helpers : commandBody;

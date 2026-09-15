@@ -479,6 +479,7 @@ tests.unit.ui.command_notice_test
 tests.unit.ui.discard_guard_test
 tests.unit.ui.guard_modal_state_test
 tests.unit.ui.history_panel_test
+tests.unit.ui.image_list_panel_roles_test
 tests.unit.ui.image_rows_test
 tests.unit.ui.imgui_tabbing_test
 tests.unit.ui.item_rename_state_test
