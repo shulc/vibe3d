@@ -4413,6 +4413,9 @@ void main(string[] args) {
     app.uiCommandDelegate = uiCommandDelegate;
     app.formsInteractiveDispatch = formsInteractiveDispatch;
     app.replayUndoEntry = replayUndoEntry;
+    import ui.layer_list_panel : bindLayerListPanel;
+    auto layerListRoles = bindLayerListPanel(sessionOwner, commandBinding,
+                                             formsPanel, toolHost.getActiveTool);
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
@@ -4719,9 +4722,9 @@ void main(string[] args) {
     // from within the panel bodies themselves, never from app.d directly).
     // drawLayerListPanel/drawViewportPropsPanel keep their own separate
     // local imports at their call sites, below.
+    import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle;
     import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
-        pushPopupStyle, popPopupStyle, pushPanelChromeStyle,
-        popPanelChromeStyle,
+        pushPopupStyle, popPopupStyle,
         drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
         drawCommandHistoryPanel;
     // Task 0669 — the per-frame button-availability record (see ui/availability.d).
@@ -5289,8 +5292,9 @@ void main(string[] args) {
         // so synthetic viewport drags are never captured by it. In a normal run
         // it is always drawn (g_testMode false ⇒ guard passes).
         if (!command.g_testMode || g_layerListShown) {
-            import ui.panels : drawLayerListPanel;
-            drawLayerListPanel(app, itemRenameState);
+            import ui.layer_list_panel : drawLayerListPanel;
+            drawLayerListPanel(layerListRoles.read, layerListRoles.actions,
+                               itemRenameState);
         }
 
         // ---- Images (floating; task 0616 Ph4) ----

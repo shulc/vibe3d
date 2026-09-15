@@ -15,7 +15,7 @@ module ui.item_rows;
 //     no ImGui, no globals (the document path and the dirty flag are
 //     PARAMETERS, not calls to `currentDocPath()` / `docDirty()`), and
 //     therefore fully assertable by the in-module tests at the bottom;
-//   * `ui/panels.d`'s `drawLayerListPanel` answers "where on screen", and
+//   * `ui/layer_list_panel.d`'s `drawLayerListPanel` answers "where on screen", and
 //     `ui/item_glyphs.d` answers "which pixels" — neither of which any test
 //     here claims to cover.
 //

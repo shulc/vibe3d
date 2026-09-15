@@ -190,6 +190,19 @@ private string bodyAt(string code, string marker) {
     return null;
 }
 
+private string collapseWhitespace(string text) {
+    string result;
+    bool spacing;
+    foreach (ch; text) {
+        const ws = ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t';
+        if (ws) { spacing = result.length > 0; continue; }
+        if (spacing) result ~= ' ';
+        result ~= ch;
+        spacing = false;
+    }
+    return result;
+}
+
 unittest { // production passes one owner and both panel writers consume it
     import std.algorithm : count;
     import std.algorithm.searching : canFind;
@@ -201,6 +214,8 @@ unittest { // production passes one owner and both panel writers consume it
     const app = blankNonCode(readText(root.buildPath("source", "app.d")));
     const editor = blankNonCode(readText(root.buildPath("source", "editor_app.d")));
     const panels = blankNonCode(readText(root.buildPath("source", "ui", "panels.d")));
+    const layerPanel = blankNonCode(readText(root.buildPath(
+        "source", "ui", "layer_list_panel.d")));
     const state = blankNonCode(readText(root.buildPath("source", "ui", "item_rename.d")));
 
     assert(app.count("ItemRenameState itemRenameState;") == 1,
@@ -208,17 +223,19 @@ unittest { // production passes one owner and both panel writers consume it
     const mainBody = bodyAt(app, "void main(string[] args)");
     assert(mainBody.count("ItemRenameState itemRenameState;") == 1,
         "5880 application ownership: ItemRenameState escaped main into process-global storage");
-    assert(app.count("drawLayerListPanel(app, itemRenameState);") == 1,
+    const flatApp = collapseWhitespace(app);
+    assert(flatApp.count(
+        "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, itemRenameState);") == 1,
         "5880 Layers wiring: Layers no longer receives main's itemRenameState owner");
     assert(app.count("drawImageListPanel(app, itemRenameState);") == 1,
         "5880 cross-panel wiring: Images no longer receives the same ItemRenameState owner");
 
-    const layersBody = bodyAt(panels,
-        "void drawLayerListPanel(EditorApp app, ref ItemRenameState itemRenameState)");
+    const layersBody = bodyAt(layerPanel,
+        "void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,");
     const imagesBody = bodyAt(panels,
         "void drawImageListPanel(EditorApp app, ref ItemRenameState itemRenameState)");
     assert(layersBody.canFind(
-            "bindItemRenameController(itemRenameState, uiCommandDelegate)")
+            "bindItemRenameController(itemRenameState,\n                                           actions.commandDispatch())")
         && layersBody.canFind("rename.begin(r.index, r.renameSeed);")
         && layersBody.canFind("rename.finish(r.index, exit);"),
         "5880 Layers writer: rename open/exit stopped using the shared owner");

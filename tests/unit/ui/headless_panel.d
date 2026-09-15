@@ -69,8 +69,8 @@ private extern (C) nothrow @nogc {
 // Key codes not present in the shim's partial `ImGuiKey` enum. Values are
 // cimgui 1.92.8's (`extern/cimgui/cimgui.h`); `AddKeyEvent` takes the enum, so
 // they are cast at the call site.
-private enum int KEY_LEFT_CTRL = 527;   // ImGuiKey_LeftCtrl
-private enum int MOD_CTRL      = 1 << 12; // ImGuiMod_Ctrl — `io.KeyCtrl` is
+enum int KEY_LEFT_CTRL = 527;   // ImGuiKey_LeftCtrl
+enum int MOD_CTRL      = 1 << 12; // ImGuiMod_Ctrl — `io.KeyCtrl` is
                                           // derived from the MOD key's data,
                                           // not from LeftCtrl, so a backend
                                           // must send both. Sending only
@@ -247,6 +247,13 @@ struct HeadlessPanel {
     void keyDown(int key) { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, true); }
     /// ditto
     void keyUp(int key)   { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, false); }
+
+    /// Add text through the same input queue as the SDL backend and submit it.
+    void typeText(string value) {
+        foreach (dchar ch; value)
+            ImGuiIO_AddInputCharacter(io, cast(uint) ch);
+        frame();
+    }
 
     /// Tear the context down. Safe to call twice.
     void close() {
