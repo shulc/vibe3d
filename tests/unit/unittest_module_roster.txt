@@ -189,6 +189,7 @@ tests.unit.commands.mesh.symmetrize_test
 tests.unit.commands.mesh.symmetry_delta_test
 tests.unit.commands.select.loop_test
 tests.unit.commands.test_undo_flags_test
+tests.unit.commands.tool.tool_lifecycle_registration_test
 tests.unit.commands.workplane_test
 tests.unit.comment_prose_ceiling_test
 tests.unit.commit_seam_census_test
@@ -279,6 +280,7 @@ tests.unit.l8_command_undo_census_test
 tests.unit.l8_extrude_delta_test
 tests.unit.l9_loop_slice_delta_test
 tests.unit.layer_params_test
+tests.unit.live_registration_rig
 tests.unit.map_delta_census_test
 tests.unit.map_value_delta_test
 tests.unit.mark_view_field_guard_test

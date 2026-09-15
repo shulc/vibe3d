@@ -13,9 +13,8 @@ import command_history : CommandHistory, HistoryFlags;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import edit_session : EditSession, KeepAliveOnCancel;
 import editmode : EditMode;
-import file_io_registration : FileIoSessionRole, LiveFileView,
-    LiveFileViewModeRole;
 import history_macro_registration : registerHistoryCommands;
+import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import macro_recorder : MacroRecorder;
 import mesh : Mesh, makeCube;
 import params : injectParamsInto;
@@ -89,8 +88,8 @@ private final class RegistrationHarness {
         macroRecorder = new MacroRecorder();
 
         ref View liveView() { return camera; }
-        registerHistoryCommands(registry, FileIoSessionRole(session),
-            LiveFileViewModeRole(cast(LiveFileView)&liveView,
+        registerHistoryCommands(registry, LiveSessionRole(session),
+            LiveViewModeRole(cast(LiveView)&liveView,
                                  session.editModePtr()),
             history, panelState, macroRecorder);
 
@@ -274,7 +273,7 @@ unittest { // production wiring, scope fences, and the single panel owner
         "5810 lifecycle scope fence: scene reset/load left the old registrar");
 
     enum productionCall =
-        "registerHistoryCommands(app.reg(), FileIoSessionRole(app.sessionOwner),";
+        "registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),";
     assert(registration.count(productionCall) == 1
         && registration.count(
             "app.history, app.historyPanelState, app.macroRecorder);") == 1,

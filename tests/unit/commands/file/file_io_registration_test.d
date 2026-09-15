@@ -12,8 +12,9 @@ import commands.file.load : FileLoad, FileLoadMode;
 import commands.file.save : FileSave, FileSaveMode;
 import document : Document, Layer;
 import editmode : EditMode;
-import file_io_registration : FileIoSessionRole, LiveFileView,
-    LiveFileViewModeRole, registerFileIoCommands;
+import file_io_registration : registerFileIoCommands;
+import live_registration_roles : LiveSessionRole, LiveView,
+    LiveViewModeRole;
 import mesh : makeCube, makeGridPlane, makeOctahedron;
 import registry : Registry;
 import session_owner : Session;
@@ -28,8 +29,8 @@ unittest { // every format factory retains its own configure argument
     ref View liveView() { return camera; }
 
     Registry reg;
-    registerFileIoCommands(reg, FileIoSessionRole(session),
-        LiveFileViewModeRole(cast(LiveFileView)&liveView,
+    registerFileIoCommands(reg, LiveSessionRole(session),
+        LiveViewModeRole(cast(LiveView)&liveView,
                              session.editModePtr()));
 
     assert(reg.commandFactories.length == 12,
@@ -89,8 +90,8 @@ unittest { // a history-held command stays on A while new factories resolve B
     ref View liveView() { return camera; }
 
     Registry reg;
-    registerFileIoCommands(reg, FileIoSessionRole(session),
-        LiveFileViewModeRole(cast(LiveFileView)&liveView,
+    registerFileIoCommands(reg, LiveSessionRole(session),
+        LiveViewModeRole(cast(LiveView)&liveView,
                              session.editModePtr()));
 
     const path = buildPath("/var/tmp", "vibe3d-5790-file-io-history.lwo");
@@ -160,7 +161,7 @@ unittest { // production wiring and LAST-wrapper ordering
         "5790 scope fence: file.new left its application lifecycle family");
 
     enum productionCall =
-        "registerFileIoCommands(app.reg(), FileIoSessionRole(app.sessionOwner),";
+        "registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),";
     assert(registration.count(productionCall) == 1,
         "5790 production wiring witness: registerCommands no longer calls the "
         ~ "narrow file-I/O registrar with the real Session");

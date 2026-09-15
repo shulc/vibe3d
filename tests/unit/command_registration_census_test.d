@@ -34,7 +34,7 @@
 // below is what says the scanner found the tree it was pointed at.
 module tests.unit.command_registration_census_test;
 
-import std.algorithm : canFind, sort, splitter;
+import std.algorithm : canFind, count, sort, splitter;
 import std.array     : appender, array;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
@@ -46,6 +46,8 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
     enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+private enum registrarEntryRe = ctRegex!(
+    `void[ \t\r\n]+(register[A-Za-z0-9_]*Commands)[ \t\r\n]*\([ \t\r\n]*ref[ \t\r\n]+Registry[ \t\r\n]+reg\b`);
 
 // ---------------------------------------------------------------------------
 // Scanner
@@ -217,16 +219,34 @@ private static immutable BuiltElsewhere[] kBuiltElsewhere = [
 ];
 
 unittest {
-    const regPaths = [
-        buildPath(repoRoot, "source", "registration.d"),
-        buildPath(repoRoot, "source", "file_io_registration.d"),
-        buildPath(repoRoot, "source", "history_macro_registration.d"),
-    ];
+    const sourceDir = buildPath(repoRoot, "source");
+    const parentPath = buildPath(sourceDir, "registration.d");
+    const parentCode = blankNonCode(readText(parentPath));
+    string[] regPaths = [parentPath];
+    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
+        regPaths ~= de.name;
+    regPaths.sort;
+    assert(regPaths.length >= 4,
+        format("command registration census found only %d registration modules",
+               regPaths.length));
+
     string regCode;
     foreach (path; regPaths) {
         assert(exists(path) && isFile(path),
             "the census cannot find " ~ path ~ " — it is measuring nothing");
-        regCode ~= blankUnittestBodies(blankNonCode(readText(path)));
+        const source = readText(path);
+        if (path != parentPath) {
+            string[] entries;
+            foreach (m; matchAll(blankNonCode(source), registrarEntryRe))
+                entries ~= m[1].idup;
+            assert(entries.length == 1,
+                format("%s must expose exactly one register…Commands(ref Registry reg entry; found %d",
+                       path, entries.length));
+            assert(parentCode.count(entries[0] ~ "(") == 1,
+                path ~ " exposes " ~ entries[0]
+              ~ " but comment-blanked registration.d never calls it exactly once");
+        }
+        regCode ~= blankUnittestBodies(blankNonCode(source));
     }
     assert(regCode.length > 50_000,
         format("registration modules blanked to only %d bytes — wrong files", regCode.length));

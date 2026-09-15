@@ -11,7 +11,7 @@ import commands.history.undo : HistoryUndo;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import commands.test_undo_flags : UndoForceNoop, UndoSuppressNoop;
-import file_io_registration : FileIoSessionRole, LiveFileViewModeRole;
+import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import macro_recorder : MacroRecorder;
 import registry : Registry;
 import ui.history_panel : HistoryPanelState;
@@ -23,8 +23,8 @@ import ui.history_panel : HistoryPanelState;
 /// Keep those two doors different (task 5810; evidence:
 /// history_macro_registration_test and history_panel_test).
 void registerHistoryCommands(ref Registry reg,
-        FileIoSessionRole session,
-        LiveFileViewModeRole live,
+        LiveSessionRole session,
+        LiveViewModeRole live,
         CommandHistory history,
         HistoryPanelState panelState,
         MacroRecorder macroRecorder) {

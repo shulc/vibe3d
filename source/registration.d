@@ -131,9 +131,10 @@ import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverla
                                          ViewportWireAlpha;
 import commands.viewport.grid_steps   : ViewportGridSteps;
 import commands.viewport.master       : ViewportMaster;
-import file_io_registration : FileIoSessionRole, LiveFileViewModeRole,
-                              registerFileIoCommands;
+import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
+import live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import tool_lifecycle_registration : registerToolLifecycleCommands;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -218,25 +219,7 @@ import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
 import snapshot : SelectionSnapshot;
-import commands.tool.host     : ToolHost;
-import commands.tool.set      : ToolReleaseCommand, ToolSetCommand;
-import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr;
-import commands.tool.do_apply : ToolDoApplyCommand;
-import commands.tool.reset    : ToolResetCommand;
-import commands.tool.pipe     : ToolPipeAttrCommand;
-import commands.tool.begin_session : ToolBeginSessionCommand,
-    ToolClearSoftPinForTestCommand;
-import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
-import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
-import commands.ui.image_list      : UiImageListCommand;
-import commands.ui.channels        : UiChannelsCommand;
-import commands.ui.statistics      : UiStatisticsCommand, UiStatisticsExpandCommand,
-                                     g_statisticsShown;
-import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
-import commands.ui.about           : UiAboutCommand;
-import commands.ui.pie             : UiPieCommand;
-import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
@@ -1006,17 +989,12 @@ private void registerEditTools(EditorApp app) {
 
 /// Registers the remaining `reg.commandFactories[id]` entries — tool.*,
 /// ui.*, layer.*, ai3d.*, workplane.*, actr.*, falloff.*, select.*, mesh.*,
-/// history.*, macro.* (app.d's former Span B, ~3395-4132). Phase 2 (0415).
+/// history.*, and macro.*.
 ///
-/// Body is a VERBATIM cut of former app.d text, wrapped in `with (app) {
-/// with (ai3dRefs) { with (remeshRefs) { } } }` so every bare identifier
-/// (mesh(), reg.*, history, vpm, toolHost, the ai3d/remesh modal fields,
-/// subpatchPreview, activeTool, running, historyPanelState,
-/// resetAllPipeStages, the hook delegates, ...) resolves through the ctx
-/// instead of a main()-local of the same name. The only line-level edits
-/// versus the original text are Edit-class 1 (`&x` -> `&x()`, 19 &document
-/// + 10 &editMode sites) and Edit-class 2 (`&promoteItemType` ->
-/// `promoteItemType`, the one address-taken hook -- see task doc).
+/// Families that still need broad EditorApp state retain their local
+/// `with (app)` bodies. Extracted families instead receive explicit live
+/// roles and narrow collaborators at the calls below, so they do not resolve
+/// those inputs through the residual nested `with` block.
 void registerCommands(EditorApp app) {
     // Task 0722 (audit §2C A9): the family functions and narrow registrars
     // below are called in the flat list's order. The task-0621 selection-type wrap
@@ -1030,20 +1008,22 @@ void registerCommands(EditorApp app) {
     // because they share a single anonymous scope block (former lines
     // 955-1086) whose locals they all read. Splitting them means moving
     // those locals, which is a change of shape, not a slice.
-    registerToolLifecycleCommands(app);
+    registerToolLifecycleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        app.toolHostPtr);
     registerItemCommands(app);
     registerPipeStageCommands(app);
     registerSelectionCommands(app);
     registerViewCommands(app);
-    registerFileIoCommands(app.reg(), FileIoSessionRole(app.sessionOwner),
-        LiveFileViewModeRole(app.cameraViewDg,
-                             app.sessionOwner.editModePtr()));
+    registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg,
+                         app.sessionOwner.editModePtr()));
     registerFileCommands(app);
     registerMeshCommands(app);
     registerSceneLifecycleCommands(app);
-    registerHistoryCommands(app.reg(), FileIoSessionRole(app.sessionOwner),
-        LiveFileViewModeRole(app.cameraViewDg,
-                             app.sessionOwner.editModePtr()),
+    registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg,
+                         app.sessionOwner.editModePtr()),
         app.history, app.historyPanelState, app.macroRecorder);
     registerSelfTestCommands(app);
     // The same three-deep `with` the flat body had, for the same reason the
@@ -1090,61 +1070,6 @@ void registerCommands(EditorApp app) {
             reg.commandFactories[id] = withSelType(reg.commandFactories[id],
                                                    selTypeSrc);
     }
-    }
-    }
-    }
-}
-
-/// Tool lifecycle and panel visibility — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerToolLifecycleCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-    reg.commandFactories["tool.set"] = () => cast(Command)
-        new ToolSetCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.release"] = () => cast(Command)
-        new ToolReleaseCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.attr"] = () => cast(Command)
-        new ToolAttrCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.doApply"] = () => cast(Command)
-        new ToolDoApplyCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.reset"] = () => cast(Command)
-        new ToolResetCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
-        new ToolPipeAttrCommand(&mesh(), cameraView, editMode, toolHost);
-    // Test-only headless hooks. Each rejects itself unless g_testMode (set by
-    // --test), so the registrations are inert in a normal run.
-    reg.commandFactories["tool.beginSession"] = () => cast(Command)
-        new ToolBeginSessionCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.clearSoftPinForTest"] = () => cast(Command)
-        new ToolClearSoftPinForTestCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["tool.panelEdit"] = () => cast(Command)
-        new ToolPanelEditCommand(&mesh(), cameraView, editMode, toolHost);
-    reg.commandFactories["ui.toolProperties"] = () => cast(Command)
-        new UiToolPropertiesCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.layerList"] = () => cast(Command)
-        new UiLayerListCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.imageList"] = () => cast(Command)
-        new UiImageListCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.channels"] = () => cast(Command)
-        new UiChannelsCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.statistics"] = () => cast(Command)
-        new UiStatisticsCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.statistics.expand"] = () => cast(Command)
-        new UiStatisticsExpandCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.viewportProps"] = () => cast(Command)
-        new UiViewportPropsCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.about"] = () => cast(Command)
-        new UiAboutCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["ui.pie"] = () => cast(Command)
-        new UiPieCommand(&mesh(), cameraView, editMode);
     }
     }
     }

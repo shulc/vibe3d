@@ -237,7 +237,7 @@ unittest {
 // header says so — and `input_router.d` opens it in three handlers, each with
 // a comment on the `buildToolVts` rebinding hazard beside it. Those blocks are
 // deliberate. What this row refuses is a FOURTH input_router block or a
-// fifteenth registration one born without anyone deciding: the failure mode
+// fourteenth registration one born without anyone deciding: the failure mode
 // is the one described at the top of this file, a bare name that silently
 // REBINDS to an `EditorApp` member of the same spelling, and it is invisible
 // at the point of introduction. So the set is enumerated, not merely
@@ -249,7 +249,7 @@ unittest {
 // nothing about how many blocks exist.
 
 /// Measured 2026-09-04 with `scanLiveWith` over the committed files:
-/// `grep -c 'with (app)'` reads 17 and 18 for the two files, but three of
+/// `grep -c 'with (app)'` reads 16 and 18 for the two files, but three of
 /// registration.d's and fifteen of input_router.d's are comments and doc
 /// lines — the scanner is what separates them, which is why the recorded
 /// numbers are the scanner's and not grep's.
@@ -259,7 +259,6 @@ private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerPrimitiveTools", 1, "primitive registrations"),
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
     LedgerRow("registerCommands", 1, "top-level command registrations"),
-    LedgerRow("registerToolLifecycleCommands", 1, "tool lifecycle commands"),
     LedgerRow("registerItemCommands", 1, "item commands"),
     LedgerRow("registerPipeStageCommands", 1, "pipe-stage commands"),
     LedgerRow("registerSelectionCommands", 1, "selection commands"),
@@ -325,8 +324,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 17)
-        problems ~= format("\n    with(app) population — recorded 17, scanner "
+    if (ledgerHits.length != 16)
+        problems ~= format("\n    with(app) population — recorded 16, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

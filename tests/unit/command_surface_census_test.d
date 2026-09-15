@@ -22,12 +22,15 @@ import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;
 
 import buttonset : ActionKind, allButtons, loadButtons;
+import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum registeredIdRe = ctRegex!(`reg\.commandFactories\["([^"]+)"\]`);
 private enum configTokenRe = ctRegex!(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+`);
 private enum quotedValueRe = ctRegex!(`"([^"]+)"`);
 private enum actrPresetRe = ctRegex!(`Preset\("([^"]+)"`);
+private enum registrarEntryRe = ctRegex!(
+    `void[ \t\r\n]+(register[A-Za-z0-9_]*Commands)[ \t\r\n]*\([ \t\r\n]*ref[ \t\r\n]+Registry[ \t\r\n]+reg\b`);
 
 // Four registration loops construct ids from a literal prefix and a closed
 // literal value list. A regex that stops at the first quote reports fake ids
@@ -122,13 +125,33 @@ private string withoutYamlComments(string src)
 
 private string registrationText()
 {
+    const sourceDir = buildPath(repoRoot, "source");
+    const parentPath = buildPath(sourceDir, "registration.d");
+    const parentCode = blankNonCode(readText(parentPath));
+    string[] paths = [parentPath];
+    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
+        paths ~= de.name;
+    paths.sort;
+    assert(paths.length >= 4,
+        format("command surface census found only %d registration modules", paths.length));
+
     string result;
-    foreach (name; ["registration.d", "file_io_registration.d",
-                    "history_macro_registration.d"]) {
-        const path = buildPath(repoRoot, "source", name);
+    foreach (path; paths) {
         assert(exists(path) && isFile(path),
-            "command surface census cannot find source/" ~ name);
-        result ~= readText(path);
+            "command surface census cannot find " ~ path);
+        const source = readText(path);
+        if (path != parentPath) {
+            string[] entries;
+            foreach (m; matchAll(blankNonCode(source), registrarEntryRe))
+                entries ~= m[1].idup;
+            assert(entries.length == 1,
+                format("%s must expose exactly one register…Commands(ref Registry reg entry; found %d",
+                       path, entries.length));
+            assert(parentCode.count(entries[0] ~ "(") == 1,
+                path ~ " exposes " ~ entries[0]
+              ~ " but comment-blanked registration.d never calls it exactly once");
+        }
+        result ~= source;
     }
     return result;
 }
