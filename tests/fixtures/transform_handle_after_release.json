@@ -3,11 +3,11 @@
     "schema": 1,
     "source": "live-capture",
     "reference_token": "ref-editor@11.2v3",
-    "method": "self-drive",
+    "method": "debug-live",
     "captured_utc": "2026-09-15",
-    "harness": "private transform-handle capture harness",
+    "harness": "private GUI gesture and live-debug capture harness",
     "task": "6207 phase 0",
-    "notes": "The handle observations are captured; expected vectors in this public fixture are recomputed from the captured composition law."
+    "notes": "The runtime handle and frame observations were read during GUI gestures under a live debugger; expected vectors in this public fixture are recomputed from the captured composition law."
   },
   "parameters": {
     "schema": 1,
@@ -127,6 +127,7 @@
     "element": {
       "centre": [-1.2, 0.0, 1.2],
       "frame_columns": [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+      "measured_frame_columns": [true, false, false],
       "points": [[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 0.0, 1.2], [1.2, 0.0, 1.2]],
       "expected": [[0.748479, 0.0, -0.644838], [1.876111, 0.0, -0.234414], [-0.072369, 0.0, 1.610424], [1.055262, 0.0, 2.020848]]
     }

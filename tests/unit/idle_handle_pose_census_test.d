@@ -18,10 +18,12 @@ unittest // Every idle publication uses the one translated-centre helper.
         "transform", "xfrm_apply.d")));
 
     assert(host.count("setSharedGizmoPose(") == 10
-        && handles.count("setSharedGizmoPose(") == 2,
-        "6207 shared-pose census must remain 11 calls plus one definition");
+        && handles.count("setSharedGizmoPose(") == 4,
+        "6207 shared-pose census must remain 13 calls plus one definition");
     assert(host.count("setSharedGizmoPose(idleHandleCentre(vts), vts)") == 2,
         "6207 update/draw idle pose must use idleHandleCentre");
+    assert(handles.count("setSharedGizmoPose(idleHandleCentre(vts), vts)") == 2,
+        "6207 Move/Rotate restart pose must use idleHandleCentre before arm");
     assert(host.count("image.center = idleHandleCentre(vts)") == 1,
         "6207 prepared update tail must use idleHandleCentre");
     assert(handles.count("private Vec3 idleHandleCentre(") == 1,

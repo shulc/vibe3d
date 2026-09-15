@@ -179,6 +179,14 @@ unittest // Captured auto and element cells share the action-frame formula.
         "tests/fixtures/transform_handle_after_release.json"))["scale_axis_law"];
     foreach (mode; ["element", "auto"]) {
         const entry = data[mode];
+        if (mode == "element") {
+            const measured = entry["measured_frame_columns"].array;
+            assert(measured.length == 3
+                && measured[0].type == JSONType.true_
+                && measured[1].type == JSONType.false_
+                && measured[2].type == JSONType.false_,
+                "6207 element fixture must mark only its discriminating scale axis measured");
+        }
         const centre = vector(entry["centre"]);
         const frame = frameColumns(entry["frame_columns"]);
         const scale = vector(data["scale"]);
@@ -613,7 +621,10 @@ unittest // X: Local rebake freezes the handle at the translated cluster centre.
     const camera = fetchCamera();
     const drag = dragMoveArrow(camera);
     const rebakeSource = drag.after;
-    const rigCentre = scale(add(rebakeSource[0], rebakeSource[3]), 0.5);
+    const baseCentre = scale(add(base[0], base[3]), 0.5);
+    const moveTransform = transformEval();
+    const rigCentre = add(baseCentre,
+        worldTranslation(moveTransform, frameForCell("local", base)));
     dragViewRing(camera);
     const transform = transformEval();
     assertFrozenRigFrame(transform, rigCentre,
@@ -680,13 +691,15 @@ private void runGestureScaleCell(string mode)
     double[3][3] runFrame;
     foreach (axis, key; ["runFrameRight", "runFrameUp", "runFrameFwd"])
         runFrame[axis] = vector(transform[key]);
+    assert(distance(vector(transform["runFrameOrigin"]), rigCentre) <= 1e-5,
+        "6207 G-RS " ~ mode ~ " runFrameOrigin must equal the rig centre");
     if (mode == "auto") {
         foreach (axis; 0 .. 3)
             assert(distance(runFrame[axis], capturedFrame[axis]) <= 1e-5,
                 "6207 G-RS auto must use the captured world frame");
     } else {
-        assert(distance(runFrame[0], [1.0, 0.0, 0.0]) > 0.5,
-            "6207 G-RS element needs a non-world action frame");
+        assert(fabs(dot(runFrame[0], capturedFrame[0])) >= 1.0 - 1e-5,
+            "6207 G-RS element scale axis must match the captured action-frame axis");
     }
 
     command("tool.attr Transform SX 2.0");

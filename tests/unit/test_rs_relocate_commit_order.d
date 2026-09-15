@@ -54,12 +54,21 @@ unittest // test_rs_relocate_commit_order
     assertPreNotifyOrder("rotate", "hit");
     assertPreNotifyOrder("scale", "center");
 
+    const rotate = sourceOf("rotate.d");
+    const pinnedCallback = rotate.indexOf("beforePinnedHaul();");
+    const arcballProjection = rotate.indexOf(
+        "projectToWindowFull(handler.center, cachedVp,");
+    assert(pinnedCallback >= 0 && arcballProjection >= 0 &&
+           pinnedCallback < arcballProjection,
+        "Rotate must restart a pinned off-gizmo run before projecting "
+        ~ "handler.center for the arcball");
+
     const wrapper = sourceOf("xfrm_handles.d");
     assert(wrapper.indexOf("&commitBeforeMoveRelocate") >= 0 &&
            wrapper.indexOf("&commitBeforeRotateRelocate") >= 0 &&
            wrapper.indexOf("&commitBeforeScaleRelocate") >= 0,
         "Xfrm wrapper must supply all three pre-relocate commit callbacks");
-    assert(wrapper.indexOf("rotWasPinnedOffGizmo && editIsOpen()") >= 0,
-        "Rotate's post-bank commit must be limited to the non-relocating "
-        ~ "pinned off-gizmo path");
+    assert(wrapper.indexOf("&restartBeforePinnedRotateHaul") >= 0 &&
+           wrapper.indexOf("assert(restartedPinnedRotate,") >= 0,
+        "Xfrm wrapper must restart and verify a pinned Rotate run before arm");
 }

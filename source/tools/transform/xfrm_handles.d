@@ -199,9 +199,21 @@ mixin template XfrmHandlesImpl() {
                 if (editIsOpen())
                     commitEditAtBankBoundary(DragBank.Move);
             }
+            bool restartedPinnedMove;
+            void restartBeforePinnedMoveHaul() {
+                restartedPinnedMove = true;
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Move);
+                moveSub.stageCurrentActionCenterPin();
+                if (history !is null && history.runOpen())
+                    consolidateRunAndAdvance();
+                resetRun();
+                setSharedGizmoPose(idleHandleCentre(vts), vts);
+            }
             if (!moveSub.onMouseButtonDownWithResolvedAxis(e, vts,
                                                            resolvedMoveAxis,
-                                                           &commitBeforeMoveRelocate))
+                                                           &commitBeforeMoveRelocate,
+                                                           &restartBeforePinnedMoveHaul))
                 goto tryRotateBank;
             // An off-gizmo click-relocate during a live session is a new
             // logical run: commit the prior run before the bank publishes
@@ -219,8 +231,9 @@ mixin template XfrmHandlesImpl() {
             // declining the press, so it no longer falls through to the
             // off-gizmo commit boundary at the bottom of this method. That
             // boundary still has to happen — an off-gizmo press splits the undo
-            // run in every mode; only the pin handling differs — so it runs
-            // here, with the pin re-staged VERBATIM (nothing relocated).
+            // run in every mode; only the pin handling differs. The callback
+            // above runs it before Move freezes the new gesture anchor, with
+            // the pin re-staged VERBATIM (nothing relocated).
             bool wasPinnedOffGizmo = moveSub.lastClickWasOffGizmo && !wasRelocate;
             moveSub.lastClickWasOffGizmo = false;   // consume
             // The pre-relocate callback already closed any prior edit. The
@@ -241,20 +254,13 @@ mixin template XfrmHandlesImpl() {
                 // baseline at the relocated mesh on the fresh Move gesture below.
                 resetRun();   // + P-F: relocate freezes a NEW run-frame (G8)
             }
-            // The two off-gizmo paths share the run close below, but their
-            // session and pin setup differ. A relocate already committed in
-            // the pre-publication callback, and setUserPlaced staged the old
-            // pin. A pinned press publishes nothing, so it closes any open edit
-            // here and stages the live pin verbatim before beginEdit freezes it.
-            // Both paths then consolidate an open run and reset its frame.
+            // The two off-gizmo paths share a run boundary, but their session
+            // and pin setup differ. A relocate closes here after publishing its
+            // new pin. A pinned press publishes nothing, so its callback closed
+            // and reset the run before the bank copied handler.center.
             if (wasPinnedOffGizmo) {
-                if (editIsOpen())
-                    commitEditAtBankBoundary(DragBank.Move);
-                moveSub.stageCurrentActionCenterPin();
-                if (history !is null && history.runOpen()) {
-                    consolidateRunAndAdvance();
-                }
-                resetRun();
+                assert(restartedPinnedMove,
+                    "pinned Move haul must restart before it freezes its anchor");
             }
             // Bank-switch run boundary (Q-c): a switch INTO Move from a prior
             // R/S run consolidates that run first. After a Move relocate above,
@@ -277,9 +283,21 @@ tryRotateBank:
                 if (editIsOpen())
                     commitEditAtBankBoundary(DragBank.Rotate);
             }
+            bool restartedPinnedRotate;
+            void restartBeforePinnedRotateHaul() {
+                restartedPinnedRotate = true;
+                if (editIsOpen())
+                    commitEditAtBankBoundary(DragBank.Rotate);
+                rotateSub.stageCurrentActionCenterPin();
+                if (history !is null && history.runOpen())
+                    consolidateRunAndAdvance();
+                resetRun();
+                setSharedGizmoPose(idleHandleCentre(vts), vts);
+            }
             if (!rotateSub.onMouseButtonDownWithResolvedAxis(e, vts,
                                                              resolvedRotateAxis,
-                                                             &commitBeforeRotateRelocate))
+                                                             &commitBeforeRotateRelocate,
+                                                             &restartBeforePinnedRotateHaul))
                 goto tryScaleBank;
             // An off-gizmo press now ALSO starts a drag — the screen-space
             // arcball — so it no longer falls through to the else-branch's run
@@ -296,21 +314,21 @@ tryRotateBank:
                 rotateSub.lastClickWasOffGizmo && !rotWasRelocate;
             rotateSub.lastClickWasOffGizmo = false;   // consume
             if (rotWasRelocate || rotWasPinnedOffGizmo) {
-                // A relocate closes the wrapper edit through the callback
-                // BEFORE the bank publishes the moved user pin.  A pinned
-                // off-gizmo press moves no pin, so it closes here instead.
-                if (rotWasPinnedOffGizmo && editIsOpen())
-                    commitEditAtBankBoundary(DragBank.Rotate);
+                // A relocate closes the wrapper edit through its callback
+                // before publishing the moved user pin. A pinned press moves
+                // no pin; its callback already closed and reset the run before
+                // the arcball projected handler.center.
+                if (rotWasPinnedOffGizmo)
+                    assert(restartedPinnedRotate,
+                        "pinned Rotate haul must restart before it projects its centre");
                 // A relocate's setUserPlaced call already staged the old pin
                 // after the callback cleared the freeze. Re-staging the new pin
-                // would destroy that cancel baseline. A pinned press moves no
-                // pin, so it still stages the current state verbatim.
-                if (rotWasPinnedOffGizmo)
-                    rotateSub.stageCurrentActionCenterPin();
-                if (history !is null && history.runOpen()) {
-                    consolidateRunAndAdvance();
+                // would destroy that cancel baseline.
+                if (rotWasRelocate) {
+                    if (history !is null && history.runOpen())
+                        consolidateRunAndAdvance();
+                    resetRun();
                 }
-                resetRun();
             }
             // Principal-axis ring (0/1/2), view-ring (3) AND the off-gizmo
             // arcball (which arms as 3) → wrapper owns geometry via applyTRS

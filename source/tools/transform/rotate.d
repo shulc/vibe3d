@@ -493,7 +493,8 @@ public:
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
                                            int resolvedAxis,
-                                           scope void delegate() beforeRelocate = null) {
+                                           scope void delegate() beforeRelocate = null,
+                                           scope void delegate() beforePinnedHaul = null) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         version(unittest) SDL_Keymod mods = 0;
         else SDL_Keymod mods = SDL_GetModState();
@@ -549,14 +550,19 @@ public:
                 return false;
             Vec3 hit;
             if (relocates) {
-            if (!computeClickRelocateHit(e.x, e.y, hit, vts))
-                return false;
-            if (beforeRelocate !is null) beforeRelocate();
-            handler.setPosition(hit);
-            centerManual = true;
-            notifyAcenUserPlaced(hit);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            lastClickWasRelocate = true;
+                if (!computeClickRelocateHit(e.x, e.y, hit, vts))
+                    return false;
+                if (beforeRelocate !is null) beforeRelocate();
+                handler.setPosition(hit);
+                centerManual = true;
+                notifyAcenUserPlaced(hit);
+                gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+                lastClickWasRelocate = true;
+            } else if (beforePinnedHaul !is null) {
+                // The wrapper resets the prior run and re-publishes c before
+                // the arcball projects handler.center. Otherwise the ball is
+                // centred on the stale c+T pose from the run being closed.
+                beforePinnedHaul();
             }
             lastClickWasOffGizmo = true;
             // Centre the ball on the pivot AS IT NOW STANDS — after any

@@ -710,7 +710,8 @@ public:
     bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
                                            ref VectorStack vts,
                                            int resolvedAxis,
-                                           scope void delegate() beforeRelocate = null) {
+                                           scope void delegate() beforeRelocate = null,
+                                           scope void delegate() beforePinnedHaul = null) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         // Don't interfere with pan/rotate/zoom modifier combos.
         version(unittest) SDL_Keymod mods = 0;
@@ -801,6 +802,13 @@ public:
         immutable bool relocates = pressPlacesCenter();
         if (!relocates && acenClickPicksElement())
             return false;
+        // A pinned off-gizmo press is a run boundary. Let the wrapper close
+        // that run and publish the fresh idle pose BEFORE this bank reads the
+        // handler centre into the gesture's plane anchor. Doing it after
+        // beginScreenPlaneDragAt freezes the prior run's c+T and produces a
+        // release jump when the new run starts from T=0.
+        if (!relocates && beforePinnedHaul !is null)
+            beforePinnedHaul();
         Vec3 anchor = handler.center;
         if (relocates) {
             if (!computeClickRelocateHit(e.x, e.y, anchor, vts))
