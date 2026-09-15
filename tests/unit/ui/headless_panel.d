@@ -251,21 +251,27 @@ struct HeadlessPanel {
     /// same batch as the click is not yet down when the click is processed —
     /// and `DragFloat` reads `KeyCtrl` at click time to decide text mode.
     void editRow(size_t row, string text) {
-        hoverRow(row);
+        const took = editAt(rowPoint(row), text);
+        assert(took, "editRow: no item took ActiveId — the point missed every widget");
+    }
+
+    /// Keyboard-edit the widget at a panel-recorded point. Returns whether the
+    /// press acquired an ActiveId so a disabled-row test can assert the
+    /// negative without turning the harness's own floor into the first failure.
+    bool editAt(ImVec2 p, string text) {
+        hoverAt(p);
         keyDown(KEY_LEFT_CTRL);
         keyDown(MOD_CTRL);
         frame();
         ImGuiIO_AddMouseButtonEvent(io, 0, true);
         frame();
-        assert(anyActive,
-               "editRow: no item took ActiveId — the point missed every widget");
+        const took = anyActive;
         ImGuiIO_AddMouseButtonEvent(io, 0, false);
         keyUp(KEY_LEFT_CTRL);
         keyUp(MOD_CTRL);
         frame();
         // Ctrl+click pre-selects the field's whole text, so typing replaces it.
-        foreach (ch; text) ImGuiIO_AddInputCharacter(io, cast(uint) ch);
-        frame();
+        typeText(text);
         keyDown(cast(int) ImGuiKey.Enter);
         frame();
         keyUp(cast(int) ImGuiKey.Enter);
@@ -273,6 +279,7 @@ struct HeadlessPanel {
         // One idle frame so the panel sees IsItemDeactivatedAfterEdit and,
         // where it re-seeds its display field from the truth, does so.
         frame();
+        return took;
     }
 
     /// Push one key down / up into ImGui's input queue, exactly as the SDL2

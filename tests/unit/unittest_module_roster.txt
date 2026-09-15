@@ -468,6 +468,7 @@ tests.unit.transform_history_ownership_census_test
 tests.unit.transform_input_bank_census_test
 tests.unit.ui.availability_test
 tests.unit.ui.channel_rows_test
+tests.unit.ui.channels_panel_roles_test
 tests.unit.ui.command_notice_test
 tests.unit.ui.discard_guard_test
 tests.unit.ui.guard_modal_state_test

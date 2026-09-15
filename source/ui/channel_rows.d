@@ -19,7 +19,7 @@ module ui.channel_rows;
 //   * this module answers "WHAT rows would the panel draw" — pure, no ImGui,
 //     no globals, the `Document*` is a PARAMETER — and is fully assertable by
 //     the in-module tests at the bottom;
-//   * `ui/panels.d`'s `drawChannelsPanel` answers "where on screen", which is
+//   * `ui/channels_panel.d`'s `drawChannelsPanel` answers "where on screen", which is
 //     the part no test here claims to cover.
 //
 // THE ROWS ARE `forms.Row`, not a private struct of our own. That is the load-

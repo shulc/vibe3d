@@ -4416,6 +4416,10 @@ void main(string[] args) {
     import ui.layer_list_panel : bindLayerListPanel;
     auto layerListRoles = bindLayerListPanel(sessionOwner, commandBinding,
                                              formsPanel, toolHost.getActiveTool);
+    import ui.channels_panel : bindChannelsPanel;
+    auto channelsPanelRoles = bindChannelsPanel(sessionOwner, commandBinding,
+                                                formsPanel,
+                                                toolHost.getActiveTool);
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
@@ -5315,8 +5319,9 @@ void main(string[] args) {
         // third window cannot start swallowing the synthetic viewport drags
         // every existing test drives.
         if (!command.g_testMode || g_channelsShown) {
-            import ui.panels : drawChannelsPanel;
-            drawChannelsPanel(app);
+            import ui.channels_panel : drawChannelsPanel;
+            drawChannelsPanel(channelsPanelRoles.read,
+                              channelsPanelRoles.actions);
         }
 
         // ---- Statistics (dockable; task 1100) ----
