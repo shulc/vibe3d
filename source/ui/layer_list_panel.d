@@ -8,6 +8,7 @@ import commands.layer.commands : layerDeleteButtonState;
 import document : Document;
 import forms : Form;
 import forms_render : FormsPanel;
+import imgui_flag_boundary : inputTextSubmitOnEnter;
 import layer_params : LayerPropsProvider, itemPropsTarget;
 import seltype : SelType;
 import session_owner : Session;
@@ -496,8 +497,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
                     ImGui.SetKeyboardFocusHere();
                 ImGui.SetNextItemWidth(140);
-                bool commit = ImGui.InputText("##rename", rename.buffer,
-                                  ImGuiInputTextFlags.EnterReturnsTrue);
+                bool commit = inputTextSubmitOnEnter("##rename", rename.buffer);
                 nameMin = ImGui.GetItemRectMin();
                 nameMax = ImGui.GetItemRectMax();
                 bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);

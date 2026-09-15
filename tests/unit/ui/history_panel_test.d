@@ -15,8 +15,11 @@ import registry : Registry;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import ui.history_panel;
-import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot;
-import tests.unit.ui.headless_panel : openPanel;
+import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
+    historyPopupSnapshot;
+import imgui_event_gate : imguiPopupOpen;
+import d_imgui.imgui_h : ImVec2;
+import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import view : View;
 
 private string repositoryRoot() {
@@ -129,6 +132,27 @@ private final class HistoryPanelActionHarness {
     }
 }
 
+private void withPopupPanel(
+        void delegate(ref HeadlessPanel, HistoryPanelActionHarness,
+                      HistoryPanelState) cell) {
+    auto harness = new HistoryPanelActionHarness();
+    harness.dispatch("probe.first");
+    harness.dispatch("probe.second");
+    auto state = new HistoryPanelState();
+    state.visible = true;
+    auto read = bindHistoryPanelRead(harness.history);
+    auto ui = openPanel(() {
+        drawCommandHistoryPanel(state, read, harness.actions, 0.0f);
+    }, "History popup host");
+    scope (exit) ui.close();
+    ui.frame();
+    cell(ui, harness, state);
+}
+
+private ImVec2 centre(ImVec2 min, ImVec2 max) {
+    return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+}
+
 unittest { // each state owns its buffers for its whole panel lifetime
     auto a = new HistoryPanelState();
     auto b = new HistoryPanelState();
@@ -227,6 +251,117 @@ unittest { // macro strip reads the recorder again after its button dispatch
         "the real macro.record action did not start and clear the recorder");
     assert(after.status.length == 0 && !after.saveEnabled,
         "macro strip used the pre-dispatch recorder length for Save/REC");
+}
+
+unittest { // history popup/input flags cross the production C boundary
+    // F0: both rows and both kinds of empty space are real geometry. The REPL
+    // ordering fact is M8's witness: moving the snapshot publication above the
+    // InputText records the child/list item instead and fails here.
+    withPopupPanel((ref ui, harness, state) {
+        const snap = historyPopupSnapshot();
+        const macroSnap = historyMacroStripSnapshot();
+        assert(harness.history.undoEntries().length == 2,
+            "F0: history popup rig did not populate exactly two rows");
+        assert(snap.row0Max.x > snap.row0Min.x
+            && snap.row0Max.y > snap.row0Min.y,
+            "F0: row0 rectangle is empty");
+        assert(snap.listMax.x > snap.listMin.x
+            && snap.listMax.y > snap.listMin.y,
+            "F0: history list rectangle is empty");
+        assert(snap.replMax.x > snap.replMin.x
+            && snap.replMax.y > snap.replMin.y,
+            "F0: REPL rectangle is empty");
+        assert(snap.replMin.y >= snap.row0Max.y,
+            "F0/M8: captured REPL rectangle is not below history row0");
+        assert(macroSnap.recMax.x > macroSnap.recMin.x
+            && macroSnap.recMax.y > macroSnap.recMin.y,
+            "F0: macro Rec rectangle is empty");
+
+        const replPoint = centre(snap.replMin, snap.replMax);
+        assert(ui.anyItemHoveredAt(replPoint),
+            "F0: measured REPL centre does not hover an item");
+
+        const outerEmpty = ImVec2(
+            snap.replMax.x,
+            (macroSnap.recMin.y + macroSnap.recMax.y) * 0.5f);
+        assert(!ui.anyItemHoveredAt(outerEmpty),
+            "F0: outer-window empty point unexpectedly hovers an item");
+
+        const listEmpty = ImVec2(
+            (snap.listMin.x + snap.listMax.x) * 0.5f,
+            snap.listMax.y - 5.0f);
+        assert(listEmpty.y > snap.row0Max.y
+            && listEmpty.y < snap.listMax.y,
+            "F0/C4: list empty point is outside the measured empty band");
+        assert(!ui.anyItemHoveredAt(listEmpty),
+            "F0/C4: list empty-space click point unexpectedly hovers an item");
+    });
+
+    // C1: the real history row owns its context menu.
+    withPopupPanel((ref ui, harness, state) {
+        auto snap = historyPopupSnapshot();
+        ui.rightClickAt(centre(snap.row0Min, snap.row0Max));
+        snap = historyPopupSnapshot();
+        assert(imguiPopupOpen() && snap.rowMenuIndex == 0
+            && !snap.panelMenuOpen,
+            "C1: RMB on history row0 did not open only its row menu");
+    });
+
+    // C2: empty space in the outer window owns the panel menu.
+    withPopupPanel((ref ui, harness, state) {
+        auto snap = historyPopupSnapshot();
+        const macroSnap = historyMacroStripSnapshot();
+        const point = ImVec2(
+            snap.replMax.x,
+            (macroSnap.recMin.y + macroSnap.recMax.y) * 0.5f);
+        assert(!ui.anyItemHoveredAt(point),
+            "C2 floor: outer-window click point unexpectedly hovers an item");
+        ui.rightClickAt(point);
+        snap = historyPopupSnapshot();
+        assert(imguiPopupOpen() && snap.panelMenuOpen
+            && snap.rowMenuIndex == size_t.max,
+            "C2: RMB on outer-window empty space did not open only the panel menu");
+    });
+
+    // C3: the header-derived NoOpenOverItems bit must reach the actual call.
+    withPopupPanel((ref ui, harness, state) {
+        auto snap = historyPopupSnapshot();
+        const point = centre(snap.replMin, snap.replMax);
+        assert(ui.anyItemHoveredAt(point),
+            "C3 floor: measured REPL point is not an item");
+        ui.rightClickAt(point);
+        snap = historyPopupSnapshot();
+        assert(!imguiPopupOpen() && !snap.panelMenuOpen,
+            "C3: NoOpenOverItems did not reach the C call");
+    });
+
+    // C4 records current behaviour, not a product law: the child list's empty
+    // space opens no menu; whether it should is still an owner question.
+    withPopupPanel((ref ui, harness, state) {
+        auto snap = historyPopupSnapshot();
+        const point = ImVec2(
+            (snap.listMin.x + snap.listMax.x) * 0.5f,
+            snap.listMax.y - 5.0f);
+        assert(!ui.anyItemHoveredAt(point),
+            "C4 floor: list empty-space click point unexpectedly hovers an item");
+        ui.rightClickAt(point);
+        assert(!imguiPopupOpen(),
+            "C4 current behaviour: empty child-list space opened a popup; "
+            ~ "the owner question remains open");
+    });
+
+    // C5 is the independent M8 witness and the used input-flag route: type into
+    // the production REPL, press Enter, and observe the real dispatch/history.
+    withPopupPanel((ref ui, harness, state) {
+        const snap = historyPopupSnapshot();
+        ui.pressAt(centre(snap.replMin, snap.replMax));
+        ui.release();
+        ui.typeAndSubmit("probe.first");
+        assert(harness.firstCalls == 2
+            && harness.history.undoEntries().length == 3
+            && harness.history.undoEntries()[$ - 1].commandName == "probe.first",
+            "C5/M8: typing into the measured REPL and pressing Enter did not dispatch");
+    });
 }
 
 unittest { // cursor undo cancels the live edit, then moves raw history

@@ -26,8 +26,8 @@
 //      needed, and the likeliest to be forgotten, because it is the only exit
 //      that produces no test output whatsoever.
 //
-//   C. a worker preparation that starts after the lock but cannot write its
-//      object file. It must be `run_incomplete`, never `ran`: selected tests
+//   C. preparation starts after the lock but cannot build the shared project
+//      test library. It must be `run_incomplete`, never `ran`: selected tests
 //      are not measured tests, and there is no verdict without `Total:`.
 //      The nested invocation reuses only a PID+fd lease for this test's private
 //      lock, verified through /proc ancestry plus descriptor/path device+inode
@@ -238,7 +238,7 @@ void main() {
         ~ "descriptor for a different inode:\n" ~ wrongIdentity.output);
 
     // ---------------------------------------------------------------- cell C
-    scenario("C: a run that loses worker output before Total is incomplete");
+    scenario("C: a run that loses its project library before Total is incomplete");
     // Unlike cells A/B, execute() here receives this test's verified private
     // lease while its fd stays owned by this process. The host lock remains
     // excluded for the entire nested run.
@@ -254,9 +254,10 @@ void main() {
     } else {
         // The mount begins above the mandatory 256 MiB floor. The filler waits
         // for the scratch tree, which is created only after the preflight, then
-        // consumes enough space to make the source-backed test's object write
-        // fail. A deadline makes a runner that never creates scratch fail this
-        // fixture rather than leaving a polling process behind.
+        // consumes enough space to make the source-backed project library
+        // fail. That is now the earliest legal stop: the high-RAM per-test -i
+        // fallback is forbidden. A deadline makes a runner that never creates
+        // scratch fail this fixture rather than leaving a polling process behind.
         const childPort = 20_000 + cast(int)(thisProcessID % 20_000);
         const script =
             "mount -t tmpfs -o size=512m tmpfs \"$1\" || exit 99\n"
@@ -277,9 +278,14 @@ void main() {
         assert(c.status == 0, format(
             "C: constrained child failed outside the expected runner refusal (%d):\n%s",
             c.status, c.output));
-        assert(c.output.indexOf("Error: error writing file") >= 0, format(
-            "C: the synchronized filler did not force the intended object-write failure:\n%s",
+        assert(c.output.indexOf(
+                "project test-lib build failed; refusing per-test -i fallback") >= 0,
+            format("C: the synchronized filler did not force the intended "
+              ~ "project-library hard failure:\n%s",
             c.output));
+        assert(c.output.indexOf(
+                "project test-lib build failed; falling back to per-test -i compile") < 0,
+            "C: the forbidden per-test fallback reappeared:\n" ~ c.output);
         assert(c.output.indexOf("CHILD_RUNNER_EXIT=1") >= 0,
             "C: failed preparation should exit 1:\n" ~ c.output);
         assert(c.output.indexOf("Total:") < 0,

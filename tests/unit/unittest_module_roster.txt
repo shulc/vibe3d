@@ -251,6 +251,7 @@ tests.unit.history_replay_boundary_test
 tests.unit.image_cache_test
 tests.unit.image_plane_test
 tests.unit.imgui_event_gate_test
+tests.unit.imgui_flag_boundary_census_test
 tests.unit.io.image_decode_test
 tests.unit.io.image_path_test
 tests.unit.io.lwo_export_ptag_census_test

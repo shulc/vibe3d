@@ -6,19 +6,13 @@ module imgui_event_gate;
 
 import bindbc.sdl;
 import imgui_impl_sdl2 : ImGui_ImplSDL2_ProcessEvent;
-
-private extern (C) bool igIsPopupOpen_Str(const(char)* strId, int flags)
-    nothrow @nogc;
-
-// The linked cimgui 1.92.8 expects 3072; the D shim's stale 384 crashes this
-// query (task 5911; tests/unit/escape_ladder_test.d EL-d0/EL-d).
-enum int kCimguiAnyPopup = (1 << 10) | (1 << 11);
+import imgui_flag_boundary : anyPopupOpen;
 
 /// Requires a current ImGui context and a between-frames call (after Render,
 /// before NewFrame); it reads the popup stack retained from the last frame.
 /// Task 5911; imgui_event_gate_test.d group H.
 bool imguiPopupOpen() nothrow @nogc {
-    return igIsPopupOpen_Str(null, kCimguiAnyPopup);
+    return anyPopupOpen();
 }
 
 bool escapeReachesEditor(bool popupOpen) pure nothrow @nogc {

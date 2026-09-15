@@ -11,8 +11,7 @@ import std.string : indexOf;
 import std.json : JSONType, JSONValue, parseJSON;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiConfigFlags, ImGuiKey;
-import imgui_event_gate : escapeReachesEditor, imguiPopupOpen,
-                          kCimguiAnyPopup;
+import imgui_event_gate : escapeReachesEditor, imguiPopupOpen;
 import input_context : EscapeRung, escapeRungFor;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 import tests.unit.ui.headless_panel : openPanel;
@@ -158,17 +157,14 @@ unittest { // EL-b: popup priority and both inline ladder doors stay wired.
         "EL-b(4): escapeLadder must call escapeRungFor and contain one final switch");
 }
 
-unittest { // EL-d0: fail by name before a stale popup flag can crash EL-d.
-    static assert(kCimguiAnyPopup == 3072);
+unittest { // EL-d0: the event gate delegates to the header-derived boundary.
     const code = blankNonCode(readText(buildPath(repoRoot, "source", "imgui_event_gate.d")));
     const anchor = code.indexOf("bool imguiPopupOpen()");
     assert(anchor >= 0, "EL-d0: imguiPopupOpen anchor vanished");
     const body = bodyAt(code, code.indexOf("{", anchor));
-    assert(body.length > 0 && body.canFind("kCimguiAnyPopup")
+    assert(body.length > 0 && body.canFind("anyPopupOpen()")
         && !body.canFind("ImGuiPopupFlags"),
-        "EL-d0: imguiPopupOpen must pass kCimguiAnyPopup (the linked lib's "
-        ~ "AnyPopup = 3072); the D shim's ImGuiPopupFlags.AnyPopup is 384 "
-        ~ "and segfaults between frames");
+        "EL-d0: imguiPopupOpen must delegate to the header-derived boundary");
 }
 
 unittest { // EL-d: the query observes the real popup stack between frames.

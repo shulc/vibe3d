@@ -29,6 +29,13 @@
 	"sourcePaths": [
 		"source"
 	],
+	"sourceFiles": [
+		"source/imgui_flag_abi.c"
+	],
+	"dflags": [
+		"-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui"
+	],
+	"_comment-imgui-flag-boundary": "TASK 5930 -- source/imgui_flag_abi.c is ImportC, not a separately configured C build: its flag values are compiled from the cimgui.h shipped by the exact d_imgui package that also supplies the linked archive. The ImportC file must not sort first in dub's source list; putting it first exposed a DMD full-build ordering defect during admission. The D side uses extern(C) integer accessors instead of importing the C module because the latter produced an undefined ModuleInfo link in the full application. Only integer flag constants cross this boundary; no cimgui struct layout does. Every Windows build now requires cl.exe on PATH for ImportC. .github/workflows/build.yml activates the MSVC developer environment before dub, but Windows proof for this boundary is necessarily the post-merge nightly; rollback is git revert of this slice's own commits.",
 	"stringImportPaths": [
 		"assets/icon",
 		"assets/fonts"

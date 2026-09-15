@@ -93,7 +93,7 @@ __gshared bool   keepVibe;
 __gshared bool   useColor;
 __gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
 __gshared bool   runLockBorrowed; // verified descendant; outer runner owns fd
-__gshared string projLibPath;  // prebuilt project test-lib (see buildProjectLib); "" => -i fallback
+__gshared string projLibPath;  // prebuilt project test-lib (see buildProjectLib)
 __gshared Duration g_testTimeout;   // per-test wall-clock cap; zero = no cap
 __gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
                                     // test (0 = retired slot). A test that is
@@ -1112,8 +1112,9 @@ string sourceDigest() {
     // which the caller already handles as "rebuild"; a stack trace instead
     // of a test run does not (task 0685 T7).
     try {
-        foreach (e; dirEntries("source", "*.d", SpanMode.depth))
-            if (e.isFile) files ~= e.name;
+        foreach (pattern; ["*.d", "*.c"])
+            foreach (e; dirEntries("source", pattern, SpanMode.depth))
+                if (e.isFile) files ~= e.name;
     } catch (Exception e) {
         stderr.writeln(yellow("source scan interrupted (" ~ e.msg
                             ~ ") — treating the build as stale"));
@@ -1153,7 +1154,7 @@ void writeBuildStamp() {
 // right order: COMPILE flags (-I / -J / -version) are position-independent,
 // while the LINK TAIL (lflags, -l libs, dep .a archives) is order-sensitive and
 // must come AFTER the project lib on the command line so its undefined symbols
-// resolve against the deps. The `-i` fallback path just concatenates the two.
+// resolve against the deps.
 __gshared string g_compileFlags;
 __gshared string g_linkTail;
 __gshared bool   g_sourceFlagsDone;
@@ -1179,6 +1180,10 @@ void harvestSourceFlags() {
         g_compileFlags ~= gather("import-paths",        "-I=");
         g_compileFlags ~= gather("string-import-paths", "-J=");
         g_compileFlags ~= gather("versions",            "-version=");
+        // ImportC preprocess flags are compile inputs too. In particular,
+        // task 5930's project-owned C source includes the linked UI package's
+        // header through its expanded -P-I path.
+        g_compileFlags ~= gather("dflags",               "");
         g_linkTail     ~= gather("lflags",              "-L");
         g_linkTail     ~= gather("libs",                "-L-l");
         // linker-files (.a archives) are passed verbatim.
@@ -1196,7 +1201,6 @@ void harvestSourceFlags() {
 
 string sourceCompileFlags() { harvestSourceFlags(); return g_compileFlags; }
 string sourceLinkTail()     { harvestSourceFlags(); return g_linkTail; }
-string sourceTestFlags()    { harvestSourceFlags(); return g_compileFlags ~ g_linkTail; }
 
 // A test is "source-backed" if it imports any first-party project module.
 // Heuristic: a top-level `import <mod>` / `import <mod> :` whose module is one
@@ -1233,7 +1237,8 @@ bool isSourceBackedTest(string path) {
 /// whole project graph via `dmd -i` — ≈6× faster per test and ≈6× less peak RAM
 /// (so far more workers fit in the same memory), and it removes the `-i` + dep
 /// archive duplicate symbols that block mold. Returns the lib path, or "" on
-/// failure (callers fall back to the -i compile). Built with -unittest to match
+/// failure (the caller hard-fails rather than taking the high-RAM -i path).
+/// Built with -unittest to match
 /// the test compile; as a static archive only referenced members are pulled, so
 /// a test no longer re-runs its *imported* project modules' unittests — those
 /// are covered by the separate `dub test` step, and the test's own asserts are
@@ -1256,8 +1261,6 @@ string buildProjectLib(string scratch) {
     auto r = executeShell(format("dmd -lib -unittest%s %s -of=%s 2>&1",
                                  sourceCompileFlags(), srcs.join(" "), lib));
     if (r.status != 0 || !exists(lib)) {
-        stderr.writeln(yellow("project test-lib build failed; "
-            ~ "falling back to per-test -i compile"));
         if (r.output.length) stderr.writeln(dim(r.output));
         return "";
     }
@@ -1415,27 +1418,23 @@ string[] compileTests(string[] paths, string outDir) {
         // -J=tests lets a test embed a golden fixture via
         // `import("fixtures/<name>.json")` (see tests/fixture_helpers.d).
         //
-        // Source-backed tests (those importing project modules like
-        // tools.xform_kernels / mesh / math) need the full dependency graph:
-        // dmd's `-i` auto-includes the imported project source, and the
-        // harvested `dub describe` flags supply the dep import paths + the
-        // native link inputs (OpenSubdiv C libs, bindbc archives, …). We drop
-        // `-w` for these because the third-party dep code carries warnings
-        // that aren't ours to fix; the test's own warnings still surface via
-        // the bare-path tests. HTTP-driver tests keep the original cheap line.
+        // Source-backed tests link the prebuilt project library plus the
+        // harvested dependency graph. We drop `-w` for these because the
+        // third-party dep code carries warnings that aren't ours to fix; the
+        // test's own warnings still surface via the bare-path tests.
+        // HTTP-driver tests keep the original cheap line.
         string cmd;
         if (isSourceBackedTest(p)) {
-            if (projLibPath.length) {
-                // Link the prebuilt project lib instead of recompiling it via
-                // `-i`. Order is load-bearing: test.o, then the project lib,
-                // then the dep archives/link tail (mold is order-strict).
-                cmd = format("dmd -unittest -J=tests -I=tests%s%s %s %s%s%s -of=%s 2>&1",
-                             helpers, sourceCompileFlags(), p,
-                             projLibPath, sourceLinkTail(), moldFlag, of);
-            } else {
-                cmd = format("dmd -unittest -i -J=tests -I=tests%s%s %s -of=%s 2>&1",
-                             helpers, sourceTestFlags(), p, of);
+            if (!projLibPath.length) {
+                writeln("  ", red("FAIL  "), name,
+                    ": source-backed compile has no project test-lib");
+                return null;
             }
+            // Order is load-bearing: test.o, then the project lib, then the
+            // dep archives/link tail (mold is order-strict).
+            cmd = format("dmd -unittest -J=tests -I=tests%s%s %s %s%s%s -of=%s 2>&1",
+                         helpers, sourceCompileFlags(), p,
+                         projLibPath, sourceLinkTail(), moldFlag, of);
         } else {
             cmd = format("dmd -unittest -J=tests -I=tests%s %s -w -of=%s 2>&1",
                          helpers, p, of);
@@ -2870,14 +2869,17 @@ int main(string[] args) {
     // link it (≈6× faster + ≈6× less RAM per test than recompiling via `dmd -i`,
     // and it unlocks mold). Done once here, single-threaded, before workers fan
     // out; the lib + flag are read-only thereafter. HTTP-driver tests are
-    // unaffected. On lib-build failure projLibPath stays "" and we fall back.
+    // unaffected. A source-backed run must build this library: the per-test
+    // fallback costs about six times the peak RAM and cannot fit the CI VM.
     if (tests.canFind!isSourceBackedTest) {
         projLibPath = buildProjectLib(scratchDir);
-        if (projLibPath.length) {
-            moldFlag = probeMoldFlag();
-            writeln(dim("Built project test-lib for source-backed tests"
-                ~ (moldFlag.length ? " (linking with mold)." : ".")));
+        if (!projLibPath.length) {
+            stderr.writeln(red("project test-lib build failed; refusing per-test -i fallback"));
+            return 1;
         }
+        moldFlag = probeMoldFlag();
+        writeln(dim("Built project test-lib for source-backed tests"
+            ~ (moldFlag.length ? " (linking with mold)." : ".")));
     }
     bool allUp = true;
     foreach (i, ref w; parallel(workers, 1)) {

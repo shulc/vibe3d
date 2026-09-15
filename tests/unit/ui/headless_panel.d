@@ -64,6 +64,7 @@ private extern (C) nothrow @nogc {
     void ImGuiIO_AddMouseButtonEvent(void* self, int button, bool down);
     void ImGuiIO_AddInputCharacter(void* self, uint c);
     void ImGuiIO_AddFocusEvent(void* self, bool focused);
+    bool igIsAnyItemHovered();
 }
 
 // Key codes not present in the shim's partial `ImGuiKey` enum. Values are
@@ -192,6 +193,39 @@ struct HeadlessPanel {
     /// Release the left button.
     void release() {
         ImGuiIO_AddMouseButtonEvent(io, 0, false);
+        frame();
+    }
+
+    /// Right-click a measured point and leave two settled frames so a context
+    /// popup opened on release has been submitted by the real panel body.
+    void rightClickAt(ImVec2 p) {
+        hoverAt(p);
+        hoverAt(p);
+        ImGuiIO_AddMouseButtonEvent(io, 1, true);
+        frame();
+        ImGuiIO_AddMouseButtonEvent(io, 1, false);
+        frame();
+        frame();
+        frame();
+    }
+
+    /// Ask the linked UI state whether a measured point belongs to any item.
+    /// Two hover frames make the answer independent of the prior pointer.
+    bool anyItemHoveredAt(ImVec2 p) {
+        hoverAt(p);
+        hoverAt(p);
+        return igIsAnyItemHovered();
+    }
+
+    /// Type text into the currently active input and submit it with Enter.
+    void typeAndSubmit(string text) {
+        foreach (ch; text)
+            ImGuiIO_AddInputCharacter(io, cast(uint) ch);
+        frame();
+        keyDown(cast(int) ImGuiKey.Enter);
+        frame();
+        keyUp(cast(int) ImGuiKey.Enter);
+        frame();
         frame();
     }
 

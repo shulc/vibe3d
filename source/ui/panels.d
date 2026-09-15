@@ -53,6 +53,8 @@ import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import prefs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+import imgui_flag_boundary : beginItemContextMenu, beginPanelContextMenu,
+    inputTextSubmitOnEnter;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import nfde;
@@ -1147,8 +1149,7 @@ void drawImageListPanel(EditorApp app, ref ItemRenameState itemRenameState) {
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
                     ImGui.SetKeyboardFocusHere();
                 ImGui.SetNextItemWidth(140);
-                bool commit = ImGui.InputText("##rename", rename.buffer,
-                                  ImGuiInputTextFlags.EnterReturnsTrue);
+                bool commit = inputTextSubmitOnEnter("##rename", rename.buffer);
                 bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
                 if (!commit && !cancel && ImGui.IsItemDeactivatedAfterEdit())
                     commit = true;
@@ -2845,10 +2846,26 @@ version (unittest) {
         ImVec2 recMax;
     }
 
+    struct HistoryPopupSnapshot {
+        ImVec2 row0Min;
+        ImVec2 row0Max;
+        ImVec2 listMin;
+        ImVec2 listMax;
+        ImVec2 replMin;
+        ImVec2 replMax;
+        bool panelMenuOpen;
+        size_t rowMenuIndex = size_t.max;
+    }
+
     private __gshared HistoryMacroStripSnapshot g_historyMacroStripSnapshot;
+    private __gshared HistoryPopupSnapshot g_historyPopupSnapshot;
 
     HistoryMacroStripSnapshot historyMacroStripSnapshot() {
         return g_historyMacroStripSnapshot;
+    }
+
+    HistoryPopupSnapshot historyPopupSnapshot() {
+        return g_historyPopupSnapshot;
     }
 }
 
@@ -2905,7 +2922,10 @@ void drawCommandHistoryPanel(HistoryPanelState state,
             version (unittest) {
                 const macroRecMin = ImGui.GetItemRectMin();
                 const macroRecMax = ImGui.GetItemRectMax();
+                ImVec2 historyRow0Min;
+                ImVec2 historyRow0Max;
             }
+            size_t historyRowMenuIndex = size_t.max;
             ImGui.EndDisabled();
             if (recActive) ImGui.PopStyleColor();
             ImGui.SameLine();
@@ -2923,10 +2943,6 @@ void drawCommandHistoryPanel(HistoryPanelState state,
             if (ImGui.SmallButton("Save..."))
                 controller.openArgs("macro.saveRecorded");
             ImGui.EndDisabled();
-            version (unittest) {
-                g_historyMacroStripSnapshot = HistoryMacroStripSnapshot(
-                    macroStatus, macroSaveEnabled, macroRecMin, macroRecMax);
-            }
             if (recActive) {
                 ImGui.SameLine();
                 ImGui.TextColored(
@@ -2966,14 +2982,14 @@ void drawCommandHistoryPanel(HistoryPanelState state,
             // string for comparisons.
             const(char)[] filter = state.filterText;
 
-            // Phase 3: panel-level right-click menu — fires when
-            // the user right-clicks empty space within the list.
-            // Per-row menu (defined inside the row loop below)
-            // gets priority via ImGui's hit-test ordering.
+            // Current behaviour: this outer-window menu opens on empty space
+            // outside the child list. Empty space inside the list opens no
+            // menu; whether the panel should own that area remains an owner
+            // question rather than a rule for this flag boundary.
             pushPopupStyle();
-            if (ImGui.BeginPopupContextWindow("hist-panel-ctx",
-                    ImGuiPopupFlags.MouseButtonRight
-                  | ImGuiPopupFlags.NoOpenOverItems)) {
+            const bool panelMenuOpen =
+                beginPanelContextMenu("hist-panel-ctx");
+            if (panelMenuOpen) {
                 if (ImGui.MenuItem("Save as Script..."))
                     controller.openArgs("history.saveAsScript");
                 if (ImGui.MenuItem("Clear history"))
@@ -3063,6 +3079,12 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                     // applied.
                     if (ImGui.Selectable(rowText, false))
                         controller.rawJump(i + 1);
+                    version (unittest) {
+                        if (i == 0) {
+                            historyRow0Min = ImGui.GetItemRectMin();
+                            historyRow0Max = ImGui.GetItemRectMax();
+                        }
+                    }
                     if (ImGui.IsItemHovered()) {
                         pushPopupStyle();
                         ImGui.SetTooltip("Jump cursor here (undo back %d step(s))",
@@ -3071,7 +3093,8 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                     }
                     // Phase 3: right-click context menu per row.
                     pushPopupStyle();
-                    if (ImGui.BeginPopupContextItem("hist-row-ctx")) {
+                    if (beginItemContextMenu("hist-row-ctx")) {
+                        historyRowMenuIndex = i;
                         if (ImGui.MenuItem("Re-run"))
                             controller.replay(i);
                         if (ImGui.MenuItem("Copy argstring")) {
@@ -3166,6 +3189,8 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                 }
             }
             ImGui.EndChild();
+            const historyListMin = ImGui.GetItemRectMin();
+            const historyListMax = ImGui.GetItemRectMax();
 
             // Phase 5: REPL bar — fixed at the bottom. Enter or
             // the Run button submits the input to the command
@@ -3177,10 +3202,21 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                 ImGui.PushStyleColor(ImGuiCol.FrameBg,
                     ImVec4(0.45f, 0.18f, 0.18f, 1.0f));
             ImGui.SetNextItemWidth(-60);  // leave room for "Run"
-            bool submitted = ImGui.InputText("##hist-repl",
-                state.replBuffer, ImGuiInputTextFlags.EnterReturnsTrue);
+            bool submitted = inputTextSubmitOnEnter(
+                "##hist-repl", state.replBuffer);
             if (state.replLastWasError)
                 ImGui.PopStyleColor();
+            version (unittest) {
+                const historyReplMin = ImGui.GetItemRectMin();
+                const historyReplMax = ImGui.GetItemRectMax();
+                g_historyMacroStripSnapshot = HistoryMacroStripSnapshot(
+                    macroStatus, macroSaveEnabled, macroRecMin, macroRecMax);
+                g_historyPopupSnapshot = HistoryPopupSnapshot(
+                    historyRow0Min, historyRow0Max,
+                    historyListMin, historyListMax,
+                    historyReplMin, historyReplMax,
+                    panelMenuOpen, historyRowMenuIndex);
+            }
             ImGui.SameLine();
             if (ImGui.SmallButton("Run")) submitted = true;
             if (submitted) controller.submitRepl();
