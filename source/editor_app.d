@@ -260,7 +260,6 @@ import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
-import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
 import document       : Layer;
@@ -954,13 +953,6 @@ struct EditorApp {
     CheckerShader checkerShader;
     GridShader    gridShader;
     FormsPanel    formsPanel;
-    // Task 0722 (audit §2C A2): the ONLY main() local the Tool Properties
-    // block closed over that was not already a field here. Same category as
-    // `formsPanel` right above -- a class reference assigned exactly once in
-    // main() (`new PropertyPanel()`), well before the LATE-wiring point, and
-    // never reassigned. main() itself has no other reader: the declaration
-    // and all six reads were inside the block that moved to ui/panels.d.
-    PropertyPanel propertyPanel;
     ImGuiIO*      io;
     void delegate(string, string) uiCommandDelegate;
     void delegate(string, string) formsInteractiveDispatch;

@@ -4360,7 +4360,6 @@ void main(string[] args) {
     app.checkerShader           = checkerShader;
     app.gridShader               = gridShader;
     app.formsPanel                = formsPanel;
-    app.propertyPanel             = propertyPanel;   // task 0722 (A2)
     app.io                        = io;
 
     // Task 4711: application command binding is assembled here from the live
@@ -4406,6 +4405,10 @@ void main(string[] args) {
     auto channelsPanelRoles = bindChannelsPanel(sessionOwner, commandBinding,
                                                 formsPanel,
                                                 toolHost.getActiveTool);
+    import ui.tool_properties_panel : bindToolPropertiesPanel;
+    auto toolPropertiesRoles = bindToolPropertiesPanel(commandBinding,
+        formsPanel, session,
+        toolHost.getActiveTool, toolHost.getActiveToolId);
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
@@ -5392,14 +5395,12 @@ void main(string[] args) {
         // section must still be reachable to read/edit Start/End etc.).
         if ((activeTool !is null || anyFalloffActive())
             && (!command.g_testMode || g_toolPropertiesShown)) {
-            // Body moved to ui/panels.d (task 0722, audit §2C A2) -- the
-            // last panel entry point that was still a 253-line inline block
-            // in main(), joining the six that moved in 0419. The GUARD stays
-            // here, matching Layers / Images / Channels / Viewport Properties
-            // above: what decides whether a panel is drawn is main-loop
-            // business, what it draws is the panel module's.
-            import ui.panels : drawToolPropertiesPanel;
-            drawToolPropertiesPanel(app);
+            // Task 6060: the guard remains main-loop policy; the extracted
+            // body reads live Tool/Stage roles and uses the bound UI actions.
+            import ui.tool_properties_panel : drawToolPropertiesPanel;
+            drawToolPropertiesPanel(toolPropertiesRoles.read,
+                toolPropertiesRoles.actions, propertyPanel,
+                layout.sideW + 10);
         }
 
         // ---- Command History (floating) ----

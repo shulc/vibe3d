@@ -163,7 +163,8 @@ public:
     }
 
     /// Generic ParamProvider renderer — used by `draw(Tool)` and by
-    /// the per-stage Tool Properties iteration in ui/panels.d. The session
+    /// the per-stage Tool Properties iteration in ui/tool_properties_panel.d.
+    /// The session
     /// receives one ValueWritten phase per mutation and one BatchComplete.
     void drawProvider(ParamProvider p, EditSession session) {
         if (p is null) return;

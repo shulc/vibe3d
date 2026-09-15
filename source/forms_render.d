@@ -76,7 +76,7 @@ alias DispatchFn = void delegate(string commandId, string paramsJson);
 alias InteractiveDispatchFn = void delegate(string commandId, string paramsJson);
 
 // ---------------------------------------------------------------------------
-// FormsPanel — one instance lives on App (alongside propertyPanel). Holds the
+// FormsPanel — one instance serves the panel in ui/tool_properties_panel.d. Holds the
 // per-control active-item scratch buffers across frames; everything else is
 // recomputed each frame.
 // ---------------------------------------------------------------------------
