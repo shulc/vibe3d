@@ -192,6 +192,7 @@ tests.unit.commands.select.loop_test
 tests.unit.commands.select.selection_command_registration_test
 tests.unit.commands.test_undo_flags_test
 tests.unit.commands.tool.tool_lifecycle_registration_test
+tests.unit.commands.viewport.viewport_command_registration_test
 tests.unit.commands.workplane_test
 tests.unit.comment_prose_ceiling_test
 tests.unit.commit_seam_census_test

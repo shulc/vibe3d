@@ -103,15 +103,6 @@ import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
 import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 import tools.edit.topology_pen : TopologyPenTool;
-import commands.viewport.fit_selected;
-import commands.viewport.fit;
-import commands.viewport.view_preset  : ViewportViewPreset;
-import commands.viewport.layout_preset : ViewportLayoutPreset;
-import commands.viewport.independence : ViewportIndependence, ViewportIndepAxis;
-import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverlay,
-                                         ViewportWireAlpha;
-import commands.viewport.grid_steps   : ViewportGridSteps;
-import commands.viewport.master       : ViewportMaster;
 import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
@@ -245,6 +236,7 @@ import layer_params   : LayerPropsProvider;
 import document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
+import viewport_command_registration : registerViewportCommands;
 
 // Locally-scoped in app.d's main() (not top-level there).
 import document       : Document;
@@ -998,6 +990,9 @@ void registerCommands(EditorApp app) {
         SelectionTypeDoors(app.sessionOwner.editModePtr(),
                            app.promoteGeometryType, app.switchGeometryType,
                            app.switchItemType));
+    registerViewportCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        app.vpm);
     registerViewCommands(app);
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
@@ -1211,7 +1206,7 @@ private void registerItemCommands(EditorApp app) {
     }
 }
 
-/// Viewport, snapping, preferences, path and the AI toggles — one family of the registration table (task 0722, audit
+/// Snapping, preferences, path and the AI toggles — one family of the registration table (task 0722, audit
 /// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
 /// which keys are written is exactly what it was; and every key in the
 /// table is written exactly once (checked before the split), so order is
@@ -1223,46 +1218,6 @@ private void registerViewCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
-    // Fit routes through the focus/scale OWNER cameras of the active (=
-    // hovered, per 0220) cell — not the cell's own (possibly follower)
-    // camera. For a default Quad follower both owners are the group master,
-    // so A/Shift+A reframe the whole linked group (visible in every cell);
-    // an indCenter/indScale cell owns itself and fits independently. Same
-    // owner redirect 0217 uses for pan/zoom. Single view: owners = self →
-    // byte-neutral under --test.
-    reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh(),
-        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode,
-        &document());
-    reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(),
-        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode,
-        &document());
-    // The ten `viewport.*` commands task 0761 moved out of the HTTP
-    // delegate's own interception (they used to run BEFORE the
-    // `reg.commandFactories` lookup — see `doc/tasks/done/0761-*`). Each
-    // factory call re-resolves `vpm`/`editMode` fresh at dispatch time,
-    // same as `viewport.fit` above; the argument-parsing law each one
-    // implements is unchanged — see `commands/viewport/*.d` and the
-    // injector in `http_providers.d`.
-    reg.commandFactories["viewport.view"] = () => cast(Command)
-        new ViewportViewPreset(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.layout"] = () => cast(Command)
-        new ViewportLayoutPreset(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.indCenter"] = () => cast(Command)
-        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Center);
-    reg.commandFactories["viewport.indScale"] = () => cast(Command)
-        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Scale);
-    reg.commandFactories["viewport.indRotate"] = () => cast(Command)
-        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Rotate);
-    reg.commandFactories["viewport.displayStyle"] = () => cast(Command)
-        new ViewportDisplayStyle(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.wireOverlay"] = () => cast(Command)
-        new ViewportWireOverlay(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.wireAlpha"] = () => cast(Command)
-        new ViewportWireAlpha(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.gridSteps"] = () => cast(Command)
-        new ViewportGridSteps(&mesh(), cameraView, editMode, vpm);
-    reg.commandFactories["viewport.master"] = () => cast(Command)
-        new ViewportMaster(&mesh(), cameraView, editMode, vpm);
     {
         import commands.snap.toggle : SnapToggleCommand;
         import commands.snap.mode   : SnapModeCommand;
