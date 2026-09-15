@@ -103,25 +103,6 @@ import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
 import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 import tools.edit.topology_pen : TopologyPenTool;
-import commands.select.connect;
-import commands.select.expand;
-import commands.select.contract;
-import commands.select.loop;
-import commands.select.ring;
-import commands.select.invert;
-import commands.select.more;
-import commands.select.less;
-import commands.select.between;
-import commands.select.type_from : SelectTypeFromCommand;
-import commands.select.drop     : SelectDropCommand;
-import commands.select.element  : SelectElementCommand;
-import commands.select.convert  : SelectConvertCommand;
-import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
-import commands.select.boundary : SelectBoundary;
-import commands.select.by_tag   : SelectByTag;
-import commands.select.by_stat  : SelectByStatVertex, SelectByStatEdge, SelectByStatPolygon;
-import commands.select.sets     : SelectSetStore, SelectSetEdit, SelectSetApply,
-                                   SelectSetRename, SelectSetDelete;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.viewport.view_preset  : ViewportViewPreset;
@@ -134,6 +115,8 @@ import commands.viewport.master       : ViewportMaster;
 import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import selection_command_registration : SelectionTypeDoors,
+    registerSelectionCommands;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
@@ -1013,7 +996,11 @@ void registerCommands(EditorApp app) {
         app.toolHostPtr);
     registerItemCommands(app);
     registerPipeStageCommands(app);
-    registerSelectionCommands(app);
+    registerSelectionCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        SelectionTypeDoors(app.sessionOwner.editModePtr(),
+                           app.promoteGeometryType, app.switchGeometryType,
+                           app.switchItemType));
     registerViewCommands(app);
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
@@ -1330,106 +1317,6 @@ private void registerPipeStageCommands(EditorApp app) {
         reg.commandFactories["falloff.reverse"] = () => cast(Command)
             new FalloffReverseCommand(&mesh(), cameraView, editMode, toolHost);
     }
-    }
-    }
-    }
-}
-
-/// Selection — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerSelectionCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-
-    reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.less"]           = () => cast(Command) new SelectLess(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.loop"]           = () => cast(Command) new SelectLoop(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.ring"]           = () => cast(Command) new SelectRing(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.invert"]         = () => cast(Command) new SelectInvert(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.connect"]        = () => cast(Command) new SelectConnect(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.fill.holes"]      = () => cast(Command)
-        new SelectFillHoles(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.fill.insideLoop"] = () => cast(Command)
-        (new SelectFillInsideLoop(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    // select.boundary ends on Edges, so it goes through the SAME geometry-type
-    // funnel select.fill.insideLoop uses — the mode move is part of the
-    // command's measured behaviour, not a caller's afterthought.
-    reg.commandFactories["select.boundary"]        = () => cast(Command)
-        (new SelectBoundary(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    // The wire vocabulary is FOUR tokens (task 0642): vertex / edge / polygon
-    // route through the geometry funnel; `item` routes through the item door
-    // (`switchItemType`), which leaves `editMode` alone by construction. Every
-    // factory below gets BOTH hooks so the token decides the path, not the
-    // factory — `select.typeFrom item` and the dedicated `select.item` id are
-    // the same command reaching the same door.
-    reg.commandFactories["select.typeFrom"]  = () => cast(Command)
-        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(),
-                                  (EditMode m) => switchGeometryType(m)))
-            .setItemHook(switchItemType);
-    reg.commandFactories["select.vertex"]    = () => cast(Command)
-        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "vertex",
-                                  (EditMode m) => switchGeometryType(m)))
-            .setItemHook(switchItemType);
-    reg.commandFactories["select.edge"]      = () => cast(Command)
-        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "edge",
-                                  (EditMode m) => switchGeometryType(m)))
-            .setItemHook(switchItemType);
-    reg.commandFactories["select.polygon"]   = () => cast(Command)
-        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "polygon",
-                                  (EditMode m) => switchGeometryType(m)))
-            .setItemHook(switchItemType);
-    reg.commandFactories["select.item"]      = () => cast(Command)
-        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "item",
-                                  (EditMode m) => switchGeometryType(m)))
-            .setItemHook(switchItemType);
-    reg.commandFactories["select.byTag"]     = () => cast(Command)
-        new SelectByTag(&mesh(), cameraView, editMode);
-    // select.byStat.* rows always promote to their own geometry type
-    // (task 1061, vibe3d-choice) — same funnel select.boundary /
-    // select.fill.insideLoop use.
-    reg.commandFactories["select.byStat.vertex"]  = () => cast(Command)
-        (new SelectByStatVertex(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["select.byStat.edge"]    = () => cast(Command)
-        (new SelectByStatEdge(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["select.byStat.polygon"] = () => cast(Command)
-        (new SelectByStatPolygon(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    reg.commandFactories["select.drop"]      = () => cast(Command)
-        new SelectDropCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.element"]   = () => cast(Command)
-        new SelectElementCommand(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.convert"]   = () => cast(Command)
-        (new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode()))
-            .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    // select.set.* — named selection sets (task 1060). `apply` is the one
-    // multi-layer command in this family (walks foreground layers via
-    // `Document*`, matching the `layer.*` `&document()` pattern above);
-    // store/edit/rename/delete are single-mesh, primary-only (Stage 0 C2,
-    // measured 2026-08-17).
-    reg.commandFactories["select.set.store"]  = () => cast(Command)
-        new SelectSetStore(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.set.edit"]   = () => cast(Command)
-        new SelectSetEdit(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.set.apply"]  = () => cast(Command)
-        new SelectSetApply(&mesh(), cameraView, editMode, &document());
-    reg.commandFactories["select.set.rename"] = () => cast(Command)
-        new SelectSetRename(&mesh(), cameraView, editMode);
-    reg.commandFactories["select.set.delete"] = () => cast(Command)
-        new SelectSetDelete(&mesh(), cameraView, editMode);
     }
     }
     }

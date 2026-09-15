@@ -286,3 +286,48 @@ unittest {
         "the geometry selection payload is exactly the picked faces; got "
         ~ to!string(viaTypeFrom));
 }
+
+// Task 6000 — this is the production-wiring witness. The unit registrar rig
+// builds its own doors, while this path reaches the doors assigned in app.d.
+unittest {
+    bool toolArmed() {
+        return getJson("/api/tool/handles")["handles"].type != JSONType.null_;
+    }
+
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
+    cmd("select.typeFrom vertex");
+    cmd("select.element vertex set 0 1 2 3");
+    cmd("tool.set move on");
+    assert(toolArmed(),
+        "6000 production fixture: move must be armed before promotion");
+
+    cmd("select.convert polygon");
+    auto promoted = readSel();
+    assert(promoted.selType == "polygon" && promoted.mode == "polygons"
+        && promoted.faces.length == 1,
+        "6000 production promotion did not convert to one polygon: "
+      ~ promoted.selType ~ "/" ~ promoted.mode ~ " faces="
+      ~ to!string(promoted.faces));
+    assert(toolArmed(),
+        "select.convert promotes the selection type; it must keep the active tool");
+
+    cmd("select.typeFrom vertex");
+    auto switched = readSel();
+    assert(switched.selType == "vertex" && switched.mode == "vertices",
+        "6000 production switch did not reach vertex/vertices");
+    assert(!toolArmed(),
+        "select.typeFrom is an explicit mode switch; it must drop on a flip");
+
+    // The app starts in vertex mode, so doors built over a COPY of the mode
+    // cell read the same value in the steps above. Converting away from
+    // polygon mode is the step that separates the live cell from a copy.
+    cmd("select.typeFrom polygon");
+    cmd("select.element polygon set 0");
+    cmd("select.convert edge");
+    auto edged = readSel();
+    assert(edged.selType == "edge" && edged.mode == "edges"
+        && edged.edges.length == 4,
+        "6000 production doors must read the live edit-mode cell: polygon 0 "
+      ~ "converted to edges gave " ~ edged.selType ~ "/" ~ edged.mode
+      ~ " edges=" ~ to!string(edged.edges));
+}
