@@ -113,6 +113,7 @@ struct Run {
 // `budgetMs` is generous on purpose: a green pays only the real exit latency
 // (tens of ms), and only a FAILING cell waits the whole budget out.
 enum int kExitBudgetMs = 8_000;
+enum long kReplayQuitOffsetMs = 1_500;
 
 Run driveOne(string tag, string method, string path, string reqBody) {
     Run r;
@@ -198,6 +199,8 @@ struct QuitFrameRun {
     Reply arm;
     Reply play;
     Reply save;
+    long playAtMs = -1;
+    long saveAtMs = -1;
     bool savedNonEmpty;
     bool exited;
     string logTail;
@@ -215,7 +218,7 @@ QuitFrameRun driveQuitFrame() {
 
     string[string] env;
     env["VIBE3D_CONFIG_DIR"] = scratch;
-    env["VIBE3D_STALL_PRE_TOOL_TICK_MS"] = "5000";
+    env["VIBE3D_STALL_PRE_TOOL_TICK_MS"] = "3000";
 
     auto logFile = File(logPath, "wb");
     auto pid = spawnProcess(["./vibe3d", "--test", "--http-port", port.to!string],
@@ -234,16 +237,19 @@ QuitFrameRun driveQuitFrame() {
     }
 
     if (r.ready) {
-        // tool.set arms the existing bounded pre-tool seam stall. Its reply is
-        // sent before that stall begins, giving the HTTP thread five seconds to
-        // load a due quit and queue file.save for the NEXT frame. Production
-        // order then has to run HTTP replay first, continue through tickAll,
-        // and execute file.save despite the accepted quit setting running=false.
+        // Accept the future quit before arming the bounded pre-tool seam stall.
+        // tool.set then replies as the <=3 s stall begins; file.save waits
+        // during that stall and is serviced after the t=1500 quit becomes due.
+        // Production order must still finish tickAll in that frame despite the
+        // accepted quit setting running=false.
+        auto replies = StopWatch(AutoStart.yes);
+        r.play = once(port, "POST", "/api/play-events", format(
+            `{"t":%d,"type":"SDL_QUIT"}` ~ "\n", kReplayQuitOffsetMs));
+        r.playAtMs = replies.peek.total!"msecs";
         r.arm = once(port, "POST", "/api/script", "tool.set move");
-        r.play = once(port, "POST", "/api/play-events",
-            `{"t":0,"type":"SDL_QUIT"}` ~ "\n");
         r.save = once(port, "POST", "/api/command",
             `{"id":"file.save","params":{"path":"` ~ savePath ~ `"}}`);
+        r.saveAtMs = replies.peek.total!"msecs";
     }
 
     if (exists(savePath)) {
@@ -299,9 +305,11 @@ string render(ref Run r) {
 
 string render(ref QuitFrameRun r) {
     return format("ready=%s arm=%s %s play=%s %s save=%s %s "
+                ~ "playAtMs=%d saveAtMs=%d gapMs=%d "
                 ~ "savedNonEmpty=%s exited=%s\n--- log tail ---\n%s",
                   r.ready, r.arm.code, r.arm.body_, r.play.code, r.play.body_,
-                  r.save.code, r.save.body_, r.savedNonEmpty, r.exited,
+                  r.save.code, r.save.body_, r.playAtMs, r.saveAtMs,
+                  r.saveAtMs - r.playAtMs, r.savedNonEmpty, r.exited,
                   r.logTail);
 }
 
@@ -336,13 +344,19 @@ unittest {
     assert(g_quitFrame.ready,
         "5170 quit-frame floor: the owned instance never exposed a populated "
         ~ "command registry.\n" ~ render(g_quitFrame));
+    assert(g_quitFrame.play.code == "200"
+        && g_quitFrame.play.body_.canFind(`"status":"success"`),
+        "5170 quit-frame floor: HTTP replay did not accept the due quit.\n"
+        ~ render(g_quitFrame));
     assert(g_quitFrame.arm.code == "200"
         && g_quitFrame.arm.body_.canFind(`"status":"ok"`),
         "5170 quit-frame floor: tool.set did not arm the pre-tool stall.\n"
         ~ render(g_quitFrame));
-    assert(g_quitFrame.play.code == "200"
-        && g_quitFrame.play.body_.canFind(`"status": "success"`),
-        "5170 quit-frame floor: HTTP replay did not accept the due quit.\n"
+    assert(g_quitFrame.playAtMs >= 0
+        && g_quitFrame.saveAtMs - g_quitFrame.playAtMs
+            >= kReplayQuitOffsetMs,
+        "5170 stall floor: save replied before the replay's real SDL_QUIT "
+        ~ "offset elapsed; the pre-tool stall was not exercised.\n"
         ~ render(g_quitFrame));
     assert(g_quitFrame.savedNonEmpty,
         "5170 accepted-quit frame witness: file.save queued after the due quit "

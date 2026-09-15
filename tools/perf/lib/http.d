@@ -416,8 +416,8 @@ bool postUndo() {
 }
 
 // Post-drag settle: /api/play-events/status reports "finished" once events
-// are POSTED to the SDL queue, not necessarily fully processed by the main
-// loop (same caveat documented in CLAUDE.md for the HTTP test suite) — wait
+// have returned from the input sink, before later tool update/draw work in the
+// same frame (the HTTP test suite has the same caveat) — wait
 // a beat before reading /api/frames so the window includes the drag's last
 // frames.
 void settleAfterPlay() { Thread.sleep(150.msecs); }

@@ -2203,13 +2203,13 @@ bool resetBetweenTests(ushort port, ref string failure) {
             Thread.sleep(10.msecs);
         }
         // 2b. Settle. The event player reports "finished" once all its events
-        //     are DISPATCHED, but /api/play-events pushes them onto the SDL
-        //     queue (g_directDispatch is null) — the LAST few are still in the
-        //     queue, unprocessed, when the player goes idle. They drain on the
-        //     next 1–2 main-loop frames. If we reset before they drain, those
-        //     queued mouse events (e.g. a drag's final mouse-up) fire AFTER the
-        //     reset, landing on the next test's freshly-reset mesh + active
-        //     tool — exactly the test_property_panel_drag "got (-1,0,1)" bleed.
+        //     have returned from the production input sink, before the later
+        //     tool update/draw work in that frame. If we reset before those
+        //     derived effects settle across the next 1–2 main-loop frames,
+        //     late tool state (for example a drag's final mouse-up effects)
+        //     can settle AFTER the reset, on the next test's freshly-reset mesh
+        //     + active tool — exactly the test_property_panel_drag
+        //     "got (-1,0,1)" bleed.
         //     A short settle lets the queue drain onto the OLD mesh first; the
         //     reset below then wipes whatever they did.
         Thread.sleep(120.msecs);

@@ -77,8 +77,8 @@ HistorySurfaceCounts historySurfaceCounts() {
 }
 
 /// Post-`/api/play-events` settle: `/status` reports `finished` once events
-/// are POSTED to the SDL queue, not yet PROCESSED (CLAUDE.md flake note #3)
-/// — a fixed settle after "finished" avoids reading 1-2-frame-stale state.
+/// are delivered through the input sink, before later tool update/draw work in
+/// that frame — a fixed settle avoids reading 1-2-frame-stale derived state.
 void waitPlayerIdle() {
     for (int i = 0; i < 200; ++i) {
         auto s = parseJSON(cast(string) get(baseUrl ~ "/api/play-events/status"));

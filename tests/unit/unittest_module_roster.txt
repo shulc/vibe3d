@@ -375,6 +375,7 @@ tests.unit.pie_geometry_test
 tests.unit.pies_config_test
 tests.unit.pipe_preset_claim_test
 tests.unit.plane_dump_test
+tests.unit.playback_owner_test
 tests.unit.point_size_law_test
 tests.unit.popup_state_test
 tests.unit.prefs_test

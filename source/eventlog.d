@@ -15,6 +15,9 @@ version(unittest) {
     private __gshared void function(SDL_Keymod)  _mock_SetModState;
     private __gshared SDL_Keymod function()      _mock_GetModState;
     private __gshared int function(SDL_Event*)   _mock_PushEvent;
+    private __gshared ulong                      _externalCounterForTest;
+    private __gshared ulong                      _externalFreqForTest;
+    private __gshared SDL_Keymod                 _externalModForTest;
 }
 
 private uint _getMouseState(int* x, int* y) {
@@ -36,6 +39,40 @@ private void _setModState(SDL_Keymod mod) {
 private SDL_Keymod _getModState() {
     version(unittest) if (_mock_GetModState) return _mock_GetModState();
     return SDL_GetModState();
+}
+
+version(unittest) {
+    /// Cross-module clock/modifier controls for the real HttpServer unit rig.
+    void setEventPlayerClockForTest(ulong counter, ulong frequency) {
+        assert(frequency > 0);
+        _externalCounterForTest = counter;
+        _externalFreqForTest = frequency;
+        _mock_PerfCounter = () => _externalCounterForTest;
+        _mock_PerfFreq = () => _externalFreqForTest;
+    }
+
+    void setEventPlayerCounterForTest(ulong counter) {
+        assert(_mock_PerfCounter !is null && _mock_PerfFreq !is null);
+        _externalCounterForTest = counter;
+    }
+
+    void setEventPlayerModifierForTest(SDL_Keymod mod) {
+        _externalModForTest = mod;
+        _mock_GetModState = () => _externalModForTest;
+        _mock_SetModState = (SDL_Keymod next) { _externalModForTest = next; };
+    }
+
+    SDL_Keymod eventPlayerModifierForTest() {
+        assert(_mock_GetModState !is null);
+        return _externalModForTest;
+    }
+
+    void clearEventPlayerControlsForTest() {
+        _mock_PerfCounter = null;
+        _mock_PerfFreq = null;
+        _mock_GetModState = null;
+        _mock_SetModState = null;
+    }
 }
 private int _pushEvent(SDL_Event* e) {
     version(unittest) if (_mock_PushEvent) return _mock_PushEvent(e);

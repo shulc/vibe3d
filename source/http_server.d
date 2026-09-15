@@ -24,6 +24,7 @@ import perf_probe : g_perf, g_frames, g_fc, g_commandGc;
 // For event player functionality
 import bindbc.sdl;
 import eventlog;
+import playback_controller : PlaybackController, encodePlaybackStatus;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
 import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
@@ -313,6 +314,13 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
 
         bool ownedWaitReachedForTest() {
             return atomicLoad(ownedWaitReachedForTest_);
+        }
+
+        MonoTime ownedDeadlineForTest() {
+            synchronized (this) {
+                assert(ownedPending.length == 1);
+                return ownedPending[0].deadline;
+            }
         }
 
         long ownedConditionWaitsForTest() {
@@ -891,8 +899,8 @@ class HttpServer {
     private alias BlockHandler = void delegate(string action, string label);
     private BlockHandler blockHandler;
 
-    // Event player for handling event playback via HTTP
-    private EventPlayer eventPlayer;
+    // Main-thread owner of the HTTP event player (task 5960 D2).
+    private PlaybackController playbackController;
 
     // ========================================================================
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
@@ -1105,10 +1113,28 @@ class HttpServer {
     private MainThreadBridge!(ToolHandlesReq, ToolHandlesResp) toolHandlesBridge;
     private Duration toolHandlesBudget_ = 5.seconds;
 
+    struct PlayEventsReq {
+        ParsedEventLog log;
+        MonoTime notAfter;
+    }
+    struct PlayEventsResp {
+        ulong generation;
+        ulong replaced;
+        string error;
+    }
+    private MainThreadBridge!(PlayEventsReq, PlayEventsResp) playEventsBridge;
+    private Duration playEventsBudget_ = 5.seconds;
+
+    struct PlayEventsStatusReq { }
+    struct PlayEventsStatusResp { string result; string error; }
+    private MainThreadBridge!(PlayEventsStatusReq, PlayEventsStatusResp)
+        playEventsStatusBridge;
+    private Duration playEventsStatusBudget_ = 5.seconds;
+
     public this(ushort port = 8080) {
         this.port = port;
         atomicStore(this.isRunning, false);
-        this.eventPlayer = EventPlayer();
+        this.playbackController = PlaybackController();
 
         modelBridge = new MainThreadBridge!(ModelReq, ModelResp)(this,
             (ref ModelReq req, ref ModelResp resp) {
@@ -1509,6 +1535,26 @@ class HttpServer {
                     }
                 }
             });
+
+        // Playback bridges are appended without perturbing the established
+        // bridge order. The phase boundary comes from app.d calling
+        // tickEventPlayer before tickAll: an accepted log first ticks next frame.
+        playEventsBridge = new MainThreadBridge!(PlayEventsReq, PlayEventsResp)(this,
+            (ref PlayEventsReq req, ref PlayEventsResp resp) {
+                auto outcome = playbackController.accept(req.log, req.notAfter);
+                if (!outcome.accepted) {
+                    resp.error = "timeout waiting for main thread";
+                    return;
+                }
+                resp.generation = outcome.generation;
+                resp.replaced = outcome.replaced;
+            }, "/api/play-events");
+
+        playEventsStatusBridge = new MainThreadBridge!(PlayEventsStatusReq,
+                PlayEventsStatusResp)(this,
+            (ref PlayEventsStatusReq req, ref PlayEventsStatusResp resp) {
+                resp.result = encodePlaybackStatus(playbackController.status());
+            }, "/api/play-events/status");
     }
 
     // Task 5820 invariant: both command entry services synchronously use this
@@ -1709,6 +1755,47 @@ class HttpServer {
             toolStateBudget_ = budget;
         }
 
+        public void setPlayEventsBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            playEventsBudget_ = budget;
+        }
+
+        public size_t playEventsOwnedPendingForTest() {
+            return playEventsBridge.ownedPendingForTest();
+        }
+
+        public size_t playEventsStatusOwnedPendingForTest() {
+            return playEventsStatusBridge.ownedPendingForTest();
+        }
+
+        public void holdPlayEventsOwnedWaitForTest(bool held) {
+            playEventsBridge.holdOwnedWaitForTest(held);
+        }
+
+        public bool playEventsOwnedWaitReachedForTest() {
+            return playEventsBridge.ownedWaitReachedForTest();
+        }
+
+        public MonoTime playEventsOwnedDeadlineForTest() {
+            return playEventsBridge.ownedDeadlineForTest();
+        }
+
+        public auto playbackStatusForTest() const {
+            return playbackController.status();
+        }
+
+        public auto playbackViewportForTest() const {
+            return playbackController.eventPlayer.recordedViewport;
+        }
+
+        public size_t playbackAcceptThreadForTest() const {
+            return playbackController.acceptThreadForTest();
+        }
+
+        public size_t playbackAcceptCallsForTest() const {
+            return playbackController.acceptCallsForTest();
+        }
+
         public void wakeToolStateOwnedWaiterForTest() {
             toolStateBridge.wakeOwnedWaiterForTest();
         }
@@ -1902,13 +1989,12 @@ class HttpServer {
     /// mode). EventPlayer.begin() preserves this flag across /api/play-events
     /// requests, so it only needs setting once at startup.
     public void setPlayerFastForward(bool enabled) {
-        eventPlayer.fastForward = enabled;
+        playbackController.setFastForward(enabled);
     }
 
-    public int  playerMouseX()    const { return eventPlayer.mouseX; }
-    public int  playerMouseY()    const { return eventPlayer.mouseY; }
-    public bool playerMouseDown() const { return eventPlayer.mouseDown; }
-    public bool playerFinished()  const { return !eventPlayer.active; }
+    public int  playerMouseX()    const { return playbackController.mouseX(); }
+    public int  playerMouseY()    const { return playbackController.mouseY(); }
+    public bool playerMouseDown() const { return playbackController.mouseDown(); }
 
     /// Set the POST /api/camera handler. Called on the main thread with
     /// the parsed JSON body — sets View azimuth/elevation/distance/focus
@@ -3718,35 +3804,21 @@ class HttpServer {
     }
 
     private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response) {
-        // Task 0763 — same defect shape FrameWorkProbe.toJson documents and
-        // tools/local/frame_counts_seq_race.sh measured for /api/frames/counts
-        // (89 self-contradictory responses / 40 000): this ran on the HTTP
-        // thread and read `eventPlayer.active`, `.entries.length` and `.idx`
-        // as THREE separate live reads, while the main thread's
-        // `tickEventPlayer()` mutates all three every frame. A commit landing
-        // between the reads did not just go stale by one — `remaining` is a
-        // size_t subtraction, so a length/idx pair from two different frames
-        // could underflow to a huge number instead of being off by one.
-        //
-        // Fix mirrors FrameWorkProbe.toJson exactly: one copy of each field up
-        // front, then derive the whole body from the copies. This does not
-        // make the read atomic (no lock here, same as /api/frames/counts) —
-        // it makes the RESPONSE internally consistent with itself, which is
-        // the actual property `finished`/`total`/`remaining` need to hold.
-        import std.format : format;
-        const bool   active  = eventPlayer.active;
-        const size_t total   = eventPlayer.entries.length;
-        const size_t idx     = eventPlayer.idx;
-        const size_t immediateMotions = eventPlayer.immediateMotionDeliveries();
-        const bool   done    = !active;
-        response.statusCode = 200;
-        response.body = format(
-            `{"finished":%s,"total":%d,"remaining":%d,"immediateMotions":%d}`,
-            done ? "true" : "false",
-            total,
-            done ? 0 : total - idx,
-            immediateMotions);
         response.headers["Content-Type"] = "application/json";
+        auto owned = playEventsStatusBridge.submitOwned(
+            PlayEventsStatusReq.init,
+            PlayEventsStatusResp("", ""),
+            PlayEventsStatusResp("", "timeout waiting for main thread"),
+            PlayEventsStatusResp("", "HTTP server stopping"),
+            playEventsStatusBudget_);
+        if (owned.result.error.length == 0) {
+            response.statusCode = 200;
+            response.body = owned.result.result;
+        } else {
+            response.statusCode = 500;
+            response.body = `{"error": "Failed to retrieve playback status", "message": "`
+                          ~ jsonEsc(owned.result.error) ~ `"}`;
+        }
     }
 
     private void route_apiTestLayer(HttpRequest request, HttpResponse response) {
@@ -4245,30 +4317,9 @@ class HttpServer {
     }
 
     private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
-        // Task 0763 — the second of 0611's two named HTTP-thread writers.
-        // A valid request still installs `entries` directly on the HTTP
-        // thread, unsynchronized, while the main thread's `tickEventPlayer()`
-        // reads `entries[idx]` every frame. Unlike a scalar counter this is
-        // a dynamic array: a torn read of the slice header (ptr+length) is
-        // possible, not just a stale value, which is a sharper hazard than
-        // /api/play-events/status's field-level race above.
-        //
-        // Not fixed here: the two callers never legitimately race in
-        // practice — every test/tool driving this endpoint POSTs, then polls
-        // /api/play-events/status for `finished:true` before POSTing again
-        // (the documented protocol), so tick() only ever sees an `entries`
-        // this call finished writing before the FIRST status poll returns.
-        // The hazard is real if a caller violates that protocol (loads a new
-        // log while a previous one is still ticking); grep of tests/ and
-        // tools/ found no caller that does. Recorded rather than fixed
-        // because the correct fix (marshal onto the main thread, like
-        // /api/reset) changes this route's Answered column from httpThread
-        // to mainThread — a route-table + wire-timing change needing the
-        // full suite, not this follow-up's narrow lanes. Grouped with
-        // /api/selection and /api/history under task 0950.
-        //
-        // Validation is now a preparation step: a 400 returns before any
-        // EventPlayer method can replace playback or inherited remap state.
+        // Task 5960 D2: parsing and rejection stay on the HTTP thread; one
+        // validated immutable log is accepted through its owned main-thread
+        // service. See tests/unit/playback_owner_test.d.
         if (!testMode) {
             response.statusCode = 403;
             response.body = `{"error":"play-events is only available in --test mode"}`;
@@ -4279,9 +4330,34 @@ class HttpServer {
                 response.statusCode = 400;
                 response.body = `{"status": "error", "message": "Failed to parse events"}`;
             } else {
-                eventPlayer.begin(parsed.log);
-                response.statusCode = 200;
-                response.body = `{"status": "success", "message": "Events loaded successfully"}`;
+                // Leave 50 ms inside the owned wait budget so a call still in
+                // the queue at its service deadline is refused without changing
+                // MainThreadBridge's shared claim protocol. A service preempted
+                // after this guard retains the narrow window recorded in the
+                // task-5960 design; the full budget still governs the waiter.
+                enum Duration deadlineGuard = 50.msecs;
+                immutable acceptWindow = playEventsBudget_ > deadlineGuard
+                    ? playEventsBudget_ - deadlineGuard : Duration.zero;
+                PlayEventsReq bridgeRequest;
+                bridgeRequest.log = parsed.log;
+                bridgeRequest.notAfter = MonoTime.currTime + acceptWindow;
+                auto owned = playEventsBridge.submitOwned(
+                    bridgeRequest,
+                    PlayEventsResp(0, 0, ""),
+                    PlayEventsResp(0, 0, "timeout waiting for main thread"),
+                    PlayEventsResp(0, 0, "HTTP server stopping"),
+                    playEventsBudget_);
+                if (owned.result.error.length == 0) {
+                    import std.format : format;
+                    response.statusCode = 200;
+                    response.body = format(
+                        `{"status":"success","message":"Events loaded successfully","generation":%d,"replaced":%d}`,
+                        owned.result.generation, owned.result.replaced);
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"status":"error","message":"`
+                                  ~ jsonEsc(owned.result.error) ~ `"}`;
+                }
             }
             response.headers["Content-Type"] = "application/json";
         }
@@ -4338,7 +4414,7 @@ class HttpServer {
      * for time-based playback of a previously loaded event log.
      */
     public bool tickEventPlayer() {
-        return eventPlayer.tick();
+        return playbackController.tick();
     }
 
     /**
@@ -4348,7 +4424,7 @@ class HttpServer {
      * player's ordinary SDL-queue fallback remains active.
      */
     public void setEventPlayerSink(ImmediateEventSink sink) {
-        eventPlayer.setImmediateSink(sink);
+        playbackController.eventPlayer.setImmediateSink(sink);
     }
 
     /**
@@ -4549,7 +4625,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/surface-raycast",      "GET",  Match.prefix, Answered.mainThread, "route_apiSurfaceRaycast"),
     RouteSpec("/api/camera",               "GET",  Match.prefix, Answered.httpThread, "route_apiCameraGet"),
     RouteSpec("/api/recorded-events",      "GET",  Match.exact,  Answered.httpThread, "route_apiRecordedEvents"),
-    RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.httpThread, "route_apiPlayEventsStatus"),
+    RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.mainThread, "route_apiPlayEventsStatus"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
     // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,
     // and Match.exact compares the whole path — the query would never match.
@@ -4565,7 +4641,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/trace/disarm",         "POST", Match.exact,  Answered.httpThread, "route_apiTraceDisarm"),
     RouteSpec("/api/history/jump",         "POST", Match.exact,  Answered.mainThread, "route_apiHistoryJump"),
     RouteSpec("/api/history/replay",       "POST", Match.exact,  Answered.mainThread, "route_apiHistoryReplay"),
-    RouteSpec("/api/play-events",          "POST", Match.exact,  Answered.httpThread, "route_apiPlayEvents"),
+    RouteSpec("/api/play-events",          "POST", Match.exact,  Answered.mainThread, "route_apiPlayEvents"),
 ];
 
 // ---------------------------------------------------------------------------
