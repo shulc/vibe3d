@@ -778,9 +778,15 @@ bool shouldKillGroup(int p, int ownPgid) pure @safe @nogc nothrow {
 // has no home in the `dub test --config=tests` gate — the same reason
 // `tools/perf/lib/vslast.d` needed its own carve-out (dub.json's `_comment`
 // there). This block is this file's own witness instead: build+run it with
-//   dmd -unittest run_test.d -of=/tmp/run_test_ut && /tmp/run_test_ut
-// (a single-file compile — this module has no project-local imports, so no
-// `-i`/import-path juggling is needed). Compiling WITHOUT `-unittest`, which
+//   dmd -unittest -I. run_test.d tools/harness/hostspace.d -of=/tmp/run_test_ut \
+//     && /tmp/run_test_ut
+// The line above used to read `dmd -unittest run_test.d` with a parenthetical
+// saying this module has no project-local imports and needs no import-path
+// juggling. That stopped being true when `tools.harness.hostspace` arrived:
+// the documented command now dies with `undefined reference to
+// tools.harness.hostspace.scratchRoot()` and produces no binary at all, so
+// the witness it points at has been unrunnable — and therefore unrun — since
+// then (task 6291). Compiling WITHOUT `-unittest`, which
 // is how every real invocation of this script runs, elides this block
 // entirely; druntime's default (non-`--DRT-testmode=run-main`) unittest
 // runner exits after the block below instead of falling into the real
@@ -1041,6 +1047,80 @@ double medianOf(double[] xs, double fallback) {
 // Stale-process & port handling
 // ---------------------------------------------------------------------------
 
+/// Is anything LISTENING on this port right now? One definition, because the
+/// two callers below must agree: `killStaleVibe` waits on it, and the
+/// default-port guard refuses on it. A wrong answer here is invisible in the
+/// direction that matters — it reads "free" and every guard built on it stops
+/// firing — so its witness binds a real socket rather than trusting the shape
+/// of the command.
+bool portBusy(ushort port) {
+    return executeShell(
+        format("ss -ltn 'sport = :%d' | tail -n +2 | grep -q .", port)).status == 0;
+}
+
+/// Refuse to run when the port was NOT asked for and is already taken (task
+/// 6291). The default is 8080, which is also what a plain interactive
+/// `./vibe3d` binds, so a lane that forgets `--port` aims the whole run at
+/// whatever the developer is using. What happens then is not one failure but
+/// two, and only the loud one is survivable:
+///
+///   - an instance started as `vibe3d --test --http-port 8080` — the visual
+///     proxy, a debug session — matches `killStaleVibe`'s pattern and is
+///     killed SILENTLY, before a single test runs;
+///   - a plain `./vibe3d` does not match, survives, keeps the port, and the
+///     run dies later with "failed to come up" after a 5 s warning.
+///
+/// The discriminator is deliberately "was it asked for", not the port number:
+/// an explicit `--port 8080` is a human saying they mean it, and banning 8080
+/// outright would break the ordinary local run in main, where it is free.
+/// `--attach` is exempt by construction — it exists to drive an endpoint that
+/// is already listening.
+bool refuseDefaultBusyPort(bool portGiven, int attach, bool busy)
+        pure nothrow @safe @nogc {
+    return !portGiven && attach == 0 && busy;
+}
+
+// Witness for both of the above. The predicate's table is exhaustive over its
+// three booleans, so a dropped term cannot hide in an untried combination; the
+// `portBusy` cell binds a real listening socket, because the failure that
+// matters is the silent one where it answers "free" forever.
+unittest {
+    import std.socket;
+
+    // Every row of the truth table, so removing any one term reddens: dropping
+    // `!portGiven` breaks row 2, dropping `attach == 0` breaks row 3, dropping
+    // `busy` breaks row 4.
+    assert(refuseDefaultBusyPort(false, 0, true),
+        "a default port that is already taken must refuse");           // row 1
+    assert(!refuseDefaultBusyPort(true, 0, true),
+        "an explicit --port is a human saying they mean it");          // row 2
+    assert(!refuseDefaultBusyPort(false, 8080, true),
+        "--attach exists to drive an endpoint that is already up");    // row 3
+    assert(!refuseDefaultBusyPort(false, 0, false),
+        "a free default port is the ordinary local run");              // row 4
+    assert(!refuseDefaultBusyPort(true, 0, false));
+    assert(!refuseDefaultBusyPort(true, 8080, true));
+    assert(!refuseDefaultBusyPort(false, 8080, false));
+    assert(!refuseDefaultBusyPort(true, 8080, false));
+
+    // The real probe, against a socket this block owns. Bound to port 0 so the
+    // kernel picks a free one — asking for a fixed port here would fail on a
+    // busy host and read as a broken guard.
+    auto sock = new TcpSocket();
+    sock.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+    sock.bind(new InternetAddress("127.0.0.1", 0));
+    sock.listen(1);
+    const ushort bound = sock.localAddress.toPortString.to!ushort;
+    assert(bound != 0, "the kernel must have assigned a real port");
+    assert(portBusy(bound),
+        "portBusy answered 'free' for a port this test is listening on");
+    sock.close();
+    // Not asserting !portBusy(bound) after the close: another process on this
+    // shared host may take the port in the gap, and a flaky guard is worse
+    // than a one-sided one. The direction that must never fail silently is the
+    // one above.
+}
+
 void killStaleVibe(ushort port) {
     // pkill returns 1 if no matches — that's fine. We match by --http-port
     // arg so workers running on OTHER ports survive.
@@ -1053,10 +1133,8 @@ void killStaleVibe(ushort port) {
         Thread.sleep(100.msecs);
     }
     // Wait for the port itself to be free (TIME_WAIT can linger).
-    string portCheck = format("ss -ltn 'sport = :%d' | tail -n +2 | grep -q .", port);
     for (int i = 0; i < 50; ++i) {
-        auto r = executeShell(portCheck);
-        if (r.status != 0) return;  // port free
+        if (!portBusy(port)) return;  // port free
         Thread.sleep(100.msecs);
     }
     stderr.writefln(red("warning: port %d still in use after 5s"), port);
@@ -2380,7 +2458,10 @@ int main(string[] args) {
     bool   sweepScratch;
     bool   sweepPlan;
     string[] sweepEntry, sweepLive;
-    ushort port = 8080;
+    // 0 = not given. Resolved to the 8080 default right after getopt, so that
+    // "the caller asked for a port" stays distinguishable from "the caller got
+    // the default" — which is the whole discriminator of refuseDefaultBusyPort.
+    ushort port = 0;
     int timeoutSec = -1;   // -1 = not given → per-mode default, resolved below
     // Machine-aware default worker count: scale with the host but stay sane.
     // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
@@ -2453,12 +2534,29 @@ int main(string[] args) {
                     ~ "killed and it is reported as TIMEOUT (default 600; "
                     ~ "0 = no cap; --attach defaults to no cap)",             &timeoutSec);
 
+    const bool portGiven = (port != 0);
+    if (!portGiven) port = 8080;
+
     // --attach: target a pre-launched endpoint (visual proxy / external vibe3d).
     // Single worker on that one port; never kill or spawn an instance.
     if (attach != 0) {
         g_attachPort = cast(ushort)attach;
         port = cast(ushort)attach;
         j = 1;
+    }
+
+    // Before anything is built, killed or spawned: see refuseDefaultBusyPort.
+    if (refuseDefaultBusyPort(portGiven, attach, portBusy(port))) {
+        stderr.writefln(red("refusing to run: port %d is the DEFAULT and "
+                          ~ "something is already listening on it."), port);
+        stderr.writeln("This run would target whatever is using that port — "
+                     ~ "killing it outright if it was started as\n"
+                     ~ "`vibe3d --test --http-port`, and failing several "
+                     ~ "minutes later if it was not.");
+        stderr.writeln("Pass this lane's own port (see ~/Code/wt/.lanes.tsv), "
+                     ~ "e.g. --port 8570.\nIf you really mean this port, say "
+                     ~ "so explicitly: --port " ~ port.to!string ~ ".");
+        return 2;
     }
 
     // --attach drives an endpoint a HUMAN is driving (the visual proxy in front
