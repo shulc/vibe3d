@@ -632,19 +632,19 @@ struct SubpatchPreview {
     }
 
     private ulong computeReusablePreviewKey(ref const Mesh source, int d) const {
-        import core.internal.hash : hashOf;
-        ulong h = hashOf(d);
-        h = hashOf(source.vertices.length, h);
-        h = hashOf(source.edges.length, h);
-        h = hashOf(source.faces.length, h);
-        h = hashOf(source.vertices, h);
-        h = hashOf(source.edges, h);
+        ulong h = 0x243F6A8885A308D3UL;
+        h = foldSubpatchKeyMember(h, d);
+        h = foldSubpatchKeyMember(h, source.vertices.length);
+        h = foldSubpatchKeyMember(h, source.edges.length);
+        h = foldSubpatchKeyMember(h, source.faces.length);
+        h = foldSubpatchKeyMember(h, source.vertices);
+        h = foldSubpatchKeyMember(h, source.edges);
         foreach (face; source.faces) {
-            h = hashOf(face.length, h);
-            h = hashOf(face, h);
+            h = foldSubpatchKeyMember(h, face.length);
+            h = foldSubpatchKeyMember(h, face);
         }
         foreach (fi; 0 .. source.faces.length)
-            h = hashOf(source.isFaceSubpatch(fi), h);
+            h = foldSubpatchKeyMember(h, source.isFaceSubpatch(fi));
         // Hide (task 0613, R4). This is the Tab-toggle REUSE key: preview off,
         // preview on again, and if the key matches we resurrect the cached
         // preview mesh WITHOUT re-running buildPreview. That cached mesh
@@ -654,7 +654,7 @@ struct SubpatchPreview {
         // Folded as its own per-face term rather than OR-ed into the Subpatch
         // one, so "face i subpatch" and "face i hidden" cannot cancel.
         foreach (fi; 0 .. source.faces.length)
-            h = hashOf(source.isFaceHidden(fi), h);
+            h = foldSubpatchKeyMember(h, source.isFaceHidden(fi));
         // Crease-weight fold (task 1062, same reasoning as the Hide fold
         // just above): this IS the Tab-toggle REUSE key. A weight changed
         // while the preview was off must land in this key, or the
@@ -666,8 +666,8 @@ struct SubpatchPreview {
         // both folding down to the same value.
         {
             auto cw = source.creaseWeightMap();
-            if (cw !is null) h = hashOf(cw.data, h);
-            else              h = hashOf(0xC1EA5E00u, h);
+            if (cw !is null) h = foldSubpatchKeyMember(h, cw.data);
+            else              h = foldSubpatchKeyMember(h, 0xC1EA5E00u);
         }
         return h == 0 ? 1 : h;
     }

@@ -23,8 +23,10 @@ import std.net.curl;
 import std.json;
 import std.string : format;
 import std.conv : to;
+import std.math : fabs;
 import core.thread : Thread;
 import core.time : msecs;
+import drag_helpers;
 
 void main() {}
 
@@ -61,6 +63,43 @@ bool[] subpatchFlags() {
     foreach (b; j["isSubpatch"].array)
         r ~= (b.type == JSONType.TRUE);
     return r;
+}
+
+struct GpuSurface {
+    int faceVertCount;
+    double[3][] positions;
+}
+
+GpuSurface gpuSurface() {
+    auto j = getJson("/api/gpu/face-vbo");
+    GpuSurface s;
+    s.faceVertCount = cast(int)j["faceVertCount"].integer;
+    foreach (p; j["positions"].array) {
+        auto a = p.array;
+        s.positions ~= [a[0].floating, a[1].floating, a[2].floating];
+    }
+    return s;
+}
+
+double maxDelta(in double[3][] a, in double[3][] b) {
+    assert(a.length == b.length, "surface population changed across a position-only edit");
+    double result;
+    foreach (i; 0 .. a.length)
+        foreach (axis; 0 .. 3)
+            result = result > fabs(a[i][axis] - b[i][axis])
+                ? result : fabs(a[i][axis] - b[i][axis]);
+    return result;
+}
+
+void waitPreviewSettled() {
+    foreach (_; 0 .. 1_500) {
+        if (getJson("/api/subpatch/preview")["pending"].type != JSONType.TRUE) {
+            Thread.sleep(60.msecs);
+            return;
+        }
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "subpatch preview build did not settle within 30s");
 }
 
 unittest { // Tab with no selection flips every face's subpatch flag
@@ -139,4 +178,93 @@ unittest { // MODE-AWARE (parity 0464): a face selection made in polygon mode
         assert(b,
             "edge-mode Tab must whole-model (parity): face " ~ i.to!string ~
             " should be subpatch=true, not just the 2 polygon-selected");
+}
+
+unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale limit positions
+    // Every older subpatch regression uses the six-face cube, below the
+    // measured ten-face collapse threshold. One subdivision gives this closed
+    // cage 24 faces while retaining a deterministic vertex and VBO population.
+    postJson("/api/command", commandBody("scene.reset"));
+    auto subdiv = postJson("/api/command", commandBody("mesh.subdivide"));
+    assert(subdiv["status"].str == "ok", "fixture subdivision failed: " ~ subdiv.toString);
+
+    auto cage = getJson("/api/model");
+    assert(cage["vertexCount"].integer == 26,
+        "population floor: the once-subdivided cube must have exactly 26 cage vertices");
+    assert(cage["faceCount"].integer == 24,
+        "threshold guard: the once-subdivided cube must have exactly 24 faces");
+
+    postJson("/api/command", "select.typeFrom polygon");
+    auto tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "initial Tab playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    waitPreviewSettled();
+
+    auto before = gpuSurface();
+    assert(before.faceVertCount == 9_216 && before.positions.length == 9_216,
+        format("population floor: the 24-face depth-3 preview must expose exactly "
+             ~ "9216 face vertices, got count=%d positions=%d",
+               before.faceVertCount, before.positions.length));
+
+    auto toolOn = postJson("/api/script", "tool.set xfrm.elementMove on");
+    assert(toolOn["status"].str == "ok", "element Move activation failed: " ~ toolOn.toString);
+    Thread.sleep(150.msecs);
+
+    auto cam = fetchCamera();
+    auto vp = viewportFromCamera(cam);
+    auto vertices = getJson("/api/model")["vertices"].array;
+    size_t picked;
+    double nearest = double.max;
+    foreach (i, value; vertices) {
+        auto p = value.array;
+        immutable double dx = p[0].floating - cam.eye.x;
+        immutable double dy = p[1].floating - cam.eye.y;
+        immutable double dz = p[2].floating - cam.eye.z;
+        immutable double dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 < nearest) { nearest = dist2; picked = i; }
+    }
+    assert(picked == 19, format("fixture drift: nearest cage vertex must be 19, got %d", picked));
+    auto pickedJson = vertices[picked].array;
+    Vec3 pickedPos = Vec3(cast(float)pickedJson[0].floating,
+                          cast(float)pickedJson[1].floating,
+                          cast(float)pickedJson[2].floating);
+    float sx, sy;
+    assert(projectToWindow(pickedPos, vp, sx, sy),
+        "fixture drift: cage vertex 19 must project into the viewport");
+
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)sx, cast(int)sy,
+                             cast(int)sx, cast(int)sy - 60, 8));
+    Thread.sleep(150.msecs);
+    waitPreviewSettled();
+    auto live = gpuSurface();
+    assert(live.faceVertCount == 9_216 && live.positions.length == 9_216,
+        "the interactive position edit must preserve the 9216-vertex preview population");
+    immutable double liveDelta = maxDelta(before.positions, live.positions);
+    assert(fabs(liveDelta - 0.274082) < 1e-5,
+        format("the fixed 60px gizmo drag must move the limit VBO by 0.274082, got %.9f",
+               liveDelta));
+
+    tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "Tab-off playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "Tab-on playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    waitPreviewSettled();
+    auto restored = gpuSurface();
+    assert(restored.faceVertCount == 9_216 && restored.positions.length == 9_216,
+        "Tab-on must restore the 9216-vertex preview population");
+
+    postJson("/api/script", "tool.set xfrm.elementMove off");
+    Thread.sleep(150.msecs);
+
+    immutable double restoredDelta = maxDelta(before.positions, restored.positions);
+    assert(fabs(restoredDelta - 0.274082) < 1e-5,
+        format("Tab-on resurrected the pre-edit surface: expected VBO delta 0.274082, got %.9f",
+               restoredDelta));
+    immutable double continuityDelta = maxDelta(live.positions, restored.positions);
+    assert(continuityDelta < 2e-5,
+        format("Tab-on surface must match the live post-drag VBO, max delta %.9f",
+               continuityDelta));
 }
