@@ -118,7 +118,7 @@ import tools.transform.transform : TransformTool, VertexEditFactory,
 import tool            : ToolFlag;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient,
-                         LifecycleUndoEmitter, ForeignEditRearm;
+                         LifecycleUndoEmitter, ForeignEditBoundary;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -697,7 +697,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient,
-                          LifecycleUndoEmitter, ForeignEditRearm {
+                          LifecycleUndoEmitter, ForeignEditBoundary {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -1473,7 +1473,7 @@ public:
         return true;
     }
 
-    override void rearmAfterForeignEdit() {
+    override void resumeAfterForeignEdit() {
         auto ac = activeAcenStage();
         if (ac !is null && ac.mode == ActionCenterStage.Mode.Element) {
             // Element keeps the picked pin and displayed channels exactly as
@@ -1596,15 +1596,16 @@ public:
             // drag upload, then once more when the settled display refreshes.
             // armRegradeStamp() sees the final drag upload, so its exact +1 is
             // the owner's deferred settle — not a foreign edit boundary. An
-            // undo/redo can also land on that numeric version, so require the
-            // gesture's paired undo epoch to still be current. Keep the
-            // recorded history run open for later consolidation (N1b/N1c).
+            // foreign UiState publisher can also land on that numeric version,
+            // so license the exception only while the cage actually has a live
+            // subpatch branch. Keep the recorded history run open for later
+            // consolidation (N1b/N1c). N1d/N1f distinguish both terms.
             // recorded remainder (1906 §3.6): the boundary and its one-step
             // settle exception need ownership/order that no bus class carries.
             ulong curMutVer = mesh.mutationVersion;
             const bool ownSettledGestureMutation =
                 curMutVer == lastAppliedGestureMutationVersion + 1
-                && history !is null && history.undoEpoch() == armedUndoEpoch;
+                && mesh.hasAnySubpatch();
             if (curHash != lastSelectionHash
              || (curMutVer != lastMutationVersion
                  && !ownSettledGestureMutation)) {
@@ -3513,9 +3514,10 @@ public:
     // run-absolute field resets are added as each field migrates (Phase 2 Move,
     // Phase 3 R/S).
     private void resetRun() {
-        // This clear is the primary cache invalidator. Every reachable run,
-        // pick and layer boundary comes through resetRun(); the key below is
-        // only same-run defence against a foreign publication.
+        // Eager boundary hygiene: release the owned samples and make an empty
+        // restart explicit. Freshness does not depend on this clear alone: the
+        // mesh/settled-epoch key rejects a stale cache even if the value survives
+        // a boundary (the deletion mutation is green for exactly that reason).
         elementWeightCache_ = ElementWeightCache.init;
         // P-F Phase 2 — Move is run-absolute, so a geometry-run boundary that
         // ends an ACTIVE run (relocate / selection change after a gesture / tool

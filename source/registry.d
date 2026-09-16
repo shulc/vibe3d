@@ -167,8 +167,8 @@ struct Registry {
     bool[string] commandDiscardsWork;
     /// Snapshot of the single pre-apply tool-drop policy in command.d.
     bool[string] commandDropsToolBeforeApply;
-    /// Snapshot of the bounded commit-and-rearm policy in command.d.
-    bool[string] commandRearmsToolAfterApply;
+    /// Snapshot of the bounded pre-apply tool-commit policy in command.d.
+    bool[string] commandCommitsToolEditBeforeApply;
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
@@ -183,9 +183,10 @@ struct Registry {
             commandNeedsTarget[id] = cmd.needsEditTarget();
             commandDiscardsWork[id] = cmd.discardsUnsavedWork();
             import command : dropsActiveToolBeforeApply,
-                             rearmsActiveToolAfterApply;
+                             commitsActiveToolEditBeforeApply;
             commandDropsToolBeforeApply[id] = dropsActiveToolBeforeApply(cmd);
-            commandRearmsToolAfterApply[id] = rearmsActiveToolAfterApply(cmd);
+            commandCommitsToolEditBeforeApply[id] =
+                commitsActiveToolEditBeforeApply(cmd);
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
@@ -280,12 +281,12 @@ struct Registry {
             firstToolDrop = false;
             buf.put(format(`"%s"`, k));
         }
-        buf.put(`],"commandsRearmingToolAfterApply":[`);
-        bool firstToolRearm = true;
+        buf.put(`],"commandsCommittingToolEditBeforeApply":[`);
+        bool firstToolCommit = true;
         foreach (k; cmds) {
-            if (!commandRearmsToolAfterApply.get(k, false)) continue;
-            if (!firstToolRearm) buf.put(",");
-            firstToolRearm = false;
+            if (!commandCommitsToolEditBeforeApply.get(k, false)) continue;
+            if (!firstToolCommit) buf.put(",");
+            firstToolCommit = false;
             buf.put(format(`"%s"`, k));
         }
         buf.put(`],"toolsNeedingTarget":[`);

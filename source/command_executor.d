@@ -13,14 +13,14 @@ private:
     bool delegate() activeTool;
     void delegate(ToolTransition) dropActiveTool;
     bool delegate() commitPendingToolEdit;
-    void delegate() rearmActiveTool;
+    void delegate() resumeActiveTool;
     bool inPreApplyToolHandling_;
 
 public:
     this(CommandHistory history, bool delegate() activeTool,
          void delegate(ToolTransition) dropActiveTool,
          bool delegate() commitPendingToolEdit = null,
-         void delegate() rearmActiveTool = null) {
+         void delegate() resumeActiveTool = null) {
         assert(history !is null, "CommandExecutor requires CommandHistory");
         assert(activeTool !is null, "CommandExecutor requires an armed-tool reader");
         assert(dropActiveTool !is null, "CommandExecutor requires a tool-drop hook");
@@ -28,7 +28,7 @@ public:
         this.activeTool = activeTool;
         this.dropActiveTool = dropActiveTool;
         this.commitPendingToolEdit = commitPendingToolEdit;
-        this.rearmActiveTool = rearmActiveTool;
+        this.resumeActiveTool = resumeActiveTool;
     }
 
     // Refire/apply-record dispatch helper (task 0183 C4). Folds the
@@ -46,8 +46,8 @@ public:
     // killed the editor from inside an ImGui draw.
     bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
         // Task 6250 latch extent: the whole invocation, including pre-apply
-        // commit, command apply/record and post-apply re-arm. Declared first so
-        // reverse-order scope guards run the re-arm before this latch clears.
+        // commit, command apply/record and post-apply resume. Declared first so
+        // reverse-order scope guards run the resume before this latch clears.
         const bool reentrant = inPreApplyToolHandling_;
         if (!reentrant) inPreApplyToolHandling_ = true;
         scope(exit) if (!reentrant) inPreApplyToolHandling_ = false;
@@ -59,7 +59,8 @@ public:
         // interactive tool is armed normally DROPS the tool FIRST — committing
         // any pending live edit via deactivate() — then runs. Task 6250 ports
         // the narrower 2026-09-16 capture: mesh.subpatch_toggle instead commits
-        // the pending transform, runs, and re-arms a fresh run in place. That
+        // the pending transform, runs, and resumes the tool in place. The tool
+        // decides whether that means a fresh run or a closed retained frame. The
         // exception is bounded by both a command predicate and a cast-discovered
         // tool capability; every other command/tool pair keeps the drop rule.
         // Without the default, Delete-while-bevelling ran on the live-preview
@@ -105,7 +106,7 @@ public:
         //     drops the tool itself). reorder / rename / parent leave the
         //     primary put but are not session CONTINUATIONS either, so they
         //     keep the status-quo drop.
-        // Re-entry from commit/apply/re-arm suppresses only the narrow re-arm
+        // Re-entry from commit/apply/resume suppresses only the narrow boundary
         // exception below. An ordinary Model command reached re-entrantly
         // still owns the pre-existing drop policy.
         //
@@ -129,19 +130,19 @@ public:
             return false;
         }
 
-        bool rearm = false;
+        bool resume = false;
         if (activeTool()) {
-            if (!reentrant && rearmsActiveToolAfterApply(cmd)) {
+            if (!reentrant && commitsActiveToolEditBeforeApply(cmd)) {
                 if (commitPendingToolEdit !is null && commitPendingToolEdit())
-                    rearm = true;
+                    resume = true;
                 else
                     dropActiveTool(ToolTransition.commandPreApplyDrop);
             } else if (dropsActiveToolBeforeApply(cmd)) {
                 dropActiveTool(ToolTransition.commandPreApplyDrop);
             }
         }
-        scope(exit) if (rearm && activeTool() && rearmActiveTool !is null)
-            rearmActiveTool();
+        scope(exit) if (resume && activeTool() && resumeActiveTool !is null)
+            resumeActiveTool();
         if (cmd.apply()) {
             final switch (mode) {
                 case RecordMode.Record:     history.record(cmd);           break;

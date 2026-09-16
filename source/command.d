@@ -126,11 +126,11 @@ enum CmdFlags : uint {
 }
 
 /// Whether the application command funnel must commit the active tool's
-/// pending edit and re-arm it around `cmd`, instead of dropping it. Task 6250
+/// pending edit before `cmd`, instead of dropping it. Task 6250
 /// ports the 2026-09-16 capture in `toolcards/subpatch_toggle_during_tool_edit/`;
 /// only the captured command is licensed, while every other model command
 /// retains the prior drop policy until separately measured.
-bool rearmsActiveToolAfterApply(const Command cmd) {
+bool commitsActiveToolEditBeforeApply(const Command cmd) {
     return cmd.name() == "mesh.subpatch_toggle";
 }
 
@@ -138,7 +138,7 @@ bool rearmsActiveToolAfterApply(const Command cmd) {
 /// applying `cmd`. The active-tool presence check stays at the call site;
 /// registry startup evaluates this policy on cold command instances.
 bool dropsActiveToolBeforeApply(const Command cmd) {
-    if (rearmsActiveToolAfterApply(cmd)) return false;
+    if (commitsActiveToolEditBeforeApply(cmd)) return false;
     import std.string : startsWith;
     if (!(cmd.cmdFlags() & CmdFlags.Model)) return false;
     const cn = cmd.name();

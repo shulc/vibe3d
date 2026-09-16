@@ -65,7 +65,8 @@ private V3[] modelVertices()
     return result;
 }
 
-private V3[] establish(bool elementFalloff = true)
+private V3[] establish(bool elementFalloff = true, bool startSubpatch = false,
+                       bool createMorph = false)
 {
     postJson("/api/command", commandBody("scene.reset"));
     command("tool.pipe.attr snap enabled false");
@@ -73,6 +74,8 @@ private V3[] establish(bool elementFalloff = true)
     postJson("/api/command", commandBody("scene.loadMesh",
         `{"vertices":[[-1.2,0,-1.2],[0,0,-1.2],[1.2,0,-1.2],[-1.2,0,0],[0,0,0],[1.2,0,0],[-1.2,0,1.2],[0,0,1.2],[1.2,0,1.2]],"faces":[[0,3,4,1],[1,4,5,2],[3,6,7,4],[4,7,8,5]]}`));
     if (!elementFalloff) command("select.element vertex set 6");
+    if (startSubpatch) command("mesh.subpatch_toggle");
+    if (createMorph) command("mesh.morph.create name:f1 kind:relative");
     command("viewport.view Top");
     postJson("/api/camera", `{"distance":6,"focus":{"x":0,"y":0,"z":0}}`);
     if (!elementFalloff) command("tool.pipe.attr falloff type none");
@@ -240,6 +243,21 @@ private string actionCenterMode()
     assert(false, "6250 population: active toolpipe has no ACEN stage");
 }
 
+private string weightType()
+{
+    foreach (stage; getJson("/api/toolpipe")["stages"].array)
+        if (stage["task"].str == "WGHT") return stage["attrs"]["type"].str;
+    assert(false, "6250 population: active toolpipe has no WGHT stage");
+}
+
+private bool selectionEmpty()
+{
+    const selection = getJson("/api/selection");
+    return selection["selectedVertices"].array.length == 0
+        && selection["selectedEdges"].array.length == 0
+        && selection["selectedFaces"].array.length == 0;
+}
+
 unittest { // N1 — at-rest handle/T/run state after two complete gestures.
     const original = establish();
     const camera = fetchCamera();
@@ -277,6 +295,7 @@ unittest { // N1 — at-rest handle/T/run state after two complete gestures.
 
 private struct AtRestGesture {
     int x, y;
+    bool initialSubpatch;
     bool subpatch;
     string actionMode;
     JSONValue state;
@@ -286,9 +305,13 @@ private struct AtRestGesture {
 }
 
 private AtRestGesture runAtRestGesture(bool toggle, bool originArm = false,
-                                       bool collectRows = false)
+                                       bool collectRows = false,
+                                       bool startSubpatch = false)
 {
-    const original = establish();
+    const original = establish(true, startSubpatch);
+    const initialSubpatch = allSubpatch();
+    assert(initialSubpatch == startSubpatch,
+        "6250 population: requested initial subpatch state was not established");
     if (originArm) command("tool.pipe.attr actionCenter mode origin");
     const camera = fetchCamera();
     initialDrag(camera, original);
@@ -307,6 +330,7 @@ private AtRestGesture runAtRestGesture(bool toggle, bool originArm = false,
     AtRestGesture result;
     result.x = x;
     result.y = y;
+    result.initialSubpatch = initialSubpatch;
     result.subpatch = allSubpatch();
     result.actionMode = actionCenterMode();
     result.state = getJson("/api/tool/state");
@@ -360,7 +384,7 @@ unittest { // N1b — a post-toggle gesture settles like the no-toggle control.
             && row["inSession"].boolean && row["runId"].integer == runId,
             format("6250 N1c: gesture %s is not in the shared open run: %s", i, row));
     }
-    const originToggled = runAtRestGesture(true, true);
+    const originToggled = runAtRestGesture(true, true, true);
     assert(originToggled.actionMode == "origin",
         "6250 N1b origin population: origin arm was not selected");
     const originT = vector(originToggled.eval["transform"]["translate"]);
@@ -371,6 +395,98 @@ unittest { // N1b — a post-toggle gesture settles like the no-toggle control.
              ~ "T=%s valid=%s runOpen=%s",
                originT, originToggled.state["runFrame"]["valid"],
                originToggled.state["runOpen"]));
+    assert(originToggled.rows.length == 3,
+        format("6250 N1b origin population: three gestures added %s rows",
+               originToggled.rows.length));
+    const originRunId = originToggled.rows[0]["runId"].integer;
+    assert(originRunId != 0,
+        "6250 N1b origin: post-toggle gestures lost their run id");
+    foreach (i, row; originToggled.rows) {
+        assert(row["command"].str == "mesh.vertex_edit"
+            && row["inSession"].boolean && row["runId"].integer == originRunId,
+            format("6250 N1b origin: gesture %s is not in the shared open run: %s",
+                   i, row));
+    }
+}
+
+unittest { // N1d — a real +1 UiState mesh mutation is not our deferred settle.
+    establish(true, false, true);
+    command("tool.pipe.attr actionCenter mode origin");
+    command("tool.pipe.attr falloff type none");
+    assert(selectionEmpty(),
+        "6250 N1d population: foreign publication needs an empty selection hash");
+    const camera = fetchCamera();
+    dragArrow(camera, 55);
+    const before = getJson("/api/tool/state");
+    const beforeT = vector(getJson("/api/toolpipe/eval")["transform"]["translate"]);
+    assert(before["runOpen"].boolean && before["runFrame"]["valid"].boolean
+        && distance(beforeT, [0.0, 0.0, 0.0]) > 0.2,
+        "6250 N1d population: origin gesture did not arm a live nonzero run");
+
+    auto foreign = postJson("/api/command",
+        commandBody("mesh.morph.select", `{"name":""}`));
+    assert(foreign["status"].str == "ok",
+        "6250 N1d population: morph-target clear did not publish MapsDisplay");
+    settle();
+    assert(selectionEmpty(),
+        "6250 N1d population: foreign MapsDisplay publication changed selection hash");
+    const after = getJson("/api/tool/state");
+    const afterT = vector(getJson("/api/toolpipe/eval")["transform"]["translate"]);
+    assert(after["tool"].str == "xfrm",
+        "6250 N1d control: UiState morph-target clear dropped the transform");
+    assert(!after["runOpen"].boolean && !after["runFrame"]["valid"].boolean
+        && distance(afterT, [0.0, 0.0, 0.0]) <= 1e-6,
+        format("6250 N1d: foreign +1 mesh mutation was swallowed as own settle; "
+             ~ "T=%s valid=%s runOpen=%s",
+               afterT, after["runFrame"]["valid"], after["runOpen"]));
+    command("tool.set Transform off");
+}
+
+unittest { // N1f — after the real settle, the next +1 still is foreign.
+    establish(true, true, true);
+    command("tool.pipe.attr actionCenter mode origin");
+    command("tool.pipe.attr falloff type none");
+    assert(allSubpatch() && selectionEmpty(),
+        "6250 N1f population: live subpatch arm must keep an empty selection");
+    const camera = fetchCamera();
+    dragArrow(camera, 55);
+    const before = getJson("/api/tool/state");
+    const beforeT = vector(getJson("/api/toolpipe/eval")["transform"]["translate"]);
+    assert(before["runOpen"].boolean && before["runFrame"]["valid"].boolean
+        && distance(beforeT, [0.0, 0.0, 0.0]) > 0.2,
+        "6250 N1f population: settled subpatch gesture did not retain its run");
+
+    auto foreign = postJson("/api/command",
+        commandBody("mesh.morph.select", `{"name":""}`));
+    assert(foreign["status"].str == "ok",
+        "6250 N1f population: morph-target clear did not publish MapsDisplay");
+    settle();
+    const after = getJson("/api/tool/state");
+    const afterT = vector(getJson("/api/toolpipe/eval")["transform"]["translate"]);
+    assert(after["tool"].str == "xfrm" && allSubpatch() && selectionEmpty(),
+        "6250 N1f control: foreign publication changed the tool/subpatch/selection stand");
+    assert(!after["runOpen"].boolean && !after["runFrame"]["valid"].boolean
+        && distance(afterT, [0.0, 0.0, 0.0]) <= 1e-6,
+        format("6250 N1f: post-settle foreign +1 mutation was swallowed; "
+             ~ "T=%s valid=%s runOpen=%s",
+               afterT, after["runFrame"]["valid"], after["runOpen"]));
+    command("tool.set Transform off");
+}
+
+unittest { // N1e — reopening after a subpatch-off boundary stamps that mesh.
+    const toggledOff = runAtRestGesture(true, false, false, true);
+    const translation = vector(toggledOff.eval["transform"]["translate"]);
+    const drift = distance(vector(toggledOff.state["pivot"]), toggledOff.vertex);
+    assert(toggledOff.initialSubpatch && !toggledOff.subpatch,
+        "6250 N1e population: the command did not toggle subpatch off");
+    assert(toggledOff.state["runOpen"].boolean
+        && toggledOff.state["runFrame"]["valid"].boolean
+        && distance(translation, [0.0, 0.0, 0.0]) > 0.05
+        && drift <= 1e-3,
+        format("6250 N1e: subpatch-off reopen lost its live at-rest run; "
+             ~ "T=%s valid=%s runOpen=%s drift=%.4f",
+               translation, toggledOff.state["runFrame"]["valid"],
+               toggledOff.state["runOpen"], drift));
 }
 
 unittest { // N2 — no handle is published while the Element session is closed.
@@ -437,6 +553,8 @@ unittest { // N2c — pipe writes and the test opener cannot clear the latch.
 
 unittest { // N2d — OUR branch keys on ACEN Element, not Element falloff.
     const original = establish(false);
+    assert(weightType() != "element",
+        "6250 N2d population: ACEN-only arm unexpectedly enabled Element falloff");
     const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
     assert(distance(pin, original[6]) <= 2e-5,
         format("6250 N2d population: ACEN-only selected-element pick was %s", pin));

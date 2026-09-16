@@ -55,13 +55,13 @@ private void armPending(string context) {
 
 unittest { // Live registry publishes the one-command continuation set.
     auto registry = getJson("/api/registry");
-    auto rearms = registry["commandsRearmingToolAfterApply"].array;
+    auto commits = registry["commandsCommittingToolEditBeforeApply"].array;
     string[] commands;
     foreach (entry; registry["commands"].array) commands ~= entry.str;
     assert(commands.canFind("mesh.subpatch_toggle"),
         "6250 registry population: mesh.subpatch_toggle is not live");
-    assert(rearms.length == 1 && rearms[0].str == "mesh.subpatch_toggle",
-        "6250 live registry: continuation set changed: " ~ rearms.to!string);
+    assert(commits.length == 1 && commits[0].str == "mesh.subpatch_toggle",
+        "6250 live registry: pre-apply commit set changed: " ~ commits.to!string);
 }
 
 private JSONValue toolState() { return getJson("/api/tool/state"); }
@@ -209,7 +209,7 @@ unittest { // B — re-arm zeroes every transform channel.
         format("6250 B: re-arm retained stale channels; centre=(%.6f,%.6f)", c[0], c[1]));
 }
 
-unittest { // K — an armed tool without ForeignEditRearm is dropped.
+unittest { // K — an armed tool without ForeignEditBoundary is dropped.
     resetFixture("K");
     command("tool.set poly.bevel on", "K arm bevel");
     auto before = toolState();
@@ -219,10 +219,10 @@ unittest { // K — an armed tool without ForeignEditRearm is dropped.
     command("mesh.subpatch_toggle", "K toggle");
     auto after = toolState();
     assert(after.object.length == 0,
-        "6250 K: tool without ForeignEditRearm stayed armed: " ~ after.toString);
+        "6250 K: tool without ForeignEditBoundary stayed armed: " ~ after.toString);
 }
 
-unittest { // Tab also drops an armed tool without ForeignEditRearm.
+unittest { // Tab also drops an armed tool without ForeignEditBoundary.
     resetFixture("K-tab");
     command("tool.set poly.bevel on", "K-tab arm bevel");
     auto before = toolState();

@@ -1,4 +1,4 @@
-// Task 6250 source/data census for the bounded model-command re-arm protocol.
+// Task 6250 source/data census for the bounded foreign-edit boundary protocol.
 module tests.unit.model_command_rearm_census_test;
 
 import command : CmdFlags, Command;
@@ -62,27 +62,27 @@ unittest { // Published sets are populated, exact and disjoint by observed data.
     registry.cacheSupportedModes();
 
     auto wire = parseJSON(registry.registryJson(false));
-    auto rearms = wire["commandsRearmingToolAfterApply"].array;
+    auto commits = wire["commandsCommittingToolEditBeforeApply"].array;
     auto drops = wire["commandsDroppingToolBeforeApply"].array;
-    assert(rearms.length == 1 && rearms[0].str == "mesh.subpatch_toggle",
-        "6250 set census: re-arm registry must equal [mesh.subpatch_toggle]: "
-        ~ wire["commandsRearmingToolAfterApply"].toString);
+    assert(commits.length == 1 && commits[0].str == "mesh.subpatch_toggle",
+        "6250 set census: pre-apply commit registry must equal [mesh.subpatch_toggle]: "
+        ~ wire["commandsCommittingToolEditBeforeApply"].toString);
     assert(drops.length == 1 && drops[0].str == "mesh.bevel",
         "6250 set census: drop controls changed: "
         ~ wire["commandsDroppingToolBeforeApply"].toString);
-    foreach (entry; rearms)
+    foreach (entry; commits)
         assert(!drops.canFind(entry),
-            "6250 set census: command is published in both re-arm and drop sets: "
+            "6250 set census: command is published in both commit and drop sets: "
             ~ entry.toString);
 
     const commandSource = readText(buildPath(repoRoot, "source", "command.d"));
     const policy = bodyAt(commandSource,
-        "bool rearmsActiveToolAfterApply(const Command cmd)");
+        "bool commitsActiveToolEditBeforeApply(const Command cmd)");
     assert(policy.count(`return cmd.name() == "mesh.subpatch_toggle";`) == 1,
-        "6250 set census: re-arm policy is no longer the one captured id: " ~ policy);
+        "6250 set census: pre-apply commit policy changed captured id: " ~ policy);
 }
 
-unittest { // Production ordering: commit before apply, re-arm from scope(exit).
+unittest { // Production ordering: commit before apply, resume from scope(exit).
     const source = readText(buildPath(repoRoot, "source", "command_executor.d"));
     const body = bodyAt(source,
         "bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg)");
@@ -90,21 +90,21 @@ unittest { // Production ordering: commit before apply, re-arm from scope(exit).
     const latchExit = body.indexOf("scope(exit) if (!reentrant)");
     const refire = body.indexOf("if (history.refireActive)");
     const commit = body.indexOf("commitPendingToolEdit()");
-    const rearmScope = body.indexOf("scope(exit) if (rearm");
-    const rearmCall = body.indexOf("rearmActiveTool();");
+    const resumeScope = body.indexOf("scope(exit) if (resume");
+    const resumeCall = body.indexOf("resumeActiveTool();");
     const apply = body.indexOf("if (cmd.apply()) {");
     assert(latch >= 0 && latchExit > latch && refire > latchExit && commit > refire,
         "6250 order census: invocation latch is absent or not function-scoped");
     assert(apply > commit,
         "6250 order census: pending tool edit is no longer committed before cmd.apply()");
-    assert(rearmScope > commit && rearmCall > rearmScope,
-        "6250 order census: post-command re-arm is no longer owned by scope(exit)");
+    assert(resumeScope > commit && resumeCall > resumeScope,
+        "6250 order census: post-command resume is no longer owned by scope(exit)");
 }
 
-unittest { // Re-entry suppresses re-arm only; the ordinary drop arm survives.
+unittest { // Re-entry suppresses resume only; the ordinary drop arm survives.
     auto history = new CommandHistory();
     bool armed = true;
-    size_t drops, rearms;
+    size_t drops, resumes;
     bool innerApplied, outerApplied;
     CommandExecutor executor;
     executor = new CommandExecutor(history,
@@ -117,29 +117,29 @@ unittest { // Re-entry suppresses re-arm only; the ordinary drop arm survives.
                 "6250 re-entry control: nested Model command was refused");
             return true;
         },
-        () { ++rearms; });
+        () { ++resumes; });
     auto outer = new PolicyCommand("mesh.subpatch_toggle", CmdFlags.Model,
         () { outerApplied = true; return true; });
 
     assert(executor.applyOrRefire(outer, RecordMode.Record, null),
-        "6250 re-entry control: outer re-arm command was refused");
+        "6250 re-entry control: outer boundary command was refused");
     assert(innerApplied && outerApplied,
         "6250 re-entry control: both Model commands must apply");
     assert(drops == 1 && !armed,
         "6250 re-entry: nested ordinary Model command lost the drop arm");
-    assert(rearms == 0,
-        "6250 re-entry: dropped tool was spuriously re-armed");
+    assert(resumes == 0,
+        "6250 re-entry: dropped tool was spuriously resumed");
 }
 
 unittest { // A Model command inside refire never enters post-mode handling.
     auto history = new CommandHistory();
     bool armed = true;
-    size_t drops, commits, rearms, applies;
+    size_t drops, commits, resumes, applies;
     auto executor = new CommandExecutor(history,
         () => armed,
         (ToolTransition) { ++drops; armed = false; },
         () { ++commits; return true; },
-        () { ++rearms; });
+        () { ++resumes; });
     history.refireBegin();
     auto cmd = new PolicyCommand("layer.rename", CmdFlags.Model,
         () { ++applies; return true; });
@@ -148,7 +148,7 @@ unittest { // A Model command inside refire never enters post-mode handling.
         "6250 refire control: Model command did not fire inside the bracket");
     assert(armed,
         "6250 refire: Model command crossed the armed-tool policy");
-    assert(drops == 0 && commits == 0 && rearms == 0,
+    assert(drops == 0 && commits == 0 && resumes == 0,
         "6250 refire: lifecycle callbacks ran inside the bracket");
     history.refireEnd();
 }
@@ -156,9 +156,9 @@ unittest { // A Model command inside refire never enters post-mode handling.
 unittest { // Capability methods cast narrowly and contain no generic fallback.
     const source = readText(buildPath(repoRoot, "source", "edit_session.d"));
     const commit = bodyAt(source, "bool commitPendingForForeignEdit() {");
-    const rearm = bodyAt(source, "void rearmAfterForeignEdit() {");
-    foreach (name, body; ["commit": commit, "rearm": rearm]) {
-        assert(body.count("cast(ForeignEditRearm)") == 1,
+    const resume = bodyAt(source, "void resumeAfterForeignEdit() {");
+    foreach (name, body; ["commit": commit, "resume": resume]) {
+        assert(body.count("cast(ForeignEditBoundary)") == 1,
             "6250 capability census: " ~ name ~ " body lost its exact cast gate");
         assert(body.indexOf("commitUncommittedEdit") < 0,
             "6250 capability census: " ~ name ~ " body gained generic commit fallback");
@@ -170,7 +170,7 @@ unittest { // Capability methods cast narrowly and contain no generic fallback.
 unittest { // The optional capability has exactly one production implementor.
     size_t implementors;
     string[] owners;
-    auto pattern = regex(r"class\s+\w+\s*:[^{]*\bForeignEditRearm\b[^{]*\{");
+    auto pattern = regex(r"class\s+\w+\s*:[^{]*\bForeignEditBoundary\b[^{]*\{");
     foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
         const source = readText(entry.name);
         foreach (_; source.matchAll(pattern)) {
