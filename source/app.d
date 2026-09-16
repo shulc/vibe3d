@@ -208,6 +208,7 @@ import ui.viewport_render : SceneInputs, SceneViewInputs,
 import ui.history_panel : HistoryPanelState, HistoryPanelActions,
     bindHistoryPanelRead, bindHistoryPanelActions;
 import ui.item_rename : ItemRenameState;
+import ui.dock_drag : viewportOverlayWindowFlags, windowDockDragActive;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -463,6 +464,7 @@ import editor_app : installSnapState;
 private __gshared bool g_seedFreshLayout = false;
 
 import viewport : LayoutPreset;
+import ui.imgui_window_class : ImGuiWindowClassMirror;
 
 // ---------------------------------------------------------------------------
 // Task 0211: scoped viewport-only layout switch — dock-node internals
@@ -478,7 +480,15 @@ private extern(C) @nogc nothrow {
     void ImGuiDockNode_SetLocalFlags(ImGuiDockNode* self, int flags);
     bool ImGuiDockNode_IsCentralNode(ImGuiDockNode* self);
     bool ImGuiDockNode_IsEmpty(ImGuiDockNode* self);
+    pragma(mangle, "igSetNextWindowClass")
+    void setNextWindowClass(const(ImGuiWindowClassMirror)* self);
 }
+alias igSetNextWindowClass = setNextWindowClass;
+
+static assert(ImGuiWindowClassMirror.sizeof == 40);
+static assert(ImGuiWindowClassMirror.ParentViewportId.offsetof == 4);
+static assert(ImGuiWindowClassMirror.DockNodeFlagsOverrideSet.offsetof == 24);
+static assert(ImGuiWindowClassMirror.DockingAllowUnclassed.offsetof == 29);
 
 // Private imgui dock-node flag (imgui_internal.h:1993) — internal-only bit,
 // not part of the public `ImGuiDockNodeFlags` enum bound in d_imgui/imgui_h.d,
@@ -488,6 +498,14 @@ private extern(C) @nogc nothrow {
 // dropped that inner dockspace entirely, so nothing declares a nested
 // DockSpace node anymore.)
 private enum int kDockFlagCentralNode  = 1 << 11;
+
+// This internal bit is delivered through ViewportHost's window class, never
+// stored on a dock node. ImGui rebuilds LocalFlagsInWindows from each node's
+// own windows every frame, so shared inheritance, local-flag transfer and ini
+// persistence cannot spread or erase it. It follows ViewportHost to a new leaf
+// after a split; without the input-side opening in ui.dock_drag it is inert.
+// Evidence: card 6245, rig H/I/J and the post-split vpCtr2 row.
+private enum int kDockFlagNoDockingOverMe = 1 << 20;
 
 // Private imgui dock-node flag (imgui_internal.h:1995, `HiddenTabBar`).
 // task 0211 Phase 4 deleted the OLD per-cell `kDockFlagHiddenTabBar` shim in
@@ -1056,6 +1074,13 @@ void main(string[] args) {
         }
     }
 
+    bool testViewportWindows;
+    {
+        import std.process : environment;
+        testViewportWindows = testMode
+            && environment.get("VIBE3D_TEST_VIEWPORT_WINDOWS", "") == "1";
+    }
+
     // Headless render-diff path. Bypasses SDL + ImGui + main loop
     // entirely — both backends' CPU paths produce framebuffers without
     // needing a GL context.
@@ -1478,12 +1503,20 @@ void main(string[] args) {
     // means windows always open at their programmatic default positions,
     // independent of cwd. Must run before any window is created/loaded.
     // Layout ini: versioned file in the user config dir for interactive
-    // sessions; strictly null in --test regardless of VIBE3D_CONFIG_DIR
-    // (that env var gates prefs, but ini must stay null for byte-identity
-    // across parallel workers). LayoutResetAction keeps the char* alive for
-    // the full lifetime of the ImGui context (ImGui stores the raw pointer).
+    // sessions. Ordinary --test keeps it null for worker byte-identity; the
+    // opt-in docking witness may name an isolated dump path. LayoutResetAction
+    // keeps the char* alive for the full ImGui context lifetime.
     if (command.g_testMode) {
-        io.IniFilename = null;
+        import std.process : environment;
+        const testLayoutIni = testViewportWindows
+            ? environment.get("VIBE3D_TEST_LAYOUT_INI", "") : "";
+        if (testLayoutIni.length) {
+            layoutResetAction.bindLayoutIniPath(testLayoutIni);
+            const testIniFilename = layoutResetAction.iniFilename();
+            io.IniFilename = testIniFilename;
+        } else {
+            io.IniFilename = null;
+        }
     } else {
         import prefs : prefsDir, layoutIniPath, kLayoutIniVersion;
         auto iniDir = prefsDir();
@@ -3563,6 +3596,7 @@ void main(string[] args) {
     app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;
     app.onActiveLayerChanged = onActiveLayerChanged;
     app.resetAllPipeStages   = cast(void delegate())&resetAllPipeStages;
+    app.authorLayoutReset    = &layoutResetAction.authorReset;
     app.pipeHoldsTask        = cast(bool delegate())&pipeHoldsTask;
     app.clearPipeTasks       = cast(void delegate())&clearPipeTasks;
 
@@ -4775,12 +4809,22 @@ void main(string[] args) {
     // callers that install no sink keep EventPlayer's SDL-queue fallback.
     ImmediateEventSink replaySink = (SDL_Event* ev, bool windowFocused) {
         // Replayed keyboard and focus events are real ImGui inputs too; the
-        // SDL backend rejects window id 0, so bind them to this window.
+        // SDL backend rejects window id 0, so bind them to this window. Mouse
+        // ids are opt-in with the viewport-window docking witness: enabling
+        // them globally would hand ImGui the cursor in every mouse replay and
+        // change WantCaptureMouse/viewportInputAllowed across that population.
         immutable uint windowId = SDL_GetWindowID(window);
         if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP)
             ev.key.windowID = windowId;
         else if (ev.type == SDL_WINDOWEVENT)
             ev.window.windowID = windowId;
+        else if (testViewportWindows && ev.type == SDL_MOUSEMOTION)
+            ev.motion.windowID = windowId;
+        else if (testViewportWindows
+              && (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_MOUSEBUTTONUP))
+            ev.button.windowID = windowId;
+        else if (testViewportWindows && ev.type == SDL_MOUSEWHEEL)
+            ev.wheel.windowID = windowId;
         if (!router.processEvent(ev, windowFocused)) running = false;
     };
     evPlay.setImmediateSink(replaySink);
@@ -4985,12 +5029,10 @@ void main(string[] args) {
         // A transparent, no-chrome, no-input window that covers the entire
         // display and hosts the main dockspace with a PassthruCentralNode.
         //
-        // PassthruCentralNode keeps the unoccupied centre mouse-transparent,
-        // so the existing io.WantCaptureMouse guards pass through 3D input
-        // exactly as before.  In --test mode IniFilename=null means the dock
-        // layout is rebuilt from the DockBuilder script every launch; since
-        // the Layers window is hidden in tests the whole dockspace becomes
-        // the passthru central hole → test geometry is unchanged.
+        // PassthruCentralNode is configured, but today the builder-created
+        // root has no central node, so ImGui registers no passthrough hole.
+        // The missing central-node invariant and its test geometry are card
+        // 6248; task 6245 deliberately leaves that tree shape unchanged.
         //
         // ConfigViewportsEnable stays OFF throughout Phase 0 (no OS windows).
         {
@@ -5064,12 +5106,13 @@ void main(string[] args) {
             if (doSeed) {
                 dockLayoutDone = true;
                 ImGui.DockBuilderRemoveNode(dockspaceId);
-                // AddNode(id, 0) creates the node; the per-frame DockSpace(id,…)
-                // call above re-applies the DockSpace flag each frame (heal).
+                // AddNode(id, 0) recreates a floating-style root; the per-frame
+                // DockSpace call does not restore its central node. Card 6248
+                // owns that invariant; task 6245 must preserve this call.
                 ImGui.DockBuilderAddNode(dockspaceId, 0);
                 ImGui.DockBuilderSetNodeSize(dockspaceId, ImVec2(dsz.x, dsz.y));
 
-                if (!testMode) {
+                if (!testMode || testViewportWindows) {
                     // Interactive: full chrome + viewport-host seed.
                     // Split order (task 0211 Phase 2 — sides off the root
                     // FIRST so the side panels span full window height, THEN
@@ -5130,7 +5173,7 @@ void main(string[] args) {
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
                     ImGui.DockBuilderDockWindow("Tab bar",            topId);
                     ImGui.DockBuilderDockWindow("Status line",        botId);
-                    // Central node: "ViewportHost" (task 0211; task 0223
+                    // Viewport region: "ViewportHost" (task 0211; task 0223
                     // dropped its inner DockSpace) — a plain window whose
                     // ONLY job now is to read the host content rect (see the
                     // ViewportHost block just before the per-cell Viewport##k
@@ -5139,24 +5182,16 @@ void main(string[] args) {
                     // that rect + `vpm.hRatio/vRatio` every frame, so a
                     // runtime `viewport.layout` switch or a cross-splitter
                     // drag never touches this outer chrome tree.
-                    // In --test this window is never created → PassthruCentralNode
-                    // hole → picking rect unchanged (but we're in !testMode here).
+                    // The root currently has no central node, so no passthrough
+                    // hole exists; card 6248 owns that separate repair.
                     ImGui.DockBuilderDockWindow("ViewportHost", vpRegion);
-                    // Hardening: lock the node so chrome can't be dragged
-                    // into the viewport region and "ViewportHost" itself
-                    // can't be undocked/floated out from under its nested
-                    // dockspace (which would reintroduce a mixed-tree
-                    // hazard). CentralNode is re-ORed back since vpRegion
-                    // (the last unsplit remainder above) is the dockspace's
-                    // designated central node — re-query it here (not the
-                    // stale `centerId` id from before the reorder) so the
-                    // PassthruCentralNode hole lands on the actual viewport
-                    // region.
+                    // The node-level undock guard was dropped by task 6245.
+                    // Keep the measured no-op CentralNode term: card 6248 makes
+                    // it load-bearing after restoring the root invariant.
                     {
                         auto vpRegionNode = ImGui.DockBuilderGetNode(vpRegion);
                         if (vpRegionNode !is null) {
-                            int f = cast(int) ImGuiDockNodeFlags.NoUndocking
-                                  | (ImGuiDockNode_IsCentralNode(vpRegionNode) ? kDockFlagCentralNode : 0)
+                            int f = (ImGuiDockNode_IsCentralNode(vpRegionNode) ? kDockFlagCentralNode : 0)
                                   | kDockFlagHiddenTabBar;
                             ImGuiDockNode_SetLocalFlags(vpRegionNode, f);
                         }
@@ -6188,15 +6223,12 @@ void main(string[] args) {
         // the same frame, so `_cellXs/Ys/Ws/Hs` are ready when those windows
         // position themselves.
         //
-        // `!testMode` only: in `--test` no "ViewportHost"/"Viewport##k"
-        // windows are ever created (see the per-cell loop's `!testMode` gate
-        // below) — this whole block is skipped, so the outer central node
-        // stays the PassthruCentralNode hole exactly as before (byte-
-        // identical HTTP suite geometry). The `--test` rect authority remains
-        // the unchanged `cellRectsFor` via `applyLayout` / the SDL resize
-        // handler (task 0223 plan §6).
+        // Ordinary `--test` still skips these windows and uses `cellRectsFor`;
+        // the opt-in docking witness enables the production-shaped branch.
+        // There is no passthrough hole today because the root has no central
+        // node; that separate invariant is card 6248.
         int[4] _cellXs, _cellYs, _cellWs, _cellHs;
-        if (!testMode) {
+        if (!testMode || testViewportWindows) {
             // Task 0223: "ViewportHost" no longer draws any content of its
             // own (it used to host the inner DockSpace) — it exists purely
             // to read the host content rect. NoBackground is REQUIRED: the
@@ -6224,6 +6256,14 @@ void main(string[] args) {
                 ImGuiWindowFlags.NoMouseInputs;
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(0, 0));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+            // NoDockingOverMe refuses centre merging but leaves side zones
+            // available. The per-frame window class follows ViewportHost across
+            // splits and is rebuilt locally; ClassId intentionally stays zero.
+            ImGuiWindowClassMirror vpClass;
+            vpClass.ParentViewportId = 0xFFFF_FFFFu;
+            vpClass.DockingAllowUnclassed = true;
+            vpClass.DockNodeFlagsOverrideSet = kDockFlagNoDockingOverMe;
+            igSetNextWindowClass(&vpClass);
             if (ImGui.Begin("ViewportHost", null, hostFlags)) {
                 ImVec2 hostPos   = ImGui.GetCursorScreenPos();
                 ImVec2 hostAvail = ImGui.GetContentRegionAvail();
@@ -6263,14 +6303,15 @@ void main(string[] args) {
         //   3. ImGui.Render() → RenderDrawData samples the freshly-filled tex.
         // All three happen in this frame, in that order.
         //
-        // "Viewport" window — interactive only.  NOT created in --test so the
-        // central node stays the PassthruCentralNode hole, keeping
-        // WantCaptureMouse false over the 3D area → 320/320 byte-identical.
+        // "Viewport" windows are interactive by default and test-visible only
+        // for the explicit docking witness. Ordinary --test remains byte-
+        // identical because the opt-in is read once at startup.
         ifs.viewportWindowHovered = false;
-        if (!testMode) {
+        if (!testMode || testViewportWindows) {
             import std.conv : to;
             import toolpipe.packets : FalloffPacket;
             import falloff_render : drawFalloffOverlay;
+            immutable bool dockDragActive = windowDockDragActive();
             // Task 0223: cells are plain top-level windows, procedurally
             // positioned every frame from `_cellXs/Ys/Ws/Hs` (see the
             // ViewportHost block above) rather than docked. NoDocking is
@@ -6289,7 +6330,7 @@ void main(string[] args) {
             // above them; the splitter's own hit-test tolerates a
             // freshly-clicked cell transiently rising over an arm (see the
             // widget block after this loop).
-            immutable int vpWinFlags =
+            immutable int vpWinFlags = viewportOverlayWindowFlags(
                 ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse |
                 ImGuiWindowFlags.NoTitleBar |
@@ -6297,7 +6338,8 @@ void main(string[] args) {
                 ImGuiWindowFlags.NoMove |
                 ImGuiWindowFlags.NoCollapse |
                 ImGuiWindowFlags.NoDocking |
-                ImGuiWindowFlags.NoSavedSettings;
+                ImGuiWindowFlags.NoSavedSettings,
+                dockDragActive);
 
             // Task 0213: falloff ring/sphere overlay packet, built ONCE
             // before the per-cell loop (view-independent — same world-
@@ -6933,13 +6975,14 @@ void main(string[] args) {
                 // ViewportManager.crossNeedsRefocus, set in applyLayout). The
                 // arms are submitted AFTER the cells, so the explicit
                 // SetWindowFocus runs after the cells' reappear-focus and wins.
-                immutable int armBaseFlags =
+                immutable int armBaseFlags = viewportOverlayWindowFlags(
                     ImGuiWindowFlags.NoTitleBar        | ImGuiWindowFlags.NoResize |
                     ImGuiWindowFlags.NoMove            | ImGuiWindowFlags.NoCollapse |
                     ImGuiWindowFlags.NoScrollbar       | ImGuiWindowFlags.NoScrollWithMouse |
                     ImGuiWindowFlags.NoDocking         | ImGuiWindowFlags.NoSavedSettings |
                     ImGuiWindowFlags.NoBackground      | ImGuiWindowFlags.NoNav |
-                    ImGuiWindowFlags.NoFocusOnAppearing;
+                    ImGuiWindowFlags.NoFocusOnAppearing,
+                    dockDragActive);
 
                 // Consume the "layout just changed" flag: on this frame we must
                 // explicitly raise both arms above the (possibly just-

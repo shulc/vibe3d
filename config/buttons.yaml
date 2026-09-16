@@ -7,6 +7,7 @@ panels:
           - { label: "Open…",    action: { kind: command, id: file.open } }
           - { label: Save,       action: { kind: command, id: file.save } }
           - { label: "Save As…", action: { kind: command, id: file.saveAs } }
+          - { label: "Reset Layout", action: { kind: command, id: layout.reset } }
           - label: "Import ›"
             action:
               kind: popup

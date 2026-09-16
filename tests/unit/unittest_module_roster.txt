@@ -194,6 +194,7 @@ tests.unit.commands.select.loop_test
 tests.unit.commands.select.selection_command_registration_test
 tests.unit.commands.test_undo_flags_test
 tests.unit.commands.tool.tool_lifecycle_registration_test
+tests.unit.commands.ui.layout_reset_test
 tests.unit.commands.viewport.viewport_command_registration_test
 tests.unit.commands.workplane_test
 tests.unit.comment_prose_ceiling_test
@@ -489,11 +490,14 @@ tests.unit.ui.channel_rows_test
 tests.unit.ui.channels_panel_roles_test
 tests.unit.ui.command_notice_test
 tests.unit.ui.discard_guard_test
+tests.unit.ui.dock_drop_over_viewport_test
+tests.unit.ui.dock_wiring_census_test
 tests.unit.ui.guard_modal_state_test
 tests.unit.ui.history_panel_test
 tests.unit.ui.image_list_panel_roles_test
 tests.unit.ui.image_rows_test
 tests.unit.ui.imgui_tabbing_test
+tests.unit.ui.imgui_window_class_layout_test
 tests.unit.ui.item_rename_state_test
 tests.unit.ui.item_rows_test
 tests.unit.ui.layer_list_panel_roles_test

@@ -193,6 +193,7 @@ import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
+import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
@@ -1014,6 +1015,9 @@ void registerCommands(EditorApp app) {
                          app.sessionOwner.editModePtr()),
         app.history, app.historyPanelState, app.macroRecorder);
     registerSelfTestCommands(app);
+    app.reg().commandFactories["layout.reset"] = () => cast(Command)
+        new UiLayoutResetCommand(&app.mesh(), app.cameraView(), app.editMode(),
+                                 app.authorLayoutReset);
     // The same three-deep `with` the flat body had, for the same reason the
     // family functions keep it: identical name resolution, not a narrower one.
     with (app) {
