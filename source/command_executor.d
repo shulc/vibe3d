@@ -105,22 +105,10 @@ public:
         //     drops the tool itself). reorder / rename / parent leave the
         //     primary put but are not session CONTINUATIONS either, so they
         //     keep the status-quo drop.
-        // Refire brackets carry only SideEffect tool.attr commands, so neither
-        // policy matches. Re-entry from commit/apply/re-arm is suppressed by
-        // the function-scoped latch above; a re-armed tool remains non-null.
-        bool rearm = false;
-        if (activeTool() && !reentrant) {
-            if (rearmsActiveToolAfterApply(cmd)) {
-                if (commitPendingToolEdit !is null && commitPendingToolEdit())
-                    rearm = true;
-                else
-                    dropActiveTool(ToolTransition.commandPreApplyDrop);
-            } else if (dropsActiveToolBeforeApply(cmd)) {
-                dropActiveTool(ToolTransition.commandPreApplyDrop);
-            }
-        }
-        scope(exit) if (rearm && activeTool() && rearmActiveTool !is null)
-            rearmActiveTool();
+        // Re-entry from commit/apply/re-arm suppresses only the narrow re-arm
+        // exception below. An ordinary Model command reached re-entrantly
+        // still owns the pre-existing drop policy.
+        //
         // Task 0616 Ph5 review (S3): a command that knows WHY it declined gets
         // to say so. `Command.refusalReason()` is "" for everything that has
         // not opted in, in which case the thrown text is byte-identical to
@@ -133,11 +121,27 @@ public:
             auto why = cmd.refusalReason();
             return why.length > 0 ? throwMsg ~ ": " ~ why : throwMsg;
         }
+        // A refire command belongs to the already-open interactive bracket;
+        // it never crosses the armed-tool post-mode policy a second time.
         if (history.refireActive) {
             if (history.fire(cmd)) return true;
             if (throwMsg !is null) throw new Exception(failMsg());
             return false;
         }
+
+        bool rearm = false;
+        if (activeTool()) {
+            if (!reentrant && rearmsActiveToolAfterApply(cmd)) {
+                if (commitPendingToolEdit !is null && commitPendingToolEdit())
+                    rearm = true;
+                else
+                    dropActiveTool(ToolTransition.commandPreApplyDrop);
+            } else if (dropsActiveToolBeforeApply(cmd)) {
+                dropActiveTool(ToolTransition.commandPreApplyDrop);
+            }
+        }
+        scope(exit) if (rearm && activeTool() && rearmActiveTool !is null)
+            rearmActiveTool();
         if (cmd.apply()) {
             final switch (mode) {
                 case RecordMode.Record:     history.record(cmd);           break;

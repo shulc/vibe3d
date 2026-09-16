@@ -1180,21 +1180,21 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "be91814babb7513836739a7a68e8a3cb1d7c4040d4fad4cd8c01809e9e483921",
+      "semantic_sha256": "7a944a20b0a3f986249f4e6138f55d969f95da1ab4d2090761e971b9e6a84b6d",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "afa7ed76dff3f6b2c1b612547ded14e92d2fc75562b460f38e6316470d22981d",
+      "semantic_sha256": "68edfc0a7f9cf3adb942c3616d8540414bac4e5959e216525ad3198c25546516",
       "signature": "void()",
       "symbol": "deactivate"
     },
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "5d6916d51a10d525642f152f5bde6e64c376d441de457e7e3c2797664753c02d",
+      "semantic_sha256": "7cc37b1b1cc45537b94ea9d2e2cdc89224828e2b2c74fd3963c68c9904b96ed6",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },

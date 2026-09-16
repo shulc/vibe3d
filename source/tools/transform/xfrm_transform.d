@@ -1044,6 +1044,7 @@ public:
 
     override void activate() {
         super.activate();   // sets active=true, runs resetTransientState()
+        foreignEditSessionClosed_ = false;
         // Bring the composed input banks online.
         foreach (sub; enabledSubs()) sub.activate();
         scaleSub.setInputOptions(negScale);
@@ -1473,11 +1474,25 @@ public:
     }
 
     override void rearmAfterForeignEdit() {
-        // This is a fresh run, unlike resyncSession's history-navigation path:
-        // reset the displayed channels, then stamp the post-command mesh so the
-        // foreign-mutation guard cannot close the boundary a second time.
+        auto ac = activeAcenStage();
+        if (ac !is null && ac.mode == ActionCenterStage.Mode.Element) {
+            // Element keeps the picked pin and displayed channels exactly as
+            // committed, but ends the live input session. The wrapper stays
+            // armed so the next press can reopen it as an ordinary fresh pick.
+            foreignEditSessionClosed_ = true;
+            activeDrag = null;
+            foreach (sub; enabledSubs()) sub.deactivate();
+            toolHandles.begin();
+            return;
+        }
+
+        // Origin starts a fresh run: reset the displayed channels, then stamp
+        // the post-command mesh so the foreign-mutation guard cannot close the
+        // boundary a second time.
         resetTransientState(false);
         lastSelectionHash   = computeSelectionHash();
+        // Construction-held stamp: the foreign edit has already landed, so
+        // this write prevents the idle guard from inventing another boundary.
         lastMutationVersion = mesh.mutationVersion;
     }
 
@@ -1488,6 +1503,7 @@ public:
         if (editIsOpen())
             commitEdit("Move");
         foreach (sub; enabledSubs()) sub.deactivate();
+        foreignEditSessionClosed_ = false;
         // Tool drop (record+consolidate): consolidate the FINAL run's in-session
         // tail into one surviving entry. A clean multi-gesture run therefore
         // collapses to ONE undo entry at the drop (one post-drop Ctrl+Z reverts
@@ -1516,7 +1532,7 @@ public:
     }
 
     override void update(ref VectorStack vts) {
-        if (!active) return;
+        if (!active || foreignEditSessionClosed_) return;
 
         // Task 0614 Phase 3 — refresh the cached subject type HERE, the
         // frame's FIRST tick of this tool, not only in `draw()` further
@@ -2305,7 +2321,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
-        if (!active) return;
+        if (!active || foreignEditSessionClosed_) return;
         // Task 0206: `cachedVp` is read by every event handler (screen→world
         // drag math, hit-test) for THIS tool. Only the interactive (owner)
         // cell's draw may pin it — a Quad/Split "visual" replica draws under
@@ -2950,6 +2966,20 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         syncInputViewport(vts);
+        bool reopenedFromForeignEdit;
+        if (foreignEditSessionClosed_ && e.button == SDL_BUTTON_LEFT) {
+            // The first press after an Element-mode foreign edit is a normal
+            // pick on the consolidated mesh. Reset before the pick so T is
+            // zero and all run-scoped falloff caches re-grade from that mesh;
+            // skip stale handle hit-testing for this one press.
+            foreignEditSessionClosed_ = false;
+            resetTransientState(false);
+            foreach (sub; enabledSubs()) sub.activate();
+            scaleSub.setInputOptions(negScale);
+            lastSelectionHash   = computeSelectionHash();
+            lastMutationVersion = mesh.mutationVersion;
+            reopenedFromForeignEdit = true;
+        }
         // Gizmo-handle hit test FIRST. When a click hits a registered shared
         // handle, dispatch only to that handle's bank; otherwise the Move bank
         // may consume a rotate/scale click as an off-gizmo relocate before R/S
@@ -2957,7 +2987,7 @@ public:
         // element-pick gate below: a click on a transform handle is an
         // on-handle drag, NEVER an element pick/relocate.
         int hitPart = -1;
-        if (e.button == SDL_BUTTON_LEFT) {
+        if (e.button == SDL_BUTTON_LEFT && !reopenedFromForeignEdit) {
             toolHandles.begin();
             registerGizmoHandles(toolHandles);
             // Task 0212: same owner-geometry refresh as the draw arbiter
@@ -4267,6 +4297,7 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (foreignEditSessionClosed_) return false;
         syncInputViewport(vts);
         if (pipeGizmoHost !is null && pipeGizmoHost.isDragging())
             return pipeGizmoHost.routeMotion(e, cachedVp);
@@ -4677,6 +4708,7 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (foreignEditSessionClosed_) return false;
         syncInputViewport(vts);
         if (pipeGizmoHost !is null && pipeGizmoHost.routeUp(e)) {
             // P-E: a falloff-handle DRAG just ended. Its per-frame setAttrs
@@ -6217,7 +6249,7 @@ public:
         // Foot-gun retired (forms Phase 5b): was `if (!flagT) return;`, which
         // silently no-opped against a Rotate/Scale preset. Open the wrapper with
         // the first enabled bank's provenance, matching production.
-        if (!flagT && !flagR && !flagS) {
+        if (foreignEditSessionClosed_ || (!flagT && !flagR && !flagS)) {
             return;
         }
         // Preserve the opener's historical first-enabled-bank owner for tests
@@ -6774,6 +6806,11 @@ private:
     // handles fold in here in step 4b. Constructed in the wrapper ctor.
     ToolHandles toolHandles;
 
+    // Element-mode foreign edits leave the tool selected but deactivate its
+    // input banks. While closed, numeric values remain writable and inert;
+    // only the next left press clears this latch and performs a fresh pick.
+    private bool foreignEditSessionClosed_;
+
 
     // Task 0234 (GET /api/tool/state): active bank + drag axis + pivot.
     // `activeBank` is "none" while idle (mouse motion goes to every enabled
@@ -6802,6 +6839,8 @@ private:
         root["dragAxis"]   = JSONValue(dragAxis);
         root["dragging"]   = JSONValue(activeDrag !is null);
         root["editOpen"]   = JSONValue(editIsOpen());
+        root["sessionOpen"] = JSONValue(!foreignEditSessionClosed_);
+        root["runOpen"] = JSONValue(history !is null && history.runOpen());
         Vec3 pivot = moveGizmoCenter();
         root["pivot"] = JSONValue([JSONValue(pivot.x), JSONValue(pivot.y), JSONValue(pivot.z)]);
         // The relocate-order witness must read the handler that consumed the

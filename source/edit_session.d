@@ -262,14 +262,14 @@ interface LifecycleUndoEmitter { }
 
 // ---------------------------------------------------------------------------
 // ForeignEditRearm — optional capability for a tool that can close its own
-// run before a foreign mesh edit and establish a fresh run afterward. Task
-// 6250 keeps this cast-discovered and deliberately provides no generic Tool
+// run before a foreign mesh edit and settle the session afterward. Task 6250
+// keeps this cast-discovered and deliberately provides no generic Tool
 // fallback: a tool without the capability retains the existing drop behavior.
 // ---------------------------------------------------------------------------
 interface ForeignEditRearm {
     /// PRE-apply: commit a pending edit, if any, and close the run boundary.
     bool commitPendingForForeignEdit();
-    /// POST-apply: zero the run and re-seat boundary latches on the new mesh.
+    /// POST-apply: follow the tool's live action-centre continuation law.
     void rearmAfterForeignEdit();
 }
 
@@ -663,7 +663,7 @@ final class EditSession {
         return false;
     }
 
-    /// Re-open the capable active tool after the foreign edit has landed.
+    /// Let the capable active tool settle after the foreign edit has landed.
     void rearmAfterForeignEdit() {
         if (auto rearm = cast(ForeignEditRearm) tool_())
             rearm.rearmAfterForeignEdit();

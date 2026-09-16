@@ -1,5 +1,5 @@
-// Task 6250: mesh.subpatch_toggle commits a pending transform, applies the
-// command, and re-arms a fresh transform run without rebuilding the toolpipe.
+// Task 6250 origin arm: mesh.subpatch_toggle commits a pending transform,
+// applies the command, and re-arms a fresh run without rebuilding the toolpipe.
 // Assert order is deliberate: each mutation's must-stay-green controls precede
 // the assertion that must redden.
 
@@ -11,6 +11,7 @@ import std.conv : to;
 import std.format : format;
 import std.json : JSONType, JSONValue;
 import std.math : fabs;
+import std.algorithm : canFind;
 
 void main() {}
 
@@ -47,8 +48,20 @@ private void resetFixture(string context) {
 
 private void armPending(string context) {
     command("tool.set Transform on", context ~ " arm");
+    command("tool.pipe.attr actionCenter mode origin", context ~ " origin arm");
     command("tool.beginSession", context ~ " begin session");
     command("tool.attr Transform TX 1.5", context ~ " pending TX");
+}
+
+unittest { // Live registry publishes the one-command continuation set.
+    auto registry = getJson("/api/registry");
+    auto rearms = registry["commandsRearmingToolAfterApply"].array;
+    string[] commands;
+    foreach (entry; registry["commands"].array) commands ~= entry.str;
+    assert(commands.canFind("mesh.subpatch_toggle"),
+        "6250 registry population: mesh.subpatch_toggle is not live");
+    assert(rearms.length == 1 && rearms[0].str == "mesh.subpatch_toggle",
+        "6250 live registry: continuation set changed: " ~ rearms.to!string);
 }
 
 private JSONValue toolState() { return getJson("/api/tool/state"); }
@@ -209,9 +222,27 @@ unittest { // K — an armed tool without ForeignEditRearm is dropped.
         "6250 K: tool without ForeignEditRearm stayed armed: " ~ after.toString);
 }
 
+unittest { // Tab also drops an armed tool without ForeignEditRearm.
+    resetFixture("K-tab");
+    command("tool.set poly.bevel on", "K-tab arm bevel");
+    auto before = toolState();
+    assert("tool" in before && before["tool"].str == "polyBevel",
+        "6250 K-tab population: poly.bevel must be armed before Tab: "
+        ~ before.toString);
+    auto response = postJson("/api/play-events", kTabLog);
+    assert(response["status"].str == "success",
+        "6250 K-tab: playback request failed: " ~ response.toString);
+    waitPlayback();
+    assertTogglePopulation("K-tab");
+    auto after = toolState();
+    assert(after.object.length == 0,
+        "6250 K-tab: Tab left the non-capable tool armed: " ~ after.toString);
+}
+
 unittest { // E — an already-completed edit is not recorded twice.
     resetFixture("E");
     command("tool.set Transform on", "E arm");
+    command("tool.pipe.attr actionCenter mode origin", "E origin arm");
     command("tool.attr Transform TX 1.5", "E TX");
     command("tool.doApply", "E apply");
     auto beforeModel = getJson("/api/model")["vertices"];

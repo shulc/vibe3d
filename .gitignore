@@ -144,3 +144,4 @@ third_party/nfde/.dub/
 # final CI gate step to read; it is a per-run artefact, never committed.
 build_class.txt
 .gesture-lane/
+scratch/*.log

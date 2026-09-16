@@ -1,0 +1,329 @@
+// Task 6250 revision 3: mesh.subpatch_toggle follows the live action-centre
+// mode.  These cells deliberately arm the generic Transform preset and then
+// set actr.element, separating the discriminator from preset/tool identity.
+
+import core.thread : Thread;
+import core.time : msecs;
+import drag_helpers : CameraState, fetchCamera, playAndWait;
+import http_client : getJson, postJson;
+import http_command_helpers : commandBody;
+import std.format : format;
+import std.json : JSONType, JSONValue;
+import std.math : abs, sqrt, tan, PI;
+
+void main() {}
+
+private alias V3 = double[3];
+
+private double number(JSONValue value)
+{
+    return value.type == JSONType.integer
+        ? cast(double)value.integer : value.floating;
+}
+
+private V3 vector(JSONValue value)
+{
+    auto a = value.array;
+    return [number(a[0]), number(a[1]), number(a[2])];
+}
+
+private V3 subtract(V3 a, V3 b)
+{
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+private double distance(V3 a, V3 b)
+{
+    const d = subtract(a, b);
+    return sqrt(d[0]^^2 + d[1]^^2 + d[2]^^2);
+}
+
+private void settle()
+{
+    Thread.sleep(150.msecs);
+}
+
+private void command(string text)
+{
+    auto result = postJson("/api/command", text);
+    assert(result["status"].str == "ok",
+        "6250 command `" ~ text ~ "` failed: " ~ result.toString);
+}
+
+private void script(string text)
+{
+    auto result = postJson("/api/script", text);
+    assert(result["status"].str == "ok",
+        "6250 script `" ~ text ~ "` failed: " ~ result.toString);
+}
+
+private V3[] modelVertices()
+{
+    V3[] result;
+    foreach (value; getJson("/api/model")["vertices"].array)
+        result ~= vector(value);
+    return result;
+}
+
+private V3[] establish()
+{
+    postJson("/api/command", commandBody("scene.reset"));
+    command("tool.pipe.attr snap enabled false");
+    command("tool.pipe.attr symmetry enabled false");
+    postJson("/api/command", commandBody("scene.loadMesh",
+        `{"vertices":[[-1.2,0,-1.2],[0,0,-1.2],[1.2,0,-1.2],[-1.2,0,0],[0,0,0],[1.2,0,0],[-1.2,0,1.2],[0,0,1.2],[1.2,0,1.2]],"faces":[[0,3,4,1],[1,4,5,2],[3,6,7,4],[4,7,8,5]]}`));
+    command("viewport.view Top");
+    postJson("/api/camera", `{"distance":6,"focus":{"x":0,"y":0,"z":0}}`);
+    command("tool.set Transform on");
+    command("tool.pipe.attr actionCenter mode element");
+    command("tool.pipe.attr falloff type element");
+    command("tool.pipe.attr falloff mode vertex");
+    command("tool.pipe.attr falloff dist 2");
+    settle();
+    return modelVertices();
+}
+
+private string viewportLine(CameraState camera)
+{
+    return format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        camera.vpX, camera.vpY, camera.width, camera.height);
+}
+
+private double[2] topPixel(JSONValue camera, V3 point)
+{
+    immutable double halfHeight = number(camera["distance"]) * tan(PI / 8.0);
+    immutable double aspect = number(camera["width"]) / number(camera["height"]);
+    immutable double ndcX = (point[0] - number(camera["focus"]["x"]))
+                          / (halfHeight * aspect);
+    immutable double ndcY = -(point[2] - number(camera["focus"]["z"]))
+                          / halfHeight;
+    return [(ndcX * 0.5 + 0.5) * number(camera["width"])
+                                      + number(camera["vpX"]),
+            (1.0 - (ndcY * 0.5 + 0.5)) * number(camera["height"])
+                                      + number(camera["vpY"])];
+}
+
+private void hover(CameraState camera, int x, int y)
+{
+    string log = viewportLine(camera);
+    foreach (i; 0 .. 5)
+        log ~= format(
+            `{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+            30 + i*20, x, y);
+    playAndWait(log);
+    settle();
+}
+
+private void haulHeld(CameraState camera, int x, int y, int dx, int dy,
+                      int steps = 12)
+{
+    string motion = viewportLine(camera);
+    int previousX = x;
+    int previousY = y;
+    foreach (i; 1 .. steps + 1) {
+        immutable int nextX = x + cast(int)(cast(double)dx * i / steps + 0.5);
+        immutable int nextY = y + cast(int)(cast(double)dy * i / steps + 0.5);
+        motion ~= format(
+            `{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            60 + i*25, nextX, nextY,
+            nextX - previousX, nextY - previousY);
+        previousX = nextX;
+        previousY = nextY;
+    }
+    playAndWait(motion);
+    settle();
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x + dx, y + dy));
+    settle();
+}
+
+private void dragAt(CameraState camera, int x, int y, int dx)
+{
+    hover(camera, x, y);
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y));
+    settle();
+    haulHeld(camera, x, y, dx, 0);
+}
+
+private void initialDrag(CameraState camera, const(V3)[] original)
+{
+    const pick = topPixel(getJson("/api/camera"), original[6]);
+    dragAt(camera, cast(int)(pick[0] + 0.5), cast(int)(pick[1] + 0.5), 55);
+}
+
+private double[2] handlePartScreen(int wanted)
+{
+    const handles = getJson("/api/tool/handles")["handles"];
+    foreach (part; handles["parts"].array) {
+        if (part["part"].integer != wanted
+                || part["screen"].type == JSONType.null_)
+            continue;
+        auto screen = part["screen"].array;
+        return [number(screen[0]), number(screen[1])];
+    }
+    assert(false, format("6250 required handle part %s is absent: %s",
+                         wanted, handles));
+}
+
+private void dragArrow(CameraState camera, int dx)
+{
+    const part = handlePartScreen(0);
+    const centre = handlePartScreen(3);
+    immutable double length = sqrt((part[0] - centre[0])^^2
+                                 + (part[1] - centre[1])^^2);
+    immutable int sx = cast(int)(dx * (part[0] - centre[0]) / length + 0.5);
+    immutable int sy = cast(int)(dx * (part[1] - centre[1]) / length + 0.5);
+    assert(abs(sy) <= 1, "6250 Top-view X arrow must stay horizontal");
+    dragAt(camera, cast(int)(part[0] + 0.5), cast(int)(part[1] + 0.5), sx);
+}
+
+private double[] measuredWeights(const(V3)[] base, const(V3)[] observed,
+                                 V3 translation)
+{
+    immutable double denom = translation[0]^^2
+                           + translation[1]^^2
+                           + translation[2]^^2;
+    assert(denom > 1e-4, "6250 N4 weight measurement needs a live translation");
+    double[] result;
+    foreach (i; 0 .. observed.length) {
+        const delta = subtract(observed[i], base[i]);
+        result ~= (delta[0]*translation[0]
+                 + delta[1]*translation[1]
+                 + delta[2]*translation[2]) / denom;
+    }
+    return result;
+}
+
+private bool allSubpatch()
+{
+    auto flags = getJson("/api/model")["isSubpatch"].array;
+    if (flags.length != 4) return false;
+    foreach (flag; flags)
+        if (flag.type != JSONType.true_) return false;
+    return true;
+}
+
+unittest { // N1 — at-rest handle/T/run state after two complete gestures.
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    dragArrow(camera, 18);
+    const beforeState = getJson("/api/tool/state");
+    const beforeEval = getJson("/api/toolpipe/eval");
+    const beforeMesh = modelVertices();
+    const pin = vector(beforeEval["actionCenter"]["center"]);
+    const handle = vector(beforeState["pivot"]);
+    const translation = vector(beforeEval["transform"]["translate"]);
+    assert(beforeState["runOpen"].boolean
+        && distance(translation, [0.0, 0.0, 0.0]) > 0.2,
+        "6250 N1 population: two settled gestures must leave a live nonzero run");
+
+    command("mesh.subpatch_toggle");
+    settle();
+    const afterState = getJson("/api/tool/state");
+    const afterEval = getJson("/api/toolpipe/eval");
+    assert(allSubpatch(), "6250 N1 control: toggle did not reach all four faces");
+    assert(modelVertices() == beforeMesh,
+        "6250 N1 control: toggle changed the consolidated cage positions");
+    assert(distance(vector(afterEval["actionCenter"]["center"]), pin) <= 1e-6,
+        "6250 N1 control: Element pin moved during the toggle");
+    assert(distance(vector(afterState["pivot"]), handle) <= 1e-6,
+        "6250 N1 control: retained at-rest handle state moved while closed");
+    assert(!afterState["runOpen"].boolean,
+        "6250 N1 control: consolidated Element run remained open");
+    assert(distance(vector(afterEval["transform"]["translate"]), translation) <= 1e-6,
+        "6250 N1: Element toggle zeroed T instead of retaining it");
+    assert(!afterState["sessionOpen"].boolean,
+        "6250 N1: Element toggle re-armed the session unconditionally");
+    command("tool.set Transform off");
+}
+
+unittest { // N2 — no handle is published while the Element session is closed.
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    command("mesh.subpatch_toggle");
+    settle();
+    const state = getJson("/api/tool/state");
+    assert(allSubpatch() && state["tool"].str == "xfrm",
+        "6250 N2 control: toggle must apply while the transform stays selected");
+    assert(!state["sessionOpen"].boolean,
+        "6250 N2 control: Element session did not close");
+    assert(getJson("/api/tool/handles")["handles"].type == JSONType.null_,
+        "6250 N2: a transform handle is still drawn for the closed session");
+    command("tool.set Transform off");
+}
+
+unittest { // N3 — frozen pin plus an accepted, inert numeric edit.
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
+    command("mesh.subpatch_toggle");
+    settle();
+    const consolidated = modelVertices();
+    script("tool.attr Transform TX 1.0");
+    settle();
+    const state = getJson("/api/tool/state");
+    const eval = getJson("/api/toolpipe/eval");
+    assert(distance(vector(eval["actionCenter"]["center"]), pin) <= 1e-6,
+        "6250 N3 control: inert numeric write advanced the frozen pin");
+    assert(number(eval["transform"]["translate"].array[0]) == 1.0,
+        "6250 N3 control: accepted numeric value was not retained");
+    assert(!state["editOpen"].boolean && !state["sessionOpen"].boolean,
+        "6250 N3 control: numeric write reopened the closed session");
+    assert(modelVertices() == consolidated,
+        "6250 N3: post-toggle numeric write moved a vertex");
+    command("tool.set Transform off");
+}
+
+unittest { // N4 — next press re-picks/re-grades the consolidated mesh.
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    script("tool.attr Transform TX 0.5");
+    settle();
+    command("mesh.subpatch_toggle");
+    settle();
+    const consolidated = modelVertices();
+    assert(!getJson("/api/tool/state")["sessionOpen"].boolean,
+        "6250 N4 population: toggle must close the Element session");
+
+    const pixel = topPixel(getJson("/api/camera"), consolidated[7]);
+    immutable int x = cast(int)(pixel[0] + 0.5);
+    immutable int y = cast(int)(pixel[1] + 0.5);
+    hover(camera, x, y);
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y));
+    settle();
+    const pressed = getJson("/api/toolpipe/eval");
+    const pressedState = getJson("/api/tool/state");
+    assert(distance(vector(pressed["actionCenter"]["center"]), consolidated[7]) <= 2e-5,
+        "6250 N4 control: next press did not store the clicked vertex's current position");
+    assert(distance(vector(pressed["transform"]["translate"]), [0.0, 0.0, 0.0]) <= 1e-6,
+        "6250 N4 control: next press did not reset T to zero");
+    assert(pressedState["sessionOpen"].boolean && pressedState["editOpen"].boolean,
+        "6250 N4 control: next press did not reopen the edit session");
+
+    haulHeld(camera, x, y, 80, 24, 18);
+    const moved = modelVertices();
+    // The picked vertex is the anchor-ring member and therefore has weight 1;
+    // its observed displacement is the applied world translation itself.
+    const translation = subtract(moved[7], consolidated[7]);
+    const observed = measuredWeights(consolidated, moved, translation);
+    assert(observed.length == consolidated.length && observed.length == 9,
+        "6250 N4 population: falloff measurement lost a rig vertex");
+    foreach (i; 0 .. observed.length) {
+        const d = distance(consolidated[i], consolidated[7]);
+        const expected = d >= 2.0 ? 0.0 : 1.0 - d / 2.0;
+        assert(abs(observed[i] - expected) <= 3e-5,
+            format("6250 N4: consolidated-mesh falloff weight v%s got %.6f want %.6f",
+                   i, observed[i], expected));
+    }
+    command("tool.set Transform off");
+}
