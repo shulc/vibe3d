@@ -81,7 +81,27 @@ module mesh_dirty;
 // for reading that counter was made once, at the term. A NEW TERM, or a
 // counter compared by hand, does, and has to be argued in a
 // `recorded remainder` comment beside it.
+//
+// CONTENT-HASH KEYS are the third family. Hash each member independently, then
+// fold its digest with `foldSubpatchKeyMember`: its state transition is a
+// permutation for a fixed digest, so an unchanged suffix cannot erase an
+// earlier member. Never chain the array overload of `hashOf` with the running
+// state as a composition rule; that byte-hash path keeps only part of the
+// state and can reconverge.
 // ===========================================================================
+
+/// Fold one independently-computed member digest into a content-hash key.
+/// Rotate, xor, odd multiply and add are each bijections of the 64-bit
+/// accumulator, so an unchanged suffix cannot collapse distinct prefix states.
+ulong foldSubpatchKeyMember(T)(ulong state, auto ref const T value)
+    pure nothrow @nogc @safe
+{
+    import core.internal.hash : hashOf;
+    enum ulong kMul = 0x9E3779B185EBCA87UL;
+    enum ulong kAdd = 0xD1B54A32D192ED03UL;
+    state = (state << 27) | (state >> (64 - 27));
+    return (state ^ cast(ulong)hashOf(value)) * kMul + kAdd;
+}
 
 // ---------------------------------------------------------------------------
 // Bus-driven, allocation-free per-mesh-address change EPOCHS — the consumer

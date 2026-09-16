@@ -91,15 +91,38 @@ double maxDelta(in double[3][] a, in double[3][] b) {
     return result;
 }
 
-void waitPreviewSettled() {
+struct PreviewState {
+    bool pending;
+    long builds;
+    long topologiesCreated;
+}
+
+PreviewState previewState() {
+    auto j = getJson("/api/subpatch/preview");
+    return PreviewState(j["pending"].type == JSONType.TRUE,
+                        j["builds"].integer,
+                        j["topologiesCreated"].integer);
+}
+
+void waitPreviewSettled(long buildsBefore) {
     foreach (_; 0 .. 1_500) {
-        if (getJson("/api/subpatch/preview")["pending"].type != JSONType.TRUE) {
-            Thread.sleep(60.msecs);
-            return;
-        }
+        const p = previewState();
+        if (p.builds > buildsBefore && !p.pending) return;
         Thread.sleep(20.msecs);
     }
     assert(false, "subpatch preview build did not settle within 30s");
+}
+
+void waitPreviewIdleAfterDispatchGrace() {
+    // `pending:false` is also the PRE-dispatch state. Playback completion says
+    // the event was posted, not that the frame consumed it, so give dispatch
+    // its measured 60 ms window before an idle read is allowed to finish.
+    Thread.sleep(60.msecs);
+    foreach (_; 0 .. 1_500) {
+        if (!previewState().pending) return;
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "subpatch preview did not become idle within 30s");
 }
 
 unittest { // Tab with no selection flips every face's subpatch flag
@@ -180,10 +203,43 @@ unittest { // MODE-AWARE (parity 0464): a face selection made in polygon mode
             " should be subpatch=true, not just the 2 polygon-selected");
 }
 
+unittest { // no-edit Tab off/on must take the reusable-preview short circuit
+    postJson("/api/command", commandBody("scene.reset"));
+    postJson("/api/command", "select.typeFrom polygon");
+
+    const cold = previewState();
+    auto tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "initial Tab playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    waitPreviewSettled(cold.builds);
+    const warm = previewState();
+    assert(warm.builds >= 1,
+        "population floor: no subpatch preview build completed before the reuse check");
+    assert(warm.topologiesCreated >= 1,
+        "population floor: no OSD topology existed before the reuse check");
+
+    tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "Tab-off playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
+    assert(tab["status"].str == "success", "Tab-on playback failed: " ~ tab.toString);
+    waitPlaybackFinish();
+    waitPreviewIdleAfterDispatchGrace();
+
+    const reused = previewState();
+    assert(reused.topologiesCreated == warm.topologiesCreated,
+        format("no-edit Tab-on created an OSD topology: %d -> %d",
+               warm.topologiesCreated, reused.topologiesCreated));
+    assert(reused.builds == warm.builds,
+        format("no-edit Tab-on rebuilt instead of reusing: builds %d -> %d",
+               warm.builds, reused.builds));
+}
+
 unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale limit positions
-    // Every older subpatch regression uses the six-face cube, below the
-    // measured ten-face collapse threshold. One subdivision gives this closed
-    // cage 24 faces while retaining a deterministic vertex and VBO population.
+    // Every older subpatch regression uses the six-face cube. The old fold's
+    // blindness is probabilistic and rises with the face-chain length; one
+    // subdivision gives this cell 24 faces plus deterministic population and
+    // motion guards, while the pure member matrix carries the general proof.
     postJson("/api/command", commandBody("scene.reset"));
     auto subdiv = postJson("/api/command", commandBody("mesh.subdivide"));
     assert(subdiv["status"].str == "ok", "fixture subdivision failed: " ~ subdiv.toString);
@@ -192,13 +248,14 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
     assert(cage["vertexCount"].integer == 26,
         "population floor: the once-subdivided cube must have exactly 26 cage vertices");
     assert(cage["faceCount"].integer == 24,
-        "threshold guard: the once-subdivided cube must have exactly 24 faces");
+        "fixture guard: the once-subdivided cube must have exactly 24 faces");
 
     postJson("/api/command", "select.typeFrom polygon");
+    const cold = previewState();
     auto tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
     assert(tab["status"].str == "success", "initial Tab playback failed: " ~ tab.toString);
     waitPlaybackFinish();
-    waitPreviewSettled();
+    waitPreviewSettled(cold.builds);
 
     auto before = gpuSurface();
     assert(before.faceVertCount == 9_216 && before.positions.length == 9_216,
@@ -236,7 +293,7 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
                              cast(int)sx, cast(int)sy,
                              cast(int)sx, cast(int)sy - 60, 8));
     Thread.sleep(150.msecs);
-    waitPreviewSettled();
+    waitPreviewIdleAfterDispatchGrace();
     auto live = gpuSurface();
     assert(live.faceVertCount == 9_216 && live.positions.length == 9_216,
         "the interactive position edit must preserve the 9216-vertex preview population");
@@ -248,10 +305,11 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
     tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
     assert(tab["status"].str == "success", "Tab-off playback failed: " ~ tab.toString);
     waitPlaybackFinish();
+    const beforeRestore = previewState();
     tab = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
     assert(tab["status"].str == "success", "Tab-on playback failed: " ~ tab.toString);
     waitPlaybackFinish();
-    waitPreviewSettled();
+    waitPreviewSettled(beforeRestore.builds);
     auto restored = gpuSurface();
     assert(restored.faceVertCount == 9_216 && restored.positions.length == 9_216,
         "Tab-on must restore the 9216-vertex preview population");

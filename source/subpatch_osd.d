@@ -17,6 +17,7 @@ module subpatch_osd;
 import std.math : sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
+import mesh_dirty : foldSubpatchKeyMember;
 import osd.c;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
@@ -30,18 +31,29 @@ __gshared bool g_osdGpuEnabled = false;
 version (unittest)
     __gshared size_t g_osdWholeShortEdgeLookupBuilds;
 
-/// Fold one independently-computed member digest into a subpatch content key.
-/// The rotate, xor, odd multiply and add are each bijections of the 64-bit
-/// accumulator, so an unchanged suffix cannot collapse two distinct prefix
-/// states back together (task 6249). `hashOf(value, state)` does not have that
-/// property for arrays: its byte-hash path truncates the seed and the old face
-/// loop erased earlier cage members once it was long enough.
-ulong foldSubpatchKeyMember(T)(ulong state, auto ref const T value) {
-    import core.internal.hash : hashOf;
-    enum ulong kMul = 0x9E3779B185EBCA87UL;
-    enum ulong kAdd = 0xD1B54A32D192ED03UL;
-    state = (state << 27) | (state >> (64 - 27));
-    return (state ^ cast(ulong)hashOf(value)) * kMul + kAdd;
+ulong computeSubpatchTopologyKey(
+    int nv,
+    int nf,
+    int effectiveLevel,
+    const(int)[] faceVertCounts,
+    const(int)[] faceVertIndices,
+    const(int)[] creasePairs,
+    const(float)[] creaseWeights,
+    const(int)[] cornerVerts,
+    const(float)[] cornerWeights)
+    pure nothrow @nogc @safe
+{
+    ulong key = 0x243F6A8885A308D3UL;
+    key = foldSubpatchKeyMember(key, nv);
+    key = foldSubpatchKeyMember(key, nf);
+    key = foldSubpatchKeyMember(key, effectiveLevel);
+    key = foldSubpatchKeyMember(key, faceVertCounts);
+    key = foldSubpatchKeyMember(key, faceVertIndices);
+    key = foldSubpatchKeyMember(key, creasePairs);
+    key = foldSubpatchKeyMember(key, creaseWeights);
+    key = foldSubpatchKeyMember(key, cornerVerts);
+    key = foldSubpatchKeyMember(key, cornerWeights);
+    return key == 0 ? 1 : key;
 }
 
 // ---------------------------------------------------------------------------
@@ -1929,23 +1941,9 @@ struct OsdAccel {
         // creases / corners) — so back-and-forth toggling oscillates
         // between two distinct keys. LRU(2) holds both after one
         // full cycle and never re-builds the OSD topology again.
-        ulong topoKey;
-        {
-            topoKey = 0x243F6A8885A308D3UL;
-            topoKey = foldSubpatchKeyMember(topoKey, nv);
-            topoKey = foldSubpatchKeyMember(topoKey, nf);
-            topoKey = foldSubpatchKeyMember(topoKey, effectiveLevel);
-            topoKey = foldSubpatchKeyMember(topoKey, faceVertCounts);
-            topoKey = foldSubpatchKeyMember(topoKey, faceVertIndices);
-            topoKey = foldSubpatchKeyMember(topoKey, creasePairs);
-            topoKey = foldSubpatchKeyMember(topoKey, creaseWeights);
-            topoKey = foldSubpatchKeyMember(topoKey, cornerVerts);
-            topoKey = foldSubpatchKeyMember(topoKey, cornerWeights);
-            // Guard against the sentinel "empty slot" hash colliding
-            // with a real key. 1-in-2^64 chance, but mapping zero to
-            // a fixed non-zero value costs nothing.
-            if (topoKey == 0) topoKey = 1;
-        }
+        immutable ulong topoKey = computeSubpatchTopologyKey(
+            nv, nf, effectiveLevel, faceVertCounts, faceVertIndices,
+            creasePairs, creaseWeights, cornerVerts, cornerWeights);
         res.topoKey = topoKey;
 
         // ---- LRU(2) topology lookup ------------------------------------

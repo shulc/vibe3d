@@ -25,6 +25,47 @@ import mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
 import subpatch_osd;
 import subpatch_worker;
 
+ulong computeReusablePreviewKey(ref const Mesh source, int d) {
+    ulong h = 0x243F6A8885A308D3UL;
+    h = foldSubpatchKeyMember(h, d);
+    h = foldSubpatchKeyMember(h, source.vertices.length);
+    h = foldSubpatchKeyMember(h, source.edges.length);
+    h = foldSubpatchKeyMember(h, source.faces.length);
+    h = foldSubpatchKeyMember(h, source.vertices);
+    h = foldSubpatchKeyMember(h, source.edges);
+    foreach (face; source.faces) {
+        h = foldSubpatchKeyMember(h, face.length);
+        h = foldSubpatchKeyMember(h, face);
+    }
+    foreach (fi; 0 .. source.faces.length)
+        h = foldSubpatchKeyMember(h, source.isFaceSubpatch(fi));
+    // Hide (task 0613, R4). This is the Tab-toggle REUSE key: preview off,
+    // preview on again, and if the key matches we resurrect the cached
+    // preview mesh WITHOUT re-running buildPreview. That cached mesh
+    // carries the Hide marks stamped from the cage at build time
+    // (subpatch_osd.d), so a hide performed while the preview was off must
+    // land in this key or the resurrected preview draws the pre-hide set.
+    // Folded as its own per-face term rather than OR-ed into the Subpatch
+    // one, so "face i subpatch" and "face i hidden" cannot cancel.
+    foreach (fi; 0 .. source.faces.length)
+        h = foldSubpatchKeyMember(h, source.isFaceHidden(fi));
+    // Crease-weight fold (task 1062, same reasoning as the Hide fold
+    // just above): this IS the Tab-toggle REUSE key. A weight changed
+    // while the preview was off must land in this key, or the
+    // resurrected preview (rebuildIfStale's reusablePreviewKey branch)
+    // draws the pre-change surface — the crease-map analogue of the bug
+    // the Hide fold was added to fix. Hashes the map's raw data when the
+    // reserved map exists, a fixed sentinel when it does not, so
+    // "no crease map" can never alias a real (all-zero-weight) map by
+    // both folding down to the same value.
+    {
+        auto cw = source.creaseWeightMap();
+        if (cw !is null) h = foldSubpatchKeyMember(h, cw.data);
+        else              h = foldSubpatchKeyMember(h, 0xC1EA5E00u);
+    }
+    return h == 0 ? 1 : h;
+}
+
 /// Cached subdivision preview of a source (cage) mesh. When `active`
 /// is true, `mesh`/`trace` hold the OpenSubdiv-emitted limit geometry;
 /// otherwise the cage should be rendered directly and this struct is
@@ -629,47 +670,6 @@ struct SubpatchPreview {
         // further use for.
         osdAccel.clear();
         osdAccel.destroyCache();
-    }
-
-    private ulong computeReusablePreviewKey(ref const Mesh source, int d) const {
-        ulong h = 0x243F6A8885A308D3UL;
-        h = foldSubpatchKeyMember(h, d);
-        h = foldSubpatchKeyMember(h, source.vertices.length);
-        h = foldSubpatchKeyMember(h, source.edges.length);
-        h = foldSubpatchKeyMember(h, source.faces.length);
-        h = foldSubpatchKeyMember(h, source.vertices);
-        h = foldSubpatchKeyMember(h, source.edges);
-        foreach (face; source.faces) {
-            h = foldSubpatchKeyMember(h, face.length);
-            h = foldSubpatchKeyMember(h, face);
-        }
-        foreach (fi; 0 .. source.faces.length)
-            h = foldSubpatchKeyMember(h, source.isFaceSubpatch(fi));
-        // Hide (task 0613, R4). This is the Tab-toggle REUSE key: preview off,
-        // preview on again, and if the key matches we resurrect the cached
-        // preview mesh WITHOUT re-running buildPreview. That cached mesh
-        // carries the Hide marks stamped from the cage at build time
-        // (subpatch_osd.d), so a hide performed while the preview was off must
-        // land in this key or the resurrected preview draws the pre-hide set.
-        // Folded as its own per-face term rather than OR-ed into the Subpatch
-        // one, so "face i subpatch" and "face i hidden" cannot cancel.
-        foreach (fi; 0 .. source.faces.length)
-            h = foldSubpatchKeyMember(h, source.isFaceHidden(fi));
-        // Crease-weight fold (task 1062, same reasoning as the Hide fold
-        // just above): this IS the Tab-toggle REUSE key. A weight changed
-        // while the preview was off must land in this key, or the
-        // resurrected preview (rebuildIfStale's reusablePreviewKey branch)
-        // draws the pre-change surface — the crease-map analogue of the bug
-        // the Hide fold was added to fix. Hashes the map's raw data when the
-        // reserved map exists, a fixed sentinel when it does not, so
-        // "no crease map" can never alias a real (all-zero-weight) map by
-        // both folding down to the same value.
-        {
-            auto cw = source.creaseWeightMap();
-            if (cw !is null) h = foldSubpatchKeyMember(h, cw.data);
-            else              h = foldSubpatchKeyMember(h, 0xC1EA5E00u);
-        }
-        return h == 0 ? 1 : h;
     }
 
     /// `targets` (when non-null) wires the GPU fan-out path: the
