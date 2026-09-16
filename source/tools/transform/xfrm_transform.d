@@ -169,8 +169,9 @@ import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
-import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
-                          SnapPacket, SymmetryPacket, SubjectPacket;
+import toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
+                          FalloffConfig, FalloffPacket, SnapPacket,
+                          SymmetryPacket, SubjectPacket;
 import toolpipe.subject  : SubjectSource, evaluateSubject;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import snapshot          : MeshSnapshot;
@@ -473,6 +474,8 @@ struct PreparedXfrmReplayImage {
     SnapPacket nextSnap;
     SymmetryPacket expectedSymmetry;
     SymmetryPacket nextSymmetry;
+    ElementWeightCache expectedElementWeights;
+    ElementWeightCache nextElementWeights;
     Layer[] itemTargets;
     ItemXform[] expectedItemXforms;
     ItemXform[] nextItemXforms;
@@ -485,6 +488,28 @@ struct PreparedXfrmReplayImage {
     bool itemPrepared;
     bool valid;
     void clear() nothrow @nogc { this = PreparedXfrmReplayImage.init; }
+}
+
+// Element weights are a run-owned snapshot: a pick or a range re-grade samples
+// once, then every T/R/S fold in that run reads the same vertex-id positions.
+private struct ElementWeightCache {
+    bool valid;
+    bool hasElement;
+    FalloffConfig config;
+    Vec3[] anchorPos;
+    Vec3[] samplePos;
+    ulong pickSerial;
+
+    ElementWeightCache ownedDup() const {
+        ElementWeightCache result;
+        result.valid = valid;
+        result.hasElement = hasElement;
+        result.pickSerial = pickSerial;
+        result.config = config.dup();
+        result.anchorPos = anchorPos.dup;
+        result.samplePos = samplePos.dup;
+        return result;
+    }
 }
 
 /// Detached final phase of `update`: subject publication, shared gizmo pose
@@ -1097,6 +1122,7 @@ public:
         armedUndoEpoch = ulong.max;
         refireAnchor.length = 0;
         refirePreValid = false;
+        refirePreElementWeights_ = ElementWeightCache.init;
         foldSrc_.length = 0;
         itemEditCapturing_ = false;
         itemEditTargets_.length = 0;
@@ -1284,6 +1310,7 @@ public:
         armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
+        refirePreElementWeights_          = ElementWeightCache.init;
         // (task 0202) Idle tool should not pin the fold-source scratch buffer
         // between drags; the next drag's first frame re-allocates cold.
         foldSrc_.length                   = 0;
@@ -1439,6 +1466,7 @@ public:
         armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
+        refirePreElementWeights_          = ElementWeightCache.init;
         // (task 0202) Release the fold-source scratch buffer on tool drop too,
         // mirroring refireAnchor above.
         foldSrc_.length                   = 0;
@@ -1629,6 +1657,7 @@ public:
                 if (!falloffPacketsEqual(liveF, dragFalloff)
                  || !snapPacketsEqual(liveSn, dragSnap)
                  || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
+                    Vec3[] weightSample = mesh.vertices.dup;
                     // Re-read ALL THREE live packets before the recompute so
                     // applyTRS's symmetry pass + per-vertex falloff weight read
                     // the new config. recaptureLivePipePackets() does a FRESH
@@ -1639,6 +1668,7 @@ public:
                     // changes no geometry — but keeps the run-state coherent for
                     // the config-restore hooks downstream.
                     recaptureLivePipePackets();
+                    regradeElementWeightCache(weightSample);
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
                     // re-grade. Re-weight the COMPOSED op (all preset banks'
@@ -1681,6 +1711,8 @@ public:
                     FalloffPacket  preF  = dragFalloff,  postF  = liveF;
                     SnapPacket     preSn = dragSnap,     postSn = liveSn;
                     SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
+                    ElementWeightCache preElementWeights =
+                        elementWeightCache_.ownedDup();
                     // Re-capture the live packets via a FRESH evaluate so a
                     // just-enabled symmetry stage's pairOf is populated (see
                     // recaptureLivePipePackets); applyTRS below then mirrors. The
@@ -1688,6 +1720,9 @@ public:
                     // above — pairOf is rebuilt by evaluate() at undo/redo time,
                     // so the hook needs only the config fields.
                     recaptureLivePipePackets();
+                    regradeElementWeightCache(anchor);
+                    ElementWeightCache postElementWeights =
+                        elementWeightCache_.ownedDup();
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
                     // re-grade of the committed gesture. Byte-identical to the
@@ -1710,7 +1745,8 @@ public:
                     // support can be the whole mesh, so a full-range pass is the
                     // safe superset.
                     recordPipeRefire(anchor, after, null, currentRunBank,
-                                     preF, postF, preSn, postSn, preSy, postSy);
+                                     preF, postF, preSn, postSn, preSy, postSy,
+                                     preElementWeights, postElementWeights);
                     needsGpuUpdate = true;
                 }
             }
@@ -1951,6 +1987,7 @@ public:
             armedUndoEpoch = ulong.max;
             refireAnchor = null;
             refirePreValid = false;
+            refirePreElementWeights_ = ElementWeightCache.init;
         }
         runBaselineValid = false;
         runFrameValid = false;
@@ -3199,6 +3236,7 @@ public:
                 // Apply-path Phase 2: the P5 off-gizmo-in-relocate-DISALLOWED
                 // click is a geometry-run boundary; re-capture on the next drag.
                 resetRun();   // + P-F: this boundary freezes a NEW run-frame
+                markElementWeightCacheEmpty(currentFalloff(vts));
             }
         }
         // Task 0614 Phase 5 (R3): an item-mode off-gizmo down is CONSUMED here.
@@ -3382,6 +3420,7 @@ public:
         armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
+        refirePreElementWeights_          = ElementWeightCache.init;
     }
 
     // P-F — geometry-run boundary reset. Factored so EVERY `runBaselineValid =
@@ -3392,6 +3431,11 @@ public:
     // run-absolute field resets are added as each field migrates (Phase 2 Move,
     // Phase 3 R/S).
     private void resetRun() {
+        const keepElementWeights = elementWeightResetSkips_ != 0;
+        if (keepElementWeights) --elementWeightResetSkips_;
+        if (!keepElementWeights)
+            elementWeightCache_ = ElementWeightCache.init;
+        preserveElementWeightsOnResync_ = false;
         // P-F Phase 2 — Move is run-absolute, so a geometry-run boundary that
         // ends an ACTIVE run (relocate / selection change after a gesture / tool
         // drop) resets the DISPLAY field with the geometry baseline (G8
@@ -3780,6 +3824,76 @@ public:
         return h;
     }
 
+    private bool elementWeightCacheMatches(FalloffPacket packet) const {
+        return elementWeightCache_.valid
+            && packet.enabled && packet.type == FalloffType.Element
+            && elementWeightCache_.pickSerial == pickSerial_
+            && elementWeightCache_.config == packet.config;
+    }
+
+    private ElementWeightCache elementWeightCacheFrom(
+            FalloffPacket packet, const(Vec3)[] samplePos) const {
+        ElementWeightCache result;
+        if (!packet.enabled || packet.type != FalloffType.Element)
+            return result;
+        result.valid = true;
+        result.config = packet.config.dup();
+        result.pickSerial = pickSerial_;
+        // An empty-space restart is an explicit no-element state. A fresh pipe
+        // evaluation can still publish the prior stage ring, so the run cache,
+        // not that stale derived packet, decides whether an element exists.
+        const preserveEmpty = elementWeightCache_.valid
+            && elementWeightCache_.pickSerial == pickSerial_
+            && !elementWeightCache_.hasElement;
+        result.hasElement = !preserveEmpty;
+        if (result.hasElement) {
+            result.anchorPos = packet.anchorPos.dup;
+            result.samplePos = samplePos.dup;
+        }
+        return result;
+    }
+
+    private void useElementWeightCacheAfterCapture(const(Vec3)[] samplePos) {
+        if (!dragFalloff.enabled || dragFalloff.type != FalloffType.Element)
+            return;
+        if (!elementWeightCacheMatches(dragFalloff))
+            elementWeightCache_ = elementWeightCacheFrom(dragFalloff, samplePos);
+        if (elementWeightCache_.hasElement)
+            dragFalloff.anchorPos = elementWeightCache_.anchorPos;
+    }
+
+    private void regradeElementWeightCache(const(Vec3)[] samplePos) {
+        if (!dragFalloff.enabled || dragFalloff.type != FalloffType.Element)
+            return;
+        if (!elementWeightCacheMatches(dragFalloff))
+            elementWeightCache_ = elementWeightCacheFrom(dragFalloff, samplePos);
+        if (elementWeightCache_.hasElement)
+            dragFalloff.anchorPos = elementWeightCache_.anchorPos;
+    }
+
+    private ElementWeightCache elementWeightCacheForPacket(
+            FalloffPacket packet, const(Vec3)[] samplePos) const {
+        return elementWeightCacheMatches(packet)
+            ? elementWeightCache_.ownedDup()
+            : elementWeightCacheFrom(packet, samplePos);
+    }
+
+    private void markElementWeightCacheEmpty(FalloffPacket packet) {
+        if (!packet.enabled || packet.type != FalloffType.Element) return;
+        elementWeightCache_ = ElementWeightCache.init;
+        elementWeightCache_.valid = true;
+        elementWeightCache_.config = packet.config.dup();
+        elementWeightCache_.pickSerial = pickSerial_;
+    }
+
+    private bool elementWeightCachesEqual(
+            ref const ElementWeightCache a,
+            ref const ElementWeightCache b) const pure nothrow @nogc {
+        return a.valid == b.valid && a.hasElement == b.hasElement
+            && a.pickSerial == b.pickSerial && a.config == b.config
+            && a.anchorPos == b.anchorPos && a.samplePos == b.samplePos;
+    }
+
     // Shared begin*DragSession prologue: the per-drag captures every bank
     // runs at mouse-down, BEFORE its bank-specific session/baseline work.
     // The `beginRunGesture(bank)` / `beginGesture(bank)` pair deliberately
@@ -3789,6 +3903,7 @@ public:
     private void beginDragSessionPrologue(ref VectorStack vts) {
         buildVertexCacheIfNeeded();
         captureFalloffForDrag(vts);
+        useElementWeightCacheAfterCapture(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
     }
@@ -4683,6 +4798,7 @@ public:
         // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
         refireAnchor.length = 0;
         refirePreValid      = false;   // fresh window ⇒ recapture pre-config
+        refirePreElementWeights_ = ElementWeightCache.init;
     }
 
     // Rotate drag (principal axes OR view-ring) — wrapper owns the final
@@ -4801,6 +4917,7 @@ public:
         armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
         refireAnchor.length = 0;
         refirePreValid      = false;   // fresh window ⇒ recapture pre-config
+        refirePreElementWeights_ = ElementWeightCache.init;
     }
 
     // Scale single-source — wrapper owns the final upload + gpuMatrix
@@ -4889,6 +5006,7 @@ public:
         armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
         refireAnchor.length = 0;
         refirePreValid      = false;   // fresh window ⇒ recapture pre-config
+        refirePreElementWeights_ = ElementWeightCache.init;
     }
 
     // Phase 2.5 of doc/item_mode_transform_plan.md (task 0614) — VERBATIM
@@ -5061,6 +5179,7 @@ public:
         VectorStack vts;
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
+        useElementWeightCacheAfterCapture(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;
@@ -5194,6 +5313,7 @@ public:
         VectorStack vts;
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
+        useElementWeightCacheAfterCapture(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         if (!runBaselineValid || dragBaseline.length != mesh.vertices.length) {
@@ -5251,7 +5371,8 @@ public:
     public PreparedXfrmRefireCandidate buildPreparedRefireCandidate(
             FalloffPacket falloff, SnapPacket snap, SymmetryPacket symmetry,
             bool useItemSubjectOverride = false,
-            bool itemSubjectOverride = false) {
+            bool itemSubjectOverride = false,
+            ElementWeightCache elementWeights = ElementWeightCache.init) {
         PreparedXfrmRefireCandidate result;
         auto live = mesh;
         if (live is null || editMode is null ||
@@ -5300,6 +5421,8 @@ public:
         shadow.rotFalloffBlend = rotFalloffBlend;
         shadow.dragBaseline = dragBaseline.dup;
         shadow.dragFalloff = falloff;
+        shadow.elementWeightCache_ = elementWeights.ownedDup();
+        shadow.pickSerial_ = elementWeights.pickSerial;
         shadow.dragSnap = snap;
         shadow.dragSymmetry = symmetry;
         shadow.cachedVp = cachedVp;
@@ -5359,12 +5482,17 @@ public:
         image.expectedFalloff = dragFalloff.ownedDup();
         image.expectedSnap = dragSnap;
         image.expectedSymmetry = dragSymmetry.ownedDup();
+        image.expectedElementWeights = elementWeightCache_.ownedDup();
         FalloffPacket liveFalloff = projection.liveFalloff.ownedDup();
         SnapPacket liveSnap = projection.liveSnap;
         SymmetryPacket liveSymmetry = projection.liveSymmetry.ownedDup();
+        image.nextElementWeights = elementWeightCacheForPacket(
+            liveFalloff, image.expectedLive.vertices);
+        if (image.nextElementWeights.hasElement)
+            liveFalloff.anchorPos = image.nextElementWeights.anchorPos;
         auto prepared = buildPreparedRefireCandidate(
             liveFalloff, liveSnap, liveSymmetry, true,
-            projection.subject == SelType.Item);
+            projection.subject == SelType.Item, image.nextElementWeights);
         if (!prepared.applied) return image;
         image.candidate = prepared.mesh;
         image.nextIndices = prepared.vertexIndices;
@@ -5377,7 +5505,7 @@ public:
         image.nextRunFrameR = prepared.runFrameR;
         image.nextRunFrameU = prepared.runFrameU;
         image.nextRunFrameF = prepared.runFrameF;
-        image.nextFalloff = projection.liveFalloff.ownedDup();
+        image.nextFalloff = liveFalloff.ownedDup();
         image.nextSnap = projection.liveSnap;
         image.nextSymmetry = projection.liveSymmetry.ownedDup();
         image.itemTargets = prepared.itemTargets;
@@ -5394,7 +5522,8 @@ public:
                 image.expectedLive.vertices, image.candidate.vertices,
                 image.expectedFalloff, image.nextFalloff,
                 image.expectedSnap, image.nextSnap,
-                image.expectedSymmetry, image.nextSymmetry);
+                image.expectedSymmetry, image.nextSymmetry,
+                image.expectedElementWeights, image.nextElementWeights);
             if (!image.historyRefire.valid)
                 return PreparedXfrmReplayImage.init;
         }
@@ -5419,6 +5548,8 @@ public:
             !falloffPacketsEqual(dragFalloff, image.expectedFalloff) ||
             !snapPacketsEqual(dragSnap, image.expectedSnap) ||
             !symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) ||
+            !elementWeightCachesEqual(elementWeightCache_,
+                                      image.expectedElementWeights) ||
             itemTargets.length != image.itemTargets.length ||
             image.itemTargets.length != image.expectedItemXforms.length)
             return false;
@@ -5447,8 +5578,13 @@ public:
         dragSymmetry = image.nextSymmetry;
         foreach (i, target; image.itemTargets)
             target.xform = image.nextItemXforms[i];
-        if (image.historyRefire.valid)
+        if (image.historyRefire.valid) {
+            if (!refirePreValid && image.historyRefire.nextPreValid)
+                refirePreElementWeights_ = image.expectedElementWeights;
             installPreparedRefireState(image.historyRefire);
+        }
+        elementWeightCache_ = image.nextElementWeights;
+        image.nextElementWeights = ElementWeightCache.init;
         image.clear();
     }
 
@@ -5461,9 +5597,12 @@ public:
             const Vec3[] anchor, const Vec3[] after,
             FalloffPacket preF, FalloffPacket postF,
             SnapPacket preSn, SnapPacket postSn,
-            SymmetryPacket preSy, SymmetryPacket postSy) {
+            SymmetryPacket preSy, SymmetryPacket postSy,
+            ElementWeightCache preElementWeights,
+            ElementWeightCache postElementWeights) {
         auto projection = projectPreparedPipeRefire(anchor, after, null,
-            preF, postF, preSn, postSn, preSy, postSy);
+            preF, postF, preSn, postSn, preSy, postSy,
+            preElementWeights, postElementWeights);
         if (!preparePipeRefireProjection(projection, context))
             return PreparedXfrmRefireStateImage.init;
         return projection.state;
@@ -5482,9 +5621,12 @@ public:
             const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
             FalloffPacket preF, FalloffPacket postF,
             SnapPacket preSn, SnapPacket postSn,
-            SymmetryPacket preSy, SymmetryPacket postSy) {
+            SymmetryPacket preSy, SymmetryPacket postSy,
+            ElementWeightCache preElementWeights,
+            ElementWeightCache postElementWeights) {
         return projectPipeRefire(anchor, after, idx,
-            preF, postF, preSn, postSn, preSy, postSy);
+            preF, postF, preSn, postSn, preSy, postSy,
+            preElementWeights, postElementWeights);
     }
 
     public bool preparedRefireStateMatches(
@@ -6181,6 +6323,12 @@ public:
     // pop does not change the transform tool's geometry contribution, and the
     // field is re-primed at the next gesture's begin*DragSession if ever stale.
     override void resyncSession() {
+        // A refire undo is followed by resetTransientState's run reset and by
+        // the next update's mutation-boundary reset. Preserve only the cache
+        // restored by the refire hook through those two mechanical resets;
+        // ordinary gesture undo still drops the run cache.
+        if (preserveElementWeightsOnResync_)
+            elementWeightResetSkips_ = 2;
         resyncPreserveDisplayFields = true;
         scope(exit) resyncPreserveDisplayFields = false;
         resetTransientState();
@@ -6259,6 +6407,7 @@ private:
     /// far larger radius than the behaviour it buys.
     private void writeElementAnchor(Vec3 anchor) {
         if (acenHoldsElementPin(anchor)) return;   // equal write skipped
+        ++pickSerial_;
         notifyAcenUserPlaced(anchor);
         notifyAcenElementPin(anchor);
     }
@@ -6813,6 +6962,12 @@ private:
     FalloffPacket  refirePreFalloff;
     SnapPacket     refirePreSnap;
     SymmetryPacket refirePreSym;
+    ElementWeightCache refirePreElementWeights_;
+
+    ElementWeightCache elementWeightCache_;
+    ulong pickSerial_;
+    bool preserveElementWeightsOnResync_;
+    ubyte elementWeightResetSkips_;
 
     // foldSrc_ — reused per-frame gather buffer for applyFold's ordinal-parallel
     // baseline source (moving-set length). `applyFold` used to `new Vec3[]`
@@ -6889,7 +7044,9 @@ private:
             const Vec3[] anchor, const Vec3[] after, const size_t[] idx,
             FalloffPacket preF, FalloffPacket postF,
             SnapPacket preSn, SnapPacket postSn,
-            SymmetryPacket preSy, SymmetryPacket postSy) {
+            SymmetryPacket preSy, SymmetryPacket postSy,
+            ElementWeightCache preElementWeights,
+            ElementWeightCache postElementWeights) {
         PipeRefireProjection p;
         if (!regradeStampCurrent()) {
             p.stale = p.valid = true;
@@ -6914,6 +7071,7 @@ private:
             preF = refirePreFalloff;
             preSn = refirePreSnap;
             preSy = refirePreSym;
+            preElementWeights = refirePreElementWeights_.ownedDup();
         }
         image.nextPreFalloff = preF.ownedDup();
         image.nextPreSnap = preSn;
@@ -6954,6 +7112,8 @@ private:
         const preSnCopy = preSn, postSnCopy = postSn;
         const preSyCopy = preSy.ownedDup();
         const postSyCopy = postSy.ownedDup();
+        const preElementWeightsCopy = preElementWeights.ownedDup();
+        const postElementWeightsCopy = postElementWeights.ownedDup();
         const xfNow = run;
         const frameNow = frame;
         p.command.setHooks(
@@ -6967,6 +7127,8 @@ private:
                 headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameNow;
                 refreshFrameValid();
+                elementWeightCache_ = postElementWeightsCopy.ownedDup();
+                preserveElementWeightsOnResync_ = true;
             },
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
@@ -6978,6 +7140,8 @@ private:
                 headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameNow;
                 refreshFrameValid();
+                elementWeightCache_ = preElementWeightsCopy.ownedDup();
+                preserveElementWeightsOnResync_ = true;
             });
         image.valid = true;
         p.valid = true;
@@ -6988,17 +7152,23 @@ private:
                                   Vec3[] after, size_t[] idx, DragBank,
                                   FalloffPacket preF, FalloffPacket postF,
                                   SnapPacket preSn, SnapPacket postSn,
-                                  SymmetryPacket preSy, SymmetryPacket postSy) {
+                                  SymmetryPacket preSy, SymmetryPacket postSy,
+                                  ElementWeightCache preElementWeights,
+                                  ElementWeightCache postElementWeights) {
         auto projection = projectPipeRefire(anchor, after, idx,
-            preF, postF, preSn, postSn, preSy, postSy);
+            preF, postF, preSn, postSn, preSy, postSy,
+            preElementWeights, postElementWeights);
         if (!projection.valid) return;
         if (projection.stale) {
             refireAnchor.length = 0;
             refirePreValid = false;
+            refirePreElementWeights_ = ElementWeightCache.init;
             return;
         }
         recordTransformCommand(
             projection.command, TransformHistoryIntent.GenerationRefire);
+        if (!refirePreValid && projection.state.nextPreValid)
+            refirePreElementWeights_ = preElementWeights.ownedDup();
         installPreparedRefireState(projection.state);
     }
     // Phase 3 — wrapper-owned drag state.
@@ -7775,11 +7945,13 @@ unittest {
     auto liveRefireProjection = liveRefireTool.projectPipeRefire(
         liveAnchor, liveAnchor, null, refirePre, refirePost,
         SnapPacket.init, SnapPacket.init,
-        SymmetryPacket.init, SymmetryPacket.init);
+        SymmetryPacket.init, SymmetryPacket.init,
+        ElementWeightCache.init, ElementWeightCache.init);
     auto preparedRefireProjection = preparedRefireTool.projectPreparedPipeRefire(
         preparedAnchor, preparedAnchor, null, refirePre, refirePost,
         SnapPacket.init, SnapPacket.init,
-        SymmetryPacket.init, SymmetryPacket.init);
+        SymmetryPacket.init, SymmetryPacket.init,
+        ElementWeightCache.init, ElementWeightCache.init);
     assert(liveRefireProjection.valid && preparedRefireProjection.valid &&
            liveRefireProjection.command.editIndices().length == 0 &&
            preparedRefireProjection.command.editIndices().length == 0 &&

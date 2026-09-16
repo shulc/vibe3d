@@ -725,6 +725,15 @@ mixin template XfrmApplyImpl() {
         // gesture 1, not replace it. Both are mesh-length and vertex-id
         // indexed, which is what `weightVerts` needs.
         const(Vec3)[] evalFrom = routed ? route.runPos : cast(const(Vec3)[]) baseline;
+        const bool cachedElement = !routed && dragFalloff.enabled
+            && dragFalloff.type == FalloffType.Element
+            && elementWeightCache_.valid;
+        const bool skipElementDriver = cachedElement
+            && !elementWeightCache_.hasElement;
+        const(Vec3)[] weightFrom = cachedElement
+            && elementWeightCache_.hasElement
+            && elementWeightCache_.samplePos.length == mesh.vertices.length
+            ? cast(const(Vec3)[]) elementWeightCache_.samplePos : evalFrom;
 
         // Source = the eval array gathered ORDINAL-parallel to the moving set.
         // The two index spaces here are NOT the same and the mismatch is
@@ -805,11 +814,13 @@ mixin template XfrmApplyImpl() {
         // the action centre is routed to the morphed centroid, so weighting
         // from the base would grade the falloff from a point the user is not
         // looking at). Unmeasured — registry row 46b.
-        applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
-                         lastFoldAnchor,
-                         foldMode, dragFalloff, dragAimSpace(), cp, ap,
-                         clusterM, noSym, toProcess, /*weightVerts=*/ evalFrom,
-                         /*route=*/ route);
+        if (!skipElementDriver)
+            applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
+                             lastFoldAnchor,
+                             foldMode, dragFalloff, dragAimSpace(), cp, ap,
+                             clusterM, noSym, toProcess,
+                             /*weightVerts=*/ weightFrom,
+                             /*route=*/ route);
 
         // MIRROR pass — fixed-base position-copy symmetry. The fold carries
         // exactly ONE symmetry model: the positive-axis side drives and is
@@ -821,7 +832,7 @@ mixin template XfrmApplyImpl() {
         // discarded; the base side's weight drives both halves. This is
         // cluster-agnostic: it copies the per-cluster (ACEN.Local) final
         // positions the driver pass produced just as it copies the global ones.
-        if (dragSymmetry.enabled
+        if (!skipElementDriver && dragSymmetry.enabled
             && dragSymmetry.pairOf.length == mesh.vertices.length) {
             import tools.transform.morph_route :
                 applySymmetryMirrorRouted, applySymmetryMirrorDeltaRouted;

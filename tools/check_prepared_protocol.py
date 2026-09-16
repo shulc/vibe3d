@@ -7381,7 +7381,7 @@ def xfrm_activation_reset_gate(source, transform):
         "            nothrow @nogc" in source and
         [semantic_digest(body) for body in bodies] == [
             "0c0189f9125980fdd81edff3b546ad39eab91ec5c956b966fb9e3efe8cba5a75",
-            "fb7447f80e0dcd58e218fc69a263945f45389ef8ce9d1a8c413bc1fabb31bb93",
+            "3ea801ef44e8022930b95c17ab8b700b2e639978e1445845104e588b3362e095",
             "6be9aea0828d812b3ee09cfdd0f17488a1ce1575cf86674353040a4205860f45"] and
         "image.run = resyncPreserveDisplayFields ? run : XformState.init;" in prepared_bodies and
         "const bool hadRun = runBaselineValid;" in prepared_bodies and
@@ -7397,6 +7397,7 @@ def xfrm_activation_reset_gate(source, transform):
         "lastAppliedGestureMutationVersion = ulong.max;" in prepared_bodies and
         "armedUndoEpoch = ulong.max;" in prepared_bodies and
         "refireAnchor.length = 0;" in prepared_bodies and
+        "refirePreElementWeights_ = ElementWeightCache.init;" in prepared_bodies and
         "foldSrc_.length = 0;" in prepared_bodies and
         "itemEditTargets_.length = 0;" in prepared_bodies and
         "itemEditBefore_.length = 0;" in prepared_bodies and
@@ -7431,6 +7432,8 @@ for target, old, new, label in (
     ("xfrm", "dragBaseline.length = 0;", "", "retain drag baseline"),
     ("xfrm", "moveRec.pinKnown = false;", "", "retain pin-known"),
     ("xfrm", "refireAnchor.length = 0;", "", "retain refire anchor"),
+    ("xfrm", "refirePreElementWeights_ = ElementWeightCache.init;", "",
+     "retain refire element weights"),
     ("xfrm", "itemEditBefore_.length = 0;", "", "retain item baseline"),
     ("xfrm", "frame.valid = false;", "frame.valid = true;", "retain valid frame"),
     ("xfrm", "if (!image.valid) return;\n        recordViaInSession = true;",

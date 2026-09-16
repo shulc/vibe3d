@@ -25,10 +25,11 @@
 //      new entries (fully inert — no empty undo entry); a following single
 //      drag+drop => exactly one.
 //  (d) Element mode (xfrm.elementMove): on-handle drag -> off-gizmo click that
-//      MISSES all elements -> in-session Ctrl+Z reverts only the post-click
-//      run AND the pivot stays at the PICKED point (the verbatim re-stage,
-//      stageCurrentActionCenterPin — regression for constraint 5). Uses the
-//      two-batch hover technique from test_relocate_boundary_element.d.
+//      MISSES all elements -> pick a new element and drag -> in-session Ctrl+Z
+//      reverts only the post-click run AND the pivot stays at the new PICKED
+//      point. The new pick is load-bearing: an empty press leaves Element
+//      weights at zero until that next pick. Uses the two-batch hover technique
+//      from test_relocate_boundary_element.d.
 //  (e) alt-modified click between drags must NOT split. GAP NOTE: buildDragLog
 //      emits motion/button events with mod=0 and there is no helper to inject
 //      a modifier-held LMB-down through the play-events log, so this case is
@@ -492,23 +493,37 @@ unittest {
         pivotAfterClick.x.to!string ~ "," ~ pivotAfterClick.y.to!string ~
         "," ~ pivotAfterClick.z.to!string ~ ")");
 
-    // Gesture 2 (post-click run): re-grab the +X arrow at the picked pivot and
-    // partial-haul (do NOT drop — keep run 2 OPEN).
+    // Gesture 2 (post-click run): the empty press deliberately left this run
+    // with zero Element weights, so pick v6 again before hauling. The picked
+    // vertex has weight one and therefore guarantees a real run-2 edit for the
+    // boundary/undo assertion below.
     cam = fetchCamera();
     vp  = viewportFromCamera(cam);
-    int xc, yc;
-    arrowGrabPx(pivotAfterClick, vp, xc, yc);
+    auto v6BeforeRun2 = vert(6);
+    float v6x, v6y;
+    projectToWindow(Vec3(cast(float)v6BeforeRun2[0],
+                         cast(float)v6BeforeRun2[1],
+                         cast(float)v6BeforeRun2[2]), vp, v6x, v6y);
+    int xc = cast(int)(v6x + 0.5f);
+    int yc = cast(int)(v6y + 0.5f);
+    playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height, xc, yc));
+    settle();
     int xd = xc + cast(int)(40.0 * ux);
     int yd = yc + cast(int)(40.0 * uy);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               xc, yc, xd, yd, 8));
     settle();
+    auto v6AfterRun2 = vert(6);
+    assert(fabs(v6AfterRun2[0] - v6AfterRun1[0]) > 1e-3 ||
+           fabs(v6AfterRun2[1] - v6AfterRun1[1]) > 1e-3 ||
+           fabs(v6AfterRun2[2] - v6AfterRun1[2]) > 1e-3,
+        "the first pick after an empty restart must restore Element weight");
+    Vec3 run2Pivot = evalPivot();
 
     // In-session Ctrl+Z (record+consolidate Phase 1): gesture 2 committed its
     // own TAGGED in-session entry on mouse-up, so navHistory does a PLAIN
     // history.undo() that pops it (geometry back to post-run-1) and
-    // resyncSession re-baselines. The pivot stays on the picked +Z anchor: the
-    // Phase 5 boundary re-staged it verbatim (stageCurrentActionCenterPin) and
+    // resyncSession re-baselines. The pivot stays on the run-2 picked anchor:
     // the pin is permanent, so reverting gesture 2's mesh edit does not move it
     // (constraint 5). Same observable as the old whole-run cancel. (Q-b gate.)
     playAndWait(ctrlZ(50.0));
@@ -523,13 +538,12 @@ unittest {
         v6Cancel[1].to!string ~ "," ~ v6Cancel[2].to!string ~ ")");
 
     Vec3 pivotAfterCancel = evalPivot();
-    assert(fabs(pivotAfterCancel.x - pickedPivot.x) < 1e-2 &&
-           fabs(pivotAfterCancel.y - pickedPivot.y) < 1e-2 &&
-           fabs(pivotAfterCancel.z - pickedPivot.z) < 1e-2,
-        "in-session cancel must leave the pivot at the PICKED +Z anchor " ~
-        "(verbatim re-stage); picked=(" ~
-        pickedPivot.x.to!string ~ "," ~ pickedPivot.y.to!string ~ "," ~
-        pickedPivot.z.to!string ~ ") cancel=(" ~
+    assert(fabs(pivotAfterCancel.x - run2Pivot.x) < 1e-2 &&
+           fabs(pivotAfterCancel.y - run2Pivot.y) < 1e-2 &&
+           fabs(pivotAfterCancel.z - run2Pivot.z) < 1e-2,
+        "in-session cancel must leave the pivot at the run-2 PICKED anchor; " ~
+        "picked=(" ~ run2Pivot.x.to!string ~ "," ~ run2Pivot.y.to!string ~ "," ~
+        run2Pivot.z.to!string ~ ") cancel=(" ~
         pivotAfterCancel.x.to!string ~ "," ~ pivotAfterCancel.y.to!string ~
         "," ~ pivotAfterCancel.z.to!string ~ ")");
 

@@ -1187,14 +1187,14 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "490adc59d3899cdaf4de1b9d4de1ec49d8ab6c7a2a2cc2ab03cf0744f868893a",
+      "semantic_sha256": "afa7ed76dff3f6b2c1b612547ded14e92d2fc75562b460f38e6316470d22981d",
       "signature": "void()",
       "symbol": "deactivate"
     },
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "e8f29a94b587c717c5fb5fe8e6ffc3cd9709cbd2ff76d91e6836c8f2cf1d4dc5",
+      "semantic_sha256": "e63f45d2716f981e6fdb222323b121b38318b10c41e39dbf6afab9004caa6c4c",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
