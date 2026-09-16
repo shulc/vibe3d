@@ -353,6 +353,7 @@ tests.unit.mesh_wire_rebuild_test
 tests.unit.mesh_wire_snapshot_test
 tests.unit.mesh_wire_weld_undo_test
 tests.unit.mirror_coincident_face_test
+tests.unit.model_command_rearm_census_test
 tests.unit.model_handles_owned_transport_test
 tests.unit.module_gate_lock_test
 tests.unit.morph_delta_test

@@ -118,7 +118,7 @@ import tools.transform.transform : TransformTool, VertexEditFactory,
 import tool            : ToolFlag;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient,
-                         LifecycleUndoEmitter;
+                         LifecycleUndoEmitter, ForeignEditRearm;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -697,7 +697,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient,
-                          LifecycleUndoEmitter {
+                          LifecycleUndoEmitter, ForeignEditRearm {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -1459,6 +1459,26 @@ public:
         armedUndoEpoch = ulong.max;
         installPreparedScalarDeactivate(image.wrapper);
         image.clear();
+    }
+
+    override bool commitPendingForForeignEdit() {
+        if (editIsOpen())
+            commitEdit("Move");
+        // Task 6250: this boundary is PRE-apply. After the foreign command is
+        // recorded, its ordinary history row would stop consolidation at the
+        // stack top and turn this close into a silent no-op.
+        closeRunBoundary();
+        invalidateRunRefireAnchor();
+        return true;
+    }
+
+    override void rearmAfterForeignEdit() {
+        // This is a fresh run, unlike resyncSession's history-navigation path:
+        // reset the displayed channels, then stamp the post-command mesh so the
+        // foreign-mutation guard cannot close the boundary a second time.
+        resetTransientState(false);
+        lastSelectionHash   = computeSelectionHash();
+        lastMutationVersion = mesh.mutationVersion;
     }
 
     override void deactivate() {

@@ -25,6 +25,8 @@ private immutable string[] kCodeIdents = [
     "g_disarmCrossings",
     "dropsActiveToolBeforeApply",
     "commandDropsToolBeforeApply",
+    "rearmsActiveToolAfterApply",
+    "commandRearmsToolAfterApply",
 ];
 
 private immutable string[] kCommentWords = [
@@ -39,10 +41,14 @@ private enum string kLayerAttrLiteral = `"layer.attr"`;
 private immutable LedgerRow[] kCodeSites = [
     LedgerRow("CommandExecutor.applyOrRefire|dropsActiveToolBeforeApply", 1,
         "the single command-funnel policy call"),
+    LedgerRow("CommandExecutor.applyOrRefire|rearmsActiveToolAfterApply", 1,
+        "the single command-funnel re-arm policy call"),
     LedgerRow("main|g_disarmActiveTool", 2,
         "the app-side hook assignment and its delegate target"),
     LedgerRow("(module scope)|dropsActiveToolBeforeApply", 1,
         "the sole definition of the pre-apply policy"),
+    LedgerRow("(module scope)|rearmsActiveToolAfterApply", 1,
+        "the sole definition of the commit-and-rearm policy"),
     LedgerRow("FileLoad.applyImpl|disarmActiveToolBeforeDocumentReplace", 4,
         "import plus call in each of the native and interchange branches"),
     LedgerRow("LayerSelect.mutateGuardingPrimary|dropActiveToolBeforePrimaryMove", 2,
@@ -55,9 +61,14 @@ private immutable LedgerRow[] kCodeSites = [
         "the /api/tool/disarm import and read"),
     LedgerRow("Registry.cacheSupportedModes|dropsActiveToolBeforeApply", 2,
         "the registry-cache import and evaluation"),
+    LedgerRow("Registry.cacheSupportedModes|rearmsActiveToolAfterApply", 2,
+        "the registry-cache import and evaluation"),
     LedgerRow("Registry|commandDropsToolBeforeApply", 1, "cache declaration"),
     LedgerRow("Registry.cacheSupportedModes|commandDropsToolBeforeApply", 1, "cache fill"),
     LedgerRow("Registry.registryJson|commandDropsToolBeforeApply", 1, "JSON publication"),
+    LedgerRow("Registry|commandRearmsToolAfterApply", 1, "cache declaration"),
+    LedgerRow("Registry.cacheSupportedModes|commandRearmsToolAfterApply", 1, "cache fill"),
+    LedgerRow("Registry.registryJson|commandRearmsToolAfterApply", 1, "JSON publication"),
     LedgerRow("(module scope)|g_disarmActiveTool", 1, "hook declaration"),
     LedgerRow("disarmActiveToolBeforeDocumentReplace|g_disarmActiveTool", 2,
         "the seam's presence check and invocation"),
@@ -77,6 +88,8 @@ private immutable LedgerRow[] kCodeSites = [
         "the command name definition, not tool-drop policy"),
     LedgerRow("dropsActiveToolBeforeApply|" ~ kLayerAttrLiteral, 1,
         "the one authoritative pre-apply exclusion"),
+    LedgerRow("dropsActiveToolBeforeApply|rearmsActiveToolAfterApply", 1,
+        "the re-arm set is excluded from the drop set by construction"),
 ];
 
 private immutable LedgerRow[] kCommentSites = [

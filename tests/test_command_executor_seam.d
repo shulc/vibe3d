@@ -245,7 +245,7 @@ unittest {
     // the layer.attr term itself is removed.
     assert(!drops.canFind("layer.attr"),
         "drop-policy registry contains the layer.attr exception");
-    assert(drops.length == 148,
+    assert(drops.length == 147,
         "drop-policy registry population changed: " ~ drops.length.to!string);
 }
 

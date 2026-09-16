@@ -1,0 +1,108 @@
+// Task 6250 source/data census for the bounded model-command re-arm protocol.
+module tests.unit.model_command_rearm_census_test;
+
+import command : CmdFlags, Command;
+import editmode : EditMode;
+import registry : Registry;
+import std.algorithm : canFind, count;
+import std.file : readText;
+import std.json : parseJSON;
+import std.path : buildPath, dirName;
+import std.string : indexOf;
+import view : View;
+
+private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+private string bodyAt(string code, string marker) {
+    const at = code.indexOf(marker);
+    assert(at >= 0, "6250 census: missing source marker `" ~ marker ~ "`");
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "6250 census: no body after `" ~ marker ~ "`");
+    immutable begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "6250 census: unterminated body after `" ~ marker ~ "`");
+}
+
+private final class PolicyCommand : Command {
+    private string id_;
+    private CmdFlags flags_;
+    private View view_;
+    this(string id, CmdFlags flags) {
+        view_ = new View(0, 0, 1, 1);
+        super(null, view_, EditMode.Vertices);
+        id_ = id;
+        flags_ = flags;
+    }
+    override string name() const { return id_; }
+    override CmdFlags cmdFlags() const { return flags_; }
+    protected override bool applyImpl() { return true; }
+}
+
+unittest { // Published sets are populated, exact and disjoint by observed data.
+    Registry registry;
+    registry.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
+        new PolicyCommand("mesh.subpatch_toggle", CmdFlags.Model);
+    registry.commandFactories["mesh.bevel"] = () => cast(Command)
+        new PolicyCommand("mesh.bevel", CmdFlags.Model);
+    registry.commandFactories["tool.attr"] = () => cast(Command)
+        new PolicyCommand("tool.attr", CmdFlags.SideEffect);
+    registry.cacheSupportedModes();
+
+    auto wire = parseJSON(registry.registryJson(false));
+    auto rearms = wire["commandsRearmingToolAfterApply"].array;
+    auto drops = wire["commandsDroppingToolBeforeApply"].array;
+    assert(rearms.length == 1 && rearms[0].str == "mesh.subpatch_toggle",
+        "6250 set census: re-arm registry must equal [mesh.subpatch_toggle]: "
+        ~ wire["commandsRearmingToolAfterApply"].toString);
+    assert(drops.length == 1 && drops[0].str == "mesh.bevel",
+        "6250 set census: drop controls changed: "
+        ~ wire["commandsDroppingToolBeforeApply"].toString);
+    foreach (entry; rearms)
+        assert(!drops.canFind(entry),
+            "6250 set census: command is published in both re-arm and drop sets: "
+            ~ entry.toString);
+
+    const commandSource = readText(buildPath(repoRoot, "source", "command.d"));
+    const policy = bodyAt(commandSource,
+        "bool rearmsActiveToolAfterApply(const Command cmd)");
+    assert(policy.count(`return cmd.name() == "mesh.subpatch_toggle";`) == 1,
+        "6250 set census: re-arm policy is no longer the one captured id: " ~ policy);
+}
+
+unittest { // Production ordering: commit before apply, re-arm from scope(exit).
+    const source = readText(buildPath(repoRoot, "source", "command_executor.d"));
+    const body = bodyAt(source,
+        "bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg)");
+    const latch = body.indexOf("const bool reentrant = inPreApplyToolHandling_");
+    const latchExit = body.indexOf("scope(exit) if (!reentrant)");
+    const commit = body.indexOf("commitPendingToolEdit()");
+    const rearmScope = body.indexOf("scope(exit) if (rearm");
+    const rearmCall = body.indexOf("rearmActiveTool();");
+    const apply = body.indexOf("if (cmd.apply()) {");
+    assert(latch >= 0 && latchExit > latch && commit > latchExit,
+        "6250 order census: invocation latch is absent or not function-scoped");
+    assert(apply > commit,
+        "6250 order census: pending tool edit is no longer committed before cmd.apply()");
+    assert(rearmScope > commit && rearmCall > rearmScope,
+        "6250 order census: post-command re-arm is no longer owned by scope(exit)");
+}
+
+unittest { // Capability methods cast narrowly and contain no generic fallback.
+    const source = readText(buildPath(repoRoot, "source", "edit_session.d"));
+    const commit = bodyAt(source, "bool commitPendingForForeignEdit() {");
+    const rearm = bodyAt(source, "void rearmAfterForeignEdit() {");
+    foreach (name, body; ["commit": commit, "rearm": rearm]) {
+        assert(body.count("cast(ForeignEditRearm)") == 1,
+            "6250 capability census: " ~ name ~ " body lost its exact cast gate");
+        assert(body.indexOf("commitUncommittedEdit") < 0,
+            "6250 capability census: " ~ name ~ " body gained generic commit fallback");
+        assert(body.indexOf("resyncSession") < 0,
+            "6250 capability census: " ~ name ~ " body gained generic resync fallback");
+    }
+}

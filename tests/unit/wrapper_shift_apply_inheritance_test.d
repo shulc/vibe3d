@@ -54,6 +54,7 @@ import tools.common.command_wrapper : CommandWrapperTool,
                                       XfrmSmoothTool, XfrmJitterTool,
                                       XfrmQuantizeTool;
 import tools.slice.edge_slide : EdgeSlideTool;
+import tools.transform.xfrm_transform : XfrmTransformTool;
 
 // ---------------------------------------------------------------------------
 // 1. EACH OF THE FOUR RESOLVES TO THE FAMILY'S OVERRIDE, AND DECLARES NONE.
@@ -91,6 +92,14 @@ unittest {
       ~ "XfrmSmoothTool message above. It is also the one wrapper tool the "
       ~ "in-module cell in command_wrapper.d cannot construct, so this is its "
       ~ "only witness of any kind.");
+}
+
+unittest {
+    static assert(__traits(isSame, XfrmTransformTool.commitUncommittedEdit,
+                                   Tool.commitUncommittedEdit),
+        "6250: XfrmTransformTool must keep Tool's base commitUncommittedEdit "
+      ~ "opt-out so EditSession.applyAndContinue still lets Shift+LMB fall "
+      ~ "through to selection for a transform panel session.");
 }
 
 // ---------------------------------------------------------------------------

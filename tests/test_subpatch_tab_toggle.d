@@ -1,10 +1,8 @@
 // Tab-key subpatch-toggle test (Stage E2 of doc/test_coverage_plan.md).
 //
-// app.d:1938 handles SDLK_TAB inline (not through mesh.subpatch_toggle
-// command — the key path takes a different branch). Existing
-// test_subpatch.d drives the command directly, so the keypress flow
-// itself has zero coverage. This test exercises Tab through the live
-// SDL event pipeline.
+// Tab reaches mesh.subpatch_toggle through the same command funnel as scripts.
+// Existing test_subpatch.d drives the command directly; this test exercises
+// the keyboard binding through the live SDL event pipeline.
 //
 // What the key handler does (MODE-AWARE scope — parity task 0464):
 //   • Polygons mode + a face selection ⇒ toggle isSubpatch on just the

@@ -12,16 +12,23 @@ private:
     CommandHistory history;
     bool delegate() activeTool;
     void delegate(ToolTransition) dropActiveTool;
+    bool delegate() commitPendingToolEdit;
+    void delegate() rearmActiveTool;
+    bool inPreApplyToolHandling_;
 
 public:
     this(CommandHistory history, bool delegate() activeTool,
-         void delegate(ToolTransition) dropActiveTool) {
+         void delegate(ToolTransition) dropActiveTool,
+         bool delegate() commitPendingToolEdit = null,
+         void delegate() rearmActiveTool = null) {
         assert(history !is null, "CommandExecutor requires CommandHistory");
         assert(activeTool !is null, "CommandExecutor requires an armed-tool reader");
         assert(dropActiveTool !is null, "CommandExecutor requires a tool-drop hook");
         this.history = history;
         this.activeTool = activeTool;
         this.dropActiveTool = dropActiveTool;
+        this.commitPendingToolEdit = commitPendingToolEdit;
+        this.rearmActiveTool = rearmActiveTool;
     }
 
     // Refire/apply-record dispatch helper (task 0183 C4). Folds the
@@ -38,19 +45,25 @@ public:
     // tell "refused" from "applied" WITHOUT a throw, because the throw is what
     // killed the editor from inside an ImGui draw.
     bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
+        // Task 6250 latch extent: the whole invocation, including pre-apply
+        // commit, command apply/record and post-apply re-arm. Declared first so
+        // reverse-order scope guards run the re-arm before this latch clears.
+        const bool reentrant = inPreApplyToolHandling_;
+        if (!reentrant) inPreApplyToolHandling_ = true;
+        scope(exit) if (!reentrant) inPreApplyToolHandling_ = false;
+
         // Post-mode finalize (task 0463, SDK-derived — the reference's
         // MODEL command class + its command-system post-mode listener; see
         // toolcards/_framework/shift_apply_rearm.md "Command-fired post-mode
         // finalize"). A Model (scene-mutating) command executed while an
-        // interactive tool is armed DROPS the tool FIRST — committing any
-        // pending live edit via deactivate() — then runs. In the reference
-        // editor a MODEL-class command triggers the armed post-mode session's
-        // registered end-callback, which for an interactive mesh tool tears the
-        // toolpipe down (a hard DROP, not the Shift+click commit-and-rearm); it
-        // fires regardless of whether the command's target relates to the
-        // tool's own geometry (measured — deleting an unrelated face still
-        // drops the armed bevel). Without this, Delete-while-bevelling ran on
-        // the live-preview mesh, leaving the tool's session desynced.
+        // interactive tool is armed normally DROPS the tool FIRST — committing
+        // any pending live edit via deactivate() — then runs. Task 6250 ports
+        // the narrower 2026-09-16 capture: mesh.subpatch_toggle instead commits
+        // the pending transform, runs, and re-arms a fresh run in place. That
+        // exception is bounded by both a command predicate and a cast-discovered
+        // tool capability; every other command/tool pair keeps the drop rule.
+        // Without the default, Delete-while-bevelling ran on the live-preview
+        // mesh, leaving the tool's session desynced.
         //
         // The single chokepoint: both runCommand (keyboard / UI) and the HTTP
         // /api/command dispatch funnel here. This targets INCREMENTAL mesh-edit
@@ -92,12 +105,22 @@ public:
         //     drops the tool itself). reorder / rename / parent leave the
         //     primary put but are not session CONTINUATIONS either, so they
         //     keep the status-quo drop.
-        // Never fires during a refire bracket (those carry only SideEffect
-        // tool.attr); after the drop activeTool is null so the tool's own
-        // lifecycle-undo emit cannot re-enter this branch.
-        if (activeTool() && dropsActiveToolBeforeApply(cmd)) {
-            dropActiveTool(ToolTransition.commandPreApplyDrop);
+        // Refire brackets carry only SideEffect tool.attr commands, so neither
+        // policy matches. Re-entry from commit/apply/re-arm is suppressed by
+        // the function-scoped latch above; a re-armed tool remains non-null.
+        bool rearm = false;
+        if (activeTool() && !reentrant) {
+            if (rearmsActiveToolAfterApply(cmd)) {
+                if (commitPendingToolEdit !is null && commitPendingToolEdit())
+                    rearm = true;
+                else
+                    dropActiveTool(ToolTransition.commandPreApplyDrop);
+            } else if (dropsActiveToolBeforeApply(cmd)) {
+                dropActiveTool(ToolTransition.commandPreApplyDrop);
+            }
         }
+        scope(exit) if (rearm && activeTool() && rearmActiveTool !is null)
+            rearmActiveTool();
         // Task 0616 Ph5 review (S3): a command that knows WHY it declined gets
         // to say so. `Command.refusalReason()` is "" for everything that has
         // not opted in, in which case the thrown text is byte-identical to

@@ -124,7 +124,6 @@ import symmetry_pick        : symmetricSelectVertex, symmetricSelectEdge,
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.select.loop    : SelectLoop;
 import commands.select.connect : SelectConnect;
-import commands.mesh.subpatch_toggle : skipsSubpatchToggle;
 import ai.element_candidates : collectElementCandidates,
                                resolveElementCandidateDecision,
                                publishElementCandidates;
@@ -646,24 +645,7 @@ struct InputRouter {
                     }
                     break;
                 case SDLK_TAB: {
-                    // Toggle subpatch flag. Scope is MODE-AWARE (parity): the face
-                    // selection is honored ONLY while Polygon is the current
-                    // selection type — in edge/vertex/item modes a persisted face
-                    // selection is ignored and the toggle applies to the WHOLE
-                    // model (matches the reference editor, which drops the polygon
-                    // selection's authority outside polygon mode). Whole-model when
-                    // nothing is face-selected in polygon mode too. The preview
-                    // rebuilds next frame via mutationVersion bumped inside
-                    // setSubpatch.
-                    mesh.syncSelection();
-                    bool scoped = currentSelType(selTypeOrder) == SelType.Polygon
-                                  && mesh.hasAnySelectedFaces();
-                    foreach (fi; 0 .. mesh.faces.length) {
-                        if (scoped && !mesh.isFaceSelected(fi))
-                            continue;
-                        if (skipsSubpatchToggle(mesh, fi)) continue;
-                        mesh.setSubpatch(fi, !mesh.isFaceSubpatch(fi));
-                    }
+                    runCommandWithArgs("mesh.subpatch_toggle", "");
                     break;
                 }
                 case SDLK_MINUS:

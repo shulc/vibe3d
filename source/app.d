@@ -2742,7 +2742,9 @@ void main(string[] args) {
 
     history = new CommandHistory();
     auto executor = new CommandExecutor(history,
-        () => activeTool !is null, &dropActiveTool);
+        () => activeTool !is null, &dropActiveTool,
+        () => session !is null && session.commitPendingForForeignEdit(),
+        () { if (session !is null) session.rearmAfterForeignEdit(); });
     ApplicationCommandBinding commandBinding;
     GuardedActionController guardController;
     auto guardModalState = new GuardModalState();

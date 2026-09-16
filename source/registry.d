@@ -167,6 +167,8 @@ struct Registry {
     bool[string] commandDiscardsWork;
     /// Snapshot of the single pre-apply tool-drop policy in command.d.
     bool[string] commandDropsToolBeforeApply;
+    /// Snapshot of the bounded commit-and-rearm policy in command.d.
+    bool[string] commandRearmsToolAfterApply;
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
@@ -180,8 +182,10 @@ struct Registry {
             commandParamsJson[id] = paramsSchemaJson(cmd.params());
             commandNeedsTarget[id] = cmd.needsEditTarget();
             commandDiscardsWork[id] = cmd.discardsUnsavedWork();
-            import command : dropsActiveToolBeforeApply;
+            import command : dropsActiveToolBeforeApply,
+                             rearmsActiveToolAfterApply;
             commandDropsToolBeforeApply[id] = dropsActiveToolBeforeApply(cmd);
+            commandRearmsToolAfterApply[id] = rearmsActiveToolAfterApply(cmd);
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
@@ -274,6 +278,14 @@ struct Registry {
             if (!commandDropsToolBeforeApply.get(k, false)) continue;
             if (!firstToolDrop) buf.put(",");
             firstToolDrop = false;
+            buf.put(format(`"%s"`, k));
+        }
+        buf.put(`],"commandsRearmingToolAfterApply":[`);
+        bool firstToolRearm = true;
+        foreach (k; cmds) {
+            if (!commandRearmsToolAfterApply.get(k, false)) continue;
+            if (!firstToolRearm) buf.put(",");
+            firstToolRearm = false;
             buf.put(format(`"%s"`, k));
         }
         buf.put(`],"toolsNeedingTarget":[`);
