@@ -11,7 +11,7 @@ import std.conv : to;
 import std.file : readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
-import std.math : PI, cos, sqrt, sin, tan;
+import std.math : PI, abs, cos, sqrt, sin, tan;
 
 void main() {}
 
@@ -168,20 +168,30 @@ private void dragAt(CameraState camera, int x, int y, int dx, int steps = 16)
         `{"t":30,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         x, y));
     settle();
+    haulHeld(camera, x, y, dx, 0, steps);
+}
+
+private void haulHeld(CameraState camera, int x, int y, int dx, int dy,
+                      int steps = 16)
+{
     string motion = viewportLine(camera);
-    int previous = x;
+    int previousX = x;
+    int previousY = y;
     foreach (i; 1 .. steps + 1) {
-        immutable int next = x + cast(int)(cast(double)dx * i / steps + 0.5);
+        immutable int nextX = x + cast(int)(cast(double)dx * i / steps + 0.5);
+        immutable int nextY = y + cast(int)(cast(double)dy * i / steps + 0.5);
         motion ~= format(
-            `{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":0,"state":1,"mod":0}` ~ "\n",
-            60 + i*25, next, y, next - previous);
-        previous = next;
+            `{"t":%d,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            60 + i*25, nextX, nextY,
+            nextX - previousX, nextY - previousY);
+        previousX = nextX;
+        previousY = nextY;
     }
     playAndWait(motion);
     settle();
     playAndWait(viewportLine(camera) ~ format(
         `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        x + dx, y));
+        x + dx, y + dy));
     settle();
 }
 
@@ -238,6 +248,23 @@ private V3 worldTranslation(JSONValue transform)
     V3 result = [0.0, 0.0, 0.0];
     foreach (axis, key; ["runFrameRight", "runFrameUp", "runFrameFwd"])
         result = add(result, scale(vector(transform[key]), local[axis]));
+    return result;
+}
+
+private double[] measuredWeights(const(V3)[] base, const(V3)[] observed,
+                                 V3 translation)
+{
+    immutable double denom = translation[0]^^2
+                           + translation[1]^^2
+                           + translation[2]^^2;
+    assert(denom > 1e-4, "6207 C19 weight measurement needs a live translation");
+    double[] result;
+    foreach (i; 0 .. observed.length) {
+        const delta = subtract(observed[i], base[i]);
+        result ~= (delta[0]*translation[0]
+                 + delta[1]*translation[1]
+                 + delta[2]*translation[2]) / denom;
+    }
     return result;
 }
 
@@ -485,5 +512,70 @@ unittest // W6d: undo -> tool drop -> re-arm starts with a fresh cache.
     assert(!readText("source/tools/transform/xfrm_transform.d")
                 .canFind("elementWeightResetSkips_"),
         "6207 W6d residual reset-skip escape hatch survived");
+    command("tool.set xfrm.elementMove off");
+}
+
+unittest // C19: an empty cache is repopulated from the current mesh at re-pick.
+{
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    script("tool.attr xfrm.elementMove TX 0.5");
+    settle();
+    const consolidated = modelVertices();
+    assert(distance(consolidated[6], [-0.7, 0.0, 1.2]) <= 2e-5,
+        "6207 C19 setup must move v6 to the captured re-pick position");
+
+    emptyRestart(camera);
+    dragArrow(camera, -100);
+    const zeroControl = modelVertices();
+    assert(zeroControl.length == 9 && zeroControl.length == consolidated.length,
+        "6207 C19 population floor requires exactly nine measured weights");
+    foreach (i; 0 .. zeroControl.length)
+        assert(distance(zeroControl[i], consolidated[i]) == 0.0,
+            format("6207 C19 empty-control haul moved v%s", i));
+
+    const repick = topPixel(getJson("/api/camera"), zeroControl[6]);
+    immutable int x = cast(int)(repick[0] + 0.5);
+    immutable int y = cast(int)(repick[1] + 0.5);
+    hover(camera, x, y);
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y));
+    settle();
+    const pressed = getJson("/api/toolpipe/eval");
+    assert(distance(vector(pressed["actionCenter"]["center"]), zeroControl[6]) <= 2e-5,
+        "6207 C19 re-pick must store v6's current position as its centre");
+    assert(distance(worldTranslation(pressed["transform"]), [0.0, 0.0, 0.0]) <= 1e-6,
+        "6207 C19 re-pick press must restart at T=0");
+    haulHeld(camera, x, y, 80, 24, 18);
+
+    auto translation = worldTranslation(transformEval());
+    auto weights = measuredWeights(zeroControl, modelVertices(), translation);
+    assert(weights.length == 9,
+        "6207 C19 re-pick must populate one weight for every rig vertex");
+    assert(abs(weights[6] - 1.0) <= 2e-5,
+        format("6207 C19 re-pick weight v6: got %.6f want 1.000000", weights[6]));
+    assert(abs(weights[7] - 0.55) <= 2e-5 && abs(weights[8] - 0.05) <= 2e-5,
+        format("6207 C19 discriminators v7/v8: got %.6f/%.6f want 0.550000/0.050000",
+               weights[7], weights[8]));
+    assert(weights[8] > 0.0,
+        "6207 C19 v8 was outside the first range and must move after re-pick");
+    assert(abs(weights[3] - 0.381534) <= 2e-5,
+        format("6207 C19 re-pick weight v3: got %.6f want 0.381534", weights[3]));
+    assert(abs(weights[4] - 0.285548) <= 2e-5,
+        format("6207 C19 re-pick weight v4: got %.6f want 0.285548", weights[4]));
+    assert(abs(falloffDistance() - 2.0) <= 1e-6,
+        "6207 C19 empty press must retain the Element falloff range");
+
+    dragArrow(camera, 20);
+    translation = worldTranslation(transformEval());
+    weights = measuredWeights(zeroControl, modelVertices(), translation);
+    assert(abs(weights[6] - 1.0) <= 2e-5
+        && abs(weights[7] - 0.55) <= 2e-5
+        && abs(weights[3] - 0.381534) <= 2e-5
+        && abs(weights[4] - 0.285548) <= 2e-5
+        && abs(weights[8] - 0.05) <= 2e-5,
+        "6207 C19 continuing haul must retain the re-pick weight profile");
     command("tool.set xfrm.elementMove off");
 }
