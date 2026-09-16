@@ -105,6 +105,7 @@ import math : Vec3, Pin, Viewport, translationMatrix,
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;
+import mesh_dirty : g_settledGeomEpochs;
 import mesh_gpu : GpuMesh;
 import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles;
@@ -490,26 +491,92 @@ struct PreparedXfrmReplayImage {
     void clear() nothrow @nogc { this = PreparedXfrmReplayImage.init; }
 }
 
-// Element weights are a run-owned snapshot: a pick or a range re-grade samples
-// once, then every T/R/S fold in that run reads the same vertex-id positions.
+// Element weights are pick-owned, with a run-scoped position sample: a pick or
+// a range re-grade samples once, then every T/R/S fold in that run reads the
+// same vertex-id positions. The address + settled epoch are the mesh_dirty
+// recipe for a position-derived cache; the run serial is a second invalidator.
+private struct ElementWeightCacheKey {
+    size_t meshAddr;
+    ulong settledGeomEpoch;
+    ulong runSerial;
+    Vec3 pickAnchor;
+    ulong pickSerial;
+    bool pickValid;
+
+    bool matches(ref const ElementWeightCacheKey other) const
+            pure nothrow @nogc {
+        return meshAddr == other.meshAddr
+            && settledGeomEpoch == other.settledGeomEpoch
+            && runSerial == other.runSerial
+            && pickSerial == other.pickSerial
+            && pickValid == other.pickValid
+            && (!pickValid || pickAnchor == other.pickAnchor);
+    }
+}
+
 private struct ElementWeightCache {
     bool valid;
     bool hasElement;
     FalloffConfig config;
     Vec3[] anchorPos;
     Vec3[] samplePos;
-    ulong pickSerial;
+    ElementWeightCacheKey key;
 
     ElementWeightCache ownedDup() const {
         ElementWeightCache result;
         result.valid = valid;
         result.hasElement = hasElement;
-        result.pickSerial = pickSerial;
+        result.key = key;
         result.config = config.dup();
         result.anchorPos = anchorPos.dup;
         result.samplePos = samplePos.dup;
         return result;
     }
+}
+
+unittest { // same-version layer switch: the mesh address is part of the key
+    ElementWeightCacheKey a, same, other;
+    a.meshAddr = 0x1000; a.settledGeomEpoch = 7;
+    a.runSerial = 3; a.pickAnchor = Vec3(1, 2, 3);
+    a.pickSerial = 5; a.pickValid = true;
+    same = a;
+    other = a; other.meshAddr = 0x2000;
+    assert(a.matches(same), "element cache key must accept its sampled mesh");
+    assert(!a.matches(other),
+        "element cache key must reject a same-version layer's mesh address");
+}
+
+unittest { // topology publication and a same-pin re-pick both make a fresh key
+    import mesh_dirty : noteMeshChange;
+    import mesh_edit_delta : MeshEditScope;
+
+    Mesh subject;
+    const addr = cast(size_t)&subject;
+    ElementWeightCacheKey before;
+    before.meshAddr = addr;
+    before.settledGeomEpoch = g_settledGeomEpochs.epochFor(addr);
+    before.runSerial = 9;
+    before.pickAnchor = Vec3(4, 5, 6);
+    before.pickSerial = 11;
+    before.pickValid = true;
+
+    auto repick = before;
+    ++repick.pickSerial;
+    assert(!before.matches(repick),
+        "re-picking the same frozen pin must invalidate the element cache");
+
+    noteMeshChange(addr, MeshEditScope.Polygons);
+    auto reshaped = before;
+    reshaped.settledGeomEpoch = g_settledGeomEpochs.epochFor(addr);
+    assert(reshaped.settledGeomEpoch != before.settledGeomEpoch,
+        "topology witness must advance the settled-geometry epoch");
+    assert(!before.matches(reshaped),
+        "topology change mid-run must invalidate the element cache");
+
+    auto nextRun = reshaped;
+    ++nextRun.runSerial;
+    assert(!reshaped.matches(nextRun),
+        "an ordinary run boundary must invalidate the position sample");
 }
 
 /// Detached final phase of `update`: subject publication, shared gizmo pose
@@ -1670,7 +1737,7 @@ public:
                     // changes no geometry — but keeps the run-state coherent for
                     // the config-restore hooks downstream.
                     recaptureLivePipePackets();
-                    regradeElementWeightCache(weightSample);
+                    useElementWeightCache(weightSample);
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
                     // re-grade. Re-weight the COMPOSED op (all preset banks'
@@ -1722,7 +1789,7 @@ public:
                     // above — pairOf is rebuilt by evaluate() at undo/redo time,
                     // so the hook needs only the config fields.
                     recaptureLivePipePackets();
-                    regradeElementWeightCache(anchor);
+                    useElementWeightCache(anchor);
                     ElementWeightCache postElementWeights =
                         elementWeightCache_.ownedDup();
                     vertexCacheDirty = true;
@@ -3828,58 +3895,79 @@ public:
         return h;
     }
 
-    private bool elementWeightCacheMatches(FalloffPacket packet) const {
+    private ElementWeightCacheKey currentElementWeightCacheKey() const {
+        ElementWeightCacheKey result;
+        result.meshAddr = cast(size_t)mesh;
+        result.settledGeomEpoch = g_settledGeomEpochs.epochFor(result.meshAddr);
+        // Cache capture precedes beginRunGesture. A fresh run therefore belongs
+        // to the serial beginRunGesture is about to allocate.
+        result.runSerial = runBaselineValid ? runSerial_ : runSerial_ + 1;
+        result.pickAnchor = elementPickAnchor_;
+        result.pickSerial = pickSerial_;
+        result.pickValid = elementPickValid_;
+        return result;
+    }
+
+    private void restampElementWeightMeshEpoch() nothrow @nogc {
+        if (!elementWeightCache_.valid ||
+            elementWeightCache_.key.meshAddr == 0) return;
+        elementWeightCache_.key.settledGeomEpoch =
+            g_settledGeomEpochs.epochFor(elementWeightCache_.key.meshAddr);
+    }
+
+    private void retainElementWeightEpochForOwnedRun(
+            ref const ElementWeightCacheKey liveKey) {
+        if (!elementWeightCache_.valid || !runBaselineValid ||
+            history is null || !history.runOpen() ||
+            elementWeightCache_.key.meshAddr != liveKey.meshAddr ||
+            elementWeightCache_.key.runSerial != liveKey.runSerial ||
+            elementWeightCache_.key.pickSerial != liveKey.pickSerial ||
+            !regradeStampCurrent()) return;
+        elementWeightCache_.key.settledGeomEpoch = liveKey.settledGeomEpoch;
+    }
+
+    private bool elementWeightCacheMatches(FalloffPacket packet,
+            ref const ElementWeightCacheKey key) const {
         return elementWeightCache_.valid
             && packet.enabled && packet.type == FalloffType.Element
-            && elementWeightCache_.pickSerial == pickSerial_
+            && elementWeightCache_.key.matches(key)
             && elementWeightCache_.config == packet.config;
     }
 
     private ElementWeightCache elementWeightCacheFrom(
-            FalloffPacket packet, const(Vec3)[] samplePos) const {
+            FalloffPacket packet, const(Vec3)[] samplePos,
+            ref const ElementWeightCacheKey key) const {
         ElementWeightCache result;
         if (!packet.enabled || packet.type != FalloffType.Element)
             return result;
         result.valid = true;
         result.config = packet.config.dup();
-        result.pickSerial = pickSerial_;
-        // An empty-space restart is an explicit no-element state. A fresh pipe
-        // evaluation can still publish the prior stage ring, so the run cache,
-        // not that stale derived packet, decides whether an element exists.
-        const preserveEmpty = elementWeightCache_.valid
-            && elementWeightCache_.pickSerial == pickSerial_
-            && !elementWeightCache_.hasElement;
-        result.hasElement = !preserveEmpty;
-        if (result.hasElement) {
-            result.anchorPos = packet.anchorPos.dup;
-            result.samplePos = samplePos.dup;
-        }
+        result.key = key;
+        result.hasElement = true;
+        result.anchorPos = packet.anchorPos.dup;
+        result.samplePos = samplePos.dup;
         return result;
     }
 
-    private void useElementWeightCacheAfterCapture(const(Vec3)[] samplePos) {
+    private void useElementWeightCache(const(Vec3)[] samplePos) {
         if (!dragFalloff.enabled || dragFalloff.type != FalloffType.Element)
             return;
-        if (!elementWeightCacheMatches(dragFalloff))
-            elementWeightCache_ = elementWeightCacheFrom(dragFalloff, samplePos);
+        const key = currentElementWeightCacheKey();
+        retainElementWeightEpochForOwnedRun(key);
+        if (!elementWeightCacheMatches(dragFalloff, key))
+            elementWeightCache_ = elementWeightCacheFrom(
+                dragFalloff, samplePos, key);
         if (elementWeightCache_.hasElement)
-            dragFalloff.anchorPos = elementWeightCache_.anchorPos;
-    }
-
-    private void regradeElementWeightCache(const(Vec3)[] samplePos) {
-        if (!dragFalloff.enabled || dragFalloff.type != FalloffType.Element)
-            return;
-        if (!elementWeightCacheMatches(dragFalloff))
-            elementWeightCache_ = elementWeightCacheFrom(dragFalloff, samplePos);
-        if (elementWeightCache_.hasElement)
-            dragFalloff.anchorPos = elementWeightCache_.anchorPos;
+            dragFalloff.anchorPos = elementWeightCache_.anchorPos.dup;
     }
 
     private ElementWeightCache elementWeightCacheForPacket(
-            FalloffPacket packet, const(Vec3)[] samplePos) const {
-        return elementWeightCacheMatches(packet)
+            FalloffPacket packet, const(Vec3)[] samplePos) {
+        const key = currentElementWeightCacheKey();
+        retainElementWeightEpochForOwnedRun(key);
+        return elementWeightCacheMatches(packet, key)
             ? elementWeightCache_.ownedDup()
-            : elementWeightCacheFrom(packet, samplePos);
+            : elementWeightCacheFrom(packet, samplePos, key);
     }
 
     private void markElementWeightCacheEmpty(FalloffPacket packet) {
@@ -3887,14 +3975,17 @@ public:
         elementWeightCache_ = ElementWeightCache.init;
         elementWeightCache_.valid = true;
         elementWeightCache_.config = packet.config.dup();
-        elementWeightCache_.pickSerial = pickSerial_;
+        elementWeightCache_.key = currentElementWeightCacheKey();
+        // The apply gate validates cardinality for both populated and empty
+        // caches. Empty uses the sample only as that topology stamp.
+        elementWeightCache_.samplePos = mesh.vertices.dup;
     }
 
     private bool elementWeightCachesEqual(
             ref const ElementWeightCache a,
             ref const ElementWeightCache b) const pure nothrow @nogc {
         return a.valid == b.valid && a.hasElement == b.hasElement
-            && a.pickSerial == b.pickSerial && a.config == b.config
+            && a.key.matches(b.key) && a.config == b.config
             && a.anchorPos == b.anchorPos && a.samplePos == b.samplePos;
     }
 
@@ -3907,7 +3998,7 @@ public:
     private void beginDragSessionPrologue(ref VectorStack vts) {
         buildVertexCacheIfNeeded();
         captureFalloffForDrag(vts);
-        useElementWeightCacheAfterCapture(mesh.vertices);
+        useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
     }
@@ -5183,7 +5274,7 @@ public:
         VectorStack vts;
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
-        useElementWeightCacheAfterCapture(mesh.vertices);
+        useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;
@@ -5317,7 +5408,7 @@ public:
         VectorStack vts;
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
-        useElementWeightCacheAfterCapture(mesh.vertices);
+        useElementWeightCache(mesh.vertices);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         if (!runBaselineValid || dragBaseline.length != mesh.vertices.length) {
@@ -5427,7 +5518,13 @@ public:
         shadow.dragBaseline = dragBaseline.dup;
         shadow.dragFalloff = falloff;
         shadow.elementWeightCache_ = elementWeights.ownedDup();
-        shadow.pickSerial_ = elementWeights.pickSerial;
+        shadow.elementWeightCache_.key.meshAddr = cast(size_t)&result.mesh;
+        shadow.elementWeightCache_.key.settledGeomEpoch =
+            g_settledGeomEpochs.epochFor(cast(size_t)&result.mesh);
+        shadow.pickSerial_ = elementWeights.key.pickSerial;
+        shadow.elementPickAnchor_ = elementWeights.key.pickAnchor;
+        shadow.elementPickValid_ = elementWeights.key.pickValid;
+        shadow.runSerial_ = elementWeights.key.runSerial;
         shadow.dragSnap = snap;
         shadow.dragSymmetry = symmetry;
         shadow.cachedVp = cachedVp;
@@ -5494,7 +5591,7 @@ public:
         image.nextElementWeights = elementWeightCacheForPacket(
             liveFalloff, image.expectedLive.vertices);
         if (image.nextElementWeights.hasElement)
-            liveFalloff.anchorPos = image.nextElementWeights.anchorPos;
+            liveFalloff.anchorPos = image.nextElementWeights.anchorPos.dup;
         auto prepared = buildPreparedRefireCandidate(
             liveFalloff, liveSnap, liveSymmetry, true,
             projection.subject == SelType.Item, image.nextElementWeights);
@@ -5970,10 +6067,12 @@ public:
             case TransformHistoryIntent.RunClose:
                 history.recordInSession(cmd, history.currentRunId);
                 publishCommittedTransform();
+                restampElementWeightMeshEpoch();
                 break;
             case TransformHistoryIntent.BoundaryCommit:
                 history.record(cmd);
                 publishCommittedTransform();
+                restampElementWeightMeshEpoch();
                 break;
             case TransformHistoryIntent.GenerationRefire:
                 history.replaceInSessionTail(cmd, history.currentRunId);
@@ -6337,6 +6436,7 @@ public:
             resyncKeepRun_ = ulong.max;
         }
         resetTransientState(keepRun);
+        if (keepRun) restampElementWeightMeshEpoch();
     }
 
 private:
@@ -6416,8 +6516,10 @@ private:
     /// caller in the editor, and widening the skip to all of them would be a
     /// far larger radius than the behaviour it buys.
     private void writeElementAnchor(Vec3 anchor) {
-        if (acenHoldsElementPin(anchor)) return;   // equal write skipped
         ++pickSerial_;
+        elementPickAnchor_ = anchor;
+        elementPickValid_ = true;
+        if (acenHoldsElementPin(anchor)) return;   // equal write skipped
         notifyAcenUserPlaced(anchor);
         notifyAcenElementPin(anchor);
     }
@@ -6976,6 +7078,8 @@ private:
 
     ElementWeightCache elementWeightCache_;
     ulong pickSerial_;
+    Vec3 elementPickAnchor_;
+    bool elementPickValid_;
 
     // foldSrc_ — reused per-frame gather buffer for applyFold's ordinal-parallel
     // baseline source (moving-set length). `applyFold` used to `new Vec3[]`

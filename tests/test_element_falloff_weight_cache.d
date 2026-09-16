@@ -6,6 +6,7 @@ import core.time : msecs;
 import drag_helpers : CameraState, fetchCamera, playAndWait;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
+import std.algorithm.searching : canFind;
 import std.conv : to;
 import std.file : readText;
 import std.format : format;
@@ -362,6 +363,10 @@ unittest // C6/W6: empty-space restart keeps T live and every weight zero.
     assert(distance(worldTranslation(transformEval()), [0.0, 0.0, 0.0]) > 0.3,
         "6207 W6 handle/T must still move after the empty restart");
     const observed = modelVertices();
+    assert(committed.length == 9,
+        "6207 W6 control fixture must contain exactly nine vertices");
+    assert(observed.length == 9,
+        "6207 W6 empty-cache result must contain exactly nine vertices");
     foreach (i; 0 .. committed.length)
         assert(distance(observed[i], committed[i]) <= 1e-5,
             format("6207 W6 no element means zero cached weight at v%s", i));
@@ -433,5 +438,52 @@ unittest // W9: without a re-grade, combined TS/TR use pick-time weights.
     immutable double angle = number(transform["rotate"].array[1]);
     assertWeightedFold("W9 TR", original, fixtureWeights("pick_weights"),
         original[6], worldTranslation(transform), 1.0, angle);
+    command("tool.set xfrm.elementMove off");
+}
+
+unittest // W6s: the empty-cache gate suppresses driver and symmetry mirror.
+{
+    const original = establish();
+    const camera = fetchCamera();
+    command("tool.pipe.attr symmetry enabled true");
+    initialDrag(camera, original);
+    const committed = modelVertices();
+    emptyRestart(camera);
+    dragArrow(camera, 40);
+    assert(distance(worldTranslation(transformEval()), [0.0, 0.0, 0.0]) > 0.3,
+        "6207 W6s symmetry run must still advance the transform channel");
+    const observed = modelVertices();
+    assert(observed.length == committed.length && observed.length == 9,
+        "6207 W6s symmetry fixture/result cardinality changed");
+    foreach (i; 0 .. observed.length)
+        assert(distance(observed[i], committed[i]) <= 1e-5,
+            format("6207 W6s empty cache must suppress mirrored vertex v%s", i));
+    command("tool.set xfrm.elementMove off");
+}
+
+unittest // W6d: undo -> tool drop -> re-arm starts with a fresh cache.
+{
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    emptyRestart(camera);
+    dragArrow(camera, 40);
+    undo(camera);
+    command("tool.set xfrm.elementMove off");
+    command("tool.set xfrm.elementMove on");
+    settle();
+    const before = modelVertices();
+    dragArrow(camera, 20);
+    const after = modelVertices();
+    assert(before.length == 9 && after.length == 9,
+        "6207 W6d fresh-cache witness must retain the nine-vertex rig");
+    bool moved;
+    foreach (i; 0 .. after.length)
+        moved = moved || distance(after[i], before[i]) > 1e-4;
+    assert(moved,
+        "6207 W6d undo -> tool drop -> re-drag reused an empty cache");
+    assert(!readText("source/tools/transform/xfrm_transform.d")
+                .canFind("elementWeightResetSkips_"),
+        "6207 W6d residual reset-skip escape hatch survived");
     command("tool.set xfrm.elementMove off");
 }

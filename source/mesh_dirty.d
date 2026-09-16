@@ -22,11 +22,14 @@ module mesh_dirty;
 //          key over those two cannot be a `MeshKey` today no matter what it
 //          holds.
 //
-// MEASURED, not asserted (task 4060 review): the eight surviving
+// MEASURED, not asserted (task 4060 review; task 6207 adds the ninth): nine
+// position-derived caches carry mesh address + a bus epoch. Eight are plain
 // `MeshDirtyKey` fields — `bvh_pick._surfKey`, `app.gpuUploadedKey_`,
 // `app.displayServiced_`, `bg_gpu_cache.BgGpuCache`, `snap.meshKey`,
-// `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey` — are
-// every one of them address + one epoch and carry NO counter, and every live
+// `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey` — and
+// every one is address + one epoch with NO counter. The ninth is
+// `tools.transform.xfrm_transform.elementWeightCache_`: its composite key adds
+// pick/run identity beside address + `g_settledGeomEpochs`. Every live
 // `MeshKey` instantiation carries at least one counter. Four of the eight
 // (display ×2, settled-geometry ×2) have no term to move to; the other four
 // (geometry ×2, topology ×2) could be `MeshKey!MeshTermGeomEpoch` /

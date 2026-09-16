@@ -725,11 +725,12 @@ mixin template XfrmApplyImpl() {
         // gesture 1, not replace it. Both are mesh-length and vertex-id
         // indexed, which is what `weightVerts` needs.
         const(Vec3)[] evalFrom = routed ? route.runPos : cast(const(Vec3)[]) baseline;
-        const bool cachedElement = !routed && dragFalloff.enabled
-            && dragFalloff.type == FalloffType.Element
-            && elementWeightCache_.valid;
+        const elementWeightKey = currentElementWeightCacheKey();
+        const bool cachedElement = !routed
+            && elementWeightCacheMatches(dragFalloff, elementWeightKey);
         const bool skipElementDriver = cachedElement
-            && !elementWeightCache_.hasElement;
+            && !elementWeightCache_.hasElement
+            && elementWeightCache_.samplePos.length == mesh.vertices.length;
         const(Vec3)[] weightFrom = cachedElement
             && elementWeightCache_.hasElement
             && elementWeightCache_.samplePos.length == mesh.vertices.length
