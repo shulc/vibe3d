@@ -924,11 +924,22 @@ protected:
     // update(). Deliberately does NOT touch `active` (resync keeps the tool
     // active) nor any open edit session (resync is only called when there is
     // none) — it resets only the drag-invariant cache/gizmo bookkeeping that
-    // activate() also clears, to the same values.
-    protected void resetTransientState() {
+    // activate() also clears. Task 6207 Phase 3 supplies the sole exception:
+    // a history hook from the current run preserves that run and re-seats the
+    // two boundary latches against the hook-rewritten mesh.
+    protected void resetTransientState(bool keepRunBoundary = false) {
         vertexCacheDirty = true;
-        lastSelectionHash = ulong.max;
-        lastMutationVersion = ulong.max;
+        if (keepRunBoundary) {
+            // A history hook from the current transform run already restored
+            // the run's channels and frozen frame.  Re-seat both boundary
+            // latches on that rewritten mesh so update() cannot immediately
+            // mistake the undo/redo mutation for a new run boundary.
+            lastSelectionHash = computeSelectionHash();
+            lastMutationVersion = mesh.mutationVersion;
+        } else {
+            lastSelectionHash = ulong.max;
+            lastMutationVersion = ulong.max;
+        }
         needsGpuUpdate = false;
         centerManual = false;
         wholeMeshDrag = false;

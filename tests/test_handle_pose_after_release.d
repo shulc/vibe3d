@@ -205,16 +205,21 @@ unittest { // Q: stationary empty Element press restarts the run at H=c.
     command("tool.set xfrm.elementMove off");
 }
 
-unittest { // U: Phase 1 undo drops the run and re-arms cleanly.
+unittest { // U: Phase 3 undo rewrites the run and leaves it live.
     establish("TransformMove","origin"); const camera=fetchCamera();
     immutable V3 centre=[0.0,0.0,0.0]; const initial=handleScreen();
     dragArrow(camera,120); dragArrow(camera,13);
     assert(distance(worldTranslation(transformEval()),centre)>0.2,"6207 U needs a visible run");
     pressUndo(camera); const undone=transformEval();
-    assert(undone["runFrameValid"].type==JSONType.false_,
-           "6207 U Phase 1 expects undo to drop the run; Phase 3 changes this");
-    assertHandleShift(camera,initial,centre,centre,"U undo");
+    assert(undone["runFrameValid"].type==JSONType.true_,
+           "6207 U undo must keep the frozen run frame live");
+    const undoneHandle=add(centre,worldTranslation(undone));
+    assert(distance(undoneHandle,centre)>0.2,
+           "6207 U undo must restore the prior nonzero run total");
+    assertHandleShift(camera,initial,centre,undoneHandle,"U undo");
     const after=dragArrow(camera,13);
+    assert(distance(worldTranslation(transformEval()),worldTranslation(undone))>0.02,
+           "6207 U post-undo arrow must continue the rewritten run");
     assert(distance2(after.midHandle,after.releasedHandle)<=1.5,"6207 U post-undo release must not jump");
     command("tool.set TransformMove off");
 }

@@ -6,7 +6,7 @@
     "method": "debug-live",
     "captured_utc": "2026-09-15",
     "harness": "private GUI gesture and live-debug capture harness",
-    "task": "6207 phases 0 and 0b",
+    "task": "6207 phases 0, 0b, and 3",
     "notes": "The runtime handle, frame, and Element-weight observations were read during GUI gestures under a live debugger; expected vectors in this public fixture are recomputed from the captured laws."
   },
   "parameters": {
@@ -112,6 +112,28 @@
               ],
               "rotation_y_degrees": [
                 -30.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "undo_redo_continuation",
+        "drove": [
+          {
+            "op": "element-transform-undo-redo-and-continue",
+            "values": {
+              "undo_translate_x": [
+                0.502539
+              ],
+              "continue_translate_x": [
+                0.622539
+              ],
+              "redo_continue_translate_x": [
+                0.742539
+              ],
+              "numeric_translate_x": [
+                0.8
               ]
             }
           }
@@ -943,5 +965,215 @@
         ]
       ]
     }
+  },
+  "undo_redo": {
+    "undo_translation": [
+      0.502539,
+      0.0,
+      0.0
+    ],
+    "continued_translation": [
+      0.622539,
+      0.0,
+      0.0
+    ],
+    "redo_continued_translation": [
+      0.742539,
+      0.0,
+      0.0
+    ],
+    "numeric_translation": [
+      0.8,
+      0.0,
+      0.0
+    ],
+    "undo_expected": [
+      [
+        -1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        0.0,
+        0.0,
+        -1.2
+      ],
+      [
+        1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        -0.9989844,
+        0.0,
+        0.0
+      ],
+      [
+        0.0761205183471523,
+        0.0,
+        0.0
+      ],
+      [
+        1.2,
+        0.0,
+        0.0
+      ],
+      [
+        -0.697461,
+        0.0,
+        1.2
+      ],
+      [
+        0.2010156,
+        0.0,
+        1.2
+      ],
+      [
+        1.2,
+        0.0,
+        1.2
+      ]
+    ],
+    "continued_expected": [
+      [
+        -1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        0.0,
+        0.0,
+        -1.2
+      ],
+      [
+        1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        -0.9509844,
+        0.0,
+        0.0
+      ],
+      [
+        0.09429714185628947,
+        0.0,
+        0.0
+      ],
+      [
+        1.2,
+        0.0,
+        0.0
+      ],
+      [
+        -0.577461,
+        0.0,
+        1.2
+      ],
+      [
+        0.2490156,
+        0.0,
+        1.2
+      ],
+      [
+        1.2,
+        0.0,
+        1.2
+      ]
+    ],
+    "redo_continued_expected": [
+      [
+        -1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        0.0,
+        0.0,
+        -1.2
+      ],
+      [
+        1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        -0.9029844,
+        0.0,
+        0.0
+      ],
+      [
+        0.11247376536542662,
+        0.0,
+        0.0
+      ],
+      [
+        1.2,
+        0.0,
+        0.0
+      ],
+      [
+        -0.457461,
+        0.0,
+        1.2
+      ],
+      [
+        0.2970156,
+        0.0,
+        1.2
+      ],
+      [
+        1.2,
+        0.0,
+        1.2
+      ]
+    ],
+    "numeric_expected": [
+      [
+        -1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        0.0,
+        0.0,
+        -1.2
+      ],
+      [
+        1.2,
+        0.0,
+        -1.2
+      ],
+      [
+        -0.8799999999999999,
+        0.0,
+        0.0
+      ],
+      [
+        0.12117749006091438,
+        0.0,
+        0.0
+      ],
+      [
+        1.2,
+        0.0,
+        0.0
+      ],
+      [
+        -0.3999999999999999,
+        0.0,
+        1.2
+      ],
+      [
+        0.32000000000000006,
+        0.0,
+        1.2
+      ],
+      [
+        1.2,
+        0.0,
+        1.2
+      ]
+    ]
   }
 }

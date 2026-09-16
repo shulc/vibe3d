@@ -584,39 +584,22 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (C) REDO PATH (Q4 + the documented redo-split / step-closes-run interaction).
+// (C) REDO PATH (Q4 + live-run undo/redo interaction).
 //
 // 2 gestures -> in-session Ctrl+Z pops gesture 2 (it lands on the REDO stack) ->
 // redo (Ctrl+Shift+Z through navHistory) re-applies gesture 2 with its hook ->
 // drop. This pins the redo direction works through navHistory AND the resulting
-// stack shape, which is NOT a one-entry consolidation — and that is the
-// architecturally-truthful outcome, verified empirically (Phase-3 finding,
-// 2026-06-07):
+// stack shape under the phase-3 keep-run law:
 //
-//   * The in-session Ctrl+Z's revert bumps mesh.mutationVersion. On the NEXT
-//     update() frame the wrapper's selection/mutation-change guard
-//     (xfrm_transform.d:313-350) sees the version change and, since runOpen() is
-//     true, CONSOLIDATES the open run + nextRun()s. With gesture 2 already on the
-//     redo stack, the gather sees a single-entry undo tail (gesture 1) and STRIPS
-//     its InSession tag in place -> gesture 1 becomes an ordinary surviving entry
-//     and the current run id advances (R -> R+1).
-//   * The redo (history.redo) re-pushes gesture 2's entry verbatim — it is STILL
-//     tagged InSession with the OLD run id R (redo() preserves entry flags and
-//     does NOT reopen the run). So after redo the stack is: [gesture1 ordinary,
-//     gesture2 tagged-runId-R]; runOpen() is false.
-//   * The drop calls consolidate(currentRunId) = consolidate(R+1); the only
-//     tagged tail entry carries run id R != R+1, so the gather finds no match and
-//     no-ops. The stack therefore stands at TWO surviving entries (one of which
-//     is still tagged from the redo). This is benign for NAVIGATION — both are
-//     valid undoable entries; the residual tag only affects the future panel's
-//     grouping badge, never stepping.
+//   * The in-session Ctrl+Z rewrites geometry while the transform run stays open.
+//   * Redo re-pushes gesture 2 into that same live run.
+//   * The drop consolidates both restored gestures to one surviving entry.
 //
 // The load-bearing contract this case locks: in-session REDO through the
 // keyboard chokepoint re-applies the popped gesture WITH its hook (geometry is
 // exactly restored), and the full undo walk-back after the drop is monotone back
-// to the cube. The exact post-drop entry COUNT (2) is asserted truthfully rather
-// than forced to 1 — the architecture does not re-merge a redo-resurrected
-// gesture into the step-closed run.
+// to the cube. The exact post-drop entry COUNT (1) proves that undo/redo did not
+// step-close the run.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -654,34 +637,22 @@ unittest {
         "redo restores the second in-session entry; floor=" ~ floor.to!string
         ~ " now=" ~ undoCount().to!string);
 
-    // Drop. The step already closed (consolidated) gesture 1's run; the redo
-    // resurrected gesture 2 as a separate (still-tagged, old-runId) entry that
-    // the drop's consolidate(R+1) cannot reach -> TWO surviving entries (truthful
-    // — see the timeline comment above).
+    // Drop. The transform run remained live, so both gestures consolidate.
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 2,
-        "redo of a step-closed run leaves TWO surviving entries at the drop "
-        ~ "(the resurrected gesture is not re-merged into the closed run); floor="
+    assert(undoCount() == floor + 1,
+        "redo inside a live transform run consolidates to ONE entry at the drop; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     assert(vertNear(vert(6), v6BothDrags),
         "the drop does not move geometry — the mesh holds the redo'd both-drags "
         ~ "state; got (" ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string
         ~ "," ~ vert(6)[2].to!string ~ ")");
 
-    // Monotone walk-back: Ctrl+Z #1 pops the resurrected gesture 2 (-> post-
-    // gesture-1), Ctrl+Z #2 pops gesture 1 (-> the cube). Both entries step
-    // cleanly despite the residual tag.
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
-    assert(vertNear(vert(6), g1),
-        "post-drop Ctrl+Z #1 pops gesture 2 back to post-gesture-1; got ("
-        ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
-        ~ vert(6)[2].to!string ~ ")");
+    // The consolidated entry walks the complete run back to the cube.
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "post-drop Ctrl+Z #2 reverts gesture 1 back to the cube");
+        "post-drop Ctrl+Z reverts the consolidated live run back to the cube");
     drainHistory();
 }
 

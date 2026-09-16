@@ -1270,8 +1270,8 @@ public:
     // resyncSession() so the two can't drift. Touches only drag-invariant
     // bookkeeping (no open edit exists when resyncSession() runs); the one-time
     // sub-tool activation and owner-provided inputs stay in activate().
-    protected override void resetTransientState() {
-        super.resetTransientState();
+    protected override void resetTransientState(bool keepRunBoundary = false) {
+        super.resetTransientState(keepRunBoundary);
         // P-F Phase 3 — display-field preservation on the resync-after-undo path.
         // resetTransientState() is shared by activate() (brand-new tool → MUST
         // zero the run-absolute display fields) and resyncSession() (after an
@@ -1295,8 +1295,10 @@ public:
         lastValueReplayValid     = false;
         lastValueReplayCause     = DragBank.None;
         valueReplayFolds         = 0;
-        dragBaseline.length       = 0;
-        resetRun();                          // apply-path Phase 2: fresh run (+ P-F frozen frame)
+        if (!keepRunBoundary) {
+            dragBaseline.length = 0;
+            resetRun();                      // genuine boundary: next gesture starts fresh
+        }
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
@@ -3431,11 +3433,7 @@ public:
     // run-absolute field resets are added as each field migrates (Phase 2 Move,
     // Phase 3 R/S).
     private void resetRun() {
-        const keepElementWeights = elementWeightResetSkips_ != 0;
-        if (keepElementWeights) --elementWeightResetSkips_;
-        if (!keepElementWeights)
-            elementWeightCache_ = ElementWeightCache.init;
-        preserveElementWeightsOnResync_ = false;
+        elementWeightCache_ = ElementWeightCache.init;
         // P-F Phase 2 — Move is run-absolute, so a geometry-run boundary that
         // ends an ACTIVE run (relocate / selection change after a gesture / tool
         // drop) resets the DISPLAY field with the geometry baseline (G8
@@ -3625,6 +3623,7 @@ public:
             captureMorphRunBaseline(dragBaseline);
             resetGestureAttrs();
             runBaselineValid = true;
+            ++runSerial_;
 
             // Task 0614 Phase 3 — item-mode run baseline, captured on the
             // SAME predicate as `dragBaseline` above: a same-bank repeat
@@ -3788,6 +3787,7 @@ public:
         else                       softStart = runKnown ? rec.softStart : softEnd;
         XformState   runStart = runKnown ? rec.runStart   : runEnd;
         GestureFrame frmStart = runKnown ? rec.frameStart : frameEnd;
+        immutable ulong serial = runSerial_;
 
         GestureHooks h;
         if (bank == DragBank.Move) {
@@ -3798,6 +3798,7 @@ public:
                 }
                 run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameEnd; refreshFrameValid();
+                resyncKeepRun_ = serial;
             };
             h.revert = () {
                 if (auto ac = activeAcenStage()) {
@@ -3806,17 +3807,20 @@ public:
                 }
                 run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frmStart; refreshFrameValid();
+                resyncKeepRun_ = serial;
             };
         } else {
             h.apply = () {
                 run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameEnd; refreshFrameValid();
+                resyncKeepRun_ = serial;
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softEnd);
             };
             h.revert = () {
                 run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frmStart; refreshFrameValid();
+                resyncKeepRun_ = serial;
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softStart);
             };
@@ -5322,6 +5326,7 @@ public:
                 dragBaseline[i] = mesh.vertices[i];
             captureMorphRunBaseline(dragBaseline);   // task 1069, same predicate
             runBaselineValid = true;
+            ++runSerial_;
             return true;
         }
         return false;
@@ -6323,15 +6328,15 @@ public:
     // pop does not change the transform tool's geometry contribution, and the
     // field is re-primed at the next gesture's begin*DragSession if ever stale.
     override void resyncSession() {
-        // A refire undo is followed by resetTransientState's run reset and by
-        // the next update's mutation-boundary reset. Preserve only the cache
-        // restored by the refire hook through those two mechanical resets;
-        // ordinary gesture undo still drops the run cache.
-        if (preserveElementWeightsOnResync_)
-            elementWeightResetSkips_ = 2;
+        const keepRun = resyncKeepRun_ == runSerial_
+                     && runBaselineValid
+                     && dragBaseline.length == mesh.vertices.length;
         resyncPreserveDisplayFields = true;
-        scope(exit) resyncPreserveDisplayFields = false;
-        resetTransientState();
+        scope(exit) {
+            resyncPreserveDisplayFields = false;
+            resyncKeepRun_ = ulong.max;
+        }
+        resetTransientState(keepRun);
     }
 
 private:
@@ -6341,6 +6346,11 @@ private:
     // keeps the hook-restored field. False everywhere else (activate(), relocate,
     // selection/mode change, tool drop, cancel) → unchanged identity-zeroing.
     bool resyncPreserveDisplayFields = false;
+    // Monotonic run identity plus a one-shot history-hook request. A hook from
+    // an older run cannot preserve the current baseline; resync always consumes
+    // the request, including the mismatch case.
+    ulong runSerial_ = 0;
+    ulong resyncKeepRun_ = ulong.max;
 
     // Element-falloff click-pick. Reads the GPU-resolved hover state
     // (g_hoveredVertex/Edge/Face — published by app.d after each
@@ -6966,8 +6976,6 @@ private:
 
     ElementWeightCache elementWeightCache_;
     ulong pickSerial_;
-    bool preserveElementWeightsOnResync_;
-    ubyte elementWeightResetSkips_;
 
     // foldSrc_ — reused per-frame gather buffer for applyFold's ordinal-parallel
     // baseline source (moving-set length). `applyFold` used to `new Vec3[]`
@@ -7116,6 +7124,7 @@ private:
         const postElementWeightsCopy = postElementWeights.ownedDup();
         const xfNow = run;
         const frameNow = frame;
+        immutable ulong serial = runSerial_;
         p.command.setHooks(
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
@@ -7128,7 +7137,7 @@ private:
                 frame = frameNow;
                 refreshFrameValid();
                 elementWeightCache_ = postElementWeightsCopy.ownedDup();
-                preserveElementWeightsOnResync_ = true;
+                resyncKeepRun_ = serial;
             },
             () {
                 restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
@@ -7141,7 +7150,7 @@ private:
                 frame = frameNow;
                 refreshFrameValid();
                 elementWeightCache_ = preElementWeightsCopy.ownedDup();
-                preserveElementWeightsOnResync_ = true;
+                resyncKeepRun_ = serial;
             });
         image.valid = true;
         p.valid = true;

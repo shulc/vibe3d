@@ -1762,10 +1762,8 @@ unittest {
     // entry's before[] is the once-per-window post-gesture anchor, so the geometry
     // reverts straight to POST-GESTURE (v0AfterG), NOT to after-tweak1 — the
     // intermediate tweak1 is NOT a geometry waypoint, it is a distinct UNDO STEP
-    // (witnessed by the floor+3 count above). The pop bumps mutationVersion, so
-    // the wrapper's idle mutation guard then consolidates the surviving run
-    // (gesture + tweak1) into the lone entry, floor+1 — the (R-F)-documented
-    // closed-run behaviour.
+    // (witnessed by the floor+3 count above). Phase 3 keeps the transform run
+    // open after the pop, leaving the two surviving entries until the drop.
     playAndWait(ctrlZ(50.0));
     settle();
     assert(vertNear(vert(0), v0AfterG),
@@ -1773,9 +1771,9 @@ unittest {
         ~ "post-gesture anchor (OBJ-3 once-per-window anchor); got ("
         ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
         ~ vert(0)[2].to!string ~ ")");
-    assert(undoCount() == floor + 1,
-        "the geometry-reverting pop closes the run → it consolidates to the lone "
-        ~ "surviving gesture (floor+1); got " ~ undoCount().to!string);
+    assert(undoCount() == floor + 2,
+        "the geometry-reverting pop keeps the run open with two surviving entries "
+        ~ "(floor+2); got " ~ undoCount().to!string);
 
     // Drop + unwind back to the cube (the surviving consolidated run).
     cmd("tool.set move off");

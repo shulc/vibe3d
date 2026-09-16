@@ -343,16 +343,11 @@ unittest // C2/W5: undo restores the pick weights, not live-position weights.
     undo(camera);
     assert(falloffDistance() == 2.0,
         "6207 W5 undo must restore the pick-time range");
-    const before = modelVertices();
     dragArrow(camera, 13);
     const transform = transformEval();
-    const translation = worldTranslation(transform);
-    immutable double pickWeight = 1.0 - distance(original[7], original[6]) / 2.0;
-    const expected = add(before[7], scale(translation, pickWeight));
-    const observed = modelVertices()[7];
-    assert(distance(observed, expected) <= 1e-5,
-        format("6207 W5 undo must restore PICK weights: observed=%s expected=%s",
-               observed, expected));
+    assertWeightedTranslation("W5 undo", original,
+                              fixtureWeights("pick_weights"),
+                              worldTranslation(transform));
     command("tool.set xfrm.elementMove off");
 }
 
