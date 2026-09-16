@@ -1058,26 +1058,64 @@ bool portBusy(ushort port) {
         format("ss -ltn 'sport = :%d' | tail -n +2 | grep -q .", port)).status == 0;
 }
 
-/// Refuse to run when the port was NOT asked for and is already taken (task
-/// 6291). The default is 8080, which is also what a plain interactive
-/// `./vibe3d` binds, so a lane that forgets `--port` aims the whole run at
-/// whatever the developer is using. What happens then is not one failure but
-/// two, and only the loud one is survivable:
+/// Who is holding the port? Returns the listener's `/proc` cmdline with NULs
+/// turned into spaces, or "" when nothing is listening or it cannot be read
+/// (another user's process, or one that exited between the two reads).
 ///
-///   - an instance started as `vibe3d --test --http-port 8080` — the visual
-///     proxy, a debug session — matches `killStaleVibe`'s pattern and is
-///     killed SILENTLY, before a single test runs;
-///   - a plain `./vibe3d` does not match, survives, keeps the port, and the
-///     run dies later with "failed to come up" after a 5 s warning.
+/// Deliberately NOT `pgrep -f`: that matches the pattern against every
+/// process on the host, including this runner's own argv, and the project has
+/// been bitten by exactly that self-match. This asks the kernel WHICH pid owns
+/// the listening socket and then reads only that one.
+string portHolderCmdline(ushort port) {
+    auto r = executeShell(format(
+        "ss -ltnp 'sport = :%d' | tail -n +2 | grep -o 'pid=[0-9]*' | "
+        ~ "head -1 | cut -d= -f2", port));
+    const pid = r.output.strip;
+    if (r.status != 0 || pid.length == 0) return "";
+    try {
+        import std.array : replace;
+        return readText(format("/proc/%s/cmdline", pid)).replace("\0", " ").strip;
+    } catch (Exception) {
+        return "";
+    }
+}
+
+/// Is the process holding the port one of OUR OWN stale test instances — the
+/// thing `killStaleVibe` exists to clear? Keyed on the same three argv tokens
+/// that `killStaleVibe`'s pattern uses, so the two agree by construction: if
+/// this says yes, that function can and will clean it up.
+bool holderIsStaleTestInstance(string cmdline, ushort port) {
+    return cmdline.canFind("vibe3d")
+        && cmdline.canFind("--test")
+        && cmdline.canFind(format("--http-port %d", port));
+}
+
+/// Refuse to run when the port was NOT asked for, is already taken, and the
+/// holder is NOT one of our own stale test instances (task 6291). The default
+/// is 8080, which is also what a plain interactive `./vibe3d` binds, so a lane
+/// that forgets `--port` aims the whole run at whatever the developer is
+/// using. What happens then is not one failure but two:
 ///
-/// The discriminator is deliberately "was it asked for", not the port number:
-/// an explicit `--port 8080` is a human saying they mean it, and banning 8080
-/// outright would break the ordinary local run in main, where it is free.
+///   - an instance started as `vibe3d --test --http-port 8080` matches
+///     `killStaleVibe`'s pattern and is cleared before the run — which is
+///     CORRECT and routine on CI, where a killed run leaves exactly that
+///     behind, and is why this guard must not fire on it;
+///   - a plain `./vibe3d`, the interactive one, does not match, survives,
+///     keeps the port, and the run dies minutes later with "failed to come
+///     up" after a 5 s warning — having first sent its `pkill` at the
+///     developer's machine for nothing.
+///
+/// Two discriminators, and both are needed. "Was the port ASKED for" rather
+/// than the port number: an explicit `--port 8080` is a human saying they mean
+/// it, and banning 8080 outright would break the ordinary local run in main,
+/// where it is free. "Is the holder our own test instance" rather than "is
+/// anything there": without that term this guard refuses every CI run that
+/// follows an interrupted one, which is the case the cleanup was written for.
 /// `--attach` is exempt by construction — it exists to drive an endpoint that
 /// is already listening.
-bool refuseDefaultBusyPort(bool portGiven, int attach, bool busy)
+bool refuseDefaultBusyPort(bool portGiven, int attach, bool busy, bool ourStaleInstance)
         pure nothrow @safe @nogc {
-    return !portGiven && attach == 0 && busy;
+    return !portGiven && attach == 0 && busy && !ourStaleInstance;
 }
 
 // Witness for both of the above. The predicate's table is exhaustive over its
@@ -1089,19 +1127,49 @@ unittest {
 
     // Every row of the truth table, so removing any one term reddens: dropping
     // `!portGiven` breaks row 2, dropping `attach == 0` breaks row 3, dropping
-    // `busy` breaks row 4.
-    assert(refuseDefaultBusyPort(false, 0, true),
-        "a default port that is already taken must refuse");           // row 1
-    assert(!refuseDefaultBusyPort(true, 0, true),
-        "an explicit --port is a human saying they mean it");          // row 2
-    assert(!refuseDefaultBusyPort(false, 8080, true),
-        "--attach exists to drive an endpoint that is already up");    // row 3
-    assert(!refuseDefaultBusyPort(false, 0, false),
-        "a free default port is the ordinary local run");              // row 4
-    assert(!refuseDefaultBusyPort(true, 0, false));
-    assert(!refuseDefaultBusyPort(true, 8080, true));
-    assert(!refuseDefaultBusyPort(false, 8080, false));
-    assert(!refuseDefaultBusyPort(true, 8080, false));
+    // `busy` breaks row 4, dropping `!ourStaleInstance` breaks row 5.
+    assert(refuseDefaultBusyPort(false, 0, true, false),
+        "a default port held by something that is not ours must refuse");
+    assert(!refuseDefaultBusyPort(true, 0, true, false),
+        "an explicit --port is a human saying they mean it");
+    assert(!refuseDefaultBusyPort(false, 8080, true, false),
+        "--attach exists to drive an endpoint that is already up");
+    assert(!refuseDefaultBusyPort(false, 0, false, false),
+        "a free default port is the ordinary local run");
+    assert(!refuseDefaultBusyPort(false, 0, true, true),
+        "our own stale test instance is killStaleVibe's job, not a refusal — "
+        ~ "refusing here breaks every CI run that follows an interrupted one");
+    foreach (pg; [false, true])
+        foreach (at; [0, 8080])
+            foreach (bs; [false, true])
+                foreach (ours; [false, true])
+                    assert(refuseDefaultBusyPort(pg, at, bs, ours)
+                           == (!pg && at == 0 && bs && !ours),
+                        "the predicate must be exactly the conjunction it documents");
+
+    // The holder classifier, against the argv shapes that actually occur. The
+    // port term matters: a stale instance on ANOTHER port is not this port's
+    // holder, and treating it as one would hand the port to killStaleVibe,
+    // whose pattern would then match nothing and leave the run to fail late.
+    assert(holderIsStaleTestInstance("./vibe3d --test --http-port 8080", 8080),
+        "our own stale test instance must be recognised");
+    assert(!holderIsStaleTestInstance("./vibe3d", 8080),
+        "a plain interactive instance is NOT ours to clear");
+    assert(!holderIsStaleTestInstance("./vibe3d --test --http-port 8570", 8080),
+        "a test instance on another port does not hold this one");
+    // Found by mutation, not by design: with the `--test` term dropped every
+    // other row above still passed, because none of them had `vibe3d` and this
+    // port WITHOUT `--test`. That shape is a real one — a human running the
+    // editor on an explicit port — and it is precisely NOT ours to clear,
+    // since killStaleVibe's pattern also requires `--test` and would match
+    // nothing.
+    assert(!holderIsStaleTestInstance("./vibe3d --http-port 8080", 8080),
+        "an interactive instance on an explicit port carries no --test, so "
+        ~ "killStaleVibe's pattern cannot match it and it is not ours to clear");
+    assert(!holderIsStaleTestInstance("", 8080),
+        "an unreadable holder must never be taken for ours");
+    assert(!holderIsStaleTestInstance("python3 -m http.server 8080", 8080),
+        "an unrelated listener is not a vibe3d test instance");
 
     // The real probe, against a socket this block owns. Bound to port 0 so the
     // kernel picks a free one — asking for a fixed port here would fail on a
@@ -2546,13 +2614,20 @@ int main(string[] args) {
     }
 
     // Before anything is built, killed or spawned: see refuseDefaultBusyPort.
-    if (refuseDefaultBusyPort(portGiven, attach, portBusy(port))) {
-        stderr.writefln(red("refusing to run: port %d is the DEFAULT and "
-                          ~ "something is already listening on it."), port);
-        stderr.writeln("This run would target whatever is using that port — "
-                     ~ "killing it outright if it was started as\n"
-                     ~ "`vibe3d --test --http-port`, and failing several "
-                     ~ "minutes later if it was not.");
+    // `busy` comes from portBusy, NOT from "we managed to read a cmdline":
+    // a listener owned by another user gives an empty cmdline, and reading
+    // that as "nothing is there" would drop the guard in exactly the case it
+    // can say least about. Unreadable holder ⇒ busy, and not ours ⇒ refuse.
+    const holder = portHolderCmdline(port);
+    if (refuseDefaultBusyPort(portGiven, attach, portBusy(port),
+                              holderIsStaleTestInstance(holder, port))) {
+        stderr.writefln(red("refusing to run: port %d is the DEFAULT and it is "
+                          ~ "held by something that is not a stale test "
+                          ~ "instance of ours."), port);
+        stderr.writefln("  holder: %s", holder);
+        stderr.writeln("This run would send its pkill at that process and then "
+                     ~ "fail minutes later with\n\"failed to come up\", because "
+                     ~ "the port never becomes free.");
         stderr.writeln("Pass this lane's own port (see ~/Code/wt/.lanes.tsv), "
                      ~ "e.g. --port 8570.\nIf you really mean this port, say "
                      ~ "so explicitly: --port " ~ port.to!string ~ ".");
