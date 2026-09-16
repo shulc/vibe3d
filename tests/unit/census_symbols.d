@@ -248,7 +248,7 @@ unittest // the scanner cluster's own contracts (task 0678 M10)
 // from any form nobody has thought of, because a desynced scanner eats the rest
 // of the file and the site count collapses.
 // ---------------------------------------------------------------------------
-package string blankNonCode(string src, bool keepComments = false) {
+package(tests.unit) string blankNonCode(string src, bool keepComments = false) {
     auto outBuf = new char[src.length];
     foreach (i, c; src) outBuf[i] = (c == '\n') ? '\n' : ' ';
     size_t codeStart = 0;

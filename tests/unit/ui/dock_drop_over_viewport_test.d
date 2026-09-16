@@ -2,13 +2,12 @@ module tests.unit.ui.dock_drop_over_viewport_test;
 
 import d_imgui.imgui_h : ImVec2;
 import tests.unit.ui.headless_dock : HeadlessDockScene, openScene;
-
-private enum int noDockingOverMe = 1 << 20;
+import ui.imgui_window_class : kDockFlagNoDockingOverMe;
 
 private ImVec2 tabGrab() { return ImVec2(190, 10); }
 
 unittest { // control: the harness can dock into an ordinary panel node
-    auto scene = openScene(noDockingOverMe);
+    auto scene = openScene(kDockFlagNoDockingOverMe);
     scope(exit) scene.close();
     const before = scene.tabDockId;
     scene.dragTo(tabGrab(), scene.rightRect.center());
@@ -17,7 +16,7 @@ unittest { // control: the harness can dock into an ordinary panel node
 }
 
 unittest { // target: the top edge creates a sibling split above the viewport
-    auto scene = openScene(noDockingOverMe);
+    auto scene = openScene(kDockFlagNoDockingOverMe);
     scope(exit) scene.close();
     const edge = ImVec2(scene.viewportRect.center().x,
                         scene.viewportRect.center().y - 46);
@@ -29,7 +28,7 @@ unittest { // target: the top edge creates a sibling split above the viewport
 }
 
 unittest { // centre merging is refused
-    auto scene = openScene(noDockingOverMe);
+    auto scene = openScene(kDockFlagNoDockingOverMe);
     scope(exit) scene.close();
     scene.dragTo(tabGrab(), scene.viewportRect.center());
     assert(scene.tabDockId == 0,
@@ -37,16 +36,17 @@ unittest { // centre merging is refused
 }
 
 unittest { // the class-derived refusal follows ViewportHost after a split
-    auto control = openScene(noDockingOverMe, true);
+    auto control = openScene(kDockFlagNoDockingOverMe, true);
     scope(exit) control.close();
     const edge = ImVec2(control.viewportRect.center().x,
                         control.viewportRect.center().y - 46);
     control.dragTo(tabGrab(), edge);
+    const mateBefore = control.mateDockId;
     control.dragTo(tabGrab(), control.rightRect.center());
-    assert(control.mateDockId != 0,
+    assert(control.mateDockId != mateBefore,
         "6245 F4b(4) floor: the second panel could not dock into an ordinary node");
 
-    auto scene = openScene(noDockingOverMe, true);
+    auto scene = openScene(kDockFlagNoDockingOverMe, true);
     scope(exit) scene.close();
     const splitEdge = ImVec2(scene.viewportRect.center().x,
                              scene.viewportRect.center().y - 46);

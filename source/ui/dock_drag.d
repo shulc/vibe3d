@@ -6,6 +6,9 @@ private extern(C) @nogc nothrow {
 }
 
 /// Whether Dear ImGui is currently carrying a dock-window payload.
+/// Its lifetime is ImGui's own: PayloadAutoExpire clears it two frames after
+/// the source stops submitting, and Escape clears it immediately; do not
+/// replace this query with an application-stored drag boolean.
 bool windowDockDragActive() nothrow @nogc {
     void* payload = igGetDragDropPayload();
     return payload !is null

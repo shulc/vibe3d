@@ -3,6 +3,7 @@ module tests.unit.ui.headless_dock;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import ui.dock_drag : viewportOverlayWindowFlags;
+import ui.imgui_window_class : ImGuiWindowClassStorage;
 
 private extern(C) nothrow @nogc {
     void ImGuiIO_AddMousePosEvent(void* self, float x, float y);
@@ -11,20 +12,7 @@ private extern(C) nothrow @nogc {
     ImGuiID igGetWindowDockID();
     ImVec2 igGetWindowPos();
     ImVec2 igGetWindowSize();
-    void igSetNextWindowClass(const(ImGuiWindowClassRaw)* self);
-}
-
-private struct ImGuiWindowClassRaw {
-    uint ClassId;
-    uint ParentViewportId;
-    uint FocusRouteParentWindowId;
-    int ViewportFlagsOverrideSet;
-    int ViewportFlagsOverrideClear;
-    int TabItemFlagsOverrideSet;
-    int DockNodeFlagsOverrideSet;
-    bool DockingAlwaysTabBar;
-    bool DockingAllowUnclassed;
-    void* PlatformIconData;
+    void igSetNextWindowClass(const(void)* self);
 }
 
 private struct IoHeader {
@@ -127,10 +115,11 @@ struct HeadlessDockScene {
         if (extraTop) submitWindow("Top mate2", ignored);
         submitWindow("Status line", ignored);
 
-        ImGuiWindowClassRaw wc;
-        wc.ParentViewportId = 0xFFFF_FFFFu;
-        wc.DockingAllowUnclassed = true;
-        wc.DockNodeFlagsOverrideSet = viewportClassBit;
+        ImGuiWindowClassStorage wc = void;
+        wc.bytes[] = 0;
+        wc.fields.ParentViewportId = 0xFFFF_FFFFu;
+        wc.fields.DockingAllowUnclassed = true;
+        wc.fields.DockNodeFlagsOverrideSet = viewportClassBit;
         igSetNextWindowClass(&wc);
         immutable int hostFlags = ImGuiWindowFlags.NoScrollbar
             | ImGuiWindowFlags.NoScrollWithMouse
@@ -203,6 +192,14 @@ HeadlessDockScene openScene(int viewportClassBit, bool extraTop = false) {
     header.displayH = 720;
     header.backendFlags |= backendRendererHasTextures;
     header.configFlags |= dockingEnable;
+    enum int layoutProbeBit = 1 << 30;
+    header.configFlags |= layoutProbeBit;
+    assert((ImGui.GetIO().ConfigFlags & layoutProbeBit) != 0,
+        "6245 headless dock: ImGuiIO ConfigFlags prefix moved");
+    header.configFlags &= ~layoutProbeBit;
+    assert(ImGui.GetIO().DisplaySize.x == 1280
+        && ImGui.GetIO().DisplaySize.y == 720,
+        "6245 headless dock: ImGuiIO DisplaySize prefix moved");
     ImGui.GetIO().IniFilename = null;
     ImGui.StyleColorsDark();
     ImGuiIO_AddFocusEvent(scene.io, true);

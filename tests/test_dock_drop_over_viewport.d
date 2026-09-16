@@ -57,6 +57,7 @@ private Instance launch(string cell) {
         buildPath(repo, "vibe3d"), "--test", "--http-port",
         result.port.to!string,
     ], stdin, logFile, logFile, childEnv, Config.none, result.root);
+    scope(failure) stop(result);
     foreach (_; 0 .. 240) {
         if (kill(result.pid.processID, 0) != 0) break;
         try {

@@ -464,7 +464,8 @@ import editor_app : installSnapState;
 private __gshared bool g_seedFreshLayout = false;
 
 import viewport : LayoutPreset;
-import ui.imgui_window_class : ImGuiWindowClassMirror;
+import ui.imgui_window_class : ImGuiWindowClassMirror,
+    ImGuiWindowClassStorage, kDockFlagNoDockingOverMe;
 
 // ---------------------------------------------------------------------------
 // Task 0211: scoped viewport-only layout switch — dock-node internals
@@ -481,14 +482,19 @@ private extern(C) @nogc nothrow {
     bool ImGuiDockNode_IsCentralNode(ImGuiDockNode* self);
     bool ImGuiDockNode_IsEmpty(ImGuiDockNode* self);
     pragma(mangle, "igSetNextWindowClass")
-    void setNextWindowClass(const(ImGuiWindowClassMirror)* self);
+    void setNextWindowClass(const(void)* self);
 }
 alias igSetNextWindowClass = setNextWindowClass;
 
+// These assertions describe the known prefix used by our field writes. The
+// constructor-backed unit bracket checks the offsets against the linked
+// library; the oversized zeroed call buffer below also tolerates appended C
+// fields and therefore does not assume the C struct is exactly 40 bytes.
 static assert(ImGuiWindowClassMirror.sizeof == 40);
 static assert(ImGuiWindowClassMirror.ParentViewportId.offsetof == 4);
 static assert(ImGuiWindowClassMirror.DockNodeFlagsOverrideSet.offsetof == 24);
 static assert(ImGuiWindowClassMirror.DockingAllowUnclassed.offsetof == 29);
+static assert(ImGuiWindowClassStorage.sizeof == 256);
 
 // Private imgui dock-node flag (imgui_internal.h:1993) — internal-only bit,
 // not part of the public `ImGuiDockNodeFlags` enum bound in d_imgui/imgui_h.d,
@@ -498,14 +504,6 @@ static assert(ImGuiWindowClassMirror.DockingAllowUnclassed.offsetof == 29);
 // dropped that inner dockspace entirely, so nothing declares a nested
 // DockSpace node anymore.)
 private enum int kDockFlagCentralNode  = 1 << 11;
-
-// This internal bit is delivered through ViewportHost's window class, never
-// stored on a dock node. ImGui rebuilds LocalFlagsInWindows from each node's
-// own windows every frame, so shared inheritance, local-flag transfer and ini
-// persistence cannot spread or erase it. It follows ViewportHost to a new leaf
-// after a split; without the input-side opening in ui.dock_drag it is inert.
-// Evidence: card 6245, rig H/I/J and the post-split vpCtr2 row.
-private enum int kDockFlagNoDockingOverMe = 1 << 20;
 
 // Private imgui dock-node flag (imgui_internal.h:1995, `HiddenTabBar`).
 // task 0211 Phase 4 deleted the OLD per-cell `kDockFlagHiddenTabBar` shim in
@@ -5186,8 +5184,13 @@ void main(string[] args) {
                     // hole exists; card 6248 owns that separate repair.
                     ImGui.DockBuilderDockWindow("ViewportHost", vpRegion);
                     // The node-level undock guard was dropped by task 6245.
-                    // Keep the measured no-op CentralNode term: card 6248 makes
-                    // it load-bearing after restoring the root invariant.
+                    // This stays safe while the top-level Viewport##k cells win
+                    // hover: ViewportHost is mouse-transparent and this leaf's
+                    // tab bar is hidden, so the host has no grab surface.
+                    // If either shield changes, the host becomes rippable;
+                    // backlog 6251 owns that coupled invariant. Keep the
+                    // measured no-op CentralNode term: card 6248 makes it
+                    // load-bearing after restoring the root invariant.
                     {
                         auto vpRegionNode = ImGui.DockBuilderGetNode(vpRegion);
                         if (vpRegionNode !is null) {
@@ -6259,10 +6262,11 @@ void main(string[] args) {
             // NoDockingOverMe refuses centre merging but leaves side zones
             // available. The per-frame window class follows ViewportHost across
             // splits and is rebuilt locally; ClassId intentionally stays zero.
-            ImGuiWindowClassMirror vpClass;
-            vpClass.ParentViewportId = 0xFFFF_FFFFu;
-            vpClass.DockingAllowUnclassed = true;
-            vpClass.DockNodeFlagsOverrideSet = kDockFlagNoDockingOverMe;
+            ImGuiWindowClassStorage vpClass = void;
+            vpClass.bytes[] = 0;
+            vpClass.fields.ParentViewportId = 0xFFFF_FFFFu;
+            vpClass.fields.DockingAllowUnclassed = true;
+            vpClass.fields.DockNodeFlagsOverrideSet = kDockFlagNoDockingOverMe;
             igSetNextWindowClass(&vpClass);
             if (ImGui.Begin("ViewportHost", null, hostFlags)) {
                 ImVec2 hostPos   = ImGui.GetCursorScreenPos();
