@@ -426,7 +426,7 @@ unittest {
     auto centreRegraded = dumpVerts()[72];
     assert(!approxEq(centreRegraded[0], centreAfterG[0], 1e-3),
         "idle steps change (Selection falloff) must refresh the preview "
-        ~ "(F1 fix): centre-vert.x was " ~ centreAfterG[0].to!string
+        ~ "(F1 fix): centre vertex X was " ~ centreAfterG[0].to!string
         ~ ", still " ~ centreRegraded[0].to!string ~ " after steps 1->6");
 
     cmd("tool.set move off");
