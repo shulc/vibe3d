@@ -448,7 +448,6 @@ noBankConsumed:
     // something to compare against — this tool doesn't expose `cachedVp`
     // itself, only its serialization.
     public override JSONValue toolHandlesJson() const {
-        if (foreignEditSessionClosed_) return JSONValue(null);
         JSONValue root = toolHandles.toJson(cachedVp);
         auto vpObj = JSONValue.emptyObject;
         vpObj["x"]      = JSONValue(cachedVp.x);

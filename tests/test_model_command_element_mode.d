@@ -40,7 +40,7 @@ private double distance(V3 a, V3 b)
 
 private void settle()
 {
-    Thread.sleep(150.msecs);
+    Thread.sleep(100.msecs);
 }
 
 private void command(string text)
@@ -65,20 +65,24 @@ private V3[] modelVertices()
     return result;
 }
 
-private V3[] establish()
+private V3[] establish(bool elementFalloff = true)
 {
     postJson("/api/command", commandBody("scene.reset"));
     command("tool.pipe.attr snap enabled false");
     command("tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("scene.loadMesh",
         `{"vertices":[[-1.2,0,-1.2],[0,0,-1.2],[1.2,0,-1.2],[-1.2,0,0],[0,0,0],[1.2,0,0],[-1.2,0,1.2],[0,0,1.2],[1.2,0,1.2]],"faces":[[0,3,4,1],[1,4,5,2],[3,6,7,4],[4,7,8,5]]}`));
+    if (!elementFalloff) command("select.element vertex set 6");
     command("viewport.view Top");
     postJson("/api/camera", `{"distance":6,"focus":{"x":0,"y":0,"z":0}}`);
+    if (!elementFalloff) command("tool.pipe.attr falloff type none");
     command("tool.set Transform on");
     command("tool.pipe.attr actionCenter mode element");
-    command("tool.pipe.attr falloff type element");
-    command("tool.pipe.attr falloff mode vertex");
-    command("tool.pipe.attr falloff dist 2");
+    if (elementFalloff) {
+        command("tool.pipe.attr falloff type element");
+        command("tool.pipe.attr falloff mode vertex");
+        command("tool.pipe.attr falloff dist 2");
+    }
     settle();
     return modelVertices();
 }
@@ -149,6 +153,23 @@ private void dragAt(CameraState camera, int x, int y, int dx)
     haulHeld(camera, x, y, dx, 0);
 }
 
+private void pressAt(CameraState camera, int x, int y)
+{
+    hover(camera, x, y);
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y));
+    settle();
+}
+
+private void releaseAt(CameraState camera, int x, int y)
+{
+    playAndWait(viewportLine(camera) ~ format(
+        `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y));
+    settle();
+}
+
 private void initialDrag(CameraState camera, const(V3)[] original)
 {
     const pick = topPixel(getJson("/api/camera"), original[6]);
@@ -207,6 +228,18 @@ private bool allSubpatch()
     return true;
 }
 
+private JSONValue[] undoRows()
+{
+    return getJson("/api/history")["undo"].array;
+}
+
+private string actionCenterMode()
+{
+    foreach (stage; getJson("/api/toolpipe")["stages"].array)
+        if (stage["task"].str == "ACEN") return stage["attrs"]["mode"].str;
+    assert(false, "6250 population: active toolpipe has no ACEN stage");
+}
+
 unittest { // N1 — at-rest handle/T/run state after two complete gestures.
     const original = establish();
     const camera = fetchCamera();
@@ -242,19 +275,183 @@ unittest { // N1 — at-rest handle/T/run state after two complete gestures.
     command("tool.set Transform off");
 }
 
+private struct AtRestGesture {
+    int x, y;
+    bool subpatch;
+    string actionMode;
+    JSONValue state;
+    JSONValue eval;
+    V3 vertex;
+    JSONValue[] rows;
+}
+
+private AtRestGesture runAtRestGesture(bool toggle, bool originArm = false,
+                                       bool collectRows = false)
+{
+    const original = establish();
+    if (originArm) command("tool.pipe.attr actionCenter mode origin");
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    const before = modelVertices();
+    const pixel = topPixel(getJson("/api/camera"), before[6]);
+    immutable int x = cast(int)(pixel[0] + 0.5);
+    immutable int y = cast(int)(pixel[1] + 0.5);
+    size_t beforeRows;
+    if (toggle) {
+        command("mesh.subpatch_toggle");
+        settle();
+        beforeRows = undoRows().length;
+    }
+    dragAt(camera, x, y, 80);
+    auto vertices = modelVertices();
+    AtRestGesture result;
+    result.x = x;
+    result.y = y;
+    result.subpatch = allSubpatch();
+    result.actionMode = actionCenterMode();
+    result.state = getJson("/api/tool/state");
+    result.eval = getJson("/api/toolpipe/eval");
+    result.vertex = vertices[6];
+    if (collectRows) {
+        dragArrow(camera, 80);
+        dragArrow(camera, 80);
+        result.rows = undoRows()[beforeRows .. $].dup;
+    }
+    command("tool.set Transform off");
+    return result;
+}
+
+unittest { // N1b — a post-toggle gesture settles like the no-toggle control.
+    const control = runAtRestGesture(false);
+    const toggled = runAtRestGesture(true, false, true);
+    assert(!control.subpatch && toggled.subpatch,
+        "6250 N1b population: toggle and no-toggle arms were not separated");
+    assert(control.x == toggled.x && control.y == toggled.y,
+        "6250 N1b population: control and toggle must press identical pixels");
+    const controlT = vector(control.eval["transform"]["translate"]);
+    const toggledT = vector(toggled.eval["transform"]["translate"]);
+    const controlDrift = distance(vector(control.state["pivot"]), control.vertex);
+    const toggledDrift = distance(vector(toggled.state["pivot"]), toggled.vertex);
+    assert(control.state["runOpen"].boolean
+        && control.state["runFrame"]["valid"].boolean
+        && distance(controlT, [0.0, 0.0, 0.0]) > 0.05
+        && controlDrift <= 1e-3,
+        format("6250 N1b control: no-toggle gesture was not live at rest; "
+             ~ "T=%s valid=%s runOpen=%s drift=%.4f",
+               controlT, control.state["runFrame"]["valid"],
+               control.state["runOpen"], controlDrift));
+    assert(toggled.state["runOpen"].boolean
+        && toggled.state["runFrame"]["valid"].boolean
+        && distance(toggledT, [0.0, 0.0, 0.0]) > 0.05
+        && toggledDrift <= 1e-3,
+        format("6250 N1b: post-toggle gesture lost its live at-rest run; "
+             ~ "T=%s valid=%s runOpen=%s drift=%.4f "
+             ~ "(control T=%s drift=%.4f)",
+               toggledT, toggled.state["runFrame"]["valid"],
+               toggled.state["runOpen"], toggledDrift,
+               controlT, controlDrift));
+    const added = toggled.rows;
+    assert(added.length == 3,
+        format("6250 N1c population: three gestures added %s rows", added.length));
+    const runId = added[0]["runId"].integer;
+    assert(runId != 0, "6250 N1c: post-toggle gestures lost their run id");
+    foreach (i, row; added) {
+        assert(row["command"].str == "mesh.vertex_edit"
+            && row["inSession"].boolean && row["runId"].integer == runId,
+            format("6250 N1c: gesture %s is not in the shared open run: %s", i, row));
+    }
+    const originToggled = runAtRestGesture(true, true);
+    assert(originToggled.actionMode == "origin",
+        "6250 N1b origin population: origin arm was not selected");
+    const originT = vector(originToggled.eval["transform"]["translate"]);
+    assert(originToggled.state["runOpen"].boolean
+        && originToggled.state["runFrame"]["valid"].boolean
+        && distance(originT, [0.0, 0.0, 0.0]) > 0.05,
+        format("6250 N1b origin: post-toggle gesture lost its live at-rest run; "
+             ~ "T=%s valid=%s runOpen=%s",
+               originT, originToggled.state["runFrame"]["valid"],
+               originToggled.state["runOpen"]));
+}
+
 unittest { // N2 — no handle is published while the Element session is closed.
     const original = establish();
     const camera = fetchCamera();
     initialDrag(camera, original);
+    const stalePart = handlePartScreen(0);
+    const stalePin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
+    assert(!getJson("/api/tool/state")["editOpen"].boolean,
+        "6250 N2 population: completed gesture must close its edit before toggle");
+    command("mesh.subpatch_toggle");
+    settle();
+    const closedState = getJson("/api/tool/state");
+    assert(allSubpatch() && closedState["tool"].str == "xfrm",
+        "6250 N2 control: toggle must apply while the transform stays selected");
+    assert(!closedState["sessionOpen"].boolean,
+        "6250 N2 control: Element session did not close");
+    const handles = getJson("/api/tool/handles")["handles"];
+    assert(handles.type == JSONType.object && handles["parts"].array.length == 0,
+        "6250 N2: closed session published transform handle parts: " ~ handles.toString);
+    immutable int x = cast(int)(stalePart[0] + 0.5);
+    immutable int y = cast(int)(stalePart[1] + 0.5);
+    assert(x == 490 && y == 431,
+        format("6250 N2b population: stale part-0 pixel moved to (%s,%s)", x, y));
+    pressAt(camera, x, y);
+    const reopenedState = getJson("/api/tool/state");
+    const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
+    assert(reopenedState["sessionOpen"].boolean,
+        "6250 N2b control: physical press did not reopen the closed session");
+    assert(reopenedState["activeBank"].str == "none"
+        && reopenedState["dragAxis"].integer == -1 && !reopenedState["dragging"].boolean
+        && distance(pin, stalePin) <= 1e-6,
+        format("6250 N2b: press at hidden part 0 (%s,%s) grabbed stale geometry; "
+             ~ "bank=%s axis=%s dragging=%s pin=%s stale=%s",
+               x, y, reopenedState["activeBank"], reopenedState["dragAxis"], reopenedState["dragging"],
+               pin, stalePin));
+    releaseAt(camera, x, y);
+    command("tool.set Transform off");
+}
+
+unittest { // N2c — pipe writes and the test opener cannot clear the latch.
+    const original = establish();
+    const camera = fetchCamera();
+    initialDrag(camera, original);
+    command("mesh.subpatch_toggle");
+    command("tool.pipe.attr actionCenter mode origin");
+    command("tool.beginSession");
+    settle();
+    const closed = getJson("/api/tool/state");
+    const handles = getJson("/api/tool/handles")["handles"];
+    assert(!closed["sessionOpen"].boolean && !closed["editOpen"].boolean,
+        "6250 N2c: non-physical writes reopened the closed session");
+    assert(handles.type == JSONType.object && handles["parts"].array.length == 0,
+        "6250 N2c: non-physical writes republished closed-session handles");
+    const pixel = topPixel(getJson("/api/camera"), modelVertices()[7]);
+    immutable int x = cast(int)(pixel[0] + 0.5);
+    immutable int y = cast(int)(pixel[1] + 0.5);
+    pressAt(camera, x, y);
+    assert(getJson("/api/tool/state")["sessionOpen"].boolean,
+        "6250 N2c: physical press did not clear the closed-session latch");
+    releaseAt(camera, x, y);
+    command("tool.set Transform off");
+}
+
+unittest { // N2d — OUR branch keys on ACEN Element, not Element falloff.
+    const original = establish(false);
+    const pin = vector(getJson("/api/toolpipe/eval")["actionCenter"]["center"]);
+    assert(distance(pin, original[6]) <= 2e-5,
+        format("6250 N2d population: ACEN-only selected-element pick was %s", pin));
+    command("tool.beginSession");
+    command("tool.attr Transform TX 0.5");
+    assert(getJson("/api/tool/state")["editOpen"].boolean
+        && distance(modelVertices()[6], original[6]) > 0.1,
+        "6250 N2d population: ACEN-only pending edit did not open and move");
     command("mesh.subpatch_toggle");
     settle();
     const state = getJson("/api/tool/state");
-    assert(allSubpatch() && state["tool"].str == "xfrm",
-        "6250 N2 control: toggle must apply while the transform stays selected");
-    assert(!state["sessionOpen"].boolean,
-        "6250 N2 control: Element session did not close");
-    assert(getJson("/api/tool/handles")["handles"].type == JSONType.null_,
-        "6250 N2: a transform handle is still drawn for the closed session");
+    const handles = getJson("/api/tool/handles")["handles"];
+    assert(!state["sessionOpen"].boolean
+        && handles.type == JSONType.object && handles["parts"].array.length == 0,
+        "6250 N2d: ACEN Element without Element falloff missed the close branch");
     command("tool.set Transform off");
 }
 

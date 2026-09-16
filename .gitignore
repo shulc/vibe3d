@@ -145,3 +145,4 @@ third_party/nfde/.dub/
 build_class.txt
 .gesture-lane/
 scratch/*.log
+scratch/*.lock

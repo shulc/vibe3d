@@ -285,3 +285,21 @@ unittest { // F — Tab uses the same command funnel and history law.
     assert(rows[$ - 1]["label"].str == "mesh.subpatch_toggle",
         "6250 F: Tab did not record mesh.subpatch_toggle: " ~ rows[$ - 1].toString);
 }
+
+unittest { // J — default ACEN None follows the Origin continuation arm.
+    resetFixture("J");
+    command("tool.set Transform on", "J arm");
+    assert(pipeAttrs("ACEN", "J").get("mode", "") == "none",
+        "6250 J population: Transform no longer starts with ACEN None");
+    command("tool.beginSession", "J begin session");
+    command("tool.attr Transform TX 1.5", "J pending TX");
+    command("mesh.subpatch_toggle", "J toggle");
+    auto state = toolState();
+    assert(state["sessionOpen"].boolean,
+        "6250 J: default ACEN None took the Element closed-session arm");
+    command("tool.beginSession", "J second session");
+    command("tool.attr Transform TX 2.5", "J second TX");
+    assert(fabs(centre()[0] - 4.0) <= kTol,
+        format("6250 J: ACEN None did not rearm from the committed cage; x=%.6f",
+               centre()[0]));
+}

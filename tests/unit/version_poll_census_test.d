@@ -678,8 +678,9 @@ private static immutable LedgerRow[] kRemainder = [
         "same family, same argument — the dormant prepared projection"),
     LedgerRow("ScaleTool.updateInput", 1,
         "same family, same argument — the gesture boundary"),
-    LedgerRow("XfrmTransformTool.update", 1,
-        "the wrapper's gesture boundary"),
+    LedgerRow("XfrmTransformTool.update", 2,
+        "the wrapper's gesture boundary plus its deferred subpatch-settle "
+      ~ "exception, paired with the gesture undo epoch"),
     LedgerRow("XfrmTransformTool.projectPreparedUpdatePre", 1,
         "the conversion-only prepared projection"),
     LedgerRow("XfrmTransformTool.regradeStampCurrent", 1,

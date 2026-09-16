@@ -1591,10 +1591,23 @@ public:
             // that mask. Re-keyed on an epoch this guard would fire on the
             // tool's OWN drag at the first update() after mouse-up — commit
             // the edit, split the run, cancel the re-grade §2.3 protects.
-            ulong curHash   = computeSelectionHash();
+            ulong curHash = computeSelectionHash();
+            // A live subpatch preview bumps mutationVersion once per confined
+            // drag upload, then once more when the settled display refreshes.
+            // armRegradeStamp() sees the final drag upload, so its exact +1 is
+            // the owner's deferred settle — not a foreign edit boundary. An
+            // undo/redo can also land on that numeric version, so require the
+            // gesture's paired undo epoch to still be current. Keep the
+            // recorded history run open for later consolidation (N1b/N1c).
+            // recorded remainder (1906 §3.6): the boundary and its one-step
+            // settle exception need ownership/order that no bus class carries.
             ulong curMutVer = mesh.mutationVersion;
+            const bool ownSettledGestureMutation =
+                curMutVer == lastAppliedGestureMutationVersion + 1
+                && history !is null && history.undoEpoch() == armedUndoEpoch;
             if (curHash != lastSelectionHash
-             || curMutVer != lastMutationVersion) {
+             || (curMutVer != lastMutationVersion
+                 && !ownSettledGestureMutation)) {
                 // Session-close work stays editIsOpen()-gated (harmless no-op
                 // once gestures self-commit on mouse-up). Run-close work gates
                 // on history.runOpen() — the single source of truth for "is
@@ -3131,7 +3144,8 @@ public:
             && (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0
             && pressPlacesCenter();
 
-        if (!itemOffGizmoDown && routeResolvedHandlePart(e, vts, hitPart))
+        if (!reopenedFromForeignEdit && !itemOffGizmoDown
+                && routeResolvedHandlePart(e, vts, hitPart))
             return true;
 
         // Click landed OFF every gizmo handler bank. If we just
@@ -6482,9 +6496,9 @@ private:
         // frozen Element pivot is ACEN state; a click that relocates it must
         // work wherever that mode is armed (`actr.element` on a plain move
         // tool, say), not only inside the one preset that also happens to arm
-        // an Element falloff. This is the reference's shape too: its writer is
-        // the centre tool's own event handler, and the falloff is a separate
-        // slot it knows nothing about.
+        // an Element falloff. This is our implementation inference; the
+        // reference capture changed ACEN and WGHT together, so registry row
+        // 171 keeps the discriminator open pending a separating capture.
         auto ac = activeAcenStage();
         if (ac is null || ac.mode != ActionCenterStage.Mode.Element) return false;
 
