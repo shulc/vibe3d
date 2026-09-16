@@ -552,30 +552,37 @@ unittest // C19: an empty cache is repopulated from the current mesh at re-pick.
 
     auto translation = worldTranslation(transformEval());
     auto weights = measuredWeights(zeroControl, modelVertices(), translation);
+    const expectedRepick = fixtureWeights("repick_weights");
     assert(weights.length == 9,
         "6207 C19 re-pick must populate one weight for every rig vertex");
-    assert(abs(weights[6] - 1.0) <= 2e-5,
-        format("6207 C19 re-pick weight v6: got %.6f want 1.000000", weights[6]));
-    assert(abs(weights[7] - 0.55) <= 2e-5 && abs(weights[8] - 0.05) <= 2e-5,
-        format("6207 C19 discriminators v7/v8: got %.6f/%.6f want 0.550000/0.050000",
-               weights[7], weights[8]));
+    assert(expectedRepick.length == 9,
+        "6207 C19 fixture must contain exactly nine re-pick weights");
+    assert(abs(weights[6] - expectedRepick[6]) <= 2e-5,
+        format("6207 C19 re-pick weight v6: got %.6f want %.6f",
+               weights[6], expectedRepick[6]));
+    assert(abs(weights[7] - expectedRepick[7]) <= 2e-5
+        && abs(weights[8] - expectedRepick[8]) <= 2e-5,
+        format("6207 C19 discriminators v7/v8: got %.6f/%.6f want %.6f/%.6f",
+               weights[7], weights[8], expectedRepick[7], expectedRepick[8]));
     assert(weights[8] > 0.0,
         "6207 C19 v8 was outside the first range and must move after re-pick");
-    assert(abs(weights[3] - 0.381534) <= 2e-5,
-        format("6207 C19 re-pick weight v3: got %.6f want 0.381534", weights[3]));
-    assert(abs(weights[4] - 0.285548) <= 2e-5,
-        format("6207 C19 re-pick weight v4: got %.6f want 0.285548", weights[4]));
+    assert(abs(weights[3] - expectedRepick[3]) <= 2e-5,
+        format("6207 C19 re-pick weight v3: got %.6f want %.6f",
+               weights[3], expectedRepick[3]));
+    assert(abs(weights[4] - expectedRepick[4]) <= 2e-5,
+        format("6207 C19 re-pick weight v4: got %.6f want %.6f",
+               weights[4], expectedRepick[4]));
     assert(abs(falloffDistance() - 2.0) <= 1e-6,
         "6207 C19 empty press must retain the Element falloff range");
 
     dragArrow(camera, 20);
     translation = worldTranslation(transformEval());
     weights = measuredWeights(zeroControl, modelVertices(), translation);
-    assert(abs(weights[6] - 1.0) <= 2e-5
-        && abs(weights[7] - 0.55) <= 2e-5
-        && abs(weights[3] - 0.381534) <= 2e-5
-        && abs(weights[4] - 0.285548) <= 2e-5
-        && abs(weights[8] - 0.05) <= 2e-5,
+    assert(abs(weights[6] - expectedRepick[6]) <= 2e-5
+        && abs(weights[7] - expectedRepick[7]) <= 2e-5
+        && abs(weights[3] - expectedRepick[3]) <= 2e-5
+        && abs(weights[4] - expectedRepick[4]) <= 2e-5
+        && abs(weights[8] - expectedRepick[8]) <= 2e-5,
         "6207 C19 continuing haul must retain the re-pick weight profile");
     command("tool.set xfrm.elementMove off");
 }

@@ -519,6 +519,13 @@ unittest {
            fabs(v6AfterRun2[2] - v6AfterRun1[2]) > 1e-3,
         "the first pick after an empty restart must restore Element weight");
     Vec3 run2Pivot = evalPivot();
+    const expectedRun2Pivot = Vec3(cast(float)v6BeforeRun2[0],
+                                   cast(float)v6BeforeRun2[1],
+                                   cast(float)v6BeforeRun2[2]);
+    const pivotDelta = run2Pivot - expectedRun2Pivot;
+    assert(sqrt(pivotDelta.x*pivotDelta.x + pivotDelta.y*pivotDelta.y
+                + pivotDelta.z*pivotDelta.z) < 1e-2,
+        "run-2 pivot must independently equal the picked pre-haul vertex");
 
     // In-session Ctrl+Z (record+consolidate Phase 1): gesture 2 committed its
     // own TAGGED in-session entry on mouse-up, so navHistory does a PLAIN

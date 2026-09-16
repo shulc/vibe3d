@@ -6,7 +6,7 @@
     "method": "debug-live",
     "captured_utc": "2026-09-15",
     "harness": "private GUI gesture and live-debug capture harness",
-    "task": "6207 phases 0, 0b, and 3",
+    "task": "6207 phases 0, 0b, 0e, and 3",
     "notes": "The runtime handle, frame, and Element-weight observations were read during GUI gestures under a live debugger; expected vectors in this public fixture are recomputed from the captured laws."
   },
   "parameters": {
@@ -526,6 +526,11 @@
       0.0,
       0.0
     ],
+    "repick_first_translation": [
+      0.5,
+      0.0,
+      0.0
+    ],
     "arrow_translation": [
       0.622539,
       0.0,
@@ -809,6 +814,17 @@
       1.0,
       0.7005078,
       0.3675130000000001
+    ],
+    "repick_weights": [
+      0.0,
+      0.0,
+      0.0,
+      0.381534156157351,
+      0.2855480710552719,
+      0.0,
+      1.0,
+      0.55,
+      0.050000000000000044
     ]
   },
   "scale_axis_law": {

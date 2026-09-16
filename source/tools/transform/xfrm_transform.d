@@ -105,7 +105,7 @@ import math : Vec3, Pin, Viewport, translationMatrix,
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;
-import mesh_dirty : g_settledGeomEpochs;
+import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import mesh_gpu : GpuMesh;
 import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles;
@@ -493,26 +493,10 @@ struct PreparedXfrmReplayImage {
 
 // Element weights are pick-owned, with a run-scoped position sample: a pick or
 // a range re-grade samples once, then every T/R/S fold in that run reads the
-// same vertex-id positions. The address + settled epoch are the mesh_dirty
-// recipe for a position-derived cache; the run serial is a second invalidator.
-private struct ElementWeightCacheKey {
-    size_t meshAddr;
-    ulong settledGeomEpoch;
-    ulong runSerial;
-    Vec3 pickAnchor;
-    ulong pickSerial;
-    bool pickValid;
-
-    bool matches(ref const ElementWeightCacheKey other) const
-            pure nothrow @nogc {
-        return meshAddr == other.meshAddr
-            && settledGeomEpoch == other.settledGeomEpoch
-            && runSerial == other.runSerial
-            && pickSerial == other.pickSerial
-            && pickValid == other.pickValid
-            && (!pickValid || pickAnchor == other.pickAnchor);
-    }
-}
+// same vertex-id positions. resetRun() clears the cache at every run/pick/layer
+// boundary; this standard address + settled-epoch key is defence in depth for
+// a foreign mesh publication while the run remains open (task 6207).
+private alias ElementWeightCacheKey = MeshDirtyKey;
 
 private struct ElementWeightCache {
     bool valid;
@@ -521,62 +505,27 @@ private struct ElementWeightCache {
     Vec3[] anchorPos;
     Vec3[] samplePos;
     ElementWeightCacheKey key;
+    // Replay metadata, deliberately not freshness terms: resetRun() owns
+    // invalidation. The prepared shadow still needs the live pick image.
+    ulong runSerial;
+    ulong pickSerial;
+    Vec3 pickAnchor;
+    bool pickValid;
 
     ElementWeightCache ownedDup() const {
         ElementWeightCache result;
         result.valid = valid;
         result.hasElement = hasElement;
         result.key = key;
+        result.runSerial = runSerial;
+        result.pickSerial = pickSerial;
+        result.pickAnchor = pickAnchor;
+        result.pickValid = pickValid;
         result.config = config.dup();
         result.anchorPos = anchorPos.dup;
         result.samplePos = samplePos.dup;
         return result;
     }
-}
-
-unittest { // same-version layer switch: the mesh address is part of the key
-    ElementWeightCacheKey a, same, other;
-    a.meshAddr = 0x1000; a.settledGeomEpoch = 7;
-    a.runSerial = 3; a.pickAnchor = Vec3(1, 2, 3);
-    a.pickSerial = 5; a.pickValid = true;
-    same = a;
-    other = a; other.meshAddr = 0x2000;
-    assert(a.matches(same), "element cache key must accept its sampled mesh");
-    assert(!a.matches(other),
-        "element cache key must reject a same-version layer's mesh address");
-}
-
-unittest { // topology publication and a same-pin re-pick both make a fresh key
-    import mesh_dirty : noteMeshChange;
-    import mesh_edit_delta : MeshEditScope;
-
-    Mesh subject;
-    const addr = cast(size_t)&subject;
-    ElementWeightCacheKey before;
-    before.meshAddr = addr;
-    before.settledGeomEpoch = g_settledGeomEpochs.epochFor(addr);
-    before.runSerial = 9;
-    before.pickAnchor = Vec3(4, 5, 6);
-    before.pickSerial = 11;
-    before.pickValid = true;
-
-    auto repick = before;
-    ++repick.pickSerial;
-    assert(!before.matches(repick),
-        "re-picking the same frozen pin must invalidate the element cache");
-
-    noteMeshChange(addr, MeshEditScope.Polygons);
-    auto reshaped = before;
-    reshaped.settledGeomEpoch = g_settledGeomEpochs.epochFor(addr);
-    assert(reshaped.settledGeomEpoch != before.settledGeomEpoch,
-        "topology witness must advance the settled-geometry epoch");
-    assert(!before.matches(reshaped),
-        "topology change mid-run must invalidate the element cache");
-
-    auto nextRun = reshaped;
-    ++nextRun.runSerial;
-    assert(!reshaped.matches(nextRun),
-        "an ordinary run boundary must invalidate the position sample");
 }
 
 /// Detached final phase of `update`: subject publication, shared gizmo pose
@@ -3500,6 +3449,9 @@ public:
     // run-absolute field resets are added as each field migrates (Phase 2 Move,
     // Phase 3 R/S).
     private void resetRun() {
+        // This clear is the primary cache invalidator. Every reachable run,
+        // pick and layer boundary comes through resetRun(); the key below is
+        // only same-run defence against a foreign publication.
         elementWeightCache_ = ElementWeightCache.init;
         // P-F Phase 2 — Move is run-absolute, so a geometry-run boundary that
         // ends an ACTIVE run (relocate / selection change after a gesture / tool
@@ -3897,40 +3849,34 @@ public:
 
     private ElementWeightCacheKey currentElementWeightCacheKey() const {
         ElementWeightCacheKey result;
-        result.meshAddr = cast(size_t)mesh;
-        result.settledGeomEpoch = g_settledGeomEpochs.epochFor(result.meshAddr);
-        // Cache capture precedes beginRunGesture. A fresh run therefore belongs
-        // to the serial beginRunGesture is about to allocate.
-        result.runSerial = runBaselineValid ? runSerial_ : runSerial_ + 1;
-        result.pickAnchor = elementPickAnchor_;
-        result.pickSerial = pickSerial_;
-        result.pickValid = elementPickValid_;
+        const addr = cast(size_t)mesh;
+        result.stamp(addr, g_settledGeomEpochs.epochFor(addr));
         return result;
     }
 
     private void restampElementWeightMeshEpoch() nothrow @nogc {
         if (!elementWeightCache_.valid ||
-            elementWeightCache_.key.meshAddr == 0) return;
-        elementWeightCache_.key.settledGeomEpoch =
-            g_settledGeomEpochs.epochFor(elementWeightCache_.key.meshAddr);
+            elementWeightCache_.key.addr == 0) return;
+        // Called immediately after our own transform commit publishes Position;
+        // no foreign writer can have advanced this epoch inside that call.
+        elementWeightCache_.key.epoch =
+            g_settledGeomEpochs.epochFor(elementWeightCache_.key.addr);
     }
 
     private void retainElementWeightEpochForOwnedRun(
             ref const ElementWeightCacheKey liveKey) {
         if (!elementWeightCache_.valid || !runBaselineValid ||
             history is null || !history.runOpen() ||
-            elementWeightCache_.key.meshAddr != liveKey.meshAddr ||
-            elementWeightCache_.key.runSerial != liveKey.runSerial ||
-            elementWeightCache_.key.pickSerial != liveKey.pickSerial ||
+            elementWeightCache_.key.addr != liveKey.addr ||
             !regradeStampCurrent()) return;
-        elementWeightCache_.key.settledGeomEpoch = liveKey.settledGeomEpoch;
+        elementWeightCache_.key.epoch = liveKey.epoch;
     }
 
     private bool elementWeightCacheMatches(FalloffPacket packet,
             ref const ElementWeightCacheKey key) const {
         return elementWeightCache_.valid
             && packet.enabled && packet.type == FalloffType.Element
-            && elementWeightCache_.key.matches(key)
+            && elementWeightCache_.key.matches(key.addr, key.epoch)
             && elementWeightCache_.config == packet.config;
     }
 
@@ -3943,6 +3889,12 @@ public:
         result.valid = true;
         result.config = packet.config.dup();
         result.key = key;
+        // Capture precedes beginRunGesture, so a fresh run belongs to the
+        // serial that beginRunGesture is about to allocate.
+        result.runSerial = runBaselineValid ? runSerial_ : runSerial_ + 1;
+        result.pickSerial = pickSerial_;
+        result.pickAnchor = elementPickAnchor_;
+        result.pickValid = elementPickValid_;
         result.hasElement = true;
         result.anchorPos = packet.anchorPos.dup;
         result.samplePos = samplePos.dup;
@@ -3976,6 +3928,11 @@ public:
         elementWeightCache_.valid = true;
         elementWeightCache_.config = packet.config.dup();
         elementWeightCache_.key = currentElementWeightCacheKey();
+        elementWeightCache_.runSerial =
+            runBaselineValid ? runSerial_ : runSerial_ + 1;
+        elementWeightCache_.pickSerial = pickSerial_;
+        elementWeightCache_.pickAnchor = elementPickAnchor_;
+        elementWeightCache_.pickValid = elementPickValid_;
         // The apply gate validates cardinality for both populated and empty
         // caches. Empty uses the sample only as that topology stamp.
         elementWeightCache_.samplePos = mesh.vertices.dup;
@@ -3983,9 +3940,14 @@ public:
 
     private bool elementWeightCachesEqual(
             ref const ElementWeightCache a,
-            ref const ElementWeightCache b) const pure nothrow @nogc {
+            ref const ElementWeightCache b) const nothrow @nogc {
         return a.valid == b.valid && a.hasElement == b.hasElement
-            && a.key.matches(b.key) && a.config == b.config
+            && a.key.matches(b.key.addr, b.key.epoch)
+            && a.runSerial == b.runSerial
+            && a.pickSerial == b.pickSerial
+            && a.pickValid == b.pickValid
+            && (!a.pickValid || a.pickAnchor == b.pickAnchor)
+            && a.config == b.config
             && a.anchorPos == b.anchorPos && a.samplePos == b.samplePos;
     }
 
@@ -5518,13 +5480,13 @@ public:
         shadow.dragBaseline = dragBaseline.dup;
         shadow.dragFalloff = falloff;
         shadow.elementWeightCache_ = elementWeights.ownedDup();
-        shadow.elementWeightCache_.key.meshAddr = cast(size_t)&result.mesh;
-        shadow.elementWeightCache_.key.settledGeomEpoch =
+        shadow.elementWeightCache_.key.addr = cast(size_t)&result.mesh;
+        shadow.elementWeightCache_.key.epoch =
             g_settledGeomEpochs.epochFor(cast(size_t)&result.mesh);
-        shadow.pickSerial_ = elementWeights.key.pickSerial;
-        shadow.elementPickAnchor_ = elementWeights.key.pickAnchor;
-        shadow.elementPickValid_ = elementWeights.key.pickValid;
-        shadow.runSerial_ = elementWeights.key.runSerial;
+        shadow.pickSerial_ = elementWeights.pickSerial;
+        shadow.elementPickAnchor_ = elementWeights.pickAnchor;
+        shadow.elementPickValid_ = elementWeights.pickValid;
+        shadow.runSerial_ = elementWeights.runSerial;
         shadow.dragSnap = snap;
         shadow.dragSymmetry = symmetry;
         shadow.cachedVp = cachedVp;

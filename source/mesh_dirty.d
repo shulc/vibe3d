@@ -23,14 +23,16 @@ module mesh_dirty;
 //          holds.
 //
 // MEASURED, not asserted (task 4060 review; task 6207 adds the ninth): nine
-// position-derived caches carry mesh address + a bus epoch. Eight are plain
+// position-derived caches carry mesh address + a bus epoch. All are plain
 // `MeshDirtyKey` fields — `bvh_pick._surfKey`, `app.gpuUploadedKey_`,
 // `app.displayServiced_`, `bg_gpu_cache.BgGpuCache`, `snap.meshKey`,
-// `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey` — and
-// every one is address + one epoch with NO counter. The ninth is
-// `tools.transform.xfrm_transform.elementWeightCache_`: its composite key adds
-// pick/run identity beside address + `g_settledGeomEpochs`. Every live
-// `MeshKey` instantiation carries at least one counter. Four of the eight
+// `symmetry.cachedMeshKey_`, `falloff._selKey`, `actcenter._clusterKey`, and
+// `tools.transform.xfrm_transform.elementWeightCache_` — every one is address
+// + one epoch with NO counter. The Element cache is cleared by `resetRun()` at
+// every run/pick/layer boundary; its key is defence in depth for a foreign
+// publication while the run remains open, not the boundary invalidator.
+// Every live `MeshKey` instantiation carries at least one counter. Four of the
+// original eight
 // (display ×2, settled-geometry ×2) have no term to move to; the other four
 // (geometry ×2, topology ×2) could be `MeshKey!MeshTermGeomEpoch` /
 // `MeshKey!MeshTermTopoEpoch` and were left alone, because 4060 folded only

@@ -222,3 +222,9 @@ drop 0 3 5610 compatibility stage changes have no provider through which the rem
 # frame work, and on the CI runner the NORMAL row measured 8.355 ms against the
 # hidden row's 4.289 ms, driving the difference negative on a correct tree.
 drop 0 1 5900 the two-frame timing floor guarded a difference that no longer exists; the forwarded sleep is now timed in place, where a sleep's one-sided error makes the floor sound
+
+# Task 6207 removes two hand-built comparator cells after proving that their
+# run/pick terms cannot be reached as freshness boundaries: resetRun clears the
+# cache at every run, pick, and layer boundary. MeshDirtyKey's own ABA cell now
+# owns the remaining address/epoch defence-in-depth comparator mutation.
+drop 2 6 6207 unreachable run/pick key terms and their isolated struct assertions were retired; boundary clear owns invalidation and MeshDirtyKey owns its comparator witness
