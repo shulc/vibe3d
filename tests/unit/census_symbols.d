@@ -1210,6 +1210,8 @@ unittest { // task 6353 registration-block boundaries, old and paired forms
     enum probe = q"PROBE
 registerHeadlessTool!BoxTool(reg, "prim.cube", () {
     auto t = new BoxTool();
+    // an unbalanced { in a comment
+    t.tag("{");
     if (ready) { t.bind(); }
     return t;
 }, owner, live);

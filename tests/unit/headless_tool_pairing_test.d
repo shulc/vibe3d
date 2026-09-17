@@ -9,6 +9,7 @@ import command : Command;
 import command_history : CommandHistory;
 import commands.tool.headless : ToolHeadlessCommand;
 import document : Document, Layer;
+import editmode : EditMode;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
@@ -121,8 +122,10 @@ unittest {
         && countOccurrences(self, "reg.commandFactories[") == 0,
         "6353 self-census: the witness must drive production registration");
 
-    immutable registration = readText(buildPath(repoRoot, "source", "registration.d"));
-    assert(registration.length > 50_000,
+    immutable rawRegistration = readText(
+        buildPath(repoRoot, "source", "registration.d"));
+    immutable registration = blankNonCode(rawRegistration);
+    assert(rawRegistration.length > 50_000,
         "6353 source population: registration.d is unexpectedly small");
     assert(countOccurrences(registration, "registerHeadlessTool!") == 13,
         "6353 source population: expected 13 paired helper calls");
@@ -154,18 +157,18 @@ unittest {
     assert(countOccurrences(primitive, "registerHeadlessTool!") == 9,
         "6353 primitive population: expected nine paired calls");
     foreach (id; kPaired) {
-        assert(countOccurrences(registration,
+        assert(countOccurrences(rawRegistration,
                 "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
             "6353 old channel: literal tool assignment survived for " ~ id);
-        assert(countOccurrences(registration,
+        assert(countOccurrences(rawRegistration,
                 "reg.commandFactories[\"" ~ id ~ "\"]") == 0,
             "6353 old channel: literal command assignment survived for " ~ id);
     }
     foreach (id; kToolOnly) {
-        assert(countOccurrences(registration,
+        assert(countOccurrences(rawRegistration,
                 "reg.toolFactories[\"" ~ id ~ "\"] = ") == 1,
             "6353 command-negative source: flat tool registration moved for " ~ id);
-        assert(countOccurrences(registration,
+        assert(countOccurrences(rawRegistration,
                 "reg, \"" ~ id ~ "\", () {") == 0,
             "6353 command-negative source: tool-only id became paired: " ~ id);
     }
@@ -181,6 +184,9 @@ unittest {
 unittest {
     static assert(kPaired.length == 13);
     auto r = makeRig();
+    r.session.editMode = EditMode.Edges;
+    auto firstMesh = &r.layer.meshRef();
+    auto firstView = r.view;
     registerTools(r.app);
     foreach (id; kPaired) {
         assert(id in r.registry.toolFactories,
@@ -195,6 +201,30 @@ unittest {
             "6353 label: " ~ id ~ " wrapper reports '" ~ cmd.label() ~ "'");
         assert(cmd.needsEditTarget(),
             "6353 target contract: " ~ id ~ " wrapper does not require an edit target");
+        assert(cmd.meshPtr() is firstMesh,
+            "6353 live role: " ~ id ~ " wrapper did not take the live Mesh");
+        assert(cmd.viewRef() is firstView,
+            "6353 live role: " ~ id ~ " wrapper did not take the live View");
+        assert(cmd.editModeVal() == EditMode.Edges,
+            "6353 live role: " ~ id ~ " wrapper did not take the live EditMode");
+    }
+
+    auto secondLayer = new Layer;
+    secondLayer.name = "B";
+    secondLayer.meshRef() = makeCube();
+    r.session.document.layers ~= secondLayer;
+    r.session.document.noteLayerListChanged();
+    r.session.document.setPrimary(secondLayer);
+    r.session.editMode = EditMode.Polygons;
+    r.view = new View(0, 0, 640, 480);
+    foreach (id; kPaired) {
+        auto cmd = r.registry.commandFactories[id]();
+        assert(cmd.meshPtr() is &secondLayer.meshRef(),
+            "6353 live role: " ~ id ~ " wrapper retained the registration-time Mesh");
+        assert(cmd.viewRef() is r.view,
+            "6353 live role: " ~ id ~ " wrapper retained the registration-time View");
+        assert(cmd.editModeVal() == EditMode.Polygons,
+            "6353 live role: " ~ id ~ " wrapper retained the registration-time EditMode");
     }
 }
 
