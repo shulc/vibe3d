@@ -301,8 +301,8 @@ unittest { // rename edits exactly the selected item through the bound action
     app.history.clear();
     app.records.length = 0;
     auto rename = bindItemRenameController(app.renameState,
-        app.roles.actions.commandDispatch());
-    rename.begin(1, "Beta");
+        app.owner.documentPtr(), app.roles.actions.commandDispatch());
+    rename.begin(app.owner.document.layers[1], "Beta");
     auto ui = app.open();
     scope (exit) ui.close();
     ui.frame();
@@ -325,7 +325,7 @@ unittest { // rename edits exactly the selected item through the bound action
         && app.records.length == 1
         && app.records[0].id == "layer.rename"
         && app.records[0].outcome == "applied"
-        && app.renameState.index == -1,
+        && !app.renameState.open,
         "6030 rename lost its one UI history/guard record or stayed active");
 }
 

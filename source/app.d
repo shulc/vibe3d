@@ -3030,7 +3030,7 @@ void main(string[] args) {
     };
 
     // One application-owned inline editor is shared by Layers and Images:
-    // both panels address the same document-layer index space. The owner keeps
+    // both panels edit items of the same document. The owner keeps
     // its fixed, null-terminated widget buffer across frames.
     ItemRenameState itemRenameState;
 
@@ -5361,7 +5361,7 @@ void main(string[] args) {
         if (!command.g_testMode || g_imageListShown) {
             import ui.image_list_panel : drawImageListPanel;
             drawImageListPanel(imageListRoles.read, imageListRoles.actions,
-                               itemRenameState);
+                               imageListRoles.state, itemRenameState);
         }
 
         // ---- Channels (dockable; task 0637) ----

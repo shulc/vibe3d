@@ -3,16 +3,17 @@ module ui.image_list_panel;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import application_command_binding : ApplicationCommandBinding;
-import document : Document;
+import document : Document, Layer;
 import imgui_flag_boundary : inputTextSubmitOnEnter;
 import session_owner : Session;
-import ui.image_rows : ImageRow, elidedPathText, imageRemoveConfirmText,
-    imageRemoveTarget, imageRowsInto, kNoImagesText;
+import ui.image_rows : ImageRemoveConfirm, ImageRow, elidedPathText,
+    imageRemoveConfirm, imageRemoveTarget, imageRowsInto, kNoImagesText;
 import ui.item_rename : ItemRenameDispatch, ItemRenameExit, ItemRenameState,
     bindItemRenameController;
 import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
+import ui.retained_item : RetainedItem;
 
-// CONTRACT (task 6040). This module places the Images list; `ui.image_rows`
+// CONTRACT (tasks 6040, 6359). This module places the Images list; `ui.image_rows`
 // decides which rows exist, their document indices, text, the Remove target
 // and the confirm sentence. The read role is consulted during each draw and
 // caches no Document, row or index between frames.
@@ -26,8 +27,9 @@ import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
 // The rename state is the one application owner also passed to the Items
 // panel; this module never creates a second one. All writes go through the
 // action role; the panel never mutates the document directly.
-// `removeConfirmIndex` and `ItemRenameState.index` retain the click-time
-// document index across frames; identity-addressing is backlog 6203.
+// Cross-frame storage is `ImageListPanelState`, one per binding. A pending
+// rename or remove holds its item by identity and resolves the index just
+// before dispatch; an item that left the document ends it with no command.
 // Decision history: doc/image_list_panel_history.md.
 
 struct ImageListReadRole {
@@ -54,16 +56,59 @@ public:
     ItemRenameDispatch commandDispatch() { return dispatch_; }
 }
 
+/// Everything the Images panel keeps between frames, owned by ONE binding.
+/// The remove confirmation holds its item by identity together with the
+/// sentence and the referrers the user was shown; the row buffer is refilled
+/// in place every visible frame.
+final class ImageListPanelState {
+private:
+    RetainedItem confirmTarget_;
+    string confirmText_;
+    Layer[] confirmReferrers_;
+    bool confirmPendingOpen_;
+    ImageRow[] rows_;
+
+    this() {}
+
+    void openConfirm(Layer item, ImageRemoveConfirm shown) {
+        confirmTarget_.hold(item);
+        showConfirm(shown);
+        confirmPendingOpen_ = true;
+    }
+
+    void showConfirm(ImageRemoveConfirm shown) {
+        confirmText_ = shown.text;
+        confirmReferrers_ = shown.referrers;
+    }
+
+    /// True when `current` names the same referrers, element by element and
+    /// by identity, in the same sentence as the one on screen. A referrer
+    /// replaced by a same-named item is a change.
+    bool confirmUnchanged(ImageRemoveConfirm current) const {
+        import std.algorithm.comparison : equal;
+        return current.text == confirmText_
+            && equal!((a, b) => a is b)(current.referrers, confirmReferrers_);
+    }
+
+    void closeConfirm() {
+        confirmTarget_.release();
+        confirmText_ = null;
+        confirmReferrers_ = null;
+        confirmPendingOpen_ = false;
+    }
+}
+
 struct ImageListPanelRoles {
     ImageListReadRole read;
     ImageListActions actions;
+    ImageListPanelState state;
 }
 
 ImageListPanelRoles bindImageListPanel(Session* owner,
         ApplicationCommandBinding binding) {
     assert(binding !is null);
     return ImageListPanelRoles(ImageListReadRole(owner),
-        ImageListActions(&binding.dispatchUi));
+        ImageListActions(&binding.dispatchUi), new ImageListPanelState);
 }
 
 version (unittest) {
@@ -82,7 +127,19 @@ version (unittest) {
         bool confirmDrawn;
         string confirmText;
         size_t confirmIndex;
+        Object confirmTarget;
         ImVec2 confirmMin, confirmMax;
+    }
+    struct ImageListConfirmView {
+        bool held, pendingOpen;
+        Object target;
+        string text;
+        const(Layer)[] referrers;
+    }
+    ImageListConfirmView imageListConfirmView(ImageListPanelState state) {
+        return ImageListConfirmView(state.confirmTarget_.held,
+            state.confirmPendingOpen_, state.confirmTarget_.item,
+            state.confirmText_, state.confirmReferrers_);
     }
     private __gshared ImageListDrawSnapshot g_imageListDrawSnapshot;
     ImageListDrawSnapshot imageListDrawSnapshot() {
@@ -105,10 +162,11 @@ version (unittest) {
         g_imageListDrawSnapshot.removeMin = ImGui.GetItemRectMin();
         g_imageListDrawSnapshot.removeMax = ImGui.GetItemRectMax();
     }
-    private void recordImageConfirm(string text, size_t index) {
+    private void recordImageConfirm(string text, size_t index, Layer target) {
         g_imageListDrawSnapshot.confirmDrawn = true;
         g_imageListDrawSnapshot.confirmText = text;
         g_imageListDrawSnapshot.confirmIndex = index;
+        g_imageListDrawSnapshot.confirmTarget = target;
         g_imageListDrawSnapshot.confirmMin = ImGui.GetItemRectMin();
         g_imageListDrawSnapshot.confirmMax = ImGui.GetItemRectMax();
     }
@@ -133,28 +191,21 @@ version (unittest) {
     private void beginImageListDraw() {}
     private void recordImageLoad() {}
     private void recordImageRemove(bool, size_t) {}
-    private void recordImageConfirm(string, size_t) {}
+    private void recordImageConfirm(string, size_t, Layer) {}
     private void recordImageMarker(size_t, string, bool, bool) {}
     private void recordImageName(bool) {}
 }
 
 void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
+                        ImageListPanelState state,
                         ref ItemRenameState itemRenameState) {
     import std.json : JSONValue;
     import std.conv : to;
     import io.doc_state : currentDocPath;
 
     auto dispatch = actions.commandDispatch();
-    auto rename = bindItemRenameController(itemRenameState, dispatch);
-
-    // Confirm-before-remove state. Function-local statics rather than
-    // EditorApp fields: nothing outside this body reads them, and the panel is
-    // main-thread-only (same convention as the AI3D modal flags in
-    // `ui/panels.d`, which are app fields because the side-panel menu shares them).
-    static bool   removeConfirmOpen;
-    static bool   removeConfirmPendingOpen;
-    static string removeConfirmText;
-    static size_t removeConfirmIndex;
+    auto rename = bindItemRenameController(itemRenameState, read.document(),
+                                           dispatch);
 
     // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE (review S3). `ImGui.End`
     // and the style pop are not optional cleanup — ImGui keeps a window stack
@@ -205,12 +256,9 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
                     // may run: `Document.referrersOf` explicitly forbids a
                     // draw-path call, and this is the delete-time query it was
                     // written for.
-                    removeConfirmText  = imageRemoveConfirmText(read.document(),
-                                                                rem.layer);
-                    removeConfirmIndex = rem.index;
-                    if (removeConfirmText.length) {
-                        removeConfirmOpen        = true;
-                        removeConfirmPendingOpen = true;
+                    auto shown = imageRemoveConfirm(read.document(), rem.layer);
+                    if (shown.text.length) {
+                        state.openConfirm(rem.layer, shown);
                     } else {
                         // Nothing references it — nothing to warn about.
                         dispatch("image.remove",
@@ -222,43 +270,60 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
 
         // ---- In-use confirmation ----
         // Same pendingOpen convention as the AI3D modals in `ui/panels.d`.
-        if (removeConfirmOpen) {
-            if (removeConfirmPendingOpen) {
+        if (state.confirmTarget_.held) {
+            if (state.confirmPendingOpen_) {
                 ImGui.OpenPopup("Remove Image?");
-                removeConfirmPendingOpen = false;
+                state.confirmPendingOpen_ = false;
             }
             if (ImGui.BeginPopupModal("Remove Image?", null,
                                       ImGuiWindowFlags.AlwaysAutoResize)) {
                 // Balanced on unwind if command construction or argument
                 // binding throws; a normal UI refusal is reported as a notice.
                 scope(exit) ImGui.EndPopup();
-                ImGui.TextUnformatted(removeConfirmText);
-                ImGui.TextUnformatted("Remove it anyway?");
-                immutable confirmPressed = ImGui.Button("Remove");
-                recordImageConfirm(removeConfirmText, removeConfirmIndex);
-                if (confirmPressed) {
-                    dispatch("image.remove",
-                        `{"index":` ~ to!string(removeConfirmIndex) ~ `}`);
+                size_t confirmIndex;
+                if (!state.confirmTarget_.resolve(*read.document(), confirmIndex)) {
+                    // The item left the document: end with no command.
                     ImGui.CloseCurrentPopup();
-                    removeConfirmOpen = false;
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("Cancel")) {
-                    ImGui.CloseCurrentPopup();
-                    removeConfirmOpen = false;
+                    state.closeConfirm();
+                } else {
+                    ImGui.TextUnformatted(state.confirmText_);
+                    ImGui.TextUnformatted("Remove it anyway?");
+                    immutable confirmPressed = ImGui.Button("Remove");
+                    recordImageConfirm(state.confirmText_, confirmIndex,
+                                       state.confirmTarget_.item);
+                    if (confirmPressed) {
+                        // Click time again, so the reverse sweep may run. When
+                        // the referrers (by identity) or their sentence changed,
+                        // the new ones are shown and must be confirmed once more.
+                        auto current = imageRemoveConfirm(read.document(),
+                            state.confirmTarget_.item);
+                        if (!state.confirmUnchanged(current)) {
+                            state.showConfirm(current);
+                        } else {
+                            dispatch("image.remove",
+                                `{"index":` ~ to!string(confirmIndex) ~ `}`);
+                            ImGui.CloseCurrentPopup();
+                            state.closeConfirm();
+                        }
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) {
+                        ImGui.CloseCurrentPopup();
+                        state.closeConfirm();
+                    }
                 }
             } else {
-                removeConfirmOpen = false;   // closed via ESC
+                state.closeConfirm();   // closed via ESC
             }
         }
 
         ImGui.Separator();
 
         // ---- Rows ----
-        // ONE buffer, refilled in place each frame (the `referrersOf` /
-        // `selectedItemsInto` idiom) rather than a fresh array per frame.
-        static ImageRow[] rows;
-        imageRowsInto(read.document(), currentDocPath(), rows);
+        // ONE buffer per binding, refilled in place each frame (the
+        // `referrersOf` / `selectedItemsInto` idiom).
+        imageRowsInto(read.document(), currentDocPath(), state.rows_);
+        auto rows = state.rows_;
 
         if (rows.length == 0) {
             // The measured list has its own empty text rather than an empty
@@ -290,7 +355,7 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
             }
             ImGui.SameLine();
 
-            if (rename.activeFor(r.index)) {
+            if (rename.activeFor(r.layer)) {
                 // Inline rename — `layer.rename`, which writes the item's
                 // display name and NOTHING on disk. There is deliberately no
                 // `image.rename`: a second command would be a second way to
@@ -308,7 +373,7 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
                     : cancel ? ItemRenameExit.cancel
                     : ImGui.IsItemDeactivated() ? ItemRenameExit.deactivate
                     : ItemRenameExit.none;
-                rename.finish(r.index, exit);
+                rename.finish(exit);
             } else {
                 // Multi-select: plain click replaces the selection
                 // (`mode:set`), ctrl-click adds/removes (`mode:toggle`).
@@ -336,7 +401,7 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
                     // field) then shows an item genuinely called "(unnamed)".
                     // The two fields exist separately so a test can see the
                     // difference; see `ui/image_rows.d`.
-                    rename.begin(r.index, r.renameSeed);
+                    rename.begin(r.layer, r.renameSeed);
                 }
             }
 

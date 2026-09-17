@@ -115,6 +115,8 @@ private final class ImagePanelHarness {
             new ImageRemove(owner.document.activeMesh(), view, owner.editMode,
                             owner.documentPtr(), null);
         imageRoles = bindImageListPanel(owner, binding);
+        assert(imageRoles.state !is null,
+            "6359 state floor: bindImageListPanel returned no ImageListPanelState");
         forms = new FormsPanel;
         layerRoles = bindLayerListPanel(owner, binding, forms, () => activeTool);
     }
@@ -132,7 +134,7 @@ private final class ImagePanelHarness {
         return openPanel(() {
             ImGui.SetNextWindowPos(ImVec2(380, 0));
             ImGui.SetNextWindowSize(ImVec2(420, 480));
-            drawImageListPanel(imageRoles.read, imageRoles.actions, renameState);
+            drawImageListPanel(imageRoles.read, imageRoles.actions, imageRoles.state, renameState);
         }, "Images host");
     }
 
@@ -145,7 +147,7 @@ private final class ImagePanelHarness {
             drawLayerListPanel(layerRoles.read, layerRoles.actions, renameState);
             ImGui.SetNextWindowPos(ImVec2(780, 0));
             ImGui.SetNextWindowSize(ImVec2(420, 480));
-            drawImageListPanel(imageRoles.read, imageRoles.actions, renameState);
+            drawImageListPanel(imageRoles.read, imageRoles.actions, imageRoles.state, renameState);
         }, "Items+Images host");
     }
 }
@@ -355,7 +357,7 @@ unittest { // B5: Load dispatches the argument-less load through the UI route
         "6040 Load did not reach image.load through the guarded UI route");
 }
 
-unittest { // B6: Items and Images share main's ItemRenameState by document index
+unittest { // B6: Items and Images share main's identity-bound ItemRenameState
     auto prior = g_testMode; g_testMode = true;
     scope (exit) { g_testMode = prior; SDL_SetModState(KMOD_NONE); }
     assert(loadSDL() == sdlSupport, "6040 SDL population: binding did not load");
@@ -378,12 +380,12 @@ unittest { // B6: Items and Images share main's ItemRenameState by document inde
     assert(sawBeta && sawConsumer && !sawImage,
         "6040 cross-panel floor: Items must contain Beta/Consumer and no images");
     assert(images.rows.length == 2 && renamingRows(images) == 0
-        && app.renameState.index == -1,
+        && !app.renameState.open,
         "6040 cross-panel floor: two Images rows and no editor");
 
     doubleClick(ui, center(beta.nameMin, beta.nameMax));
     ui.frame(); ui.frame();
-    assert(app.renameState.index == 1,
+    assert(app.renameState.activeFor(app.owner.document.layers[1]),
         "6040 cross-panel floor: the Items double-click did not start renaming Beta");
     assert(renamingRows(imageListDrawSnapshot()) == 0,
         "6040 cross-panel index: an Items rename opened an editor on an Images row");
@@ -392,7 +394,7 @@ unittest { // B6: Items and Images share main's ItemRenameState by document inde
     doubleClick(ui, center(one.nameMin, one.nameMax));
     ui.frame(); ui.frame();
     auto after = imageListDrawSnapshot();
-    assert(app.renameState.index == 2,
+    assert(app.renameState.activeFor(app.owner.document.layers[2]),
         "6040 shared owner: Images began its rename outside main's ItemRenameState");
     assert(renamingRows(after) == 1 && imageRow(after, "ImgOne").renaming,
         "6040 one editor: the Images rename is not on exactly the ImgOne row");
@@ -410,7 +412,7 @@ unittest { // B6: Items and Images share main's ItemRenameState by document inde
         ~ app.owner.document.layers[2].name ~ "`");
     assert(app.history.undoEntries()[$ - 1].commandName == "layer.rename"
         && app.records[$ - 1].id == "layer.rename"
-        && app.renameState.index == -1,
+        && !app.renameState.open,
         "6040 cross-panel commit lost its UI layer.rename record or stayed open");
 }
 
@@ -493,7 +495,7 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         "void drawImageListPanel(ImageListReadRole read, ImageListActions actions,");
     assert(identifierCount(draw, "itemRenameState") == 1
         && draw.count("auto dispatch = actions.commandDispatch();") == 1
-        && draw.count("bindItemRenameController(itemRenameState, dispatch)") == 1
+        && collapseWhitespace(draw).count("bindItemRenameController(itemRenameState, read.document(), dispatch)") == 1
         && identifierCount(draw, "ItemRenameState") == 0,
         "6040 shared rename owner: the draw must bind the passed ItemRenameState and declare no other");
     const rawDraw = bodyAt(rawImages,
@@ -519,13 +521,13 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
     // (6) app.d identifiers, then spelling, then order
     assert(identifierCount(app, "bindImageListPanel") == 2
         && identifierCount(app, "drawImageListPanel") == 2
-        && identifierCount(app, "imageListRoles") == 3,
+        && identifierCount(app, "imageListRoles") == 4,
         "6040 production wiring: app.d must import+call bindImageListPanel once, drawImageListPanel once, and declare one imageListRoles");
     assert(identifierCount(app, "itemRenameState") == 3,
         "6040 production owner: app.d must declare one shared itemRenameState and pass it to both panels");
     const flatApp = collapseWhitespace(app);
     assert(flatApp.count("auto imageListRoles = bindImageListPanel(sessionOwner, commandBinding);") == 1
-        && flatApp.count("drawImageListPanel(imageListRoles.read, imageListRoles.actions, itemRenameState);") == 1,
+        && flatApp.count("drawImageListPanel(imageListRoles.read, imageListRoles.actions, imageListRoles.state, itemRenameState);") == 1,
         "6040 production wiring: Images must bind sessionOwner+commandBinding and draw with main's itemRenameState");
     const cbAt = app.indexOf("commandBinding = new ApplicationCommandBinding(");
     const bindAt = app.indexOf("bindImageListPanel(sessionOwner");

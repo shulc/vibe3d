@@ -198,7 +198,7 @@ import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr, layerDeleteButtonState;
 import ui.image_rows : ImageRow, imageRowsInto, imageRemoveTarget,
-                       imageRemoveConfirmText, elidedPathText, kNoImagesText;
+                       elidedPathText, kNoImagesText;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;

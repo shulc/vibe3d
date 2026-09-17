@@ -14,6 +14,7 @@ import registry : Registry;
 import session_owner : Session;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
+import ui.discard_guard : GuardRecord;
 import ui.item_rename : ItemRenameCapacity, ItemRenameController,
     ItemRenameExit, ItemRenameState, bindItemRenameController;
 import view : View;
@@ -29,6 +30,7 @@ private final class RenameApplicationHarness {
     ApplicationCommandBinding binding;
     Tool activeTool;
     ItemRenameState renameState;
+    GuardRecord[] records;
 
     this() {
         owner = Session.bootstrap(makeCube());
@@ -53,7 +55,7 @@ private final class RenameApplicationHarness {
             () => true,
             (Command) {},
             GuardObservationPorts(
-                (record) {}, (answer, performed) {}, (pending) {})));
+                (record) { records ~= record; }, (answer, performed) {}, (pending) {})));
         binding = new ApplicationCommandBinding(
             registry, executor, editSession, history, guard,
             (Command) {}, (string) {});
@@ -64,12 +66,12 @@ private final class RenameApplicationHarness {
     }
 
     ItemRenameController layersPanel() {
-        return bindItemRenameController(renameState,
+        return bindItemRenameController(renameState, owner.documentPtr(),
             (string id, string args) => binding.dispatchUi(id, args));
     }
 
     ItemRenameController imagesPanel() {
-        return bindItemRenameController(renameState,
+        return bindItemRenameController(renameState, owner.documentPtr(),
             (string id, string args) => binding.dispatchUi(id, args));
     }
 }
@@ -79,17 +81,18 @@ unittest { // Layers begins; Images observes and commits through the real action
     auto layers = app.layersPanel();
     auto images = app.imagesPanel();
 
-    layers.begin(1, app.owner.document.layers[1].name);
-    assert(app.renameState.index == 1
+    auto image = app.owner.document.layers[1];
+    layers.begin(image, image.name);
+    assert(app.renameState.activeFor(image)
         && app.renameState.text == "Image seed",
         "5880 floor: the Layers action did not actually start item rename");
-    assert(images.activeFor(1) && images.text == "Image seed",
+    assert(images.activeFor(image) && images.text == "Image seed",
         "5880 cross-panel: Images did not observe the rename started in Layers");
-    assert(!images.activeFor(0) && !images.activeFor(2),
+    assert(!images.activeFor(app.owner.document.layers[0]) && !images.activeFor(null),
         "5880 index identity: Images reported rename active for unrelated layer rows");
 
-    layers.begin(1, "Background");
-    layers.begin(1, "Hat");
+    layers.begin(image, "Background");
+    layers.begin(image, "Hat");
     assert(images.text == "Hat",
         "5880 buffer reset: shorter seed retained bytes from the previous item name");
 
@@ -101,13 +104,13 @@ unittest { // Layers begins; Images observes and commits through the real action
         && app.history.undoEntries().length == 0,
         "5880 commit floor: rename changed the model or history before commit");
 
-    images.finish(1, ItemRenameExit.commit);
+    images.finish(ItemRenameExit.commit);
     assert(app.owner.document.layers[1].name == editedName,
         "5880 commit: the real layer.rename action did not change the visible item name");
     assert(app.history.undoEntries().length == 1
         && app.history.undoEntries()[0].commandName == "layer.rename",
         "5880 commit: layer.rename did not create exactly one history entry");
-    assert(app.renameState.index == -1,
+    assert(!app.renameState.open,
         "5880 commit: the shared editor remained active after commit");
 }
 
@@ -116,32 +119,51 @@ unittest { // cancel and plain deactivation are distinct non-command exits
     auto layers = app.layersPanel();
     auto images = app.imagesPanel();
 
-    layers.begin(1, "Image seed");
-    assert(images.activeFor(1),
+    auto image = app.owner.document.layers[1];
+    layers.begin(image, "Image seed");
+    assert(images.activeFor(image),
         "5880 cancel floor: rename was not active before cancel");
     images.setText("cancelled");
-    images.finish(1, ItemRenameExit.cancel);
-    assert(app.renameState.index == -1
+    images.finish(ItemRenameExit.cancel);
+    assert(!app.renameState.open
         && app.owner.document.layers[1].name == "Image seed"
         && app.history.undoEntries().length == 0,
         "5880 cancel: Escape must close without changing name/history");
 
-    layers.begin(1, "Image seed");
-    assert(images.activeFor(1),
+    layers.begin(image, "Image seed");
+    assert(images.activeFor(image),
         "5880 deactivate floor: rename was not active before deactivation");
     images.setText("deactivated");
-    images.finish(1, ItemRenameExit.deactivate);
-    assert(app.renameState.index == -1
+    images.finish(ItemRenameExit.deactivate);
+    assert(!app.renameState.open
         && app.owner.document.layers[1].name == "Image seed"
         && app.history.undoEntries().length == 0,
         "5880 deactivate: untouched focus loss must close without a command");
 
-    layers.begin(1, "x");
+    layers.begin(image, "x");
     images.setText("");
-    images.finish(1, ItemRenameExit.commit);
+    images.finish(ItemRenameExit.commit);
     assert(app.owner.document.layers[1].name == "Image seed"
         && app.history.undoEntries().length == 0,
         "5880 empty commit: blank rename changed the visible name or created history");
+}
+
+unittest { // a commit whose item left the document dispatches nothing
+    auto app = new RenameApplicationHarness;
+    auto images = app.imagesPanel();
+    auto image = app.owner.document.layers[1];
+    images.begin(image, "Image seed");
+    images.setText("Renamed");
+    assert(app.renameState.activeFor(image) && app.records.length == 0,
+        "6359 detached floor: rename was not open on the image before its removal");
+
+    app.owner.document.layers = app.owner.document.layers[0 .. 1];
+    images.finish(ItemRenameExit.commit);
+    assert(app.records.length == 0 && app.history.undoEntries().length == 0
+        && image.name == "Image seed",
+        "6359 detached commit: the controller dispatched a rename for an item outside the document");
+    assert(!app.renameState.open,
+        "6359 detached commit: the editor stayed open after the commit was dropped");
 }
 
 unittest { // fixed capacity/terminator and per-application ownership
@@ -153,14 +175,14 @@ unittest { // fixed capacity/terminator and per-application ownership
     char[] oversized;
     oversized.length = ItemRenameCapacity + 23;
     oversized[] = 'x';
-    a.layersPanel().begin(1, cast(string)oversized);
-    assert(a.renameState.index == 1,
+    a.layersPanel().begin(a.owner.document.layers[1], cast(string)oversized);
+    assert(a.renameState.activeFor(a.owner.document.layers[1]),
         "5880 capacity floor: oversized rename did not actually start");
     assert(a.renameState.buffer.length == ItemRenameCapacity
         && a.renameState.buffer[$ - 1] == 0
         && a.renameState.text.length == ItemRenameCapacity - 1,
         "5880 capacity: buffer lost its fixed size, terminator, or length-1 cap");
-    assert(b.renameState.index == -1 && b.renameState.text.length == 0,
+    assert(!b.renameState.open && b.renameState.text.length == 0,
         "5880 instances: editing application A changed application B's owner");
 }
 
@@ -229,22 +251,22 @@ unittest { // production passes one owner and both panel writers consume it
         "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, itemRenameState);") == 1,
         "5880 Layers wiring: Layers no longer receives main's itemRenameState owner");
     assert(flatApp.count(
-        "drawImageListPanel(imageListRoles.read, imageListRoles.actions, itemRenameState);") == 1,
+        "drawImageListPanel(imageListRoles.read, imageListRoles.actions, imageListRoles.state, itemRenameState);") == 1,
         "5880 cross-panel wiring: Images no longer receives the same ItemRenameState owner");
 
     const layersBody = bodyAt(layerPanel,
         "void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,");
     const imagesBody = bodyAt(imagePanel,
         "void drawImageListPanel(ImageListReadRole read, ImageListActions actions,");
-    assert(layersBody.canFind(
-            "bindItemRenameController(itemRenameState,\n                                           actions.commandDispatch())")
-        && layersBody.canFind("rename.begin(r.index, r.renameSeed);")
-        && layersBody.canFind("rename.finish(r.index, exit);"),
+    assert(collapseWhitespace(layersBody).canFind(
+            "bindItemRenameController(itemRenameState, read.document(), actions.commandDispatch())")
+        && layersBody.canFind("rename.begin(r.layer, r.renameSeed);")
+        && layersBody.canFind("rename.finish(exit);"),
         "5880 Layers writer: rename open/exit stopped using the shared owner");
-    assert(imagesBody.canFind(
-            "bindItemRenameController(itemRenameState, dispatch)")
-        && imagesBody.canFind("rename.begin(r.index, r.renameSeed);")
-        && imagesBody.canFind("rename.finish(r.index, exit);"),
+    assert(collapseWhitespace(imagesBody).canFind(
+            "bindItemRenameController(itemRenameState, read.document(), dispatch)")
+        && imagesBody.canFind("rename.begin(r.layer, r.renameSeed);")
+        && imagesBody.canFind("rename.finish(exit);"),
         "5880 Images writer: rename open/exit stopped using the shared owner, so its visible name cannot change");
 
     foreach (retired; ["layerRenameIndexPtr", "layerRenameBufPtr",

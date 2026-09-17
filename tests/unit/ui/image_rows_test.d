@@ -466,17 +466,21 @@ unittest {
 unittest {
     auto f = makeRowFixture("rows_remove_confirm");
 
-    immutable used = imageRemoveConfirmText(&f.doc, f.bravo);
+    auto confirm = imageRemoveConfirm(&f.doc, f.bravo);
+    immutable used = confirm.text;
     import std.algorithm : canFind;
     assert(used.canFind("bravo"),      "names the item being removed: " ~ used);
     assert(used.canFind("2 item(s)"),  "counts BOTH referrers: " ~ used);
     assert(used.canFind("consumerX"),  "names the first referrer: " ~ used);
     assert(used.canFind("consumerY"),  "names the second referrer: " ~ used);
+    assert(confirm.referrers.length == 2 && confirm.referrers[0] is f.consumerX
+        && confirm.referrers[1] is f.consumerY,
+        "6359 referrer identity: the confirmation does not carry the items its sentence names");
 
-    assert(imageRemoveConfirmText(&f.doc, f.alpha) == "",
+    assert(imageRemoveConfirm(&f.doc, f.alpha) == ImageRemoveConfirm.init,
         "an image nothing references needs no confirmation — an "
         ~ "implementation that swept every layer would warn here too");
-    assert(imageRemoveConfirmText(&f.doc, f.charlie) == "",
+    assert(imageRemoveConfirm(&f.doc, f.charlie) == ImageRemoveConfirm.init,
         "and the same for the third image");
 }
 
@@ -834,4 +838,3 @@ unittest {
         ~ "re-reading it after removal allocated 0 bytes, which means "
         ~ "sweepRowTextMemo left a stale entry in the table");
 }
-

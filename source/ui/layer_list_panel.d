@@ -159,7 +159,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                             kGlyphRadiusRatio, kIndentRatio;
     import io.doc_state   : currentDocPath, docDirty;
 
-    auto rename = bindItemRenameController(itemRenameState,
+    auto rename = bindItemRenameController(itemRenameState, read.document(),
                                            actions.commandDispatch());
 
     pushPanelChromeStyle();
@@ -477,7 +477,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
             }
 
             // ---- Name ----
-            immutable bool renaming = !r.isRoot && rename.activeFor(r.index);
+            immutable bool renaming = !r.isRoot && rename.activeFor(r.layer);
             // The accent is for a row being READ; a row being EDITED reverts to
             // ink. The rename field sits on the pale beige FrameBg this chrome
             // pushes, and the accent orange on that is barely legible — the
@@ -508,7 +508,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                     : cancel ? ItemRenameExit.cancel
                     : ImGui.IsItemDeactivated() ? ItemRenameExit.deactivate
                     : ItemRenameExit.none;
-                rename.finish(r.index, exit);
+                rename.finish(exit);
             } else {
                 // The name is the multi-select target, the rename opener and
                 // the drag-to-reorder handle. `selected` is passed FALSE: the
@@ -556,7 +556,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                     // editor with the "(unnamed)" placeholder means Enter
                     // renames the item to that literal, after which "no name"
                     // cannot be recovered (see `ItemRow.renameSeed`).
-                    rename.begin(r.index, r.renameSeed);
+                    rename.begin(r.layer, r.renameSeed);
                 }
 
                 // ---- Drag-to-reorder ----

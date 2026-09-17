@@ -94,10 +94,10 @@ module ui.image_rows;
 //
 // `imageRowsInto` fills the caller's buffer in place (the
 // `Document.referrersOf` / `selectedItemsInto` idiom) so a panel holding one
-// static buffer does not churn an array per frame. What is deliberately NOT
+// buffer does not churn an array per frame. What is deliberately NOT
 // on this path is `Document.referrersOf` — its own doc comment forbids a
-// draw-path call — so "is this image in use" is asked once, at CLICK time,
-// through `imageRemoveConfirmText`.
+// draw-path call — so "is this image in use" is asked only at CLICK time,
+// through `imageRemoveConfirm`.
 // ---------------------------------------------------------------------------
 
 import document        : Document, Layer, ImageData;
@@ -708,7 +708,7 @@ void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
 ///
 /// `referrersOf` is deliberately NOT consulted here: this runs every frame,
 /// and its doc comment forbids a draw-path call. "Is it in use" is asked at
-/// click time, by `imageRemoveConfirmText`.
+/// click time, by `imageRemoveConfirm`.
 struct ImageRemoveTarget {
     size_t index;   ///< index into `layers`; meaningless when `!enabled`
     Layer  layer;   ///< the target item, or null
@@ -727,20 +727,30 @@ ImageRemoveTarget imageRemoveTarget(Document* doc) {
     return t;
 }
 
-/// The confirm text shown before removing an image that something still
-/// references, or `""` when nothing does (in which case the panel removes
-/// straight away, with nothing to warn about).
+/// What the user is asked to confirm before removing an image that something
+/// still references: the sentence, and the referrers it names BY IDENTITY.
+struct ImageRemoveConfirm {
+    string  text;       ///< `""` when nothing references the target
+    Layer[] referrers;  ///< the items `text` names, in `layers` order; owned
+}
+
+/// The confirmation for removing `target`, or an empty one when nothing
+/// references it (in which case the panel removes straight away, with nothing
+/// to warn about).
 ///
 /// Built on `imageRemoveWarning` — the SAME predicate `image.remove` logs
 /// from — so the sentence the user is asked to confirm and the condition the
-/// command acted on cannot drift apart. This is a click-time call: the reverse
-/// sweep it performs is O(items × slots) and belongs nowhere near a draw.
-string imageRemoveConfirmText(Document* doc, Layer target) {
+/// command acted on cannot drift apart. The sentence and the referrer list come
+/// from ONE sweep, so a panel comparing two confirmations compares what it
+/// showed. This is a click-time call: the reverse sweep it performs is
+/// O(items × slots) and belongs nowhere near a draw.
+ImageRemoveConfirm imageRemoveConfirm(Document* doc, Layer target) {
     import commands.image.commands : imageRemoveWarning;
     import std.conv : to;
-    if (doc is null || target is null) return "";
+    ImageRemoveConfirm confirm;
+    if (doc is null || target is null) return confirm;
     auto w = imageRemoveWarning(doc, target);
-    if (!w.inUse) return "";
+    if (!w.inUse) return confirm;
 
     string names;
     foreach (i, r; w.referrers) {
@@ -748,8 +758,10 @@ string imageRemoveConfirmText(Document* doc, Layer target) {
         names ~= r.name.length ? r.name : kUnnamedText;
     }
     immutable label = target.name.length ? target.name : kUnnamedText;
-    return "\"" ~ label ~ "\" is still used by "
+    confirm.text = "\"" ~ label ~ "\" is still used by "
          ~ to!string(w.referrers.length) ~ " item(s): " ~ names;
+    confirm.referrers = w.referrers;
+    return confirm;
 }
 
 // ===========================================================================
