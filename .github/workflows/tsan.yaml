@@ -219,6 +219,12 @@ jobs:
       # called from libcap's ELF constructor while REAL(prctl) is still null.
       run: rdmd tools/sanitizer/lane.d build tsan
 
+    - name: 'Parallel-loop completion witness (GATE)'
+      # Runs the committed 300-round reproducer twice. The plain arm must stay
+      # near the measured 11 reports, while the production wrapper stays near
+      # 1; exact counts are scheduler-dependent, so lane.d enforces bands.
+      run: rdmd tools/sanitizer/lane.d tsan-parallel-completion
+
     - name: 'Selfcheck (GATE: a lane whose instrument is dead reports health)'
       id: selfcheck
       run: rdmd tools/sanitizer/lane.d tsan-selfcheck

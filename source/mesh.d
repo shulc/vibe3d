@@ -3,8 +3,6 @@ module mesh;
 import std.math : sqrt, isIdentical;
 import std.array : uninitializedArray;
 import std.algorithm : sort;
-import std.parallelism : parallel;
-import std.range : iota;
 import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
                     KeyType, ValueType;
 import std.range.primitives : ElementType;
@@ -25,6 +23,7 @@ import mesh_planes : rewriteFaces, FaceSource, kNoSource,
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
 import perf_probe : g_perf, Cat;
+import tsan_annotate : parallelForWithCompletion;
 
 // Half-edge dart type + the topology ranges → extracted to source/mesh_topo.d
 // (task 0717). Re-exported so every `import mesh : Loop;` / `mesh.EdgeFaceRange`
@@ -13585,7 +13584,7 @@ struct Mesh {
             }
         }
         if (faces.length >= PARALLEL_BUILD_MIN) {
-            foreach (fi; parallel(iota(faces.length))) fillOneFace(fi);
+            parallelForWithCompletion!fillOneFace(faces.length);
         } else {
             foreach (fi; 0 .. faces.length) fillOneFace(fi);
         }
@@ -13614,7 +13613,7 @@ struct Mesh {
                 loopEdge[idx] = *p;
         }
         if (total >= PARALLEL_BUILD_MIN) {
-            foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
+            parallelForWithCompletion!fillLoopEdge(total);
         } else {
             foreach (idx; 0 .. total) fillLoopEdge(idx);
         }
@@ -13683,7 +13682,7 @@ struct Mesh {
             loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
         }
         if (total >= PARALLEL_BUILD_MIN) {
-            foreach (idx; parallel(iota(total))) fillTwin(idx);
+            parallelForWithCompletion!fillTwin(total);
         } else {
             foreach (idx; 0 .. total) fillTwin(idx);
         }
@@ -13809,7 +13808,7 @@ struct Mesh {
                 vertLoop[vi] = cur;
             }
             if (vertices.length >= PARALLEL_BUILD_MIN) {
-                foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
+                parallelForWithCompletion!anchorOneVert(vertices.length);
             } else {
                 foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
             }

@@ -57,6 +57,11 @@
  *   tsan-selfcheck          GATE: the synthetic race must be reported exactly
  *                           once, and the suppression canary must both silence
  *                           it and print its Matched block
+ *   tsan-parallel-completion
+ *                           GATE: 300 reused-allocation rounds reproduce the
+ *                           missing std.parallelism completion edge, while the
+ *                           production annotation keeps the count in its low
+ *                           measured band
  *   tsan-shutdown           the LIVE control on HttpServer's own fields, and
  *                           the A/B that measures whether the bridge's atomics
  *                           order it away
@@ -1736,6 +1741,97 @@ void removeReports(string tagGlob) {
     foreach (f; reportFilesFor(tagGlob)) std.file.remove(f);
 }
 
+// ---------------------------------------------------------------------------
+// tsan-parallel-completion — committed reproducer for task 6340.
+//
+// Coordinator measurement on the same 300-round shape was 11 reports without
+// the explicit completion edge and 1 with it. These are deliberately BANDS,
+// not exact scheduler-dependent counts: 5..25 keeps the broken mechanism
+// populated, while 0..3 keeps the annotated arm near the one unavoidable
+// std.parallelism-internal report. Removing AnnotateHappensAfter moves the
+// annotated arm back into the first band and must redden this command.
+// ---------------------------------------------------------------------------
+void cmdTsanParallelCompletion() {
+    enum string probeSource = "tools/sanitizer/parallel_loop_completion_probe.d";
+    enum string probeBinary = "./parallel-loop-completion-probe-tsan";
+    enum int plainMin = 5;
+    enum int plainMax = 25;
+    enum int annotatedMin = 0;
+    enum int annotatedMax = 3;
+
+    // The behavioural probe imports the production wrapper. This source census
+    // closes the other half: a green helper test must not survive production
+    // being rewired around it.
+    auto meshSource = readText("source/mesh.d");
+    auto begin = meshSource.indexOf("    void buildLoops() {");
+    auto end = meshSource.indexOf("    // Make Polygon", begin);
+    if (begin < 0 || end < 0 || end <= begin)
+        fail("tsan-parallel-completion: could not isolate Mesh.buildLoops for "
+           ~ "the production-wiring census");
+    auto buildLoopsSource = meshSource[begin .. end];
+    immutable string[] expectedCalls = [
+        "parallelForWithCompletion!fillOneFace(faces.length);",
+        "parallelForWithCompletion!fillLoopEdge(total);",
+        "parallelForWithCompletion!fillTwin(total);",
+        "parallelForWithCompletion!anchorOneVert(vertices.length);",
+    ];
+    foreach (call; expectedCalls)
+        if (buildLoopsSource.split(call).length != 2)
+            fail("tsan-parallel-completion: Mesh.buildLoops must contain "
+               ~ "exactly one production call `" ~ call ~ "`");
+    if (buildLoopsSource.canFind("parallel(iota("))
+        fail("tsan-parallel-completion: Mesh.buildLoops contains a raw "
+           ~ "parallel(iota(...)) that bypasses the completion wrapper");
+    ok("tsan-parallel-completion: all 4 Mesh.buildLoops parallel branches "
+     ~ "use the production completion wrapper");
+
+    auto env = laneEnv();
+    auto ldc = ldcPath();
+    if (exists(probeBinary)) std.file.remove(probeBinary);
+    scope(exit) if (exists(probeBinary)) std.file.remove(probeBinary);
+    run([ldc, "-g", "-O0", "--fsanitize=thread",
+         "--enable-asserts=false", "--frame-pointer=all",
+         "--d-version=SanitizerThreadPreinit", "-Isource",
+         "-of=" ~ probeBinary, probeSource, "source/tsan_annotate.d",
+         "source/tsan_preinit.d"], env);
+    if (!exists(probeBinary))
+        fail("tsan-parallel-completion: compiler produced no " ~ probeBinary);
+
+    int runArm(string arm) {
+        const tag = "parallel-completion-" ~ arm;
+        removeReports(tag);
+        auto armEnv = env.dup;
+        const prefix = buildPath(getcwd(), "tsan-report-" ~ tag);
+        armEnv["TSAN_OPTIONS"] = "halt_on_error=0:history_size=7:"
+                               ~ "print_suppressions=1:exitcode=0:log_path="
+                               ~ prefix;
+        auto outp = run([probeBinary, "--DRT-gcopt=gc:manual", arm], armEnv);
+        writeln("lane.d: [", tag, "] ", outp.strip);
+        const count = cast(int)reportsFor(tag).length;
+        writeln("lane.d: [", tag, "] ", count, " race report(s)");
+        return count;
+    }
+
+    const plain = runArm("plain");
+    if (plain < plainMin || plain > plainMax)
+        fail(format("tsan-parallel-completion: plain arm reported %d races; "
+                  ~ "expected %d..%d around the measured 11", plain,
+                    plainMin, plainMax));
+
+    const annotated = runArm("annotated");
+    if (annotated < annotatedMin || annotated > annotatedMax)
+        fail(format("tsan-parallel-completion: annotated arm reported %d "
+                  ~ "races; expected %d..%d around the measured 1", annotated,
+                    annotatedMin, annotatedMax));
+    if (annotated >= plain)
+        fail(format("tsan-parallel-completion: annotation did not reduce the "
+                  ~ "race count (%d annotated vs %d plain)", annotated, plain));
+
+    ok(format("tsan-parallel-completion: plain=%d in [%d,%d], annotated=%d "
+            ~ "in [%d,%d]", plain, plainMin, plainMax, annotated,
+              annotatedMin, annotatedMax));
+}
+
 /// `ThreadSanitizer: Matched N suppressions (pid=...):` followed by one
 /// `  N <type>:<pattern>` line each. AT ZERO MATCHES THE BLOCK IS NOT PRINTED
 /// AT ALL — not "Matched 0" — so a parser written against the block alone can
@@ -2334,7 +2430,7 @@ void cmdTsanShutdown() {
         // contrast before the measurement started — the readiness probe would
         // have supplied exactly the happens-before edge whose absence arm A is
         // supposed to represent.
-        auto ins = spawnInstance(spec, arm, null, null, ReadyMode.bridgeFree);
+        auto ins = spawnInstance(spec, arm, null, kTsanSupp, ReadyMode.bridgeFree);
         if (arm == "shutdownB") {
             auto r = httpGet(ins.port, "/api/layers", 30);
             writeln("lane.d: [", arm, "] /api/layers connected=", r.connected,
@@ -2523,7 +2619,7 @@ void cmdTsanSweep(string[] args) {
     // leaves yesterday's reports and sentinel available to tonight's verdict.
     checkSweepCompleteness();
 
-    auto ins = spawnInstance(spec, tag);
+    auto ins = spawnInstance(spec, tag, null, kTsanSupp);
     scope(failure) killInstance(ins);
 
     atomicStore(g_sweepStop, false);
@@ -2745,7 +2841,7 @@ void cmdTsanSweep(string[] args) {
 void cmdTsanBridge() {
     auto spec = specFor("tsan");
     removeReports("bridge");
-    auto ins = spawnInstance(spec, "bridge");
+    auto ins = spawnInstance(spec, "bridge", null, kTsanSupp);
     scope(failure) killInstance(ins);
     const port = ins.port;
 
@@ -2950,7 +3046,8 @@ int main(string[] args) {
                      ~ "        fuzzer-path\n"
                      ~ "  2080: check-space <path> [floor-mib]\n"
                      ~ "  1411: preflight-tsan | window-guard <event> [force] |\n"
-                     ~ "        tsan-selfcheck | tsan-shutdown | tsan-sweep |\n"
+                     ~ "        tsan-selfcheck | tsan-parallel-completion |\n"
+                     ~ "        tsan-shutdown | tsan-sweep |\n"
                      ~ "        tsan-bridge | tsan-verdict <scenario...> |\n"
                      ~ "        tsan-audit-suppressions <scenario...> |\n"
                      ~ "        rss-sample <pid> <seconds> [csv]");
@@ -2975,6 +3072,8 @@ int main(string[] args) {
         case "preflight-tsan":    cmdPreflightTsan();                break;
         case "window-guard":      cmdWindowGuard(args[2 .. $]);      break;
         case "tsan-selfcheck":    cmdTsanSelfcheck();                break;
+        case "tsan-parallel-completion":
+                                  cmdTsanParallelCompletion();        break;
         case "tsan-shutdown":     cmdTsanShutdown();                 break;
         case "tsan-sweep":        cmdTsanSweep(args[2 .. $]);        break;
         case "tsan-bridge":       cmdTsanBridge();                   break;
