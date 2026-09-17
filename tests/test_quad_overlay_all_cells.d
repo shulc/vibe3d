@@ -66,6 +66,7 @@ import core.time     : msecs;
 // --------------------------------------------------------------------------
 
 string baseUrl;
+int verifiedToolDrops;
 
 string httpGet(string path) {
     import std.net.curl : get;
@@ -157,14 +158,24 @@ JSONValue enterQuad() {
     return j;
 }
 
-void restoreSingle() {
+void restoreSingle(bool verifyToolDrop = false) {
+    bool toolDropped;
     try {
+        script("tool.set move off");
+        if (verifyToolDrop) {
+            auto state = parseJSON(httpGet("/api/tool/state"));
+            toolDropped = ("tool" in state.object) is null;
+        }
         script("tool.set edge.extend off");
         script("tool.set edge.bevel off");
-        script("tool.set move off");
         postCommand("viewport.layout", "Single");
         settle();
     } catch (Exception) { /* best effort — the runner shares one app */ }
+    if (verifyToolDrop) {
+        ++verifiedToolDrops;
+        enforce(toolDropped,
+            "cleanup did not drop move before the later layout reset could hide it");
+    }
 }
 
 /// Drive a JSON-Lines event log and wait for playback to finish.
@@ -424,7 +435,7 @@ bool testFlowB() {
 bool testFlowC() {
     writeln("  [C] Quad + move: hovering the owner's handle lights every replica...");
     resetApp();
-    scope(exit) restoreSingle();
+    scope(exit) restoreSingle(true);
     enterQuad();
     script("tool.set move on");
     settle();
@@ -534,6 +545,15 @@ int main(string[] args) {
     // The runner shares one app across a worker's slice and its between-tests
     // reset covers neither the layout nor the armed tool.
     restoreSingle();
+    auto restoredDisplay = displayDump();
+    enforce(jsonInt(restoredDisplay, "cellCount") == 1,
+        "cleanup left the shared app in a multi-cell layout");
+    auto restoredTool = parseJSON(httpGet("/api/tool/state"));
+    enforce(("tool" in restoredTool.object) is null,
+        "cleanup left an active tool in the shared app: " ~ restoredTool.toString);
+    enforce(verifiedToolDrops == 1,
+        format("cleanup verify-arm ran %d times, expected exactly once",
+               verifiedToolDrops));
 
     writefln("\n%d passed, %d failed", passed, failed);
     return failed > 0 ? 1 : 0;
