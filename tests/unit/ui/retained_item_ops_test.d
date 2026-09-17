@@ -244,11 +244,15 @@ private string stringOf(int v) {
     return to!string(v);
 }
 
-private void pressConfirm(ref HeadlessPanel ui) {
+private void releaseConfirm(ref HeadlessPanel ui) {
     auto s = imageListDrawSnapshot();
     assert(s.confirmDrawn, "6359 confirm press floor: no confirmation is drawn");
     ui.pressAt(center(s.confirmMin, s.confirmMax));
     ui.release();
+}
+
+private void pressConfirm(ref HeadlessPanel ui) {
+    releaseConfirm(ui);
     ui.frame();
 }
 
@@ -395,7 +399,11 @@ unittest { // C1: Confirm removes its item after an earlier item is deleted
     assert(h.owner.document.indexOf(h.imgOne) == 2
         && h.owner.document.indexOf(h.imgTwo) == 3,
         "6359 shift floor: Beta's delete did not move ImgOne to 2 and ImgTwo to 3");
-    pressConfirm(ui);
+    releaseConfirm(ui);
+    const view = imageListConfirmView(h.imageRoles.state);
+    assert(!view.held && view.referrers.length == 0,
+        "6359 successful cleanup: the binding retained the removed image or its referrers");
+    ui.frame();
     assert(!h.owner.document.isMember(h.imgOne) && h.owner.document.isMember(h.imgTwo),
         "6359 old index: Confirm removed the item now at the click-time index: "
         ~ h.names());
@@ -404,9 +412,6 @@ unittest { // C1: Confirm removes its item after an earlier item is deleted
         && h.history.undoEntries()[$ - 1].args == "index:2"
         && !imageListDrawSnapshot().confirmDrawn,
         "6359 confirm dispatch: not exactly one image.remove at the live index");
-    const view = imageListConfirmView(h.imageRoles.state);
-    assert(!view.held && view.referrers.length == 0,
-        "6359 successful cleanup: the binding retained the removed image or its referrers");
 }
 
 unittest { // C2: a confirmation whose item left the document closes, no command
