@@ -1090,6 +1090,58 @@ bool holderIsStaleTestInstance(string cmdline, ushort port) {
         && cmdline.canFind(format("--http-port %d", port));
 }
 
+/// Is this a mapped user namespace rather than the host's initial one?
+///
+/// Read from `/proc/self/uid_map`, whose initial-namespace content is exactly
+/// `0 0 4294967295` — identity over the whole uid range. `unshare
+/// --map-root-user` writes `0 <caller uid> 1` instead. Measured on this host:
+/// `[         0          0 4294967295]` outside and `[         0       1000
+/// 1]` inside. The first thing tried here was comparing `/proc/self/ns/user`
+/// with `/proc/1/ns/user`, which cannot work: init's link is unreadable to a
+/// normal user in BOTH cases, so the comparison threw and answered "host"
+/// every time — a carve-out that could never fire.
+///
+/// An unreadable or unparsable map answers NO, keeping the guard fail-closed.
+bool isMappedUserNamespace(string uidMap) {
+    import std.array : split;
+    try {
+        auto f = uidMap.strip.split;
+        if (f.length < 3) return false;
+        return !(f[0] == "0" && f[1] == "0" && f[2] == "4294967295");
+    } catch (Exception) {
+        return false;
+    }
+}
+
+bool inForeignUserNamespace() {
+    try {
+        return isMappedUserNamespace(readText("/proc/self/uid_map"));
+    } catch (Exception) {
+        return false;
+    }
+}
+
+/// The classification the guard actually needs, and the reason it is not just
+/// `holderIsStaleTestInstance` (task 6291, second defect, 2026-09-16).
+///
+/// Inside a user namespace `ss -ltnp` cannot attribute a listening socket to a
+/// pid at all, so the holder's command line reads EMPTY — and an empty string
+/// is not "vibe3d --test --http-port N". A test that spawns a real runner
+/// inside `unshare --mount --map-root-user` while the parent suite's worker 0
+/// legitimately holds the default port therefore saw its own family classified
+/// as a stranger and was refused. Measured: outside the namespace the pid
+/// extraction yields the holder; inside, the same pipeline yields nothing while
+/// the port still reads busy.
+///
+/// So an unreadable holder means "ours" ONLY in a foreign namespace, where we
+/// are by construction a child of our own harness and there is no interactive
+/// session for this guard to protect. On the host an unreadable holder is a
+/// process of another user, and there the fail-closed answer stays.
+bool holderCountsAsOurs(string cmdline, ushort port, bool foreignNamespace) {
+    if (holderIsStaleTestInstance(cmdline, port)) return true;
+    return cmdline.length == 0 && foreignNamespace;
+}
+
 /// Refuse to run when the port was NOT asked for, is already taken, and the
 /// holder is NOT one of our own stale test instances (task 6291). The default
 /// is 8080, which is also what a plain interactive `./vibe3d` binds, so a lane
@@ -1170,6 +1222,33 @@ unittest {
         "an unreadable holder must never be taken for ours");
     assert(!holderIsStaleTestInstance("python3 -m http.server 8080", 8080),
         "an unrelated listener is not a vibe3d test instance");
+
+    // The namespace carve-out, in both directions. An unreadable holder is our
+    // own family ONLY when we cannot possibly be looking at a human's session.
+    assert(holderCountsAsOurs("", 8080, true),
+        "inside a foreign user namespace an unattributable holder is our own "
+        ~ "harness: ss cannot name a pid there, and a real runner spawned by a "
+        ~ "test was refused for exactly this");
+    assert(!holderCountsAsOurs("", 8080, false),
+        "on the host an unreadable holder is another user's process, and the "
+        ~ "fail-closed answer is the whole point of the guard");
+    assert(holderCountsAsOurs("./vibe3d --test --http-port 8080", 8080, false),
+        "a readable holder of our own shape needs no namespace excuse");
+    assert(!holderCountsAsOurs("./vibe3d", 8080, true),
+        "a READABLE holder is judged on what it says, namespace or not — the "
+        ~ "carve-out is for the unreadable case only");
+
+    // The namespace reader itself, against the two shapes measured on this
+    // host: `[         0          0 4294967295]` outside `unshare`, and
+    // `[         0       1000          1]` inside it.
+    assert(!isMappedUserNamespace("         0          0 4294967295\n"),
+        "the initial namespace maps the whole uid range identically");
+    assert(isMappedUserNamespace("         0       1000          1\n"),
+        "`unshare --map-root-user` maps one uid and must read as mapped");
+    assert(!isMappedUserNamespace(""),
+        "an unreadable map answers 'host', keeping the guard fail-closed");
+    assert(!isMappedUserNamespace("garbage"),
+        "an unparsable map answers 'host' too");
 
     // The real probe, against a socket this block owns. Bound to port 0 so the
     // kernel picks a free one — asking for a fixed port here would fail on a
@@ -2911,7 +2990,8 @@ int main(string[] args) {
     // say least about. Unreadable holder ⇒ busy, and not ours ⇒ refuse.
     const holder = portHolderCmdline(port);
     if (refuseDefaultBusyPort(portGiven, attach, portBusy(port),
-                              holderIsStaleTestInstance(holder, port))) {
+                              holderCountsAsOurs(holder, port,
+                                                 inForeignUserNamespace()))) {
         stderr.writefln(red("refusing to run: port %d is the DEFAULT and it is "
                           ~ "held by something that is not a stale test "
                           ~ "instance of ours."), port);
