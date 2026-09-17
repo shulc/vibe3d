@@ -91,7 +91,7 @@ unittest { // L1-L5: actual registry matches the paired local metadata.
 
     size_t otherRestricted;
     foreach (id, modes; reg["commandSupportedModes"].object)
-        if (id !in commands || !kPaired.canFind(id))
+        if (!kPaired.canFind(id))
             if (modes.array.length < 3) ++otherRestricted;
     assert(otherRestricted > 0,
         "6353 live modes discriminator: no other command has a restricted mode set");
