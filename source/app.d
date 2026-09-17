@@ -5389,7 +5389,8 @@ void main(string[] args) {
         if (!command.g_testMode || g_channelsShown) {
             import ui.channels_panel : drawChannelsPanel;
             drawChannelsPanel(channelsPanelRoles.read,
-                              channelsPanelRoles.actions);
+                              channelsPanelRoles.actions,
+                              channelsPanelRoles.state);
         }
 
         // ---- Statistics (dockable; task 1100) ----

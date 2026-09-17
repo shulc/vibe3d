@@ -188,9 +188,9 @@ struct ChannelsModel {
     /// draws its empty line and nothing else.
     bool bound;
 
-    /// The bound item's display name — the panel's header line.
-    string title;
-    /// Its kind's display word, shown beside the name.
+    /// The bound item's kind's display word, shown beside the header name.
+    /// The name itself is not memoised: the panel reads it live from the item
+    /// on every draw (`channelsHeaderName`), so a rename needs no rebuild.
     string kindText;
     /// Its index in `document.layers` — the index every row's `layer.attr`
     /// addresses. Held separately so a test can read it without re-parsing a
@@ -222,6 +222,12 @@ struct ChannelsKey {
 /// The empty-state line. The panel has its own text rather than an empty
 /// rectangle, the same call `ui/image_rows.d` made.
 enum string kNoItemText = "(no item selected)";
+
+/// The header name for `item`, read from the item itself on every draw.
+string channelsHeaderName(const(Layer) item)
+{
+    return item.name.length ? item.name : "(unnamed)";
+}
 
 /// Build the row list for a live `params()` snapshot.
 ///
@@ -298,7 +304,6 @@ ChannelsModel channelsModel(Document* doc)
     auto ps   = prov.params();
 
     m.bound    = true;
-    m.title    = item.name.length ? item.name : "(unnamed)";
     m.kindText = kindHeading(item.kind);
     m.index    = doc.indexOf(item);
     m.form     = channelsFormFor(ps, m.index.to!string, m.kindText);

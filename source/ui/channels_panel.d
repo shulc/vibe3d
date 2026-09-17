@@ -3,18 +3,19 @@ module ui.channels_panel;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import application_command_binding : ApplicationCommandBinding;
-import document : Document;
+import document : Document, Layer;
 import forms : Form;
 import forms_render : FormsPanel;
 import mesh : Mesh;
 import seltype : SelType;
 import session_owner : Session;
 import tool : Tool;
-import ui.channel_rows : ChannelsProvider;
+import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
+                         channelsModel;
 import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
 
 // ---------------------------------------------------------------------------
-// Channels panel (tasks 0637, 6050) — EVERY channel of the focused item,
+// Channels panel (tasks 0637, 6050, 6358) — EVERY channel of the focused item,
 // uncurated, plus the read-only Vertex Maps list of the edit mesh.
 //
 // CONTRACT. The panel reads the document, the selection type, the active tool
@@ -22,10 +23,12 @@ import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
 // draw, and writes only through `ChannelsActions.drawChannelForm`, which hands
 // the synthesised form to the shared `FormsPanel` with the application
 // binding's interactive dispatch. It holds no Document, primary or Tool
-// between frames: the two function-local statics below are a memo keyed on the
-// live focus item, index and parameter count, re-validated on every draw; the
-// key has no name term, so a rename leaves the title stale until the focus
-// changes. The Vertex Maps marker reads the
+// between frames. Its only retained state is the binding's own
+// `ChannelsPanelState`: a row memo keyed on the live focus item, index and
+// parameter count, re-validated on every draw and emptied, before `Begin`, on
+// every call whose focus is not the memoised item — so a hidden tab never
+// keeps a replaced document alive. The header NAME is not memoised; it is
+// read from the focus item on every draw. The Vertex Maps marker reads the
 // module-owned `morphTargetName()` directly during that draw.
 //
 // It binds the item-selection FOCUS (`itemPropsTarget`), never the primary —
@@ -81,9 +84,44 @@ public:
     }
 }
 
+/// The panel's retained memo, owned by ONE binding: `bindChannelsPanel` is the
+/// only constructor call, so two bindings never share rows or a provider.
+final class ChannelsPanelState {
+private:
+    ChannelsProvider provider_;
+    ChannelsModel    model_;
+
+    this() {}
+
+    /// Keep the memo only while it describes `item`; a null or different
+    /// focus empties it. Runs on every draw call, visible or not.
+    void retainOnly(Layer item) {
+        if (model_.key.item is item) return;
+        provider_ = null;
+        model_    = ChannelsModel.init;
+    }
+
+    /// Rebuild on a key miss (item, index, parameter count); true when rebuilt.
+    /// Precondition: `retainOnly(item)` ran first, so a live provider is
+    /// already bound to `item`.
+    bool refresh(Document* doc, Layer item) {
+        if (provider_ !is null) {
+            const k = ChannelsKey(item, doc.indexOf(item),
+                                  provider_.params().length);
+            if (k == model_.key) return false;
+            provider_.rebind(item);
+        } else {
+            provider_ = new ChannelsProvider(item);
+        }
+        model_ = channelsModel(doc);
+        return true;
+    }
+}
+
 struct ChannelsPanelRoles {
     ChannelsReadRole read;
     ChannelsActions actions;
+    ChannelsPanelState state;
 }
 
 ChannelsPanelRoles bindChannelsPanel(Session* owner,
@@ -91,7 +129,8 @@ ChannelsPanelRoles bindChannelsPanel(Session* owner,
         Tool delegate() activeTool) {
     assert(binding !is null && forms !is null);
     return ChannelsPanelRoles(ChannelsReadRole(owner, activeTool),
-        ChannelsActions(&binding.dispatchInteractiveUi, forms));
+        ChannelsActions(&binding.dispatchInteractiveUi, forms),
+        new ChannelsPanelState);
 }
 
 version (unittest) {
@@ -101,6 +140,14 @@ version (unittest) {
         string title;
         string kindText;
         bool providerMatchesModel;
+        bool memoReported;
+        bool modelRebuilt;
+        Object provider;
+        size_t channelCount;
+        size_t disabledChannels;
+        bool retainedReported;
+        Object retainedItem;
+        bool retainsProvider;
         bool transformGuardArmed;
         bool formDrawn;
         ImVec2 lastRowMin, lastRowMax;
@@ -128,6 +175,23 @@ version (unittest) {
     private void recordChannelsProvider(bool matches) {
         g_channelsDrawSnapshot.providerMatchesModel = matches;
     }
+    private void recordChannelsMemo(bool rebuilt, ChannelsPanelState state) {
+        g_channelsDrawSnapshot.memoReported = true;
+        g_channelsDrawSnapshot.modelRebuilt = rebuilt;
+        g_channelsDrawSnapshot.provider = state.provider_;
+        g_channelsDrawSnapshot.channelCount = state.model_.channelCount;
+    }
+    private void recordChannelsDisabled(ChannelsProvider provider) {
+        size_t n;
+        foreach (ref p; provider.params())
+            if (!provider.paramEnabled(p.name)) ++n;
+        g_channelsDrawSnapshot.disabledChannels = n;
+    }
+    private void recordChannelsRetained(ChannelsPanelState state) {
+        g_channelsDrawSnapshot.retainedReported = true;
+        g_channelsDrawSnapshot.retainedItem = state.model_.key.item;
+        g_channelsDrawSnapshot.retainsProvider = state.provider_ !is null;
+    }
     private void recordChannelsGuard(bool armed) {
         g_channelsDrawSnapshot.transformGuardArmed = armed;
     }
@@ -149,6 +213,9 @@ version (unittest) {
     private void recordChannelsBegin() {}
     private void recordChannelsHeader(string, string) {}
     private void recordChannelsProvider(bool) {}
+    private void recordChannelsMemo(bool, ChannelsPanelState) {}
+    private void recordChannelsDisabled(ChannelsProvider) {}
+    private void recordChannelsRetained(ChannelsPanelState) {}
     private void recordChannelsGuard(bool) {}
     private void recordChannelsForm() {}
     private void recordVertexMapsHeader(bool) {}
@@ -160,18 +227,20 @@ private void drawVertexMapLine(string line) {
     ImGui.TextUnformatted(line);
 }
 
-void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions) {
-    import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
-                             channelsModel, kNoItemText;
+void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
+                       ChannelsPanelState state) {
+    import ui.channel_rows : channelsHeaderName, kNoItemText;
     import layer_params    : itemPropsTarget;
 
-    // Cached across frames: the provider (so its blocked set is not rebuilt per
-    // frame) and the built rows (so 24 command strings are not rebuilt per
-    // frame). Function-local statics rather than application-context fields —
-    // nothing outside this body reads them and the panel is main-thread-only,
-    // the same convention the Images panel's confirm state uses.
-    static ChannelsProvider prov;
-    static ChannelsModel    model;
+    // Binds the item-selection FOCUS, never `document.primary` — an image
+    // plane can never BE the primary, so a primary-bound panel would show
+    // none of the channels this one exists for. Reached through the shared
+    // `itemPropsTarget` so this surface and the properties form can never
+    // disagree about which item is being edited. Resolved BEFORE `Begin`: a
+    // docked tab that is not in front gets `Begin == false`, and the memo must
+    // still let go of an item that is no longer the focus.
+    auto item = itemPropsTarget(read.document());
+    state.retainOnly(item);
 
     // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE: the action role's
     // interactive delegate routes through `applyOrRefire`, and a refused
@@ -184,40 +253,23 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Channels")) {
         recordChannelsBegin();
-        // Binds the item-selection FOCUS, never `document.primary` — an image
-        // plane can never BE the primary, so a primary-bound panel would show
-        // none of the channels this one exists for. Reached through the shared
-        // `itemPropsTarget` so this surface and the properties form can never
-        // disagree about which item is being edited.
-        auto item = itemPropsTarget(read.document());
         if (item is null) {
             ImGui.TextDisabled("%s", kNoItemText);
         } else {
-            // Rebuild only on a key change (see `ChannelsModel.key`). A focus
-            // move rebinds from scratch; otherwise the one per-frame `params()`
-            // — the same allocation the renderer's own snapshot makes — catches
-            // an index shift or a payload appearing on an item that had none.
-            if (prov is null || model.key.item !is item) {
-                prov  = new ChannelsProvider(item);
-                model = channelsModel(read.document());
-            } else {
-                auto k = ChannelsKey(item, read.document().indexOf(item),
-                                     prov.params().length);
-                if (k != model.key) {
-                    prov.rebind(item);
-                    model = channelsModel(read.document());
-                }
-            }
-            recordChannelsProvider(prov.base.layer() is model.key.item);
+            const rebuilt = state.refresh(read.document(), item);
+            recordChannelsMemo(rebuilt, state);
+            recordChannelsProvider(
+                state.provider_.base.layer() is state.model_.key.item);
 
-            // Header: whose channels these are. `%s` rather than passing the
-            // name as the format string — it is user text (same reason the
-            // Layers panel's kind badge does).
-            ImGui.TextUnformatted(model.title);
+            // Header: whose channels these are, read live every draw. `%s`
+            // rather than passing the name as the format string — it is user
+            // text (same reason the Layers panel's kind badge does).
+            const title = channelsHeaderName(item);
+            ImGui.TextUnformatted(title);
             ImGui.SameLine();
-            ImGui.TextDisabled("%s", model.kindText);
+            ImGui.TextDisabled("%s", state.model_.kindText);
             ImGui.Separator();
-            recordChannelsHeader(model.title, model.kindText);
+            recordChannelsHeader(title, state.model_.kindText);
 
             // The base provider's own mid-gesture transform interlock, driven
             // exactly as the Layers panel drives it: while a transform tool is
@@ -226,16 +278,17 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions) {
             // gizmo's only write target IS these rows, so it must not arm —
             // the narrowing lives in `setTransformGuard`, read live from the
             // authority rather than cached.
-            prov.base.setTransformGuard(read.transformToolActive(),
-                                        read.currentSelType());
-            recordChannelsGuard(!prov.paramEnabled("pos.x"));
+            state.provider_.base.setTransformGuard(read.transformToolActive(),
+                                                   read.currentSelType());
+            recordChannelsGuard(!state.provider_.paramEnabled("pos.x"));
+            recordChannelsDisabled(state.provider_);
 
             // The SAME renderer the properties form uses, so a row here is
             // resolved, drawn and written back by exactly one implementation.
             // `layerIndex` is empty on purpose: these lines were synthesised
             // with the live index already in them, so there is nothing for
             // `rebindBindingTarget` to overwrite.
-            actions.drawChannelForm(model.form, prov);
+            actions.drawChannelForm(state.model_.form, state.provider_);
             recordChannelsForm();
         }
 
@@ -261,8 +314,9 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions) {
         // bearing for the test suite.
         drawVertexMapsSection(read.editMesh());
     }
+    recordChannelsRetained(state);
     // `ImGui.End()` + `popPanelChromeStyle()` are the two `scope(exit)`s
-    // registered above.
+    // registered above; they run after this record.
 }
 
 /// The Vertex Maps list: every morph map with its kind and entry count, the
