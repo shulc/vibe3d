@@ -665,9 +665,10 @@ struct RemeshModalRefs {
 // `@property ref T` (category "а"). A field is by-value (category "в") ONLY
 // when it is a class-ref or delegate assigned EXACTLY ONCE in main(); the
 // single stable Session pointer is category "в" too -- grep-verified, not assumed from
-// its type. Getting this wrong is SILENT: a by-value copy of a mutated
-// value-type or a reassigned reference compiles cleanly and just stops seeing
-// later writes.
+// its type. `toolHostView` is the one by-value STRUCT: it holds only a private
+// address and hands out a fresh copy on every read (task 6350). Getting this
+// wrong is SILENT: a by-value copy of a mutated value-type or a reassigned
+// reference compiles cleanly and just stops seeing later writes.
 // ---------------------------------------------------------------------------
 struct EditorApp {
     // ---- (б) nested-accessor delegates: lazy, live-binding ----

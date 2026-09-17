@@ -216,6 +216,7 @@ unittest { // V5: the owner address is confined to ToolHostReadView
     string hostCode;
     size_t fieldReads;
     size_t reflectionHits;
+    string[] bypassFiles;
     foreach (path; paths) {
         const code = blankNonCode(readText(path));
         const relative = path[repoRoot.length + 1 .. $];
@@ -230,7 +231,10 @@ unittest { // V5: the owner address is confined to ToolHostReadView
         if (code.indexOf("ToolHostReadView") >= 0
                 || code.indexOf("toolHostView") >= 0) {
             namingFiles ~= relative;
-            reflectionHits += code.count("tupleof") + code.count("getMember");
+            const bypass = code.count("tupleof") + code.count("getMember")
+                + identifierCount(code, "mixin");
+            if (bypass > 0) bypassFiles ~= relative;
+            reflectionHits += bypass;
         }
         if (relative == "source/commands/tool/host.d") hostCode = code;
     }
@@ -271,8 +275,14 @@ unittest { // V5: the owner address is confined to ToolHostReadView
     assert(namingFiles == expectedNamingFiles, format(
         "6350 V5 ToolHostReadView naming set changed: %s", namingFiles));
     assert(reflectionHits == 0,
-        "6350 V5 reflection can bypass the private backing in "
-        ~ namingFiles.join(", "));
+        "6350 V5 reflection or a mixin can bypass the private backing in "
+        ~ bypassFiles.join(", "));
+    // A string mixin hides an accessor from the token counts above, so the
+    // module's own member set is pinned by the compiler, not by the text.
+    static import commands.tool.host;
+    static assert([__traits(allMembers, commands.tool.host)]
+        == ["object", "ToolHost", "ToolHostReadView"],
+        "6350 V5 commands.tool.host gained a member beside the view");
 }
 
 unittest { // V4b: a default-constructed view rejects its first read
