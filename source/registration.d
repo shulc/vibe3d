@@ -197,7 +197,6 @@ import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
-import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 import command;
 import registry;
 import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -212,7 +211,6 @@ import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
-import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
@@ -235,21 +233,19 @@ import layer_params   : LayerPropsProvider;
 import document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
+import ai_command_registration : registerAiToggleCommands;
 import viewport_command_registration : registerViewportCommands;
 import view_settings_registration : registerViewSettingsCommands;
+version (WithAI) import copilot_command_registration : registerCopilotCommands;
 
 // Locally-scoped in app.d's main() (not top-level there).
 import document       : Document;
 import viewport        : ViewportManager;
 
-// AI Modeling Copilot (task 0402): version(WithAI)-only, mirroring app.d's
-// own gating (see editor_app.d's doc comment for the same block).
-version (WithAI) import commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
+// These imports were already unused before this slice; follow-up card 6460
+// owns their removal together with the wider dead-symbol inventory.
+version (WithAI) import commands.ui.copilot_panel : g_copilotPanelShown;
 version (WithAI) {
-    import commands.copilot.analyze        : CopilotAnalyzeCommand;
-    import commands.copilot.select_finding : CopilotSelectFindingCommand;
-    import commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
-    import copilot_panel : CopilotPanel;
     import copilot_overlay : drawCopilotFindingOverlay;
 }
 
@@ -878,7 +874,18 @@ void registerCommands(EditorApp app) {
         app.vpm);
     registerViewSettingsCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()));
-    registerViewCommands(app);
+    // The task-0422 pause gates registration at the composition root while
+    // leaving both registrar bodies under semantic analysis.
+    static if (kCopilotEnabled)
+        registerAiToggleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+            app.aiState);
+    version (WithAI)
+    static if (kCopilotEnabled)
+        registerCopilotCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+            app.aiState, app.copilotPanel,
+            () => app.reg().commandFactories["mesh.select"]());
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()));
@@ -1090,79 +1097,6 @@ private void registerItemCommands(EditorApp app) {
                 ai3dController.probeHealth(
                     workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
             });
-    }
-    }
-    }
-    }
-}
-
-/// Snapping, preferences, path and the AI toggles — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerViewCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-    // ai.toggle / ai.enable / ai.disable: gated on kCopilotEnabled (task
-    // 0422 — owner pausing the AI Modeling Copilot; ONNX path untouched).
-    // All THREE are gated together, not just ai.toggle: aiState.enabled
-    // must stay permanently false with no command able to flip it, so the
-    // model-decision-provider's keepDefault fallback (app.d ~2555, which
-    // calls aiAdvisor.advise() directly) stays byte-identical to "AI never
-    // existed" per its own doc comment, with no backdoor left to re-arm the
-    // deterministic advisor while the copilot is off. The statusline "AI"
-    // button greys out via the same kAiToggleAvailable/aiGateBlocked
-    // mechanism (ui/panels.d) so it never dispatches to this now-missing
-    // factory. Flip kCopilotEnabled back to `true` to restore.
-    static if (kCopilotEnabled)
-    {
-        Command delegate() makeAiFactory(AiToggleAction action) {
-            return () => cast(Command)
-                new AiToggleCommand(&mesh(), cameraView, editMode, aiState, action);
-        }
-        reg.commandFactories["ai.toggle"]  = makeAiFactory(AiToggleAction.toggle);
-        reg.commandFactories["ai.enable"]  = makeAiFactory(AiToggleAction.enable);
-        reg.commandFactories["ai.disable"] = makeAiFactory(AiToggleAction.disable);
-    }
-    // AI Modeling Copilot findings-panel commands: version(WithAI)-only,
-    // compiled out of modeling-noai entirely (see import block doc comment).
-    // static if kCopilotEnabled (task 0422) on top: not registered while the
-    // copilot is paused; flip the flag to restore.
-    version (WithAI)
-    static if (kCopilotEnabled)
-    {
-        // AI Modeling Copilot (task 0402 Phase 2): copilot.analyze is a pure
-        // read (repopulates copilotPanel's findings list); copilot.selectFinding
-        // is the ONLY act-on and wraps the SAME "mesh.select" factory app.d
-        // registers below (lazy lookup — evaluated when the wrapper's own
-        // apply() runs, well after every factory is registered, so
-        // registration order here does not matter) so it inherits that
-        // factory's promoteGeometryType hook + resolved-viewport provider.
-        // See commands/copilot/*.d doc comments.
-        reg.commandFactories["copilot.analyze"] = () => cast(Command)
-            new CopilotAnalyzeCommand(&mesh(), cameraView, editMode, copilotPanel);
-        reg.commandFactories["copilot.selectFinding"] = () => cast(Command)
-            new CopilotSelectFindingCommand(&mesh(), cameraView, editMode,
-                copilotPanel, aiState,
-                () => reg.commandFactories["mesh.select"]());
-        // copilot.cycleFinding (task 0402 Phase 3): panel Prev/Next + Up/Down
-        // both dispatch this. It computes only the new index and delegates
-        // the actual select-only act-on to a CopilotSelectFindingCommand it
-        // builds internally (see cycle_finding.d) — same meshSelectFactory
-        // lazy lookup as copilot.selectFinding above.
-        reg.commandFactories["copilot.cycleFinding"] = () => cast(Command)
-            new CopilotCycleFindingCommand(&mesh(), cameraView, editMode,
-                copilotPanel, aiState,
-                () => reg.commandFactories["mesh.select"]());
-        // Test-only visibility flip (idiom: commands.ui.layer_list /
-        // g_layerListShown) — see commands/ui/copilot_panel.d.
-        reg.commandFactories["ui.copilotPanel"] = () => cast(Command)
-            new UiCopilotPanelCommand(&mesh(), cameraView, editMode);
     }
     }
     }
