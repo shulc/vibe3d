@@ -25,11 +25,11 @@ import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
 // binding's interactive dispatch. It holds no Document, primary or Tool
 // between frames. Its only retained state is the binding's own
 // `ChannelsPanelState`: a row memo keyed on the live focus item, index and
-// parameter count, re-validated on every draw and emptied, before `Begin`, on
-// every call whose focus is not the memoised item — so a hidden tab never
-// keeps a replaced document alive. The header NAME is not memoised; it is
-// read from the focus item on every draw. The Vertex Maps marker reads the
-// module-owned `morphTargetName()` directly during that draw.
+// parameter count, re-validated on every visible draw and emptied, before
+// `Begin`, on every call whose focus is not the memoised item — so a hidden
+// tab never keeps a replaced document alive. The header NAME is not memoised;
+// it is read from the focus item on every draw. The Vertex Maps marker reads
+// the module-owned `morphTargetName()` directly during that draw.
 //
 // It binds the item-selection FOCUS (`itemPropsTarget`), never the primary —
 // an image plane can never be the primary. Which rows exist, their labels,

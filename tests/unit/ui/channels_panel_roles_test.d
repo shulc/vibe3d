@@ -374,7 +374,6 @@ unittest { // M3/M4: guard blocks geometry mode and permits item mode
         "6050 item guard: the permitted row did not write one layer.attr");
 }
 
-
 unittest { // I1: two bindings over two sessions own their memo: draw A, B, A
     clearMorphTarget();
     scope (exit) clearMorphTarget();
@@ -531,7 +530,6 @@ unittest { // I4: an empty document releases the provider and rows
         && again.provider !is first.provider,
         "6358 release recovery: the next document did not rebuild the memo");
 }
-
 
 unittest { // I5: a payload appearing under the same item and index is a memo miss
     import image_data : ImageData;
@@ -711,12 +709,12 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         "6358 state census: bind owns the only construction and draw has no static; A/B/A covers a module singleton");
     const drawBody = bodyAt(channels, "void drawChannelsPanel(");
     const retainAt = drawBody.indexOf("state.retainOnly(item);");
-    const beginAt0 = drawBody.indexOf("ImGui.Begin(");
+    const drawBeginAt = drawBody.indexOf("ImGui.Begin(");
     assert(drawBody.count("const title = channelsHeaderName(item);") == 1
         && drawBody.count("ImGui.TextUnformatted(title);") == 1
         && drawBody.count("recordChannelsHeader(title, state.model_.kindText);") == 1
         && drawBody.count("state.retainOnly(item);") == 1
-        && retainAt >= 0 && beginAt0 > retainAt
+        && retainAt >= 0 && drawBeginAt > retainAt
         && drawBody.count(".title") == 0,
         "6358 draw census: computed, drawn, or recorded live header, or pre-Begin retention changed");
     const readRole = bodyAt(channels, "struct ChannelsReadRole");
