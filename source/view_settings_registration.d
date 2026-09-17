@@ -13,7 +13,7 @@ import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
 /// Registers the snap/constrain/preferences/path/symmetry command family.
-/// Task 6354: inputs stay live at factory invocation, without EditorApp capture.
+/// Task 6354: inputs stay live at factory invocation without a broad app capture.
 void registerViewSettingsCommands(ref Registry reg, LiveSessionRole owner,
                                   LiveViewModeRole live) {
     reg.commandFactories["snap.toggle"] = () => cast(Command)

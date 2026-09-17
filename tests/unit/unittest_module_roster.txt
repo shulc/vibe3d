@@ -196,6 +196,7 @@ tests.unit.commands.test_undo_flags_test
 tests.unit.commands.tool.tool_host_read_view_test
 tests.unit.commands.tool.tool_lifecycle_registration_test
 tests.unit.commands.ui.layout_reset_test
+tests.unit.commands.view.view_settings_registration_test
 tests.unit.commands.viewport.viewport_command_registration_test
 tests.unit.commands.workplane_test
 tests.unit.comment_prose_ceiling_test

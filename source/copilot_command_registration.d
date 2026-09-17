@@ -12,7 +12,7 @@ import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
 /// Registers the four WithAI-only findings-panel commands.
-/// Task 6354: named collaborators replace the former EditorApp capture.
+/// Task 6354: named collaborators replace the former broad app capture.
 void registerCopilotCommands(ref Registry reg, LiveSessionRole owner,
                              LiveViewModeRole live, EditorAiState aiState,
                              CopilotPanel copilotPanel,

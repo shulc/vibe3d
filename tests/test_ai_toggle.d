@@ -14,7 +14,9 @@ import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
-import std.stdio : stderr;
+import std.algorithm : canFind, map;
+import std.array : array;
+import std.stdio : stderr, writeln;
 import ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
@@ -40,6 +42,32 @@ void runCmd(string argstring) {
 
 size_t historyLen(string side) {
     return getJson("/api/history")[side].array.length;
+}
+
+unittest { // Task 6354: gate effect on the production registry
+    auto commands = getJson("/api/registry")["commands"].array
+        .map!(value => value.str).array;
+    assert(commands.length > 100,
+        "6354 A2 floor: /api/registry returned too few commands");
+    assert(commands.canFind("snap.toggle"),
+        "6354 A2 floor: the view/settings registrar did not run");
+    assert(commands.canFind("mesh.select"),
+        "6354 A2 floor: the later mesh registrar did not run");
+    static immutable gated = [
+        "ai.toggle", "ai.enable", "ai.disable", "copilot.analyze",
+        "copilot.selectFinding", "copilot.cycleFinding", "ui.copilotPanel",
+    ];
+    if (!kCopilotEnabled) {
+        foreach (id; gated)
+            assert(!commands.canFind(id),
+                "0422 policy: " ~ id
+                ~ " is registered while the copilot is paused");
+    } else {
+        foreach (id; gated[0 .. 3])
+            assert(commands.canFind(id),
+                "0422 policy: " ~ id ~ " is absent with the gate raised");
+    }
+    writeln("6354 A2: production registry gate witness executed");
 }
 
 unittest { // default-off and advisor shell payload
