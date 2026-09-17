@@ -2,8 +2,19 @@ module tests.unit.commands.tool.tool_host_read_view_test;
 
 import commands.tool.host : ToolHost, ToolHostReadView;
 import core.exception : AssertError;
+import std.algorithm : count, sort;
+import std.array : join;
 import std.exception : assertThrown;
+import std.file : dirEntries, readText, SpanMode;
+import std.format : format;
+import std.path : buildNormalizedPath, buildPath, dirName;
+import std.string : indexOf;
 import std.traits : hasFunctionAttributes, ReturnType;
+import tests.unit.census_symbols : blankNonCode, isIdentChar, LedgerHit,
+    LedgerRow, reconcile, symbolTokenHits;
+
+private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
+    "..", "..", "..", "..");
 
 private struct RefReadMirror {
     ToolHost* host_;
@@ -78,6 +89,21 @@ private string[] publicMembers(T)() {
     return names;
 }
 
+private size_t identifierCount(string code, string ident) {
+    size_t result, from;
+    while (from + ident.length <= code.length) {
+        const rel = code[from .. $].indexOf(ident);
+        if (rel < 0) break;
+        const pos = from + cast(size_t)rel;
+        const before = pos > 0 && isIdentChar(code[pos - 1]);
+        const after = pos + ident.length < code.length
+            && isIdentChar(code[pos + ident.length]);
+        if (!before && !after) ++result;
+        from = pos + ident.length;
+    }
+    return result;
+}
+
 unittest { // V1: the only public read is by value
     static assert(readsHost!ToolHostReadView,
         "6350 V1 control: read() no longer yields a ToolHost value");
@@ -94,9 +120,9 @@ unittest { // V1: the only public read is by value
     static assert(fieldDeref!PublicFieldMirror,
         "6350 V1 CONTROL fieldDeref is not public-field-shaped");
     static assert(implicitPointer!PointerAliasMirror,
-        "6350 V1 CONTROL implicitPointer is not pointer-alias-shaped");
+        "6350 V1 CONTROL implicit address conversion is not alias-shaped");
     static assert(pointerParam!PointerAliasMirror,
-        "6350 V1 CONTROL pointerParam is not pointer-alias-shaped");
+        "6350 V1 CONTROL address parameter conversion is not alias-shaped");
     static assert(viewRefBind!RefAliasMirror,
         "6350 V1 CONTROL viewRefBind is not ref-alias-shaped");
     static assert(forwardedAssign!RefAliasMirror,
@@ -170,6 +196,83 @@ unittest { // V3: a whole-host reassignment is observed by the next read
 unittest { // V4a: a null binding is rejected
     assertThrown!AssertError(ToolHostReadView(null),
         "6350 V4 a null binding was accepted");
+}
+
+unittest { // V5: the owner address is confined to ToolHostReadView
+    string[] paths;
+    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
+                               SpanMode.depth))
+        paths ~= entry.name;
+    paths.sort();
+    assert(paths.length >= 500, format(
+        "6350 V5 source population is implausibly small: %s files",
+        paths.length));
+
+    string[] retiredChannelFiles;
+    LedgerHit[] addressShapeHits;
+    LedgerHit[] constructorHits;
+    LedgerHit[] ownerAddressHits;
+    string[] namingFiles;
+    string hostCode;
+    size_t fieldReads;
+    size_t reflectionHits;
+    foreach (path; paths) {
+        const code = blankNonCode(readText(path));
+        const relative = path[repoRoot.length + 1 .. $];
+        if (identifierCount(code, "toolHostPtr") != 0)
+            retiredChannelFiles ~= relative;
+        foreach (needle; ["ToolHost*", "ToolHost *", "ToolHost)*"])
+            addressShapeHits ~= symbolTokenHits(code, relative, needle);
+        constructorHits ~= symbolTokenHits(
+            code, relative, "ToolHostReadView(");
+        ownerAddressHits ~= symbolTokenHits(code, relative, "&toolHost");
+        fieldReads += code.count("toolHostView.read");
+        if (code.indexOf("ToolHostReadView") >= 0
+                || code.indexOf("toolHostView") >= 0) {
+            namingFiles ~= relative;
+            reflectionHits += code.count("tupleof") + code.count("getMember");
+        }
+        if (relative == "source/commands/tool/host.d") hostCode = code;
+    }
+
+    assert(retiredChannelFiles.length == 0,
+        "6350 V5 the retired ToolHost address channel reappeared: "
+        ~ retiredChannelFiles.join(", "));
+    const addressDrift = reconcile([
+        LedgerRow("ToolHostReadView", 2,
+                  "the private backing field and the binding constructor's parameter"),
+    ], addressShapeHits);
+    assert(addressDrift.length == 0,
+        "6350 V5 a ToolHost address escaped ToolHostReadView:" ~ addressDrift);
+    const constructorDrift = reconcile([
+        LedgerRow("main", 1, "the single binding of main()'s ToolHost"),
+    ], constructorHits);
+    assert(constructorDrift.length == 0,
+        "6350 V5 ToolHostReadView binding census changed:" ~ constructorDrift);
+    const ownerAddressDrift = reconcile([
+        LedgerRow("main", 1, "the view binding is the only address taken"),
+    ], ownerAddressHits);
+    assert(ownerAddressDrift.length == 0,
+        "6350 V5 ToolHost address-taking census changed:" ~ ownerAddressDrift);
+    assert(identifierCount(hostCode, "host_") == 4, format(
+        "6350 V5 ToolHostReadView backing-token population: expected 4, got %s",
+        identifierCount(hostCode, "host_")));
+    assert(fieldReads == 0,
+        "6350 V5 EditorApp.toolHostView gained a direct read outside registrars");
+
+    immutable expectedNamingFiles = [
+        "source/app.d",
+        "source/commands/tool/host.d",
+        "source/editor_app.d",
+        "source/pipe_command_registration.d",
+        "source/registration.d",
+        "source/tool_lifecycle_registration.d",
+    ];
+    assert(namingFiles == expectedNamingFiles, format(
+        "6350 V5 ToolHostReadView naming set changed: %s", namingFiles));
+    assert(reflectionHits == 0,
+        "6350 V5 reflection can bypass the private backing in "
+        ~ namingFiles.join(", "));
 }
 
 unittest { // V4b: a default-constructed view rejects its first read

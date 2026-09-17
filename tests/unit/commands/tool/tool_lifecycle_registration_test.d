@@ -31,10 +31,12 @@ import editmode : EditMode;
 import params : Param;
 import std.algorithm : count;
 import std.file : exists, readText;
+import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : ctRegex, matchAll;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
+    statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 
@@ -424,14 +426,40 @@ unittest { // U8: production owns the same live inputs and wrapper order
         && appRaw.length > 100_000,
         "5980 U8 source population floor: a production file is implausibly small");
     foreach (forbidden; ["EditorApp", "editor_app", "Ai3dModalRefs",
-                         "RemeshModalRefs", "with ("])
+                         "RemeshModalRefs", "with (", "*host", "ToolHost*",
+                         "ToolHost *", "tupleof", "getMember"])
         assert(registrar.count(forbidden) == 0,
             "5980 narrow registrar regained forbidden code: " ~ forbidden);
     assert(registrar.count("reg.commandFactories[") == 18,
         "5980 U8 registrar no longer contains exactly 18 factory rows");
-    assert(registrar.count("host.read()") == 9
-            && registrar.count("*host") == 0,
-        "5980 U8 ToolHost factory-read population changed from nine");
+
+    const readHits = symbolTokenHits(registrar,
+        "source/tool_lifecycle_registration.d", "host.read()");
+    assert(readHits.length > 0,
+        "6350 U8 factory-read population is empty");
+    const drift = reconcile([
+        LedgerRow("registerToolLifecycleCommands", 9,
+                  "one ToolHostReadView read per ToolHost-consuming factory"),
+    ], readHits);
+    assert(drift.length == 0,
+        "6350 U8 host.read() site census changed:" ~ drift);
+
+    const statements = statementsContaining(registrar, "host.read()");
+    assert(statements.length == 9, format(
+        "6350 U8 factory-read statement population: expected 9, got %s",
+        statements.length));
+    string early;
+    foreach (statement; statements) {
+        const lambdaAt = statement.indexOf("() =>");
+        const readAt = statement.indexOf("host.read()");
+        const startsFactory = statement.indexOf("reg.commandFactories[") == 0;
+        if (statement.count("host.read()") != 1 || !startsFactory
+                || lambdaAt < 0 || lambdaAt > readAt)
+            early ~= "\n    " ~ statement;
+    }
+    assert(early.length == 0,
+        "6350 U8 host.read() outside a factory lambda (a registration-time copy):"
+        ~ early);
 
     immutable classNames = [
         "ToolSetCommand", "ToolReleaseCommand", "ToolAttrCommand",
@@ -490,11 +518,16 @@ unittest { // U8: production owns the same live inputs and wrapper order
     const sessionAt = app.indexOf("toolHost.session = () => session;");
     const hostAt = app.indexOf(
         "app.toolHostView = ToolHostReadView(&toolHost);");
+    const registerAt = app.indexOf("registerCommands(app);");
     assert(sessionAt >= 0 && app.count("toolHost.session = () => session;") == 1,
         "5980 U8 production ToolHost lost its EditSession binding");
     assert(hostAt > sessionAt
             && app.count("app.toolHostView = ToolHostReadView(&toolHost);") == 1,
         "5980 U8 production ToolHost read view must be bound after session binding");
+    assert(app.count("registerCommands(app);") == 1 && registerAt > hostAt,
+        "6350 U8 production view must be bound before registerCommands copies EditorApp");
+    assert(app.count("toolHost.resetActiveTool = (string optId) {") == 1,
+        "6350 U8 the late reset write must target the ToolHost the view binds");
     assert(app.count("reg, executor, session, history,") == 1,
         "5980 U8 ApplicationCommandBinding no longer receives the same EditSession");
 }

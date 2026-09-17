@@ -26,7 +26,8 @@ import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : regex, replaceAll;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
+    statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
@@ -364,16 +365,44 @@ unittest { // P6: production owns the narrow registrar call and ordering
         "5990 P6 source population: a production file is implausibly small");
 
     foreach (forbidden; ["EditorApp", "editor_app", "Ai3dModalRefs",
-                         "RemeshModalRefs", "with (", "app."])
+                         "RemeshModalRefs", "with (", "app.", "*host",
+                         "ToolHost*", "ToolHost *", "tupleof", "getMember"])
         assert(moduleCode.count(forbidden) == 0,
             "5990 P6 narrow registrar regained forbidden code: " ~ forbidden);
     assert(moduleCode.count("reg.commandFactories[") == 12,
         format("5990 P6 factory-row population changed to %s",
                moduleCode.count("reg.commandFactories[")));
-    assert(moduleCode.count("host.read()") == 6
-            && moduleCode.count("*host") == 0,
-        format("5990 P6 ToolHost factory-read population changed to %s",
-               moduleCode.count("host.read()")));
+
+    const readHits = symbolTokenHits(moduleCode,
+        "source/pipe_command_registration.d", "host.read()");
+    assert(readHits.length > 0,
+        "6350 P6 factory-read population is empty");
+    const drift = reconcile([
+        LedgerRow("registerPipeStageCommands", 5, "five verb factories"),
+        LedgerRow("registerPipeStageCommands.makeFalloffFactory", 1,
+                  "the preset factory"),
+    ], readHits);
+    assert(drift.length == 0,
+        "6350 P6 host.read() site census changed:" ~ drift);
+
+    const statements = statementsContaining(moduleCode, "host.read()");
+    assert(statements.length == 6, format(
+        "6350 P6 factory-read statement population: expected 6, got %s",
+        statements.length));
+    string early;
+    foreach (statement; statements) {
+        const lambdaAt = statement.indexOf("() =>");
+        const readAt = statement.indexOf("host.read()");
+        const startsFactory = statement.indexOf("reg.commandFactories[") == 0;
+        const startsReturn = statement.indexOf("return () =>") == 0;
+        if (statement.count("host.read()") != 1
+                || (!startsFactory && !startsReturn)
+                || lambdaAt < 0 || lambdaAt > readAt)
+            early ~= "\n    " ~ statement;
+    }
+    assert(early.length == 0,
+        "6350 P6 host.read() outside a factory lambda; brace-bodied factories require an explicit census update:"
+        ~ early);
 
     immutable classNames = [
         "WorkplaneResetCommand", "WorkplaneEditCommand",

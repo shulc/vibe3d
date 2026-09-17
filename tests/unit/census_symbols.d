@@ -94,6 +94,7 @@ import std.array     : appender, join;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
+import std.string    : strip;
 
 package bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -123,6 +124,21 @@ package size_t countOccurrences(string hay, string needle) {
         else ++i;
     }
     return n;
+}
+
+/// Statements of a CODE view that contain `needle`: text between `;`, `{`
+/// or `}` boundaries, stripped. A `=>` lambda stays inside its statement; a
+/// brace-bodied lambda's inner statements are separate statements.
+package string[] statementsContaining(string code, string needle) {
+    string[] result;
+    size_t from;
+    foreach (i, c; code) {
+        if (c != ';' && c != '{' && c != '}') continue;
+        const statement = code[from .. i + 1].strip;
+        if (statement.canFind(needle)) result ~= statement;
+        from = i + 1;
+    }
+    return result;
 }
 
 /// One `history.<NAME>(` call site: the symbol it sits in, the primitive
@@ -1052,6 +1068,32 @@ unittest { // generic token attribution used by the remaining census families
         && hits[2].key == "g|call", format("wrong symbol attribution: %s", hits));
     assert(hits[2].file == "moved.d" && hits[2].line == 6,
         format("diagnostic address drifted: %s", hits[2]));
+}
+
+unittest { // statement boundaries used by late-read registrar censuses
+    enum probe = "void r() {\n"
+        ~ "  auto e = host.read();\n"
+        ~ "  a = () => new X(host.read());\n"
+        ~ "  b = () { return new X(host.read()); };\n"
+        ~ "  c[\"x;y\"] = () => new Y(host.read());\n"
+        ~ "  if (true) { sink(); }\n"
+        ~ "  d = () => new Z(host.read());\n"
+        ~ "}\n";
+    const statements = statementsContaining(
+        blankNonCode(probe), "host.read()");
+    assert(statements.length == 5, format(
+        "6350 statement scanner: expected 5 reads, got %s: %s",
+        statements.length, statements));
+    assert(statements[0] == "auto e = host.read();",
+        "6350 statement scanner lost a plain statement");
+    assert(statements[1] == "a = () => new X(host.read());",
+        "6350 statement scanner split an expression lambda");
+    assert(statements[2] == "return new X(host.read());",
+        "6350 statement scanner kept a brace-lambda prefix");
+    assert(statements[3] == "c[     ] = () => new Y(host.read());",
+        "6350 statement scanner split at blanked literal content");
+    assert(statements[4] == "d = () => new Z(host.read());",
+        "6350 statement scanner kept a closing-brace prefix");
 }
 
 // ---------------------------------------------------------------------------
