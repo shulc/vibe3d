@@ -836,7 +836,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             ensureDisplayCurrent();
             // Faces use stride-6 (pos+normal). Read the live VBO.
             int vertCount = gpu.faceVertCount;
-            // Task 6450: `model` is what the renderer applies to this VBO;
+            // Task 6450: `model` is the display-authorised TOOL matrix for
+            // this VBO — the renderer folds the item matrix on top of it;
             // `toolMatrix` is the raw transform state used by dirty keys.
             float[16] meshModel = identityMatrix;
             float[16] toolRaw = identityMatrix;

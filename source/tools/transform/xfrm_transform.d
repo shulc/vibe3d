@@ -4049,12 +4049,12 @@ public:
     // flip (e.g. if falloff turned on between frames), violating the
     // "drag == numeric" contract the parity test pins.
     private bool wholeMeshGpuBypassAllowed(ClusterPivots cp) const {
-        // Task 0614 Phase 3 — item mode never takes the GPU bypass: the
-        // bypass composes `matMul4(itemMatrix, tt.gpuMatrix)`
-        // (ui/panels.d:~1928) on the assumption that `itemMatrix` is
-        // whatever the LAYER already holds; in item mode the item matrix
-        // itself is what the gesture is writing, so a non-identity
-        // `gpuMatrix` on top would double-apply it.
+        // Task 0614 Phase 3, fold moved to the read door by 6450 — item mode
+        // never takes the GPU bypass: the bypass is folded into the display
+        // matrix by `gpu.displayToolMatrix` (ui/viewport_render.d) on the
+        // assumption that `itemMatrix` is whatever the LAYER already holds; in
+        // item mode the item matrix itself is what the gesture is writing, so
+        // a non-identity `gpuMatrix` on top would double-apply it.
         if (itemSubjectActive()) return false;
         return !dragFalloff.enabled
             && !dragSymmetry.enabled
