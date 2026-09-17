@@ -25,15 +25,12 @@
 // exactly ZERO (measured with comments stripped; the pin lives in
 // `tests/unit/tool_commit_seam_census_g7_test.d`, members 2 and 3).
 //
-// THIRTEEN FACTORIES BOUND POSITIONALLY. `TopologyPenTool.setPenFactories`
-// takes the thirteen `MeshSessionEdit delegate()` factories as thirteen
-// structurally IDENTICAL defaulted parameters, and `source/registration.d`
-// passes them by position; the declaration's own comment says a mis-ordered
-// argument "would compile and silently label one op as another". Nothing in
-// the tree checked that order until lane G0-G7. This file checks four of the
-// thirteen behaviourally (`build`, `move`, `remove`, `dupLoop`) and
-// `tests/unit/tool_commit_seam_census_g7_test.d` (member 7) closes the other
-// nine with a composed position -> field -> factory-identifier roster.
+// THIRTEEN FACTORIES BOUND BY NAME. `TopologyPenTool.setPenFactories` takes
+// one `TopoPenFactories` value, assembled by field name beside the session-edit
+// descriptors and passed whole by `source/registration.d` (task 6352). This
+// file checks four fields behaviourally (`build`, `move`, `remove`, `dupLoop`);
+// `tests/unit/tool_commit_seam_census_g7_test.d` member 7 closes the other nine
+// with a composed field -> wire-name/scope roster.
 //
 // G7 DOES NOT SHARE THE SINGLE-WIRE-NAME PROPERTY — BUT IT HAS A HARDER ONE.
 // The G0-G1 lane found the create family recording every entry under one wire

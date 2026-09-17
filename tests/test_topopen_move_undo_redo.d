@@ -4,7 +4,7 @@
 // After a Move drag, ONE undo restores the exact pre-move vertex position;
 // redo re-applies the move exactly. Mirrors P3's own undo/redo discipline
 // (test_topopen_build_tri.d) applied to Move's OWN dedicated undo entry
-// (`topoPenMoveEditFactory`, wireName "mesh.topoPen_move" — distinct from
+// (`TopoPenFactories.move`, wireName "mesh.topoPen_move" — distinct from
 // the build gesture's "mesh.topoPen_build", OBJ-3 FOLDED).
 //
 // Run via: ./run_test.d topopen_move_undo_redo

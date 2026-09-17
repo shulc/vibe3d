@@ -34,15 +34,16 @@
 //     2"). The successor is strictly wider: the whole history call surface with
 //     a reason beside every legal name, plus the seam's own call sites AND
 //     their modes, instead of one hand-written name.
-//   * Block 3 — the positional binding of the thirteen factories — MOVED to
-//     that file's member 7. This header used to call it "independent"; phase D
-//     disagreed for a measured reason. The binder it parses
+//   * Block 3 — the thirteen-factory binding — MOVED to that file's member 7,
+//     which task 6352 then converted into the named-field census. This header
+//     used to call it "independent"; phase D disagreed for a measured reason.
+//     The binder it parses
 //     (`setUndoBindings` -> `setPenFactories`) is the declaration phase D
 //     reshaped, so the two files had to be edited in step anyway, and two
 //     rosters over ONE binding surface is precisely the merge hazard that made
 //     the census per-family in the first place. Nothing was weakened: member 7
 //     carries the same composed chain, the same thirteen frozen triples, the
-//     same swap probe — with its three anti-vacuity controls folded INTO the
+//     same frozen triples — with its anti-vacuity controls folded INTO the
 //     accumulator instead of standing as bare asserts ahead of the raise, where
 //     they would abort the module and swallow the position rows they exist to
 //     accompany.

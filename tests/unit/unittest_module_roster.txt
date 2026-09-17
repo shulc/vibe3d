@@ -485,6 +485,7 @@ tests.unit.tools.transform.arcball_test
 tests.unit.tools.transform.item_xform_kernels_test
 tests.unit.tools.transform.transform_test
 tests.unit.tools.transform.xform_kernels_test
+tests.unit.topology_pen_factory_bundle_test
 tests.unit.trackball_test
 tests.unit.transform_compose_order_test
 tests.unit.transform_history_ownership_census_test
