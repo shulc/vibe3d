@@ -404,6 +404,9 @@ unittest { // C1: Confirm removes its item after an earlier item is deleted
         && h.history.undoEntries()[$ - 1].args == "index:2"
         && !imageListDrawSnapshot().confirmDrawn,
         "6359 confirm dispatch: not exactly one image.remove at the live index");
+    const view = imageListConfirmView(h.imageRoles.state);
+    assert(!view.held && view.referrers.length == 0,
+        "6359 successful cleanup: the binding retained the removed image or its referrers");
 }
 
 unittest { // C2: a confirmation whose item left the document closes, no command
@@ -462,9 +465,10 @@ unittest { // C3: a changed referrer sentence needs a second Confirm
     assert(imageListDrawSnapshot().confirmText == before,
         "6359 sentence floor: the confirmation did not name one referrer");
 
-    auto second = imagePlaneLayer("Second");
-    h.owner.document.layers ~= second;
-    h.binding.dispatchUi("imagePlane.setImage", `{"index":6,"image":3}`);
+    h.binding.dispatchUi("imagePlane.add", `{"name":"Second","image":3}`);
+    auto second = h.owner.document.layers[$ - 1];
+    assert(second.name == "Second" && second.linksTo(h.imgOne),
+        "6359 second-referrer floor: imagePlane.add did not create the linked plane");
     ui.frame();
     assert(imageListDrawSnapshot().confirmText == before,
         "6359 draw sweep: the frame recomputed referrers outside a click");
@@ -581,10 +585,42 @@ unittest { // C4: two bindings do not share a confirmation
     assert(imageListConfirmView(a.imageRoles.state).held
         && imageListConfirmView(a.imageRoles.state).target is a.imgOne,
         "6359 singleton state: drawing B cancelled A's pending confirmation");
+}
 
-    // Not asserted further: both bindings draw ONE ImGui window ("Images") in
-    // one context, and a modal left unsubmitted for B's frames is closed by
-    // ImGui, so redrawing A closes A's state through the Esc branch (measured).
+unittest { // C4b: an ImGui-closed modal releases its retained state
+    bool prior; enterTestMode(prior);
+    scope (exit) { g_testMode = prior; SDL_SetModState(KMOD_NONE); }
+    auto h = new RetainedHarness;
+    bool shown = true;
+    resetImageListDrawSnapshot();
+    auto ui = openPanel(() {
+        if (!shown) return;
+        ImGui.SetNextWindowPos(ImVec2(380, 0));
+        ImGui.SetNextWindowSize(ImVec2(420, 600));
+        drawImageListPanel(h.imageRoles.read, h.imageRoles.actions,
+                           h.imageRoles.state, h.renameState);
+    }, "Hidden Images host", 1280, 1000);
+    scope (exit) ui.close();
+    ui.frame();
+    h.openRemoveConfirm(ui, h.imgOne);
+    assert(imageListDrawSnapshot().confirmDrawn,
+        "6359 hidden-panel floor: the confirmation did not open");
+    const records = h.records.length;
+
+    shown = false;
+    ui.frame();
+    ui.frame();
+    shown = true;
+    ui.frame();
+    ui.frame();
+
+    const view = imageListConfirmView(h.imageRoles.state);
+    assert(!imageListDrawSnapshot().confirmDrawn,
+        "6359 hidden-panel route: the modal survived two unsubmitted frames");
+    assert(!view.held && view.referrers.length == 0,
+        "6359 hidden-panel cleanup: an ImGui-closed modal retained its image or referrers");
+    assert(h.records.length == records && h.owner.document.isMember(h.imgOne),
+        "6359 hidden-panel cleanup: closing the modal dispatched image.remove");
 }
 
 unittest { // C5: an image renamed to the target's name is not the target
@@ -692,6 +728,8 @@ unittest { // J5 census: one resolve contract, one state per binding, no statics
         "void drawImageListPanel(ImageListReadRole read, ImageListActions actions,");
     assert(identifierCount(draw, "static") == 0,
         "6359 state census: the Images draw declares function-static state again");
+    assert(draw.count("assert(state !is null,") == 1,
+        "6359 state census: the Images draw no longer checks its binding-owned state");
     const binder = bodyAt(images, "ImageListPanelRoles bindImageListPanel(Session* owner,");
     assert(images.count("new ImageListPanelState") == 1
         && binder.count("new ImageListPanelState") == 1,
@@ -700,6 +738,9 @@ unittest { // J5 census: one resolve contract, one state per binding, no statics
         && draw.count("imageRemoveConfirm(") == 2
         && draw.count("state.confirmUnchanged(current)") == 1,
         "6359 confirm census: the confirmation no longer resolves once per frame or re-reads at Confirm");
+    assert(draw.count("imageRowsInto(read.document(), currentDocPath(), state.rows_)") == 1
+        && draw.count("auto rows = state.rows_") == 1,
+        "6359 row-buffer ownership: the Images draw no longer uses its binding's buffer");
     const layers = blankNonCode(readText(repoRoot.buildPath("source", "ui", "layer_list_panel.d")));
     const items = bodyAt(layers, "void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,");
     foreach (panel; [[draw, "Images"], [items, "Items"]]) {

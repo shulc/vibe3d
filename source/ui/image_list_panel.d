@@ -203,6 +203,7 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
     import std.conv : to;
     import io.doc_state : currentDocPath;
 
+    assert(state !is null, "Images panel requires its binding-owned state");
     auto dispatch = actions.commandDispatch();
     auto rename = bindItemRenameController(itemRenameState, read.document(),
                                            dispatch);
@@ -313,7 +314,7 @@ void drawImageListPanel(ImageListReadRole read, ImageListActions actions,
                     }
                 }
             } else {
-                state.closeConfirm();   // closed via ESC
+                state.closeConfirm();   // ImGui closed the unsubmitted modal.
             }
         }
 

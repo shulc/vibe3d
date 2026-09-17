@@ -83,7 +83,7 @@ unittest { // Layers begins; Images observes and commits through the real action
 
     auto image = app.owner.document.layers[1];
     layers.begin(image, image.name);
-    assert(app.renameState.activeFor(image)
+    assert(app.renameState.open && app.renameState.activeFor(image)
         && app.renameState.text == "Image seed",
         "5880 floor: the Layers action did not actually start item rename");
     assert(images.activeFor(image) && images.text == "Image seed",
