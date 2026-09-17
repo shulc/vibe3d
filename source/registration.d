@@ -275,6 +275,44 @@ void registerTools(EditorApp app) {
     registerEditTools(app);
 }
 
+/// The four unified-transform ids share this construction recipe; each row
+/// supplies only T/R/S and the handle family/presentation. Collaborators come
+/// from the registration-time EditorApp copy, while mesh, subject and item
+/// targets remain live callbacks read on every use. The `transform` row equals
+/// the XfrmTransformTool constructor defaults by contract. Task 6351; pinned by
+/// tests/unit/unified_transform_recipe_test.d.
+private struct TransformFactoryDefaults {
+    bool flagT, flagR, flagS;
+    int handleFamily;
+    string handlePresentation;
+
+    enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
+    enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full");
+    enum scale     = TransformFactoryDefaults(false, false, true,  2, "full");
+    // Equal to the XfrmTransformTool constructor defaults by contract, not by
+    // omission: presets on this base that set no handle fields inherit it.
+    enum transform = TransformFactoryDefaults(true,  true,  true,  0, "compact");
+}
+
+private XfrmTransformTool buildUnifiedTransform(EditorApp app,
+                                                TransformFactoryDefaults defaults) {
+    auto t = new XfrmTransformTool(() => &app.mesh(), &app.gpu(), &app.editMode(),
+        () => currentSelType(app.selTypeOrder),
+        // The moving target-narrowed set, not only the primary layer.
+        (ref Layer[] buf) => app.document().itemTransformTargets(buf));
+    t.flagT = defaults.flagT;
+    t.flagR = defaults.flagR;
+    t.flagS = defaults.flagS;
+    t.handleFamily = defaults.handleFamily;
+    t.handlePresentation = defaults.handlePresentation;
+    t.setUndoBindings(app.history, app.vxEditFactory, app.morphEditFactory);
+    t.setItemUndoFactory(app.layerXformEditFactory);
+    t.setPipeGizmoHost(app.pipeGizmoHost);
+    if (app.aiExplore.enabled && app.aiLogWriter.enabled)
+        t.setAiExploreSilentHover(true);
+    return t;
+}
+
 /// Transform, deform, align and convolve tools — one family of the registration table (task 0722, audit
 /// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
 /// which keys are written is exactly what it was; and every key in the
@@ -285,91 +323,14 @@ void registerTools(EditorApp app) {
 /// same-named EditorApp member.
 private void registerTransformTools(EditorApp app) {
     with (app) {
-    reg.toolFactories["move"]   = typedToolFactory!XfrmTransformTool(() {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder),
-                                        // 0614 Ph6: the moving SET (L2), not
-                                        // the primary — see the field doc on
-                                        // XfrmTransformTool.itemTargetsSrc_.
-                                        // 0612 Stage 8: the set is now the
-                                        // TARGET-narrowed one (approximation
-                                        // D, §7.2) — same funnel as the gizmo
-                                        // centre in app.d.
-                                        (ref Layer[] buf) => document().itemTransformTargets(buf));
-        t.flagT = true; t.flagR = false; t.flagS = false;
-        t.handleFamily = 0;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
-        t.setItemUndoFactory(layerXformEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return t;
-    });
-    reg.toolFactories["rotate"] = typedToolFactory!XfrmTransformTool(() {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder),
-                                        // 0614 Ph6: the moving SET (L2), not
-                                        // the primary — see the field doc on
-                                        // XfrmTransformTool.itemTargetsSrc_.
-                                        // 0612 Stage 8: the set is now the
-                                        // TARGET-narrowed one (approximation
-                                        // D, §7.2) — same funnel as the gizmo
-                                        // centre in app.d.
-                                        (ref Layer[] buf) => document().itemTransformTargets(buf));
-        t.flagT = false; t.flagR = true; t.flagS = false;
-        t.handleFamily = 1;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
-        t.setItemUndoFactory(layerXformEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return t;
-    });
-    reg.toolFactories["scale"]  = typedToolFactory!XfrmTransformTool(() {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder),
-                                        // 0614 Ph6: the moving SET (L2), not
-                                        // the primary — see the field doc on
-                                        // XfrmTransformTool.itemTargetsSrc_.
-                                        // 0612 Stage 8: the set is now the
-                                        // TARGET-narrowed one (approximation
-                                        // D, §7.2) — same funnel as the gizmo
-                                        // centre in app.d.
-                                        (ref Layer[] buf) => document().itemTransformTargets(buf));
-        t.flagT = false; t.flagR = false; t.flagS = true;
-        t.handleFamily = 2;
-        t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
-        t.setItemUndoFactory(layerXformEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return t;
-    });
-    reg.toolFactories["xfrm.transform"] = typedToolFactory!XfrmTransformTool(() {
-        import tools.transform.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder),
-                                        // 0614 Ph6: the moving SET (L2), not
-                                        // the primary — see the field doc on
-                                        // XfrmTransformTool.itemTargetsSrc_.
-                                        // 0612 Stage 8: the set is now the
-                                        // TARGET-narrowed one (approximation
-                                        // D, §7.2) — same funnel as the gizmo
-                                        // centre in app.d.
-                                        (ref Layer[] buf) => document().itemTransformTargets(buf));
-        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
-        t.setItemUndoFactory(layerXformEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        if (aiExplore.enabled && aiLogWriter.enabled)
-            t.setAiExploreSilentHover(true);
-        return t;
-    });
+    reg.toolFactories["move"] = typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(app, TransformFactoryDefaults.move));
+    reg.toolFactories["rotate"] = typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(app, TransformFactoryDefaults.rotate));
+    reg.toolFactories["scale"] = typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(app, TransformFactoryDefaults.scale));
+    reg.toolFactories["xfrm.transform"] = typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(app, TransformFactoryDefaults.transform));
     reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {
         auto t = new PushTool(() => &mesh(), &gpu(), &editMode());
         t.setUndoBindings(history, vxEditFactory);

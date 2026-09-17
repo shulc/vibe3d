@@ -204,9 +204,12 @@ unittest {
         buildPath(repoRoot, "source", "registration.d")));
     auto factories = bodyAt(registration,
         "private void registerTransformTools(EditorApp app)");
-    assert(factories.count("new XfrmTransformTool(") == 4,
+    assert(factories.count("buildUnifiedTransform(") == 4,
         "5940 S production constructor floor: expected four Xfrm factories");
-    assert(factories.count("() => currentSelType(selTypeOrder)") >= 4,
+    auto builder = bodyAt(registration,
+        "private XfrmTransformTool buildUnifiedTransform(");
+    assert(builder.count("new XfrmTransformTool(") == 1
+        && builder.count("() => currentSelType(app.selTypeOrder)") == 1,
         "5940 S production constructor wiring lost the live subject source");
 }
 

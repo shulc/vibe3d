@@ -300,7 +300,7 @@ allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 3
 allow source/record_observer_hub.d 1
-allow source/registration.d 54
+allow source/registration.d 55
 allow source/registry.d 7
 allow source/remesh/region_stitch.d 2
 allow source/remesh/remesh_job.d 15

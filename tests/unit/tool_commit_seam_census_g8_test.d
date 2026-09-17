@@ -13,7 +13,7 @@
 // the `topology_pen/` package. G8 owns no tool at all. Its subject is the
 // TABLE the application hands the tools: the twenty-four `MeshSessionEdit`
 // factories `source/app.d` builds, the twenty-seven `EditorApp` fields they
-// are wired into, and the sixty-eight places `source/registration.d` spends
+// are wired into, and the rostered places `source/registration.d` spends
 // them. So the members below do not ask "does this tool still call the seam" —
 // phases B and C answered that, family by family. They ask the three questions
 // that only exist once the factories are ONE parameterised builder instead of
@@ -304,16 +304,21 @@ private enum Row[] kSessionRows = [
 private struct OtherRow { string field; string carrier; size_t binds; string why; }
 
 private enum OtherRow[] kOtherRows = [
-    OtherRow("vxEditFactory", "MeshVertexEdit", 13,
-        "TWELVE `setUndoBindings` calls in the transform zone plus ONE "
+    OtherRow("vxEditFactory", "MeshVertexEdit", 10,
+        "ONE `setUndoBindings` inside `buildUnifiedTransform` (shared by the "
+      ~ "four unified transform ids), FOUR `setUndoBindings` for xfrm.push / "
+      ~ "xfrm.bend / xfrm.linearAlignTool / xfrm.radialAlignTool, FOUR "
+      ~ "`setGestureBindings` for the command-wrapper tools, plus ONE "
       ~ "`setGestureBindings` for xfrm.magnet. That split is the residue "
       ~ "member 5 rosters, and it does NOT close with this group: the "
       ~ "transform zone is out of task 1905's scope by decision D1"),
-    OtherRow("morphEditFactory", "MeshMorphEdit", 4,
-        "the four XfrmTransformTool registrations' third `setUndoBindings` "
-      ~ "argument (task 1069's routed-gesture carrier)"),
-    OtherRow("layerXformEditFactory", "LayerXformEdit", 4,
-        "the four XfrmTransformTool registrations' `setItemUndoFactory`"),
+    OtherRow("morphEditFactory", "MeshMorphEdit", 1,
+        "the third `setUndoBindings` argument inside `buildUnifiedTransform`, "
+      ~ "shared by move / rotate / scale / xfrm.transform (task 1069's "
+      ~ "routed-gesture carrier)"),
+    OtherRow("layerXformEditFactory", "LayerXformEdit", 1,
+        "the `setItemUndoFactory` inside `buildUnifiedTransform`, shared by "
+      ~ "move / rotate / scale / xfrm.transform"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -661,8 +666,11 @@ unittest {
 //    is not in it, nor is it among the three sites §8 rejects with a reason
 //    (`transform.d:501`, `transform.d:503`, `xfrm_transform.d:5666`). So the
 //    twelve `setUndoBindings` call sites were never 4+4+4 transform-zone; they
-//    were EIGHT transform-zone (four `XfrmTransformTool` + xfrm.push, xfrm.bend,
-//    xfrm.linearAlignTool, xfrm.radialAlignTool) and FOUR command-wrapper. The
+//    were EIGHT transform registrations (four `XfrmTransformTool` + xfrm.push,
+//    xfrm.bend, xfrm.linearAlignTool, xfrm.radialAlignTool) and FOUR
+//    command-wrapper. The unified four now share one call site, so the surviving
+//    production spelling is five transform-zone calls plus four command-wrapper
+//    calls. The
 //    mislabel put a G6 file behind decision D1's out-of-scope wall, where
 //    nothing was going to move it.
 //
@@ -679,19 +687,20 @@ unittest {
 //    and does not touch it.
 // ---------------------------------------------------------------------------
 private enum LedgerRow[] kBinderRoster = [
-    // The EIGHT surviving transform-zone bindings split FOUR / FOUR across
-    // these two declarations, and the split matters: it is why neither is idle.
+    // Five surviving transform-zone call sites split FOUR / ONE across these
+    // declarations; the one Xfrm call serves four registry ids, so neither
+    // declaration is idle.
     LedgerRow("TransformTool|binder", 1,
-        "`TransformTool`'s own binder, reached by FOUR of the eight "
-      ~ "transform-zone registrations (xfrm.push, xfrm.bend, "
+        "`TransformTool`'s own binder, reached by FOUR transform-zone call "
+      ~ "sites (xfrm.push, xfrm.bend, "
       ~ "xfrm.linearAlignTool, xfrm.radialAlignTool). The transform zone is "
       ~ "OUT OF task 1905's scope by decision D1, and group G8 does NOT close "
       ~ "it: the app-level closures collapsing changes nothing about which "
       ~ "binder a transform tool DECLARES"),
     LedgerRow("XfrmTransformTool|binder", 1,
-        "an `override` of the above, reached by the other FOUR "
-      ~ "`XfrmTransformTool` registrations (move / rotate / scale / "
-      ~ "xfrm.transform) and forwarding to its three composed sub-tools"),
+        "an `override` of the above, reached by ONE shared helper call for "
+      ~ "FOUR `XfrmTransformTool` registrations (move / rotate / scale / "
+      ~ "xfrm.transform), and forwarding to its three composed sub-tools"),
 ];
 
 unittest {
@@ -731,13 +740,14 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     string[] problems;
-    size_t total = 0;
+    size_t total = 0, rosterTotal = 0;
 
     immutable regSrc = stripCommentsAndStrings(readSource("source/registration.d"));
 
     void check(string field, size_t want, string why) {
         auto hits = identHits(regSrc, field);
         total += hits.length;
+        rosterTotal += want;
         if (hits.length == want) return;
         string at;
         foreach (h; hits) at ~= h.to!string ~ " ";
@@ -750,10 +760,11 @@ unittest {
     foreach (r; kSessionRows) check(r.field, r.binds, r.why);
     foreach (r; kOtherRows)   check(r.field, r.binds, r.why);
 
-    if (total < 60)
+    if (total * 2 < rosterTotal)
         problems ~= "    · NON-VACUITY: the scan of `source/registration.d` "
                   ~ "found " ~ total.to!string ~ " factory use(s) in total; "
-                  ~ "sixty-eight is the rostered sum. A number near zero means "
+                  ~ "the roster expects " ~ rosterTotal.to!string ~ ". A "
+                  ~ "number below half the roster means "
                   ~ "the reader or the stripper returned nothing, so every "
                   ~ "per-name row above is a comparison against zero and would "
                   ~ "be reported for a reason it does not have";
