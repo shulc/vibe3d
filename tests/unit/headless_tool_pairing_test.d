@@ -124,7 +124,11 @@ unittest {
 
     immutable rawRegistration = readText(
         buildPath(repoRoot, "source", "registration.d"));
-    immutable registration = blankNonCode(rawRegistration);
+    enum structuralCommentDecoy =
+        "// registerHeadlessTool! private void registerHeadlessTool( "
+      ~ "new ToolHeadlessCommand(\n";
+    immutable registration = blankNonCode(
+        rawRegistration ~ structuralCommentDecoy);
     assert(rawRegistration.length > 50_000,
         "6353 source population: registration.d is unexpectedly small");
     assert(countOccurrences(registration, "registerHeadlessTool!") == 13,
@@ -217,6 +221,10 @@ unittest {
     r.session.document.setPrimary(secondLayer);
     r.session.editMode = EditMode.Polygons;
     r.view = new View(0, 0, 640, 480);
+    assert(&secondLayer.meshRef() !is firstMesh,
+        "6353 live-role fixture: second Mesh must differ from the first");
+    assert(r.view !is firstView,
+        "6353 live-role fixture: second View must differ from the first");
     foreach (id; kPaired) {
         auto cmd = r.registry.commandFactories[id]();
         assert(cmd.meshPtr() is &secondLayer.meshRef(),
