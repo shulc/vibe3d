@@ -115,7 +115,7 @@ private struct ProductRow {
 // construction can fail first.
 unittest {
     immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
-    assert(countOccurrences(self, "registerTools(") >= 1
+    assert(countOccurrences(self, "registerTools(") == 4
         && countOccurrences(self, "new ToolHeadlessCommand(") == 0
         && countOccurrences(self, "registerHeadlessTool!") == 0
         && countOccurrences(self, "reg.commandFactories[") == 0,
