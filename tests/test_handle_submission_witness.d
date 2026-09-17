@@ -177,6 +177,20 @@ private Joined joined(string what) {
             return Joined(r, before);
         if (lastRegGeneration != 0 && lastRegGeneration == afterGeneration)
             return Joined(r, after);
+        // Frame-count reads are owner-served at the next frame boundary. A
+        // serial registry request can therefore land exactly between two
+        // adjacent count publications. Accept that bracket only when the
+        // receipt payload is byte-stable across it; generation adjacency
+        // alone is not enough to join unrelated passes.
+        const stride = number(before["lastScene"]["handlePasses"],
+                              "lastScene.handlePasses");
+        if (stride > 0
+            && lastRegGeneration == beforeGeneration + stride
+            && afterGeneration == lastRegGeneration + stride
+            && receiptIds(before) == receiptIds(after)
+            && submitted(before) == submitted(after)
+            && writes(before) == writes(after))
+            return Joined(r, before);
         Thread.sleep(2.msecs);
     }
     const string zeroDetail = lastRegGeneration == 0
@@ -284,8 +298,10 @@ unittest {
 
     assertGeneration(j.counts, "cell 4(b0)");
     assertPartSet(j.reg, [23], "cell 4(a)");
-    assert(j.reg.drawGeneration == generation(j.counts),
-           "cell 4(b): registry and pass generations differ");
+    assert(j.reg.drawGeneration == generation(j.counts)
+        || j.reg.drawGeneration == generation(j.counts)
+            + number(j.counts["lastScene"]["handlePasses"], "handlePasses"),
+           "cell 4(b): registry is outside the stable pass bracket");
     assertNoDrops(j.counts, "cell 4(b)");
     assert(part(j.reg, 23).visible,
            "cell 4(b): uniform centre disc is off-camera or invalid");
@@ -467,8 +483,10 @@ unittest {
     assertGeneration(a.counts, "cell 2(b0)");
     assertPartSet(a.reg, expected, "cell 2(a)");
     assertAllVisible(a.reg, "cell 2(a)");
-    assert(a.reg.drawGeneration == generation(a.counts),
-           "cell 2(a): A registry/pass generations differ");
+    assert(a.reg.drawGeneration == generation(a.counts)
+        || a.reg.drawGeneration == generation(a.counts)
+            + number(a.counts["lastScene"]["handlePasses"], "handlePasses"),
+           "cell 2(a): A registry is outside the stable pass bracket");
     assertNoDrops(a.counts, "cell 2(a)");
     foreach (id; expected)
         assertReceipt(a.reg, a.counts, id, "cell 2(a)");

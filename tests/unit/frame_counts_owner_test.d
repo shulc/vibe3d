@@ -25,6 +25,14 @@ private final class OwnedReply {
     string json;
 }
 
+private auto snapshotNoGc(ref FrameWorkProbe probe) nothrow @nogc {
+    return probe.snapshot();
+}
+
+private void resetNoGc(ref FrameWorkProbe probe) nothrow @nogc {
+    probe.reset();
+}
+
 private ushort freePort() {
     auto socket = new TcpSocket();
     scope(exit) socket.close();
@@ -156,6 +164,10 @@ unittest {
     assert(reply.kind == BridgeResultKind.completed);
     assert(probe.totals().seq == 3, "6357 read reset the probe");
     assert(reply.json == probe.snapshot().toJson());
+    auto trace = bridge.ownedTraceForTest();
+    assert(trace.length == 2 && trace[0].kind == BridgeResultKind.submitted
+        && trace[1].kind == BridgeResultKind.completed,
+        "6357 completed trace publication changed");
     waiter.join();
 }
 
@@ -179,6 +191,10 @@ unittest {
         "6357 error path: a claimed call whose service threw did not publish completion; waiter still blocked");
     assert(reply.kind == BridgeResultKind.failed,
         "6357 error path reported the wrong owner outcome");
+    auto trace = bridge.ownedTraceForTest();
+    assert(trace.length == 2 && trace[0].kind == BridgeResultKind.submitted
+        && trace[1].kind == BridgeResultKind.failed,
+        "6357 failed trace publication changed");
     waiter.join();
 }
 
@@ -273,6 +289,7 @@ unittest {
     server.tickFrameCounts(probe);
     assert(waitUntil(() => atomicLoad(readReply.done)));
     assert(readReply.wire.canFind("HTTP/1.1 200 OK")
+        && readReply.wire.canFind("Content-Type: application/json")
         && body(readReply.wire) == probe.snapshot().toJson());
     assert(probe.totals().seq == 3);
     readClient.join();
@@ -302,6 +319,7 @@ unittest {
     auto client = request(port, "POST", "/api/frames/counts/reset", reply);
     assert(waitUntil(() => atomicLoad(reply.done)));
     assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout"));
+    assert(reply.wire.canFind("Content-Type: application/json"));
     assert(body(reply.wire) == `{"error":"timeout waiting for main thread"}`);
     assert(bridge.claimPendingForTest() == 1);
     server.tickFrameCounts(probe);
@@ -397,6 +415,7 @@ unittest {
     bridge.holdClaimForTest(ClaimProbePoint.enqueued, false);
     assert(waitUntil(() => atomicLoad(reply.done))
         && reply.wire.canFind("HTTP/1.1 503 Service Unavailable"));
+    assert(reply.wire.canFind("Content-Type: application/json"));
     assert(waitUntil(() => !stopper.isRunning));
     client.join(); owner.join(); stopper.join();
 }
@@ -471,6 +490,8 @@ unittest {
     auto stopper = new Thread({ server.stop(); });
     stopper.isDaemon = true; stopper.start();
     assert(waitUntil(() => !stopper.isRunning));
+    assert(bridge.claimPendingForTest() == 0,
+        "6357 stopping retained a pending frame-count call");
     assert(waitUntil(() => atomicLoad(reply.done))
         && reply.wire.canFind("HTTP/1.1 503 Service Unavailable"));
     assert(body(reply.wire) == `{"error":"HTTP server stopping"}`);
@@ -509,6 +530,7 @@ unittest {
     assert(caught);
     assert(waitUntil(() => atomicLoad(reply.done)));
     assert(reply.wire.canFind("HTTP/1.1 500 Internal Server Error"));
+    assert(reply.wire.canFind("Content-Type: application/json"));
     assert(body(reply.wire) == `{"error":"frame-count owner failed"}`);
     client.join();
 }
@@ -560,4 +582,9 @@ unittest {
     assert(ownerTick.canFind("frameCountsBridge.tickClaimed("));
     assert(raw.canFind(`RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.mainThread`)
         && raw.canFind(`RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.mainThread`));
+    FrameWorkProbe probe;
+    auto detached = snapshotNoGc(probe);
+    resetNoGc(probe);
+    assert(detached.totals.seq == 0,
+        "6357 nothrow/@nogc compile witness default snapshot changed");
 }
