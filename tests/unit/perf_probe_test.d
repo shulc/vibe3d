@@ -180,7 +180,10 @@ unittest { // 6357: the detached snapshot keeps the established wire bytes
     foreach (_; 0 .. 3) fc.bumpCellConsidered();
     fc.bumpCellRendered();
     fc.draw(DrawPass.faces, 36);
+    fc.draw(DrawPass.faceOverlay, 18);
     fc.draw(DrawPass.grid, 404);
+    fc.draw(DrawPass.symmetry, 7);
+    fc.draw(DrawPass.symmetry, 7);
     fc.upload(8);
     fc.bumpPipeEval();
     fc.bumpStageEval();
@@ -195,6 +198,7 @@ unittest { // 6357: the detached snapshot keeps the established wire bytes
         {
             auto leaf = fc.handleDraw(0x10);
             fc.draw(DrawPass.handles, 6);
+            fc.noteHandleSubmission();
         }
         {
             auto leaf = fc.handleDraw(0x20);
@@ -215,7 +219,7 @@ unittest { // 6357: the detached snapshot keeps the established wire bytes
 
     auto bytes = fc.snapshot().toJson().replaceAll(regex(`"allocBytes":\d+`),
                                                    `"allocBytes":0`);
-    immutable expected = `{"frames":2,"lastScene":{"seq":1,"cellsConsidered":3,"cellsRendered":1,"handlePasses":0,"drawCalls":2,"drawVerts":440,"uploadCalls":1,"uploadVerts":8,"hoverPicks":0,"pipeEvals":1,"stageEvals":1,"statRebuilds":1,"allocBytes":0,"pass":{"faces":{"calls":1,"verts":36},"faceOverlay":{"calls":0,"verts":0},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":1,"verts":404},"symmetry":{"calls":0,"verts":0},"handles":{"calls":0,"verts":0},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":0,"verts":0}}},"last":{"seq":2,"cellsConsidered":0,"cellsRendered":0,"handlePasses":1,"drawCalls":3,"drawVerts":24,"uploadCalls":0,"uploadVerts":0,"hoverPicks":1,"pipeEvals":0,"stageEvals":0,"statRebuilds":0,"allocBytes":0,"pass":{"faces":{"calls":0,"verts":0},"faceOverlay":{"calls":0,"verts":0},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":0,"verts":0},"symmetry":{"calls":0,"verts":0},"handles":{"calls":2,"verts":12},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":1,"verts":12}}},"totals":{"seq":2,"cellsConsidered":3,"cellsRendered":1,"handlePasses":1,"drawCalls":5,"drawVerts":464,"uploadCalls":1,"uploadVerts":8,"hoverPicks":1,"pipeEvals":1,"stageEvals":1,"statRebuilds":1,"allocBytes":0,"pass":{"faces":{"calls":1,"verts":36},"faceOverlay":{"calls":0,"verts":0},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":1,"verts":404},"symmetry":{"calls":0,"verts":0},"handles":{"calls":2,"verts":12},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":1,"verts":12}}},"handlePass":{"generation":1,"writes":2,"submitted":2,"receiptsDropped":0,"ids":["0000000000000010","0000000000000020"]}}`;
+    immutable expected = `{"frames":2,"lastScene":{"seq":1,"cellsConsidered":3,"cellsRendered":1,"handlePasses":0,"drawCalls":5,"drawVerts":472,"uploadCalls":1,"uploadVerts":8,"hoverPicks":0,"pipeEvals":1,"stageEvals":1,"statRebuilds":1,"allocBytes":0,"pass":{"faces":{"calls":1,"verts":36},"faceOverlay":{"calls":1,"verts":18},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":1,"verts":404},"symmetry":{"calls":2,"verts":14},"handles":{"calls":0,"verts":0},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":0,"verts":0}}},"last":{"seq":2,"cellsConsidered":0,"cellsRendered":0,"handlePasses":1,"drawCalls":3,"drawVerts":24,"uploadCalls":0,"uploadVerts":0,"hoverPicks":1,"pipeEvals":0,"stageEvals":0,"statRebuilds":0,"allocBytes":0,"pass":{"faces":{"calls":0,"verts":0},"faceOverlay":{"calls":0,"verts":0},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":0,"verts":0},"symmetry":{"calls":0,"verts":0},"handles":{"calls":2,"verts":12},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":1,"verts":12}}},"totals":{"seq":2,"cellsConsidered":3,"cellsRendered":1,"handlePasses":1,"drawCalls":8,"drawVerts":496,"uploadCalls":1,"uploadVerts":8,"hoverPicks":1,"pipeEvals":1,"stageEvals":1,"statRebuilds":1,"allocBytes":0,"pass":{"faces":{"calls":1,"verts":36},"faceOverlay":{"calls":1,"verts":18},"edges":{"calls":0,"verts":0},"verts":{"calls":0,"verts":0},"bgFaces":{"calls":0,"verts":0},"bgEdges":{"calls":0,"verts":0},"imagePlane":{"calls":0,"verts":0},"grid":{"calls":1,"verts":404},"symmetry":{"calls":2,"verts":14},"handles":{"calls":2,"verts":12},"subpatch":{"calls":0,"verts":0},"idPick":{"calls":1,"verts":12}}},"handlePass":{"generation":1,"writes":3,"submitted":2,"receiptsDropped":0,"ids":["0000000000000010","0000000000000020"]}}`;
     assert(bytes == expected, "6357 frame-count wire bytes changed");
 }
 

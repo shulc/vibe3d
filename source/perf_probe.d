@@ -1795,12 +1795,10 @@ struct FrameWorkProbe {
     /// reached this conclusion first (see its comment); this probe's header
     /// used to claim it had no such base to protect, and that was the error.
     ///
-    /// The side effect that makes the nightly quiet again is free: with that
-    /// line gone, `reset` and `rebaseAllocationWindow` share no memory at all,
-    /// so that pair cannot be reported. The three pairs tolerated since
-    /// 2026-08-19 (`beginFrame`, `endFrame`, `backdrop` against `reset`) are
-    /// untouched and still tolerated — this is NOT a claim that the probe is
-    /// race-free; task 6297 is where that is addressed.
+    /// Task 6357 moved reset and snapshot to the frame-owner boundary. Reset
+    /// now runs on the same thread as `beginFrame`, `endFrame`, and `backdrop`;
+    /// the formerly tolerated reset race pairs were removed from the TSan
+    /// baseline.
     void reset() nothrow @nogc {
         cur_ = FrameWork.init;
         last_ = FrameWork.init;

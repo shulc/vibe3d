@@ -393,6 +393,7 @@ unittest {
 unittest {
     immutable port = freePort();
     auto server = startedServer(port);
+    scope(exit) if (server.running) server.stop();
     auto bridge = server.frameCountsBridgeForTest();
     FrameWorkProbe probe; seed(probe);
     bridge.holdClaimForTest(ClaimProbePoint.enqueued, true);
@@ -453,6 +454,7 @@ unittest {
 unittest {
     immutable port = freePort();
     auto server = startedServer(port);
+    scope(exit) if (server.running) server.stop();
     auto bridge = server.frameCountsBridgeForTest();
     FrameWorkProbe probe; seed(probe);
     bridge.holdClaimForTest(ClaimProbePoint.claimed, true);
@@ -482,6 +484,7 @@ unittest {
 unittest {
     immutable port = freePort();
     auto server = startedServer(port);
+    scope(exit) if (server.running) server.stop();
     auto bridge = server.frameCountsBridgeForTest();
     FrameWorkProbe probe; seed(probe);
     auto reply = new Reply();
@@ -501,6 +504,7 @@ unittest {
 
     immutable port2 = freePort();
     auto server2 = startedServer(port2);
+    scope(exit) if (server2.running) server2.stop();
     auto readReply = new Reply();
     auto readClient = request(port2, "GET", "/api/frames/counts", readReply);
     assert(waitUntil(() => server2.frameCountsBridgeForTest().claimPendingForTest() == 1));
