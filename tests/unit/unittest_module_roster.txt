@@ -367,6 +367,7 @@ tests.unit.neutrality_boundary_test
 tests.unit.nightly_freshness_test
 tests.unit.nonmanifold_degrade_test
 tests.unit.operator_test
+tests.unit.overlay_mode_import_census_test
 tests.unit.overlay_space_test
 tests.unit.param_cast_overflow_test
 tests.unit.param_change_orchestration_test

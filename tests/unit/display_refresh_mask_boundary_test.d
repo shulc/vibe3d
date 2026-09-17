@@ -21,7 +21,8 @@ import std.path      : buildPath, dirName, relativePath;
 import std.stdio     : stderr, writefln;
 import std.string    : indexOf, replace, startsWith;
 
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+    containsWord, ImportDecl, importDeclarations, skipSpace;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -44,12 +45,6 @@ private enum RoleRow[] kExpectedRoles = [
     RoleRow("source/render/render_mvp.d", importsAlias | usesAlias),
 ];
 
-private struct ImportDecl {
-    size_t start;
-    size_t end;
-    size_t moduleListEnd;
-}
-
 private struct RoleScan {
     uint roles;
     bool importsDisplaySync;
@@ -61,58 +56,6 @@ private bool isIdentChar(char c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
         || (c >= '0' && c <= '9') || c == '_';
-}
-
-private bool containsWord(string code, string word)
-{
-    size_t pos;
-    while (pos < code.length) {
-        const rel = code[pos .. $].indexOf(word);
-        if (rel < 0) return false;
-        const at = pos + cast(size_t) rel;
-        const before = at == 0 || !isIdentChar(code[at - 1]);
-        const after = at + word.length == code.length
-            || !isIdentChar(code[at + word.length]);
-        if (before && after) return true;
-        pos = at + word.length;
-    }
-    return false;
-}
-
-private void skipSpace(string code, ref size_t pos, size_t end)
-{
-    while (pos < end && (code[pos] == ' ' || code[pos] == '\t'
-                      || code[pos] == '\r' || code[pos] == '\n')) ++pos;
-}
-
-private ImportDecl[] importDeclarations(string code)
-{
-    ImportDecl[] result;
-    size_t searchAt;
-    while (searchAt < code.length) {
-        const rel = code[searchAt .. $].indexOf("import");
-        if (rel < 0) break;
-        const at = searchAt + cast(size_t) rel;
-        searchAt = at + "import".length;
-        if ((at > 0 && isIdentChar(code[at - 1]))
-            || (searchAt < code.length && isIdentChar(code[searchAt])))
-            continue;
-
-        size_t body = searchAt;
-        skipSpace(code, body, code.length);
-        if (body < code.length && code[body] == '(')
-            continue; // string import expression, not an import declaration
-
-        const semiRel = code[body .. $].indexOf(';');
-        if (semiRel < 0) break;
-        const end = body + cast(size_t) semiRel + 1;
-        const colonRel = code[body .. end].indexOf(':');
-        const moduleListEnd = colonRel < 0
-            ? end : body + cast(size_t) colonRel;
-        result ~= ImportDecl(at, end, moduleListEnd);
-        searchAt = end;
-    }
-    return result;
 }
 
 private bool isInImport(size_t pos, const ImportDecl[] imports)
