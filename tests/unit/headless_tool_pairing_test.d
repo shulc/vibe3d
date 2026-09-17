@@ -219,7 +219,9 @@ unittest {
     foreach (i, id; kPaired) {
         immutable marker = 100 + cast(int) i;
         ToolFactory probe = () => new MarkerTool(marker);
-        r.registry.toolFactories[id] = probe;
+        auto reboundFactories = r.registry.toolFactories.dup;
+        reboundFactories[id] = probe;
+        r.registry.toolFactories = reboundFactories;
         auto cmd = cast(ToolHeadlessCommand) r.registry.commandFactories[id]();
         assert(cmd !is null, "6353 late lookup: wrapper type changed for " ~ id);
         auto held = fieldOf!ToolFactory(cmd, "factory");
