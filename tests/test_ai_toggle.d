@@ -57,6 +57,8 @@ unittest { // Task 6354: gate effect on the production registry
         "ai.toggle", "ai.enable", "ai.disable", "copilot.analyze",
         "copilot.selectFinding", "copilot.cycleFinding", "ui.copilotPanel",
     ];
+    static assert(gated.length == 7,
+        "6354 A2 witness must cover every gated command id");
     if (!kCopilotEnabled) {
         foreach (id; gated)
             assert(!commands.canFind(id),

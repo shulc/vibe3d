@@ -213,6 +213,16 @@ unittest { // A7: mesh.select lookup stays lazy through registration
         () => rig.registry.commandFactories["mesh.select"]());
     assert("copilot.selectFinding" in rig.registry.commandFactories,
         "6354 A7 population: the copilot family did not register");
+    size_t registered;
+    foreach (id; kCopilotIds) {
+        auto registeredCommand = rig.registry.commandFactories[id]();
+        assert(registeredCommand.name() == id,
+            "6354 copilot population: " ~ id
+            ~ " built a command whose name is " ~ registeredCommand.name());
+        ++registered;
+    }
+    assert(registered == 4,
+        "6354 copilot population ran over fewer than four ids");
     rig.registry.commandFactories["mesh.select"] = () {
         ++sentinelCalls;
         return makeMeshSelect(rig);
