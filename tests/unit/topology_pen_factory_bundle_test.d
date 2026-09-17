@@ -2,7 +2,9 @@ module tests.unit.topology_pen_factory_bundle_test;
 
 // Task 6352: the Topology Pen's thirteen per-gesture undo factories reach the
 // tool as ONE named `TopoPenFactories` value through the PRODUCTION
-// `mesh.topoPen` registration. Block 1 drives the real factory with a bundle
+// `mesh.topoPen` registration. Block 0 comes first and pins that this witness
+// drives that production registration rather than an analogue of its own.
+// Block 1 drives the real factory with a bundle
 // whose every field is a distinct probe and checks, for every field the struct
 // declares (the compiler's list, not one written here), that the tool holds
 // that field's own delegate. Block 2 is the placement carrier bound by
@@ -24,7 +26,6 @@ import registry : Registry;
 import seltype : SelMode;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
-import tool : Tool;
 import tools.edit.topology_pen : TopologyPenTool;
 import tools.edit.topology_pen.defs : TopoPenFactories;
 import view : View;
@@ -39,10 +40,14 @@ private F fieldOf(F, T)(T obj, string name) {
     static foreach (C; AliasSeq!(T, BaseClassesTuple!T)) {
         foreach (i, ref f; (cast(C) obj).tupleof)
             if (__traits(identifier, C.tupleof[i]) == name) {
+                // The `static if` can fall through when the field EXISTS but its
+                // type does not convert to F, so the message below names both —
+                // otherwise a type drift reads as "field not found" (6352 review).
                 static if (is(typeof(f) : F)) return cast(F) f;
             }
     }
-    assert(0, "6352 reflection floor: field not found: " ~ name);
+    assert(0, "6352 reflection floor: no field named " ~ name
+        ~ " convertible to " ~ F.stringof ~ " on " ~ T.stringof);
 }
 
 private struct Rig {
@@ -92,6 +97,18 @@ private TopologyPenTool buildPen(Rig* r) {
     return t;
 }
 
+// Block 0: the witness drives the production factory, never its own pen. It runs
+// FIRST on purpose: druntime stops a module at its first failed assert, so a red
+// behaviour block below would otherwise hide this one (6352 review).
+unittest {
+    immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
+    assert(countOccurrences(self, "registerTools(") >= 1
+        && countOccurrences(self, "new TopologyPenTool(") == 0
+        && countOccurrences(self, "setPenFactories(") == 0
+        && countOccurrences(self, "setGestureBindings(") == 0,
+        "6352 census: the witness must drive the production factory, not an analogue");
+}
+
 // Block 1: every declared field reaches the tool as that field's own factory.
 unittest {
     assert(kFields.length == 13,
@@ -124,14 +141,3 @@ unittest {
     assert(fieldOf!CommandHistory(t, "history") is r.app.history,
         "6352 placement: the tool's history is not EditorApp.history");
 }
-
-// Block 3: the witness drives the production factory, never its own pen.
-unittest {
-    immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
-    assert(countOccurrences(self, "registerTools(") >= 1
-        && countOccurrences(self, "new TopologyPenTool(") == 0
-        && countOccurrences(self, "setPenFactories(") == 0
-        && countOccurrences(self, "setGestureBindings(") == 0,
-        "6352 census: the witness must drive the production factory, not an analogue");
-}
-

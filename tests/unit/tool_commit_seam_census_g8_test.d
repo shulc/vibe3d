@@ -16,7 +16,8 @@
 // thirteen written by field name into one `TopoPenFactories` value, task
 // 6352), the fifteen `EditorApp` fields they are wired into (fourteen
 // delegates and that one pen value), and the rostered places
-// `source/registration.d` spends them. So the members below do not ask "does this tool still call the seam" —
+// `source/registration.d` spends them. So the members below do not ask "does this
+// tool still call the seam" —
 // phases B and C answered that, family by family. They ask the three questions
 // that only exist once the factories are ONE parameterised builder instead of
 // twenty-four hand-written closures:
