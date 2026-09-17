@@ -486,6 +486,7 @@ tests.unit.trackball_test
 tests.unit.transform_compose_order_test
 tests.unit.transform_history_ownership_census_test
 tests.unit.transform_input_bank_census_test
+tests.unit.tsan_sweep_cleanup_test
 tests.unit.ui.availability_test
 tests.unit.ui.channel_rows_test
 tests.unit.ui.channels_panel_roles_test
