@@ -71,7 +71,7 @@ unittest {
     assert(full.receiptsDropped == 3,
            "receipt overflow was not reported exactly");
 
-    // `/api/frames/counts/reset` can run while the main thread owns this
+    // A direct reset in this unit stand can run while the scope owns this
     // scope. Its destructor must not drive depth negative and poison the next
     // pass; this is the construction defect caught by task 5480's final review.
     {
