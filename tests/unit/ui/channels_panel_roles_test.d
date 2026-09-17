@@ -11,7 +11,7 @@ import application_command_binding : ApplicationCommandBinding;
 import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
-import commands.layer.commands : LayerAttr, LayerSelect;
+import commands.layer.commands : LayerAttr, LayerRename, LayerReorder, LayerSelect;
 import document : Document, ItemKind, Layer;
 import edit_session : EditSession;
 import editmode : EditMode;
@@ -31,12 +31,22 @@ import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.channels_panel : ChannelsDrawSnapshot, ChannelsPanelRoles,
+import ui.channel_rows : ChannelsModel;
+import ui.channels_panel : ChannelsDrawSnapshot, ChannelsPanelRoles, ChannelsPanelState,
     bindChannelsPanel, channelsDrawSnapshot, drawChannelsPanel,
     resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import view : View;
 import d_imgui.imgui_h : ImVec2;
+
+static assert(__traits(compiles, {
+    ChannelsPanelRoles roles = void;
+    ChannelsPanelState s = roles.state;
+}) && !__traits(compiles, new ChannelsPanelState()),
+    "6358 state ownership: only bindChannelsPanel may create the panel memo");
+
+static assert(!__traits(hasMember, ChannelsModel, "title"),
+    "6358 single name store: the row model regained a cached title");
 
 static assert(!__traits(compiles, {
     ChannelsPanelRoles roles = void;
@@ -128,6 +138,12 @@ private final class ChannelsHarness {
         registry.commandFactories["layer.select"] = () => cast(Command)
             new LayerSelect(&owner.editMesh(), view, owner.editMode,
                             owner.documentPtr(), null);
+        registry.commandFactories["layer.rename"] = () => cast(Command)
+            new LayerRename(&owner.editMesh(), view, owner.editMode,
+                            owner.documentPtr(), null);
+        registry.commandFactories["layer.reorder"] = () => cast(Command)
+            new LayerReorder(&owner.editMesh(), view, owner.editMode,
+                             owner.documentPtr(), null);
         registry.commandFactories["layer.attr"] = () => cast(Command)
             new LayerAttr(&owner.editMesh(), view, owner.editMode,
                           owner.documentPtr(), null);
@@ -147,7 +163,7 @@ private final class ChannelsHarness {
 private HeadlessPanel openChannels(ChannelsPanelRoles roles) {
     resetChannelsDrawSnapshot();
     return openPanel(
-        () { drawChannelsPanel(roles.read, roles.actions); },
+        () { drawChannelsPanel(roles.read, roles.actions, roles.state); },
         "Channels host", 1280, 1200);
 }
 
@@ -358,6 +374,258 @@ unittest { // M3/M4: guard blocks geometry mode and permits item mode
         "6050 item guard: the permitted row did not write one layer.attr");
 }
 
+
+unittest { // I1: two bindings over two sessions own their memo: draw A, B, A
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    auto a = new ChannelsHarness;
+    auto b = new ChannelsHarness;
+    b.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    assert(a.owner !is b.owner
+        && itemPropsTarget(a.owner.documentPtr()) is a.alpha
+        && itemPropsTarget(b.owner.documentPtr()) is b.beta,
+        "6358 A/B/A precondition: two sessions focusing different items");
+    auto rolesA = a.bind();
+    auto rolesB = b.bind();
+    ChannelsPanelRoles* current = &rolesA;
+    resetChannelsDrawSnapshot();
+    auto ui = openPanel(
+        () { drawChannelsPanel(current.read, current.actions, current.state); },
+        "Channels host", 1280, 1200);
+    scope (exit) ui.close();
+
+    const a1 = fresh(ui);
+    assert(a1.bound && a1.title == "Alpha" && a1.memoReported
+        && a1.modelRebuilt && a1.provider !is null,
+        "6358 A/B/A floor: A's first draw must build its own rows");
+    const a2 = fresh(ui);
+    assert(a2.title == "Alpha" && a2.memoReported && !a2.modelRebuilt
+        && a2.provider is a1.provider,
+        "6358 memo hit floor: an unchanged item rebuilt its rows");
+    current = &rolesB;
+    const b1 = fresh(ui);
+    assert(b1.bound && b1.title == "Beta" && b1.modelRebuilt
+        && b1.provider !is a1.provider,
+        "6358 A/B/A floor: B's first draw must build B's rows");
+    current = &rolesA;
+    const a3 = fresh(ui);
+    assert(a3.bound && a3.title == "Alpha" && a3.formDrawn,
+        "6358 A/B/A control: A's header after B");
+    assert(a3.memoReported && !a3.modelRebuilt && a3.provider is a1.provider,
+        "6358 per-binding memo: drawing B evicted A's rows and provider");
+}
+
+unittest { // I2: live header on rename, no row rebuild; focus != primary control
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    auto h = new ChannelsHarness;
+    h.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    h.binding.dispatchUi("layer.select", `{"index":3,"mode":"set"}`);
+    auto doc = h.owner.documentPtr();
+    assert(itemPropsTarget(doc) is h.plane && doc.primary is h.beta,
+        "6358 rename precondition needs Plane focus and Beta primary");
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+
+    const first = fresh(ui);
+    assert(first.bound && first.title == "Plane"
+        && first.kindText == "Image Plane" && first.modelRebuilt
+        && first.provider !is null,
+        "6358 rename floor: Plane's rows were not built on the first draw");
+    const base = fresh(ui);
+    assert(!base.modelRebuilt && base.provider is first.provider
+        && base.formDrawn,
+        "6358 rename hit floor: an unchanged Plane rebuilt its rows");
+
+    h.binding.dispatchUi("layer.rename", `{"index":1,"name":"BetaRenamed"}`);
+    assert(h.beta.name == "BetaRenamed" && doc.primary is h.beta
+        && itemPropsTarget(doc) is h.plane,
+        "6358 control precondition: the primary rename did not land");
+    auto snap = fresh(ui);
+    assert(snap.title == "Plane" && !snap.modelRebuilt
+        && snap.provider is first.provider,
+        "6358 focus control: renaming the primary moved the Channels header");
+
+    h.binding.dispatchUi("layer.rename", `{"index":3,"name":"PlaneRenamed"}`);
+    assert(h.plane.name == "PlaneRenamed" && itemPropsTarget(doc) is h.plane,
+        "6358 rename precondition: the focused rename did not land");
+    snap = fresh(ui);
+    assert(snap.bound && snap.formDrawn && snap.kindText == "Image Plane",
+        "6358 rename floor: the renamed Plane's form was not drawn");
+    assert(snap.title == "PlaneRenamed",
+        "6358 live header: renaming the focused item left a cached title");
+    assert(!snap.modelRebuilt && snap.provider is first.provider,
+        "6358 rename is not a row change: the header update rebuilt the rows");
+}
+
+unittest { // I3: reorder rebuilds rows so the write follows the item
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    auto h = new ChannelsHarness;
+    h.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    h.binding.dispatchUi("layer.select", `{"index":2,"mode":"add"}`);
+    auto doc = h.owner.documentPtr();
+    assert(itemPropsTarget(doc) is h.gamma && doc.primary is h.beta,
+        "6358 reorder precondition needs Gamma focus and Beta primary");
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const first = fresh(ui);
+    assert(first.bound && first.title == "Gamma" && first.modelRebuilt,
+        "6358 reorder floor: Gamma's rows were not built");
+    const base = fresh(ui);
+    assert(!base.modelRebuilt, "6358 reorder hit floor: unchanged Gamma rebuilt");
+
+    h.binding.dispatchUi("layer.reorder", `{"from":0,"to":2}`);
+    assert(doc.layers.length == 4 && doc.layers[0] is h.beta
+        && doc.layers[1] is h.gamma && doc.layers[2] is h.alpha
+        && doc.layers[3] is h.plane
+        && itemPropsTarget(doc) is h.gamma && doc.primary is h.beta,
+        "6358 reorder precondition: Gamma at 1, Alpha at Gamma's old 2, Beta at 0");
+    const moved = fresh(ui);
+    const settled = fresh(ui);
+    assert(moved.title == "Gamma" && settled.formDrawn,
+        "6358 reorder floor: Gamma's form was not drawn after the move");
+    clearHistory(h);
+    assert(ui.editAt(center(settled.lastRowMin, settled.lastRowMax), "2.5"),
+        "6358 reorder write floor: Gamma's last row did not take ActiveId");
+    assert(h.gamma.xform.pivot.z == 2.5f && h.alpha.xform.pivot.z == 0.0f
+        && h.beta.xform.pivot.z == 0.0f,
+        "6358 reorder target: the channel write missed the moved item");
+    auto entries = h.history.undoEntries();
+    assert(entries.length == 1
+        && entries[$ - 1].args == `index:"1" attr:pivot.z value:"2.5"`,
+        "6358 reorder target: layer.attr did not address Gamma's new index");
+    assert(moved.memoReported && moved.modelRebuilt,
+        "6358 reorder memo: an index change was served from the old rows");
+}
+
+unittest { // I4: an empty document releases the provider and rows
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    import mesh : makeCube;
+    auto h = new ChannelsHarness;
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const first = fresh(ui);
+    assert(first.bound && first.title == "Alpha" && first.retainedReported
+        && first.retainsProvider && first.retainedItem is h.alpha,
+        "6358 release floor: the bound draw did not retain its memo");
+
+    *h.owner.documentPtr() = Document.init;
+    assert(h.owner.documentPtr().layers.length == 0
+        && itemPropsTarget(h.owner.documentPtr()) is null,
+        "6358 release precondition: the replaced document still has a focus");
+    const empty = fresh(ui);
+    assert(!empty.bound && !empty.formDrawn && empty.retainedReported,
+        "6358 release floor: the no-item branch did not run");
+    assert(!empty.retainsProvider && empty.retainedItem is null,
+        "6358 no-item release: the panel state still holds the closed document");
+
+    *h.owner.documentPtr() = Document.bootstrap(makeCube());
+    h.owner.documentPtr().layers[0].name = "Fresh";
+    const again = fresh(ui);
+    assert(again.bound && again.title == "Fresh" && again.modelRebuilt
+        && again.provider !is first.provider,
+        "6358 release recovery: the next document did not rebuild the memo");
+}
+
+
+unittest { // I5: a payload appearing under the same item and index is a memo miss
+    import image_data : ImageData;
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    auto h = new ChannelsHarness;
+    auto logo = new Layer;
+    logo.name = "Logo";
+    logo.kind = ItemKind.Image;
+    h.owner.document.layers ~= logo;
+    h.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    h.binding.dispatchUi("layer.select", `{"index":4,"mode":"set"}`);
+    auto doc = h.owner.documentPtr();
+    assert(itemPropsTarget(doc) is logo && doc.primary is h.beta
+        && logo.imageOrNull() is null,
+        "6358 payload precondition needs a payload-less Image focus");
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const first = fresh(ui);
+    const base = fresh(ui);
+    assert(first.modelRebuilt && !base.modelRebuilt
+        && base.channelCount == 2 && base.disabledChannels == 1,
+        "6358 payload floor: the payload-less Image did not memoise its base rows");
+    logo.imageRef() = new ImageData();
+    const grown = fresh(ui);
+    assert(grown.bound && grown.title == "Logo" && grown.provider !is null,
+        "6358 payload control: the Image binding was not rebuilt");
+    assert(grown.modelRebuilt && grown.channelCount == 5,
+        "6358 payload miss: new channels were served from the old rows");
+    assert(grown.disabledChannels == 2,
+        "6358 payload rebind: the readonly filename row was not re-blocked");
+}
+
+
+private extern (C) void igSetNextWindowCollapsed(bool collapsed, int cond);
+
+unittest { // I6: a collapsed (hidden-tab) panel keeps only the current focus
+    import mesh : makeCube;
+    clearMorphTarget();
+    scope (exit) clearMorphTarget();
+    auto h = new ChannelsHarness;
+    auto roles = h.bind();
+    bool collapse = false;
+    resetChannelsDrawSnapshot();
+    auto ui = openPanel(() {
+        igSetNextWindowCollapsed(collapse, 1);
+        drawChannelsPanel(roles.read, roles.actions, roles.state);
+    }, "Channels host", 1280, 1200);
+    scope (exit) ui.close();
+    const first = fresh(ui);
+    assert(first.bound && first.retainedReported
+        && first.retainedItem is h.alpha && first.retainsProvider,
+        "6358 hidden floor: the expanded draw did not retain Alpha's memo");
+
+    collapse = true;
+    resetChannelsDrawSnapshot();
+    ui.frame();
+    auto hidden = channelsDrawSnapshot();
+    assert(!hidden.drawn && hidden.retainedReported,
+        "6358 hidden floor: the collapsed frame submitted its body or did not report");
+    assert(hidden.retainedItem is h.alpha && hidden.retainsProvider,
+        "6358 hidden control: a collapsed frame with an unchanged focus dropped its memo");
+
+    auto next = Document.bootstrap(makeCube());
+    next.layers[0].name = "Next";
+    *h.owner.documentPtr() = next;
+    assert(itemPropsTarget(h.owner.documentPtr()) !is null
+        && itemPropsTarget(h.owner.documentPtr()) !is h.alpha,
+        "6358 hidden precondition: the replacement document has its own focus");
+    resetChannelsDrawSnapshot();
+    ui.frame();
+    hidden = channelsDrawSnapshot();
+    assert(!hidden.drawn && hidden.retainedReported,
+        "6358 hidden floor: the collapsed replacement frame did not report");
+    assert(hidden.retainedItem is null && !hidden.retainsProvider,
+        "6358 hidden release: a collapsed panel kept the replaced document's item");
+
+    *h.owner.documentPtr() = Document.init;
+    resetChannelsDrawSnapshot();
+    ui.frame();
+    hidden = channelsDrawSnapshot();
+    assert(!hidden.drawn && hidden.retainedReported
+        && hidden.retainedItem is null && !hidden.retainsProvider,
+        "6358 hidden release: a collapsed no-item frame holds a memo");
+
+    collapse = false;
+    *h.owner.documentPtr() = next;
+    fresh(ui);
+    const shown = fresh(ui);
+    assert(shown.bound && shown.title == "Next" && shown.retainsProvider,
+        "6358 hidden recovery: expanding again did not rebuild the memo");
+}
+
 private string bodyAt(string code, string marker) {
     const at = code.indexOf(marker);
     assert(at >= 0, "6050 census missing source marker " ~ marker);
@@ -425,8 +693,8 @@ unittest { // M6a-d and the retired EditorApp path: production source census
                          "ui.layer_list_panel", "with (", "activeMesh"])
         assert(channels.count(forbidden) == 0,
             "6050 role boundary: channels panel regained " ~ forbidden);
-    assert(channels.count(
-            "void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions)") == 1
+    assert(collapseWhitespace(channels).count(
+            "void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions, ChannelsPanelState state)") == 1
         && channels.count(
             "private void drawVertexMapsSection(const(Mesh)* m)") == 1,
         "6050 panel signatures: the two narrow draw entries are not unique");
@@ -437,6 +705,20 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         && binder.count("&binding.dispatchUi") == 0
         && binder.count("&binding.dispatchInteractiveUi") == 1,
         "6050 binder census: Channels must bind only the interactive UI method");
+    assert(binder.count("new ChannelsPanelState") == 1
+        && channels.count("new ChannelsPanelState") == 1
+        && identifierCount(channels, "static") == 0,
+        "6358 state census: bind owns the only construction and draw has no static; A/B/A covers a module singleton");
+    const drawBody = bodyAt(channels, "void drawChannelsPanel(");
+    const retainAt = drawBody.indexOf("state.retainOnly(item);");
+    const beginAt0 = drawBody.indexOf("ImGui.Begin(");
+    assert(drawBody.count("const title = channelsHeaderName(item);") == 1
+        && drawBody.count("ImGui.TextUnformatted(title);") == 1
+        && drawBody.count("recordChannelsHeader(title, state.model_.kindText);") == 1
+        && drawBody.count("state.retainOnly(item);") == 1
+        && retainAt >= 0 && beginAt0 > retainAt
+        && drawBody.count(".title") == 0,
+        "6358 draw census: computed, drawn, or recorded live header, or pre-Begin retention changed");
     const readRole = bodyAt(channels, "struct ChannelsReadRole");
     assert(readRole.count("owner_.documentPtr()") == 1
         && readRole.count("owner_.editMesh()") == 1
@@ -448,7 +730,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         && actions.count("void delegate(string, string) interactive_;") == 1,
         "6050 action census: the private interactive-only writer shape changed");
     assert(channels.count("itemPropsTarget(read.document())") == 1
-        && channels.count("actions.drawChannelForm(model.form, prov);") == 1
+        && channels.count("actions.drawChannelForm(state.model_.form, state.provider_);") == 1
         && channels.count("drawVertexMapsSection(read.editMesh());") == 1,
         "6050 draw census: a role consumer bypassed its narrow capability");
     assert(panels.count("drawChannelsPanel") == 0
@@ -475,10 +757,11 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     enum bindCall =
         "auto channelsPanelRoles = bindChannelsPanel(sessionOwner, commandBinding, formsPanel, toolHost.getActiveTool);";
     enum drawCall =
-        "drawChannelsPanel(channelsPanelRoles.read, channelsPanelRoles.actions);";
+        "drawChannelsPanel(channelsPanelRoles.read, channelsPanelRoles.actions, channelsPanelRoles.state);";
     assert(identifierCount(app, "bindChannelsPanel") == 2
         && identifierCount(app, "drawChannelsPanel") == 2
-        && identifierCount(app, "channelsPanelRoles") == 3
+        && identifierCount(app, "channelsPanelRoles") == 4
+        && identifierCount(app, "ChannelsPanelState") == 0
         && flatApp.count(bindCall) == 1
         && flatApp.count(drawCall) == 1
         && flatApp.count("import ui.channels_panel : bindChannelsPanel;") == 1

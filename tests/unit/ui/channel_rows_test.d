@@ -66,7 +66,7 @@ unittest {
 
     auto m = channelsModel(&doc);
     assert(m.bound, "an item is bound");
-    assert(m.title == "the plane",
+    assert(m.key.item is plane && channelsHeaderName(m.key.item) == "the plane",
         "the panel headers the FOCUSED item; bound to the primary it would "
         ~ "read '" ~ doc.primary.name ~ "'");
     assert(m.index == 1,
@@ -138,7 +138,7 @@ unittest {
     doc.layers[0].name = "just a mesh";
 
     auto m = channelsModel(&doc);
-    assert(m.bound && m.title == "just a mesh");
+    assert(m.bound && channelsHeaderName(m.key.item) == "just a mesh");
     assert(m.channelCount == 14,
         "a mesh has 14 channels — 12 transform + name + visible; read "
         ~ m.channelCount.to!string);
@@ -386,4 +386,13 @@ unittest {
     auto m = channelsModel(&empty);
     assert(!m.bound && m.form.rows.length == 0 && m.channelCount == 0);
     assert(channelsModel(null).bound == false);
+}
+
+unittest { // 6358: the header name is the item's live name, with one fallback
+    import document : Layer;
+    auto l = new Layer;
+    l.name = "Named";
+    assert(channelsHeaderName(l) == "Named", "6358 header name: a named item lost its name");
+    l.name = "";
+    assert(channelsHeaderName(l) == "(unnamed)", "6358 header name: an unnamed item lost its fallback");
 }
