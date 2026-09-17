@@ -26,6 +26,8 @@ import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum registeredIdRe = ctRegex!(`reg\.commandFactories\["([^"]+)"\]`);
+private enum pairedRegisteredIdRe = ctRegex!(
+    `registerHeadlessTool!\w+\s*\(\s*reg\s*,\s*"([^"]+)"`);
 private enum configTokenRe = ctRegex!(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+`);
 private enum quotedValueRe = ctRegex!(`"([^"]+)"`);
 private enum actrPresetRe = ctRegex!(`Preset\("([^"]+)"`);
@@ -171,6 +173,14 @@ private string[] registeredCommandIds()
     bool[string] seen;
     foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;
+    size_t pairedIds;
+    foreach (m; matchAll(registration, pairedRegisteredIdRe)) {
+        seen[m[1].idup] = true;
+        ++pairedIds;
+    }
+    assert(registration.count("registerHeadlessTool!") == pairedIds,
+        format("paired command census parsed %d literal ids from %d helper calls",
+               pairedIds, registration.count("registerHeadlessTool!")));
     foreach (expression; dynamicRegistrationExpressions)
         assert(registration.count(expression) == 1,
             "dynamic command registration expression changed; update its named "

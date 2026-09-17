@@ -70,7 +70,8 @@ import std.string    : indexOf;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
    blankNonCode, countOccurrences, enclosingSymbols, historySurface,
-   isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits;
+   isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits,
+   toolRegistrationBlock;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -407,17 +408,12 @@ unittest {
     foreach (row; kG2Registrations) {
         immutable id  = row[0];
         immutable fac = row[1];
-        immutable needle = "reg.toolFactories[\"" ~ id ~ "\"] = ";
-        immutable size_t defs = countOccurrences(src, needle);
-        if (defs != 1) {
-            problems ~= "    · wire id `" ~ id ~ "`: found " ~ defs.to!string
-                      ~ " registration definitions, expected exactly 1";
+        string problem;
+        immutable block = toolRegistrationBlock(src, id, problem);
+        if (problem.length != 0) {
+            problems ~= "    · " ~ problem;
             continue;
         }
-        auto at   = src.indexOf(needle);
-        auto rest = src[cast(size_t) at .. $];
-        auto end  = rest.indexOf("});");
-        immutable block = (end < 0) ? rest : rest[0 .. cast(size_t) end];
         ++checked;
 
         if (countOccurrences(block, "setGestureBindings(") != 1)

@@ -91,10 +91,11 @@ module tests.unit.census_symbols;
 
 import std.algorithm : canFind, find;
 import std.array     : appender, join;
+import std.conv      : to;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.string    : indexOf, strip;
+import std.string    : indexOf, lastIndexOf, strip;
 
 package bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -124,6 +125,55 @@ package size_t countOccurrences(string hay, string needle) {
         else ++i;
     }
     return n;
+}
+
+/// Extract one brace-lambda tool registration in either the literal legacy
+/// assignment or the paired helper form. The source stays raw for id matching;
+/// the same-length code projection owns brace balancing so literals/comments
+/// cannot extend the block into the next registration.
+package string toolRegistrationBlock(string src, string id, out string problem) {
+    immutable oldHead = "reg.toolFactories[\"" ~ id ~ "\"] = ";
+    immutable pairedHead = "reg, \"" ~ id ~ "\", () {";
+    immutable size_t oldDefs = countOccurrences(src, oldHead);
+    immutable size_t pairedDefs = countOccurrences(src, pairedHead);
+    immutable size_t defs = oldDefs + pairedDefs;
+    if (defs != 1) {
+        problem = "wire id `" ~ id ~ "`: found " ~ defs.to!string
+                ~ " registration definitions, expected exactly 1";
+        return null;
+    }
+
+    size_t start;
+    size_t bodyOpen;
+    if (oldDefs == 1) {
+        start = cast(size_t) src.indexOf(oldHead);
+        const relOpen = src[start .. $].indexOf('{');
+        if (relOpen < 0) {
+            problem = "wire id `" ~ id ~ "`: legacy registration has no lambda body";
+            return null;
+        }
+        bodyOpen = start + cast(size_t) relOpen;
+    } else {
+        const idAt = src.indexOf(pairedHead);
+        const prefix = src[0 .. cast(size_t) idAt];
+        const callAt = prefix.lastIndexOf("registerHeadlessTool!");
+        if (callAt < 0 || prefix[cast(size_t) callAt .. $].canFind(';')) {
+            problem = "wire id `" ~ id ~ "`: paired head is not owned by registerHeadlessTool";
+            return null;
+        }
+        start = cast(size_t) callAt;
+        bodyOpen = cast(size_t) idAt + pairedHead.length - 1;
+    }
+
+    const code = blankNonCode(src);
+    size_t depth = 1;
+    foreach (i; bodyOpen + 1 .. code.length) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return src[start .. i + 1];
+    }
+    problem = "wire id `" ~ id ~ "`: registration lambda is unbalanced";
+    return null;
 }
 
 /// Statements of a CODE view that contain `needle`: text between `;`, `{`
@@ -1154,6 +1204,39 @@ unittest { // statement boundaries used by late-read registrar censuses
         "6350 statement scanner split at blanked literal content");
     assert(statements[4] == "d = () => new Z(host.read());",
         "6350 statement scanner kept a closing-brace prefix");
+}
+
+unittest { // task 6353 registration-block boundaries, old and paired forms
+    enum probe = q"PROBE
+registerHeadlessTool!BoxTool(reg, "prim.cube", () {
+    auto t = new BoxTool();
+    if (ready) { t.bind(); }
+    return t;
+}, owner, live);
+registerHeadlessTool!SphereTool(reg, "prim.sphere", () {
+    return new SphereTool();
+}, owner, live);
+reg.toolFactories["pen"] = typedToolFactory!PenTool(() {
+    return new PenTool();
+});
+reg.toolFactories["prim.vertex"] = typedToolFactory!VertexTool(() {
+    return new VertexTool();
+});
+PROBE";
+    string problem;
+    const paired = toolRegistrationBlock(probe, "prim.cube", problem);
+    assert(problem.length == 0, problem);
+    assert(countOccurrences(paired, "new BoxTool(") == 1,
+        "6353 block: the prim.cube registration lost its own constructor");
+    assert(!paired.canFind("\"prim.sphere\""),
+        "6353 block: the prim.cube registration block reached \"prim.sphere\"");
+
+    const legacy = toolRegistrationBlock(probe, "pen", problem);
+    assert(problem.length == 0, problem);
+    assert(countOccurrences(legacy, "new PenTool(") == 1,
+        "6353 block: the pen registration lost its own constructor");
+    assert(!legacy.canFind("\"prim.vertex\""),
+        "6353 block: the pen registration block reached \"prim.vertex\"");
 }
 
 // ---------------------------------------------------------------------------
