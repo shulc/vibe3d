@@ -232,6 +232,25 @@ unittest {
         assert(!silent(key, false, true), "6351 explore off/on " ~ key);
         assert(silent(key, true, true), "6351 explore on/on " ~ key);
     }
+
+    foreach (key; kKeys) {
+        r.app.aiExplore = new AiExplorationController(0.5f, 42);
+        auto writer = new AiInteractionLogWriter(logPath);
+        scope (exit) writer.close();
+        r.app.aiLogWriter = writer;
+        auto first = build(r, key);
+        assert(fieldOf!bool(fieldOf!ToolHandles(first, "toolHandles"),
+                "aiExploreSilent"),
+            "6351 explore lifecycle floor " ~ key);
+        writer.close();
+        assert(!writer.enabled,
+            "6351 explore lifecycle: close must disable the writer " ~ key);
+        auto second = cast(XfrmTransformTool) r.app.reg.toolFactories[key]();
+        assert(second !is null
+            && !fieldOf!bool(fieldOf!ToolHandles(second, "toolHandles"),
+                "aiExploreSilent"),
+            "6351 explore lifecycle: factory froze registration state " ~ key);
+    }
 }
 
 private string bodyAt(string code, string marker) {

@@ -668,11 +668,11 @@ unittest {
 //    twelve `setUndoBindings` call sites were never 4+4+4 transform-zone; they
 //    were EIGHT transform registrations (four `XfrmTransformTool` + xfrm.push,
 //    xfrm.bend, xfrm.linearAlignTool, xfrm.radialAlignTool) and FOUR
-//    command-wrapper. The unified four now share one call site, so the surviving
-//    production spelling is five transform-zone calls plus four command-wrapper
-//    calls. The
-//    mislabel put a G6 file behind decision D1's out-of-scope wall, where
-//    nothing was going to move it.
+//    command-wrapper. The unified four now share one call site, so
+//    `setUndoBindings` survives at five transform-zone call sites; the four
+//    command-wrapper tools are on `setGestureBindings`. The earlier mislabel put
+//    a G6 file behind decision D1's out-of-scope wall, where nothing was going
+//    to move it.
 //
 //    THE NEEDLE, because the anchored one is blind. The predicate card 3200
 //    used, `^\s*(private|protected|public|package )?void setUndoBindings`,

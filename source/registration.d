@@ -762,18 +762,19 @@ private void registerEditTools(EditorApp app) {
         t.setGestureBindings(history, smoothShiftEditFactory);
         return t;
     });
-    // TASK 1905 — `vxEditFactory` is spent at THIRTEEN sites in this file and
-    // this is the only one on the base seam; the other TWELVE are the
-    // transform zone, still on their own `setUndoBindings` overload. So one
-    // factory feeds TWO binding interfaces at once. That is legal (the
-    // parameter types differ, the overloads are distinct).
+    // TASK 1905 — `vxEditFactory` is spent at TEN sites in this file: FIVE
+    // transform-zone `setUndoBindings` calls (the unified-transform helper plus
+    // push, bend and the two align tools), and FIVE `setGestureBindings` calls
+    // (the four command-wrapper tools plus xfrm.magnet). So one factory feeds
+    // TWO binding interfaces at once. That is legal (the parameter types
+    // differ, the overloads are distinct).
     //
     // THE G1 NOTE HERE SAID "FOURTEEN … the other thirteen", AND SAID THE
     // SPLIT WOULD BE RESOLVED WHEN THE APP-LEVEL CLOSURES COLLAPSED IN GROUP
     // G8. Both halves were wrong and group G8 re-measured them (2026-08-29).
-    // The count was thirteen before phase B too — twelve transform sites plus
-    // this one — and the closures collapsing changes nothing about which
-    // binder the transform tools DECLARE.
+    // The count was thirteen before phase B — twelve transform sites plus this
+    // one. The unified-transform recipe collapsed four of those sites to one,
+    // but changes nothing about which binder the transform tools DECLARE.
     //
     // WHAT G8 DID SETTLE. The temptation the note warned about was "unify the
     // factory alias", and what made it dangerous was that `VertexEditFactory`
@@ -787,11 +788,11 @@ private void registerEditTools(EditorApp app) {
     // so member 4 of `tests/unit/tool_commit_seam_census_g8_test.d` does: a
     // third alias naming a different type reddens there by file and line.
     //
-    // WHAT IS LEFT IS NOT THIS TASK'S. The twelve transform bindings stay on
-    // `setUndoBindings` because the transform zone is OUT of task 1905's scope
-    // by decision D1; they move when that zone does. Until then the count
-    // above is pinned by member 6 of the same census and the surviving binder
-    // declarations by member 5, so neither can grow in silence.
+    // WHAT IS LEFT IS NOT THIS TASK'S. The five transform-zone calls stay on
+    // `setUndoBindings` because that zone is OUT of task 1905's scope by
+    // decision D1. Member 6 of the same census pins the ten-site five/five
+    // split, and member 5 pins the surviving binder declarations, so neither
+    // can grow in silence.
     reg.toolFactories["xfrm.magnet"] = typedToolFactory!MagnetTool(() {
         auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode());
         t.setGestureBindings(history, vxEditFactory);
