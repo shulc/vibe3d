@@ -19,7 +19,7 @@ import mesh : Mesh, Surface;
 public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta;
 import core.atomic;
-import perf_probe : g_perf, g_frames, g_fc, g_commandGc, FrameWorkProbe,
+import perf_probe : g_perf, g_frames, g_commandGc, FrameWorkProbe,
                     FrameWorkSnapshot;
 
 // For event player functionality
@@ -3162,26 +3162,28 @@ class HttpServer {
     }
 
     private void route_apiFramesCountsReset(HttpRequest request, HttpResponse response) {
-        // Zero the always-on frame WORK counters. Unlike its two siblings
-        // above this is NOT a no-op in the default build — see below.
-        //
-        // Task 0763 — same HTTP-thread-writes-into-main-thread-state shape as
-        // /api/perf/reset and /api/frames/reset (its two siblings), decided
-        // the same way and written here rather than left implied:
-        // `FrameWorkProbe.reset()` zeroes four fields in sequence, not as one
-        // assignment, so a reset landing mid-`endFrame()` could leave a
-        // partially-zeroed record for one frame. Tolerable — every caller of
-        // this endpoint immediately follows it with the measured run it
-        // wants counted, and the always-on counters this drives
-        // (`/api/frames/counts`, used by the default `modeling` build's own
-        // test lane, not just the perf lane) have no invariant that a
-        // one-frame wobble at reset time would violate. Not marshaled for the
-        // same reason as its siblings: the round-trip cost lands on every
-        // measured run's setup, not just this diagnostic's accuracy.
-        g_fc.reset();
-        response.statusCode = 200;
-        response.body = "{\"status\":\"ok\"}";
         response.headers["Content-Type"] = "application/json";
+        auto owned = frameCountsBridge.submitClaimed(
+            FrameCountsReq(FrameCountsOp.reset), frameCountsBudget_);
+        final switch (owned.kind) {
+        case BridgeResultKind.completed:
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+            break;
+        case BridgeResultKind.timedOut:
+            response.statusCode = 504;
+            response.body = "{\"error\":\"timeout waiting for main thread\"}";
+            break;
+        case BridgeResultKind.stopping:
+            response.statusCode = 503;
+            response.body = "{\"error\":\"HTTP server stopping\"}";
+            break;
+        case BridgeResultKind.failed:
+        case BridgeResultKind.submitted:
+            response.statusCode = 500;
+            response.body = "{\"error\":\"frame-count owner failed\"}";
+            break;
+        }
     }
 
     private void route_apiFramesCounts(HttpRequest request, HttpResponse response) {
@@ -3206,17 +3208,36 @@ class HttpServer {
         // FrameWorkProbe header in source/perf_probe.d for what these
         // numbers do and do not support.
         //
-        // Same no-lock diagnostic-read contract as /api/perf and
-        // /api/frames: single main-thread writer, whole-record publish.
-        try {
+        // Task 6357: the owner snapshots between frames; this thread only
+        // serializes the detached value. Pending has a five-second deadline,
+        // while a claimed operation waits for its actual owner outcome.
+        response.headers["Content-Type"] = "application/json";
+        auto owned = frameCountsBridge.submitClaimed(
+            FrameCountsReq(FrameCountsOp.read), frameCountsBudget_);
+        final switch (owned.kind) {
+        case BridgeResultKind.completed:
+          try {
             response.statusCode = 200;
-            response.body = g_fc.snapshot().toJson();
-            response.headers["Content-Type"] = "application/json";
-        } catch (Exception e) {
+            response.body = owned.result.snapshot.toJson();
+          } catch (Exception e) {
             response.statusCode = 500;
             response.body = "{\"error\":\"frame-count probe read failed\",\"message\":\"" ~
                            jsonEsc(e.msg) ~ "\"}";
-            response.headers["Content-Type"] = "application/json";
+          }
+          break;
+        case BridgeResultKind.timedOut:
+            response.statusCode = 504;
+            response.body = "{\"error\":\"timeout waiting for main thread\"}";
+            break;
+        case BridgeResultKind.stopping:
+            response.statusCode = 503;
+            response.body = "{\"error\":\"HTTP server stopping\"}";
+            break;
+        case BridgeResultKind.failed:
+        case BridgeResultKind.submitted:
+            response.statusCode = 500;
+            response.body = "{\"error\":\"frame-count owner failed\"}";
+            break;
         }
     }
 
@@ -4897,8 +4918,8 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
     RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),
     RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),
-    RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.httpThread, "route_apiFramesCountsReset"),
-    RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.httpThread, "route_apiFramesCounts"),
+    RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.mainThread, "route_apiFramesCountsReset"),
+    RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.mainThread, "route_apiFramesCounts"),
     RouteSpec("/api/frames/reset",         "POST", Match.exact,  Answered.httpThread, "route_apiFramesReset"),
     RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
     RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),

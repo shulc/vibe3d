@@ -4831,9 +4831,12 @@ void main(string[] args) {
     httpServer.setEventPlayerSink(replaySink);
 
     while (running) {
-        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): beginFrame is
-        // the FIRST statement of the loop body; endFrame (below, before the
-        // present/flush conditional) closes it. No-op in the default build.
+        // Task 6357: serve frame-work resets and detached snapshots on their
+        // owner thread after the prior close and before either new probe opens.
+        // The general bridge drain later in the frame must not serve them.
+        if (httpServer.running) httpServer.tickFrameCounts(g_fc);
+        // Perf (doc/frame_probe_scenarios_plan.md, task 0195): the timing probe
+        // opens before frame work; its close remains before present/flush.
         g_frames.beginFrame();
         // Always-on work counters (perf_probe.d FrameWorkProbe). Paired with
         // g_frames deliberately: same frame boundary, so a `perf`-build
