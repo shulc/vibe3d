@@ -361,12 +361,13 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
         "6010 production wiring witness: registerCommands does not call the "
         ~ "viewport registrar with inline live roles and the real manager");
     const callAt = registration.indexOf(productionCall);
-    const viewFamilyAt = registration.indexOf("registerViewCommands(app);");
+    const viewFamilyAt = registration.indexOf(
+        "registerViewSettingsCommands(app.reg(), ");
     const wrapperAt = registration.indexOf(
         "auto selTypeSrc = () => currentSelType(selTypeOrder);");
     assert(callAt >= 0 && viewFamilyAt > callAt && wrapperAt > viewFamilyAt,
         "6010 registration ordering witness: viewport registration must stay "
-        ~ "before registerViewCommands and the LAST selection-type wrapper");
+        ~ "before view/settings registration and the LAST selection-type wrapper");
     assert(registrationRaw.count(`commandFactories["viewport.`) == 0
         && registration.count("focusOwnerCamera") == 0
         && registration.count("scaleOwnerCamera") == 0,

@@ -874,7 +874,7 @@ void registerCommands(EditorApp app) {
         app.vpm);
     registerViewSettingsCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()));
-    // The task-0422 pause gates registration at the composition root while
+    // The copilot pause (task 0422) gates registration at the composition root while
     // leaving both registrar bodies under semantic analysis.
     static if (kCopilotEnabled)
         registerAiToggleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
