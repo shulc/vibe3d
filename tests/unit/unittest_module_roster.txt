@@ -428,6 +428,7 @@ tests.unit.snapshot_test
 tests.unit.spin_edge_cost_test
 tests.unit.stat_predicate_law_test
 tests.unit.step_trace_test
+tests.unit.subpatch_display_fold_census_test
 tests.unit.subpatch_hash_seed_census_test
 tests.unit.subpatch_key_fold_test
 tests.unit.subpatch_level_policy_test

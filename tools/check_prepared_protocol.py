@@ -1138,6 +1138,7 @@ gpu_contracts = (
     "glDeleteVertexArrays(1, &n.faceVao); glDeleteBuffers(1, &n.faceVbo);",
     "glDeleteBuffers(1, &n.weightColorVbo);",
     "gpu.suppressCageUpload = false;",
+    "gpu.previewWritesDisplayBuffers = false;",
     "static assert(!__traits(compiles, {\n    void copyValidatedToken",
 )
 def validate_prepared_gpu(source):
@@ -1153,7 +1154,7 @@ def validate_prepared_gpu(source):
         (r"bool\s+validatePrepared", "e431625354aa80b1012f59836227d249f0d4b6fb624829e1a5e6121dfab0f043"),
         (r"void\s+installPrepared", "7d060cedf3efd7bc2daa26352d0b139ff755d2e8d21f9ddb2cdb85a1ccc570f0"),
         (r"void\s+discardPrepared", "b31cf1d319a934c57aca2deb80e889b62b34a1e46b4093330434c08ad74f5794"),
-        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "35ef20e0db595abe95abf1caf6b80ea0db16892fda525eb59b082a63ee8c530b"),
+        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "e0ac2ce6d439d5abbc95bfb4ef65e454d34fc12538fe703d3126ee298ae1800a"),
         (r"private\s+void\s+deleteGpuMeshNames", "725d85a33d229c84da0c0ce8819d3f9390a19a64d03b418a496e34ccac4bc488"),
     )
     for signature, digest in exact_bodies:
@@ -1172,6 +1173,7 @@ gpu_mutations = (
         "glDeleteBuffers(1, &n.faceVbo); glDeleteVertexArrays(1, &n.faceVao);"),
     ("drop resource", "glDeleteBuffers(1, &n.weightColorVbo);", ""),
     ("retain upload suppression", "gpu.suppressCageUpload = false;", ""),
+    ("retain preview display ownership", "gpu.previewWritesDisplayBuffers = false;", ""),
     ("double consume", "pending = false;", "pending = true;"),
     ("throw path", "if (!pending || !validated", "assert(pending);\n        if (!pending || !validated"),
 )
