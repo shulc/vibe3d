@@ -1412,6 +1412,29 @@ for label, edit in (
     else:
         fail(f"P1.0b.0 {label} factory product descriptor mutation did not fail")
 
+def drop_expression_factory_helper_write(root):
+    p = root / "source/registration.d"
+    text = p.read_text()
+    needle = "    t.setItemUndoFactory(app.layerXformEditFactory);\n"
+    if needle not in text:
+        fail("P1.0b.0 expression-helper body mutation anchor vanished")
+    p.write_text(text.replace(needle, "", 1))
+if not mutation_rejected(drop_expression_factory_helper_write,
+                         "direct-body/product census changed"):
+    fail("P1.0b.0 expression-helper body mutation did not RED fingerprint")
+
+def change_expression_factory_defaults_row(root):
+    p = root / "source/registration.d"
+    text = p.read_text()
+    needle = "buildUnifiedTransform(app, TransformFactoryDefaults.move)"
+    if needle not in text:
+        fail("P1.0b.0 expression-factory defaults mutation anchor vanished")
+    p.write_text(text.replace(
+        needle, "buildUnifiedTransform(app, TransformFactoryDefaults.rotate)", 1))
+if not mutation_rejected(change_expression_factory_defaults_row,
+                         "direct-body/product census changed"):
+    fail("P1.0b.0 expression-factory defaults mutation did not RED fingerprint")
+
 def add_domain_without_renaming(root):
     p = root / "source/tools/transform/transform.d"
     text = p.read_text()

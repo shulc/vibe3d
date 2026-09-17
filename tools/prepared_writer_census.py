@@ -50,6 +50,34 @@ def _balanced(text, start):
     if depth: raise ValueError("unbalanced D source")
     return i
 
+def _balanced_parentheses(text, open_pos):
+    """Return the offset after the parenthesis paired with open_pos."""
+    if open_pos >= len(text) or text[open_pos] != "(":
+        raise ValueError("expected opening parenthesis")
+    depth = 1
+    i = open_pos + 1
+    quote = None
+    comment = None
+    while i < len(text) and depth:
+        c = text[i]
+        if comment == "//":
+            if c == "\n": comment = None
+        elif comment in ("/*", "/+"):
+            close = "*/" if comment == "/*" else "+/"
+            if text.startswith(close, i): comment = None; i += 2; continue
+        elif quote:
+            if c == "\\": i += 2; continue
+            if c == quote: quote = None
+        elif text.startswith("//", i): comment = "//"; i += 2; continue
+        elif text.startswith("/*", i): comment = "/*"; i += 2; continue
+        elif text.startswith("/+", i): comment = "/+"; i += 2; continue
+        elif c in "\"'": quote = c
+        elif c == "(": depth += 1
+        elif c == ")": depth -= 1
+        i += 1
+    if depth: raise ValueError("unbalanced D call expression")
+    return i
+
 def _aggregate(text, pos):
     found = "<module>"
     declarations = _mask_comments(text)
@@ -101,6 +129,29 @@ def _semantic_digest(body):
     tokens = re.sub(r"//[^\n]*|/\*.*?\*/|/\+.*?\+/", " ", body, flags=re.S)
     tokens = " ".join(tokens.split())
     return hashlib.sha256(tokens.encode()).hexdigest()
+
+def _private_function_body(text, name):
+    """Resolve one private same-module function body by its unqualified name."""
+    declarations = _mask_comments(text)
+    pattern = re.compile(
+        r"(?m)^[ \t]*private[ \t]+"
+        r"(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*[ \t]+)+"
+        + re.escape(name) + r"\s*\(")
+    bodies = []
+    for match in pattern.finditer(declarations):
+        open_pos = match.end() - 1
+        params_end = _balanced_parentheses(text, open_pos)
+        body_open = declarations.find("{", params_end)
+        declaration_end = declarations.find(";", params_end)
+        if body_open < 0 or (declaration_end >= 0 and declaration_end < body_open):
+            continue
+        body_end = _balanced(text, body_open + 1)
+        bodies.append(text[body_open + 1:body_end - 1])
+    if len(bodies) != 1:
+        raise ValueError(
+            f"expression factory helper {name} resolved to {len(bodies)} "
+            "private same-module function bodies")
+    return bodies[0]
 
 _MODULE_INDEX_CACHE = {}
 
@@ -179,9 +230,36 @@ def scan(root):
     for p in [root / "source/tool.d", *tool_files]: params += _methods(p, ("params",))
     reg = (root / "source/registration.d").read_text()
     factories = []
-    for m in re.finditer(r'reg\.toolFactories\["([^"]+)"\]\s*=\s*typedToolFactory!(\w+)\s*\(\(\)\s*\{', reg):
-        end = _balanced(reg, m.end())
-        body = reg[m.end():end-1]
+    factory_head = re.compile(
+        r'reg\.toolFactories\["([^"]+)"\]\s*=\s*'
+        r'typedToolFactory!(\w+)\s*\(\s*\(\)\s*')
+    for m in factory_head.finditer(reg):
+        body = None
+        cursor = m.end()
+        if cursor < len(reg) and reg[cursor] == "{":
+            end = _balanced(reg, cursor + 1)
+            body = reg[cursor + 1:end - 1]
+        elif reg.startswith("=>", cursor):
+            expression_start = cursor + 2
+            call = re.match(r"\s*([A-Za-z_]\w*)\s*\(", reg[expression_start:])
+            if not call:
+                raise ValueError(
+                    f'expression factory {m.group(1)} is not a direct helper call')
+            helper_name = call.group(1)
+            call_open = expression_start + call.end() - 1
+            call_end = _balanced_parentheses(reg, call_open)
+            if not re.match(r"\s*\)\s*;", reg[call_end:]):
+                raise ValueError(
+                    f'expression factory {m.group(1)} has trailing expression syntax')
+            expression = reg[expression_start:call_end]
+            helper_body = _private_function_body(reg, helper_name)
+            # Keep the registry row sensitive to both its chosen defaults and
+            # the shared construction recipe. The labels make the two token
+            # streams unambiguous without promising helper source coordinates.
+            body = ("factoryExpression { " + expression
+                    + " } privateHelperBody { " + helper_body + " }")
+        if body is None:
+            continue
         factories.append({"id": m.group(1), "aggregate": _aggregate(reg, m.start()),
                           "symbol": "toolFactories[\"%s\"]" % m.group(1),
                           "product_types": [m.group(2)],
