@@ -2,10 +2,9 @@
  * Reproducer for the std.parallelism completion edge used by Mesh.buildLoops.
  *
  * A single parallel-write/serial-read round is quiet and therefore cannot
- * witness task 6340. Repeating the shape over explicitly freed GC blocks makes
- * the allocator reuse addresses and exposes the missing TSan edge. The lane
- * runs `plain` and `annotated` in separate processes so one arm cannot poison
- * the other's shadow state.
+ * witness task 6340. Repeating the shape over fresh GC blocks exposes the
+ * missing TSan edge. The lane runs `plain` and `annotated` in separate
+ * processes so one arm cannot poison the other's shadow state.
  */
 module tools.sanitizer.parallel_loop_completion_probe;
 
@@ -37,8 +36,11 @@ void runRound(size_t round, bool annotated) {
 
     ulong sum;
     foreach (word; words) sum += word;
+    const expected = cast(ulong)kItems * (round * kItems)
+                   + cast(ulong)kItems * (kItems + 1) / 2;
+    if (sum != expected)
+        throw new Exception("parallel writer did not populate the whole block");
     g_probeChecksum += sum;
-    GC.free(raw);
 }
 
 int main(string[] args) {

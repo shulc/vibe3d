@@ -1679,6 +1679,7 @@ bool isAccessHeader(string line) {
 }
 
 enum kNoSourceFrame = "<no-source-frame>";
+enum kParallelCompletionFrame = "<std.parallelism-completion>";
 
 RaceReport[] parseReportFile(string path) {
     RaceReport[] out_;
@@ -1690,6 +1691,8 @@ RaceReport[] parseReportFile(string path) {
         // Collect this block until SUMMARY: or the next WARNING.
         string[] keys;
         string[] shown;
+        string[] accessHeaders;
+        string[] accessTopFrames;
         size_t j = i + 1;
         while (j < lines.length
                && !lines[j].canFind("WARNING: ThreadSanitizer:")
@@ -1697,6 +1700,7 @@ RaceReport[] parseReportFile(string path) {
             if (isAccessHeader(lines[j]) && keys.length < 2) {
                 size_t k = j + 1;
                 string picked, pickedLine;
+                const topFrame = k < lines.length ? lines[k].strip : "";
                 while (k < lines.length && lines[k].strip.startsWith("#")) {
                     auto key = frameKey(lines[k]);
                     if (key !is null && picked is null) {
@@ -1706,6 +1710,8 @@ RaceReport[] parseReportFile(string path) {
                 }
                 keys ~= (picked is null ? kNoSourceFrame : picked);
                 shown ~= (picked is null ? lines[j].strip : pickedLine);
+                accessHeaders ~= lines[j].strip;
+                accessTopFrames ~= topFrame;
                 j = k;
                 continue;
             }
@@ -1714,7 +1720,25 @@ RaceReport[] parseReportFile(string path) {
         RaceReport r;
         r.file = path;
         r.frames = shown;
-        if (keys.length == 2) { keys.sort(); r.signature = keys[0] ~ " ^ " ~ keys[1]; }
+        const block = lines[i .. j].join("\n");
+        // Phobos writes ParallelForeach's stack-local completion byte while a
+        // worker still polls it atomically. Classify that exact library shape
+        // before source-frame selection: the caller's wrapper is deeper in
+        // the stack, so an ordinary source-pair signature would vary with the
+        // delegate even though neither conflicting access is ours. Requiring
+        // both access headers, opApply as the write's #0, doIt and the pool
+        // loop keeps a real worker-body race visible.
+        const parallelCompletion = accessHeaders.length == 2
+            && accessHeaders[0].startsWith("Write of size 1")
+            && accessHeaders[1].startsWith("Previous atomic read of size 1")
+            && accessTopFrames[0].canFind("std.parallelism.ParallelForeach")
+            && accessTopFrames[0].canFind(".ParallelForeach.opApply(")
+            && block.canFind(".ParallelForeach.opApply(scope int(ulong) delegate).doIt()")
+            && block.canFind("std.parallelism.TaskPool.executeWorkLoop()");
+        if (parallelCompletion)
+            r.signature = kParallelCompletionFrame ~ " ^ "
+                        ~ kParallelCompletionFrame;
+        else if (keys.length == 2) { keys.sort(); r.signature = keys[0] ~ " ^ " ~ keys[1]; }
         else if (keys.length == 1) r.signature = keys[0] ~ " ^ " ~ kNoSourceFrame;
         else r.signature = kNoSourceFrame ~ " ^ " ~ kNoSourceFrame;
         out_ ~= r;
@@ -1753,11 +1777,12 @@ void removeReports(string tagGlob) {
 // ---------------------------------------------------------------------------
 void cmdTsanParallelCompletion() {
     enum string probeSource = "tools/sanitizer/parallel_loop_completion_probe.d";
-    enum string probeBinary = "./parallel-loop-completion-probe-tsan";
     enum int plainMin = 5;
     enum int plainMax = 25;
     enum int annotatedMin = 0;
     enum int annotatedMax = 3;
+    enum string residualSignature =
+        kParallelCompletionFrame ~ " ^ " ~ kParallelCompletionFrame;
 
     // The behavioural probe imports the production wrapper. This source census
     // closes the other half: a green helper test must not survive production
@@ -1785,8 +1810,18 @@ void cmdTsanParallelCompletion() {
     ok("tsan-parallel-completion: all 4 Mesh.buildLoops parallel branches "
      ~ "use the production completion wrapper");
 
+    const expectedResidual = loadExpected().any!(row =>
+        row.klass == "tolerated" && row.scenarios.canFind("sweep")
+        && row.signature == residualSignature && row.task == "6340");
+    if (!expectedResidual)
+        fail("tsan-parallel-completion: tsan_expected.txt does not carry task "
+           ~ "6340's tolerated std.parallelism residual for sweep");
+
     auto env = laneEnv();
     auto ldc = ldcPath();
+    immutable probeBinary = buildPath(
+        environment.get("VIBE3D_SAN_DUB_HOME", ""),
+        "parallel-loop-completion-probe-tsan");
     if (exists(probeBinary)) std.file.remove(probeBinary);
     scope(exit) if (exists(probeBinary)) std.file.remove(probeBinary);
     run([ldc, "-g", "-O0", "--fsanitize=thread",
@@ -1797,28 +1832,36 @@ void cmdTsanParallelCompletion() {
     if (!exists(probeBinary))
         fail("tsan-parallel-completion: compiler produced no " ~ probeBinary);
 
-    int runArm(string arm) {
-        const tag = "parallel-completion-" ~ arm;
+    int runArm(string tagSuffix, string mode) {
+        const tag = "parallel-completion-" ~ tagSuffix;
         removeReports(tag);
         auto armEnv = env.dup;
         const prefix = buildPath(getcwd(), "tsan-report-" ~ tag);
         armEnv["TSAN_OPTIONS"] = "halt_on_error=0:history_size=7:"
                                ~ "print_suppressions=1:exitcode=0:log_path="
                                ~ prefix;
-        auto outp = run([probeBinary, "--DRT-gcopt=gc:manual", arm], armEnv);
+        auto outp = run([probeBinary, "--DRT-gcopt=gc:manual", mode], armEnv);
         writeln("lane.d: [", tag, "] ", outp.strip);
         const count = cast(int)reportsFor(tag).length;
         writeln("lane.d: [", tag, "] ", count, " race report(s)");
         return count;
     }
 
-    const plain = runArm("plain");
+    const plain = runArm("plain", "plain");
+    const annotated = runArm("annotated", "annotated");
+    foreach (report; reportsFor("parallel-completion-annotated"))
+        if (report.signature != residualSignature)
+            fail("tsan-parallel-completion: annotated arm left a non-library "
+               ~ "signature: " ~ report.signature);
+    // fail() exits through core.stdc.exit and therefore skips scope(exit).
+    // Remove the temporary before any threshold can terminate this process.
+    if (exists(probeBinary)) std.file.remove(probeBinary);
+
     if (plain < plainMin || plain > plainMax)
         fail(format("tsan-parallel-completion: plain arm reported %d races; "
                   ~ "expected %d..%d around the measured 11", plain,
                     plainMin, plainMax));
 
-    const annotated = runArm("annotated");
     if (annotated < annotatedMin || annotated > annotatedMax)
         fail(format("tsan-parallel-completion: annotated arm reported %d "
                   ~ "races; expected %d..%d around the measured 1", annotated,
@@ -1826,7 +1869,6 @@ void cmdTsanParallelCompletion() {
     if (annotated >= plain)
         fail(format("tsan-parallel-completion: annotation did not reduce the "
                   ~ "race count (%d annotated vs %d plain)", annotated, plain));
-
     ok(format("tsan-parallel-completion: plain=%d in [%d,%d], annotated=%d "
             ~ "in [%d,%d]", plain, plainMin, plainMax, annotated,
               annotatedMin, annotatedMax));
@@ -1985,6 +2027,12 @@ void cmdPreflightTsan() {
     // wrong process.
     if (!exists(kTsanWorkflow)) fail("no " ~ kTsanWorkflow);
     auto wf = readText(kTsanWorkflow);
+    enum witnessCommand =
+        "run: rdmd tools/sanitizer/lane.d tsan-parallel-completion";
+    if (wf.split(witnessCommand).length != 2)
+        fail(kTsanWorkflow ~ " must carry exactly one live `" ~ witnessCommand
+           ~ "` step; otherwise the committed reproducer is outside the lane");
+    ok(kTsanWorkflow ~ " runs the parallel-completion witness exactly once");
     foreach (i, ln; wf.lineSplitter.array)
         if (ln.canFind("symbolize=0"))
             fail(format("%s:%d carries symbolize=0: %s\nMeasured: it silently "
@@ -2430,7 +2478,7 @@ void cmdTsanShutdown() {
         // contrast before the measurement started — the readiness probe would
         // have supplied exactly the happens-before edge whose absence arm A is
         // supposed to represent.
-        auto ins = spawnInstance(spec, arm, null, kTsanSupp, ReadyMode.bridgeFree);
+        auto ins = spawnInstance(spec, arm, null, null, ReadyMode.bridgeFree);
         if (arm == "shutdownB") {
             auto r = httpGet(ins.port, "/api/layers", 30);
             writeln("lane.d: [", arm, "] /api/layers connected=", r.connected,
@@ -2619,7 +2667,7 @@ void cmdTsanSweep(string[] args) {
     // leaves yesterday's reports and sentinel available to tonight's verdict.
     checkSweepCompleteness();
 
-    auto ins = spawnInstance(spec, tag, null, kTsanSupp);
+    auto ins = spawnInstance(spec, tag);
     scope(failure) killInstance(ins);
 
     atomicStore(g_sweepStop, false);
@@ -2841,7 +2889,7 @@ void cmdTsanSweep(string[] args) {
 void cmdTsanBridge() {
     auto spec = specFor("tsan");
     removeReports("bridge");
-    auto ins = spawnInstance(spec, "bridge", null, kTsanSupp);
+    auto ins = spawnInstance(spec, "bridge");
     scope(failure) killInstance(ins);
     const port = ins.port;
 

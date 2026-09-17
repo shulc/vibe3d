@@ -44,9 +44,3 @@
 # Matched block) and once with it (expect 0 reports and `Matched 1
 # suppressions`). That one control proves symbolisation produces names, that
 # matching is by name, and that the audit's parser sees the block.
-
-# 2026-09-17 | 6340 | Phobos' ParallelForeach completion bookkeeping races in
-# TSan's model after the caller-side acquire has removed our worker/main pairs.
-# `race_top` is deliberate: an actual race in our loop body has our worker as
-# its top access frame and must remain visible to the lane.
-race_top:std.parallelism.ParallelForeach
