@@ -6,6 +6,7 @@ import application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome, CommandInvocationResult;
 import command : Command, CommandOrigin;
 import command_history : CommandHistory;
+import commands.tool.host : ToolHostReadView;
 import commands.actr : ActrPresetCommand;
 import commands.falloff : FalloffPresetCommand, FalloffAddCommand,
     FalloffRemoveCommand, FalloffClearCommand, FalloffAutoSizeCommand,
@@ -82,7 +83,8 @@ private string typeOf(FalloffStage stage) {
 
 private void registerPipe(LiveRegistrationRig rig) {
     registerPipeStageCommands(
-        rig.registry, rig.liveSession(), rig.liveViewMode(), &rig.host);
+        rig.registry, rig.liveSession(), rig.liveViewMode(),
+        ToolHostReadView(&rig.host));
 }
 
 private CommandInvocationResult invokeApplied(
@@ -315,7 +317,7 @@ unittest { // P3: all 27 factories resolve mesh/View/Mode at creation
         "5990 P3 late-mode witness did not inspect all factories");
 }
 
-unittest { // P4: ToolHost is dereferenced at command creation
+unittest { // P4: ToolHost is read at command creation
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
     auto rig = new LiveRegistrationRig;
@@ -368,9 +370,10 @@ unittest { // P6: production owns the narrow registrar call and ordering
     assert(moduleCode.count("reg.commandFactories[") == 12,
         format("5990 P6 factory-row population changed to %s",
                moduleCode.count("reg.commandFactories[")));
-    assert(moduleCode.count("*host") == 6,
-        format("5990 P6 ToolHost dereference population changed to %s",
-               moduleCode.count("*host")));
+    assert(moduleCode.count("host.read()") == 6
+            && moduleCode.count("*host") == 0,
+        format("5990 P6 ToolHost factory-read population changed to %s",
+               moduleCode.count("host.read()")));
 
     immutable classNames = [
         "WorkplaneResetCommand", "WorkplaneEditCommand",
@@ -395,10 +398,10 @@ unittest { // P6: production owns the narrow registrar call and ordering
     enum productionCall =
         "registerPipeStageCommands(app.reg(), LiveSessionRole(app.sessionOwner), "
       ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
-      ~ "app.toolHostPtr);";
+      ~ "app.toolHostView);";
     assert(flat.count(productionCall) == 1,
         "5990 P6 production call no longer passes the real Session, live "
-      ~ "View/Mode source, and ToolHost pointer inline");
+      ~ "View/Mode source, and ToolHost read view inline");
     const callAt = flat.indexOf(productionCall);
     const wrapperAt = flat.indexOf(
         "auto selTypeSrc = () => currentSelType(selTypeOrder);");
@@ -406,6 +409,7 @@ unittest { // P6: production owns the narrow registrar call and ordering
         "5990 P6 pipe registration moved after currentType wrapping");
     assert(editorApp.count("toolHost()") == 0,
         "5990 P6 EditorApp retained the ToolHost forwarder");
-    assert(editorApp.count("ToolHost* toolHostPtr;") == 1,
-        "5990 P6 EditorApp lost the narrow ToolHost pointer");
+    assert(editorApp.count("ToolHostReadView toolHostView;") == 1
+            && editorApp.count("toolHostPtr") == 0,
+        "5990 P6 EditorApp lost the narrow ToolHost read view or retained the retired channel");
 }

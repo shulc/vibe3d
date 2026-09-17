@@ -10,6 +10,7 @@ import commands.tool.attr : ToolAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand,
     ToolClearSoftPinForTestCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
+import commands.tool.host : ToolHost;
 import commands.tool.panel_edit : ToolPanelEditCommand;
 import commands.tool.pipe : ToolPipeAttrCommand;
 import commands.tool.reset : ToolResetCommand;
@@ -217,13 +218,33 @@ unittest { // U3: factories resolve live mesh/View/Mode at creation time
         "5980 tool.doApply undo touched inactive layer A");
 }
 
-unittest { // U4: ToolHost is dereferenced after its late member is rebound
+unittest { // U4: ToolHost is read after its late member is rebound
     auto rig = new LiveRegistrationRig;
     rig.registerLifecycle();
     rig.bindLiveReset();
     rig.adapter.dispatchScript("tool.reset", "", false);
     assert(rig.liveResets == 1 && rig.staleResets == 0,
         "5980 late ToolHost member witness used the registration-time reset");
+}
+
+unittest { // U4b: a whole-host reassignment is read again by the same id
+    auto rig = new LiveRegistrationRig;
+    rig.registerLifecycle();
+    rig.bindLiveReset();
+    rig.adapter.dispatchScript("tool.reset", "", false);
+    assert(rig.liveResets == 1 && rig.staleResets == 0,
+        "6350 U4b population: the first tool.reset did not reach the live reset");
+    size_t replacementResets;
+    ToolHost replacement = rig.host;
+    replacement.resetActiveTool = (string id) {
+        ++replacementResets;
+        return true;
+    };
+    rig.host = replacement;
+    rig.adapter.dispatchScript("tool.reset", "", false);
+    assert(replacementResets == 1 && rig.liveResets == 1
+            && rig.staleResets == 0,
+        "6350 U4b the second tool.reset reused the first creation's ToolHost");
 }
 
 unittest { // U5: interactive attr writes use the binding's EditSession
@@ -408,8 +429,9 @@ unittest { // U8: production owns the same live inputs and wrapper order
             "5980 narrow registrar regained forbidden code: " ~ forbidden);
     assert(registrar.count("reg.commandFactories[") == 18,
         "5980 U8 registrar no longer contains exactly 18 factory rows");
-    assert(registrar.count("*host") == 9,
-        "5980 U8 ToolHost dereference population changed from nine");
+    assert(registrar.count("host.read()") == 9
+            && registrar.count("*host") == 0,
+        "5980 U8 ToolHost factory-read population changed from nine");
 
     immutable classNames = [
         "ToolSetCommand", "ToolReleaseCommand", "ToolAttrCommand",
@@ -434,15 +456,15 @@ unittest { // U8: production owns the same live inputs and wrapper order
     enum productionCall =
         "registerToolLifecycleCommands(app.reg(), LiveSessionRole(app.sessionOwner),\n"
       ~ "        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),\n"
-      ~ "        app.toolHostPtr);";
+      ~ "        app.toolHostView);";
     assert(registration.count(productionCall) == 1,
         "5980 U8 production call no longer passes the real Session, live "
-      ~ "View/Mode source, and ToolHost pointer inline");
+      ~ "View/Mode source, and ToolHost read view inline");
     const callAt = registration.indexOf(productionCall);
     assert(callAt >= 0,
         "5980 U8 lifecycle production-call population floor is empty");
     immutable productionFields = [
-        "sessionOwner", "cameraViewDg", "toolHostPtr",
+        "sessionOwner", "cameraViewDg", "toolHostView",
     ];
     assert(productionFields.length == 3,
         "5980 U8 lifecycle input-field census must name exactly three fields");
@@ -450,7 +472,7 @@ unittest { // U8: production owns the same live inputs and wrapper order
         assert(registration.count("app." ~ field) >= 1,
             "5980 U8 lifecycle input field is absent from registration.d: " ~ field);
     enum lifecycleInputRebinding = ctRegex!(
-        `app\.(sessionOwner|cameraViewDg|toolHostPtr)[ \t\r\n]*=[^=]`);
+        `app\.(sessionOwner|cameraViewDg|toolHostView)[ \t\r\n]*=[^=]`);
     size_t reboundInputs;
     foreach (_; matchAll(registration, lifecycleInputRebinding))
         ++reboundInputs;
@@ -466,11 +488,13 @@ unittest { // U8: production owns the same live inputs and wrapper order
       ~ "18 commands reads it, so source order is the only witness");
 
     const sessionAt = app.indexOf("toolHost.session = () => session;");
-    const hostAt = app.indexOf("app.toolHostPtr = &toolHost;");
+    const hostAt = app.indexOf(
+        "app.toolHostView = ToolHostReadView(&toolHost);");
     assert(sessionAt >= 0 && app.count("toolHost.session = () => session;") == 1,
         "5980 U8 production ToolHost lost its EditSession binding");
-    assert(hostAt > sessionAt && app.count("app.toolHostPtr = &toolHost;") == 1,
-        "5980 U8 production ToolHost pointer must be published after session binding");
+    assert(hostAt > sessionAt
+            && app.count("app.toolHostView = ToolHostReadView(&toolHost);") == 1,
+        "5980 U8 production ToolHost read view must be bound after session binding");
     assert(app.count("reg, executor, session, history,") == 1,
         "5980 U8 ApplicationCommandBinding no longer receives the same EditSession");
 }

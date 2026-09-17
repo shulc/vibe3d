@@ -5,7 +5,7 @@ import commands.tool.attr : ToolAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand,
     ToolClearSoftPinForTestCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
-import commands.tool.host : ToolHost;
+import commands.tool.host : ToolHostReadView;
 import commands.tool.panel_edit : ToolPanelEditCommand;
 import commands.tool.pipe : ToolPipeAttrCommand;
 import commands.tool.reset : ToolResetCommand;
@@ -21,33 +21,32 @@ import commands.ui.viewport_props : UiViewportPropsCommand;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
-/// Tool-lifecycle factories resolve primary/View/Mode and dereference
-/// ToolHost when each command is created; the pointer is required because
-/// resetActiveTool is bound after registration (task 5980; evidence:
+/// Tool-lifecycle factories resolve primary/View/Mode and read ToolHostReadView
+/// when each command is created; resetActiveTool is bound after registration
+/// (tasks 5980, 6350; evidence:
 /// tool_lifecycle_registration_test).
 void registerToolLifecycleCommands(ref Registry reg, LiveSessionRole owner,
-        LiveViewModeRole live, ToolHost* host) {
-    assert(host !is null, "tool lifecycle registration requires ToolHost");
+        LiveViewModeRole live, ToolHostReadView host) {
 
     reg.commandFactories["tool.set"] = () => cast(Command)
-        new ToolSetCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolSetCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.release"] = () => cast(Command)
-        new ToolReleaseCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolReleaseCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.attr"] = () => cast(Command)
-        new ToolAttrCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolAttrCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.doApply"] = () => cast(Command)
-        new ToolDoApplyCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolDoApplyCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.reset"] = () => cast(Command)
-        new ToolResetCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolResetCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
-        new ToolPipeAttrCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolPipeAttrCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     // Test-only hooks reject themselves unless the process is in test mode.
     reg.commandFactories["tool.beginSession"] = () => cast(Command)
-        new ToolBeginSessionCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolBeginSessionCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.clearSoftPinForTest"] = () => cast(Command)
-        new ToolClearSoftPinForTestCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolClearSoftPinForTestCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["tool.panelEdit"] = () => cast(Command)
-        new ToolPanelEditCommand(&owner.activeMesh(), live.view(), live.mode, *host);
+        new ToolPanelEditCommand(&owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["ui.toolProperties"] = () => cast(Command)
         new UiToolPropertiesCommand(&owner.activeMesh(), live.view(), live.mode);
     reg.commandFactories["ui.layerList"] = () => cast(Command)

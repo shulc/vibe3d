@@ -6,7 +6,7 @@ import application_command_binding : ApplicationCommandBinding;
 import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
-import commands.tool.host : ToolHost;
+import commands.tool.host : ToolHost, ToolHostReadView;
 import document : Layer;
 import edit_session : EditSession;
 import editmode : EditMode;
@@ -32,8 +32,8 @@ private void noOpParkMouse() {}
 private void noOpClosePie() {}
 
 /// Shared by registration slices F-I. This is a class because the binding
-/// retains &registry and registrars retain &host; moving a struct would stale
-/// both pointers (task 5980; evidence: this module and each family test).
+/// retains &registry and registrar views bind &host; moving a struct would
+/// stale both addresses (task 5980; evidence: this module and each family test).
 final class LiveRegistrationRig {
     Session* session;
     Layer layerA;
@@ -136,7 +136,7 @@ final class LiveRegistrationRig {
 
     void registerLifecycle() {
         registerToolLifecycleCommands(
-            registry, liveSession(), liveViewMode(), &host);
+            registry, liveSession(), liveViewMode(), ToolHostReadView(&host));
     }
 
     void bindStaleReset() {

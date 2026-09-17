@@ -209,7 +209,7 @@ import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
 import snapshot : SelectionSnapshot;
-import commands.tool.host     : ToolHost;
+import commands.tool.host     : ToolHostReadView;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr;
@@ -750,9 +750,8 @@ struct EditorApp {
     // the panel state itself and are not pointers back into main().
     HistoryPanelState historyPanelState;
 
-    // ---- (а) pointer-backed, wired AFTER the ToolHost block in main()
-    //      (Span A precedes ToolHost's declaration and never touches it) ----
-    ToolHost* toolHostPtr;
+    // ---- late-bound read view, wired AFTER the ToolHost block in main() ----
+    ToolHostReadView toolHostView;
 
     // ---- modal clusters (grouped sub-structs, see above) ----
     Ai3dModalRefs   ai3dRefs;

@@ -988,11 +988,11 @@ void registerCommands(EditorApp app) {
     // those locals, which is a change of shape, not a slice.
     registerToolLifecycleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-        app.toolHostPtr);
+        app.toolHostView);
     registerItemCommands(app);
     registerPipeStageCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-        app.toolHostPtr);
+        app.toolHostView);
     registerSelectionCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         SelectionTypeDoors(app.sessionOwner.editModePtr(),

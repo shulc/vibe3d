@@ -1,8 +1,7 @@
 /// Workplane, action-centre and falloff factories resolve the Session mesh,
-/// live View/Mode and ToolHost when each command is created. The ToolHost
-/// pointer follows the shared F §6 interface; this family reads only
-/// `.session`, which is bound before registration. Value-parameter helpers
-/// keep each dynamic row distinct (task 5990; evidence:
+/// live View/Mode and read ToolHostReadView at command creation, like the
+/// lifecycle family. Value-parameter helpers keep each dynamic row distinct
+/// (tasks 5990, 6350; evidence:
 /// pipe_command_registration_test).
 module pipe_command_registration;
 
@@ -11,7 +10,7 @@ import commands.actr : ActrPresetCommand;
 import commands.falloff : FalloffPresetCommand, FalloffAddCommand,
                           FalloffRemoveCommand, FalloffClearCommand,
                           FalloffAutoSizeCommand, FalloffReverseCommand;
-import commands.tool.host : ToolHost;
+import commands.tool.host : ToolHostReadView;
 import commands.workplane : WorkplaneResetCommand, WorkplaneEditCommand,
                             WorkplaneRotateCommand, WorkplaneOffsetCommand,
                             WorkplaneAlignToSelectionCommand;
@@ -19,8 +18,7 @@ import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : CommandFactory, Registry;
 
 void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
-        LiveViewModeRole live, ToolHost* host) {
-    assert(host !is null, "pipe command registration requires a ToolHost");
+        LiveViewModeRole live, ToolHostReadView host) {
 
     // workplane.* commands target the singleton WorkplaneStage.
     reg.commandFactories["workplane.reset"] = () => cast(Command)
@@ -65,7 +63,7 @@ void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
     CommandFactory makeFalloffFactory(string ty) {
         return () => cast(Command)
             new FalloffPresetCommand(&owner.activeMesh(), live.view(),
-                                     live.mode, *host, ty);
+                                     live.mode, host.read(), ty);
     }
     static immutable string[] falloffTypes =
         ["linear", "radial", "cylinder", "screen", "lasso", "vertexMap"];
@@ -74,17 +72,17 @@ void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
 
     reg.commandFactories["falloff.add"] = () => cast(Command)
         new FalloffAddCommand(
-            &owner.activeMesh(), live.view(), live.mode, *host);
+            &owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["falloff.remove"] = () => cast(Command)
         new FalloffRemoveCommand(
-            &owner.activeMesh(), live.view(), live.mode, *host);
+            &owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["falloff.clear"] = () => cast(Command)
         new FalloffClearCommand(
-            &owner.activeMesh(), live.view(), live.mode, *host);
+            &owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["falloff.autosize"] = () => cast(Command)
         new FalloffAutoSizeCommand(
-            &owner.activeMesh(), live.view(), live.mode, *host);
+            &owner.activeMesh(), live.view(), live.mode, host.read());
     reg.commandFactories["falloff.reverse"] = () => cast(Command)
         new FalloffReverseCommand(
-            &owner.activeMesh(), live.view(), live.mode, *host);
+            &owner.activeMesh(), live.view(), live.mode, host.read());
 }

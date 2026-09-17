@@ -133,7 +133,7 @@ import macro_recorder : MacroRecorder;
 import step_trace : StepTrace;
 import snapshot : SelectionSnapshot;
 
-import commands.tool.host     : ToolHost;
+import commands.tool.host     : ToolHost, ToolHostReadView;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr;
@@ -3492,7 +3492,7 @@ void main(string[] args) {
     // -------------------------------------------------------------------------
     // EditorApp ctx assembly (task 0415, campaign 0407 §B.V1 step 1) -- every
     // field below is wired from live storage available above this point,
-    // except `toolHostPtr` (ToolHost is declared further down; its wiring
+    // except `toolHostView` (ToolHost is declared further down; its wiring
     // sits right after the ToolHost block, before registerCommands(app) is
     // called). Passed BY VALUE into registerTools/registerCommands, which
     // open `with (app) { ... }` so the moved factory-registration text below
@@ -3756,17 +3756,17 @@ void main(string[] args) {
     // variable itself is declared just above dropActiveTool so the nested
     // function can see it). Commands reach the session through the ToolHost
     // bridge — the same delegate pattern as getActiveTool — assigned BEFORE
-    // toolHostPtr / registerCommands below so every ToolHost copy taken later
+    // toolHostView / registerCommands below so every ToolHost copy taken later
     // carries the accessor.
     session = new EditSession(
         () => activeTool,
         history,
         () { dropActiveTool(ToolTransition.editCancelDrop); });
     toolHost.session = () => session;
-    // task 0415 Phase 1: wire the ctx's toolHostPtr now that `toolHost` is
+    // task 0415 Phase 1: wire the ctx's toolHostView now that `toolHost` is
     // fully assembled -- Span A (registerTools, above) never touches it;
     // Span B below (registerCommands, Phase 2) does.
-    app.toolHostPtr = &toolHost;
+    app.toolHostView = ToolHostReadView(&toolHost);
 
     // Task 0415 Phase 2: former Span B (tool.*/ui.*/layer.*/ai3d.*/
     // workplane.*/actr.*/falloff.*/select.*/mesh.*/history.*/macro.*
