@@ -19,7 +19,8 @@ import mesh : Mesh, Surface;
 public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta;
 import core.atomic;
-import perf_probe : g_perf, g_frames, g_fc, g_commandGc;
+import perf_probe : g_perf, g_frames, g_fc, g_commandGc, FrameWorkProbe,
+                    FrameWorkSnapshot;
 
 // For event player functionality
 import bindbc.sdl;
@@ -85,7 +86,11 @@ enum BridgeResultKind : ubyte {
     timedOut,
     completed,
     stopping,
+    failed,
 }
+
+enum OwnedClaim : ubyte { pending, claimed, completed, failed, expired, stopping }
+enum ClaimProbePoint : ubyte { enqueued, extracted, claimed, pendingWait, claimedWait }
 
 final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     private shared long submitted = 0;
@@ -101,6 +106,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         long requestIdentity = 0;
         long serviceResultIdentity = 0;
         shared int finished = 0;
+        OwnedClaim claim = OwnedClaim.pending;
 
         this(Req request, Resp initialResult, MonoTime deadline,
              long requestIdentity, long serviceResultIdentity) {
@@ -121,6 +127,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     }
 
     private OwnedCall[] ownedPending = null;
+    private OwnedCall[] claimPending = null;
     private shared long nextOwnedIdentity = 0;
     private shared bool ownedStopping = false;
     private Mutex ownedWaitMutex;
@@ -141,6 +148,15 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         private shared long ownedConditionWaitsForTest_ = 0;
         private shared long ownedConditionReturnsForTest_ = 0;
         private shared bool suppressOwnedCompletionNotifyForTest_ = false;
+        private shared bool holdClaimEnqueuedForTest_ = false;
+        private shared bool claimEnqueuedReachedForTest_ = false;
+        private shared bool holdClaimExtractedForTest_ = false;
+        private shared bool claimExtractedReachedForTest_ = false;
+        private shared bool holdClaimedForTest_ = false;
+        private shared bool claimedReachedForTest_ = false;
+        private shared long pendingWaitsForTest_ = 0;
+        private shared long claimedWaitsPastDeadlineForTest_ = 0;
+        private shared long claimedWaitsWhileStoppingForTest_ = 0;
     }
 
     this(HttpServer owner, void delegate(ref Req, ref Resp) service,
@@ -256,7 +272,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
             atomicStore(ownedStopping, true);
             ownedWaitCondition.notifyAll();
         }
-        synchronized (this) ownedPending = null;
+        synchronized (this) {
+            ownedPending = null;
+            claimPending = null;
+        }
     }
 
     private long nextIdentity() {
@@ -342,6 +361,87 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         bool legacyPendingForTest() {
             return atomicLoad(submitted) > atomicLoad(completed);
         }
+
+        size_t claimPendingForTest() {
+            synchronized (this) return claimPending.length;
+        }
+
+        void holdClaimForTest(ClaimProbePoint point, bool held) {
+            final switch (point) {
+            case ClaimProbePoint.enqueued:
+                if (held) atomicStore(claimEnqueuedReachedForTest_, false);
+                atomicStore(holdClaimEnqueuedForTest_, held);
+                break;
+            case ClaimProbePoint.extracted:
+                if (held) atomicStore(claimExtractedReachedForTest_, false);
+                atomicStore(holdClaimExtractedForTest_, held);
+                break;
+            case ClaimProbePoint.claimed:
+                if (held) atomicStore(claimedReachedForTest_, false);
+                atomicStore(holdClaimedForTest_, held);
+                break;
+            case ClaimProbePoint.pendingWait:
+            case ClaimProbePoint.claimedWait:
+                assert(false, "wait probe points cannot be held");
+            }
+        }
+
+        bool claimReachedForTest(ClaimProbePoint point) {
+            final switch (point) {
+            case ClaimProbePoint.enqueued:
+                return atomicLoad(claimEnqueuedReachedForTest_);
+            case ClaimProbePoint.extracted:
+                return atomicLoad(claimExtractedReachedForTest_);
+            case ClaimProbePoint.claimed:
+                return atomicLoad(claimedReachedForTest_);
+            case ClaimProbePoint.pendingWait:
+                return atomicLoad(pendingWaitsForTest_) != 0;
+            case ClaimProbePoint.claimedWait:
+                return atomicLoad(claimedWaitsPastDeadlineForTest_) != 0
+                    || atomicLoad(claimedWaitsWhileStoppingForTest_) != 0;
+            }
+        }
+
+        long pendingWaitsForTest() {
+            return atomicLoad(pendingWaitsForTest_);
+        }
+
+        long claimedWaitsPastDeadlineForTest() {
+            return atomicLoad(claimedWaitsPastDeadlineForTest_);
+        }
+
+        long claimedWaitsWhileStoppingForTest() {
+            return atomicLoad(claimedWaitsWhileStoppingForTest_);
+        }
+
+        private void claimProbe(ClaimProbePoint point, OwnedCall call) {
+            final switch (point) {
+            case ClaimProbePoint.enqueued:
+                atomicStore(claimEnqueuedReachedForTest_, true);
+                while (atomicLoad(holdClaimEnqueuedForTest_)) Thread.sleep(1.msecs);
+                break;
+            case ClaimProbePoint.extracted:
+                atomicStore(claimExtractedReachedForTest_, true);
+                while (atomicLoad(holdClaimExtractedForTest_)) Thread.sleep(1.msecs);
+                break;
+            case ClaimProbePoint.claimed:
+                atomicStore(claimedReachedForTest_, true);
+                while (atomicLoad(holdClaimedForTest_)) Thread.sleep(1.msecs);
+                break;
+            case ClaimProbePoint.pendingWait:
+                atomicOp!"+="(pendingWaitsForTest_, 1);
+                break;
+            case ClaimProbePoint.claimedWait:
+                if (MonoTime.currTime >= call.deadline)
+                    atomicOp!"+="(claimedWaitsPastDeadlineForTest_, 1);
+                if (atomicLoad(ownedStopping))
+                    atomicOp!"+="(claimedWaitsWhileStoppingForTest_, 1);
+                break;
+            }
+        }
+    } else {
+        pragma(inline, true)
+        private void claimProbe(ClaimProbePoint, OwnedCall) {}
     }
 
     /// Main thread (called once per frame via HttpServer.tickAll()): runs
@@ -382,6 +482,115 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         if (sub <= atomicLoad(completed)) return;
         service(req, resp);
         atomicStore(completed, sub);
+    }
+
+    // Task 6357: this opt-in queue is served only by tickClaimed. Every state
+    // transition is under ownedWaitMutex: pending -> claimed -> completed or
+    // failed, or pending -> expired or stopping. A claimed call waits for its
+    // actual outcome; Throwable publication is explicit because cleanup around
+    // a nothrow delegate is not reliable for Error. Evidence: the task plan.
+    OwnedResult submitClaimed(Req request, Duration budget) {
+        auto call = new OwnedCall(request, Resp.init, MonoTime.currTime + budget,
+                                  nextIdentity(), nextIdentity());
+        bool queued = false;
+        synchronized (this) {
+            traceOwned(BridgeResultKind.submitted, call,
+                       call.serviceResultIdentity, Resp.init);
+            if (!atomicLoad(ownedStopping)) {
+                claimPending ~= call;
+                queued = true;
+            }
+        }
+        claimProbe(ClaimProbePoint.enqueued, call);
+        synchronized (ownedWaitMutex) {
+            if (!queued) call.claim = OwnedClaim.stopping;
+            for (;;) {
+                final switch (call.claim) {
+                case OwnedClaim.completed:
+                case OwnedClaim.failed:
+                    OwnedResult result;
+                    result.result = call.result;
+                    result.requestIdentity = call.requestIdentity;
+                    result.resultIdentity = call.serviceResultIdentity;
+                    result.kind = call.claim == OwnedClaim.failed
+                        ? BridgeResultKind.failed : BridgeResultKind.completed;
+                    return result;
+                case OwnedClaim.expired:
+                    return syntheticOwnedResult(call, Resp.init,
+                                                BridgeResultKind.timedOut);
+                case OwnedClaim.stopping:
+                    return syntheticOwnedResult(call, Resp.init,
+                                                BridgeResultKind.stopping);
+                case OwnedClaim.claimed:
+                    claimProbe(ClaimProbePoint.claimedWait, call);
+                    immutable now = MonoTime.currTime;
+                    if (now < call.deadline)
+                        ownedWaitCondition.wait(call.deadline - now);
+                    else
+                        ownedWaitCondition.wait();
+                    break;
+                case OwnedClaim.pending:
+                    if (atomicLoad(ownedStopping)) {
+                        call.claim = OwnedClaim.stopping;
+                        continue;
+                    }
+                    immutable now = MonoTime.currTime;
+                    if (now >= call.deadline) {
+                        call.claim = OwnedClaim.expired;
+                        continue;
+                    }
+                    claimProbe(ClaimProbePoint.pendingWait, call);
+                    ownedWaitCondition.wait(call.deadline - now);
+                    break;
+                }
+            }
+        }
+    }
+
+    void tickClaimed(scope void delegate(ref Req, ref Resp) nothrow service) {
+        OwnedCall[] batch;
+        synchronized (this) {
+            batch = claimPending;
+            claimPending = null;
+        }
+        foreach (call; batch) {
+            claimProbe(ClaimProbePoint.extracted, call);
+            bool won = false;
+            synchronized (ownedWaitMutex) {
+                if (call.claim == OwnedClaim.pending) {
+                    if (atomicLoad(ownedStopping))
+                        call.claim = OwnedClaim.stopping;
+                    else if (MonoTime.currTime >= call.deadline)
+                        call.claim = OwnedClaim.expired;
+                    else {
+                        call.claim = OwnedClaim.claimed;
+                        won = true;
+                    }
+                    if (!won) ownedWaitCondition.notifyAll();
+                }
+            }
+            if (!won) continue;
+            claimProbe(ClaimProbePoint.claimed, call);
+            try {
+                service(call.request, call.result);
+            } catch (Throwable error) {
+                publishClaimed(call, OwnedClaim.failed);
+                throw error;
+            }
+            publishClaimed(call, OwnedClaim.completed);
+        }
+    }
+
+    private void publishClaimed(OwnedCall call, OwnedClaim outcome) {
+        synchronized (this) {
+            traceOwned(outcome == OwnedClaim.failed ? BridgeResultKind.failed
+                                                    : BridgeResultKind.completed,
+                       call, call.serviceResultIdentity, call.result);
+        }
+        synchronized (ownedWaitMutex) {
+            call.claim = outcome;
+            ownedWaitCondition.notifyAll();
+        }
     }
 }
 
@@ -1131,6 +1340,12 @@ class HttpServer {
         playEventsStatusBridge;
     private Duration playEventsStatusBudget_ = 5.seconds;
 
+    enum FrameCountsOp : ubyte { read, reset }
+    struct FrameCountsReq { FrameCountsOp op; }
+    struct FrameCountsResp { FrameWorkSnapshot snapshot; }
+    private MainThreadBridge!(FrameCountsReq, FrameCountsResp) frameCountsBridge;
+    private Duration frameCountsBudget_ = 5.seconds;
+
     public this(ushort port = 8080) {
         this.port = port;
         atomicStore(this.isRunning, false);
@@ -1555,6 +1770,12 @@ class HttpServer {
             (ref PlayEventsStatusReq req, ref PlayEventsStatusResp resp) {
                 resp.result = encodePlaybackStatus(playbackController.status());
             }, "/api/play-events/status");
+
+        frameCountsBridge = new MainThreadBridge!(FrameCountsReq,
+                FrameCountsResp)(this,
+            (ref FrameCountsReq req, ref FrameCountsResp resp) {
+                assert(0, "frame-count bridge is served only by its owner tick");
+            }, "/api/frames/counts");
     }
 
     // Task 5820 invariant: both command entry services synchronously use this
@@ -1646,6 +1867,15 @@ class HttpServer {
         public void setToolHandlesBudgetForTest(Duration budget) {
             assert(budget >= Duration.zero);
             toolHandlesBudget_ = budget;
+        }
+
+        public void setFrameCountsBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            frameCountsBudget_ = budget;
+        }
+
+        public auto frameCountsBridgeForTest() {
+            return frameCountsBridge;
         }
 
         public auto modelOwnedTraceForTest() {
@@ -4444,6 +4674,7 @@ class HttpServer {
             case 404: return "HTTP/1.1 404 Not Found";
             case 500: return "HTTP/1.1 500 Internal Server Error";
             case 503: return "HTTP/1.1 503 Service Unavailable";
+            case 504: return "HTTP/1.1 504 Gateway Timeout";
             default:  return "HTTP/1.1 " ~ to!string(code) ~ " Unknown";
         }
     }
@@ -4470,6 +4701,22 @@ class HttpServer {
      */
     public bool tickEventPlayer() {
         return playbackController.tick();
+    }
+
+    /// Serve the two frame-count operations at the owner-thread frame boundary.
+    public void tickFrameCounts(ref FrameWorkProbe probe) {
+        FrameWorkProbe* owner = &probe;
+        frameCountsBridge.tickClaimed((ref FrameCountsReq req,
+                                       ref FrameCountsResp resp) nothrow {
+            final switch (req.op) {
+            case FrameCountsOp.read:
+                resp.snapshot = owner.snapshot();
+                break;
+            case FrameCountsOp.reset:
+                owner.reset();
+                break;
+            }
+        });
     }
 
     /**
@@ -5050,6 +5297,8 @@ unittest {
         "1740 status line: the readiness refusal is the ONE signal this task "
         ~ "produces, and its first line is what an external probe and every "
         ~ "log reader sees. Got `" ~ HttpServer.statusLineFor(503) ~ "`");
+    assert(HttpServer.statusLineFor(504) == "HTTP/1.1 504 Gateway Timeout",
+        "6357 status line: the pre-claim deadline must be a Gateway Timeout");
     assert(HttpServer.statusLineFor(403) == "HTTP/1.1 403 Forbidden",
         "1740 status line: 403 is emitted by eight routes here and read "
         ~ "`403 Unknown` before this task touched the switch. Got `"
