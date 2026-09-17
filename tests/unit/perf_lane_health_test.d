@@ -7,7 +7,7 @@ module tests.unit.perf_lane_health_test;
 
 import std.algorithm : canFind;
 import std.conv      : to;
-import std.file      : exists, remove, tempDir, write;
+import std.file      : exists, readText, remove, tempDir, write;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.process   : environment, execute, thisProcessID;
@@ -53,4 +53,24 @@ unittest
     assert(clean.status == 0,
         "the otherwise-identical clean fixture must pass lane health:\n"
         ~ clean.output);
+}
+
+unittest
+{
+    const drag = readText(buildPath(
+        repoRoot, "tools", "perf", "lib", "drag.d"));
+    assert(drag.canFind("auto model = meshProbe();"),
+        "6310 perf defence: vertexPos no longer uses the patient /api/model "
+        ~ "reader and can abort a whole large-mesh lane on one transport error");
+    assert(drag.canFind("immutable base = 3 * idx;")
+        && drag.canFind("return Vec3(model.pos[base], model.pos[base + 1], "
+            ~ "model.pos[base + 2]);"),
+        "6310 perf defence: vertexPos no longer maps the flat meshProbe "
+        ~ "coordinates back to the requested vertex");
+
+    const workflow = readText(buildPath(
+        repoRoot, ".github", "workflows", "perf.yaml"));
+    assert(workflow.canFind("/tmp/vibe3d_perf*.log"),
+        "6310 perf evidence: workflow no longer uploads the app logs that "
+        ~ "carry partial-response diagnostics");
 }

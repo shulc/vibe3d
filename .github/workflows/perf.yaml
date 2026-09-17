@@ -331,6 +331,7 @@ jobs:
           tools.log
           frames.log
           trend.log
+          /tmp/vibe3d_perf*.log
         retention-days: 90
 
     - name: 'Gate'

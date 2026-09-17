@@ -18,7 +18,7 @@ import std.json   : parseJSON;
 import std.math   : sqrt, tan, PI;
 import std.net.curl : get;
 
-import lib.http : g_baseUrl;
+import lib.http : g_baseUrl, meshProbe;
 
 struct Vec3 {
     float x = 0, y = 0, z = 0;
@@ -148,10 +148,12 @@ Vec3 fetchActionCenter() {
 }
 
 Vec3 vertexPos(int idx) {
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/model"));
-    auto v = j["vertices"].array[idx].array;
-    return Vec3(cast(float)v[0].floating, cast(float)v[1].floating,
-                cast(float)v[2].floating);
+    // meshProbe owns the patient /api/model retry used by the large-mesh
+    // paths. Task 6310 routes this formerly naked fetch through that same
+    // defence so one transport failure becomes a case error, not a dead lane.
+    auto model = meshProbe();
+    immutable base = 3 * idx;
+    return Vec3(model.pos[base], model.pos[base + 1], model.pos[base + 2]);
 }
 
 string buildDragLog(int vpX, int vpY, int vpW, int vpH,

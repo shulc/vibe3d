@@ -2196,18 +2196,19 @@ class HttpServer {
     // ever be served, and the timeout surfaces much later, blamed on whatever
     // was being measured (task 0652).
     //
-    // Two bounds close it. clientIoTimeout caps a single blocking recv/send,
-    // so an idle peer cannot park the loop; clientReadDeadline caps the whole
-    // request read, so a peer dribbling one byte per timeout cannot either.
-    // Both are enormous next to a real client, which sends its entire request
+    // Three bounds close it. clientIoTimeout caps one blocking recv/send,
+    // clientReadDeadline caps the whole request read, and clientWriteDeadline
+    // caps a response whose peer keeps making only partial progress.
+    // All three are enormous next to a real client, which sends its request
     // in one segment immediately. Hitting either is LOUD on stderr — closing a
     // connection without an answer must never be silent.
     //
     // Fields rather than manifest constants ONLY so an in-module unittest can
     // exercise the give-up paths in milliseconds instead of waiting the
     // production budget. Nothing in the app writes them.
-    Duration clientIoTimeout    =  5.seconds;
-    Duration clientReadDeadline = 15.seconds;
+    Duration clientIoTimeout     =  5.seconds;
+    Duration clientReadDeadline  = 15.seconds;
+    Duration clientWriteDeadline = 15.seconds;
 
     /// True when the last socket call failed only because a signal arrived.
     /// The GC's stop-the-world signals every thread, so a blocking recv() on
@@ -2222,6 +2223,46 @@ class HttpServer {
             return errno == EINTR;
         } else {
             return false;
+        }
+    }
+
+    // A blocking send may return a positive short count when the GC's signal
+    // interrupts it after the kernel copied some bytes. Keep advancing the
+    // SAME response until it is complete; task 6310's multi-megabyte fake
+    // socket and handleClient census are the behavioural and wiring evidence.
+    private static size_t sendHttpResponse(SocketLike)(
+            SocketLike client, const(void)[] response, Duration deadline,
+            out string failure) {
+        immutable startedAt = MonoTime.currTime;
+        size_t totalSent = 0;
+        while (totalSent < response.length) {
+            auto sent = client.send(response[totalSent .. $]);
+            if (sent > 0) {
+                totalSent += cast(size_t) sent;
+                if (totalSent < response.length
+                        && MonoTime.currTime - startedAt > deadline) {
+                    failure = "send still incomplete after "
+                        ~ deadline.to!string;
+                    break;
+                }
+                continue;
+            }
+            if (sent < 0 && interruptedBySignal()) {
+                if (MonoTime.currTime - startedAt <= deadline) continue;
+                failure = "send still incomplete after " ~ deadline.to!string;
+            } else {
+                failure = sent < 0 ? lastSocketError() : "stopped reading";
+            }
+            break;
+        }
+        return totalSent;
+    }
+
+    version(unittest) {
+        public static size_t sendHttpResponseForTest(SocketLike)(
+                SocketLike client, const(void)[] response, Duration deadline,
+                out string failure) {
+            return sendHttpResponse(client, response, deadline, failure);
         }
     }
 
@@ -2339,15 +2380,16 @@ class HttpServer {
             HttpResponse response = handleRequest(httpRequest);
 
             string responseStr = formatResponse(response);
-            auto sent = client.send(responseStr);
-            if (sent < 0 || cast(size_t) sent != responseStr.length) {
+            string sendFailure;
+            auto sent = sendHttpResponse(
+                client, responseStr, clientWriteDeadline, sendFailure);
+            if (sent != responseStr.length) {
                 // A peer that stops reading stalls the send the same way a
                 // silent peer stalled the receive — bounded by SNDTIMEO now,
                 // but a half-delivered answer is still no answer, so say it.
                 logWarn("http", format(
                     "peer %s took only %d of %d response bytes: %s",
-                    peer, sent, responseStr.length,
-                    sent < 0 ? lastSocketError() : "stopped reading"));
+                    peer, sent, responseStr.length, sendFailure));
             }
         } catch (Exception e) {
             logWarn("http", "Error handling client: " ~ e.msg);

@@ -4,7 +4,8 @@ import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : BridgeResultKind, HttpServer;
-import std.algorithm : canFind;
+import std.algorithm : canFind, count, min;
+import std.conv : to;
 import std.file : readText;
 import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
@@ -114,6 +115,80 @@ private string bodyAt(string code, string marker) {
     }
     assert(false, "5940 census body is unterminated " ~ marker);
     return null;
+}
+
+private final class ShortWriteSocket {
+    const(ubyte)[] expected;
+    size_t maxWrite;
+    size_t accepted;
+    size_t calls;
+
+    this(const(ubyte)[] expected, size_t maxWrite) {
+        this.expected = expected;
+        this.maxWrite = maxWrite;
+    }
+
+    ptrdiff_t send(const(void)[] raw) {
+        auto bytes = cast(const(ubyte)[]) raw;
+        immutable take = min(maxWrite, bytes.length);
+        assert(bytes[0 .. take] == expected[accepted .. accepted + take],
+            "6310 short-write socket saw a skipped or duplicated response slice");
+        accepted += take;
+        ++calls;
+        return cast(ptrdiff_t) take;
+    }
+}
+
+private final class ZeroWriteSocket {
+    size_t calls;
+
+    ptrdiff_t send(const(void)[]) {
+        ++calls;
+        return 0;
+    }
+}
+
+version (Posix)
+private final class InterruptOnceSocket {
+    const(ubyte)[] expected;
+    size_t accepted;
+    size_t calls;
+
+    this(const(ubyte)[] expected) {
+        this.expected = expected;
+    }
+
+    ptrdiff_t send(const(void)[] raw) {
+        import core.stdc.errno : errno, EINTR;
+        ++calls;
+        if (calls == 1) {
+            errno = EINTR;
+            return -1;
+        }
+        auto bytes = cast(const(ubyte)[]) raw;
+        assert(bytes == expected,
+            "6310 EINTR retry did not resume from the unsent response slice");
+        accepted += bytes.length;
+        return cast(ptrdiff_t) bytes.length;
+    }
+}
+
+version (Posix)
+private final class AlwaysInterruptedSocket {
+    ptrdiff_t send(const(void)[]) {
+        import core.stdc.errno : errno, EINTR;
+        errno = EINTR;
+        return -1;
+    }
+}
+
+version (Posix)
+private final class HardFailSocket {
+    ptrdiff_t send(const(void)[]) {
+        import core.stdc.errno : errno, EPIPE;
+        errno = EPIPE;
+        return -1;
+    }
 }
 
 private struct TimeoutCadenceSample {
@@ -749,6 +824,115 @@ unittest {
         "5730 layers shutdown: waiting request must receive its endpoint "
         ~ "500 stopping envelope while its socket is available: "
         ~ stoppingReply.wire);
+}
+
+unittest {
+    // These are the bytes from the 2026-09-16 failure: the first send stopped
+    // at 7,491,072 of a 13,637,433-byte /api/model response. Keeping the
+    // multi-megabyte shape is essential; a small-response cell passes with the
+    // old one-shot send and is not evidence for this defect.
+    enum size_t responseBytes = 13_637_433;
+    enum size_t firstWriteBytes = 7_491_072;
+    auto response = new ubyte[responseBytes];
+    foreach (i, ref value; response)
+        value = cast(ubyte)((i * 31 + 7) & 0xff);
+
+    auto socket = new ShortWriteSocket(response, firstWriteBytes);
+    string failure;
+    immutable sent = HttpServer.sendHttpResponseForTest(
+        socket, cast(const(void)[]) response, 1.seconds, failure);
+    assert(sent == response.length,
+        "6310 partial-send witness: returned " ~ sent.to!string ~ " of "
+        ~ response.length.to!string ~ " bytes");
+    assert(socket.accepted == response.length,
+        "6310 partial-send witness: socket accepted "
+        ~ socket.accepted.to!string ~ " of " ~ response.length.to!string
+        ~ " bytes");
+    assert(socket.calls == 2,
+        "6310 partial-send witness: incident-sized response should need two "
+        ~ "short writes, got " ~ socket.calls.to!string);
+    assert(failure.length == 0,
+        "6310 partial-send witness: complete response reported failure: "
+        ~ failure);
+
+    auto deadlineSocket = new ShortWriteSocket(response, firstWriteBytes);
+    string deadlineFailure;
+    immutable deadlineSent = HttpServer.sendHttpResponseForTest(
+        deadlineSocket, cast(const(void)[]) response, Duration.zero,
+        deadlineFailure);
+    assert(deadlineSent == firstWriteBytes
+        && deadlineSocket.accepted == firstWriteBytes
+        && deadlineFailure.canFind("send still incomplete after"),
+        "6310 send deadline witness: positive short writes escaped the "
+        ~ "whole-response deadline");
+
+    auto zeroSocket = new ZeroWriteSocket();
+    string zeroFailure;
+    immutable zeroSent = HttpServer.sendHttpResponseForTest(
+        zeroSocket, cast(const(void)[]) response, 1.seconds, zeroFailure);
+    assert(zeroSent == 0 && zeroSocket.calls == 1
+        && zeroFailure == "stopped reading",
+        "6310 zero-write witness: no-progress send did not fail loudly");
+}
+
+version (Posix)
+unittest {
+    import core.stdc.errno : errno;
+
+    immutable savedErrno = errno;
+    scope(exit) errno = savedErrno;
+
+    const response = cast(const(ubyte)[]) "signal-interrupted response";
+    auto socket = new InterruptOnceSocket(response);
+    string failure;
+    immutable sent = HttpServer.sendHttpResponseForTest(
+        socket, cast(const(void)[]) response, 1.seconds, failure);
+    assert(sent == response.length,
+        "6310 EINTR witness: interrupted send was not retried");
+    assert(socket.calls == 2 && socket.accepted == response.length,
+        "6310 EINTR witness: retry did not deliver the full response");
+    assert(failure.length == 0,
+        "6310 EINTR witness: successful retry reported failure: " ~ failure);
+
+    string deadlineFailure;
+    immutable deadlineSent = HttpServer.sendHttpResponseForTest(
+        new AlwaysInterruptedSocket(), cast(const(void)[]) response,
+        Duration.zero, deadlineFailure);
+    assert(deadlineSent == 0 && deadlineFailure.canFind(
+            "send still incomplete after"),
+        "6310 send deadline witness: repeated EINTR did not end loudly");
+
+    string hardFailure;
+    immutable hardSent = HttpServer.sendHttpResponseForTest(
+        new HardFailSocket(), cast(const(void)[]) response,
+        1.seconds, hardFailure);
+    assert(hardSent == 0 && hardFailure.length != 0
+        && hardFailure != "stopped reading",
+        "6310 hard send failure witness: socket error reason was lost");
+}
+
+unittest {
+    immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable rawSource = readText(
+        buildPath(root, "source", "http_server.d"));
+    immutable source = blankNonCode(rawSource);
+    immutable handle = bodyAt(source,
+        "private void handleClient(Socket client)");
+    assert(handle.count("sendHttpResponse(") == 1,
+        "6310 production wiring: handleClient must route its one response "
+        ~ "through the partial-write retry helper");
+    assert(handle.canFind(
+            "client, responseStr, clientWriteDeadline, sendFailure"),
+        "6310 production wiring: handleClient stopped applying its whole-send "
+        ~ "deadline to the retry helper");
+    assert(handle.canFind("if (sent != responseStr.length)"),
+        "6310 failure wiring: incomplete responses must retain the loud warning");
+    assert(rawSource.canFind("took only %d of %d response bytes"),
+        "6310 failure wiring: incomplete-response diagnostic text vanished");
+    assert(!handle.canFind("client.send(responseStr)"),
+        "6310 production wiring: the old one-shot response send returned");
+    assert(source.canFind("Duration clientWriteDeadline = 15.seconds;"),
+        "6310 send deadline: production whole-response budget changed");
 }
 
 unittest {
