@@ -851,8 +851,8 @@ private void registerEditTools(EditorApp app) {
 /// roles and narrow collaborators at the calls below, so they do not resolve
 /// those inputs through the residual nested `with` block.
 void registerCommands(EditorApp app) {
-    // Task 0722 (audit §2C A9): the family functions and narrow registrars
-    // below are called in the flat list's order. The task-0621 selection-type wrap
+    // The family functions and narrow registrars below are called in the flat
+    // list's order. The task-0621 selection-type wrap
     // stays HERE and stays LAST -- it walks the FINISHED dictionary, so it
     // must run after every family. It also depends on app.d calling
     // registerTools BEFORE registerCommands, because ~13 tool-paired
