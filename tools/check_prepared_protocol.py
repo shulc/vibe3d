@@ -1435,6 +1435,38 @@ if not mutation_rejected(change_expression_factory_defaults_row,
                          "direct-body/product census changed"):
     fail("P1.0b.0 expression-factory defaults mutation did not RED fingerprint")
 
+def capture_paired_factory_early(root):
+    p = root / "source/registration.d"
+    text = p.read_text()
+    assign = "    reg.toolFactories[id] = typedToolFactory!T(factory);\n"
+    lookup = "                                id, regPtr.toolFactories[id]);\n"
+    if text.count(assign) != 1 or text.count(lookup) != 1:
+        fail("P1.0b.0 paired early-capture mutation anchor vanished")
+    text = text.replace(assign, assign
+        + "    auto captured = regPtr.toolFactories[id];\n", 1)
+    text = text.replace(lookup, "                                id, captured);\n", 1)
+    p.write_text(text)
+if not mutation_rejected(capture_paired_factory_early,
+                         "direct-body/product census changed"):
+    fail("P1.0b.0 paired early capture did not RED fingerprint")
+
+def swap_paired_factory_row(root):
+    p = root / "source/registration.d"
+    text = p.read_text()
+    sphere = "new SphereTool(() => &mesh(), &gpu(), litShader);"
+    ellipsoid = ("new SphereTool(() => &mesh(), &gpu(), litShader, "
+                 "/*ellipsoidMode=*/true);")
+    if text.count(sphere) != 1 or text.count(ellipsoid) != 1:
+        fail("P1.0b.0 paired row-swap mutation anchor vanished")
+    marker = "new SphereTool(/*P1_PAIRED_SWAP*/);"
+    text = text.replace(sphere, marker, 1)
+    text = text.replace(ellipsoid, sphere, 1)
+    text = text.replace(marker, ellipsoid, 1)
+    p.write_text(text)
+if not mutation_rejected(swap_paired_factory_row,
+                         "direct-body/product census changed"):
+    fail("P1.0b.0 paired factory-row swap did not RED fingerprint")
+
 def add_domain_without_renaming(root):
     p = root / "source/tools/transform/transform.d"
     text = p.read_text()

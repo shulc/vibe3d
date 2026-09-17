@@ -120,129 +120,12 @@
     },
     {
       "aggregate": "<module>",
-      "id": "mesh.mirrorTool",
-      "product_types": [
-        "MirrorTool"
-      ],
-      "semantic_sha256": "27f934fbf5d59444e3528f37736f360fb557e6a3ea0f9e157a7a5a957c197426",
-      "symbol": "toolFactories[\"mesh.mirrorTool\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.radialSweepTool",
-      "product_types": [
-        "RadialSweepTool"
-      ],
-      "semantic_sha256": "329de789fc09801583eaa25dbe2d99981b5d17fa5fcea899818e68c77f132a85",
-      "symbol": "toolFactories[\"mesh.radialSweepTool\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.tack",
-      "product_types": [
-        "TackTool"
-      ],
-      "semantic_sha256": "369cebec4994e047d4177a41e560b734dfec8a3ff30cecdcec77fc7f77b9de67",
-      "symbol": "toolFactories[\"mesh.tack\"]"
-    },
-    {
-      "aggregate": "<module>",
       "id": "mesh.topoPen",
       "product_types": [
         "TopologyPenTool"
       ],
       "semantic_sha256": "33cec581a9709668cb152194b9d197972e1f576c9250871be2f182edc7205f34",
       "symbol": "toolFactories[\"mesh.topoPen\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.bridgeTool",
-      "product_types": [
-        "BridgeTool"
-      ],
-      "semantic_sha256": "d64b38ee85b789c3583e2b0470f8b5b3b56345bc6172a59dfcec13a018441600",
-      "symbol": "toolFactories[\"mesh.bridgeTool\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.cube",
-      "product_types": [
-        "BoxTool"
-      ],
-      "semantic_sha256": "84a8b8322fccf4216dc16d5e8ef5cf6aaecff4d424fef2f33e01eb99f3d51d9c",
-      "symbol": "toolFactories[\"prim.cube\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.sphere",
-      "product_types": [
-        "SphereTool"
-      ],
-      "semantic_sha256": "a390e55467082c2702256acfc293897c0977cad3d387db1e9291059e0fbfbc52",
-      "symbol": "toolFactories[\"prim.sphere\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.ellipsoid",
-      "product_types": [
-        "SphereTool"
-      ],
-      "semantic_sha256": "f324b9e80e901df49a72c5817b28da1104cced3c175166bdcbddad487d2a6095",
-      "symbol": "toolFactories[\"prim.ellipsoid\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.cylinder",
-      "product_types": [
-        "CylinderTool"
-      ],
-      "semantic_sha256": "317ee0902ccde9c6596e5e7d0283974e36094f1bd650fdc44d1ee64208b5a8b1",
-      "symbol": "toolFactories[\"prim.cylinder\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.tube",
-      "product_types": [
-        "TubeTool"
-      ],
-      "semantic_sha256": "0aa24d8c15e159fde2527b38872320eb0060a323152e739f6199e89a30d91bf3",
-      "symbol": "toolFactories[\"prim.tube\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.cone",
-      "product_types": [
-        "ConeTool"
-      ],
-      "semantic_sha256": "c970c38df50f5726fc5251d28605645777b75ce6c1bb10db8bd99cf000b6e5d9",
-      "symbol": "toolFactories[\"prim.cone\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.capsule",
-      "product_types": [
-        "CapsuleTool"
-      ],
-      "semantic_sha256": "f16f10aee8b339aff05dd848ea751c66e5a58a11c4ef65c9938f8e307fd60ae6",
-      "symbol": "toolFactories[\"prim.capsule\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.torus",
-      "product_types": [
-        "TorusTool"
-      ],
-      "semantic_sha256": "17d2a7b3fad50c30be9f78bc98e4e5248af8b3db33d455fd44503d7516c4dd81",
-      "symbol": "toolFactories[\"prim.torus\"]"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "prim.arc",
-      "product_types": [
-        "ArcTool"
-      ],
-      "semantic_sha256": "85f9f29a39e2fe366901edfdc03062c7df1fdec14390c2b36a8d874984ca631b",
-      "symbol": "toolFactories[\"prim.arc\"]"
     },
     {
       "aggregate": "<module>",
@@ -441,6 +324,123 @@
       ],
       "semantic_sha256": "32bed99bc2a30b0bc3871d14c4f6c8af0580da9a9b0b9f4bf2e74f9fb3e36423",
       "symbol": "toolFactories[\"mesh.arrayTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.mirrorTool",
+      "product_types": [
+        "MirrorTool"
+      ],
+      "semantic_sha256": "788a7d16e484bd4504a74da2be4118f912b66ffe07077ee71eea9655483bcbeb",
+      "symbol": "toolFactories[\"mesh.mirrorTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.radialSweepTool",
+      "product_types": [
+        "RadialSweepTool"
+      ],
+      "semantic_sha256": "204d3b59f01ae4bc808b92bbc8fa7d27935a77bb474349ae74f308460cf81528",
+      "symbol": "toolFactories[\"mesh.radialSweepTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.tack",
+      "product_types": [
+        "TackTool"
+      ],
+      "semantic_sha256": "ba3086815f67080bb4ee20a63e82cab7fee5d3295f0773387bb8193ab6e0e631",
+      "symbol": "toolFactories[\"mesh.tack\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.bridgeTool",
+      "product_types": [
+        "BridgeTool"
+      ],
+      "semantic_sha256": "84d7b297f2ad17812858397056f7fb07c1b37c8debd5214de1920e4625153287",
+      "symbol": "toolFactories[\"mesh.bridgeTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cube",
+      "product_types": [
+        "BoxTool"
+      ],
+      "semantic_sha256": "7ea52b81c04b981e7e3607de419cbce473ce948cb8f1282758b4bc9adedf576d",
+      "symbol": "toolFactories[\"prim.cube\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.sphere",
+      "product_types": [
+        "SphereTool"
+      ],
+      "semantic_sha256": "502e567332c77f2b50938e91465f2cd59e39b987585627182a5ca68535705ee9",
+      "symbol": "toolFactories[\"prim.sphere\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.ellipsoid",
+      "product_types": [
+        "SphereTool"
+      ],
+      "semantic_sha256": "6982fa182598b6918bc9ce6b8a9f354f332ae8b8c2687d520df90ebf769982ce",
+      "symbol": "toolFactories[\"prim.ellipsoid\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cylinder",
+      "product_types": [
+        "CylinderTool"
+      ],
+      "semantic_sha256": "041425936e661ade8851346121f8540df18ad78c5069fd7fc001477f872ce3a6",
+      "symbol": "toolFactories[\"prim.cylinder\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.tube",
+      "product_types": [
+        "TubeTool"
+      ],
+      "semantic_sha256": "1f829cc1a57139d65a3739b7fc17f41bd64376c3a238ec194bb80027cbb62a99",
+      "symbol": "toolFactories[\"prim.tube\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cone",
+      "product_types": [
+        "ConeTool"
+      ],
+      "semantic_sha256": "4f9c6795d41f9467f9f1047b1d6536c2c94c0e3db6bf7c058a04fb764a86ac40",
+      "symbol": "toolFactories[\"prim.cone\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.capsule",
+      "product_types": [
+        "CapsuleTool"
+      ],
+      "semantic_sha256": "1235b10e83922d5b970c81f5f872631a437fb77e590c93e670b75adfb67a9765",
+      "symbol": "toolFactories[\"prim.capsule\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.torus",
+      "product_types": [
+        "TorusTool"
+      ],
+      "semantic_sha256": "b50719c66d62b3cb7d61d0f8475af3f241a389857513a62902a1e83c819d1275",
+      "symbol": "toolFactories[\"prim.torus\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.arc",
+      "product_types": [
+        "ArcTool"
+      ],
+      "semantic_sha256": "df410936da36615807f7f90497428eb162e18ac32ab56d276a85d92337fdeaf7",
+      "symbol": "toolFactories[\"prim.arc\"]"
     },
     {
       "aggregate": "registerToolPresets",
