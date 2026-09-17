@@ -46,3 +46,24 @@ struct ToolHost {
     /// `if (host.session !is null) host.session().…`.
     EditSession delegate() session;
 }
+
+/// Registrars and EditorApp hold this instead of the owner's address: it keeps
+/// that address private and hands out a VALUE when a factory builds a command,
+/// so members bound after registration (resetActiveTool) are seen and nothing
+/// outside this module can write the owner's slots (task 6350; evidence:
+/// tests/unit/commands/tool/tool_host_read_view_test.d).
+struct ToolHostReadView {
+private:
+    ToolHost* host_;
+
+public:
+    this(ToolHost* host) {
+        assert(host !is null, "ToolHostReadView requires a ToolHost to bind");
+        host_ = host;
+    }
+
+    ToolHost read() {
+        assert(host_ !is null, "ToolHostReadView read before binding");
+        return *host_;
+    }
+}

@@ -193,6 +193,7 @@ tests.unit.commands.scene.scene_reset_effects_test
 tests.unit.commands.select.loop_test
 tests.unit.commands.select.selection_command_registration_test
 tests.unit.commands.test_undo_flags_test
+tests.unit.commands.tool.tool_host_read_view_test
 tests.unit.commands.tool.tool_lifecycle_registration_test
 tests.unit.commands.ui.layout_reset_test
 tests.unit.commands.viewport.viewport_command_registration_test
