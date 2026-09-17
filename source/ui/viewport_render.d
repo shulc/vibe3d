@@ -359,7 +359,9 @@ public:
     {
         TransformTool tt = cast(TransformTool)activeTool;
         if (tt !is null)
-            meshModel = matMul4(itemMatrix, tt.gpuMatrix);
+            // Task 6450: a preview-written VBO already contains the edit.
+            meshModel = matMul4(itemMatrix,
+                gpu.displayToolMatrix(tt.gpuMatrix));
     }
 
     shader.useProgram(meshModel, vp);

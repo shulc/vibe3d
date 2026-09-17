@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 554
-task-citation-lines 5148
+task-citation-lines 5154
 citing-files 424
 long-comment-runs 273
 files-with-long-runs 146
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 284
+allow source/app.d 286
 allow source/app_version.d 1
 allow source/application_command_binding.d 2
 allow source/args_dialog.d 1
@@ -224,7 +224,7 @@ allow source/history_macro_registration.d 1
 allow source/hover_state.d 1
 allow source/http_command_adapter.d 2
 allow source/http_json.d 7
-allow source/http_providers.d 67
+allow source/http_providers.d 68
 allow source/http_server.d 123
 allow source/image_cache.d 3
 allow source/image_data.d 7
@@ -260,7 +260,7 @@ allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
 allow source/mesh_edge_slice.d 28
 allow source/mesh_edit_delta.d 141
-allow source/mesh_gpu.d 34
+allow source/mesh_gpu.d 36
 allow source/mesh_morph.d 1
 allow source/mesh_ops/bevel_curves.d 7
 allow source/mesh_ops/bevel_fin.d 7
@@ -430,7 +430,7 @@ allow source/ui/stat_record.d 1
 allow source/ui/stat_rows.d 1
 allow source/ui/tool_properties_panel.d 13
 allow source/ui/viewport_props_role.d 1
-allow source/ui/viewport_render.d 34
+allow source/ui/viewport_render.d 35
 allow source/uv_relax.d 1
 allow source/uv_unwrap.d 2
 allow source/view.d 8

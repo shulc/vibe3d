@@ -87,12 +87,14 @@ struct SurfaceSample {
     double[3][] raw;
     double[3][] rendered;
     double[16] model;
+    double[16] toolMatrix;
 }
 
 SurfaceSample surfaceSample() {
     auto j = getJson("/api/gpu/face-vbo");
     SurfaceSample s;
     s.model = jsonMatrix(j, "model");
+    s.toolMatrix = jsonMatrix(j, "toolMatrix");
     foreach (p; j["positions"].array) {
         auto a = p.array;
         s.raw ~= [a[0].floating, a[1].floating, a[2].floating];
@@ -129,6 +131,7 @@ struct DragResult {
     double matrixExtra;
     double gizmoShift;
     double[16] midModel;
+    double[16] midToolMatrix;
 }
 
 void prepareScene(bool subpatch, int[] selectedVerts = null,
@@ -210,7 +213,144 @@ DragResult runDrag(string toolId, bool subpatch, int[] selectedVerts = null,
     r.gizmoShift = sqrt((endCx-midCx)*(endCx-midCx) +
                         (endCy-midCy)*(endCy-midCy));
     r.midModel = mid.model;
+    r.midToolMatrix = mid.toolMatrix;
     return r;
+}
+
+struct PreviewState {
+    bool active;
+    bool pending;
+    bool suppressCageUpload;
+    bool previewWritesDisplayBuffers;
+    bool pastCeiling;
+}
+
+PreviewState previewState() {
+    auto j = getJson("/api/subpatch/preview");
+    PreviewState p;
+    p.active = j["active"].type == JSONType.true_;
+    p.pending = j["pending"].type == JSONType.true_;
+    p.suppressCageUpload = j["suppressCageUpload"].type == JSONType.true_;
+    p.previewWritesDisplayBuffers =
+        j["previewWritesDisplayBuffers"].type == JSONType.true_;
+    p.pastCeiling = j["pastCeiling"].type == JSONType.true_;
+    return p;
+}
+
+void holdPreview(long ms, long ceilingMs = 0) {
+    auto r = postJson("/api/subpatch/hold",
+        format(`{"ms":%d,"ceilingMs":%d}`, ms, ceilingMs));
+    assert(r["status"].str == "ok", "6450: /api/subpatch/hold failed");
+}
+
+PreviewState waitPreviewState(bool delegate(PreviewState) accept,
+                              string label, int timeoutMs = 10_000)
+{
+    foreach (_; 0 .. timeoutMs / 20) {
+        auto p = previewState();
+        if (accept(p)) { Thread.sleep(80.msecs); return previewState(); }
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "6450: timed out waiting for " ~ label);
+}
+
+void assertFrozenOwnership() {
+    prepareScene(true);
+    holdPreview(-1, 600_000);
+    scope(exit) holdPreview(0);
+    cmd("select.typeFrom polygon");
+    select("polygons", [0]);
+    cmdId("mesh.subpatch_toggle");
+    auto frozen = waitPreviewState(
+        (p) => p.pending && !p.active && !p.pastCeiling,
+        "the active=false frozen preview window");
+    assert(frozen.suppressCageUpload,
+           "6450 S-FROZEN: cage upload suppression must remain active");
+    assert(surfaceSample().raw.length > 36,
+           "6450 S-FROZEN: the old limit surface must remain in the VBO");
+
+    assert(!frozen.previewWritesDisplayBuffers,
+           "6450 S-FROZEN: a stale preview wrote no display VBO");
+
+    holdPreview(0);
+    waitPreviewSettled();
+    auto live = previewState();
+    assert(live.active && live.previewWritesDisplayBuffers,
+           "6450 S-LIVE: the ownership word must not be stuck false");
+    assert(live.suppressCageUpload,
+           "6450 S-LIVE: cage upload suppression must remain active");
+}
+
+double[3] centroid(const double[3][] points) {
+    assert(points.length > 0, "6450: centroid population is empty");
+    double[3] c = [0.0, 0.0, 0.0];
+    foreach (p; points) foreach (i; 0 .. 3) c[i] += p[i];
+    foreach (i; 0 .. 3) c[i] /= points.length;
+    return c;
+}
+
+double componentDiff(const ref double[3] a, const ref double[3] b) {
+    return max(abs(a[0]-b[0]), max(abs(a[1]-b[1]), abs(a[2]-b[2])));
+}
+
+void assertPreviewArmAfterLastMotion() {
+    prepareScene(true);
+    holdPreview(-1, 250);
+    scope(exit) holdPreview(0);
+    cmd("select.typeFrom polygon");
+    select("polygons", [0]);
+    cmdId("mesh.subpatch_toggle");
+    waitPreviewState((p) => p.pending && p.pastCeiling,
+                     "the expired input ceiling");
+    waitPreviewState((p) => !p.suppressCageUpload,
+                     "the cage display after the ceiling");
+    assert(surfaceSample().raw.length == 36,
+           "6450 arm-after-motion: the cage VBO must have 36 face points");
+
+    select("polygons", []);
+    cmd("select.typeFrom vertex");
+    select("vertices", []);
+    cmd("tool.set move on");
+    Thread.sleep(300.msecs);
+    auto c = fetchCamera();
+    double cx, cy, gx, gy;
+    bool found;
+    fetchHandlePart(3, cx, cy, found);
+    assert(found, "6450 arm-after-motion: centre handle missing");
+    fetchHandlePart(0, gx, gy, found);
+    assert(found, "6450 arm-after-motion: grab handle missing");
+    double vx = gx-cx, vy = gy-cy;
+    double length = sqrt(vx*vx + vy*vy);
+    int x0 = cast(int)(gx+0.5), y0 = cast(int)(gy+0.5);
+    int x1 = x0 + cast(int)(60*vx/length + 0.5);
+    int y1 = y0 + cast(int)(60*vy/length + 0.5);
+    auto rest = centroid(surfaceSample().rendered);
+    playSettled(hoverLog(c, x0, y0));
+    playSettled(buildDragDownLog(c.vpX, c.vpY, c.width, c.height, x0, y0));
+    playSettled(buildDragMotionLog(c.vpX, c.vpY, c.width, c.height,
+                                   x0, y0, x1, y1, 6));
+    auto beforeArm = centroid(surfaceSample().rendered);
+    assert(componentDiff(beforeArm, rest) > 0.1,
+           "6450 arm-after-motion: held drag population floor failed");
+
+    holdPreview(0);
+    waitPreviewState((p) => p.active, "preview install after the last motion");
+    auto state = getJson("/api/tool/state");
+    assert(state["dragging"].type == JSONType.true_,
+           "6450 arm-after-motion: gesture died before the preview installed");
+    auto afterArm = centroid(surfaceSample().rendered);
+    writefln("[6450] arm centroids rest=%s cage=%s preview=%s",
+             rest, beforeArm, afterArm);
+    assert(abs(afterArm[0] - beforeArm[0]) <= 1e-3,
+        format("6450 arm-after-motion: preview install moved the held frame by %.6f",
+               abs(afterArm[0] - beforeArm[0])));
+
+    playSettled(buildDragUpLog(c.vpX, c.vpY, c.width, c.height, x1, y1));
+    waitPreviewSettled();
+    auto released = centroid(surfaceSample().rendered);
+    assert(componentDiff(released, afterArm) <= 1e-3,
+        format("6450 arm-after-motion: release moved the frame by %.6f",
+               componentDiff(released, afterArm)));
 }
 
 struct Rgb { long r, g, b; }
@@ -335,6 +475,9 @@ unittest {
     assert(hidden.releaseShift <= 1e-4,
            "6450 hidden-vertex control: release moved the picture");
 
+    assertFrozenOwnership();
+    assertPreviewArmAfterLastMotion();
+
     auto move = runDrag("move", true);
     auto element = runDrag("move.element", true);
     auto rotate = runDrag("rotate", true, null, false,
@@ -346,6 +489,8 @@ unittest {
              rotate.releaseShift, scale.releaseShift);
 
     auto px = runPixelMove();
+    writefln("[6450] pixels rest/mid/settled = %d / %d / %d",
+             px.restEdge, px.midEdge, px.settledEdge);
     assert(px.midEdge >= 0 && px.settledEdge >= 0,
            "6450 pixels: moving surface produced no changed-pixel population");
     assert(px.midEdge - px.restEdge >= 50,
@@ -353,6 +498,11 @@ unittest {
     assert(abs(px.midEdge - px.settledEdge) <= 1,
         format("6450 pixels: release moved the raster edge from %d to %d",
                px.midEdge, px.settledEdge));
+
+    assert(!matrixIsIdentity(move.midToolMatrix),
+           "6450: the transform tool must retain its raw mid-drag matrix");
+    assert(matrixIsIdentity(move.midModel),
+           "6450: the display fold must suppress the already-applied matrix");
 
     assert(move.dragMoved > 0.1,
            "6450 move: drag population floor failed");

@@ -5902,6 +5902,10 @@ void main(string[] args) {
             immutable bool staleOnScreen = ifs.previewIndexSpaceStale();
             bool wantPreview = subpatchPreview.active || staleOnScreen;
             gpu.suppressCageUpload = wantPreview;
+            // Task 6450: a reused active preview can coexist with the frozen
+            // window; only an active, non-frozen preview owns these VBOs.
+            gpu.previewWritesDisplayBuffers =
+                subpatchPreview.active && !staleOnScreen;
             const size_t cageAddr = cast(size_t)&mesh();
             bool versionChanged =
                 !gpuUploadedKey_.matches(cageAddr, g_geomEpochs.epochFor(cageAddr));
@@ -7412,6 +7416,8 @@ void main(string[] args) {
                         // Live tool matrix (see DirtyKey.toolMat doc): keeps
                         // inactive Quad/Split cells re-rendering during a drag
                         // instead of freezing at the pre-drag mesh state.
+                        // Task 6450: keep this raw; it is a freshness term,
+                        // not the display pose filtered by GpuMesh ownership.
                         {
                             TransformTool tt = cast(TransformTool)activeTool;
                             _newKey.toolMat = (tt !is null) ? tt.gpuMatrix : identityMatrix;

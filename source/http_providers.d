@@ -836,26 +836,29 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             ensureDisplayCurrent();
             // Faces use stride-6 (pos+normal). Read the live VBO.
             int vertCount = gpu.faceVertCount;
-            // Also expose the model matrix the renderer applies to the
-            // VBO (transform tools' gpuMatrix) so tests can detect a
-            // gpuMatrix-vs-mesh mismatch mid-drag — the actual on-screen
-            // pose is `gpuMatrix · gpu.faceVbo`.
+            // Task 6450: `model` is what the renderer applies to this VBO;
+            // `toolMatrix` is the raw transform state used by dirty keys.
             float[16] meshModel = identityMatrix;
+            float[16] toolRaw = identityMatrix;
             {
                 TransformTool tt = cast(TransformTool)activeTool;
-                if (tt !is null) meshModel = tt.gpuMatrix;
+                if (tt !is null) {
+                    toolRaw = tt.gpuMatrix;
+                    meshModel = gpu.displayToolMatrix(toolRaw);
+                }
             }
-            string modelStr;
-            {
+            static string matrixJson(const ref float[16] matrix) {
                 auto mb = appender!string();
                 mb.put("[");
                 foreach (i; 0 .. 16) {
                     if (i > 0) mb.put(",");
-                    mb.put(jsonNum(meshModel[i], "%.6f"));
+                    mb.put(jsonNum(matrix[i], "%.6f"));
                 }
                 mb.put("]");
-                modelStr = mb.data;
+                return mb.data;
             }
+            string modelStr = matrixJson(meshModel);
+            string toolStr = matrixJson(toolRaw);
             // Task 0613 S3 — the EDGE and VERTEX VBOs, read back the same way.
             // Until this task the only VBO readback in the whole HTTP surface
             // was the face one, so "did hiding actually remove this vertex
@@ -900,7 +903,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             }
             if (vertCount <= 0)
                 return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr
-                     ~ tailStr ~ `}`;
+                     ~ `,"toolMatrix":` ~ toolStr ~ tailStr ~ `}`;
             float[] data = new float[](vertCount * 6);
             glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
             glGetBufferSubData(GL_ARRAY_BUFFER, 0,
@@ -920,6 +923,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             }
             buf.put(`],"model":`);
             buf.put(modelStr);
+            buf.put(`,"toolMatrix":`);
+            buf.put(toolStr);
             buf.put(tailStr);
             buf.put("}");
             return buf.data;
@@ -1312,6 +1317,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
               ~ `"workerBuildNsTotal":%d,"workerAllocBytesTotal":%d,`
               ~ `"pendingFrames":%d,"topologiesCreated":%d,`
               ~ `"topologiesRetired":%d,"previewFaces":%d,"previewEdges":%d,`
+              ~ `"suppressCageUpload":%s,"previewWritesDisplayBuffers":%s,`
+              ~ `"pastCeiling":%s,`
               ~ `"estimatedMsRemaining":%d,"indicator":"%s"}`,
                 subpatchPreview.active         ? "true" : "false",
                 subpatchPreview.buildPending   ? "true" : "false",
@@ -1329,6 +1336,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 subpatchPreview.osdAccel.topologiesRetired,
                 subpatchPreview.mesh.faces.length,
                 subpatchPreview.mesh.edges.length,
+                gpu.suppressCageUpload ? "true" : "false",
+                gpu.previewWritesDisplayBuffers ? "true" : "false",
+                subpatchPreview.buildPastCeiling() ? "true" : "false",
                 subpatchPreview.estimatedBuildMsRemaining(),
                 subpatchPreview.buildIndicatorText());
         });

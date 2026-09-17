@@ -311,6 +311,16 @@ struct GpuMesh {
     // is currently displayed). Tool-side cage uploads become no-ops that
     // only bump the mesh's mutation version so the preview is rebuilt.
     bool   suppressCageUpload;
+    // Task 6450: unlike suppressCageUpload, this is true only while the
+    // displayed buffers are preview-owned; it remains true between writes.
+    bool   previewWritesDisplayBuffers;
+
+    /// Fold a transform tool's display request through the current buffer
+    /// owner. A preview-written VBO already carries the live edit (task 6450).
+    float[16] displayToolMatrix(const ref float[16] toolMat) const
+            nothrow @nogc {
+        return previewWritesDisplayBuffers ? identityMatrix : toolMat;
+    }
     // Maps each VBO line-segment to a source (cage) edge index when a
     // subpatch preview was uploaded. Empty for cage uploads, in which case
     // drawEdges assumes VBO segment i == cage edge i.
@@ -2009,6 +2019,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     gpu.weightStampName = null;
     gpu.weightStampValid = false;
     gpu.suppressCageUpload = false;
+    gpu.previewWritesDisplayBuffers = false;
     gpu.uploadVersion = 0;
     gpu.scratchFaceData = null;
     gpu.scratchFaceIdData = null;
@@ -2224,6 +2235,7 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.faceTriStart = src.faceTriStart.dup;
     dst.faceTriCount = src.faceTriCount.dup;
     dst.suppressCageUpload = src.suppressCageUpload;
+    dst.previewWritesDisplayBuffers = src.previewWritesDisplayBuffers;
     dst.edgeOriginGpu = src.edgeOriginGpu.dup;
     dst.faceOriginGpu = src.faceOriginGpu.dup;
     dst.vertOriginGpu = src.vertOriginGpu.dup;
@@ -2253,7 +2265,8 @@ private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
     return peekGpuMeshNames(gpu) == GpuMeshNames.init &&
         gpu.faceVertCount == 0 && gpu.edgeVertCount == 0 && gpu.vertCount == 0 &&
         gpu.faceTriStart.length == 0 && gpu.faceTriCount.length == 0 &&
-        !gpu.suppressCageUpload && gpu.edgeOriginGpu.length == 0 &&
+        !gpu.suppressCageUpload && !gpu.previewWritesDisplayBuffers &&
+        gpu.edgeOriginGpu.length == 0 &&
         gpu.faceOriginGpu.length == 0 && gpu.vertOriginGpu.length == 0 &&
         gpu.faceCornerVert.length == 0 && gpu.weightStampMesh is null &&
         gpu.weightStampName.length == 0 && !gpu.weightStampValid &&

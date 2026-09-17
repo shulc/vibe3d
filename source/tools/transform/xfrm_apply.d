@@ -684,7 +684,8 @@ mixin template XfrmApplyImpl() {
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
         // Published AFTER the conversion, deliberately: the draw path folds
-        // `matMul4(itemMatrix, tt.gpuMatrix)` (ui/panels.d), so `gpuMatrix`
+        // the display-authorized tool matrix into `itemMatrix`
+        // (ui/viewport_render.d), so `gpuMatrix`
         // has to be the LAYER-space matrix — the same one the CPU kernel
         // below applies. Publishing the world one here would apply the item
         // transform twice on the GPU preview and once on the CPU, and the
