@@ -446,7 +446,8 @@ final class Viewport3D {
     /// last frame that considered it (task 1650). It remains an `int` so task
     /// 6361 changes no stamp representation; the value means
     /// `viewport_overlay_mode.OverlayMode`, and `/api/viewport/display` casts
-    /// it back.
+    /// it back. Retiring the `int` is task 6420: the import cycle that forced it
+    /// is gone now that the policy lives in its own module.
     ///
     /// WHY THIS IS RECORDED AND NOT RE-DERIVED. `/api/viewport/display` is
     /// the endpoint a multi-cell overlay test asserts on, and the defect task

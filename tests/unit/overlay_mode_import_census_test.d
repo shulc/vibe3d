@@ -179,6 +179,12 @@ unittest // K0: scanner controls
            "a public protection block re-exports enclosed imports");
     assert(scan(q{ import ea = editor_app; }).importsEditorApp,
            "a module alias must retain its target module");
+    // The K7b walk keys on `importedModules`, not on `importsEditorApp`, so the
+    // alias branch needs its own witness: without it the BFS goes blind to
+    // `import x = editor_app;` while every other cell here stays green (49 such
+    // sites live in source/, e.g. app.d's).
+    assert(scan(q{ import ea = editor_app; }).importedModules == ["editor_app"],
+           "a module alias must reach the transitive walk by its target module");
 }
 
 unittest // K1-K9: whole-tree census

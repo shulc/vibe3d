@@ -40,7 +40,8 @@ enum OverlayMode { None, Visual, Interactive }
 /// across the extra per-cell calls either — that, not the flag, is the property
 /// the ordering cannot rescue.) `visualOnly` remains the right contract and the
 /// cheaper path; it is simply not what this gate rests on.
-OverlayMode resolveOverlayMode(int cellId, int ownerId, bool anyOverlay) {
+OverlayMode resolveOverlayMode(int cellId, int ownerId, bool anyOverlay)
+        pure @safe nothrow @nogc {
     if (!anyOverlay) return OverlayMode.None;
     return (cellId == ownerId) ? OverlayMode.Interactive : OverlayMode.Visual;
 }
