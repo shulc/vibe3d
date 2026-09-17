@@ -201,6 +201,46 @@ string buildDragLog(int vpX, int vpY, int vpW, int vpH,
     return log;
 }
 
+// Task 6450: split a drag into independently playable logs so a test can
+// inspect the rendered frame while the mouse button is still held.
+string buildDragDownLog(int vpX, int vpY, int vpW, int vpH,
+                        int x0, int y0, uint mod = 0, ubyte btn = 1)
+{
+    return format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+        vpX, vpY, vpW, vpH, btn, x0, y0, mod);
+}
+
+string buildDragMotionLog(int vpX, int vpY, int vpW, int vpH,
+                          int x0, int y0, int x1, int y1, int steps = 20,
+                          uint mod = 0, ubyte btn = 1)
+{
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    uint state = 1u << (btn - 1);
+    int lastX = x0, lastY = y0;
+    foreach (i; 1 .. steps + 1) {
+        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%u,"mod":%u}` ~ "\n",
+            i * 50.0, x, y, x - lastX, y - lastY, state, mod);
+        lastX = x; lastY = y;
+    }
+    return log;
+}
+
+string buildDragUpLog(int vpX, int vpY, int vpW, int vpH,
+                      int x1, int y1, uint mod = 0, ubyte btn = 1)
+{
+    return format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+        vpX, vpY, vpW, vpH, btn, x1, y1, mod);
+}
+
 void playAndWait(string log, string baseUrl = testBaseUrl()) {
     auto resp = post(baseUrl ~ "/api/play-events", log);
     auto j = parseJSON(cast(string)resp);
