@@ -193,3 +193,66 @@ unittest { // allocBytes tracks only allocations after an explicit rebase
     assert(excluded[0] == 1 && included[0] == 2,
            "allocation-window fixture buffers did not remain live");
 }
+
+unittest { // 6330: a reset from ANOTHER thread must not re-base the GC window
+    // `allocatedNow()` is `GC.allocatedInCurrentThread` — THREAD-LOCAL. When
+    // `reset()` stamped `allocBase_`, a reset arriving from the HTTP thread
+    // stored THAT thread's counter, and the main thread then subtracted it
+    // from its own in `endFrame`. Two coordinate systems: the straddling frame
+    // reported roughly the main thread's whole lifetime allocation volume, and
+    // `endFrame` folds that into `total_.allocBytes` for good.
+    //
+    // The assertion is scale-free on purpose. A literal ceiling in bytes would
+    // be a number nobody can defend on a different machine or a different day;
+    // the lifetime counter is the only quantity the broken code can produce,
+    // so the cell compares against IT.
+    import core.memory : GC;
+    import core.thread : Thread;
+
+    FrameWorkProbe fc;
+
+    // Make this thread's lifetime counter a real discriminator BEFORE anything
+    // is measured, instead of hoping the modules that ran earlier left enough
+    // behind. The first attempt relied on that and the population floor below
+    // caught it: in an isolated binary the lifetime total was the same order
+    // as one frame, so neither answer could be told from the other.
+    ubyte[][] ballast;
+    foreach (i; 0 .. 16) {
+        auto chunk = new ubyte[](512 * 1024);
+        chunk[0] = cast(ubyte)i;
+        ballast ~= chunk;                       // kept live: the counter is
+    }                                           // cumulative, not a high-water
+
+    // Control first, so a green below cannot mean "this probe reports zero for
+    // everything". A frame with a real main-thread allocation and no reset.
+    fc.beginFrame();
+    auto keepA = new ubyte[](64 * 1024);
+    keepA[0] = 1;
+    fc.endFrame();
+    const clean = fc.last().allocBytes;
+    assert(clean > 0, "control frame reported no allocation at all — the "
+                    ~ "fixture cannot exhibit the phenomenon it is judging");
+
+    const lifetime = cast(long)GC.allocatedInCurrentThread;
+    assert(lifetime > clean * 4, "this thread has not allocated enough for the "
+                               ~ "lifetime total to be a discriminator");
+
+    // Now the real shape: the frame is open, the reset arrives from another
+    // thread, and the main thread closes the frame.
+    fc.beginFrame();
+    auto keepB = new ubyte[](64 * 1024);
+    keepB[0] = 2;
+    auto t = new Thread({ fc.reset(); });
+    t.start();
+    t.join();
+    fc.endFrame();
+
+    const straddled = fc.last().allocBytes;
+    assert(straddled < lifetime / 8,
+        "a reset from another thread re-based the GC window: the straddling "
+        ~ "frame reported this thread's lifetime allocation instead of its own");
+    assert(keepA[0] == 1 && keepB[0] == 2, "fixture buffers did not stay live");
+    assert(ballast.length == 16 && ballast[15][0] == 15,
+        "the ballast that makes the lifetime counter a discriminator was "
+        ~ "collected — the comparison above would be against nothing");
+}

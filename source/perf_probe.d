@@ -1717,11 +1717,33 @@ struct FrameWorkProbe {
     /// Zero every published counter and the in-flight frame's accumulators.
     ///
     /// Called from the HTTP thread, so it can land mid-frame. Unlike
-    /// `FrameProbe.reset` this DOES clear `cur_` — there is no elapsed-time
-    /// base to corrupt here (the one base, `allocBase_`, is re-stamped in
-    /// `beginFrame` and after bridge service; a reset landing mid-frame at
-    /// worst mis-attributes that single frame's `allocBytes`, and tests reset
-    /// while quiescent).
+    /// `FrameProbe.reset` this DOES clear `cur_` — the counters it clears are
+    /// plain per-frame accumulators, and a reset landing mid-frame at worst
+    /// mis-attributes that single frame's counts.
+    ///
+    /// **It deliberately does NOT re-stamp `allocBase_`, and that is the whole
+    /// of task 6330.** `allocatedNow()` is `GC.allocatedInCurrentThread` — a
+    /// THREAD-LOCAL counter. Stamped from the HTTP thread it stored THAT
+    /// thread's total, which the main thread then subtracted from its own in
+    /// `endFrame` (`allocatedNow() - allocBase_`): two coordinate systems, so
+    /// the frame straddling the reset reported roughly the main thread's whole
+    /// lifetime allocation volume — and `endFrame` folds that number into
+    /// `total_.allocBytes` permanently. Not the "one-sample wobble" the route's
+    /// own comment argued for.
+    ///
+    /// Leaving the base alone is also simply correct: `beginFrame` re-stamps it
+    /// at the top of every frame and `rebaseAllocationWindow` re-stamps it
+    /// after bridge service, both on the main thread, so the base is never
+    /// older than the frame that consumes it. `FrameProbe.reset` next door
+    /// reached this conclusion first (see its comment); this probe's header
+    /// used to claim it had no such base to protect, and that was the error.
+    ///
+    /// The side effect that makes the nightly quiet again is free: with that
+    /// line gone, `reset` and `rebaseAllocationWindow` share no memory at all,
+    /// so that pair cannot be reported. The three pairs tolerated since
+    /// 2026-08-19 (`beginFrame`, `endFrame`, `backdrop` against `reset`) are
+    /// untouched and still tolerated — this is NOT a claim that the probe is
+    /// race-free; task 6297 is where that is addressed.
     void reset() {
         cur_ = FrameWork.init;
         last_ = FrameWork.init;
@@ -1733,7 +1755,6 @@ struct FrameWorkProbe {
         curHandleId_ = 0;
         handlePassSeq_ = 0;
         handlePassDepth_ = 0;
-        allocBase_ = allocatedNow();
     }
 
     // ---- read-out --------------------------------------------------------
