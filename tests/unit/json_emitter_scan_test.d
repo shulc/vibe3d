@@ -499,7 +499,12 @@ unittest {
             "image-plane scalar fields"),
         LedgerRow("wireViewportProviders.setGpuSurfaceProvider.putTriples|%.6f", 3,
             "GPU surface triple helper"),
-        LedgerRow("wireViewportProviders.setGpuSurfaceProvider|%.6f", 4,
+        LedgerRow("wireViewportProviders.setGpuSurfaceProvider.matrixJson|%.6f", 1,
+            "GPU surface matrix helper (task 6450 moved the sixteen-element "
+          ~ "loop into it, and the door now emits TWO matrices through the "
+          ~ "same helper: the display-authorised `model` and the raw "
+          ~ "`toolMatrix`)"),
+        LedgerRow("wireViewportProviders.setGpuSurfaceProvider|%.6f", 3,
             "GPU surface scalars"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.planJson|%.6f", 8,
             "viewport draw plan"),
