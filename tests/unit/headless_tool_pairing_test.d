@@ -214,8 +214,6 @@ unittest {
     }
 
     auto secondLayer = new Layer;
-    secondLayer.name = "B";
-    secondLayer.meshRef() = makeCube();
     r.session.document.layers ~= secondLayer;
     r.session.document.setPrimary(secondLayer);
     r.session.editMode = EditMode.Polygons;
