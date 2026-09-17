@@ -197,10 +197,7 @@ import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
-import commands.snap.toggle_type : SnapToggleTypeCommand;
-import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
-import commands.path.define    : PathDefineCommand;
 import command;
 import registry;
 import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -239,6 +236,7 @@ import document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
 import viewport_command_registration : registerViewportCommands;
+import view_settings_registration : registerViewSettingsCommands;
 
 // Locally-scoped in app.d's main() (not top-level there).
 import document       : Document;
@@ -878,6 +876,8 @@ void registerCommands(EditorApp app) {
     registerViewportCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         app.vpm);
+    registerViewSettingsCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()));
     registerViewCommands(app);
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
@@ -1108,34 +1108,6 @@ private void registerViewCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
-    {
-        import commands.snap.toggle : SnapToggleCommand;
-        import commands.snap.mode   : SnapModeCommand;
-        reg.commandFactories["snap.toggle"] = () => cast(Command)
-            new SnapToggleCommand(&mesh(), cameraView, editMode);
-        import commands.constrain.toggle : ConstrainToggleCommand;
-        reg.commandFactories["constrain.toggle"] = () => cast(Command)
-            new ConstrainToggleCommand(&mesh(), cameraView, editMode);
-        reg.commandFactories["snap.toggleType"] = () => cast(Command)
-            new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
-        reg.commandFactories["snap.mode"] = () => cast(Command)
-            new SnapModeCommand(&mesh(), cameraView, editMode);
-        // The Coordinate Rounding setting lives beside snapping because that
-        // is what it is: the step a gizmo drag's scalar is rounded to.
-        import commands.prefs.coord_rounding : CoordRoundingCommand;
-        reg.commandFactories["pref.coordRounding"] = () => cast(Command)
-            new CoordRoundingCommand(&mesh(), cameraView, editMode);
-        // Trackball navigation (task 0573) — a viewport-navigation setting, so
-        // its `viewport` subject writes THIS factory's camera, which is the
-        // active cell's (`cameraView`), resolved at fire time.
-        import commands.prefs.trackball : TrackballPrefCommand;
-        reg.commandFactories["pref.trackball"] = () => cast(Command)
-            new TrackballPrefCommand(&mesh(), cameraView, editMode);
-    }
-    {
-        reg.commandFactories["path.define"] = () => cast(Command)
-            new PathDefineCommand(&mesh(), cameraView, editMode);
-    }
     // ai.toggle / ai.enable / ai.disable: gated on kCopilotEnabled (task
     // 0422 — owner pausing the AI Modeling Copilot; ONNX path untouched).
     // All THREE are gated together, not just ai.toggle: aiState.enabled
@@ -1191,11 +1163,6 @@ private void registerViewCommands(EditorApp app) {
         // g_layerListShown) — see commands/ui/copilot_panel.d.
         reg.commandFactories["ui.copilotPanel"] = () => cast(Command)
             new UiCopilotPanelCommand(&mesh(), cameraView, editMode);
-    }
-    {
-        import commands.symmetry.toggle : SymmetryToggleCommand;
-        reg.commandFactories["symmetry.toggle"] = () => cast(Command)
-            new SymmetryToggleCommand(&mesh(), cameraView, editMode);
     }
     }
     }
