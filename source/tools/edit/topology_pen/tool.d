@@ -1192,117 +1192,16 @@ public:
         this.gpu_     = gpu;
     }
 
-    // REV1 (opponent obj-1): 6th param `alf` appended for the Add Loop
-    // factory. `mf`/`rf` MUST stay assigned — `TopoPenMoveFactory` and
-    // `TopoPenRemoveFactory` are structurally identical delegate aliases,
-    // so dropping either here would SILENTLY mis-bind that sibling
-    // gesture's factory rather than fail to compile.
-    // P7 (doc/topopen_p7_slide_plan.md): 7th param `sf` appended LAST for
-    // the Slide factory, same rationale — `TopoPenSlideFactory` is yet
-    // another structurally identical delegate alias, so it goes after
-    // `alf`, never inserted between existing params (every positional
-    // caller — registration.d — stays byte-unchanged up through `alf`).
-    // P8 (doc/topopen_p8_smooth_plan.md): 8th param `smf` appended LAST
-    // (after `sf`) for the Smooth factory — same rationale as every prior
-    // addition: `TopoPenSmoothFactory` is yet another structurally
-    // identical delegate alias, so inserting it anywhere but the tail would
-    // silently mis-bind a sibling gesture's factory rather than fail to
-    // compile. `bf`/`mf`/`rf`/`alf`/`sf` MUST stay in their existing
-    // positions — every existing positional caller (registration.d) stays
-    // byte-unchanged through `sf`.
-    // P9 (doc/topopen_p9_split_plan.md): 9th positional param `spf` appended
-    // LAST (after `smf`) for the Split factory — same rationale as every
-    // prior addition: `TopoPenSplitFactory` is yet another structurally
-    // identical delegate alias, so inserting it anywhere but the tail would
-    // silently mis-bind a sibling gesture's factory rather than fail to
-    // compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf` MUST stay in their existing
-    // positions — every existing positional caller (registration.d) stays
-    // byte-unchanged through `smf`.
-    // P10 (doc/topopen_p10_moveloop_plan.md): 10th positional param `mlf`
-    // appended LAST (after `spf`) for the Move Loop factory — same
-    // rationale as every prior addition: `TopoPenMoveLoopFactory` is yet
-    // another structurally identical delegate alias, so inserting it
-    // anywhere but the tail would silently mis-bind a sibling gesture's
-    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
-    // `spf` MUST stay in their existing positions — every existing
-    // positional caller (registration.d) stays byte-unchanged through `spf`.
-    // P11 (doc/topopen_p11_duploop_plan.md): 11th positional param `dlf`
-    // appended LAST (after `mlf`) for the Dup Loop factory — same rationale
-    // as every prior addition: `TopoPenDupLoopFactory` is yet another
-    // structurally identical delegate alias, so inserting it anywhere but
-    // the tail would silently mis-bind a sibling gesture's factory rather
-    // than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/`spf`/`mlf` MUST
-    // stay in their existing positions — every existing positional caller
-    // (registration.d) stays byte-unchanged through `mlf`.
-    // P12 (doc/topopen_p12_smoothloop_plan.md, REV1 FIX-1): 12th positional
-    // param `slf` appended LAST (after `dlf`) for the Smooth+Loop factory —
-    // same rationale as every prior addition: `TopoPenSmoothLoopFactory` is
-    // yet another structurally identical delegate alias, so inserting it
-    // anywhere but the tail would silently mis-bind a sibling gesture's
-    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
-    // `spf`/`mlf`/`dlf` MUST stay in their existing positions — every
-    // existing positional caller (registration.d) stays byte-unchanged
-    // through `dlf`.
-    // Fill mode (task 0477 continuation, doc/topopen_fill_plan.md): 13th
-    // positional param `flf` appended LAST (after `slf`) for the Fill
-    // factory — same rationale as every prior addition: `TopoPenFillFactory`
-    // is yet another structurally identical delegate alias, so inserting it
-    // anywhere but the tail would silently mis-bind a sibling gesture's
-    // factory rather than fail to compile. `bf`/`mf`/`rf`/`alf`/`sf`/`smf`/
-    // `spf`/`mlf`/`dlf`/`slf` MUST stay in their existing positions — every
-    // existing positional caller (registration.d) stays byte-unchanged
-    // through `slf`.
-    // Remove's edge / vertex primitives (task 0494): 14th and 15th positional
-    // params `ref`/`rvf` appended LAST (after `flf`) — same rationale as every
-    // prior addition, and it bites harder here than usual: all THREE Remove
-    // factories are structurally identical delegate aliases whose only
-    // difference is the wire name they were built with, so a mis-ordered
-    // argument would silently label an edge dissolve as a face removal rather
-    // than fail to compile.
-    // TASK 1905 PHASE D — WHAT THIS METHOD LOST, AND WHY IT STILL EXISTS.
-    // It used to lead with `(CommandHistory h, VertexNewFactory f, …)` and was
-    // called `setUndoBindings`. Both leaders are gone: history and the RAW
-    // site's carrier factory are bound by `Tool.setGestureBindings`, the one
-    // binder of the whole tool tree, so this class can no longer bind a history
-    // at all — which is the point. A per-tool method that takes a
-    // `CommandHistory` is a second place to forget, whatever it is called.
-    //
-    // What is left is the thirteen, and they stay POSITIONAL on purpose. The
-    // seam holds exactly ONE factory slot by design (plan §3 rejected an
-    // installer set that grows a member per carrier), and re-shaping these
-    // thirteen into a named struct would be a different change with a different
-    // witness — the roster that pins this order lives in
-    // `tests/unit/tool_commit_seam_census_g7_test.d` (member 7) and composes
-    // registration position -> parameter name -> `factories_.<field>` -> the
-    // wire name `app.d` built that identifier with. Dropping the two leaders
-    // does NOT renumber it: it numbers the FACTORY list, which starts at `bf`
-    // either way.
-    void setPenFactories(TopoPenBuildFactory bf = null,
-                        TopoPenMoveFactory mf = null,
-                        TopoPenRemoveFactory rf = null,
-                        TopoPenAddLoopFactory alf = null,
-                        TopoPenSlideFactory sf = null,
-                        TopoPenSmoothFactory smf = null,
-                        TopoPenSplitFactory spf = null,
-                        TopoPenMoveLoopFactory mlf = null,
-                        TopoPenDupLoopFactory dlf = null,
-                        TopoPenSmoothLoopFactory slf = null,
-                        TopoPenFillFactory flf = null,
-                        TopoPenRemoveEdgeFactory ref_ = null,
-                        TopoPenRemoveVertexFactory rvf = null) {
-        factories_.build         = bf;
-        factories_.move          = mf;
-        factories_.remove        = rf;
-        factories_.addLoop       = alf;
-        factories_.slide         = sf;
-        factories_.smooth        = smf;
-        factories_.split         = spf;
-        factories_.moveLoop      = mlf;
-        factories_.dupLoop       = dlf;
-        factories_.smoothLoop    = slf;
-        factories_.fill          = flf;
-        factories_.removeEdge    = ref_;
-        factories_.removeVertex  = rvf;
+    // The thirteen per-gesture undo factories arrive as ONE named value (task
+    // 6352): the application assembles `TopoPenFactories` field by field beside
+    // its session-edit descriptors, so two structurally identical delegates
+    // can no longer be exchanged by argument position. History and the
+    // placement carrier are NOT here — they come from `Tool.setGestureBindings`,
+    // and this method takes no `CommandHistory`. Pinned by
+    // tests/unit/topology_pen_factory_bundle_test.d and member 7 of
+    // tests/unit/tool_commit_seam_census_g7_test.d.
+    void setPenFactories(TopoPenFactories factories) {
+        factories_ = factories;
     }
 
     override string name() const { return "Topology Pen"; }

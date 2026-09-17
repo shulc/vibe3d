@@ -79,15 +79,16 @@
 //   4. re-declare `void setUndoBindings` in `tool.d`, or give any pen method a
 //      second `CommandHistory` parameter -> member 4, by file and by name.
 //   5. delete `t.setPenFactories(...)` from the registration block -> member 5.
-//      It COMPILES — every parameter is defaulted — and the pen then places
+//      It COMPILES — nothing else binds the thirteen — and the pen then places
 //      vertices and commits NOTHING for its other fourteen gestures.
 //   6. re-declare `CommandHistory history;` in `tool.d` -> member 6, by file.
 //      It COMPILES TOO, silently shadowing the base field — which is the whole
 //      reason phase B's deletions and the base declaration had to be one
 //      commit, and it was verified under a forced rebuild rather than reasoned
 //      about.
-//   7. swap two adjacent factory arguments at the registration site -> member
-//      7, naming BOTH positions and BOTH wire names, and nothing else.
+//   7. exchange the wire names of two rows in `app.d`'s
+//      `buildTopoPenFactories` -> member 7, naming BOTH fields and BOTH wire
+//      names (task 6352 replaced the positional chain this row used to swap).
 //
 // EVERY NON-VACUITY FLOOR IS INSIDE THE ACCUMULATOR, NEVER AHEAD OF IT. A floor
 // written as a separate assert ABOVE the roster raise aborts the module first —
@@ -98,11 +99,12 @@
 // that separates the two: does it report ITS OWN row, or the floor's line?
 // Every mutation above was re-run against this shape and reports its own row.
 //
-// LANE: `dub test --config=tests`. (The mutation drill also runs this file
-// standalone — `dmd -unittest -main -run` — because it imports nothing from the
-// repo and reads the tree as TEXT at run time, so its own binary is rebuilt
-// from this exact source every time and the mutated files are read fresh. That
-// is a convenience for the drill, never a substitute for the gate.)
+// LANE: `dub test --config=tests`. The focused mutation rig may also compile
+// this file with its complete generated import/link flag set; a bare
+// `-I. -Isource -i` invocation is insufficient now that member 7 reflects the
+// production `TopoPenFactories` type. The rig still reads mutated production
+// files as TEXT at run time; it is a convenience, never a substitute for the
+// gate.
 module tests.unit.tool_commit_seam_census_g7_test;
 
 import std.algorithm : sort, uniq;
@@ -112,10 +114,12 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName;
 import std.regex     : regex, matchAll, replaceAll;
 import std.string    : indexOf, strip;
+import std.traits    : FieldNameTuple;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
    blankNonCode, countOccurrences, enclosingSymbols, historySurface,
    isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits;
+import tools.edit.topology_pen.defs : TopoPenFactories;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -424,11 +428,10 @@ unittest {
 //    bump, i.e. a lane serialiser.
 //
 //    TWO calls where every sibling family has one, and the second is the one
-//    that can go missing quietly. Every parameter of `setPenFactories` is
-//    DEFAULTED (they have been since P3, so that direct-construction rigs can
-//    bind one at a time), so deleting the whole call COMPILES: the pen would
-//    still place vertices through the base binding and commit nothing at all
-//    for its other fourteen gestures.
+//    that can go missing quietly. Nothing else binds the thirteen factories,
+//    so deleting the whole call COMPILES: the pen would still place vertices
+//    through the base binding and commit nothing at all for its other fourteen
+//    gestures.
 // ---------------------------------------------------------------------------
 unittest {
     // Comments stripped, string literals KEPT: the wire id is a string literal,
@@ -458,8 +461,8 @@ unittest {
                       ~ "is written";
         if (countOccurrences(block, "setPenFactories(") != 1)
             problems ~= "    · `mesh.topoPen` does not call setPenFactories "
-                      ~ "exactly once. Every one of its thirteen parameters is "
-                      ~ "defaulted, so a missing call COMPILES — and then the "
+                      ~ "exactly once. Nothing else binds the thirteen "
+                      ~ "factories, so a missing call COMPILES — and then the "
                       ~ "pen places vertices (that path is bound by the base) "
                       ~ "and silently commits NOTHING for the other fourteen "
                       ~ "gestures, because `commitReady` refuses on a null "
@@ -553,83 +556,70 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 7. THE POSITIONAL BINDING. NO SIBLING FAMILY HAS THIS MEMBER.
+// 7. THE NAMED BINDING: field -> descriptor -> wire name / scope.
 //
-//    `TopologyPenTool.setPenFactories` takes the family's THIRTEEN
-//    `MeshSessionEdit delegate()` factories as thirteen structurally IDENTICAL
-//    defaulted parameters, and `source/registration.d` passes them BY POSITION.
-//    The declaration's own comment says what that costs: a mis-ordered argument
-//    "would compile and silently label one op as another". The blast radius is
-//    not hypothetical — three of the thirteen (`remove`, `removeEdge`,
-//    `removeVertex`) differ ONLY in the wire name they were built with, and one
-//    factory (`build`) is bound to TWO gestures.
+//    `TopologyPenTool.setPenFactories` takes ONE `TopoPenFactories` value, and
+//    `source/app.d` fills it field by field in `buildTopoPenFactories` (task
+//    6352). That replaced a thirteen-argument POSITIONAL chain whose three
+//    Remove factories differed only by wire name, so a swapped argument
+//    compiled and relabelled a gesture. The type still cannot tell the
+//    thirteen apart — they are the same delegate type — so the binding now IS
+//    the field name written on the left of each builder row, and this member
+//    pins, for every field the struct declares:
 //
-//    The frozen fixture reaches only the four factories it drives (`build`,
-//    `move`, `remove`, `dupLoop`). This member closes the other nine by
-//    composing the chain the compiler cannot see:
+//        TopoPenFactories.<field>  ->  exactly one row in buildTopoPenFactories
+//                                  ->  the wire name and the edit scope of that row
 //
-//        registration argument position  ->  setPenFactories parameter name
-//                                        ->  `factories_.<field>` assignment
-//                                        ->  the wire name `source/app.d` built
-//                                            that factory identifier with
+//    and the composition around it: the builder's value is what `app.d`
+//    assigns to the EditorApp field, that field is what the `mesh.topoPen`
+//    registration passes, and `setPenFactories` accepts the named value only
+//    (a positional overload beside it would compile and be callable again).
 //
-//    and pinning all thirteen triples. A swap of two arguments at the
-//    registration site re-pairs two fields with two identifiers and reddens
-//    naming both, and nothing else.
+//    THE FIELD SET IS THE COMPILER'S, not a list here: `FieldNameTuple` of the
+//    real struct. A fourteenth field added to `TopoPenFactories` and forgotten
+//    in the builder reddens by name even though nothing on the roster moved.
 //
-//    WHERE IT CAME FROM, AND WHY IT MOVED. Lane G0-G7 (task 2870) shipped this
-//    as Block 3 of `tests/unit/tool_gesture_runopen_g7_test.d`, whose header
-//    called Blocks 1 and 3 "independent" of this census. Phase D moved it: the
-//    binder it parses is the one this phase reshaped, and two files carrying
-//    two rosters over ONE binding surface is exactly the merge hazard that made
-//    the census per-family in the first place. Block 2 of that file (the
-//    record-primitive census) is superseded by members 2 and 3 here — its own
-//    header said it would be — and Block 1, the live `CommandHistory` positive
-//    control, is behavioural and stays where it is.
-//
-//    WHAT IT DELIBERATELY DOES NOT CLAIM. The factory carries the WIRE NAME
-//    (`MeshSessionEdit.name()` returns `wireName_` verbatim); it does NOT carry
-//    the label that reaches the history. `setSnapshots(before, after, label)`
-//    overrides the constructor's default label, and the pen passes its own label
-//    at every one of the thirteen call sites — which is why the Shift+LMB
-//    duplicate-edge gesture records under `mesh.topoPen_build` with the label
-//    "Topology Duplicate Edge". So a factory swap moves `entryNames` and leaves
-//    `entryLabels` GREEN (measured by lane G0-G7, not deduced), and the roster
-//    below pins the wire name only.
+//    WHAT IT DELIBERATELY DOES NOT CLAIM. The label that reaches the history is
+//    passed by the tool at each record site and overrides the row's default
+//    label, so it is not pinned here (the row's default label is frozen by
+//    member 3 of `tool_commit_seam_census_g8_test.d`). Whether the factory in a
+//    field reaches the tool is behavioural and lives in
+//    `tests/unit/topology_pen_factory_bundle_test.d`. And `editScope` has no
+//    production reader for this carrier, so a scope exchanged between two rows
+//    is invisible to every behavioural test; G7 and G8 are its source witnesses.
 // ---------------------------------------------------------------------------
 
-/// One row of the composed chain.
+/// One frozen row: the struct field, the wire name, the scope argument text.
 private struct Bind {
-    string field;   // the `factories_.<field>` the parameter is assigned to
-    string ident;   // the `source/app.d` factory identifier registration passes
-    string wire;    // the wire name app.d built that identifier with
+    string field;
+    string wire;
+    string scope_;
 }
 
-/// The FROZEN roster, position by position, as `source/registration.d` passes
-/// them today. Thirteen rows; `build` is the one bound to two gestures, and
-/// `remove` / `removeEdge` / `removeVertex` are the three that differ ONLY by
-/// wire name — the pairs a mis-ordered argument would silently exchange.
 private enum Bind[] kFrozenBinds = [
-    Bind("build",        "topoPenBuildEditFactory",        "mesh.topoPen_build"),
-    Bind("move",         "topoPenMoveEditFactory",         "mesh.topoPen_move"),
-    Bind("remove",       "topoPenRemoveEditFactory",       "mesh.topoPen_remove"),
-    Bind("addLoop",      "topoPenAddLoopEditFactory",      "mesh.topoPen_addloop"),
-    Bind("slide",        "topoPenSlideEditFactory",        "mesh.topoPen_slide"),
-    Bind("smooth",       "topoPenSmoothEditFactory",       "mesh.topoPen_smooth"),
-    Bind("split",        "topoPenSplitEditFactory",        "mesh.topoPen_split"),
-    Bind("moveLoop",     "topoPenMoveLoopEditFactory",     "mesh.topoPen_moveloop"),
-    Bind("dupLoop",      "topoPenDupLoopEditFactory",      "mesh.topoPen_duploop"),
-    Bind("smoothLoop",   "topoPenSmoothLoopEditFactory",   "mesh.topoPen_smoothloop"),
-    Bind("fill",         "topoPenFillEditFactory",         "mesh.topoPen_fill"),
-    Bind("removeEdge",   "topoPenRemoveEdgeEditFactory",   "mesh.topoPen_removeedge"),
-    Bind("removeVertex", "topoPenRemoveVertexEditFactory", "mesh.topoPen_removevertex"),
+    Bind("build",        "mesh.topoPen_build",        "sessionGeomMarks"),
+    Bind("move",         "mesh.topoPen_move",         "MeshEditScope.Position"),
+    Bind("remove",       "mesh.topoPen_remove",       "MeshEditScope.Geometry"),
+    Bind("addLoop",      "mesh.topoPen_addloop",      "sessionGeomMarks"),
+    Bind("slide",        "mesh.topoPen_slide",        "MeshEditScope.Position"),
+    Bind("smooth",       "mesh.topoPen_smooth",       "MeshEditScope.Position"),
+    Bind("split",        "mesh.topoPen_split",        "MeshEditScope.Geometry"),
+    Bind("moveLoop",     "mesh.topoPen_moveloop",     "MeshEditScope.Position"),
+    Bind("dupLoop",      "mesh.topoPen_duploop",      "sessionGeomMarks"),
+    Bind("smoothLoop",   "mesh.topoPen_smoothloop",   "MeshEditScope.Position"),
+    Bind("fill",         "mesh.topoPen_fill",         "MeshEditScope.Geometry"),
+    Bind("removeEdge",   "mesh.topoPen_removeedge",   "MeshEditScope.Geometry"),
+    Bind("removeVertex", "mesh.topoPen_removevertex", "MeshEditScope.Geometry"),
 ];
 
-private enum string kBinderDecl = "void setPenFactories(";
+private enum string[] kStructFields = [FieldNameTuple!TopoPenFactories];
+
+private enum string kBinderDecl  = "void setPenFactories(";
+private enum string kBuilderDecl = "TopoPenFactories buildTopoPenFactories()";
 
 /// The substring of `src` starting at `open` (which must index an opening
-/// bracket) and ending at its match, brackets included. Counting rather than a
-/// regex because the registration block and the parameter list both nest.
+/// bracket) and ending at its match, brackets included. Returns "" when the
+/// bracket never closes, so the caller reports a finding instead of aborting.
 private string balanced(string src, size_t open, char lo, char hi) {
     int depth = 0;
     foreach (i; open .. src.length) {
@@ -639,34 +629,7 @@ private string balanced(string src, size_t open, char lo, char hi) {
             if (depth == 0) return src[open .. i + 1];
         }
     }
-    assert(false, "unbalanced '" ~ lo ~ "' at " ~ open.to!string
-                ~ " — the parse below would silently read the rest of the file");
-}
-
-/// Parameter names of `setPenFactories`, in declaration order. Phase D removed
-/// the two non-factory leaders (`h`, `f`) the former `setUndoBindings` had, so
-/// there is nothing to skip any more — but the position NUMBERING is unchanged,
-/// because it always numbered the factory list, which started at `bf` either
-/// way.
-private string[] factoryParams(string toolSrc) {
-    immutable ptrdiff_t at = toolSrc.indexOf(kBinderDecl);
-    assert(at >= 0,
-        "G7 census (member 7): `" ~ kBinderDecl ~ "` not found in the pen's "
-      ~ "tool.d. The declaration was renamed or reformatted; fix this parse "
-      ~ "deliberately rather than letting the roster below compare against an "
-      ~ "empty list");
-    immutable size_t open = cast(size_t) at + kBinderDecl.length - 1;
-    auto list = balanced(toolSrc, open, '(', ')');
-    string[] names;
-    foreach (p; list[1 .. $ - 1].split(",")) {
-        auto lhs = p.split("=")[0].strip();
-        auto tok = lhs.split();
-        assert(tok.length >= 2,
-            "G7 census (member 7): parameter `" ~ p.strip()
-          ~ "` has no type+name pair — the parse is not reading a parameter list");
-        names ~= tok[$ - 1].strip();
-    }
-    return names;
+    return "";
 }
 
 unittest {
@@ -679,141 +642,170 @@ unittest {
 
     string[] bad;
 
-    // (i) parameter name -> `factories_.<field>`, read out of the body.
-    auto params = factoryParams(toolSrc);
-    string[string] paramToField;
-    {
-        immutable ptrdiff_t at = toolSrc.indexOf(kBinderDecl);
-        immutable size_t po = cast(size_t) at + kBinderDecl.length - 1;
-        auto plist = balanced(toolSrc, po, '(', ')');
-        immutable size_t bo = po + plist.length;
-        immutable ptrdiff_t brace = toolSrc[bo .. $].indexOf("{");
-        assert(brace >= 0, "G7 census (member 7): no body after "
-                         ~ kBinderDecl ~ "...)");
-        auto body_ = balanced(toolSrc, bo + cast(size_t) brace, '{', '}');
-        foreach (mt; body_.matchAll(regex(`factories_\.(\w+)\s*=\s*(\w+)\s*;`)))
-            paramToField[mt[2]] = mt[1];
+    // (i) the binder: one declaration, one parameter, of the named type.
+    immutable size_t binderDecls = countOccurrences(toolSrc, kBinderDecl);
+    if (binderDecls != 1)
+        bad ~= "    · `" ~ kBinderDecl ~ "` is declared " ~ binderDecls.to!string
+             ~ " time(s) in the pen's tool.d; exactly one, taking the named "
+             ~ "`TopoPenFactories`, is the binding. A second overload compiles "
+             ~ "and makes the argument position meaningful again";
+    else {
+        immutable size_t open = cast(size_t) toolSrc.indexOf(kBinderDecl)
+                              + kBinderDecl.length - 1;
+        auto plist = balanced(toolSrc, open, '(', ')');
+        auto params = plist.length >= 2 ? plist[1 .. $ - 1].strip() : "";
+        auto toks = params.split();
+        if (params.indexOf(",") >= 0 || toks.length != 2
+            || toks[0] != "TopoPenFactories")
+            bad ~= "    · `setPenFactories` takes `" ~ params ~ "`, expected "
+                 ~ "exactly one `TopoPenFactories` parameter";
     }
 
-    // (ii) `source/app.d` factory identifier -> the wire name it was built with.
-    //
-    // RE-POINTED BY GROUP G8 (task 3270). This used to read
-    // `auto X = () => new MeshSessionEdit(…, "wire", …)`, one hand-written
-    // closure per factory. G8 collapsed all twenty-four onto one parameterised
-    // builder, so the rows are now `auto X = sessionEditFactory("wire", …)`.
-    // The old needle matched nothing on the collapsed file and the CONTROL row
-    // below caught it — `identToWire` came back EMPTY and every `wire` column
-    // became a placeholder, which is exactly the failure that control exists
-    // for and the reason this member did not simply go quiet. The frozen
-    // roster in `tests/unit/tool_commit_seam_census_g8_test.d` holds the same
-    // twenty-four strings from the other side.
-    string[string] identToWire;
-    foreach (mt; appSrc.matchAll(regex(
-            `auto\s+(topoPen\w*EditFactory)\s*=\s*sessionEditFactory\(\s*"([^"]+)"\s*,`)))
-        identToWire[mt[1]] = mt[2];
-
-    // (iii) the registration call's argument identifiers, IN ORDER. The base
-    // binder's own arguments (`history`, and a `() => new MeshVertexNew(...)`
-    // lambda) carry no `topoPen…EditFactory` token, so the scan of the block
-    // still yields exactly the thirteen and in the order they are passed.
-    string[] idents;
+    // (ii) the registration passes ONE identifier, and it names no flat factory.
+    string passed;
     {
         immutable string key = `reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {`;
         immutable ptrdiff_t at = regSrc.indexOf(key);
-        assert(at >= 0,
-            "G7 census (member 7): the `mesh.topoPen` registration block was not "
-          ~ "found in source/registration.d. Every row below would then compare "
-          ~ "an empty list against the frozen roster — fix the parse, do not "
-          ~ "relax it");
-        immutable size_t bo = cast(size_t) at + key.length - 1;
-        auto block = balanced(regSrc, bo, '{', '}');
-        foreach (mt; block.matchAll(regex(`topoPen\w*EditFactory`)))
-            idents ~= mt.hit;
-    }
-
-    // Compose, then compare position by position.
-    Bind[] fresh;
-    foreach (i, ident; idents) {
-        string field = "<no parameter at this position>";
-        if (i < params.length) {
-            auto pf = params[i] in paramToField;
-            field = (pf is null)
-                  ? "<param " ~ params[i] ~ " assigned to no field>" : *pf;
+        if (at < 0)
+            bad ~= "    · the `mesh.topoPen` registration block was not found in "
+                 ~ "source/registration.d";
+        else {
+            auto block = balanced(regSrc, cast(size_t) at + key.length - 1, '{', '}');
+            immutable ptrdiff_t call = block.indexOf("setPenFactories(");
+            if (call < 0 || countOccurrences(block, "setPenFactories(") != 1)
+                bad ~= "    · the `mesh.topoPen` block calls setPenFactories "
+                     ~ countOccurrences(block, "setPenFactories(").to!string
+                     ~ " time(s), expected 1";
+            else {
+                auto args = balanced(block, cast(size_t) call + "setPenFactories".length, '(', ')');
+                immutable arg = args.length >= 2 ? args[1 .. $ - 1].strip() : "";
+                if (arg.matchAll(regex(`^\w+$`)).empty)
+                    bad ~= "    · the `mesh.topoPen` block passes `" ~ arg ~ "` to "
+                         ~ "setPenFactories; expected the one EditorApp field the "
+                         ~ "builder fills";
+                else passed = arg;
+            }
+            auto flat = block.matchAll(regex(`topoPen\w*EditFactory`)).array;
+            if (flat.length != 0)
+                bad ~= "    · the `mesh.topoPen` block still names "
+                     ~ flat.length.to!string ~ " flat `topoPen…EditFactory` "
+                     ~ "identifier(s); the thirteen travel as one named value";
         }
-        auto pw = ident in identToWire;
-        immutable string wire = (pw is null)
-            ? "<no `auto " ~ ident ~ " = () => new MeshSessionEdit(...)` in "
-            ~ "source/app.d>" : *pw;
-        fresh ~= Bind(field, ident, wire);
     }
 
-    if (params.length != kFrozenBinds.length)
-        bad ~= "    · setPenFactories takes " ~ params.length.to!string
-             ~ " factory parameter(s), the roster holds "
-             ~ kFrozenBinds.length.to!string ~ ". A factory added or removed "
-             ~ "re-numbers every position after it, which is exactly the silent "
-             ~ "mis-labelling the declaration's own comment warns about";
-    if (idents.length != kFrozenBinds.length)
-        bad ~= "    · the `mesh.topoPen` registration passes "
-             ~ idents.length.to!string
-             ~ " factory argument(s), the roster holds "
-             ~ kFrozenBinds.length.to!string;
-
-    immutable size_t n = fresh.length < kFrozenBinds.length
-                       ? fresh.length : kFrozenBinds.length;
-    foreach (i; 0 .. n) {
-        if (fresh[i] == kFrozenBinds[i]) continue;
-        bad ~= "    · position " ~ i.to!string ~ ": frozen "
-             ~ kFrozenBinds[i].field ~ " <- " ~ kFrozenBinds[i].ident
-             ~ " (" ~ kFrozenBinds[i].wire ~ "), fresh "
-             ~ fresh[i].field ~ " <- " ~ fresh[i].ident
-             ~ " (" ~ fresh[i].wire ~ "). The thirteen factories are "
-             ~ "structurally identical delegates passed BY POSITION, so this "
-             ~ "compiles and silently labels one gesture's undo entry with "
-             ~ "another gesture's wire name — in the history and in a replay. "
-             ~ "If the re-order is deliberate, re-freeze this roster and "
-             ~ "re-freeze `tests/fixtures/tool_gesture/g7.json`, whose "
-             ~ "`entryNames` are the behavioural half of this same claim";
+    // (iii) that identifier is assigned from the builder in app.d.
+    if (passed.length) {
+        auto wired = appSrc.matchAll(regex(
+            `app\.` ~ passed ~ `\s*=\s*buildTopoPenFactories\(\s*\)\s*;`)).array;
+        if (wired.length != 1)
+            bad ~= "    · source/app.d assigns `app." ~ passed ~ " = "
+                 ~ "buildTopoPenFactories();` " ~ wired.length.to!string
+                 ~ " time(s); the registration passes `" ~ passed ~ "`, so "
+                 ~ "the builder below must be what fills it, exactly once";
+        immutable size_t appFieldUses = countOccurrences(appSrc, "app." ~ passed);
+        immutable size_t registerCalls = countOccurrences(appSrc, "registerTools(app);");
+        immutable ptrdiff_t wiredAt = appSrc.indexOf("app." ~ passed);
+        immutable ptrdiff_t registerAt = appSrc.indexOf("registerTools(app);");
+        if (appFieldUses != 1 || registerCalls != 1 || wiredAt < 0
+            || registerAt < 0 || wiredAt >= registerAt)
+            bad ~= "    · source/app.d must assign `app." ~ passed
+                 ~ " = buildTopoPenFactories();` before its one `registerTools(app);` "
+                 ~ "call; found " ~ appFieldUses.to!string ~ " field use(s), "
+                 ~ registerCalls.to!string ~ " registration call(s), in "
+                 ~ (wiredAt >= 0 && registerAt >= 0 && wiredAt < registerAt
+                    ? "the required" : "the wrong") ~ " order. EditorApp is "
+                 ~ "passed by value, so wiring it afterwards cannot reach the factories";
     }
 
-    // ANTI-VACUITY, and it is not decoration. Everything above is "the parsed
-    // list equals the frozen one" — which a parse that returned the roster by
-    // accident, or a comparison that cannot see a difference, satisfies for
-    // free. So swap two adjacent rows of the FRESH list in a copy and require
-    // the comparison to notice, and require the parsed maps to be non-empty.
-    //
-    // ALL THREE ARE ROWS OF THE SAME ACCUMULATOR, and that is a correction to
-    // the shape lane G0-G7 shipped: there they sat between the accumulation and
-    // the raise, as bare asserts, so a control failure aborted the module and
-    // swallowed every position row it was supposed to accompany. Folded in,
-    // they cost nothing under the mutation this member exists for (a swapped
-    // argument moves neither map) and they no longer hide it.
-    if (paramToField.length != kFrozenBinds.length)
-        bad ~= "    · CONTROL: the body of `setPenFactories` yielded "
-             ~ paramToField.length.to!string ~ " `factories_.X = param;` "
-             ~ "assignment(s), expected " ~ kFrozenBinds.length.to!string
-             ~ ". With fewer, the `field` column above is a placeholder string "
-             ~ "and the roster compares placeholders to placeholders";
-    if (identToWire.length < kFrozenBinds.length)
-        bad ~= "    · CONTROL: source/app.d yielded " ~ identToWire.length.to!string
-             ~ " topoPen factory->wire-name pair(s), expected at least "
-             ~ kFrozenBinds.length.to!string ~ " — the `wire` column would "
-             ~ "otherwise be a constant placeholder on every row";
-    if (fresh.length >= 2) {
-        auto probe = fresh.dup;
-        auto t = probe[0]; probe[0] = probe[1]; probe[1] = t;
-        if (probe[0] == kFrozenBinds[0] && probe[1] == kFrozenBinds[1])
-            bad ~= "    · CONTROL: swapping the first two parsed bindings "
-                 ~ "produced a list the roster still accepts. `Bind`'s "
-                 ~ "comparison cannot see an argument swap, so every row above "
-                 ~ "is green under the mutation this member exists for";
-    } else {
-        bad ~= "    · CONTROL: fewer than two bindings were parsed, so the swap "
-             ~ "probe never ran and the comparison is unproven";
+    // (iv) the builder: every struct field written exactly once, by name.
+    size_t[string] seen;
+    Bind[string] fresh;
+    size_t rows = 0;
+    immutable ptrdiff_t bAt = appSrc.indexOf(kBuilderDecl);
+    if (bAt < 0 || countOccurrences(appSrc, kBuilderDecl) != 1)
+        bad ~= "    · `" ~ kBuilderDecl ~ "` is declared "
+             ~ countOccurrences(appSrc, kBuilderDecl).to!string
+             ~ " time(s) in source/app.d, expected 1";
+    else {
+        immutable ptrdiff_t brace = appSrc[cast(size_t) bAt .. $].indexOf("{");
+        auto body_ = brace < 0 ? "" : balanced(appSrc, cast(size_t)(bAt + brace), '{', '}');
+        auto locals = body_.matchAll(regex(`TopoPenFactories\s+(\w+)\s*;`)).array;
+        string local = locals.length == 1 ? locals[0][1] : "";
+        immutable size_t statements = countOccurrences(body_, ";");
+        if (local.length == 0)
+            bad ~= "    · buildTopoPenFactories declares " ~ locals.length.to!string
+                 ~ " `TopoPenFactories` local(s), expected 1";
+        else if (body_.matchAll(regex(`return\s+` ~ local ~ `\s*;`)).array.length != 1)
+            bad ~= "    · buildTopoPenFactories does not return its `" ~ local
+                 ~ "` exactly once";
+        if (countOccurrences(body_, "= sessionEditFactory(") != kStructFields.length)
+            bad ~= "    · buildTopoPenFactories holds "
+                 ~ countOccurrences(body_, "= sessionEditFactory(").to!string
+                 ~ " descriptor row(s), expected one per struct field ("
+                 ~ kStructFields.length.to!string ~ ")";
+        if (statements != kStructFields.length + 2)
+            bad ~= "    · buildTopoPenFactories contains " ~ statements.to!string
+                 ~ " statement(s), expected exactly "
+                 ~ (kStructFields.length + 2).to!string ~ " (one local declaration, "
+                 ~ kStructFields.length.to!string
+                 ~ " named descriptor assignments, one return); an extra operator "
+                 ~ "can silently rebind or clear an already checked field";
+        foreach (mt; body_.matchAll(regex(
+                `(\w+)\.(\w+)\s*=\s*sessionEditFactory\(\s*"([^"]*)"\s*,\s*"[^"]*"\s*,\s*([^)]*?)\s*\)\s*;`))) {
+            ++rows;
+            if (local.length && mt[1] != local)
+                bad ~= "    · builder row writes `" ~ mt[1] ~ "." ~ mt[2]
+                     ~ "`, not the returned local `" ~ local ~ "`";
+            seen[mt[2]] = (mt[2] in seen) ? seen[mt[2]] + 1 : 1;
+            fresh[mt[2]] = Bind(mt[2], mt[3], mt[4]);
+        }
     }
 
+    foreach (f; kStructFields) {
+        immutable size_t n = (f in seen) ? seen[f] : 0;
+        if (n != 1)
+            bad ~= "    · TopoPenFactories." ~ f ~ " is written " ~ n.to!string
+                 ~ " time(s) by buildTopoPenFactories, expected exactly 1 — an "
+                 ~ "unwritten field is a null factory and its gesture commits "
+                 ~ "nothing";
+    }
+    foreach (f, n; seen) {
+        bool declared = false;
+        foreach (x; kStructFields) if (x == f) { declared = true; break; }
+        if (!declared)
+            bad ~= "    · buildTopoPenFactories writes `" ~ f ~ "`, which "
+                 ~ "TopoPenFactories does not declare";
+    }
+    foreach (want; kFrozenBinds) {
+        auto got = want.field in fresh;
+        if (got is null) {
+            bad ~= "    · frozen field " ~ want.field ~ " has no builder row";
+            continue;
+        }
+        if (got.wire != want.wire)
+            bad ~= "    · field " ~ want.field ~ ": wire name `" ~ got.wire
+                 ~ "`, frozen `" ~ want.wire ~ "`. The thirteen factories share "
+                 ~ "one delegate type; the field name is the only binding, so "
+                 ~ "this row now labels the " ~ want.field ~ " gesture's undo "
+                 ~ "entry with another gesture's name";
+        if (got.scope_ != want.scope_)
+            bad ~= "    · field " ~ want.field ~ ": scope `" ~ got.scope_
+                 ~ "`, frozen `" ~ want.scope_ ~ "`. No behavioural test reads "
+                 ~ "this carrier's scope; G7 and G8 are its source witnesses";
+    }
+
+    // CONTROLS, inside the accumulator so they never hide a named row.
+    if (kStructFields.length != kFrozenBinds.length)
+        bad ~= "    · CONTROL: TopoPenFactories declares "
+             ~ kStructFields.length.to!string ~ " field(s), the frozen roster "
+             ~ kFrozenBinds.length.to!string ~ ". Freeze the new field's wire "
+             ~ "name and scope here";
+    if (rows < kFrozenBinds.length)
+        bad ~= "    · CONTROL: the builder parse yielded " ~ rows.to!string
+             ~ " row(s), expected " ~ kFrozenBinds.length.to!string
+             ~ " — every comparison above is against a short list";
     assert(bad.length == 0,
-        "G7 positional-binding census: " ~ bad.length.to!string
-      ~ " finding(s) over source/registration.d -> "
-      ~ kPenDir ~ "/tool.d -> source/app.d:\n" ~ joinLines(bad));
+        "G7 named-binding census: " ~ bad.length.to!string
+      ~ " finding(s) over source/app.d -> source/registration.d -> "
+      ~ kPenDir ~ "/tool.d:\n" ~ joinLines(bad));
 }

@@ -151,7 +151,7 @@
       "product_types": [
         "TopologyPenTool"
       ],
-      "semantic_sha256": "a40f99afd16fcc02d09b995e1cf0cdc347566c834fd5f18e50085c7ec9d65cca",
+      "semantic_sha256": "33cec581a9709668cb152194b9d197972e1f576c9250871be2f182edc7205f34",
       "symbol": "toolFactories[\"mesh.topoPen\"]"
     },
     {

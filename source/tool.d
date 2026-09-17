@@ -752,9 +752,9 @@ public:
     ///
     /// Counted, never silent. The mesh is already mutated when a tool reaches
     /// its commit, so "return quietly" here means an edit with no undo entry —
-    /// and a mis-bound factory is precisely the failure a positional
-    /// registration table invites (see `registration.d`'s own warning about
-    /// the thirteen positionally-bound pen factories).
+    /// and a mis-bound factory is precisely the failure a registration table
+    /// of same-typed factories invites (the Topology Pen's thirteen travel as
+    /// one named `TopoPenFactories` value for that reason).
     protected final void noteGestureCarrierMismatch() {
         ++changeBus.gestureCarrierMismatch;
     }

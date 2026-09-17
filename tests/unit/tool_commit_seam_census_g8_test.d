@@ -12,9 +12,11 @@
 // G1 owned `source/tools/create/`, G4 eleven files of `source/tools/edit/`, G7
 // the `topology_pen/` package. G8 owns no tool at all. Its subject is the
 // TABLE the application hands the tools: the twenty-four `MeshSessionEdit`
-// factories `source/app.d` builds, the twenty-seven `EditorApp` fields they
-// are wired into, and the rostered places `source/registration.d` spends
-// them. So the members below do not ask "does this tool still call the seam" —
+// factories `source/app.d` builds (eleven flat rows, and the Topology Pen's
+// thirteen written by field name into one `TopoPenFactories` value, task
+// 6352), the fifteen `EditorApp` fields they are wired into (fourteen
+// delegates and that one pen value), and the rostered places
+// `source/registration.d` spends them. So the members below do not ask "does this tool still call the seam" —
 // phases B and C answered that, family by family. They ask the three questions
 // that only exist once the factories are ONE parameterised builder instead of
 // twenty-four hand-written closures:
@@ -43,11 +45,10 @@
 // the plan feared — which is the mutation member 4 was driven with.
 //
 // WHAT THIS FILE CANNOT SEE, said here so nobody trusts it for that:
-//   * WHICH gesture a factory ends up labelling. The thirteen `topoPen*` rows
-//     are passed BY POSITION to `setPenFactories`, and a swap there re-pairs
-//     two gestures with two wire names while every count below is unchanged.
-//     That chain is member 7 of `tool_commit_seam_census_g7_test.d`, which
-//     reads the wire name out of the same table this file rosters.
+//   * WHICH gesture a pen factory ends up labelling beyond its field name.
+//     The composed chain — builder field -> EditorApp value -> registration
+//     argument -> the binder's one named parameter — is member 7 of
+//     `tool_commit_seam_census_g7_test.d`; this file freezes the rows only.
 //   * WHAT a factory records. That is the frozen plane fixtures'
 //     (`tests/fixtures/tool_gesture/g*.json`) job, family by family.
 //   * WHETHER the collapse changed behaviour. It cannot: the builder's lambda
@@ -265,36 +266,36 @@ private enum Row[] kSessionRows = [
         "mesh.strokeExtrude — and the wire name is camelCase where every "
       ~ "sibling is snake_case, a pre-existing irregularity preserved byte for "
       ~ "byte because history and replay dispatch on the string"),
-    // The thirteen Topology Pen rows. Each is spent ONCE, inside the single
-    // `setPenFactories(...)` call, so the count says nothing about ORDER —
-    // that is member 7 of the G7 census, deliberately not duplicated here.
-    Row("topoPenBuildEditFactory", "mesh.topoPen_build", "Topology Build",
-        "sessionGeomMarks", 1, "setPenFactories position 0"),
-    Row("topoPenMoveEditFactory", "mesh.topoPen_move", "Topology Move",
-        "MeshEditScope.Position", 1, "setPenFactories position 1"),
-    Row("topoPenRemoveEditFactory", "mesh.topoPen_remove", "Topology Remove",
-        "MeshEditScope.Geometry", 1, "setPenFactories position 2"),
-    Row("topoPenAddLoopEditFactory", "mesh.topoPen_addloop", "Topology Add Loop",
-        "sessionGeomMarks", 1, "setPenFactories position 3"),
-    Row("topoPenSlideEditFactory", "mesh.topoPen_slide", "Topology Slide",
-        "MeshEditScope.Position", 1, "setPenFactories position 4"),
-    Row("topoPenSmoothEditFactory", "mesh.topoPen_smooth", "Topology Smooth",
-        "MeshEditScope.Position", 1, "setPenFactories position 5"),
-    Row("topoPenSplitEditFactory", "mesh.topoPen_split", "Topology Split",
-        "MeshEditScope.Geometry", 1, "setPenFactories position 6"),
-    Row("topoPenMoveLoopEditFactory", "mesh.topoPen_moveloop", "Topology Move Loop",
-        "MeshEditScope.Position", 1, "setPenFactories position 7"),
-    Row("topoPenDupLoopEditFactory", "mesh.topoPen_duploop", "Topology Duplicate Loop",
-        "sessionGeomMarks", 1, "setPenFactories position 8"),
-    Row("topoPenSmoothLoopEditFactory", "mesh.topoPen_smoothloop", "Topology Smooth Loop",
-        "MeshEditScope.Position", 1, "setPenFactories position 9"),
-    Row("topoPenFillEditFactory", "mesh.topoPen_fill", "Topology Fill",
-        "MeshEditScope.Geometry", 1, "setPenFactories position 10"),
-    Row("topoPenRemoveEdgeEditFactory", "mesh.topoPen_removeedge", "Topology Remove Edge",
-        "MeshEditScope.Geometry", 1, "setPenFactories position 11"),
-    Row("topoPenRemoveVertexEditFactory", "mesh.topoPen_removevertex", "Topology Remove Vertex",
-        "MeshEditScope.Geometry", 1, "setPenFactories position 12"),
 ];
+
+/// The Topology Pen's thirteen rows, keyed by `TopoPenFactories` FIELD (task
+/// 6352). They are written inside `buildTopoPenFactories` as
+/// `<local>.<field> = sessionEditFactory(...)`, never as flat locals or
+/// `EditorApp` fields, so they have no per-row spend count in
+/// `source/registration.d`: the thirteen travel as ONE value, rostered below
+/// as `kPenBundleField`.
+private struct PenRow { string field; string wire; string label; string scope_; }
+
+private enum PenRow[] kPenRows = [
+    PenRow("build",        "mesh.topoPen_build",        "Topology Build",          "sessionGeomMarks"),
+    PenRow("move",         "mesh.topoPen_move",         "Topology Move",           "MeshEditScope.Position"),
+    PenRow("remove",       "mesh.topoPen_remove",       "Topology Remove",         "MeshEditScope.Geometry"),
+    PenRow("addLoop",      "mesh.topoPen_addloop",      "Topology Add Loop",       "sessionGeomMarks"),
+    PenRow("slide",        "mesh.topoPen_slide",        "Topology Slide",          "MeshEditScope.Position"),
+    PenRow("smooth",       "mesh.topoPen_smooth",       "Topology Smooth",         "MeshEditScope.Position"),
+    PenRow("split",        "mesh.topoPen_split",        "Topology Split",          "MeshEditScope.Geometry"),
+    PenRow("moveLoop",     "mesh.topoPen_moveloop",     "Topology Move Loop",      "MeshEditScope.Position"),
+    PenRow("dupLoop",      "mesh.topoPen_duploop",      "Topology Duplicate Loop", "sessionGeomMarks"),
+    PenRow("smoothLoop",   "mesh.topoPen_smoothloop",   "Topology Smooth Loop",    "MeshEditScope.Position"),
+    PenRow("fill",         "mesh.topoPen_fill",         "Topology Fill",           "MeshEditScope.Geometry"),
+    PenRow("removeEdge",   "mesh.topoPen_removeedge",   "Topology Remove Edge",    "MeshEditScope.Geometry"),
+    PenRow("removeVertex", "mesh.topoPen_removevertex", "Topology Remove Vertex",  "MeshEditScope.Geometry"),
+];
+
+/// The one `EditorApp` field that carries the pen's thirteen, and its one
+/// spend in `source/registration.d` (`t.setPenFactories(topoPenFactories)`).
+private enum string kPenBundleType  = "TopoPenFactories";
+private enum string kPenBundleField = "topoPenFactories";
 
 /// The three factories that build a DIFFERENT carrier and therefore cannot
 /// share the builder. They are in the wiring census (member 1) because an
@@ -391,6 +392,25 @@ unittest {
                       ~ "gesture bound to it records nothing";
     }
 
+    // (iii) the pen's thirteen travel as ONE value: declared once as a
+    //       `TopoPenFactories` field and wired once, from the builder.
+    {
+        string[] bundles;
+        foreach (mt; edSrc.matchAll(regex(kPenBundleType ~ `\s+(\w+)\s*;`)))
+            bundles ~= mt[1];
+        if (bundles != [kPenBundleField])
+            problems ~= "    · `EditorApp` declares " ~ bundles.length.to!string
+                      ~ " `" ~ kPenBundleType ~ "` field(s) " ~ bundles.to!string
+                      ~ ", expected exactly [`" ~ kPenBundleField ~ "`]. An "
+                      ~ "unwired pen value is thirteen null factories at once";
+        immutable size_t wired = countOccurrences(appSrc, "app." ~ kPenBundleField);
+        if (wired != 1)
+            problems ~= "    · `source/app.d` names `app." ~ kPenBundleField ~ "` "
+                      ~ wired.to!string ~ " time(s); exactly one assignment is "
+                      ~ "the wiring. Zero = every pen gesture but placement "
+                      ~ "records nothing";
+    }
+
     if (declared.length < kSessionRows.length + kOtherRows.length)
         problems ~= "    · NON-VACUITY: the scan of `source/editor_app.d` found "
                   ~ declared.length.to!string ~ " factory field declaration(s), "
@@ -453,11 +473,12 @@ unittest {
                   ~ "the row above is vacuous too";
 
     immutable size_t rows = countOccurrences(appSrc, "= sessionEditFactory(");
-    if (rows != kSessionRows.length)
+    if (rows != kSessionRows.length + kPenRows.length)
         problems ~= "    · `source/app.d` has " ~ rows.to!string
                   ~ " builder call(s), the roster holds "
-                  ~ kSessionRows.length.to!string ~ ". A factory added without "
-                  ~ "a roster row is a wire name nothing freezes";
+                  ~ (kSessionRows.length + kPenRows.length).to!string
+                  ~ ". A factory added without a roster row is a wire name "
+                  ~ "nothing freezes";
 
     // The default. Read off the RAW-ish stripped text: the token is code, not a
     // string literal, so the full stripper keeps it.
@@ -537,12 +558,42 @@ unittest {
                       ~ r.wire ~ "`) is built nowhere in `source/app.d`";
     }
 
+    // The pen's thirteen: `<local>.<field> = sessionEditFactory(...)`.
+    Parsed[] penFresh;
+    foreach (mt; appSrc.matchAll(regex(
+            `\b\w+\.(\w+)\s*=\s*sessionEditFactory\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*(?:,\s*([^)]*?)\s*)?\)\s*;`)))
+        penFresh ~= Parsed(mt[1], mt[2], mt[3], mt[4].strip());
+    foreach (r; kPenRows) {
+        size_t n = 0;
+        foreach (f; penFresh) {
+            if (f.field != r.field) continue;
+            ++n;
+            if (f.wire != r.wire)
+                problems ~= "    · TopoPenFactories." ~ r.field ~ ": wire name is `"
+                          ~ f.wire ~ "`, frozen as `" ~ r.wire ~ "`";
+            if (f.label != r.label)
+                problems ~= "    · TopoPenFactories." ~ r.field ~ ": default label is `"
+                          ~ f.label ~ "`, frozen as `" ~ r.label ~ "`";
+            if (f.scope_ != r.scope_)
+                problems ~= "    · TopoPenFactories." ~ r.field ~ ": editScope argument is `"
+                          ~ f.scope_ ~ "`, frozen as `" ~ r.scope_ ~ "`";
+        }
+        if (n != 1)
+            problems ~= "    · TopoPenFactories." ~ r.field ~ " (wire `" ~ r.wire
+                      ~ "`) is built " ~ n.to!string ~ " time(s) in `source/app.d`";
+    }
+    if (penFresh.length != kPenRows.length)
+        problems ~= "    · `source/app.d` writes " ~ penFresh.length.to!string
+                  ~ " named pen row(s), the roster holds "
+                  ~ kPenRows.length.to!string;
+
     // Wire names must be pairwise distinct EXCEPT that they simply are today —
     // the sharing happens at the BINDING (bevelEditFactory serves 24
     // registrations), never at the table.
     {
         string[] wires;
         foreach (r; kSessionRows) wires ~= r.wire;
+        foreach (r; kPenRows)     wires ~= r.wire;
         auto ws = wires.dup;
         ws.sort();
         if (ws.uniq.array.length != wires.length)
@@ -759,6 +810,9 @@ unittest {
 
     foreach (r; kSessionRows) check(r.field, r.binds, r.why);
     foreach (r; kOtherRows)   check(r.field, r.binds, r.why);
+    check(kPenBundleField, 1,
+        "`mesh.topoPen`'s one `setPenFactories` argument; the thirteen pen "
+      ~ "factories travel as this one value (task 6352)");
 
     if (total * 2 < rosterTotal)
         problems ~= "    · NON-VACUITY: the scan of `source/registration.d` "

@@ -3341,13 +3341,12 @@ void main(string[] args) {
     // paragraph deliberately does not spell the new needle.
     //
     // TWO GROUPS INSIDE THE TABLE ARE NOT SAFE TO REORDER OR MERGE:
-    //   * the thirteen `topoPen*` rows are passed to `setPenFactories`
-    //     POSITIONALLY (`registration.d`'s `mesh.topoPen` block), and three of
-    //     them (`_remove` / `_removeedge` / `_removevertex`) differ ONLY by
-    //     wire name — a swapped argument compiles and silently labels one
-    //     gesture's undo entry with another's. That chain is pinned position by
-    //     position by member 7 of `tool_commit_seam_census_g7_test.d`, which
-    //     reads the wire name straight out of the rows below.
+    //   * the thirteen Topology Pen rows are written BY FIELD NAME into one
+    //     `TopoPenFactories` value (`buildTopoPenFactories` below), and three
+    //     of them (`remove` / `removeEdge` / `removeVertex`) differ ONLY by
+    //     wire name — the field name on the left of each row is the binding.
+    //     Member 7 of `tool_commit_seam_census_g7_test.d` pins field -> wire
+    //     name -> scope for all thirteen.
     //   * `bevelEditFactory` is bound by TWENTY-FOUR separate tool
     //     registrations under the ONE wire name `mesh.bevel_edit`, so anything
     //     done to that row lands on all twenty-four at once.
@@ -3393,23 +3392,28 @@ void main(string[] args) {
     // Geometry|Marks = the op resizes the selection arrays; Position = a
     // re-snap that adds and removes nothing; Geometry = a topology change that
     // does not touch selection width.
-    auto topoPenBuildEditFactory      = sessionEditFactory("mesh.topoPen_build", "Topology Build", sessionGeomMarks);
-    auto topoPenMoveEditFactory       = sessionEditFactory("mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
-    auto topoPenRemoveEditFactory     = sessionEditFactory("mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
-    auto topoPenAddLoopEditFactory    = sessionEditFactory("mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
-    auto topoPenSlideEditFactory      = sessionEditFactory("mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
-    auto topoPenSmoothEditFactory     = sessionEditFactory("mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
-    auto topoPenSplitEditFactory      = sessionEditFactory("mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
-    auto topoPenMoveLoopEditFactory   = sessionEditFactory("mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
-    auto topoPenDupLoopEditFactory    = sessionEditFactory("mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
-    auto topoPenSmoothLoopEditFactory = sessionEditFactory("mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
-    auto topoPenFillEditFactory       = sessionEditFactory("mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
-    // Remove's OTHER two primitives (task 0494): an edge-latched press
-    // dissolves, a vertex-latched press merges the incident fan — neither
-    // removes a face, and all three share the Geometry scope, so the wire name
-    // is the ONLY thing keeping them apart in history, replay and macros.
-    auto topoPenRemoveEdgeEditFactory   = sessionEditFactory("mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
-    auto topoPenRemoveVertexEditFactory = sessionEditFactory("mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
+    import tools.edit.topology_pen.defs : TopoPenFactories;
+    TopoPenFactories buildTopoPenFactories() {
+        TopoPenFactories pen;
+        pen.build        = sessionEditFactory("mesh.topoPen_build", "Topology Build", sessionGeomMarks);
+        pen.move         = sessionEditFactory("mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
+        pen.remove       = sessionEditFactory("mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
+        pen.addLoop      = sessionEditFactory("mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
+        pen.slide        = sessionEditFactory("mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
+        pen.smooth       = sessionEditFactory("mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
+        pen.split        = sessionEditFactory("mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
+        pen.moveLoop     = sessionEditFactory("mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
+        pen.dupLoop      = sessionEditFactory("mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
+        pen.smoothLoop   = sessionEditFactory("mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
+        pen.fill         = sessionEditFactory("mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
+        // Remove's OTHER two primitives (task 0494): an edge-latched press
+        // dissolves, a vertex-latched press merges the incident fan — neither
+        // removes a face, and all three share the Geometry scope, so the wire
+        // name is the ONLY thing keeping them apart in history, replay and macros.
+        pen.removeEdge   = sessionEditFactory("mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
+        pen.removeVertex = sessionEditFactory("mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
+        return pen;
+    }
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -3557,19 +3561,7 @@ void main(string[] args) {
     app.radialArrayEditFactory   = radialArrayEditFactory;
     app.smoothShiftEditFactory   = smoothShiftEditFactory;
     app.strokeExtrudeEditFactory = strokeExtrudeEditFactory;
-    app.topoPenBuildEditFactory  = topoPenBuildEditFactory;
-    app.topoPenMoveEditFactory   = topoPenMoveEditFactory;
-    app.topoPenRemoveEditFactory = topoPenRemoveEditFactory;
-    app.topoPenAddLoopEditFactory = topoPenAddLoopEditFactory;
-    app.topoPenSlideEditFactory   = topoPenSlideEditFactory;
-    app.topoPenSmoothEditFactory  = topoPenSmoothEditFactory;
-    app.topoPenSplitEditFactory   = topoPenSplitEditFactory;
-    app.topoPenMoveLoopEditFactory = topoPenMoveLoopEditFactory;
-    app.topoPenDupLoopEditFactory  = topoPenDupLoopEditFactory;
-    app.topoPenSmoothLoopEditFactory = topoPenSmoothLoopEditFactory;
-    app.topoPenFillEditFactory       = topoPenFillEditFactory;
-    app.topoPenRemoveEdgeEditFactory   = topoPenRemoveEdgeEditFactory;
-    app.topoPenRemoveVertexEditFactory = topoPenRemoveVertexEditFactory;
+    app.topoPenFactories         = buildTopoPenFactories();
 
     app.dropActiveTool       = cast(void delegate(ToolTransition))&dropActiveTool;
     app.promoteItemType      = cast(void delegate())&promoteItemType;

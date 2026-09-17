@@ -450,79 +450,17 @@ private void registerGeneratorTools(EditorApp app) {
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 "mesh.tack", reg.toolFactories["mesh.tack"]);
 
-    // Topology Pen P0-P5 (doc/topopen_p0_plan.md, doc/topopen_p2_plan.md,
-    // doc/topopen_p3_plan.md, doc/topopen_p4_plan.md,
-    // doc/topopen_p5_remove_plan.md) — thin consumer of the CONS stage's
-    // background-surface constraint packet; P2 adds placement, via the
-    // existing `mesh.addVertex` command (MeshVertexNew) — same generic
-    // ctor-deps shape as VertexTool (prim.vertex, above), no
-    // ToolHeadlessCommand entry (interactive-only, like Vertex/Pen). P3
-    // adds the drag-from-vertex build gesture's own generic MeshSessionEdit
-    // factory (topoPenBuildEditFactory, distinct wire name, app.d) for its
-    // one-atomic-undo-per-gesture commit. P4 adds the plain-LMB Move
-    // gesture's OWN generic MeshSessionEdit factory (topoPenMoveEditFactory,
-    // distinct wire name + Position-only editScope, OBJ-3 FOLDED). P5 adds
-    // the Ctrl+MMB Remove gesture's OWN generic MeshSessionEdit factory
-    // (topoPenRemoveEditFactory, distinct wire name + Geometry editScope,
-    // opponent KILLER-1 — a single-face delete must not bake either
-    // sibling gesture's wire name). P6 adds the Shift+MMB Add Loop
-    // gesture's OWN generic MeshSessionEdit factory
-    // (topoPenAddLoopEditFactory, distinct wire name + Geometry|Marks
-    // editScope, doc/topopen_p6_addloop_plan.md REV1 — a loop cut must not
-    // bake ANY sibling gesture's wire name either). P7 adds the Ctrl+LMB
-    // Slide gesture's OWN generic MeshSessionEdit factory
-    // (topoPenSlideEditFactory, distinct wire name + Position-only editScope,
-    // doc/topopen_p7_slide_plan.md REV1 — a constrained-edge slide must not
-    // bake ANY sibling gesture's wire name either, incl. Move's, despite
-    // sharing its Position-only scope). P8 adds the Shift+Ctrl+LMB Smooth
-    // gesture's OWN generic MeshSessionEdit factory (topoPenSmoothEditFactory,
-    // distinct wire name + Position-only editScope, doc/topopen_p8_smooth_plan.md)
-    // — appended LAST (8th param), never inserted mid-list, since every
-    // sibling factory alias is a structurally identical delegate and this
-    // caller stays positional. P9 adds the plain-MMB Split gesture's OWN
-    // generic MeshSessionEdit factory (topoPenSplitEditFactory, distinct
-    // wire name + Geometry editScope, doc/topopen_p9_split_plan.md) —
-    // appended LAST (9th param), never inserted mid-list, same rationale.
-    // P10 adds the plain-RMB Move Loop gesture's OWN generic MeshSessionEdit
-    // factory (topoPenMoveLoopEditFactory, distinct wire name +
-    // Position-only editScope, doc/topopen_p10_moveloop_plan.md) — appended
-    // LAST (10th param), never inserted mid-list, same rationale. P11 adds
-    // the Shift+RMB Dup Loop gesture's OWN generic MeshSessionEdit factory
-    // (topoPenDupLoopEditFactory, distinct wire name + Geometry|Marks
-    // editScope, doc/topopen_p11_duploop_plan.md) — appended LAST (11th
-    // param), never inserted mid-list, same rationale. P12 adds the
-    // Shift+Ctrl+RMB Smooth+Loop gesture's OWN generic MeshSessionEdit
-    // factory (topoPenSmoothLoopEditFactory, distinct wire name +
-    // Position-only editScope, doc/topopen_p12_smoothloop_plan.md) —
-    // appended LAST (12th param), never inserted mid-list, same rationale.
-    // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md) adds
-    // the Fill-mode dropdown-routed plain-LMB gesture's OWN generic
-    // MeshSessionEdit factory (topoPenFillEditFactory, distinct wire name +
-    // Geometry editScope) — appended LAST (13th param), never inserted
-    // mid-list, same rationale. Task 0494 adds Remove's OTHER two primitives'
-    // factories (topoPenRemoveEdgeEditFactory / topoPenRemoveVertexEditFactory,
-    // distinct wire names + Geometry editScope) — appended LAST (14th and 15th
-    // params), never inserted mid-list. Same rationale, sharpened: these three
-    // Remove factories differ ONLY by wire name, so a mis-ordered argument here
-    // would compile and silently label one op as another.
+    // Topology Pen — interactive-only (no ToolHeadlessCommand entry). TWO
+    // binders, and neither is optional: `setGestureBindings` carries history
+    // plus the placement gesture's per-click `MeshVertexNew`; `setPenFactories`
+    // carries the other gestures' thirteen factories as ONE named
+    // `TopoPenFactories` value built in app.d (task 6352), so no argument
+    // position can re-pair a gesture with a sibling's wire name. Member 5 of
+    // tests/unit/tool_commit_seam_census_g7_test.d requires one call of each.
     reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {
         auto t = new TopologyPenTool(() => &mesh(), &gpu());
-        // Task 1905 phase D: history + the RAW site's carrier through the ONE
-        // base binder; the thirteen `MeshSessionEdit` factories through the
-        // tool's own, which no longer takes a `CommandHistory` at all. TWO
-        // calls where there was one, and the second is not optional — a pen
-        // registered without it compiles and every gesture but placement then
-        // finds a null factory and commits nothing. Member 5 of
-        // `tests/unit/tool_commit_seam_census_g7_test.d` requires exactly one
-        // of each in this block.
         t.setGestureBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode));
-        t.setPenFactories(topoPenBuildEditFactory, topoPenMoveEditFactory,
-                         topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
-                         topoPenSlideEditFactory, topoPenSmoothEditFactory,
-                         topoPenSplitEditFactory, topoPenMoveLoopEditFactory,
-                         topoPenDupLoopEditFactory, topoPenSmoothLoopEditFactory,
-                         topoPenFillEditFactory,
-                         topoPenRemoveEdgeEditFactory, topoPenRemoveVertexEditFactory);
+        t.setPenFactories(topoPenFactories);
         return t;
     });
 

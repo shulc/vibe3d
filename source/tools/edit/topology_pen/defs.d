@@ -11,7 +11,9 @@
 // Split out of the tool module by task 0718, verbatim. Visibility is
 // unchanged except for three types the tool needs across the new module
 // boundary (`TopoPenFactories`, `ChordOv`, `modeOfOverride`), which went from
-// `private` to `package` -- the pen's package, not one module wider.
+// `private` to `package` -- the pen's package, not one module wider. Task 6352
+// then made `TopoPenFactories` public: the application assembles it by field
+// name and hands it to `setPenFactories` whole.
 module tools.edit.topology_pen.defs;
 
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -47,7 +49,7 @@ alias TopoPenBuildFactory = MeshSessionEdit delegate();
 /// replay / macros) and the wrong `editScope` (Geometry|Marks vs the
 /// position-only write a re-snap move actually is). Wired with
 /// `wireName="mesh.topoPen_move"` and `MeshEditScope.Position` at the
-/// app.d construction site, mirroring `topoPenBuildEditFactory`.
+/// app.d construction site, mirroring `TopoPenFactories.build`.
 alias TopoPenMoveFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER REMOVE GESTURE to obtain a fresh,
@@ -59,7 +61,7 @@ alias TopoPenMoveFactory = MeshSessionEdit delegate();
 /// for the build factory, the wrong `editScope` (Geometry|Marks vs the
 /// plain Geometry a face delete actually is). Wired with
 /// `wireName="mesh.topoPen_remove"` and `MeshEditScope.Geometry` at the
-/// app.d construction site, mirroring `topoPenMoveEditFactory`.
+/// app.d construction site, mirroring `TopoPenFactories.move`.
 alias TopoPenRemoveFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER ADD-LOOP GESTURE to obtain a fresh,
@@ -71,7 +73,7 @@ alias TopoPenRemoveFactory = MeshSessionEdit delegate();
 /// loop-cut — corrupts undo history / event-log replay / macros). Wired
 /// with `wireName="mesh.topoPen_addloop"` and
 /// `MeshEditScope.Geometry|Marks` (the cut resizes selection arrays) at
-/// the app.d construction site, mirroring `topoPenRemoveEditFactory`.
+/// the app.d construction site, mirroring `TopoPenFactories.remove`.
 alias TopoPenAddLoopFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER SLIDE GESTURE to obtain a fresh,
@@ -82,7 +84,7 @@ alias TopoPenAddLoopFactory = MeshSessionEdit delegate();
 /// ("mesh.topoPen_move" on a slide — corrupts undo history / event-log
 /// replay / macros). Wired with `wireName="mesh.topoPen_slide"` and
 /// `MeshEditScope.Position` at the app.d construction site, mirroring
-/// `topoPenMoveEditFactory`.
+/// `TopoPenFactories.move`.
 alias TopoPenSlideFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER SMOOTH GESTURE to obtain a fresh,
@@ -93,7 +95,7 @@ alias TopoPenSlideFactory = MeshSessionEdit delegate();
 /// `wireName` ("mesh.topoPen_move"/"mesh.topoPen_slide" on a smooth gesture
 /// — corrupts undo history / event-log replay / macros). Wired with
 /// `wireName="mesh.topoPen_smooth"` and `MeshEditScope.Position` at the
-/// app.d construction site, mirroring `topoPenSlideEditFactory`.
+/// app.d construction site, mirroring `TopoPenFactories.slide`.
 alias TopoPenSmoothFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER SPLIT GESTURE to obtain a fresh,
@@ -105,7 +107,7 @@ alias TopoPenSmoothFactory = MeshSessionEdit delegate();
 /// "mesh.topoPen_addloop" on a split — corrupts undo history / event-log
 /// replay / macros). Wired with `wireName="mesh.topoPen_split"` and
 /// `MeshEditScope.Geometry` at the app.d construction site, mirroring
-/// `topoPenRemoveEditFactory`.
+/// `TopoPenFactories.remove`.
 alias TopoPenSplitFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER MOVE-LOOP GESTURE to obtain a fresh,
@@ -117,7 +119,7 @@ alias TopoPenSplitFactory = MeshSessionEdit delegate();
 /// "mesh.topoPen_smooth" on a loop drag — corrupts undo history / event-log
 /// replay / macros). Wired with `wireName="mesh.topoPen_moveloop"` and
 /// `MeshEditScope.Position` at the app.d construction site, mirroring
-/// `topoPenSlideEditFactory`.
+/// `TopoPenFactories.slide`.
 alias TopoPenMoveLoopFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER DUPLICATE-LOOP GESTURE to obtain a fresh,
@@ -138,7 +140,7 @@ alias TopoPenDupLoopFactory = MeshSessionEdit delegate();
 /// ("mesh.topoPen_moveloop" on a smooth — corrupts undo history / event-log
 /// replay / macros). Wired with `wireName="mesh.topoPen_smoothloop"` and
 /// `MeshEditScope.Position` at the app.d construction site, mirroring
-/// `topoPenMoveLoopEditFactory`.
+/// `TopoPenFactories.moveLoop`.
 alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 
 /// Factory the tool calls ONCE PER FILL GESTURE to obtain a fresh,
@@ -151,7 +153,7 @@ alias TopoPenSmoothLoopFactory = MeshSessionEdit delegate();
 /// "mesh.topoPen_remove" on a fill — corrupts undo history / event-log
 /// replay / macros) onto its own atomic undo entry. Wired with
 /// `wireName="mesh.topoPen_fill"` and `MeshEditScope.Geometry` at the
-/// app.d construction site, mirroring `topoPenSplitEditFactory`.
+/// app.d construction site, mirroring `TopoPenFactories.split`.
 alias TopoPenFillFactory = MeshSessionEdit delegate();
 
 /// Factories the tool calls ONCE PER REMOVE GESTURE THAT LATCHED AN EDGE /
@@ -162,11 +164,11 @@ alias TopoPenFillFactory = MeshSessionEdit delegate();
 /// edge-latched press DISSOLVES (merging the two incident polygons into one),
 /// a vertex-latched press merges the whole incident fan and drops the vertex.
 /// Same `MeshEditScope.Geometry` on all three, but reusing
-/// `topoPenRemoveEditFactory` for the other two would bake "a face was
+/// `TopoPenFactories.remove` for the other two would bake "a face was
 /// removed" onto an op that removed no face — the undo history, the event-log
 /// replay and any macro built on it would all describe the wrong edit. Wired
 /// with `wireName="mesh.topoPen_removeedge"` / `"mesh.topoPen_removevertex"`
-/// at the app.d construction site, mirroring `topoPenRemoveEditFactory`.
+/// at the app.d construction site, mirroring `TopoPenFactories.remove`.
 alias TopoPenRemoveEdgeFactory   = MeshSessionEdit delegate();
 alias TopoPenRemoveVertexFactory = MeshSessionEdit delegate();
 
@@ -176,7 +178,7 @@ alias TopoPenRemoveVertexFactory = MeshSessionEdit delegate();
 /// carries ONE member (`factories_`); the pre-grouping field names survive
 /// as `ref` shims on the class, because the same-module direct-construction
 /// rigs assign them one at a time. Prod code reads `factories_` directly.
-package struct TopoPenFactories {
+struct TopoPenFactories {
     TopoPenBuildFactory        build;         // P3 (doc/topopen_p3_plan.md)
     TopoPenMoveFactory         move;          // P4 (doc/topopen_p4_plan.md, OBJ-3 FOLDED)
     TopoPenRemoveFactory       remove;        // P5 (doc/topopen_p5_remove_plan.md, opponent KILLER-1)
@@ -344,8 +346,8 @@ package struct ChordOv {
 ///
 /// APPEND ONLY. This enum is simultaneously the index into the fixed-length
 /// `kChordOv` below, so inserting a value in the MIDDLE silently rebinds every
-/// row after it instead of failing to compile — the same footgun the positional
-/// `setUndoBindings` parameters carry. `CtrlRmb`/`ShiftCtrlMmb` (task 0499) are
+/// row after it instead of failing to compile — the same footgun any positional
+/// list of same-typed parameters carries. `CtrlRmb`/`ShiftCtrlMmb` (task 0499) are
 /// therefore last, in wiring order, not grouped with their own buttons.
 package enum TopoPenChord : ToolAction {
     Lmb, ShiftLmb, CtrlLmb, ShiftCtrlLmb,

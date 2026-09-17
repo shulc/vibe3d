@@ -38,6 +38,7 @@ import mesh_gpu : GpuMesh;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
+import tools.edit.topology_pen.defs : TopoPenFactories;
 import tool;
 import editmode;
 import seltype;
@@ -624,8 +625,9 @@ struct RemeshModalRefs {
 // `@property ref T` (category "а"). A field is by-value (category "в") ONLY
 // when it is a class-ref or delegate assigned EXACTLY ONCE in main(); the
 // single stable Session pointer is category "в" too -- grep-verified, not assumed from
-// its type. `toolHostView` is the one by-value STRUCT: it holds only a private
-// address and hands out a fresh copy on every read (task 6350). Getting this
+// its type. Two fields are by-value STRUCTS: `toolHostView` holds only a private
+// address and hands out a fresh copy on every read (task 6350), and
+// `topoPenFactories` is thirteen delegates assigned once (task 6352). Getting this
 // wrong is SILENT: a by-value copy of a mutated value-type or a reassigned
 // reference compiles cleanly and just stops seeing later writes.
 // ---------------------------------------------------------------------------
@@ -755,87 +757,12 @@ struct EditorApp {
     MeshSessionEdit delegate() radialArrayEditFactory;
     MeshSessionEdit delegate() smoothShiftEditFactory;
     MeshSessionEdit delegate() strokeExtrudeEditFactory;
-    // Task 0477 (topology-pen P3): the drag-build gesture's own generic
-    // session-edit factory, wireName "mesh.topoPen_build" — kept distinct
-    // from `bevelEditFactory` (unlike most interactive tools above, which
-    // reuse it under its "mesh.bevel_edit" wire name) so undo history /
-    // event-log replay dispatch on a name that actually describes this op.
-    MeshSessionEdit delegate() topoPenBuildEditFactory;
-    // Task 0477 (topology-pen P4, OBJ-3 FOLDED): the Move gesture's own
-    // generic session-edit factory, wireName "mesh.topoPen_move" — kept
-    // distinct from `topoPenBuildEditFactory` since a re-snap move never
-    // adds/removes geometry (Position-only editScope, not Geometry|Marks).
-    MeshSessionEdit delegate() topoPenMoveEditFactory;
-    // Task 0477 (topology-pen P5, doc/topopen_p5_remove_plan.md, opponent
-    // KILLER-1): the Remove gesture's own generic session-edit factory,
-    // wireName "mesh.topoPen_remove" — kept distinct from BOTH
-    // `topoPenBuildEditFactory` and `topoPenMoveEditFactory` (a single-face
-    // delete IS a topology change, Geometry editScope, not Position-only).
-    MeshSessionEdit delegate() topoPenRemoveEditFactory;
-    // Task 0477 (topology-pen P6, doc/topopen_p6_addloop_plan.md, REV1
-    // factory precedent): the Add Loop gesture's own generic session-edit
-    // factory, wireName "mesh.topoPen_addloop" — kept distinct from EVERY
-    // sibling factory above (a loop cut is its own topology op, not a
-    // build/move/remove).
-    MeshSessionEdit delegate() topoPenAddLoopEditFactory;
-    // Task 0477 (topology-pen P7, doc/topopen_p7_slide_plan.md, REV1): the
-    // Slide gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_slide" — kept distinct from EVERY sibling factory above
-    // (a constrained-edge slide is Position-only, like Move, but must never
-    // bake Move's/any other gesture's wire name onto its own undo entries).
-    MeshSessionEdit delegate() topoPenSlideEditFactory;
-    // Task 0477 (topology-pen P8, doc/topopen_p8_smooth_plan.md): the
-    // Smooth gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_smooth" — kept distinct from EVERY sibling factory above
-    // (a relax+re-snap pass is Position-only, like Move/Slide, but a
-    // multi-pass smooth gesture must never bake either sibling's wire name
-    // onto its own coalesced undo entry).
-    MeshSessionEdit delegate() topoPenSmoothEditFactory;
-    // Task 0477 (topology-pen P9, doc/topopen_p9_split_plan.md): the Split
-    // gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_split" — kept distinct from EVERY sibling factory above
-    // (a vertex-to-vertex polygon split is its own topology op — Geometry
-    // editScope, like Remove — never Move's/Slide's/Smooth's Position-only
-    // scope or Remove's/Add Loop's own wire name).
-    MeshSessionEdit delegate() topoPenSplitEditFactory;
-    // Task 0477 (topology-pen P10, doc/topopen_p10_moveloop_plan.md): the
-    // Move Loop gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_moveloop" — kept distinct from EVERY sibling factory
-    // above (a per-vertex loop re-snap is Position-only, like Move/Slide/
-    // Smooth, but must never bake any of their wire names onto its own
-    // atomic undo entry).
-    MeshSessionEdit delegate() topoPenMoveLoopEditFactory;
-    // Task 0477 (topology-pen P11, doc/topopen_p11_duploop_plan.md): the
-    // Dup Loop gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_duploop" — kept distinct from EVERY sibling factory
-    // above (duplicating an edge loop into a new bridge ring IS a topology
-    // change, Geometry|Marks editScope like Add Loop, but must never bake
-    // any sibling's wire name onto its own atomic undo entry).
-    MeshSessionEdit delegate() topoPenDupLoopEditFactory;
-    // Task 0477 (topology-pen P12, doc/topopen_p12_smoothloop_plan.md): the
-    // Smooth+Loop gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_smoothloop" — kept distinct from EVERY sibling factory
-    // above (a 1-D loop-restricted relax+re-snap is Position-only, like
-    // Move/Slide/Smooth/Move Loop, but must never bake any of their wire
-    // names onto its own coalesced undo entry).
-    MeshSessionEdit delegate() topoPenSmoothLoopEditFactory;
-    // Task 0477 continuation (Fill mode V1, doc/topopen_fill_plan.md): the
-    // Fill gesture's own generic session-edit factory, wireName
-    // "mesh.topoPen_fill" — kept distinct from EVERY sibling factory above
-    // (capping a gap cell with one quad IS a topology change, Geometry
-    // editScope like Split/Remove, but must never bake any sibling's wire
-    // name onto its own atomic undo entry).
-    MeshSessionEdit delegate() topoPenFillEditFactory;
-    // Task 0494 (Remove's OTHER two primitives): Remove is one gesture with
-    // three mesh operations, chosen by the class of the element the press
-    // latched, so it carries three factories. wireName
-    // "mesh.topoPen_removeedge" / "mesh.topoPen_removevertex" — kept distinct
-    // from `topoPenRemoveEditFactory` (and from every sibling above) because
-    // all three are the same Geometry scope and differ ONLY by wire name, so
-    // reusing one would label a dissolve as a face removal in the undo
-    // history / event-log replay / any macro built on it.
-    MeshSessionEdit delegate() topoPenRemoveEdgeEditFactory;
-    MeshSessionEdit delegate() topoPenRemoveVertexEditFactory;
+    // The Topology Pen's thirteen per-gesture undo factories, as ONE named
+    // value (task 6352). Assembled field by field in app.d's
+    // `buildTopoPenFactories` and assigned exactly once there; the pen reads
+    // it whole through `setPenFactories`. By value for the reason the
+    // delegate fields above are: thirteen delegates written once at wiring.
+    TopoPenFactories topoPenFactories;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except
