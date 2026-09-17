@@ -6,6 +6,7 @@ module tests.unit.unified_transform_recipe_test;
 // polarity. The final source census rejects a behavior-equivalent return to a
 // handwritten factory body; the preceding cells isolate the recipe mutations.
 
+import core.exception : RangeError;
 import ai.exploration : AiExplorationController;
 import ai.interaction_log_writer : AiInteractionLogWriter;
 import command_history : CommandHistory;
@@ -79,8 +80,14 @@ private Rig* makeRig() {
 }
 
 private XfrmTransformTool build(Rig* r, string key) {
-    auto t = cast(XfrmTransformTool)
-        buildRegisteredXfrmTransformForOwnershipTest(r.app, key);
+    XfrmTransformTool t;
+    try {
+        t = cast(XfrmTransformTool)
+            buildRegisteredXfrmTransformForOwnershipTest(r.app, key);
+    } catch (RangeError e) {
+        if ((key in r.app.reg.toolFactories) !is null) throw e;
+        assert(0, "6351 population: registry lacks " ~ key);
+    }
     assert(t !is null,
         "6351 population: factory '" ~ key ~ "' did not build XfrmTransformTool");
     return t;
