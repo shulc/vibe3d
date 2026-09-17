@@ -1187,6 +1187,43 @@ unittest {
     // shared host may take the port in the gap, and a flaky guard is worse
     // than a one-sided one. The direction that must never fail silently is the
     // one above.
+
+    // WHERE the guard is called cannot be seen by the table above — the
+    // predicate is identical wherever it sits — and the position is exactly
+    // what broke `tests/test_harness_load_log.d` once already: refusing a
+    // `--print-scratch` query for a port it never takes. A behavioural cell
+    // would have to occupy the default port, which this project forbids on
+    // this machine, so the witness is a census over this file's own text.
+    // It reddens the moment someone moves the call back above the query modes.
+    {
+        import std.file : readText;
+        import std.algorithm : count;
+        // The needles are SPLIT so that this block does not contain them: a
+        // census that quotes its own subject finds itself. Two attempts here
+        // did exactly that — first over the whole file, then over "main()'s
+        // body" anchored on a spelling that also appears above — and both
+        // times the mutation that moves the guard stayed GREEN while the
+        // numbers looked plausible. The population floor below is what makes
+        // the self-match impossible to reintroduce quietly: each needle must
+        // occur EXACTLY once in this file.
+        const self    = readText(__FILE_FULL_PATH__);
+        const nQuery   = "if (print" ~ "Scratch) {";
+        const nGuard   = "refuseDefaultBusyPort(port" ~ "Given,";
+        const nBarrier = "test-liveness barrier: refusing" ~ " to build";
+        assert(self.count(nQuery)   == 1, "the --print-scratch early exit is not unique");
+        assert(self.count(nGuard)   == 1, "the default-port guard's call site is not unique");
+        assert(self.count(nBarrier) == 1, "the test-liveness barrier is not unique");
+        const query   = self.indexOf(nQuery);
+        const guard   = self.indexOf(nGuard);
+        const barrier = self.indexOf(nBarrier);
+        assert(query < guard,
+            "the default-port guard must run AFTER the query modes: they bind "
+            ~ "no port, and refusing them is how this guard broke the harness "
+            ~ "load test the first time");
+        assert(guard < barrier,
+            "the default-port guard must still run BEFORE anything is built, "
+            ~ "killed or spawned — the barrier is that boundary");
+    }
 }
 
 void killStaleVibe(ushort port) {
@@ -2613,27 +2650,6 @@ int main(string[] args) {
         j = 1;
     }
 
-    // Before anything is built, killed or spawned: see refuseDefaultBusyPort.
-    // `busy` comes from portBusy, NOT from "we managed to read a cmdline":
-    // a listener owned by another user gives an empty cmdline, and reading
-    // that as "nothing is there" would drop the guard in exactly the case it
-    // can say least about. Unreadable holder ⇒ busy, and not ours ⇒ refuse.
-    const holder = portHolderCmdline(port);
-    if (refuseDefaultBusyPort(portGiven, attach, portBusy(port),
-                              holderIsStaleTestInstance(holder, port))) {
-        stderr.writefln(red("refusing to run: port %d is the DEFAULT and it is "
-                          ~ "held by something that is not a stale test "
-                          ~ "instance of ours."), port);
-        stderr.writefln("  holder: %s", holder);
-        stderr.writeln("This run would send its pkill at that process and then "
-                     ~ "fail minutes later with\n\"failed to come up\", because "
-                     ~ "the port never becomes free.");
-        stderr.writeln("Pass this lane's own port (see ~/Code/wt/.lanes.tsv), "
-                     ~ "e.g. --port 8570.\nIf you really mean this port, say "
-                     ~ "so explicitly: --port " ~ port.to!string ~ ".");
-        return 2;
-    }
-
     // --attach drives an endpoint a HUMAN is driving (the visual proxy in front
     // of a visible vibe3d), where a test sitting still for ten minutes is the
     // point of the session and not a fault. Exempt it explicitly rather than
@@ -2868,6 +2884,45 @@ int main(string[] args) {
         writeBuildStamp();
         writeln(green("build stamp written for the current source/"));
         return 0;
+    }
+
+    // The default-port guard sits HERE, not up beside the option parsing, and
+    // the position is the whole of task 6291's second lesson. Every mode above
+    // this line — `--print-scratch`, `--print-run-lock`, `--check-gate`,
+    // `--check-space`, `--sweep-scratch`, `--write-stamp` — is a QUERY: it
+    // prints something and returns, binding no port and spawning nothing. The
+    // guard's first placement was before all of them, so a query on a machine
+    // whose default port happened to be busy was refused for a port it was
+    // never going to use. That broke `tests/test_harness_load_log.d`, whose
+    // constrained child asks for the scratch path with `--print-scratch` and
+    // then asserts a DIFFERENT, specific refusal: my guard answered first and
+    // the refusal under test was never reached — the "second, unnamed guard
+    // refuses first" shape, committed by the person who had just written that
+    // shape into a card. Caught by the nightly sanitizer lane, 2026-09-16,
+    // `Total: 803 Passed: 802 Failed: 1`.
+    //
+    // `--probe-worker-display` is deliberately NOT exempt: it reaches
+    // `startVibe` and really does take the port, so it belongs on this side of
+    // the line even though it is a diagnostic.
+    //
+    // `busy` comes from portBusy, NOT from "we managed to read a cmdline": a
+    // listener owned by another user gives an empty cmdline, and reading that
+    // as "nothing is there" would drop the guard in exactly the case it can
+    // say least about. Unreadable holder ⇒ busy, and not ours ⇒ refuse.
+    const holder = portHolderCmdline(port);
+    if (refuseDefaultBusyPort(portGiven, attach, portBusy(port),
+                              holderIsStaleTestInstance(holder, port))) {
+        stderr.writefln(red("refusing to run: port %d is the DEFAULT and it is "
+                          ~ "held by something that is not a stale test "
+                          ~ "instance of ours."), port);
+        stderr.writefln("  holder: %s", holder);
+        stderr.writeln("This run would send its pkill at that process and then "
+                     ~ "fail minutes later with\n\"failed to come up\", because "
+                     ~ "the port never becomes free.");
+        stderr.writeln("Pass this lane's own port (see ~/Code/wt/.lanes.tsv), "
+                     ~ "e.g. --port 8570.\nIf you really mean this port, say "
+                     ~ "so explicitly: --port " ~ port.to!string ~ ".");
+        return 2;
     }
 
     // The barrier runs ONCE, before anything is built and before any worker
