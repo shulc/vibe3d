@@ -72,9 +72,8 @@ private JSONValue passAdvance(long n, string what) {
     JSONValue current;
     foreach (_; 0 .. 200) {
         current = snap();
-        // lastScene.seq 1 is the frame the HTTP-thread reset may have landed
-        // inside (cells bumped before it are lost, passes after it counted);
-        // seq >= 2 began after the reset returned and only grows from here.
+        // Keep a full-frame reserve after reset: the reset itself is now served
+        // between frames, and seq >= 2 also excludes the first boundary frame.
         if (generation(current) >= first + n
             && number(current["lastScene"]["seq"], "lastScene.seq") >= 2)
             return current;
