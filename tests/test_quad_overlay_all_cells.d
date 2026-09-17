@@ -161,6 +161,7 @@ void restoreSingle() {
     try {
         script("tool.set edge.extend off");
         script("tool.set edge.bevel off");
+        script("tool.set move off");
         postCommand("viewport.layout", "Single");
         settle();
     } catch (Exception) { /* best effort — the runner shares one app */ }
@@ -412,6 +413,95 @@ bool testFlowB() {
 }
 
 // --------------------------------------------------------------------------
+// Flow C — task 6361: a Visual replica draws the OWNER'S resident hot part;
+// it must not re-resolve hover under the replica's projection. Pixels are the
+// witness because owner-last overlayDrawOrder makes the end-of-frame handles
+// dump invariant under the M2b/M3 faults. Move is intentional: it honours
+// visualOnly, while edge.bevel's replica behaviour is tracked separately by
+// task 6421 and leaves non-owner hover pixels unchanged even on the baseline.
+// --------------------------------------------------------------------------
+
+bool testFlowC() {
+    writeln("  [C] Quad + move: hovering the owner's handle lights every replica...");
+    resetApp();
+    scope(exit) restoreSingle();
+    enterQuad();
+    script("tool.set move on");
+    settle();
+
+    auto h0 = handles();
+    enforce(h0.type != JSONType.null_, "move published no handle arbiter");
+    immutable int vx = jsonInt(h0["viewport"], "x");
+    immutable int vy = jsonInt(h0["viewport"], "y");
+    immutable int vh = jsonInt(h0["viewport"], "height");
+    int sx = -1, sy = -1;
+    foreach (p; h0["parts"].array)
+        if (jsonInt(p, "part") == 3 && p["visible"].type == JSONType.true_
+            && p["screen"].type != JSONType.null_) {
+            sx = cast(int)p["screen"].array[0].floating;
+            sy = cast(int)p["screen"].array[1].floating;
+        }
+    enforce(sx >= 0,
+        "move part 3 (centre box) is the only move part visible from all four "
+        ~ "cells; part 0 lit only one replica (measured)");
+    immutable int ax = vx + 20, ay = vy + vh - 10;
+
+    play(motionAt(0.0, ax, ay) ~ "\n" ~ motionAt(30.0, ax, ay));
+    auto j = displayDump();
+    enforce(jsonInt(j, "cellCount") == 4, "layout must be Quad");
+    immutable int owner = jsonInt(j, "overlayOwner");
+    enforce(jsonInt(handles(), "hot") == -1, "away point must hover nothing");
+    string[4] away, hover, back;
+    foreach (c; 0 .. 4) {
+        bool renders;
+        cellHash(c, away[c], renders);
+        enforce(renders, format("cell %d not rendered", c));
+    }
+    foreach (a; 0 .. 4)
+        foreach (b; a + 1 .. 4)
+            enforce(away[a] != away[b],
+                format("C0: away hashes for cells %d and %d are identical — "
+                     ~ "the probe may be returning one cell's FBO for both", a, b));
+
+    play(motionAt(0.0, sx, sy) ~ "\n" ~ motionAt(30.0, sx, sy));
+    enforce(jsonInt(displayDump(), "overlayOwner") == owner,
+        "hover changed the owner cell");
+    enforce(jsonInt(handles(), "hot") == 3, "hover did not make part 3 hot");
+    foreach (c; 0 .. 4) {
+        bool renders;
+        cellHash(c, hover[c], renders);
+        enforce(renders, format("cell %d not rendered after hover", c));
+    }
+    enforce(hover[owner] != away[owner],
+        "C1 control: owner cell pixels did not change on hover");
+    int lit = 0;
+    foreach (c; 0 .. 4) {
+        if (c == owner) continue;
+        enforce(hover[c] != away[c],
+            format("C2: non-owner cell %d is byte-identical hovered and unhovered — "
+                 ~ "its replica re-resolved hover under its own projection instead "
+                 ~ "of drawing the owner's resident hot part (a non-owner overlay "
+                 ~ "draw ran interactively)", c));
+        ++lit;
+    }
+    enforce(lit == 3, format("C2 floor: %d non-owner cells", lit));
+
+    play(motionAt(0.0, ax, ay) ~ "\n" ~ motionAt(30.0, ax, ay));
+    foreach (c; 0 .. 4) {
+        bool renders;
+        cellHash(c, back[c], renders);
+        enforce(renders, format("cell %d not rendered after returning away", c));
+        enforce(back[c] == away[c], format("C3: cell %d did not return", c));
+    }
+    foreach (c; j["cells"].array)
+        if (jsonInt(c, "id") != owner)
+            enforce(c["overlayMode"].str == "Visual",
+                format("C4: non-owner cell %d is not stamped Visual", jsonInt(c, "id")));
+    writefln("    C PASS: owner %d, 3 replicas lit, all returned", owner);
+    return true;
+}
+
+// --------------------------------------------------------------------------
 // Main
 // --------------------------------------------------------------------------
 
@@ -439,6 +529,7 @@ int main(string[] args) {
     // Flow B, and the run must be able to say WHICH.
     run(&testFlowA, "Flow A — every non-owner cell draws the replica");
     run(&testFlowB, "Flow B — the owner cell's hover and grab still work");
+    run(&testFlowC, "Flow C — replicas show the owner's hover state");
 
     // The runner shares one app across a worker's slice and its between-tests
     // reset covers neither the layout nor the armed tool.
