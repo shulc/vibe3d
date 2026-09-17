@@ -1,0 +1,279 @@
+module tests.unit.headless_tool_pairing_test;
+
+// Task 6353: Generator and Primitive headless commands are paired with their
+// tools by the production registration helper. The source census proves the
+// old four-spelling channel is gone; the registry blocks prove population,
+// command-negative exceptions, invocation-time lookup, and concrete products.
+
+import command : Command;
+import command_history : CommandHistory;
+import commands.tool.headless : ToolHeadlessCommand;
+import document : Document, Layer;
+import editor_app : EditorApp;
+import mesh : Mesh, makeCube;
+import mesh_gpu : GpuMesh;
+import params : Param;
+import registration : registerTools;
+import registry : Registry, ToolFactory;
+import seltype : SelMode;
+import session_owner : Session;
+import tests.unit.census_symbols : blankNonCode, countOccurrences;
+import tool : Tool;
+import tools.alignment.mirror : MirrorTool;
+import tools.alignment.radial_sweep_tool : RadialSweepTool;
+import tools.create.arc : ArcTool;
+import tools.create.box : BoxTool;
+import tools.create.capsule : CapsuleTool;
+import tools.create.cone : ConeTool;
+import tools.create.cylinder : CylinderTool;
+import tools.create.sphere : SphereTool;
+import tools.create.torus : TorusTool;
+import tools.create.tube : TubeTool;
+import tools.edit.bridge_tool : BridgeTool;
+import tools.edit.tack : TackTool;
+import view : View;
+
+import std.algorithm : map, sort;
+import std.array : array;
+import std.conv : to;
+import std.file : readText;
+import std.meta : AliasSeq;
+import std.path : buildPath, dirName;
+import std.string : indexOf;
+import std.traits : BaseClassesTuple;
+
+private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+private enum string[] kPaired = [
+    "prim.cube", "prim.sphere", "prim.ellipsoid", "prim.cylinder",
+    "prim.tube", "prim.cone", "prim.capsule", "prim.torus", "prim.arc",
+    "mesh.mirrorTool", "mesh.radialSweepTool", "mesh.tack", "mesh.bridgeTool",
+];
+
+private enum string[] kToolOnly = ["pen", "prim.vertex", "mesh.topoPen"];
+
+private F fieldOf(F, T)(T obj, string name) {
+    static foreach (C; AliasSeq!(T, BaseClassesTuple!T)) {
+        foreach (i, ref f; (cast(C) obj).tupleof)
+            if (__traits(identifier, C.tupleof[i]) == name)
+                static if (is(typeof(f) : F)) return cast(F) f;
+    }
+    assert(0, "6353 reflection floor: no field named " ~ name
+        ~ " convertible to " ~ F.stringof ~ " on " ~ T.stringof);
+}
+
+private struct Rig {
+    Registry registry;
+    GpuMesh gpu;
+    Session* session;
+    Layer layer;
+    View view;
+    EditorApp app;
+}
+
+private Rig* makeRig() {
+    auto r = new Rig;
+    r.layer = new Layer;
+    r.layer.name = "A";
+    r.layer.meshRef() = makeCube();
+    Document doc;
+    doc.layers = [r.layer];
+    doc.noteLayerListChanged();
+    doc.selectItem(r.layer, SelMode.Set);
+    r.session = Session.create(doc);
+    r.view = new View(0, 0, 800, 600);
+    auto session = r.session;
+    ref Mesh currentMesh() { return session.document.activeMeshRef(); }
+    ref View currentView() { return r.view; }
+    r.app.meshDg = cast(typeof(r.app.meshDg)) &currentMesh;
+    r.app.cameraViewDg = &currentView;
+    r.app.gpuPtr = &r.gpu;
+    r.app.sessionOwner = r.session;
+    r.app.regPtr = &r.registry;
+    r.app.history = new CommandHistory();
+    return r;
+}
+
+private final class MarkerTool : Tool {
+    int marker;
+    this(int value) { marker = value; }
+    override Param[] params() {
+        return [Param.int_("pairMarker", "Pair Marker", &marker, marker)];
+    }
+}
+
+private alias ProductCheck = bool function(Tool);
+private bool isProduct(T)(Tool tool) { return cast(T) tool !is null; }
+private struct ProductRow {
+    string id;
+    string expected;
+    ProductCheck matches;
+}
+
+// Block 0: prove every behavioural block below drives production registration,
+// and pin the disappearance of the old four-spelling channel before any object
+// construction can fail first.
+unittest {
+    immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
+    assert(countOccurrences(self, "registerTools(") >= 1
+        && countOccurrences(self, "new ToolHeadlessCommand(") == 0
+        && countOccurrences(self, "registerHeadlessTool!") == 0
+        && countOccurrences(self, "reg.commandFactories[") == 0,
+        "6353 self-census: the witness must drive production registration");
+
+    immutable registration = readText(buildPath(repoRoot, "source", "registration.d"));
+    assert(registration.length > 50_000,
+        "6353 source population: registration.d is unexpectedly small");
+    assert(countOccurrences(registration, "registerHeadlessTool!") == 13,
+        "6353 source population: expected 13 paired helper calls");
+    assert(countOccurrences(registration, "private void registerHeadlessTool(") == 1,
+        "6353 helper population: expected one private registerHeadlessTool");
+    assert(countOccurrences(registration, "new ToolHeadlessCommand(") == 4,
+        "6353 wrapper population: expected helper plus three Convolve wrappers");
+
+    const helperAt = registration.indexOf("private void registerHeadlessTool(");
+    const generatorAt = registration.indexOf("private void registerGeneratorTools(");
+    const primitiveAt = registration.indexOf("private void registerPrimitiveTools(");
+    const editAt = registration.indexOf("private void registerEditTools(");
+    assert(helperAt >= 0 && helperAt < generatorAt && generatorAt < primitiveAt
+        && primitiveAt < editAt,
+        "6353 source order: helper/family declarations moved or vanished");
+    const helper = registration[cast(size_t) helperAt .. cast(size_t) generatorAt];
+    assert(countOccurrences(helper,
+            "reg.toolFactories[id] = typedToolFactory!T(") == 1,
+        "6353 helper: typed tool write must occur exactly once");
+    assert(countOccurrences(helper, "reg.commandFactories[id] = ") == 1,
+        "6353 helper: command write must occur exactly once in the helper byte range");
+    assert(countOccurrences(helper, "new ToolHeadlessCommand(") == 1,
+        "6353 helper: wrapper construction must occur exactly once");
+
+    const generator = registration[cast(size_t) generatorAt .. cast(size_t) primitiveAt];
+    const primitive = registration[cast(size_t) primitiveAt .. cast(size_t) editAt];
+    assert(countOccurrences(generator, "registerHeadlessTool!") == 4,
+        "6353 generator population: expected four paired calls");
+    assert(countOccurrences(primitive, "registerHeadlessTool!") == 9,
+        "6353 primitive population: expected nine paired calls");
+    foreach (id; kPaired) {
+        assert(countOccurrences(registration,
+                "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
+            "6353 old channel: literal tool assignment survived for " ~ id);
+        assert(countOccurrences(registration,
+                "reg.commandFactories[\"" ~ id ~ "\"]") == 0,
+            "6353 old channel: literal command assignment survived for " ~ id);
+    }
+    foreach (id; kToolOnly) {
+        assert(countOccurrences(registration,
+                "reg.toolFactories[\"" ~ id ~ "\"] = ") == 1,
+            "6353 command-negative source: flat tool registration moved for " ~ id);
+        assert(countOccurrences(registration,
+                "reg, \"" ~ id ~ "\", () {") == 0,
+            "6353 command-negative source: tool-only id became paired: " ~ id);
+    }
+
+    immutable app = readText(buildPath(repoRoot, "source", "app.d"));
+    assert(app.indexOf("registerTools(app);") >= 0
+        && app.indexOf("registerTools(app);") < app.indexOf("registerCommands(app);"),
+        "6353 source order: registerTools must precede registerCommands/withSelType");
+}
+
+// Block 1: the real registry contains every pair, with the wrapper metadata
+// derived from the same id.
+unittest {
+    static assert(kPaired.length == 13);
+    auto r = makeRig();
+    registerTools(r.app);
+    foreach (id; kPaired) {
+        assert(id in r.registry.toolFactories,
+            "6353 population: registry lacks " ~ id ~ " tool factory");
+        assert(id in r.registry.commandFactories,
+            "6353 population: registry lacks " ~ id);
+        auto cmd = r.registry.commandFactories[id]();
+        assert(cmd !is null, "6353 population: null command for " ~ id);
+        assert(cmd.name() == id,
+            "6353 name: " ~ id ~ " wrapper reports name '" ~ cmd.name() ~ "'");
+        assert(cmd.label() == "Apply " ~ id,
+            "6353 label: " ~ id ~ " wrapper reports '" ~ cmd.label() ~ "'");
+        assert(cmd.needsEditTarget(),
+            "6353 target contract: " ~ id ~ " wrapper does not require an edit target");
+    }
+}
+
+// Block 2: the three interactive-only registrations stay command-negative.
+unittest {
+    auto r = makeRig();
+    registerTools(r.app);
+    foreach (id; kToolOnly) {
+        assert(id in r.registry.toolFactories,
+            "6353 command-negative floor: registry lacks tool " ~ id);
+        assert(id !in r.registry.commandFactories,
+            "6353 command-negative: " ~ id ~ " must have no command factory");
+    }
+}
+
+// Block 3: replacing the tool factory after registration is observed by the
+// wrapper factory when it fires. Reflection comes first so an early-capture
+// mutation reddens by name before it can construct a real GL-backed tool.
+unittest {
+    auto r = makeRig();
+    registerTools(r.app);
+    foreach (i, id; kPaired) {
+        immutable marker = 100 + cast(int) i;
+        ToolFactory probe = () => new MarkerTool(marker);
+        r.registry.toolFactories[id] = probe;
+        auto cmd = cast(ToolHeadlessCommand) r.registry.commandFactories[id]();
+        assert(cmd !is null, "6353 late lookup: wrapper type changed for " ~ id);
+        auto held = fieldOf!ToolFactory(cmd, "factory");
+        assert(held is probe,
+            "6353 late lookup: " ~ id ~ " wrapper holds the registration-time "
+          ~ "factory, not the one in the registry at fire");
+        auto schema = cmd.params();
+        assert(schema.length == 1 && schema[0].name == "pairMarker"
+            && schema[0].iptr !is null && *schema[0].iptr == marker,
+            "6353 late lookup use: " ~ id ~ " did not invoke the held probe factory");
+    }
+}
+
+// Block 4: each call-site body builds its reviewed product. Sphere and
+// ellipsoid intentionally share a class, so the constructor flag is the only
+// compiling discriminator and is asserted in both directions.
+unittest {
+    auto rows = [
+        ProductRow("prim.cube", "BoxTool", &isProduct!BoxTool),
+        ProductRow("prim.sphere", "SphereTool", &isProduct!SphereTool),
+        ProductRow("prim.ellipsoid", "SphereTool", &isProduct!SphereTool),
+        ProductRow("prim.cylinder", "CylinderTool", &isProduct!CylinderTool),
+        ProductRow("prim.tube", "TubeTool", &isProduct!TubeTool),
+        ProductRow("prim.cone", "ConeTool", &isProduct!ConeTool),
+        ProductRow("prim.capsule", "CapsuleTool", &isProduct!CapsuleTool),
+        ProductRow("prim.torus", "TorusTool", &isProduct!TorusTool),
+        ProductRow("prim.arc", "ArcTool", &isProduct!ArcTool),
+        ProductRow("mesh.mirrorTool", "MirrorTool", &isProduct!MirrorTool),
+        ProductRow("mesh.radialSweepTool", "RadialSweepTool", &isProduct!RadialSweepTool),
+        ProductRow("mesh.tack", "TackTool", &isProduct!TackTool),
+        ProductRow("mesh.bridgeTool", "BridgeTool", &isProduct!BridgeTool),
+    ];
+    assert(rows.length == 13,
+        "6353 product population: expected 13 rows, got " ~ rows.length.to!string);
+    auto rowKeys = rows.map!(row => row.id).array;
+    auto pairedKeys = kPaired.dup;
+    rowKeys.sort();
+    pairedKeys.sort();
+    assert(rowKeys == pairedKeys,
+        "6353 product population: product rows do not match kPaired");
+
+    auto r = makeRig();
+    registerTools(r.app);
+    foreach (row; rows) {
+        auto product = r.registry.toolFactories[row.id]();
+        assert(product !is null && row.matches(product),
+            "6353 product: " ~ row.id ~ " did not build " ~ row.expected);
+    }
+    auto ellipsoid = cast(SphereTool) r.registry.toolFactories["prim.ellipsoid"]();
+    assert(ellipsoid.preparedSphereClearMethod,
+        "6353 product: prim.ellipsoid built a SphereTool with ellipsoidMode=false "
+      ~ "(the ctor flag, not the class, is what separates this pair)");
+    auto sphere = cast(SphereTool) r.registry.toolFactories["prim.sphere"]();
+    assert(!sphere.preparedSphereClearMethod,
+        "6353 product: prim.sphere built a SphereTool with ellipsoidMode=true "
+      ~ "(the ctor flag, not the class, is what separates this pair)");
+}

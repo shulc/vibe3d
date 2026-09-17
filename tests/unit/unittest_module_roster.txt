@@ -258,6 +258,7 @@ tests.unit.handle_draw_funnel_census_test
 tests.unit.handle_pass_scope_test
 tests.unit.handles.gl_util_test
 tests.unit.harness_log_isolation_census_test
+tests.unit.headless_tool_pairing_test
 tests.unit.history_http_adapter_test
 tests.unit.history_replay_boundary_test
 tests.unit.idle_handle_pose_census_test
