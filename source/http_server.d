@@ -2980,7 +2980,7 @@ class HttpServer {
         // /api/frames: single main-thread writer, whole-record publish.
         try {
             response.statusCode = 200;
-            response.body = g_fc.toJson();
+            response.body = g_fc.snapshot().toJson();
             response.headers["Content-Type"] = "application/json";
         } catch (Exception e) {
             response.statusCode = 500;

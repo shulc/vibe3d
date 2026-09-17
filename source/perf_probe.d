@@ -1528,19 +1528,81 @@ struct HandleDrawScope {
     ~this() { if (owner_ !is null) owner_.restoreHandleDraw(priorId_); }
 }
 
-/// Always-compiled per-frame work counters. Single-writer (main thread);
-/// read from the HTTP thread with the same benign, lock-free diagnostic
-/// contract as `g_perf`/`g_frames`.
-///
-/// The contract is not uniform across the three published records, and the
-/// difference is worth stating because it used to be stated wrongly. `last_`
-/// and `lastScene_` ARE stamped whole (`last_ = cur_` from a fully populated
-/// local), so a racy read of either gets a slightly stale frame, never a torn
-/// one. `total_` is NOT: it is accumulated field-by-field in place, so a
-/// reader's copy of it can mix fields from two adjacent frames. That is
-/// tolerable in a diagnostic total — no consumer compares two of its fields —
-/// but reading the SAME field of it twice is not, which is why `toJson` takes
-/// one copy up front and serialises the copy. See its comment.
+/// Detached frame-work publication. The owner thread takes this snapshot
+/// between frames; serialization may then run on the HTTP thread without
+/// touching the live probe (task 6357).
+struct FrameWorkSnapshot {
+    FrameWork lastScene;
+    FrameWork last;
+    FrameWork totals;
+    HandlePassRecord handlePass;
+
+    /// JSON: `{"frames":N,"lastScene":{...},"last":{...},"totals":{...}}`.
+    string toJson() const {
+        import std.array : appender;
+        auto app = appender!string();
+        app.put(`{"frames":`);
+        putLong(app, totals.seq);
+        app.put(`,"lastScene":`); putWork(app, lastScene);
+        app.put(`,"last":`);      putWork(app, last);
+        app.put(`,"totals":`);    putWork(app, totals);
+        app.put(`,"handlePass":`); putHandlePass(app, handlePass);
+        app.put("}");
+        return app.data;
+    }
+
+    private static void putLong(A)(ref A app, long v) {
+        import std.conv : to;
+        app.put(v.to!string);
+    }
+
+    private static void putWork(A)(ref A app, const ref FrameWork w) {
+        app.put(`{"seq":`);              putLong(app, w.seq);
+        app.put(`,"cellsConsidered":`);  putLong(app, w.cellsConsidered);
+        app.put(`,"cellsRendered":`);    putLong(app, w.cellsRendered);
+        app.put(`,"handlePasses":`);     putLong(app, w.handlePasses);
+        app.put(`,"drawCalls":`);        putLong(app, w.drawCalls);
+        app.put(`,"drawVerts":`);        putLong(app, w.drawVerts);
+        app.put(`,"uploadCalls":`);      putLong(app, w.uploadCalls);
+        app.put(`,"uploadVerts":`);      putLong(app, w.uploadVerts);
+        app.put(`,"hoverPicks":`);       putLong(app, w.hoverPicks);
+        app.put(`,"pipeEvals":`);        putLong(app, w.pipeEvals);
+        app.put(`,"stageEvals":`);       putLong(app, w.stageEvals);
+        app.put(`,"statRebuilds":`);     putLong(app, w.statRebuilds);
+        app.put(`,"allocBytes":`);       putLong(app, w.allocBytes);
+        app.put(`,"pass":{`);
+        static foreach (i, member; __traits(allMembers, DrawPass)) {{
+            static if (i > 0) app.put(",");
+            app.put(`"` ~ member ~ `":{"calls":`);
+            putLong(app, w.pass[__traits(getMember, DrawPass, member)].calls);
+            app.put(`,"verts":`);
+            putLong(app, w.pass[__traits(getMember, DrawPass, member)].verts);
+            app.put("}");
+        }}
+        app.put("}}");
+    }
+
+    private static void putHandlePass(A)(ref A app,
+                                         const ref HandlePassRecord r) {
+        import std.format : formattedWrite;
+        app.put(`{"generation":`);       putLong(app, r.generation);
+        app.put(`,"writes":`);           putLong(app, r.writes);
+        app.put(`,"submitted":`);        putLong(app, r.submitted);
+        app.put(`,"receiptsDropped":`);  putLong(app, r.receiptsDropped);
+        app.put(`,"ids":[`);
+        foreach (i, id; r.ids[0 .. cast(size_t)r.submitted]) {
+            if (i > 0) app.put(",");
+            app.put(`"`);
+            formattedWrite(app, "%016x", id);
+            app.put(`"`);
+        }
+        app.put("]}");
+    }
+}
+
+/// Always-compiled per-frame work counters. The main thread is the sole owner:
+/// reset and snapshot run between frames, and HTTP serializes only the detached
+/// FrameWorkSnapshot value (task 6357).
 struct FrameWorkProbe {
 
     // In-flight frame.
@@ -1672,15 +1734,15 @@ struct FrameWorkProbe {
         }
     }
 
-    /// Internal: close one handle pass. An HTTP reset can zero the depth while
-    /// this scope is alive, so the decrement has the same mandatory floor as
+    /// Internal: close one handle pass. A direct reset in a unit stand can
+    /// zero the depth while this scope is alive, so the decrement has the same mandatory floor as
     /// `popBackdrop`; without it the next pass can silently lose all receipts.
     void popHandlePass() {
         if (handlePassDepth_ > 0) --handlePassDepth_;
         lastHandlePass_ = inFlightHandlePass_;
     }
 
-    /// Internal: restore the enclosing leaf identity. A reset can zero the pass
+    /// Internal: restore the enclosing leaf identity. A direct reset can zero the pass
     /// while this scope is alive; its old identity must not be resurrected.
     void restoreHandleDraw(size_t priorId) {
         if (handlePassDepth_ > 0) curHandleId_ = priorId;
@@ -1716,11 +1778,6 @@ struct FrameWorkProbe {
 
     /// Zero every published counter and the in-flight frame's accumulators.
     ///
-    /// Called from the HTTP thread, so it can land mid-frame. Unlike
-    /// `FrameProbe.reset` this DOES clear `cur_` — the counters it clears are
-    /// plain per-frame accumulators, and a reset landing mid-frame at worst
-    /// mis-attributes that single frame's counts.
-    ///
     /// **It deliberately does NOT re-stamp `allocBase_`, and that is the whole
     /// of task 6330.** `allocatedNow()` is `GC.allocatedInCurrentThread` — a
     /// THREAD-LOCAL counter. Stamped from the HTTP thread it stored THAT
@@ -1744,7 +1801,7 @@ struct FrameWorkProbe {
     /// 2026-08-19 (`beginFrame`, `endFrame`, `backdrop` against `reset`) are
     /// untouched and still tolerated — this is NOT a claim that the probe is
     /// race-free; task 6297 is where that is addressed.
-    void reset() {
+    void reset() nothrow @nogc {
         cur_ = FrameWork.init;
         last_ = FrameWork.init;
         lastScene_ = FrameWork.init;
@@ -1774,6 +1831,11 @@ struct FrameWorkProbe {
     /// By-value copy of the last completed handle pass.
     HandlePassRecord lastHandlePass() const { return lastHandlePass_; }
 
+    /// Copy all published records while the owner is between frames.
+    FrameWorkSnapshot snapshot() const nothrow @nogc {
+        return FrameWorkSnapshot(lastScene_, last_, total_, lastHandlePass_);
+    }
+
     /// Registration stamps are meaningful only while their pass is open.
     /// `ToolHandles.drawGeneration_` snapshots this in `ToolHandles.begin` and
     /// pairs it with the completed draw-side `HandlePassRecord.generation`.
@@ -1781,88 +1843,6 @@ struct FrameWorkProbe {
         return handlePassDepth_ > 0 ? handlePassSeq_ : 0;
     }
 
-    /// JSON: `{"frames":N,"lastScene":{...},"last":{...},"totals":{...}}`.
-    /// Live in EVERY build — this endpoint is not a "{}" stub.
-    ///
-    /// Every record is COPIED before anything is serialised, and the reason is
-    /// specifically `frames`: it and `totals.seq` are the same counter, and
-    /// reading it live at both sites left ~70 `to!string` allocations' worth of
-    /// window between them for the main thread to commit a frame in. One
-    /// response then said `frames: N` and `totals: {seq: N+1}` — a document
-    /// contradicting itself, which is what tests/test_frame_counts.d's
-    /// "totals.seq is the committed-frame count" is entitled to reject.
-    /// Measured on an idle host: 89 of 40 000 responses, every one of them
-    /// off by exactly +1. Serialising from the copies makes the two fields the
-    /// same read, so the disagreement is not narrowed, it is unrepresentable.
-    ///
-    /// The copies do not make the read atomic and are not meant to: `total_`
-    /// is accumulated in place (see the struct header), so one copy can still
-    /// mix fields from two adjacent frames. Nothing compares two of its fields;
-    /// a response disagreeing with ITSELF about one field is the defect.
-    string toJson() {
-        import std.array : appender;
-        const scene = lastScene_;
-        const lastF = last_;
-        const tot   = total_;
-        const hp    = lastHandlePass_;
-        auto app = appender!string();
-        app.put(`{"frames":`);
-        putLong(app, tot.seq);
-        app.put(`,"lastScene":`); putWork(app, scene);
-        app.put(`,"last":`);      putWork(app, lastF);
-        app.put(`,"totals":`);    putWork(app, tot);
-        app.put(`,"handlePass":`); putHandlePass(app, hp);
-        app.put("}");
-        return app.data;
-    }
-
-    private static void putLong(A)(ref A app, long v) {
-        import std.conv : to;
-        app.put(v.to!string);
-    }
-
-    private static void putWork(A)(ref A app, const ref FrameWork w) {
-        app.put(`{"seq":`);              putLong(app, w.seq);
-        app.put(`,"cellsConsidered":`);  putLong(app, w.cellsConsidered);
-        app.put(`,"cellsRendered":`);    putLong(app, w.cellsRendered);
-        app.put(`,"handlePasses":`);     putLong(app, w.handlePasses);
-        app.put(`,"drawCalls":`);        putLong(app, w.drawCalls);
-        app.put(`,"drawVerts":`);        putLong(app, w.drawVerts);
-        app.put(`,"uploadCalls":`);      putLong(app, w.uploadCalls);
-        app.put(`,"uploadVerts":`);      putLong(app, w.uploadVerts);
-        app.put(`,"hoverPicks":`);       putLong(app, w.hoverPicks);
-        app.put(`,"pipeEvals":`);        putLong(app, w.pipeEvals);
-        app.put(`,"stageEvals":`);       putLong(app, w.stageEvals);
-        app.put(`,"statRebuilds":`);     putLong(app, w.statRebuilds);
-        app.put(`,"allocBytes":`);       putLong(app, w.allocBytes);
-        app.put(`,"pass":{`);
-        static foreach (i, member; __traits(allMembers, DrawPass)) {{
-            static if (i > 0) app.put(",");
-            app.put(`"` ~ member ~ `":{"calls":`);
-            putLong(app, w.pass[__traits(getMember, DrawPass, member)].calls);
-            app.put(`,"verts":`);
-            putLong(app, w.pass[__traits(getMember, DrawPass, member)].verts);
-            app.put("}");
-        }}
-        app.put("}}");
-    }
-
-    private static void putHandlePass(A)(ref A app,
-                                         const ref HandlePassRecord r) {
-        import std.format : formattedWrite;
-        app.put(`{"generation":`);       putLong(app, r.generation);
-        app.put(`,"writes":`);           putLong(app, r.writes);
-        app.put(`,"submitted":`);        putLong(app, r.submitted);
-        app.put(`,"receiptsDropped":`);  putLong(app, r.receiptsDropped);
-        app.put(`,"ids":[`);
-        foreach (i, id; r.ids[0 .. cast(size_t)r.submitted]) {
-            if (i > 0) app.put(",");
-            app.put(`"`);
-            formattedWrite(app, "%016x", id);
-            app.put(`"`);
-        }
-        app.put("]}");
-    }
 }
 
 /// Main-thread GC allocation counter. Isolated so the one druntime call this
@@ -1883,9 +1863,8 @@ private ulong allocatedNow() nothrow {
     return GC.allocatedInCurrentThread;
 }
 
-/// Process-wide frame-work counters. Written by the main loop, read by the
-/// HTTP thread (GET /api/frames/counts). Live in every build configuration,
-/// unlike `g_perf`/`g_frames`.
+/// Process-wide frame-work counters, owned by the main loop. HTTP routes receive
+/// detached snapshots through the task-6357 bridge. Live in every build.
 __gshared FrameWorkProbe g_fc;
 
 // ---------------------------------------------------------------------------
