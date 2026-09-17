@@ -2388,9 +2388,12 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/selection", "GET", null),
     SweepRoute("/api/tool/handles", "GET", null),
     SweepRoute("/api/tool/state", "GET", null),
+    SweepRoute("/api/tool/disarm", "GET", null),
     SweepRoute("/api/toolprops/ids", "GET", null),
     SweepRoute("/api/buttons/availability", "GET", null),
+    SweepRoute("/api/input/context", "GET", null),
     SweepRoute("/api/stats", "GET", null),
+    SweepRoute("/api/pie", "GET", null),
     SweepRoute("/api/layers", "GET", null),
     SweepRoute("/api/perf/reset", "POST", `{}`),
     SweepRoute("/api/perf", "GET", null),
@@ -2399,6 +2402,9 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/frames/reset", "POST", `{}`),
     SweepRoute("/api/frames", "GET", null),
     SweepRoute("/api/changes", "GET", null),
+    SweepRoute("/api/cache/rebuilds", "GET", null),
+    SweepRoute("/api/gc/commands", "GET", null),
+    SweepRoute("/api/mesh/planes", "GET", null),
     SweepRoute("/api/toolpipe/eval", "GET", null),
     SweepRoute("/api/path", "GET", null),
     SweepRoute("/api/toolpipe", "GET", null),
@@ -2430,6 +2436,7 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/history", "GET", null),
     SweepRoute("/api/trace", "GET", null),
     SweepRoute("/api/trace/reset", "POST", `{}`),
+    SweepRoute("/api/trace/disarm", "POST", `{}`),
     SweepRoute("/api/history/jump", "POST", `{}`),
     SweepRoute("/api/history/replay", "POST", `{}`),
     SweepRoute("/api/play-events", "POST",
@@ -2501,9 +2508,6 @@ long readVmRssKb(int pid) {
 }
 
 void cmdTsanSweep(string[] args) {
-    // Cheapest first: the completeness test needs no instance.
-    checkSweepCompleteness();
-
     const bt = args.length > 0 ? args[0] : "tsan";
     auto spec = specFor(bt);
     const rssCapMb = environment.get("VIBE3D_TSAN_RSS_CAP_MB", "8192").to!long;
@@ -2514,6 +2518,11 @@ void cmdTsanSweep(string[] args) {
     const sentinel = bt == "tsan" ? "tsan-sweep.done" : "tsan-sweep-" ~ bt ~ ".done";
     removeReports(tag);
     if (exists(sentinel)) std.file.remove(sentinel);
+
+    // Cleanup belongs before this refusal: otherwise a completeness failure
+    // leaves yesterday's reports and sentinel available to tonight's verdict.
+    checkSweepCompleteness();
+
     auto ins = spawnInstance(spec, tag);
     scope(failure) killInstance(ins);
 
