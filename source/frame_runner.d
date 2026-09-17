@@ -8,7 +8,7 @@ import bindbc.sdl : SDL_Delay, SDL_GL_SwapWindow, SDL_Window;
 import document : Document;
 import edit_session : EditSession;
 import editmode : EditMode;
-import editor_app : OverlayMode;
+import viewport_overlay_mode : OverlayMode;
 import eventlog : queryMouse;
 import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 import input_frame_state : InputFrameState;

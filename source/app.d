@@ -278,31 +278,14 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 
 // Task 1040 -- `DragMode` now declared in input_frame_state.d (the input/
 // frame shared-state cluster; `dragMode` itself, the sole field it types,
-// moved there too). Imported back here for the same reason `OverlayMode`
-// below already is: app.d still spells `DragMode.Xxx` at every one of
-// `dragMode`'s own read/write sites.
+// moved there too). Imported back because app.d still spells `DragMode.Xxx`
+// at every one of `dragMode`'s own read/write sites.
 import input_frame_state : DragMode;
 
-// Task 0206 (Quad/Split multi-cell overlays) — overlay draw mode for a
-// single viewport cell's renderViewportSceneToFbo() call. `OverlayMode`
-// itself is now declared in editor_app.d (task 0419 cyclic-import fix --
-// renderViewportSceneToFbo's own parameter type needs it nameable without a
-// back-edge from editor_app.d to app.d; imported back below).
-//   None        — no tool/falloff active; nothing to draw.
-//   Visual      — a NON-owner cell's world-derived replica: activeTool.draw
-//                 / pipeGizmoHost.draw run with visualOnly=true, so gizmo
-//                 geometry still renders reprojected under THIS cell's vp,
-//                 but no cachedVp / ToolHandles registration+hit-test state
-//                 is written (would corrupt the owner cell's interaction —
-//                 see Tool.draw's doc comment in source/tool.d).
-//   Interactive — the overlay-owner (active/origin) cell: today's full path,
-//                 visualOnly=false. Pins cachedVp + runs the arbiter cycle.
-import editor_app : OverlayMode;
-
-// Task 1650 — the per-cell overlay-mode decision, in editor_app.d so that
-// `/api/viewport/display` answers off the SAME code the render loop branches
-// on rather than a second copy of it.
-import editor_app : resolveOverlayMode;
+// Tasks 0206/1650/6361: viewport_overlay_mode.d owns the per-cell policy.
+// None draws nothing, Visual is a non-owner world-derived replica with
+// visualOnly=true, and Interactive is the owner path that pins interaction.
+import viewport_overlay_mode : OverlayMode, resolveOverlayMode;
 
 // ---------------------------------------------------------------------------
 // Module-level helpers
@@ -320,10 +303,9 @@ import editor_app : resolveOverlayMode;
 // Panel layout
 // ---------------------------------------------------------------------------
 
-// Layout relocated to editor_app.d (task 0419 cyclic-import fix -- see the
-// OverlayMode comment above); imported back below since `layout` the LOCAL
-// is still declared/used here (main-loop resize, ctx-wiring), just its TYPE
-// moved.
+// Layout relocated to editor_app.d by the task-0419 extraction banner in that
+// module; imported back since `layout` the LOCAL is still declared/used here
+// (main-loop resize, ctx-wiring), just its TYPE moved.
 import editor_app : Layout;
 
 /// Belt-and-suspenders dynamic-loader path augmentation for release
@@ -7180,7 +7162,7 @@ void main(string[] args) {
         // WERE eligible via `CommandWrapperTool`'s subclasses. What actually
         // makes a replica harmless is `overlayDrawOrder` visiting the owner
         // LAST, so its own draw re-pins every one of those writes before the
-        // frame ends. See `resolveOverlayMode` in editor_app.d.
+        // frame ends. See `resolveOverlayMode` in viewport_overlay_mode.d.
         //
         // --test: Single layout ⇒ cellCount == 1 ⇒ overlayDrawOrder returns
         // [activeId] and the Visual branch is never taken, byte-identical to
@@ -7241,7 +7223,8 @@ void main(string[] args) {
             //
             // Task 1650 removed the tool-TYPE list that used to gate the
             // non-owner (`Visual`) cells here. See `resolveOverlayMode`'s doc
-            // comment in editor_app.d for the defect it caused, and for why
+            // comment in viewport_overlay_mode.d for the defect it caused,
+            // and for why
             // `overlayDrawOrder`'s owner-last visitation — not per-tool
             // `visualOnly` discipline — is what makes dropping it safe.
             bool anyOverlay = (activeTool !is null) || anyFalloffActive();

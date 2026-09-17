@@ -42,9 +42,9 @@
 //
 // WHY THE PRIMARY ASSERTION READS THE DECISION, NOT PIXELS.
 // `/api/viewport/display` reports each cell's `overlayMode` off
-// `editor_app.resolveOverlayMode` — the very function the N-cell render loop
-// branches on, not a re-derivation — so asserting it IS asserting the branch
-// the defect lived in. A pixel count can pass on the wrong pixels; it is kept
+// `viewport_overlay_mode.resolveOverlayMode` — the very function the N-cell
+// render loop branches on, not a re-derivation — so asserting it IS asserting
+// the branch the defect lived in. A pixel count can pass on the wrong pixels; it is kept
 // here as corroboration (the gizmo's ink must appear in a non-owner cell and
 // vanish when the tool is dropped), not as the load-bearing check.
 module test_quad_overlay_all_cells;

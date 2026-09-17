@@ -1,7 +1,7 @@
 module ui.viewport_render_plan_test;
 
 import display_state : DrawPlan;
-import editor_app : OverlayMode;
+import viewport_overlay_mode : OverlayMode;
 import math : Viewport;
 import operator : VectorStack;
 import shader : Shader;

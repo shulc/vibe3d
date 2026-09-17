@@ -18,10 +18,10 @@ module input_frame_state;
 // `rmbPath` 13, `anySpinning` 6, `buildToolVts` 25, `viewportInputAllowed`
 // 15.
 //
-// `DragMode` relocates here too, for the same reason `OverlayMode` already
-// relocated from app.d to editor_app.d (task 0419, see app.d's own comment
-// at the old declaration site): it is the type of exactly one field below,
-// grep-verified to have zero real (non-comment) uses outside app.d, so
+// `DragMode` relocates here too, for the same reason `OverlayMode` relocated
+// from app.d to editor_app.d (task 0419) before moving on to
+// viewport_overlay_mode.d (task 6361): it is the type of exactly one field
+// below, grep-verified to have zero real (non-comment) uses outside app.d, so
 // moving it here and importing it back avoids a fresh app.d <->
 // input_frame_state.d import cycle for a plain enum.
 //

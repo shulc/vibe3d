@@ -23,7 +23,7 @@ import input_frame_state : InputFrameState;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
 // enum's name is needed here, not the resolver.
-import editor_app : OverlayMode;
+import viewport_overlay_mode : OverlayMode;
 import viewport   : testRendersCell;
 import step_trace : StepTrace;
 import bindbc.sdl;

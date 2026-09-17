@@ -443,11 +443,10 @@ final class Viewport3D {
     DirtyKey    lastKey;
 
     /// The overlay-draw mode the N-cell loop RESOLVED for this cell on the
-    /// last frame that considered it (task 1650). Stamped as an `int` rather
-    /// than an `OverlayMode` on purpose: the enum lives in `editor_app.d`,
-    /// which already imports THIS module, and a back-edge from here would
-    /// close an import cycle. `editor_app.OverlayMode` is what the value
-    /// means; `/api/viewport/display` casts it back.
+    /// last frame that considered it (task 1650). It remains an `int` so task
+    /// 6361 changes no stamp representation; the value means
+    /// `viewport_overlay_mode.OverlayMode`, and `/api/viewport/display` casts
+    /// it back.
     ///
     /// WHY THIS IS RECORDED AND NOT RE-DERIVED. `/api/viewport/display` is
     /// the endpoint a multi-cell overlay test asserts on, and the defect task

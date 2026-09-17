@@ -1012,9 +1012,9 @@ class HttpServer {
     // renderer reads the same struct this dumps — a parallel re-derivation
     // could silently drift from what is actually drawn; this cannot.
     //
-    // Task 1650 added `overlayOwner` (top level) and `overlayMode` per cell,
-    // on the same terms: they come off `editor_app.resolveOverlayMode`, the
-    // one function the N-cell render loop branches on. That is what lets a
+    // Task 1650 added `overlayOwner` (top level) and `overlayMode` per cell.
+    // `overlayMode` is the stamp written by the N-cell loop that calls
+    // `viewport_overlay_mode.resolveOverlayMode`. That is what lets a
     // test assert WHICH cells draw the tool gizmo — the question
     // /api/viewport/probe answers only in pixels, and only for cells that
     // rendered.

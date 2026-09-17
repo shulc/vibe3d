@@ -306,7 +306,7 @@ version (WithAI) {
 
 // Task-0419 relocations out of app.d (editor_app.d is the shared foundation
 // -- see its own "Task 0419" doc comment for the full rationale on each).
-import editor_app : EditorApp, Layout, OverlayMode,
+import editor_app : EditorApp, Layout,
     kAiToggleAvailable, kGenerateAiAvailable,
     buildItemFrame;
 

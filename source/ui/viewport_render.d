@@ -30,7 +30,7 @@ import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Document, Layer, kindInfo;
 import viewport              : Viewport3D;
-import editor_app            : OverlayMode;
+import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import tool                  : Tool;

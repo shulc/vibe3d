@@ -35,7 +35,7 @@
 // behaviour end-to-end in tests/test_quad_overlay_all_cells.d.
 module tests.unit.quad_overlay_eligibility_test;
 
-import editor_app : OverlayMode, resolveOverlayMode;
+import viewport_overlay_mode : OverlayMode, resolveOverlayMode;
 
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.common.command_wrapper   : CommandWrapperTool;
