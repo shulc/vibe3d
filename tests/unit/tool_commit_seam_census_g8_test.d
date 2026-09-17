@@ -330,11 +330,11 @@ private enum OtherRow[] kOtherRows = [
 //    it, `recordGestureEdit` finds a null carrier factory, refuses, and the
 //    gesture edits the mesh with no undo entry behind it. That is the exact
 //    failure mode this whole task exists to remove, and after the collapse the
-//    wiring is a hand-maintained list of twenty-seven lines, so it is worth a
+//    wiring is a hand-maintained list of fifteen lines, so it is worth a
 //    row of its own.
 //
 //    The field set is DERIVED from `editor_app.d`, not trusted: a
-//    twenty-eighth field added tomorrow is a candidate member whether or not
+//    sixteenth field added tomorrow is a candidate member whether or not
 //    anyone updates the roster.
 // ---------------------------------------------------------------------------
 unittest {
@@ -786,8 +786,7 @@ unittest {
 //
 //    Whole-identifier matching, over comment- and string-stripped text: a
 //    paragraph naming `bevelEditFactory` (there are twelve) must not count, and
-//    `topoPenRemoveEditFactory` must not be found inside
-//    `topoPenRemoveEdgeEditFactory`.
+//    `bevelEditFactory` must not be found inside `bevelEditFactoryExtra`.
 // ---------------------------------------------------------------------------
 unittest {
     string[] problems;

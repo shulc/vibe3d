@@ -898,16 +898,16 @@ unittest {
 //      (a) place      — the RAW record site (`placeVertexAt` -> `history_.record`
 //                       on a `MeshVertexNew`). The only gesture in the family
 //                       whose wire name is not `mesh.topoPen_*`.
-//      (b) build      — the SHARED record site (`recordSnapshotUndo`), factory
-//                       slot 1 (`bf`).
+//      (b) build      — the SHARED record site (`recordSnapshotUndo`), named
+//                       factory `TopoPenFactories.build`.
 //      (c) dupEdge    — the shared KERNEL `commitDupEdges`, arm A, ALSO factory
-//                       slot 1: same wire name as (b), different label.
-//      (d) dupLoop    — the shared KERNEL `commitDupEdges`, arm B, factory slot
-//                       9 (`dlf`). Byte-identical to (c) on every plane.
-//      (e) move       — factory slot 2 (`mf`), Position-only editScope.
-//      (f) remove     — factory slot 3 (`rf`). Adjacent to (e) in the positional
-//                       argument list, which is what makes the factory-swap
-//                       mutation land on exactly two cells.
+//                       `build`: same wire name as (b), different label.
+//      (d) dupLoop    — the shared KERNEL `commitDupEdges`, arm B, named factory
+//                       `TopoPenFactories.dupLoop`. Byte-identical to (c) on
+//                       every plane.
+//      (e) move       — `TopoPenFactories.move`, Position-only editScope.
+//      (f) remove     — `TopoPenFactories.remove`; the named field is the
+//                       binding between this gesture and its wire identity.
 // ---------------------------------------------------------------------------
 unittest {
     Cell[] cells;
@@ -1043,8 +1043,8 @@ unittest {
         },
         { penOff(); });
 
-    // --- (f) Factory slot 3 (`rf`), ADJACENT to (e) in the positional argument
-    //     list. Remove commits on the press, not the release.
+    // --- (f) Named factory `TopoPenFactories.remove`. Remove commits on the
+    //     press, not the release.
     cells ~= runCell("topoPen/remove-face-ctrl-mmb", "mesh.topoPen",
         "source/tools/edit/topology_pen/tool.d "
       ~ "TopologyPenTool.removeFaceAt -> recordSnapshotUndo",
