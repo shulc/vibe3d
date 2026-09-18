@@ -180,6 +180,7 @@ tests.unit.command_wrapper_result_test
 tests.unit.commands.file.save_test
 tests.unit.commands.image.commands_test
 tests.unit.commands.layer.add_injection_range_test
+tests.unit.commands.layer.item_command_document_liveness_test
 tests.unit.commands.layer.item_command_registration_census_test
 tests.unit.commands.layer.item_command_registration_test
 tests.unit.commands.mesh.edge_slide_result_builder_test
