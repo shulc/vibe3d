@@ -1,8 +1,104 @@
 module tests.unit.ui.remesh_modal_state_test;
 
+import core.time : MonoTime, msecs, seconds;
+import d_imgui.imgui_h : ImVec2;
+import editor_app : MeshDg;
+import imgui_flag_boundary : anyPopupOpen;
+import math : Vec3;
+import mesh : Mesh, makeGridPlane;
 import remesh.remesh_job : MAX_REMESH_TARGET_QUADS,
-    MIN_REMESH_TARGET_QUADS;
+    MIN_REMESH_TARGET_QUADS, RemeshJob;
 import ui.remesh_modal_state : RemeshModalState;
+import ui.panels : drawRemeshModal, remeshModalDrawSnapshot,
+    resetRemeshModalDrawSnapshot;
+import tests.unit.ui.headless_panel : openPanel;
+
+private ImVec2 center(ImVec2 lo, ImVec2 hi) {
+    return ImVec2((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
+}
+
+private void removeIfPresent(string path) nothrow {
+    import std.file : remove;
+
+    try remove(path); catch (Exception) {}
+}
+
+private bool samePoint(Vec3 a, Vec3 b) {
+    import std.math : isClose;
+
+    return isClose(a.x, b.x, 1e-5f, 1e-5f)
+        && isClose(a.y, b.y, 1e-5f, 1e-5f)
+        && isClose(a.z, b.z, 1e-5f, 1e-5f);
+}
+
+private bool containsPoint(const Vec3[] points, Vec3 needle) {
+    foreach (point; points)
+        if (samePoint(point, needle)) return true;
+    return false;
+}
+
+private Vec3[] readObjVertices(string path) {
+    import std.algorithm.iteration : splitter;
+    import std.array : split;
+    import std.conv : to;
+    import std.file : readText;
+    import std.string : startsWith, strip;
+
+    Vec3[] result;
+    foreach (line; readText(path).splitter('\n')) {
+        const text = line.strip;
+        if (!text.startsWith("v ")) continue;
+        const fields = text.split;
+        assert(fields.length == 4, "captured OBJ vertex row is malformed");
+        result ~= Vec3(fields[1].to!float, fields[2].to!float,
+                       fields[3].to!float);
+    }
+    return result;
+}
+
+private void waitForCapture(RemeshJob job, string path) {
+    import core.thread : Thread;
+    import std.file : exists;
+
+    const deadline = MonoTime.currTime + 5.seconds;
+    while (!exists(path) && MonoTime.currTime < deadline) {
+        job.poll();
+        if (!exists(path)) Thread.sleep(10.msecs);
+    }
+    assert(exists(path), "fake remesher did not capture its input OBJ");
+}
+
+private string uniqueTempStem(string label) {
+    import std.conv : to;
+    import std.file : tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    return buildPath(tempDir(), "vibe3d_6360_" ~ label ~ "_"
+        ~ thisProcessID.to!string ~ "_" ~ MonoTime.currTime.ticks.to!string);
+}
+
+private struct SavedHelperEnv {
+    bool present;
+    string value;
+}
+
+private SavedHelperEnv saveHelperEnv() {
+    import std.process : environment;
+
+    auto snapshot = environment.toAA();
+    auto value = "VIBE3D_AUTOREMESHER_BIN" in snapshot;
+    return SavedHelperEnv(value !is null, value is null ? null : *value);
+}
+
+private void restoreHelperEnv(SavedHelperEnv saved) {
+    import std.process : environment;
+
+    if (saved.present)
+        environment["VIBE3D_AUTOREMESHER_BIN"] = saved.value;
+    else
+        environment.remove("VIBE3D_AUTOREMESHER_BIN");
+}
 
 unittest { // all eight fields belong to one state instance
     auto state = new RemeshModalState();
@@ -80,4 +176,301 @@ unittest { // all eight fields belong to one state instance
     assert(state.targetQuads == 20_000
         && state.adaptivity == 1.0f && state.sharpEdge == 90.0f,
         "in-range remesh modal values were changed");
+}
+
+unittest { // popup handshake consumes success-close only inside the modal
+    Mesh probeMesh = makeGridPlane(2);
+    ref Mesh provider() nothrow @nogc { return probeMesh; }
+
+    auto state = new RemeshModalState();
+    auto job = new RemeshJob();
+    scope (exit) job.cancel();
+    resetRemeshModalDrawSnapshot();
+    auto ui = openPanel(() {
+        drawRemeshModal(state, job, cast(MeshDg) &provider);
+    }, "Remesh modal handshake host");
+    scope (exit) ui.close();
+
+    state.requestOpen();
+    ui.frame();
+    ui.frame();
+    auto snap = remeshModalDrawSnapshot();
+    assert(snap.openCalls == 1 && !state.pendingOpen,
+        "one request must perform pending-open to OpenPopup exactly once");
+    assert(anyPopupOpen(),
+        "remesh modal request did not create a live popup");
+    assert(snap.remeshMax.x > snap.remeshMin.x
+        && snap.remeshMax.y > snap.remeshMin.y,
+        "remesh modal did not publish a clickable Remesh button");
+
+    ui.frame();
+    assert(remeshModalDrawSnapshot().openCalls == 1,
+        "an open remesh modal repeated its OpenPopup request");
+
+    state.pendingClose = true;
+    ui.frame();
+    assert(!state.pendingClose && !state.open,
+        "pending success-close was not consumed by the visible modal");
+    assert(!anyPopupOpen(),
+        "success-close outside BeginPopupModal left the popup alive");
+
+    state.requestOpen();
+    ui.frame();
+    ui.frame();
+    assert(remeshModalDrawSnapshot().openCalls == 2 && anyPopupOpen(),
+        "remesh modal did not reopen through a fresh one-shot handshake");
+}
+
+unittest { // real draw preserves in-range values and clamps both bound sides
+    Mesh probeMesh = makeGridPlane(2);
+    ref Mesh provider() nothrow @nogc { return probeMesh; }
+
+    auto state = new RemeshModalState();
+    auto job = new RemeshJob();
+    scope (exit) job.cancel();
+    auto ui = openPanel(() {
+        drawRemeshModal(state, job, cast(MeshDg) &provider);
+    }, "Remesh modal bounds host");
+    scope (exit) ui.close();
+
+    state.requestOpen();
+    ui.frame();
+    assert(anyPopupOpen(), "bounds fixture did not open the remesh modal");
+
+    state.targetQuads = 20_000;
+    state.adaptivity = 1.0f;
+    state.sharpEdge = 90.0f;
+    ui.frame();
+    assert(state.targetQuads == 20_000 && state.adaptivity == 1.0f
+        && state.sharpEdge == 90.0f,
+        "real draw changed in-range remesh values");
+
+    state.targetQuads = MAX_REMESH_TARGET_QUADS + 1;
+    state.adaptivity = 11.0f;
+    state.sharpEdge = 181.0f;
+    ui.frame();
+    assert(state.targetQuads == MAX_REMESH_TARGET_QUADS
+        && state.adaptivity == 10.0f && state.sharpEdge == 180.0f,
+        "real draw did not enforce upper remesh bounds");
+
+    state.targetQuads = MIN_REMESH_TARGET_QUADS - 1;
+    state.adaptivity = -1.0f;
+    state.sharpEdge = -1.0f;
+    ui.frame();
+    assert(state.targetQuads == MIN_REMESH_TARGET_QUADS
+        && state.adaptivity == 0.0f && state.sharpEdge == 0.0f,
+        "real draw did not enforce lower remesh bounds");
+}
+
+version (Posix)
+unittest { // synchronous launch refusal keeps its error and popup visible
+    import std.file : setAttributes, write;
+    import std.process : environment;
+
+    const savedEnv = saveHelperEnv();
+    scope (exit) restoreHelperEnv(savedEnv);
+    const nonExecutable = uniqueTempStem("nonexec");
+    write(nonExecutable, "not executable\n");
+    setAttributes(nonExecutable, 0x180); // 0600: exists, deliberately no execute bit
+    scope (exit) removeIfPresent(nonExecutable);
+    environment["VIBE3D_AUTOREMESHER_BIN"] = nonExecutable;
+
+    Mesh probeMesh = makeGridPlane(2);
+    ref Mesh provider() nothrow @nogc { return probeMesh; }
+    auto state = new RemeshModalState();
+    auto job = new RemeshJob();
+    scope (exit) job.cancel();
+    resetRemeshModalDrawSnapshot();
+    auto ui = openPanel(() {
+        drawRemeshModal(state, job, cast(MeshDg) &provider);
+    }, "Remesh modal refusal host");
+    scope (exit) ui.close();
+
+    state.requestOpen();
+    ui.frame();
+    ui.frame();
+    auto snap = remeshModalDrawSnapshot();
+    assert(snap.remeshMax.x > snap.remeshMin.x
+        && snap.remeshMax.y > snap.remeshMin.y,
+        "refusal fixture did not publish a clickable Remesh button");
+    assert(state.lastError is null && state.lastSummary is null,
+        "refusal fixture began with stale result text");
+
+    ui.pressAt(center(snap.remeshMin, snap.remeshMax));
+    ui.release();
+    assert(state.lastError.length > 0 && state.lastSummary is null,
+        "synchronous remesher launch failure was not shown in the modal");
+    assert(state.open && anyPopupOpen(),
+        "remesher launch failure closed the modal instead of preserving its error");
+    assert(job.state() == RemeshJob.State.failed,
+        "non-executable remesher did not take the synchronous failed path");
+}
+
+version (Posix)
+unittest { // Remesh resolves the current provider target at click time
+    import std.file : setAttributes, write;
+    import std.process : environment;
+
+    const savedEnv = saveHelperEnv();
+    scope (exit) restoreHelperEnv(savedEnv);
+    const nonExecutable = uniqueTempStem("live_provider_nonexec");
+    write(nonExecutable, "not executable\n");
+    setAttributes(nonExecutable, 0x180);
+    scope (exit) removeIfPresent(nonExecutable);
+    environment["VIBE3D_AUTOREMESHER_BIN"] = nonExecutable;
+
+    Mesh meshA = makeGridPlane(2);
+    Mesh meshB = makeGridPlane(3);
+    Mesh* active = &meshA;
+    ref Mesh provider() nothrow @nogc { return *active; }
+    auto state = new RemeshModalState();
+    auto job = new RemeshJob();
+    scope (exit) job.cancel();
+    resetRemeshModalDrawSnapshot();
+    auto ui = openPanel(() {
+        drawRemeshModal(state, job, cast(MeshDg) &provider);
+    }, "Remesh modal live-provider host");
+    scope (exit) ui.close();
+
+    state.requestOpen();
+    ui.frame();
+    ui.frame();
+    auto snap = remeshModalDrawSnapshot();
+    assert(snap.remeshMax.x > snap.remeshMin.x,
+        "live-provider fixture did not publish its Remesh button");
+    assert(!job.sourceMatches(meshA) && !job.sourceMatches(meshB),
+        "live-provider fixture began with a stamped job source");
+
+    active = &meshB;
+    ui.pressAt(center(snap.remeshMin, snap.remeshMax));
+    ui.release();
+    assert(job.sourceMatches(meshB),
+        "Remesh used the mesh captured when the popup opened, not the current provider target");
+    assert(!job.sourceMatches(meshA),
+        "Remesh source stamp still names the prior provider target");
+}
+
+version (Posix)
+unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
+    import std.algorithm.searching : canFind;
+    import std.conv : octal;
+    import std.file : readText, setAttributes, write;
+    import std.process : environment;
+
+    void writeRecorder(string script, string argvLog, string recordedInput) {
+        write(script,
+            "#!/bin/sh\n"
+          ~ "printf '%s\\n' \"$*\" >> \"" ~ argvLog ~ "\"\n"
+          ~ "in=\"\"; out=\"\"\n"
+          ~ "while [ $# -gt 0 ]; do\n"
+          ~ "  case \"$1\" in\n"
+          ~ "    --input) shift; in=\"$1\" ;;\n"
+          ~ "    --output) shift; out=\"$1\" ;;\n"
+          ~ "  esac\n"
+          ~ "  shift\n"
+          ~ "done\n"
+          ~ "cp \"$in\" \"" ~ recordedInput ~ "\"\n"
+          ~ "printf 'v 20 0 20\\nv 21 0 20\\nv 21 0 21\\nv 20 0 21\\nf 1 2 3 4\\n' > \"$out\"\n"
+          ~ "exit 0\n");
+        setAttributes(script, octal!755);
+    }
+
+    const savedEnv = saveHelperEnv();
+    scope (exit) restoreHelperEnv(savedEnv);
+
+    {
+        const stem = uniqueTempStem("region_selected");
+        const script = stem ~ ".sh";
+        const argvLog = stem ~ ".argv";
+        const recordedInput = stem ~ ".obj";
+        scope (exit) {
+            removeIfPresent(script);
+            removeIfPresent(argvLog);
+            removeIfPresent(recordedInput);
+        }
+        writeRecorder(script, argvLog, recordedInput);
+        environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+
+        Mesh selected = makeGridPlane(6);
+        selected.resetSelection();
+        immutable size_t[] selectedFaces = [14, 15, 20, 21];
+        foreach (fi; selectedFaces) selected.selectFace(cast(int) fi);
+        assert(selected.hasAnySelectedFaces(),
+            "region fixture did not select any faces");
+
+        Vec3[] expected;
+        foreach (fi; selectedFaces)
+            foreach (vi; selected.faces.range[fi]) {
+                const point = selected.vertices[vi];
+                if (!containsPoint(expected, point)) expected ~= point;
+            }
+        assert(expected.length == 9,
+            "central 2x2 region did not have the measured nine-position footprint");
+
+        ref Mesh provider() nothrow @nogc { return selected; }
+        auto state = new RemeshModalState();
+        auto job = new RemeshJob();
+        scope (exit) job.cancel();
+        resetRemeshModalDrawSnapshot();
+        auto ui = openPanel(() {
+            drawRemeshModal(state, job, cast(MeshDg) &provider);
+        }, "Remesh modal selected-region host");
+        scope (exit) ui.close();
+
+        state.requestOpen();
+        ui.frame();
+        ui.frame();
+        auto snap = remeshModalDrawSnapshot();
+        ui.pressAt(center(snap.remeshMin, snap.remeshMax));
+        ui.release();
+        waitForCapture(job, recordedInput);
+        assert(readText(argvLog).canFind("--mode"),
+            "selected region did not enter remesher region mode");
+        const captured = readObjVertices(recordedInput);
+        assert(captured.length == 9,
+            "selected region did not write its nine-position compact OBJ");
+        foreach (point; expected)
+            assert(containsPoint(captured, point),
+                "selected region OBJ does not match selectedFaces");
+    }
+
+    {
+        const stem = uniqueTempStem("region_empty");
+        const script = stem ~ ".sh";
+        const argvLog = stem ~ ".argv";
+        const recordedInput = stem ~ ".obj";
+        scope (exit) {
+            removeIfPresent(script);
+            removeIfPresent(argvLog);
+            removeIfPresent(recordedInput);
+        }
+        writeRecorder(script, argvLog, recordedInput);
+        environment["VIBE3D_AUTOREMESHER_BIN"] = script;
+
+        Mesh unselected = makeGridPlane(6);
+        unselected.resetSelection();
+        assert(!unselected.hasAnySelectedFaces(),
+            "whole-mesh control unexpectedly began with a face selection");
+        ref Mesh provider() nothrow @nogc { return unselected; }
+        auto state = new RemeshModalState();
+        auto job = new RemeshJob();
+        scope (exit) job.cancel();
+        resetRemeshModalDrawSnapshot();
+        auto ui = openPanel(() {
+            drawRemeshModal(state, job, cast(MeshDg) &provider);
+        }, "Remesh modal whole-mesh host");
+        scope (exit) ui.close();
+
+        state.requestOpen();
+        ui.frame();
+        ui.frame();
+        auto snap = remeshModalDrawSnapshot();
+        ui.pressAt(center(snap.remeshMin, snap.remeshMax));
+        ui.release();
+        waitForCapture(job, recordedInput);
+        assert(!readText(argvLog).canFind("--mode"),
+            "empty selection did not use the whole-mesh remesher path");
+        assert(readObjVertices(recordedInput).length == 49,
+            "whole-mesh control did not write all 49 grid vertices");
+    }
 }
