@@ -110,6 +110,8 @@ import pipe_command_registration : registerPipeStageCommands;
 import selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
+import item_command_registration : ItemLifecycleDoors, registerItemCommands;
+import ai3d_command_registration : registerAi3dCommands;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -223,7 +225,6 @@ import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationD
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
     Ai3dInstallState, ai3dDefaultInstallLocation;
-import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
@@ -853,14 +854,28 @@ void registerCommands(EditorApp app) {
     // commands are registered over there: the note below says "this
     // function", and that was already only half of where the keys come from.
     //
-    // Layers / images / image planes / AI-3D are ONE family and not four,
-    // because they share a single anonymous scope block (former lines
-    // 955-1086) whose locals they all read. Splitting them means moving
-    // those locals, which is a change of shape, not a slice.
+    // Item and AI-3D factories have separate narrow inputs. The composition
+    // root retains the modal writer and passes AI registration one callback.
     registerToolLifecycleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         app.toolHostView);
-    registerItemCommands(app);
+    registerItemCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        ItemLifecycleDoors(app.onActiveLayerChanged, app.promoteItemType));
+    registerAi3dCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        app.onActiveLayerChanged, app.ai3dController,
+        (string path) {
+            import std.string : fromStringz;
+            app.ai3dRefs.ai3dPickedImagePath  = path;
+            app.ai3dRefs.ai3dModal            = Ai3dModalState.init;
+            app.ai3dRefs.ai3dModalOpen        = true;
+            app.ai3dRefs.ai3dModalPendingOpen = true;
+            const workerUrl = cast(string)
+                fromStringz(app.ai3dRefs.ai3dWorkerUrlBuf.ptr).dup;
+            app.ai3dController.probeHealth(
+                workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
+        });
     registerPipeStageCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         app.toolHostView);
@@ -947,158 +962,6 @@ void registerCommands(EditorApp app) {
         foreach (id; reg.commandFactories.keys)
             reg.commandFactories[id] = withSelType(reg.commandFactories[id],
                                                    selTypeSrc);
-    }
-    }
-    }
-    }
-}
-
-/// Layers, images, image planes and AI-3D generation — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerItemCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-
-    // layer.* commands (layers Stage 2) — mutate the one Document; the
-    // active-index movers (add/delete/select) fire onActiveLayerChanged.
-    {
-        import commands.layer.commands : LayerAdd, LayerDelete, LayerDuplicate,
-                                          LayerSelect, LayerRename, LayerSetVisible,
-                                          LayerReorder, LayerAttr, LayerParent;
-        import commands.ai3d.import_result : Ai3dImportResult;
-        import commands.ai3d.generate : Ai3dGenerate;
-        reg.commandFactories["layer.add"] = () => cast(Command)
-            new LayerAdd(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        reg.commandFactories["layer.duplicate"] = () => cast(Command)
-            new LayerDuplicate(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        reg.commandFactories["layer.delete"] = () => cast(Command)
-            new LayerDelete(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        reg.commandFactories["layer.reorder"] = () => cast(Command)
-            new LayerReorder(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        reg.commandFactories["layer.select"] = () => cast(Command)
-            (new LayerSelect(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged))
-                .setItemSelectHook(promoteItemType);
-        reg.commandFactories["layer.rename"] = () => cast(Command)
-            new LayerRename(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        reg.commandFactories["layer.setVisible"] = () => cast(Command)
-            new LayerSetVisible(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        // layer.attr — generic per-layer Param write/read (survey #3). Wired
-        // with &document() like the others; the active-switch hook is unused (a
-        // property edit never moves the active layer) but passed for ctor
-        // uniformity.
-        reg.commandFactories["layer.attr"] = () => cast(Command)
-            new LayerAttr(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-        // layer.parent — set/clear item-parent reference (task 0082).
-        reg.commandFactories["layer.parent"] = () => cast(Command)
-            new LayerParent(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
-
-        // image.* commands (task 0616 Ph5) — the document's image list. They
-        // sit in the layer block because an image IS a document item: they
-        // mutate the same `Document`, ride the same `/api/command` dispatch
-        // and the same undo stack, and `image.remove` composes `layer.delete`
-        // for the mutation itself. `onActiveLayerChanged` is forwarded for
-        // that composition; no image command moves the edit target itself
-        // (an image is never `canBePrimary`).
-        //
-        // Every one of them takes its path/index as a param, so the file
-        // dialog inside `image.load` / `image.replace` is a wrapper over the
-        // by-path route rather than a second code path — which is what makes
-        // the whole set driveable from a test with no UI.
-        {
-            import commands.image.commands : ImageLoad, ImageReplace,
-                                              ImageReload, ImageRemove;
-            reg.commandFactories["image.load"] = () => cast(Command)
-                new ImageLoad(&mesh(), cameraView, editMode, &document(),
-                              onActiveLayerChanged);
-            reg.commandFactories["image.replace"] = () => cast(Command)
-                new ImageReplace(&mesh(), cameraView, editMode, &document(),
-                                 onActiveLayerChanged);
-            reg.commandFactories["image.reload"] = () => cast(Command)
-                new ImageReload(&mesh(), cameraView, editMode, &document(),
-                                onActiveLayerChanged);
-            reg.commandFactories["image.remove"] = () => cast(Command)
-                new ImageRemove(&mesh(), cameraView, editMode, &document(),
-                                onActiveLayerChanged);
-        }
-
-        // imagePlane.* — the reference-image plane (task 0612). It sits in
-        // this block for the same reason the image commands do: a plane is a
-        // document item, it rides the same `/api/command` dispatch and the
-        // same undo stack, and it mutates the same `Document`.
-        //
-        // TASK 0668 — `imagePlane.add` DOES forward `onActiveLayerChanged`
-        // now. The comment that used to stand here ("no plane command moves
-        // the MESH edit target, a plane is never `canBePrimary`") was sound
-        // only while an exclusive select of a plane spared the mesh primary.
-        // It no longer does: the add clears the edit target on apply and the
-        // undo restores it, and both transitions need the tool-drop / GPU
-        // re-upload / cache-resize / `ActiveChanged` the hook performs.
-        // `imagePlane.setImage` still needs none — it rebinds a link and
-        // touches no selection.
-        {
-            import commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
-            reg.commandFactories["imagePlane.add"] = () => cast(Command)
-                new ImagePlaneAdd(&mesh(), cameraView, editMode, &document(),
-                                  onActiveLayerChanged);
-            reg.commandFactories["imagePlane.setImage"] = () => cast(Command)
-                new ImagePlaneSetImage(&mesh(), cameraView, editMode, &document());
-        }
-
-        // ai3d.importResult — editor-side landing command for the optional
-        // external AI3D worker. It consumes a staged OBJ path, validates the
-        // ImportedScene through the AI3D gate, then adds one undoable layer.
-        reg.commandFactories["ai3d.importResult"] = () => cast(Command)
-            new Ai3dImportResult(&mesh(), cameraView, editMode, &document(),
-                                 onActiveLayerChanged);
-        // Explicit/scripted vertical-slice command. It is intentionally inert
-        // unless the caller supplies an image path; normal editor startup makes
-        // no worker request. The async UI/controller will replace this path.
-        reg.commandFactories["ai3d.generate"] = () => cast(Command)
-            new Ai3dGenerate(&mesh(), cameraView, editMode, &document(),
-                             onActiveLayerChanged);
-
-        // ai3d.generate.start / ai3d.generate.cancel — test-only hooks
-        // (task 0381 Phase 2, mirrors tool.beginSession/tool.panelEdit)
-        // that drive the app-owned Ai3dJobController directly. There is no
-        // production HTTP path to the async controller until the Phase 3
-        // modal exists (a live UI picker + Generate/Cancel button click),
-        // so automated tests need a bare starter/canceller to exercise the
-        // per-frame drain + ai3d.importResult wiring end-to-end against the
-        // real vibe3d --test process. Gated on g_testMode; unreachable in a
-        // normal build/run.
-        import commands.ai3d.generate_test_hooks : Ai3dGenerateStartTestCommand,
-            Ai3dGenerateCancelTestCommand;
-        reg.commandFactories["ai3d.generate.start"] = () => cast(Command)
-            new Ai3dGenerateStartTestCommand(&mesh(), cameraView, editMode, ai3dController);
-        reg.commandFactories["ai3d.generate.cancel"] = () => cast(Command)
-            new Ai3dGenerateCancelTestCommand(&mesh(), cameraView, editMode, ai3dController);
-
-        // ai3d.generate.open — `File > Generate 3D…` (task 0381 Phase 3).
-        // Zero params, so dispatchAction's tryOpenArgsDialog (app.d, near
-        // line 7288) never pops the generic args dialog for it — the click
-        // runs apply() directly. On a picked image, stash the path, reset
-        // the modal snapshot, open the popup, and kick off a health probe
-        // so the modal's health line + Generate gate populate before the
-        // user commits.
-        import commands.ai3d.generate_open : Ai3dGenerateOpen;
-        reg.commandFactories["ai3d.generate.open"] = () => cast(Command)
-            new Ai3dGenerateOpen(&mesh(), cameraView, editMode, (string path) {
-                import std.string : fromStringz;
-                ai3dPickedImagePath  = path;
-                ai3dModal            = Ai3dModalState.init;
-                ai3dModalOpen        = true;
-                ai3dModalPendingOpen = true;
-                const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
-                ai3dController.probeHealth(
-                    workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
-            });
     }
     }
     }
