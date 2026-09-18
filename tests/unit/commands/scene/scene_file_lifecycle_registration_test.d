@@ -303,6 +303,8 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
 
 unittest { // R5: factories resolve live roles/document and every door is required
     auto rig = new LiveRegistrationRig;
+    assert(rig.liveViewMode().modeCell() is rig.session.editModePtr(),
+        "6480 R5 live role did not yield the authoritative mode cell");
     auto viewports = new ViewportManager(0, 0, 800, 600);
     SubpatchPreview preview;
     Prefs prefs;
