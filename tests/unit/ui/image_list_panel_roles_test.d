@@ -12,7 +12,8 @@ import command : Command, g_testMode;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.image.commands : ImageLoad, ImageRemove, ImageRemoveWarning;
-import commands.layer.commands : LayerDelete, LayerRename, LayerSelect;
+import commands.layer.commands : LayerDelete, LayerRename, LayerReorder,
+    LayerSelect;
 import document : Document, ImageData, ItemKind, Layer;
 import edit_session : EditSession;
 import forms_render : FormsPanel;
@@ -27,7 +28,7 @@ import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : GuardRecord;
 import ui.image_list_panel : ImageListDrawSnapshot, ImageListDrawnRow,
-    ImageListPanelRoles, bindImageListPanel, drawImageListPanel,
+    ImageListPanelRoles, ImageListReadRole, bindImageListPanel, drawImageListPanel,
     imageListDrawSnapshot, resetImageListDrawSnapshot;
 import ui.image_rows : ImageRemoveConfirm, ImageRemoveTarget, ImageRow;
 import ui.item_rename : ItemRenameState;
@@ -38,6 +39,31 @@ import ui.retained_item : RetainedItem;
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
+
+private template memberTypes(T) {
+    private string[] collect() {
+        string[] result;
+        foreach (name; __traits(allMembers, T)) {
+            static if (__traits(compiles, __traits(getOverloads, T, name))
+                       && __traits(getOverloads, T, name).length > 0) {
+                string joined;
+                foreach (i, overload; __traits(getOverloads, T, name)) {
+                    if (i) joined ~= " | ";
+                    joined ~= typeof(overload).stringof;
+                }
+                result ~= name ~ ": " ~ joined;
+            } else static if (__traits(compiles,
+                                       typeof(__traits(getMember, T, name)))) {
+                result ~= name ~ ": "
+                    ~ typeof(__traits(getMember, T, name)).stringof;
+            } else {
+                result ~= name ~ ": <no type>";
+            }
+        }
+        return result;
+    }
+    enum memberTypes = collect();
+}
 
 static assert(!__traits(compiles, (ImageListPanelRoles roles) {
         Document* doc = roles.read.document();
@@ -100,6 +126,82 @@ static assert(__traits(compiles, (ImageRemoveWarning w) {
         const(Layer) l = w.referrers[0];
     }),
     "6530 N6 control: the same warning expression must compile through const");
+
+static assert([__traits(allMembers, ImageListReadRole)] ==
+        ["owner_", "__ctor", "document"],
+    "6530 F1 fence (names): the Images read role's member set changed — a "
+    ~ "capability cannot be added here without naming it");
+static assert(memberTypes!ImageListReadRole ==
+        ["owner_: Session*",
+         "__ctor: ref ImageListReadRole() | ref ImageListReadRole(Session* owner)",
+         "document: const(Document)*()"],
+    "6530 F1 fence (types): a member of ImageListReadRole changed its TYPE or "
+    ~ "SIGNATURE — regenerate with the pragma probe, read the diff, and argue "
+    ~ "the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ImageRow)] ==
+        ["index", "layer", "name", "renameSeed", "pathText", "pathTooltip",
+         "dimensions", "pixelFormat", "missing", "selected", "focused",
+         "opAssign"],
+    "6530 F2 fence (names): ImageRow's member set changed — a capability "
+    ~ "cannot be added here without naming it");
+static assert(memberTypes!ImageRow ==
+        ["index: ulong", "layer: Rebindable!(const(Layer))", "name: string",
+         "renameSeed: string", "pathText: string", "pathTooltip: string",
+         "dimensions: string", "pixelFormat: string", "missing: bool",
+         "selected: bool", "focused: bool",
+         "opAssign: pure nothrow @nogc ref @trusted ImageRow(ImageRow p) return"],
+    "6530 F2 fence (types): a member of ImageRow changed its TYPE or SIGNATURE "
+    ~ "— regenerate with the pragma probe, read the diff, and argue the change; "
+    ~ "do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ImageRemoveTarget)] ==
+        ["index", "layer", "enabled", "opAssign"],
+    "6530 F3 fence (names): ImageRemoveTarget's member set changed — a "
+    ~ "capability cannot be added here without naming it");
+static assert(memberTypes!ImageRemoveTarget ==
+        ["index: ulong", "layer: Rebindable!(const(Layer))", "enabled: bool",
+         "opAssign: pure nothrow @nogc ref @trusted ImageRemoveTarget(ImageRemoveTarget p) return"],
+    "6530 F3 fence (types): a member of ImageRemoveTarget changed its TYPE or "
+    ~ "SIGNATURE — regenerate with the pragma probe, read the diff, and argue "
+    ~ "the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ImageRemoveConfirm)] ==
+        ["text", "referrers"],
+    "6530 F4 fence (names): ImageRemoveConfirm's member set changed — a "
+    ~ "capability cannot be added here without naming it");
+static assert(memberTypes!ImageRemoveConfirm ==
+        ["text: string", "referrers: const(Layer)[]"],
+    "6530 F4 fence (types): a member of ImageRemoveConfirm changed its TYPE or "
+    ~ "SIGNATURE — regenerate with the pragma probe, read the diff, and argue "
+    ~ "the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, RetainedItem)] ==
+        ["item_", "hold", "release", "held", "item", "holds", "resolve",
+         "opAssign"],
+    "6530 F5 fence (names): RetainedItem's member set changed — a capability "
+    ~ "cannot be added here without naming it");
+static assert(memberTypes!RetainedItem ==
+        ["item_: Rebindable!(const(Layer))", "hold: void(const(Layer) item)",
+         "release: void()", "held: bool", "item: const(Layer)",
+         "holds: const bool(const(Layer) item)",
+         "resolve: const bool(ref const(Document) document, out ulong index)",
+         "opAssign: pure nothrow @nogc ref @trusted RetainedItem(RetainedItem p) return"],
+    "6530 F5 fence (types): a member of RetainedItem changed its TYPE or "
+    ~ "SIGNATURE. A capability escapes only by NAMING a new member (the names "
+    ~ "pin) or by widening an existing member's type (this pin). Regenerate "
+    ~ "with the pragma probe, read the diff, and argue the change — do not "
+    ~ "paste the actual list over the expected one.");
+
+static assert(ImageListReadRole.tupleof.length == 1,
+    "6530 read role fence: the Images read role no longer has exactly one field");
+static assert(is(typeof(ImageListReadRole.tupleof[0]) == Session*),
+    "6530 read role fence: the Images read role's sole field is no longer Session*");
+
+static assert(__traits(compiles, (ImageRow row) {
+        auto bypass = __traits(getMember, row.layer, "stripped");
+    }),
+    "6530 N8 (recorded remnant, NOT a guard): the private-field bypass compiles "
+    ~ "by construction, so the TYPE cannot refuse it. If this FAILS, check the "
+    ~ "ordinary cause FIRST: a stored identity was made mutable again (then "
+    ~ "N1-N6 above are the real message). Only if those hold did the language "
+    ~ "close the hole.");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");
@@ -172,6 +274,9 @@ private final class ImagePanelHarness {
         registry.commandFactories["layer.delete"] = () => cast(Command)
             new LayerDelete(owner.document.activeMesh(), view, owner.editMode,
                             owner.documentPtr(), null);
+        registry.commandFactories["layer.reorder"] = () => cast(Command)
+            new LayerReorder(owner.document.activeMesh(), view, owner.editMode,
+                             owner.documentPtr(), null);
         registry.commandFactories["image.load"] = () => cast(Command)
             new ImageLoad(owner.document.activeMesh(), view, owner.editMode,
                           owner.documentPtr(), null);
@@ -480,6 +585,51 @@ unittest { // B6: Items and Images share main's identity-bound ItemRenameState
         "6040 cross-panel commit lost its UI layer.rename record or stayed open");
 }
 
+unittest { // B7: a pending confirm resolves its target after a reorder
+    auto prior = g_testMode; g_testMode = true;
+    scope (exit) { g_testMode = prior; SDL_SetModState(KMOD_NONE); }
+    auto app = new ImagePanelHarness;
+    auto imgOne = app.owner.document.layers[2];
+    auto imgTwo = app.owner.document.layers[3];
+    app.binding.dispatchUi("layer.select", `{"index":2,"mode":"set"}`);
+    app.clearRecords();
+    auto ui = app.openImages();
+    scope (exit) ui.close();
+    ui.frame();
+    auto s = imageListDrawSnapshot();
+    assert(s.rows.length == 2 && s.removeEnabled && s.removeIndex == 2,
+        "6530 reorder floor: two image rows and ImgOne targeted at index 2");
+
+    ui.pressAt(center(s.removeMin, s.removeMax));
+    ui.release();
+    ui.frame();
+    s = imageListDrawSnapshot();
+    assert(s.confirmDrawn && s.confirmIndex == 2 && s.confirmTarget is imgOne
+        && s.confirmText == "\"ImgOne\" is still used by 1 item(s): Consumer",
+        "6530 reorder floor: the in-use ImgOne confirm did not open at index 2");
+    const shownText = s.confirmText;
+
+    app.binding.dispatchUi("layer.reorder", `{"from":2,"to":4}`);
+    assert(app.owner.document.layers[4] is imgOne
+        && app.owner.document.layers[2] is imgTwo,
+        "6530 reorder floor: the document did not move ImgOne from 2 to 4");
+    ui.frame();
+    s = imageListDrawSnapshot();
+    assert(s.confirmDrawn && s.confirmIndex == 4 && s.confirmTarget is imgOne
+        && s.confirmText == shownText,
+        "6530 reorder identity: the pending confirm did not follow ImgOne to 4");
+
+    ui.pressAt(center(s.confirmMin, s.confirmMax));
+    ui.release();
+    ui.frame();
+    assert(!app.owner.document.isMember(imgOne)
+        && app.owner.document.isMember(imgTwo),
+        "6530 reorder target: the confirm removed an item other than ImgOne");
+    assert(app.history.undoEntries()[$ - 1].commandName == "image.remove"
+        && app.history.undoEntries()[$ - 1].args == `{"index":4}`,
+        "6530 reorder target: the confirm dispatched the index from before the reorder");
+}
+
 private string bodyAt(string code, string marker) {
     const at = code.indexOf(marker);
     assert(at >= 0, "6040 census missing source marker " ~ marker);
@@ -515,6 +665,21 @@ private size_t identifierCount(string code, string identifier) {
     }
     return total;
 }
+
+private struct StripSignalRow {
+    string path;
+    size_t casts, traits, tupleofs, mixins, unions;
+}
+
+private enum StripSignalRow[] kStripSignalLedger = [
+    StripSignalRow("source/ui/image_rows.d", 0, 0, 0, 0, 0),
+    StripSignalRow("source/ui/image_list_panel.d", 3, 0, 0, 0, 0),
+    StripSignalRow("source/ui/retained_item.d", 0, 0, 0, 0, 0),
+    StripSignalRow("source/ui/item_rename.d", 0, 0, 0, 0, 0),
+    StripSignalRow("source/commands/image/commands.d", 14, 0, 0, 0, 0),
+    StripSignalRow("source/document.d", 4, 0, 0, 1, 0),
+    StripSignalRow("source/document_selection.d", 5, 0, 0, 1, 0),
+];
 
 private string collapseWhitespace(string text) {
     string result;
@@ -620,4 +785,98 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         assert(rawImages.count(needle) == 1, "6040 panel IDs: extraction lost " ~ needle);
     assert(rawImages.count("\"Remove Image?\"") == 2 && rawImages.count("\"Remove\"") == 2,
         "6040 panel IDs: confirm popup or Remove labels changed");
+}
+
+unittest { // 6530: read-role fence and strip-token signal
+    import std.conv : to;
+
+    const rawImages = readText(repoRoot.buildPath("source", "ui",
+                                                  "image_list_panel.d"));
+    const rawRows = readText(repoRoot.buildPath("source", "ui",
+                                                "image_rows.d"));
+    assert(rawImages.length > 15_000 && rawRows.length > 30_000,
+        "6530 source population: Images role/row sources are unexpectedly small");
+
+    const images = blankNonCode(rawImages);
+    const draw = bodyAt(images,
+        "void drawImageListPanel(ImageListReadRole read, ImageListActions actions,");
+    assert(identifierCount(draw, "owner_") == 0,
+        "6530 read role fence: the Images draw body names the role's private member");
+    assert(identifierCount(images, "owner_") == 3,
+        "6530 read role fence: owner_ is named "
+        ~ identifierCount(images, "owner_").to!string ~ " times (recorded 3)");
+
+    immutable expectedPaths = [
+        "source/ui/image_rows.d",
+        "source/ui/image_list_panel.d",
+        "source/ui/retained_item.d",
+        "source/ui/item_rename.d",
+        "source/commands/image/commands.d",
+        "source/document.d",
+        "source/document_selection.d",
+    ];
+    string[] rawSources;
+    size_t sourceBytes;
+    foreach (row; kStripSignalLedger) {
+        auto raw = readText(repoRoot.buildPath(row.path));
+        sourceBytes += raw.length;
+        rawSources ~= raw;
+    }
+    assert(kStripSignalLedger.length == 7 && sourceBytes > 200_000,
+        "6530 strip signal population: expected seven populated production files");
+
+    foreach (path; expectedPaths) {
+        size_t appearances;
+        foreach (row; kStripSignalLedger) if (row.path == path) ++appearances;
+        assert(appearances == 1,
+            "6530 strip signal ledger: the rows do not name the seven files "
+            ~ "exactly once (" ~ path ~ " appears " ~ appearances.to!string
+            ~ " times)");
+    }
+    foreach (row; kStripSignalLedger) {
+        size_t appearances;
+        foreach (path; expectedPaths) if (row.path == path) ++appearances;
+        assert(appearances == 1,
+            "6530 strip signal ledger: unexpected path " ~ row.path);
+    }
+
+    size_t casts, traits, tupleofs, mixins, unions;
+    foreach (row; kStripSignalLedger) {
+        casts += row.casts;
+        traits += row.traits;
+        tupleofs += row.tupleofs;
+        mixins += row.mixins;
+        unions += row.unions;
+    }
+    assert(casts == 26 && traits == 0 && tupleofs == 0
+        && mixins == 2 && unions == 0,
+        "6530 strip signal ledger: recorded totals changed (cast="
+        ~ casts.to!string ~ ", __traits=" ~ traits.to!string ~ ", tupleof="
+        ~ tupleofs.to!string ~ ", mixin=" ~ mixins.to!string ~ ", union="
+        ~ unions.to!string ~ ")");
+
+    foreach (i, row; kStripSignalLedger) {
+        const code = blankNonCode(rawSources[i]);
+        const actualCast = identifierCount(code, "cast");
+        const actualTraits = identifierCount(code, "__traits");
+        const actualTupleof = identifierCount(code, "tupleof");
+        const actualMixin = identifierCount(code, "mixin");
+        const actualUnion = identifierCount(code, "union");
+        assert(actualCast == row.casts,
+            "6530 strip signal: " ~ row.path ~ " cast = "
+            ~ actualCast.to!string ~ ", recorded " ~ row.casts.to!string
+            ~ " — a row may only FALL; if the strip left, lower the row in this commit");
+        assert(actualTraits == row.traits,
+            "6530 strip signal: " ~ row.path ~ " __traits = "
+            ~ actualTraits.to!string ~ ", recorded " ~ row.traits.to!string);
+        assert(actualTupleof == row.tupleofs,
+            "6530 strip signal: " ~ row.path ~ " tupleof = "
+            ~ actualTupleof.to!string ~ ", recorded " ~ row.tupleofs.to!string);
+        assert(actualMixin == row.mixins,
+            "6530 strip signal: " ~ row.path ~ " mixin = "
+            ~ actualMixin.to!string ~ ", recorded " ~ row.mixins.to!string);
+        assert(actualUnion == row.unions,
+            "6530 strip signal: " ~ row.path ~ " union = "
+            ~ actualUnion.to!string ~ ", recorded " ~ row.unions.to!string);
+    }
 }
