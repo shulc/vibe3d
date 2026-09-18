@@ -314,6 +314,21 @@ static assert([__traits(allMembers, FrameProbeSnapshot)] ==
               ["frames", "stats", "hitchGc16", "sumCacheNs"],
               "6511 FrameProbeSnapshot must remain detached data only");
 
+private enum bool frameStatsIsNothrow = (() {
+    import std.meta : staticIndexOf;
+    return staticIndexOf!("nothrow",
+        __traits(getFunctionAttributes, FrameProbe.stats)) >= 0;
+})();
+private enum bool frameResetIsNothrow = (() {
+    import std.meta : staticIndexOf;
+    return staticIndexOf!("nothrow",
+        __traits(getFunctionAttributes, FrameProbe.reset)) >= 0;
+})();
+static assert(frameStatsIsNothrow,
+    "6511 FrameProbe.stats must remain nothrow in both module versions");
+static assert(frameResetIsNothrow,
+    "6511 FrameProbe.reset must remain nothrow in both module versions");
+
 private enum size_t kFrameFixtureN = 25;
 private static immutable size_t[2][18] kFrameFixturePerm = [
     [2, 0], [3, 0], [4, 0], [6, 0], [7, 0], [8, 0], [9, 0], [2, 20],
