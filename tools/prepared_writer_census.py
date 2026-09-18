@@ -228,65 +228,97 @@ def scan(root):
         hooks += _methods(p, ("activate", "update", "onParamChanged", "deactivate"))
     params = []
     for p in [root / "source/tool.d", *tool_files]: params += _methods(p, ("params",))
-    reg = (root / "source/registration.d").read_text()
+    registration_sources = [
+        root / "source/registration.d",
+    ]
     factories = []
     factory_head = re.compile(
         r'reg\.toolFactories\["([^"]+)"\]\s*=\s*'
         r'typedToolFactory!(\w+)\s*\(\s*\(\)\s*')
-    for m in factory_head.finditer(reg):
-        body = None
-        cursor = m.end()
-        if cursor < len(reg) and reg[cursor] == "{":
-            end = _balanced(reg, cursor + 1)
-            body = reg[cursor + 1:end - 1]
-        elif reg.startswith("=>", cursor):
-            expression_start = cursor + 2
-            call = re.match(r"\s*([A-Za-z_]\w*)\s*\(", reg[expression_start:])
-            if not call:
-                raise ValueError(
-                    f'expression factory {m.group(1)} is not a direct helper call')
-            helper_name = call.group(1)
-            call_open = expression_start + call.end() - 1
-            call_end = _balanced_parentheses(reg, call_open)
-            if not re.match(r"\s*\)\s*;", reg[call_end:]):
-                raise ValueError(
-                    f'expression factory {m.group(1)} has trailing expression syntax')
-            expression = reg[expression_start:call_end]
-            helper_body = _private_function_body(reg, helper_name)
-            # Keep the registry row sensitive to both its chosen defaults and
-            # the shared construction recipe. The labels make the two token
-            # streams unambiguous without promising helper source coordinates.
-            body = ("factoryExpression { " + expression
-                    + " } privateHelperBody { " + helper_body + " }")
-        if body is None:
-            continue
-        factories.append({"id": m.group(1), "aggregate": _aggregate(reg, m.start()),
-                          "symbol": "toolFactories[\"%s\"]" % m.group(1),
-                          "product_types": [m.group(2)],
-                          "semantic_sha256": _semantic_digest(body)})
     # Paired tool+headless-command registration keeps the per-product body at
     # the call site and the shared recipe in one private helper. Fingerprint
     # both labelled token streams so either half remains review-visible.
     paired_head = re.compile(
         r'registerHeadlessTool!(\w+)\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\)\s*\{')
-    paired_rows = 0
-    for m in paired_head.finditer(reg):
-        body_open = m.end() - 1
-        end = _balanced(reg, body_open + 1)
-        lambda_body = reg[body_open + 1:end - 1]
-        if not re.match(r"\s*,\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*;", reg[end:]):
+    assignment_count = 0
+    for registration_source in registration_sources:
+        reg = registration_source.read_text()
+        for m in factory_head.finditer(reg):
+            body = None
+            cursor = m.end()
+            if cursor < len(reg) and reg[cursor] == "{":
+                end = _balanced(reg, cursor + 1)
+                body = reg[cursor + 1:end - 1]
+            elif reg.startswith("=>", cursor):
+                expression_start = cursor + 2
+                call = re.match(r"\s*([A-Za-z_]\w*)\s*\(", reg[expression_start:])
+                if not call:
+                    raise ValueError(
+                        f'expression factory {m.group(1)} is not a direct helper call')
+                helper_name = call.group(1)
+                call_open = expression_start + call.end() - 1
+                call_end = _balanced_parentheses(reg, call_open)
+                if not re.match(r"\s*\)\s*;", reg[call_end:]):
+                    raise ValueError(
+                        f'expression factory {m.group(1)} has trailing expression syntax')
+                expression = reg[expression_start:call_end]
+                helper_body = _private_function_body(reg, helper_name)
+                # Keep the registry row sensitive to both its chosen defaults and
+                # the shared construction recipe. The labels make the two token
+                # streams unambiguous without promising helper source coordinates.
+                body = ("factoryExpression { " + expression
+                        + " } privateHelperBody { " + helper_body + " }")
+            if body is None:
+                continue
+            factories.append({"id": m.group(1), "aggregate": _aggregate(reg, m.start()),
+                              "symbol": "toolFactories[\"%s\"]" % m.group(1),
+                              "product_types": [m.group(2)],
+                              "semantic_sha256": _semantic_digest(body)})
+
+        paired_rows = 0
+        for m in paired_head.finditer(reg):
+            body_open = m.end() - 1
+            end = _balanced(reg, body_open + 1)
+            lambda_body = reg[body_open + 1:end - 1]
+            if not re.match(r"\s*,\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*;", reg[end:]):
+                raise ValueError(
+                    f'paired factory {m.group(2)} has trailing call syntax')
+            helper_body = _private_function_body(reg, "registerHeadlessTool")
+            body = ("pairedFactoryBody { " + lambda_body
+                    + " } privateHelperBody { " + helper_body + " }")
+            paired_rows += 1
+            factories.append({"id": m.group(2), "aggregate": _aggregate(reg, m.start()),
+                              "symbol": "toolFactories[\"%s\"]" % m.group(2),
+                              "product_types": [m.group(1)],
+                              "semantic_sha256": _semantic_digest(body)})
+        if len(re.findall(r"\bregisterHeadlessTool!", reg)) != paired_rows:
             raise ValueError(
-                f'paired factory {m.group(2)} has trailing call syntax')
-        helper_body = _private_function_body(reg, "registerHeadlessTool")
-        body = ("pairedFactoryBody { " + lambda_body
-                + " } privateHelperBody { " + helper_body + " }")
-        paired_rows += 1
-        factories.append({"id": m.group(2), "aggregate": _aggregate(reg, m.start()),
-                          "symbol": "toolFactories[\"%s\"]" % m.group(2),
-                          "product_types": [m.group(1)],
-                          "semantic_sha256": _semantic_digest(body)})
-    if len(re.findall(r"\bregisterHeadlessTool!", reg)) != paired_rows:
-        raise ValueError("a registerHeadlessTool! call did not parse as a row")
+                f"a registerHeadlessTool! call did not parse as a row: {registration_source}")
+
+        # These are per-file structural invariants. Sum only after each source
+        # has proved its own assignment shapes.
+        literal_assign = len(re.findall(
+            r'\breg\.toolFactories\s*\["[^"]+"\]\s*=', reg))
+        any_assign = len(re.findall(
+            r"\breg\.toolFactories\s*\[[^]]+\]\s*=", reg))
+        helper_decls = len(re.findall(
+            r"(?m)^[ \t]*private[ \t]+void[ \t]+registerHeadlessTool\s*\(", reg))
+        helper_assign = len(re.findall(
+            r"\breg\.toolFactories\s*\[\s*id\s*\]\s*=", reg))
+        if paired_rows and helper_decls != 1:
+            raise ValueError(
+                f"expected one private registerHeadlessTool in {registration_source}, "
+                f"found {helper_decls}")
+        if paired_rows and helper_assign != 1:
+            raise ValueError(
+                f"the paired helper in {registration_source} assigns "
+                f"toolFactories {helper_assign} time(s)")
+        if any_assign != literal_assign + helper_assign:
+            raise ValueError(
+                f"a third toolFactories assignment shape appeared in "
+                f"{registration_source}: any={any_assign} "
+                f"literal={literal_assign} helper={helper_assign}")
+        assignment_count += literal_assign + paired_rows
 
     # Runtime-generated preset ids are a production factory path too. Its
     # product is the product of the referenced base factory, not a new class.
@@ -302,23 +334,10 @@ def scan(root):
                       "symbol": "toolFactories[p.id]", "product_types": [],
                       "semantic_sha256": _semantic_digest(maker_body)})
 
-    # Exhaustive production assignment proof. registration.d has no generated
-    # ids; tool_presets.d has exactly the one dynamic assignment above.
-    literal_assign = len(re.findall(r'\breg\.toolFactories\s*\["[^"]+"\]\s*=', reg))
-    any_assign = len(re.findall(r"\breg\.toolFactories\s*\[[^]]+\]\s*=", reg))
-    helper_decls = len(re.findall(
-        r"(?m)^[ \t]*private[ \t]+void[ \t]+registerHeadlessTool\s*\(", reg))
-    helper_assign = len(re.findall(r"\breg\.toolFactories\s*\[\s*id\s*\]\s*=", reg))
-    if paired_rows and helper_decls != 1:
-        raise ValueError(f"expected one private registerHeadlessTool, found {helper_decls}")
-    if paired_rows and helper_assign != 1:
-        raise ValueError(f"the paired helper assigns toolFactories {helper_assign} time(s)")
-    if any_assign != literal_assign + helper_assign:
-        raise ValueError(
-            f"a third toolFactories assignment shape appeared: any={any_assign} "
-            f"literal={literal_assign} helper={helper_assign}")
-    assignment_count = literal_assign + paired_rows \
-        + len(re.findall(r"\breg\.toolFactories\s*\[[^]]+\]\s*=", presets))
+    # Exhaustive production assignment proof. The explicitly listed registrar
+    # sources have no generated ids; tool_presets.d has one dynamic assignment.
+    assignment_count += len(re.findall(
+        r"\breg\.toolFactories\s*\[[^]]+\]\s*=", presets))
     if assignment_count != len(factories):
         raise ValueError(f"factory assignment census mismatch: source={assignment_count} rows={len(factories)}")
 
