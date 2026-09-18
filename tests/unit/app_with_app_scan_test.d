@@ -259,7 +259,6 @@ private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerPrimitiveTools", 1, "primitive registrations"),
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
     LedgerRow("registerCommands", 1, "top-level command registrations"),
-    LedgerRow("registerItemCommands", 1, "item commands"),
     LedgerRow("registerFileCommands", 1, "file commands"),
     LedgerRow("registerMeshCommands", 1, "mesh commands"),
     LedgerRow("registerSceneLifecycleCommands", 1, "scene lifecycle commands"),
@@ -321,8 +320,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 13)
-        problems ~= format("\n    with(app) population — recorded 13, scanner "
+    if (ledgerHits.length != 12)
+        problems ~= format("\n    with(app) population — recorded 12, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

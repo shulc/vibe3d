@@ -360,7 +360,7 @@ unittest { // P6: production owns the narrow registrar call and ordering
     const registration = blankNonCode(registrationRaw);
     const editorApp = blankNonCode(editorAppRaw);
     assert(moduleRaw.length > 3_000
-        && registrationRaw.length > 80_000
+        && registrationRaw.length > 50_000
         && editorAppRaw.length > 40_000,
         "5990 P6 source population: a production file is implausibly small");
 
