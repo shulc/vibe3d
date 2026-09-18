@@ -317,9 +317,11 @@ unittest { // C2b: simultaneous held modifiers keep Ctrl above Alt
         "6560 modifier-priority floor: all three variants must exist");
     version (OSX) enum testCtrl = KMOD_GUI;
     else          enum testCtrl = KMOD_CTRL;
-    selectButtonVariant(btn,
-                        cast(SDL_Keymod)(testCtrl | KMOD_ALT | KMOD_SHIFT), "",
-                        label, action, variant);
+    immutable heldMods = cast(SDL_Keymod)(testCtrl | KMOD_ALT | KMOD_SHIFT);
+    assert((heldMods & testCtrl) != 0 && (heldMods & KMOD_ALT) != 0
+        && (heldMods & KMOD_SHIFT) != 0,
+        "6560 modifier-priority floor: ctrl, alt, and shift must all be held");
+    selectButtonVariant(btn, heldMods, "", label, action, variant);
     assert(variant == "_ctrl",
         "6560 modifier priority: ctrl must win over simultaneously held alt and shift");
 }
@@ -787,6 +789,7 @@ unittest { // C13: production boundary, wiring, and private-reachability census
     assert(loopAt >= 0 && loopEnd >= 0 && dispatchAt > loopEnd,
         "6560 deferred falloff remove: the stack dispatch must sit after the findAllByTask walk, not inside it");
     assert(identifierCount(falloff, "pending") == 4
+        && falloff.count("pending = commandLine;") == 1
         && falloff.count("actions.runScriptLine") == 0
         && falloff.count("dispatchAction(actions, action)") == 1,
         "6560 deferred falloff remove: pending or shared-dispatch structure changed");
