@@ -41,7 +41,7 @@ import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
-import toolpipe.stage : Stage, TaskCode;
+import toolpipe.stage : NopStage, Stage, TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 static import ui.tool_properties_panel;
@@ -333,6 +333,7 @@ private final class ProbeLegacyTool : Tool {
     string id;
     float amount;
     size_t draws;
+    bool dropped;
     void delegate() onWrite;
 
     this(string id) { this.id = id; }
@@ -343,7 +344,39 @@ private final class ProbeLegacyTool : Tool {
     override void onParamChanged(string name) {
         if (onWrite !is null) onWrite();
     }
-    override void drawProperties() { ++draws; }
+    override void drawProperties() {
+        assert(!dropped,
+            "6504 C12 drop witness: custom draw ran on a tool dropped mid-frame");
+        ++draws;
+    }
+}
+
+private final class ProbeCountStage : NopStage {
+    float amount;
+    size_t paramsCalls;
+    size_t enabledCalls;
+    size_t customDraws;
+    string[] order;
+    void delegate() onCustomDraw;
+
+    this(TaskCode code, string id, ubyte ordinal) {
+        super(code, id, ordinal);
+    }
+    override Param[] params() {
+        ++paramsCalls;
+        return [Param.float_("amount", "Amount", &amount, 0.0f)];
+    }
+    override bool paramEnabled(string name) const {
+        auto self = cast(ProbeCountStage) this;
+        ++self.enabledCalls;
+        self.order ~= "row";
+        return true;
+    }
+    override void drawProperties() {
+        ++customDraws;
+        order ~= "custom";
+        if (onCustomDraw !is null) onCustomDraw();
+    }
 }
 
 private class ProbeXfrm : XfrmTransformTool {
@@ -461,6 +494,12 @@ private final class ToolPropsHarness {
         assert(ok,
             "6060 falloff fixture could not select linear");
         stage.start = start;
+        return stage;
+    }
+
+    FalloffStage addInactiveFalloff() {
+        auto stage = new FalloffStage(() => &mesh, &editMode, "falloff");
+        pipe.pipeline.add(stage);
         return stage;
     }
 
@@ -860,6 +899,118 @@ unittest {
         typeAndCommit(ui, "2");
         assert(stage.start.x == 2.0f && app.slot is null,
             "6060 C9 no-tool write witness: tool.pipe.attr did not use the stage path");
+    }
+
+    { // C12: a tool dropped by its value write is not custom-drawn afterwards.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto legacy = new ProbeLegacyTool("probe.legacyA");
+        legacy.onWrite = () {
+            legacy.dropped = true;
+            app.slot = null;
+            app.slotId = "";
+        };
+        app.slot = legacy;
+        app.slotId = legacy.id;
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        assert(legacy.draws >= 1
+            && idCount(cast(string) PanelIdKind.Row,
+                       "probe.legacyA", "amount") == 1,
+            "6504 C12 population: the legacy row never drew, so nothing was dropped");
+        tabInto(ui, 1);
+        const drawsBefore = legacy.draws;
+        typeAndCommit(ui, "2");
+        assert(app.slot is null,
+            "6504 C12 population: the param write did not drop the tool");
+        assert(legacy.draws == drawsBefore,
+            "6504 C12 drop witness: the action door drew a tool that had been dropped mid-frame");
+    }
+
+    { // C13: stage schema reads and custom UI retain their per-frame order.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto probe = new ProbeCountStage(
+            TaskCode.Path, "probe.stage", 0x80);
+        app.pipe.pipeline.add(probe);
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        const visible = idCount(
+            cast(string) PanelIdKind.Row, "probe.stage");
+        assert(visible == 1 && sectionKeys().canFind("probe.stage"),
+            "6504 C13 population: the probe stage never got a section");
+        assert(probe.paramsCalls == 2,
+            "6504 C13 params-call witness: the stage projection changed how often params() is read");
+        assert(probe.customDraws == 1,
+            "6504 C13 stage custom-draw witness: stage.drawProperties() did not run once per frame");
+        assert(probe.order.length > 0 && probe.order[$ - 1] == "custom"
+            && probe.order.count("row") == visible,
+            "6504 C13 order witness: stage custom draw did not run after the schema rows");
+    }
+
+    { // C15: an enabled but schema-less stage has no section on the Main page.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto stage = app.addInactiveFalloff();
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        assert(stage.pipeEnabled && !stage.isActive()
+            && stage.params().length == 0
+            && app.pipe.pipeline.findById("falloff") !is null,
+            "6504 C15 population: the probe falloff must be registered, enabled and schema-less");
+        assert(!sectionKeys().canFind("falloff")
+            && idCount(cast(string) PanelIdKind.Row, "falloff") == 0,
+            "6504 C15 schema-less-stage witness: a registered stage with no panel schema drew a section anyway");
+    }
+
+    { // C14: removal during an earlier section makes the later section vanish.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto a = new ProbeCountStage(TaskCode.Cons, "probe.a", 0xE0);
+        auto b = new ProbeCountStage(TaskCode.Path, "probe.b", 0xF0);
+        app.pipe.pipeline.add(a);
+        app.pipe.pipeline.add(b);
+        assert(app.pipe.pipeline.all().length == 2
+            && app.pipe.pipeline.findById("probe.a") is a
+            && app.pipe.pipeline.findById("probe.b") is b,
+            "6504 C14 population: the rig must register exactly the A and B stages");
+        bool armed;
+        a.onCustomDraw = () {
+            if (armed) app.pipe.pipeline.removeStage(b);
+        };
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        auto sections = sectionKeys();
+        assert(sections.canFind("probe.a") && sections.canFind("probe.b")
+            && idCount(cast(string) PanelIdKind.Row, "probe.a") == 1
+            && idCount(cast(string) PanelIdKind.Row, "probe.b") == 1
+            && a.customDraws == 1 && b.customDraws == 1,
+            "6504 C14 population: both probe stages must draw a section and a row before the removal is armed");
+
+        armed = true;
+        ui.frame();
+        sections = sectionKeys();
+        assert(app.pipe.pipeline.findById("probe.b") is null,
+            "6504 C14 population: the armed custom draw did not de-register the second stage");
+        assert(sections.canFind("probe.a")
+            && idCount(cast(string) PanelIdKind.Row, "probe.a") == 1,
+            "6504 C14 population: the first stage vanished with the second");
+        assert(!sections.canFind("probe.b")
+            && idCount(cast(string) PanelIdKind.Row, "probe.b") == 0
+            && b.customDraws == 1,
+            "6504 C14 de-registered-stage witness: a stage removed during an earlier section still reached the panel");
     }
 
     { // C11: source census pins the production binder and guarded draw site.
