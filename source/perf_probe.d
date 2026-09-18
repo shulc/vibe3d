@@ -511,34 +511,35 @@ struct FrameProbeSnapshot {
     FrameStatsSnapshot stats;
     long hitchGc16;
     long sumCacheNs;
+}
 
-    private static string recJson(const ref FrameRec r) {
-        import std.format : format;
-        return format(
-            `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
-            `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
-            `"gcCollections":%d,"gcMaxPauseNs":%d,"gcPauseNs":%d,` ~
-            `"gcCollectNs":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
-            `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
-            r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
-            r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
-            r.gcMaxPauseNs, r.gcPauseNs, r.gcCollectNs,
-            r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
-            r.uploadAlloc, r.uiAlloc);
-    }
+private string frameProbeRecJson(const ref FrameRec r) {
+    import std.format : format;
+    return format(
+        `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
+        `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
+        `"gcCollections":%d,"gcMaxPauseNs":%d,"gcPauseNs":%d,` ~
+        `"gcCollectNs":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
+        `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
+        r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
+        r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
+        r.gcMaxPauseNs, r.gcPauseNs, r.gcCollectNs,
+        r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
+        r.uploadAlloc, r.uiAlloc);
+}
 
-    /// Serialize the established /api/frames payload from detached data.
-    string toJson() {
+/// Serialize the established /api/frames payload from detached data.
+string toJson(ref FrameProbeSnapshot snapshot) {
         import std.array     : appender;
         import std.format    : formattedWrite;
         import std.algorithm : sort;
 
-        size_t len = frames.length;
-        FrameRec[] s = frames;
+        size_t len = snapshot.frames.length;
+        FrameRec[] s = snapshot.frames;
 
         auto app = appender!string();
         app.put("{");
-        app.formattedWrite(`"frameCount":%d`, stats.frameCount);
+        app.formattedWrite(`"frameCount":%d`, snapshot.stats.frameCount);
 
         long p50 = 0, p95 = 0, p99 = 0, mx = 0;
         if (len > 0) {
@@ -580,9 +581,10 @@ struct FrameProbeSnapshot {
             `,"hitch_16ms":%d,"hitch_33ms":%d,"meshCacheRebuilds":%d,` ~
             `"gcAllocBytes":%d,"gcCollections":%d,"gcPauseNs":%d,` ~
             `"gcMaxPauseNs":%d,"gcHitch_16ms":%d`,
-            stats.hitch16, stats.hitch33, stats.meshCacheRebuilds,
-            stats.sumAllocBytes, stats.sumCollections, stats.sumPauseNs,
-            stats.maxPauseNs, hitchGc16);
+            snapshot.stats.hitch16, snapshot.stats.hitch33,
+            snapshot.stats.meshCacheRebuilds, snapshot.stats.sumAllocBytes,
+            snapshot.stats.sumCollections, snapshot.stats.sumPauseNs,
+            snapshot.stats.maxPauseNs, snapshot.hitchGc16);
 
         enum size_t WarmupFrames = 3;
         long steadyMaxAllocBytes = 0;
@@ -592,14 +594,14 @@ struct FrameProbeSnapshot {
                     steadyMaxAllocBytes = s[i].gcAllocBytes;
         }
         app.formattedWrite(`,"steadyMaxAllocBytes":%d`, steadyMaxAllocBytes);
-        app.formattedWrite(`,"sumCacheNs":%d`, sumCacheNs);
+        app.formattedWrite(`,"sumCacheNs":%d`, snapshot.sumCacheNs);
 
         if (len > 0) {
             size_t worstIdx = 0;
             foreach (i, ref r; s)
                 if (r.totalNs > s[worstIdx].totalNs) worstIdx = i;
             app.put(`,"worst":`);
-            app.put(recJson(s[worstIdx]));
+            app.put(frameProbeRecJson(s[worstIdx]));
         } else {
             app.put(`,"worst":null`);
         }
@@ -612,14 +614,13 @@ struct FrameProbeSnapshot {
             size_t take = len < WorstN ? len : WorstN;
             foreach (i; 0 .. take) {
                 if (i > 0) app.put(",");
-                app.put(recJson(byWorst[i]));
+                app.put(frameProbeRecJson(byWorst[i]));
             }
         }
         app.put("]");
 
         app.put("}");
         return app.data;
-    }
 }
 
 // ===========================================================================

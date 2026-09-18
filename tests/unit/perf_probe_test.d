@@ -1,3 +1,5 @@
+// Focused: dmd -unittest -version=PerfProbe -i -I. -Isource -Itests/unit
+//          -of=<out> tests/unit/perf_probe_test.d <main.d>
 // Module unittests for `perf_probe`, moved verbatim out of source/perf_probe.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
@@ -306,4 +308,176 @@ unittest { // 6330: a reset from ANOTHER thread must not re-base the GC window
     assert(ballast.length == 16 && ballast[15][0] == 15,
         "the ballast that makes the lifetime counter a discriminator was "
         ~ "collected — the comparison above would be against nothing");
+}
+
+static assert([__traits(allMembers, FrameProbeSnapshot)] ==
+              ["frames", "stats", "hitchGc16", "sumCacheNs"],
+              "6511 FrameProbeSnapshot must remain detached data only");
+
+private enum size_t kFrameFixtureN = 25;
+private static immutable size_t[2][18] kFrameFixturePerm = [
+    [2, 0], [3, 0], [4, 0], [6, 0], [7, 0], [8, 0], [9, 0], [2, 20],
+    [11, 0], [12, 0], [13, 0], [14, 0], [16, 0], [17, 0], [18, 0],
+    [19, 0], [21, 0], [22, 0],
+];
+
+private size_t frameFixtureIndex(size_t field, size_t row) {
+    return (row * kFrameFixturePerm[field][0]
+            + kFrameFixturePerm[field][1]) % kFrameFixtureN;
+}
+
+private FrameProbeSnapshot frameProbeWireFixture() {
+    FrameProbeSnapshot snapshot;
+    snapshot.frames = new FrameRec[kFrameFixtureN];
+    foreach (row; 0 .. kFrameFixtureN) {
+        long value(size_t field) {
+            return cast(long)((field + 1) * 100_000
+                + frameFixtureIndex(field, row) * 100 + 7);
+        }
+        auto r = &snapshot.frames[row];
+        r.totalNs = value(0); r.eventNs = value(1); r.toolNs = value(2);
+        r.cacheNs = value(3); r.drawNs = value(4); r.uploadNs = value(5);
+        r.uiNs = value(6); r.gcAllocBytes = value(7);
+        r.gcCollections = value(8); r.gcMaxPauseNs = value(9);
+        r.gcPauseNs = value(10); r.gcCollectNs = value(11);
+        r.eventAlloc = value(12); r.toolAlloc = value(13);
+        r.cacheAlloc = value(14); r.drawAlloc = value(15);
+        r.uploadAlloc = value(16); r.uiAlloc = value(17);
+    }
+    snapshot.stats = FrameStatsSnapshot(9_100_001, 9_200_002, 9_300_003,
+        9_400_004, 9_500_005, 9_600_006, 9_700_007, 9_800_008);
+    snapshot.hitchGc16 = 9_900_009;
+    snapshot.sumCacheNs = 10_000_010;
+    return snapshot;
+}
+
+private immutable frameProbeWireBytes = `{"frameCount":9100001,"total":{"p50_ns":101207,"p95_ns":102207,"p99_ns":102307,"max_ns":102407},"phases":{"eventNs":{"p95_ns":202207},"toolNs":{"p95_ns":302207},"cacheNs":{"p95_ns":402207},"drawNs":{"p95_ns":502207},"uploadNs":{"p95_ns":602207},"uiNs":{"p95_ns":702207}},"hitch_16ms":9200002,"hitch_33ms":9300003,"meshCacheRebuilds":9600006,"gcAllocBytes":9400004,"gcCollections":9500005,"gcPauseNs":9700007,"gcMaxPauseNs":9800008,"gcHitch_16ms":9900009,"steadyMaxAllocBytes":802307,"sumCacheNs":10000010,"worst":{"totalNs":102407,"eventNs":201107,"toolNs":302307,"cacheNs":402207,"drawNs":500907,"uploadNs":602107,"uiNs":700807,"gcAllocBytes":801907,"gcCollections":900707,"gcMaxPauseNs":1001907,"gcPauseNs":1100607,"gcCollectNs":1201807,"eventAlloc":1301707,"toolAlloc":1400407,"cacheAlloc":1501607,"drawAlloc":1600307,"uploadAlloc":1700207,"uiAlloc":1801407},"worstN":[{"totalNs":102407,"eventNs":201107,"toolNs":302307,"cacheNs":402207,"drawNs":500907,"uploadNs":602107,"uiNs":700807,"gcAllocBytes":801907,"gcCollections":900707,"gcMaxPauseNs":1001907,"gcPauseNs":1100607,"gcCollectNs":1201807,"eventAlloc":1301707,"toolAlloc":1400407,"cacheAlloc":1501607,"drawAlloc":1600307,"uploadAlloc":1700207,"uiAlloc":1801407},{"totalNs":102307,"eventNs":202207,"toolNs":302107,"cacheNs":401907,"drawNs":501807,"uploadNs":601707,"uiNs":701607,"gcAllocBytes":801807,"gcCollections":901407,"gcMaxPauseNs":1001307,"gcPauseNs":1101207,"gcCollectNs":1201107,"eventAlloc":1300907,"toolAlloc":1400807,"cacheAlloc":1500707,"drawAlloc":1600607,"uploadAlloc":1700407,"uiAlloc":1800307},{"totalNs":102207,"eventNs":200807,"toolNs":301907,"cacheNs":401607,"drawNs":500207,"uploadNs":601307,"uiNs":702407,"gcAllocBytes":801707,"gcCollections":902107,"gcMaxPauseNs":1000707,"gcPauseNs":1101807,"gcCollectNs":1200407,"eventAlloc":1300107,"toolAlloc":1401207,"cacheAlloc":1502307,"drawAlloc":1600907,"uploadAlloc":1700607,"uiAlloc":1801707},{"totalNs":102107,"eventNs":201907,"toolNs":301707,"cacheNs":401307,"drawNs":501107,"uploadNs":600907,"uiNs":700707,"gcAllocBytes":801607,"gcCollections":900307,"gcMaxPauseNs":1000107,"gcPauseNs":1102407,"gcCollectNs":1202207,"eventAlloc":1301807,"toolAlloc":1401607,"cacheAlloc":1501407,"drawAlloc":1601207,"uploadAlloc":1700807,"uiAlloc":1800607},{"totalNs":102007,"eventNs":200507,"toolNs":301507,"cacheNs":401007,"drawNs":502007,"uploadNs":600507,"uiNs":701507,"gcAllocBytes":801507,"gcCollections":901007,"gcMaxPauseNs":1002007,"gcPauseNs":1100507,"gcCollectNs":1201507,"eventAlloc":1301007,"toolAlloc":1402007,"cacheAlloc":1500507,"drawAlloc":1601507,"uploadAlloc":1701007,"uiAlloc":1802007},{"totalNs":101907,"eventNs":201607,"toolNs":301307,"cacheNs":400707,"drawNs":500407,"uploadNs":600107,"uiNs":702307,"gcAllocBytes":801407,"gcCollections":901707,"gcMaxPauseNs":1001407,"gcPauseNs":1101107,"gcCollectNs":1200807,"eventAlloc":1300207,"toolAlloc":1402407,"cacheAlloc":1502107,"drawAlloc":1601807,"uploadAlloc":1701207,"uiAlloc":1800907},{"totalNs":101807,"eventNs":200207,"toolNs":301107,"cacheNs":400407,"drawNs":501307,"uploadNs":602207,"uiNs":700607,"gcAllocBytes":801307,"gcCollections":902407,"gcMaxPauseNs":1000807,"gcPauseNs":1101707,"gcCollectNs":1200107,"eventAlloc":1301907,"toolAlloc":1400307,"cacheAlloc":1501207,"drawAlloc":1602107,"uploadAlloc":1701407,"uiAlloc":1802307},{"totalNs":101707,"eventNs":201307,"toolNs":300907,"cacheNs":400107,"drawNs":502207,"uploadNs":601807,"uiNs":701407,"gcAllocBytes":801207,"gcCollections":900607,"gcMaxPauseNs":1000207,"gcPauseNs":1102307,"gcCollectNs":1201907,"eventAlloc":1301107,"toolAlloc":1400707,"cacheAlloc":1500307,"drawAlloc":1602407,"uploadAlloc":1701607,"uiAlloc":1801207}]}`;
+
+unittest { // 6511 PP-6/PP-7: byte wire and idempotence
+    import std.digest : toHexString;
+    import std.digest.sha : sha256Of;
+    import std.regex : regex, replaceAll;
+    import std.algorithm.searching : canFind;
+
+    auto snapshot = frameProbeWireFixture();
+    assert(snapshot.frames.length == 25,
+        "6511 frame-probe fixture must retain 25 distinct records");
+    auto first = snapshot.toJson();
+    assert(first.length == 3665,
+        "6511 frame-probe fixture must retain its measured 3665-byte population");
+    assert(first == frameProbeWireBytes, "6511 frame-probe wire bytes changed");
+    assert(snapshot.frames.length == 25,
+        "6511 serializer mutated the frame fixture population");
+    assert(snapshot.toJson() == first,
+        "6511 frame-probe serialization must be idempotent");
+    auto shape = first.replaceAll(regex(`-?\d+`), "0");
+    assert(shape.length == 2646 && shape.canFind(`"worstN":[`),
+        "6511 phase-0 wire skeleton lost its measured population");
+    assert(sha256Of(shape).toHexString ==
+           "69F7CD7E3E4A5744AC4961B5D61648E7B358AD19614B7DE5E50A7E9154C755E2",
+        "6511 frame-probe wire shape changed from the phase-0 golden");
+}
+
+version (PerfProbe) {
+    private void seedFrame(ref FrameProbe probe, long drawNs) {
+        probe.beginFrame();
+        probe.addPhase(Phase.draw, drawNs);
+        probe.endFrame();
+    }
+
+    unittest { // 6511 PP-1: the ring is detached from later writes
+        import std.algorithm.searching : canFind;
+
+        FrameProbe probe;
+        foreach (i; 0 .. 5) seedFrame(probe, 100 + i);
+        auto snapshot = probe.snapshot();
+        probe.reset();
+        foreach (i; 0 .. 5) seedFrame(probe, 900 + i);
+        FrameRec[5] recent;
+        assert(probe.copyRecent(recent[]) == 5 && recent[$ - 1].drawNs == 904,
+            "6511 detach premise did not overwrite the live ring");
+        assert(snapshot.frames.length == 5,
+            "6511 detached snapshot population changed");
+        foreach (i, ref frame; snapshot.frames)
+            assert(frame.drawNs == 100 + i,
+                "6511 snapshot aliased the live ring: frames[0].drawNs");
+        assert(snapshot.toJson().canFind(`"drawNs":{"p95_ns":103}`),
+            "6511 detached snapshot lost its original draw percentile");
+    }
+
+    unittest { // 6511 PP-2: aggregates belong to the captured snapshot
+        import std.algorithm.searching : canFind;
+
+        scope(exit) g_frames.reset();
+        g_frames.reset();
+        foreach (i; 0 .. 3) seedFrame(g_frames, 100 + i);
+        auto snapshot = g_frames.snapshot();
+        foreach (i; 0 .. 4) seedFrame(g_frames, 900 + i);
+        assert(g_frames.stats().frameCount == 7,
+            "6511 live aggregate premise did not advance to seven frames");
+        assert(snapshot.frames.length == 3,
+            "6511 aggregate fixture lost its three captured records");
+        assert(snapshot.stats.frameCount == 3,
+            "6511 snapshot copied the wrong aggregate: frameCount");
+        assert(snapshot.toJson().canFind(`"frameCount":3`),
+            "6511 snapshot served a live aggregate: frameCount");
+    }
+
+    unittest { // 6511 PP-3: running aggregates survive ring eviction
+        FrameProbe probe;
+        foreach (i; 0 .. 8195) seedFrame(probe, 100 + i);
+        auto snapshot = probe.snapshot();
+        assert(snapshot.frames.length == 8192,
+            "6511 FrameProbe ring population must remain 8192");
+        assert(snapshot.stats.frameCount == 8195,
+            "6511 aggregates must survive ring eviction: frameCount");
+    }
+
+    unittest { // 6511 PP-4: owner service must precede the allocation window
+        FrameProbe insideProbe;
+        foreach (i; 0 .. 25) seedFrame(insideProbe, 100 + i);
+        insideProbe.beginFrame();
+        auto insideSnapshot = insideProbe.snapshot();
+        insideProbe.endFrame();
+        FrameRec[1] insideRecent;
+        assert(insideSnapshot.frames.length == 25,
+            "6511 inside-window allocation fixture lost its 25 records");
+        assert(insideProbe.copyRecent(insideRecent[]) == 1);
+        assert(insideRecent[0].gcAllocBytes >= 25 * FrameRec.sizeof,
+            "6511 snapshot allocation did not enter the open frame window");
+
+        FrameProbe outsideProbe;
+        foreach (i; 0 .. 25) seedFrame(outsideProbe, 100 + i);
+        auto outsideSnapshot = outsideProbe.snapshot();
+        outsideProbe.beginFrame();
+        outsideProbe.endFrame();
+        FrameRec[1] outsideRecent;
+        assert(outsideSnapshot.frames.length == 25,
+            "6511 outside-window allocation fixture lost its 25 records");
+        assert(outsideProbe.copyRecent(outsideRecent[]) == 1);
+        assert(outsideRecent[0].gcAllocBytes == 0,
+            "6511 owner snapshot allocation leaked into the next frame");
+    }
+
+    unittest { // 6511 PP-5: reset preserves the in-flight method contract
+        FrameProbe probe;
+        probe.beginFrame();
+        probe.addPhase(Phase.draw, 777);
+        probe.addPhaseAlloc(Phase.draw, 888);
+        probe.bumpMeshCacheRebuild();
+        probe.reset();
+        probe.endFrame();
+        FrameRec[1] recent;
+        assert(probe.copyRecent(recent[]) == 1,
+            "6511 reset contract fixture must commit exactly one frame");
+        assert(recent[0].drawNs == 777,
+            "6511 reset disturbed the in-flight frame: drawNs");
+        assert(recent[0].drawAlloc == 888,
+            "6511 reset disturbed the in-flight frame: drawAlloc");
+        assert(recent[0].totalNs < 1_000_000_000,
+            "6511 reset re-based frameStart: totalNs");
+        assert(probe.stats().frameCount == 1
+            && probe.stats().meshCacheRebuilds == 0,
+            "6511 reset did not preserve the published-counter contract");
+    }
 }

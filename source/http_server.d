@@ -20,7 +20,7 @@ public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta;
 import core.atomic;
 import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
-                    FrameWorkProbe, FrameWorkSnapshot;
+                    FrameWorkProbe, FrameWorkSnapshot, toJson;
 
 // For event player functionality
 import bindbc.sdl;
