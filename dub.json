@@ -133,6 +133,17 @@
 				"PerfProbe"
 			]
 		},
+		"perf-unit": {
+			"_comment": "PerfProbe module-unittest build. Like check-unit, this explicitly keeps both `unittests` and catchable AssertError semantics because a named buildType replaces dub's built-in unittest buildType; unlike check-unit it adds only PerfProbe.",
+			"buildOptions": [
+				"unittests",
+				"debugMode",
+				"debugInfo"
+			],
+			"versions": [
+				"PerfProbe"
+			]
+		},
 		"check": {
 			"_comment": "The ordinary-tests instrumented build: debug + --checkaction=C. `-C` turns a failed assert into an IMMEDIATE C abort() -- SIGABRT, before any stack unwinding -- which is the only reason the crash oracle can see an assert at all. With the default `-D` an AssertError kills the main thread while the process lives on, and every later HTTP request then costs the full 120 s command-bridge timeout (kCommandBridgeMaxIters=60_000 x 2 ms, http_server.d:79) before answering `timeout waiting for main thread`: the TEST hangs, the process does not. --boundscheck=on is carried for symmetry only and does NOTHING here -- measured: a debugMode build already traps an out-of-bounds @system index with or without it. Its value lives entirely in check-release below.",
 			"buildOptions": [
