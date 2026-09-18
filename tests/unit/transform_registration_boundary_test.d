@@ -298,8 +298,8 @@ unittest {
         ~ "TransformToolDeps(app.gpuPtr, app.history, app.vxEditFactory, "
         ~ "app.morphEditFactory, app.layerXformEditFactory, app.pipeGizmoHost, "
         ~ "() => explore.enabled && logw.enabled)); }";
-    assert(countOccurrences(collapseWhitespace(code), expected) == 1,
-        "6506 composition root call text or multiplicity changed");
     assert(countOccurrences(collapsed, "=> app.") == 0,
         "6506 composition root body contains a lambda over `app.`");
+    assert(countOccurrences(collapseWhitespace(code), expected) == 1,
+        "6506 composition root call text or multiplicity changed");
 }
