@@ -17,11 +17,11 @@ import prefs : Prefs;
 import scene_file_lifecycle_registration : SceneLifecycleDoors,
     registerSceneFileLifecycleCommands;
 import scene_reset_effects : SceneResetEffects;
+import seltype : SelType;
 import shader : LitShader;
 import std.algorithm : count;
 import std.array : join;
 import std.conv : to;
-import std.exception : assertThrown;
 import std.file : exists, readText;
 import std.path : buildNormalizedPath, dirName;
 import std.string : indexOf, split;
@@ -266,6 +266,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
                                   &sliceMode, LitShader.init);
     loop.seedPreparedActivationForTest();
     rig.activeTool = loop;
+    rig.session.switchGeometryType(EditMode.Polygons);
     viewports.applyLayout(LayoutPreset.Quad);
     prefs.viewportLayout = LayoutPreset.Quad;
     const cached = primeTopologyCache(preview);
@@ -273,6 +274,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
             && preview.active && preview.reusablePreviewReady
             && preview.osdAccel.valid && viewports.cellCount == 4
             && prefs.viewportLayout == LayoutPreset.Quad
+            && rig.session.selTypeOrder.current == SelType.Polygon
             && rig.activeTool !is null && pipes == 0 && drops == 0,
         "6480 R4 floor: loadMesh lacks a tool, cache, preview or Quad layout");
 
@@ -282,7 +284,9 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
         CommandInvocationContext(CommandOrigin.script, false));
     assert(result.outcome == CommandInvocationOutcome.applied
             && rig.session.editMesh().vertices.length == 4
-            && rig.session.editMesh().faces.length == 1,
+            && rig.session.editMesh().faces.length == 1
+            && rig.session.editMode == EditMode.Vertices
+            && rig.session.selTypeOrder.current == SelType.Vertex,
         "6480 R4 loadMesh did not replace geometry through the real factory");
     assert(drops == 1 && transitions.length == 1
             && transitions[0] == ToolTransition.sceneResetDrop
@@ -381,12 +385,16 @@ unittest { // R5: factories resolve live roles/document and every door is requir
     void delegate(EditMode) promote;
     void delegate() door;
     size_t refusals;
-    assertThrown!AssertError(SceneLifecycleDoors(promote, () {}, () {}));
-    ++refusals;
-    assertThrown!AssertError(SceneLifecycleDoors((EditMode mode) {}, door, () {}));
-    ++refusals;
-    assertThrown!AssertError(SceneLifecycleDoors((EditMode mode) {}, () {}, door));
-    ++refusals;
+    void countRefusal(SceneLifecycleDoors delegate() make) {
+        try {
+            auto ignored = make();
+        } catch (AssertError) {
+            ++refusals;
+        }
+    }
+    countRefusal(() => SceneLifecycleDoors(promote, () {}, () {}));
+    countRefusal(() => SceneLifecycleDoors((EditMode mode) {}, door, () {}));
+    countRefusal(() => SceneLifecycleDoors((EditMode mode) {}, () {}, door));
     assert(refusals == 3,
         "6480 R5 all three lifecycle doors must be constructor-required");
 }
