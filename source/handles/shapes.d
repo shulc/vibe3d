@@ -136,6 +136,14 @@ public:
     void setEngaged(bool e) { engaged = e; }
     bool isEngaged() const  { return engaged; }
 
+    version(unittest) final ubyte[] handlerStateBytesForTest() const {
+        ubyte[] bytes;
+        bytes ~= (cast(const(ubyte)*) &state)[0 .. state.sizeof];
+        bytes ~= (cast(const(ubyte)*) &visible)[0 .. visible.sizeof];
+        bytes ~= (cast(const(ubyte)*) &engaged)[0 .. engaged.sizeof];
+        return bytes;
+    }
+
     // What this handle is doing, in the only terms the colour law cares about.
     // The two arbitration bits collapse to one of three paint states, and the
     // precedence is grab-over-hover: during a haul the arbiter pins `hot` to

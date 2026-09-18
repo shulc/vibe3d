@@ -265,6 +265,21 @@ struct PreviewRebuild {
             cage_.vertices.length != 0 && fullRebuilds == 2 &&
             placements == 3 && keyMisses == 4;
     }
+    version(unittest) ubyte[] previewStateBytesForTest() const {
+        ubyte[] bytes;
+        bytes ~= (cast(const(ubyte)*) &hasLast_)[0 .. hasLast_.sizeof];
+        bytes ~= (cast(const(ubyte)*) &lastTopology_)[0 .. lastTopology_.sizeof];
+        bytes ~= (cast(const(ubyte)*) &last_.degenerate)[0 .. last_.degenerate.sizeof];
+        bytes ~= (cast(const(ubyte)*) &last_.operand)[0 .. last_.operand.sizeof];
+        bytes ~= (cast(const(ubyte)*) &last_.counts)[0 .. last_.counts.sizeof];
+        immutable size_t vertices = cage_.vertices.length;
+        immutable size_t edges = cage_.edges.length;
+        immutable size_t faces = cage_.faces.length;
+        bytes ~= (cast(const(ubyte)*) &vertices)[0 .. vertices.sizeof];
+        bytes ~= (cast(const(ubyte)*) &edges)[0 .. edges.sizeof];
+        bytes ~= (cast(const(ubyte)*) &faces)[0 .. faces.sizeof];
+        return bytes;
+    }
 
     /// One preview rebuild.
     ///

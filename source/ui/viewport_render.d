@@ -130,6 +130,13 @@ struct ToolOverlayInputs {
 // Inputs are named above by role; the only mutable render scratch is owned by
 // the ViewportSceneRenderer instance.
 final class ViewportSceneRenderer {
+public:
+    version(unittest)
+    void drawToolOverlaysForTest(ToolOverlayInputs inputs, OverlayMode mode,
+                                 ref Viewport viewport, Shader shader) {
+        drawToolOverlays(inputs, mode, viewport, shader);
+    }
+
 private:
     uint[] faceSelEdgesCache_;
     uint[] faceSelEdgesPrevSel_;

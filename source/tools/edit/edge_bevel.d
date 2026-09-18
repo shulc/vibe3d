@@ -131,6 +131,7 @@ private:
     float dragBaseWidth;
 
     Arrow       widthArrow;
+    Arrow       replicaArrow_;
     ToolHandles toolHandles;
 
     enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
@@ -155,11 +156,13 @@ public:
         this.editMode  = editMode;
         this.litShader = litShader;
         widthArrow  = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        replicaArrow_ = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
         toolHandles = new ToolHandles();
     }
 
     void destroy() {
         if (widthArrow !is null) widthArrow.destroy();
+        if (replicaArrow_ !is null) replicaArrow_.destroy();
     }
 
     override string name() const { return "Edge Bevel"; }
@@ -627,6 +630,92 @@ private:
     }
 
 public:
+    version(unittest) {
+        private static void appendRaw(T)(ref ubyte[] bytes,
+                                         ref const T value) {
+            bytes ~= (cast(const(ubyte)*) &value)[0 .. T.sizeof];
+        }
+
+        struct EdgeBevelInteractionReadForTest {
+            bool gizmoValid;
+            Vec3 anchor;
+            Vec3 baseAnchor;
+            Vec3 widthAxis;
+            ulong gizmoSelHash;
+            int dragPart;
+            bool built;
+            int cachedWidth;
+            int cachedHeight;
+        }
+
+        final EdgeBevelInteractionReadForTest readInteractionForTest() const
+                nothrow @nogc {
+            return EdgeBevelInteractionReadForTest(gizmoValid, anchor,
+                baseAnchor, widthAxis, gizmoSelHash, dragPart, built,
+                cachedVp.width, cachedVp.height);
+        }
+
+        final void replicaArrowForTest(out Vec3 start, out Vec3 end,
+                                       out size_t drawId) const {
+            start = replicaArrow_.start;
+            end = replicaArrow_.end;
+            drawId = replicaArrow_.drawIdentity();
+        }
+
+        final void widthArrowForTest(out Vec3 start, out Vec3 end,
+                                     out size_t drawId) const {
+            start = widthArrow.start;
+            end = widthArrow.end;
+            drawId = widthArrow.drawIdentity();
+        }
+
+        final ubyte[] interactionStateBytesForTest() const {
+            ubyte[] bytes;
+            appendRaw(bytes, cachedVp.view);
+            appendRaw(bytes, cachedVp.proj);
+            appendRaw(bytes, cachedVp.width);
+            appendRaw(bytes, cachedVp.height);
+            appendRaw(bytes, cachedVp.x);
+            appendRaw(bytes, cachedVp.y);
+            appendRaw(bytes, cachedVp.eye);
+            appendRaw(bytes, cachedVp.focus);
+            appendRaw(bytes, gizmoValid);
+            appendRaw(bytes, anchor);
+            appendRaw(bytes, baseAnchor);
+            appendRaw(bytes, widthAxis);
+            appendRaw(bytes, gizmoSelHash);
+            appendRaw(bytes, dragPart);
+            appendRaw(bytes, built);
+            appendRaw(bytes, active);
+            appendRaw(bytes, width_);
+            appendRaw(bytes, roundLevel_);
+            appendRaw(bytes, widthMode_);
+            appendRaw(bytes, dragStartMX);
+            appendRaw(bytes, dragStartMY);
+            appendRaw(bytes, dragBaseWidth);
+            appendRaw(bytes, widthArrow.start);
+            appendRaw(bytes, widthArrow.end);
+            appendRaw(bytes, widthArrow.color);
+            bytes ~= widthArrow.handlerStateBytesForTest();
+            immutable counts = preview_.counts();
+            appendRaw(bytes, counts.fullRebuilds);
+            appendRaw(bytes, counts.placements);
+            appendRaw(bytes, counts.keyMisses);
+            bytes ~= preview_.previewStateBytesForTest();
+            appendRaw(bytes, before.filled);
+            immutable size_t beforeVertices = before.vertices.length;
+            immutable size_t beforeEdges = before.edges.length;
+            immutable size_t beforeFaces = before.faces.length;
+            immutable ulong beforeVertexHash = cast(ulong) hashOf(before.vertices);
+            appendRaw(bytes, beforeVertices);
+            appendRaw(bytes, beforeEdges);
+            appendRaw(bytes, beforeFaces);
+            appendRaw(bytes, beforeVertexHash);
+            bytes ~= toolHandles.arbiterStateBytesForTest();
+            return bytes;
+        }
+    }
+
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }

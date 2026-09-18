@@ -236,6 +236,20 @@ class ToolHandles {
     void setHaul(int part) { captured = part; }
     void clearHaul() nothrow @nogc { captured = -1;  }
     version(unittest) int haulForPreparedTest() const nothrow @nogc { return captured; }
+    version(unittest) ubyte[] arbiterStateBytesForTest() const {
+        ubyte[] bytes;
+        bytes ~= (cast(const(ubyte)*) &hot)[0 .. hot.sizeof];
+        bytes ~= (cast(const(ubyte)*) &captured)[0 .. captured.sizeof];
+        bytes ~= (cast(const(ubyte)*) &drawGeneration_)[0 .. drawGeneration_.sizeof];
+        immutable size_t entryCount = entries.length;
+        bytes ~= (cast(const(ubyte)*) &entryCount)[0 .. entryCount.sizeof];
+        foreach (ref e; entries) {
+            immutable size_t address = cast(size_t) cast(void*) e.h;
+            bytes ~= (cast(const(ubyte)*) &address)[0 .. address.sizeof];
+            bytes ~= (cast(const(ubyte)*) &e.part)[0 .. e.part.sizeof];
+        }
+        return bytes;
+    }
 
     // Serialize the registered handles for test introspection (task 0234,
     // /api/tool/handles). `entries` stays private to this module; this is the
