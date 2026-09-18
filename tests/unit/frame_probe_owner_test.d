@@ -257,6 +257,42 @@ version (PerfProbe) unittest { // P-3: stopping before claim returns 503
     stopper.join();
 }
 
+version (PerfProbe) unittest { // Sweep: a read timeout keeps its HTTP mapping
+    immutable port = freePort();
+    auto server = startedServer(port);
+    scope(exit) if (server.running) server.stop();
+    server.setFramesBudgetForTest(100.msecs);
+
+    auto reply = new Reply();
+    auto client = request(port, "GET", "/api/frames", reply);
+    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout")
+        && body(reply.wire) == `{"error":"timeout waiting for main thread"}`,
+        "6511 frame read timeout lost its 504 mapping");
+    client.join();
+}
+
+version (PerfProbe) unittest { // Sweep: stopping a pending read maps to 503
+    immutable port = freePort();
+    auto server = startedServer(port);
+    scope(exit) if (server.running) server.stop();
+    auto bridge = server.framesBridgeForTest();
+
+    auto reply = new Reply();
+    auto client = request(port, "GET", "/api/frames", reply);
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    auto stopper = new Thread({ server.stop(); });
+    stopper.isDaemon = true;
+    stopper.start();
+    assert(waitUntil(() => !stopper.isRunning));
+    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(reply.wire.canFind("HTTP/1.1 503 Service Unavailable")
+        && body(reply.wire) == `{"error":"HTTP server stopping"}`,
+        "6511 stopped frame read lost its 503 mapping");
+    client.join();
+    stopper.join();
+}
+
 version (PerfProbe) unittest { // P-5/P-6: reset boundary then full next frame
     immutable port = freePort();
     auto server = startedServer(port);
