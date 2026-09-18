@@ -146,6 +146,7 @@ unittest { // all eight fields belong to one state instance
     assert(!state.consumePendingOpen(),
         "pending-open handoff fired more than once");
 
+    state.lastError = "pre-success error";
     state.noteSuccess("complete");
     assert(state.lastSummary == "complete" && state.lastError is null
         && state.pendingClose,
