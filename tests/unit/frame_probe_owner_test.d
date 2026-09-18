@@ -113,6 +113,7 @@ version (PerfProbe) {} else unittest { // D-1: default answers without bridge wo
     assert(waitUntil(() => atomicLoad(readReply.done)),
         "6511 default GET /api/frames did not answer");
     assert(readReply.wire.canFind("HTTP/1.1 200 OK")
+        && readReply.wire.canFind("Content-Type: application/json")
         && body(readReply.wire) == "{}"
         && body(readReply.wire).length == 2,
         "6511 default build must answer {} without touching the bridge");
@@ -122,8 +123,9 @@ version (PerfProbe) {} else unittest { // D-1: default answers without bridge wo
     auto resetClient = request(port, "POST", "/api/frames/reset", resetReply);
     assert(waitUntil(() => atomicLoad(resetReply.done)),
         "6511 default POST /api/frames/reset did not answer");
-    assert(resetReply.wire.canFind("HTTP/1.1 200 OK"));
-    assert(body(resetReply.wire) == `{"status":"ok"}`,
+    assert(resetReply.wire.canFind("HTTP/1.1 200 OK")
+        && resetReply.wire.canFind("Content-Type: application/json")
+        && body(resetReply.wire) == `{"status":"ok"}`,
         "6511 default reset response bytes changed");
     resetClient.join();
 
@@ -346,6 +348,8 @@ unittest { // C-1: production wiring owns exactly these two routes
     assert(ownerTick.canFind("framesBridge.tickClaimed("));
     assert(raw.canFind("version (PerfProbe) private enum Answered kFramesAnswered = Answered.mainThread;")
         && raw.canFind("else                private enum Answered kFramesAnswered = Answered.httpThread;"));
+    assert(raw.canFind("private Duration framesBudget_ = 5.seconds;"),
+        "6511 FrameProbe routes must retain the owner-approved five-second deadline");
     assert(raw.canFind(`RouteSpec("/api/frames/reset",         "POST", Match.exact,  kFramesAnswered`)
         && raw.canFind(`RouteSpec("/api/frames",               "GET",  Match.exact,  kFramesAnswered`));
 
