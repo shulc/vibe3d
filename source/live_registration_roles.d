@@ -3,6 +3,7 @@ module live_registration_roles;
 import document : Document;
 import editmode : EditMode;
 import mesh : Mesh;
+import seltype : SelType, currentSelType;
 import session_owner : Session;
 import view : View;
 
@@ -30,6 +31,10 @@ public:
 
     Document* document() nothrow @nogc {
         return session_.documentPtr();
+    }
+
+    SelType subjectType() const nothrow @nogc {
+        return currentSelType(session_.selTypeOrder);
     }
 }
 

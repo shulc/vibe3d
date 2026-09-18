@@ -18,6 +18,7 @@ import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import mesh : makeCube, makeOctahedron;
 import pipe_gizmo_host : PipeGizmoHost;
 import registry : Registry;
+import seltype : SelType;
 import session_owner : Session;
 import std.json : JSONValue;
 import step_trace : StepTrace;
@@ -179,4 +180,17 @@ unittest {
         "5980 rig population: cell switch did not change the live View");
     assert(rig.session.editMode == EditMode.Polygons,
         "5980 rig population: geometry switch did not change the live mode");
+}
+
+unittest {
+    auto rig = new LiveRegistrationRig;
+    auto live = rig.liveSession();
+    assert(live.subjectType() == SelType.Vertex,
+        "6506 live subject floor: rig must begin in vertex subject mode");
+    rig.session.selTypeOrder.touch(SelType.Item);
+    assert(live.subjectType() == SelType.Item,
+        "6506 live subject: role froze the pre-item selection type");
+    rig.session.selTypeOrder.touch(SelType.Polygon);
+    assert(live.subjectType() == SelType.Polygon,
+        "6506 live subject: role froze the pre-polygon selection type");
 }
