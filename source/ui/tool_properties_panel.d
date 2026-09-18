@@ -6,29 +6,43 @@ import application_command_binding : ApplicationCommandBinding;
 import edit_session : EditSession;
 import forms : Form;
 import forms_render : DispatchFn, FormsPanel, InteractiveDispatchFn;
-import params : ParamProvider;
 import property_panel : PropertyPanel;
 import tool : Tool;
-import toolpipe.stage : Stage;
+import toolpipe.stage : Stage, TaskCode;
 import ui.panel_chrome : popPanelChromeStyle, publishPanelZone,
     pushPanelChromeStyle;
 
+/// Display metadata for one Tool Properties stage section: values only.
+/// No Stage handle, so the drawing body has nothing to cast back (task 6504).
+struct ToolPropertiesStageInfo {
+    string id;
+    string displayName;
+    TaskCode taskCode;
+}
+
 struct ToolPropertiesReadRole {
 private:
-    Tool delegate() activeTool_;
+    bool delegate() activeTool_;
     string delegate() activeToolId_;
 public:
     @disable this();
-    this(Tool delegate() activeTool, string delegate() activeToolId) {
+    this(bool delegate() activeTool, string delegate() activeToolId) {
         assert(activeTool !is null && activeToolId !is null);
         activeTool_ = activeTool;
         activeToolId_ = activeToolId;
     }
-    Tool activeTool() { return activeTool_(); }
+    bool hasActiveTool() { return activeTool_(); }
     string activeToolId() { return activeToolId_(); }
-    const(Stage)[] pipeStages() {
+    ToolPropertiesStageInfo[] enabledStages() {
         import toolpipe.pipeline : g_pipeCtx;
-        return g_pipeCtx is null ? null : g_pipeCtx.pipeline.all();
+        ToolPropertiesStageInfo[] result;
+        if (g_pipeCtx is null) return result;
+        foreach (stage; g_pipeCtx.pipeline.all()) {
+            if (!stage.pipeEnabled) continue;
+            result ~= ToolPropertiesStageInfo(
+                stage.id(), stage.displayName(), stage.taskCode());
+        }
+        return result;
     }
 }
 
@@ -38,27 +52,62 @@ private:
     InteractiveDispatchFn interactive_;
     FormsPanel forms_;
     EditSession session_;
+    Tool delegate() activeTool_;
 public:
     @disable this();
     this(DispatchFn dispatch, InteractiveDispatchFn interactive,
-         FormsPanel forms, EditSession session) {
+         FormsPanel forms, EditSession session, Tool delegate() activeTool) {
         assert(dispatch !is null && interactive !is null
-            && forms !is null && session !is null);
+            && forms !is null && session !is null && activeTool !is null);
         dispatch_ = dispatch;
         interactive_ = interactive;
         forms_ = forms;
         session_ = session;
+        activeTool_ = activeTool;
     }
-    void drawForm(ref Form form, ParamProvider provider,
-                  string activeToolId, string stageId) {
-        forms_.draw(form, provider, dispatch_, interactive_,
-                    activeToolId, stageId);
+
+    void drawToolForm(ref Form form, string activeToolId) {
+        auto tool = activeTool_();
+        if (tool is null) return;
+        forms_.draw(form, tool, dispatch_, interactive_, activeToolId, "");
     }
-    void drawToolParams(PropertyPanel panel, Tool tool) {
-        panel.draw(tool, session_);
+    void drawFormedToolCustom() {
+        import tools.transform.xfrm_transform : XfrmTransformTool;
+        if (auto xf = cast(XfrmTransformTool) activeTool_()) {
+            xf.suppressTRSProperties = true;
+            scope(exit) xf.suppressTRSProperties = false;
+            xf.drawProperties();
+        }
     }
-    void drawStageParams(PropertyPanel panel, Stage stage) {
-        panel.drawProvider(stage, session_);
+    void drawToolParams(PropertyPanel panel) {
+        panel.draw(activeTool_(), session_);
+    }
+    void drawToolCustom() {
+        auto tool = activeTool_();
+        if (tool is null) return;
+        tool.drawProperties();
+    }
+    bool stageHasPanelParams(string stageId) {
+        auto stage = resolveStage(stageId);
+        return stage !is null && stage.params().length != 0;
+    }
+    void drawStageBody(PropertyPanel panel, string stageId) {
+        import forms : g_formsPanelEnabled, formByStage;
+        auto stage = resolveStage(stageId);
+        if (stage is null) return;
+        auto stageForm = g_formsPanelEnabled
+                       ? formByStage(stage.formFamilyId()) : null;
+        if (stageForm !is null) {
+            try {
+                forms_.draw(*stageForm, stage, dispatch_, interactive_,
+                            "", stage.id());
+            } catch (Exception e) {
+                warnStageFormOnce(stage.id(), e.msg);
+                panel.drawProvider(stage, session_);
+            }
+        } else
+            panel.drawProvider(stage, session_);
+        stage.drawProperties();
     }
 }
 
@@ -76,23 +125,27 @@ public:
     ToolPropertiesActions actions() { return actions_; }
 }
 
+private Stage resolveStage(string stageId) {
+    import toolpipe.pipeline : g_pipeCtx;
+    return g_pipeCtx is null ? null : g_pipeCtx.pipeline.findById(stageId);
+}
+
 ToolPropertiesPanelRoles bindToolPropertiesPanel(
         ApplicationCommandBinding binding, FormsPanel forms,
         EditSession session, Tool delegate() activeTool,
         string delegate() activeToolId) {
-    assert(binding !is null);
+    assert(binding !is null && activeTool !is null && activeToolId !is null);
     return ToolPropertiesPanelRoles(
-        ToolPropertiesReadRole(activeTool, activeToolId),
+        ToolPropertiesReadRole(() => activeTool() !is null, activeToolId),
         ToolPropertiesActions(&binding.dispatchUi,
-            &binding.dispatchInteractiveUi, forms, session));
+            &binding.dispatchInteractiveUi, forms, session, activeTool));
 }
 
-// CONTRACT (task 6060). Tool Properties reads the active Tool/id and pipeline
-// stages live on every draw and routes value rows through the production
-// interactive refire binding. It owns no Tool, Stage or Session state; its only
-// persistent state is the module-local tab selection. The window-level Begin/End
-// and chrome style follow the panel prologue rule established by task 0719; this
-// deliberately replaces the old plain tail so exceptional exits unwind both
+// CONTRACT (tasks 6060, 6504). Tool Properties reads only live display identity
+// and stage metadata; the action door resolves the current Tool/Stage at each
+// draw and owns forms, legacy providers and custom UI. No mutable provider
+// crosses back into the drawing body. The window-level Begin/End and chrome
+// style follow task 0719's panel prologue rule so exceptional exits unwind both
 // stacks. Tests: tool_properties_panel_roles_test.
 
 // Which page of the Tool Properties panel is showing. 0 = "Main" (the active
@@ -158,48 +211,6 @@ private void warnStageFormOnce(string stageId, string msg) {
 void drawToolPropertiesPanel(ToolPropertiesReadRole read,
         ToolPropertiesActions actions, PropertyPanel propertyPanel,
         float windowX) {
-    import toolpipe.stage : Stage, TaskCode;
-    // The BODY of a pipe stage's Tool Properties section: the
-    // config-driven form when one is registered for the stage family,
-    // the legacy provider panel otherwise, then the stage's own custom
-    // block. Extracted (task 0544) so the per-stage collapsing headers
-    // and the Snapping tab below render through ONE path and cannot
-    // drift into two behaviours for the same rows.
-    //
-    // Phase 6: prefer a config-driven stage form (bound to the stage
-    // via whenStage:, looked up by the stage's id()) over the legacy
-    // drawProvider path — same gating + kill switch as the tool-level
-    // form integration below. The stage IS a ParamProvider, so
-    // FormsPanel queries its live (type-filtered) params() per frame
-    // and hides rows whose attr the active type doesn't expose. Stages
-    // without a matching form fall back to the unchanged drawProvider.
-    // stage.drawProperties() still runs in both cases (shape popup /
-    // auto-size buttons aren't form rows).
-    // Look the form up by the stage FAMILY id (not the unique id), so
-    // stacked falloff instances ("falloff#1", …) all resolve the one
-    // "falloff" form; FormsPanel filters its rows against this
-    // instance's params() and the stage.id() passed below rebinds the
-    // write to the right instance.
-    void drawStageBody(Stage stage) {
-        import forms : g_formsPanelEnabled, formByStage;
-        auto stageForm = g_formsPanelEnabled
-                       ? formByStage(stage.formFamilyId()) : null;
-        if (stageForm !is null) {
-            // A malformed row must degrade to the legacy panel, NOT
-            // throw mid-ImGui-frame (an escaping exception would leave
-            // ImGui's stack unbalanced and abort the frame). Fall back
-            // to drawProvider on any failure; warn ONCE per stage so a
-            // broken form doesn't spam stderr every frame.
-            try {
-                actions.drawForm(*stageForm, stage, "", stage.id());
-            } catch (Exception e) {
-                warnStageFormOnce(stage.id(), e.msg);
-                actions.drawStageParams(propertyPanel, stage);
-            }
-        } else
-            actions.drawStageParams(propertyPanel, stage);
-        stage.drawProperties();
-    }
     pushPanelChromeStyle();
     scope(exit) popPanelChromeStyle();
     ImGui.SetNextWindowPos(ImVec2(windowX, 10), ImGuiCond.FirstUseEver);
@@ -285,7 +296,7 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
             // Tool-level form / properties only when a tool is active. When
             // the panel is open ONLY because a falloff is active (no tool),
             // skip straight to the per-stage sections below.
-            if (read.activeTool() !is null) {
+            if (read.hasActiveTool()) {
             // The tool's own rows get an id scope of their own for the
             // same reason every stage section does (task 0640): they
             // share this window with the tab strip, the section headers
@@ -303,7 +314,7 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
                 // id is live — move / rotate / scale / a transform preset —
                 // satisfying ToolAttrCommand's active-id guard.
                 foreach (ref fm; matchingForms)
-                    actions.drawForm(fm, read.activeTool(), read.activeToolId(), "");
+                    actions.drawToolForm(fm, read.activeToolId());
 
                 // The transform form now owns ALL the TRS value rows —
                 // Position (TX/TY/TZ), Rotate (RX/RY/RZ) and Scale (SX/SY/SZ),
@@ -317,17 +328,12 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
                 // transform tool sets renderParamsAsPanel()==false
                 // (PropertyPanel.draw early-returns), and formed tools render
                 // values via the form.
-                import tools.transform.xfrm_transform : XfrmTransformTool;
-                if (auto xf = cast(XfrmTransformTool) read.activeTool()) {
-                    xf.suppressTRSProperties = true;
-                    scope(exit) xf.suppressTRSProperties = false;
-                    xf.drawProperties();
-                }
+                actions.drawFormedToolCustom();
             } else {
-                actions.drawToolParams(propertyPanel, read.activeTool()); // schema-driven params first
-                read.activeTool().drawProperties();      // tool-specific custom UI after
+                actions.drawToolParams(propertyPanel); // schema-driven params first
+                actions.drawToolCustom();              // tool-specific custom UI after
             }
-            } // if (read.activeTool() !is null)
+            } // if (read.hasActiveTool())
 
             // Phase 7.9: each enabled tool-pipe stage with a params()
             // schema gets its own collapsible section below the
@@ -339,11 +345,8 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
             // Stages without a schema (e.g. NopStage placeholders,
             // or older stages that haven't been migrated yet)
             // collapse to nothing.
-            foreach (s; read.pipeStages()) {
-                    if (!s.pipeEnabled) continue;
-                    auto stage = cast(Stage)s;
-                    if (stage is null) continue;
-                    if (stage.params().length == 0) continue;
+            foreach (ref info; read.enabledStages()) {
+                    if (!actions.stageHasPanelParams(info.id)) continue;
                     // The OTHER half of `kSnappingHasOwnTab`. While the
                     // tab exists, snapping is drawn there (below) and
                     // skipped here rather than appearing in both places;
@@ -351,7 +354,7 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
                     // becomes an ordinary header in this loop, and the
                     // second draw path below goes cold in the same move.
                     if (kSnappingHasOwnTab
-                        && stage.taskCode() == TaskCode.Snap)
+                        && info.taskCode == TaskCode.Snap)
                         continue;
                     // Default-open so the extra stage sections (Action
                     // Center, Falloff, ...) are expanded without a
@@ -363,8 +366,8 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
                     // opened inside the body, because CollapsingHeader
                     // takes its id from its own label.
                     propertyPanel.drawSection(
-                        stage.id(), stage.displayName(),
-                        () { drawStageBody(stage); });
+                        info.id, info.displayName,
+                        () { actions.drawStageBody(propertyPanel, info.id); });
                 }
         } // if (inMain)
 
@@ -389,17 +392,14 @@ void drawToolPropertiesPanel(ToolPropertiesReadRole read,
         // renamed the pipe flag; the two used to share a spelling, and
         // this paragraph existed to tell them apart.)
         if (!inMain) {
-            foreach (s; read.pipeStages()) {
-                if (!s.pipeEnabled) continue;
-                auto stage = cast(Stage)s;
-                if (stage is null) continue;
-                if (stage.taskCode() != TaskCode.Snap) continue;
+            foreach (ref info; read.enabledStages()) {
+                if (info.taskCode != TaskCode.Snap) continue;
                 // Same id scope the section loop opens (task 0640), so
                 // the page and the section put identical rows under
                 // identical ids — the tab is a location, not a second
                 // namespace.
-                propertyPanel.drawScoped(stage.id(),
-                                         () { drawStageBody(stage); });
+                propertyPanel.drawScoped(info.id,
+                    () { actions.drawStageBody(propertyPanel, info.id); });
             }
         }
     }

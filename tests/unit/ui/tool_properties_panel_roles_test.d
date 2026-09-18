@@ -45,15 +45,16 @@ import ui.tool_properties_panel : ToolPropertiesPanelRoles,
 import view : View;
 
 static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
-    role.activeTool() = null;
-}), "6060 C10: the read role must not expose a mutable active-tool slot");
+    Tool tool = role.activeTool();
+}), "6504 C10: the read role must not return the active Tool");
 static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
     role.activeToolId() = "";
 }), "6060 C10: the read role must not expose a mutable active-tool-id slot");
 static assert(__traits(compiles, (ToolPropertiesReadRole role) {
-    Tool tool = role.activeTool();
+    bool active = role.hasActiveTool();
     string id = role.activeToolId();
-}), "6060 C10: the read role must return Tool/id values");
+    auto stages = role.enabledStages();
+}), "6504 C10-0: the read role's value-only surface must compile");
 static assert(!__traits(compiles, (ToolPropertiesPanelRoles roles) {
     roles.read = roles.read;
 }), "6060 C10: the aggregate role must not expose a mutable read role");
@@ -497,7 +498,7 @@ unittest {
         sections = sectionKeys();
         assert(sections.canFind("falloff") && sections.canFind("falloff#1")
             && stacked.isActive(),
-            "6060 C5 live-pipeline witness: role retained the stage slice captured at bind");
+            "6504 C5 live-pipeline witness: stage sections are not the live, uniquely-identified pipeline slice");
     }
 
     { // C6: the active tool is re-read after an in-frame parameter callback.
@@ -621,25 +622,34 @@ unittest {
             "ToolPropertiesPanelRoles bindToolPropertiesPanel(");
         const flatBinder = collapseWhitespace(binder);
         enum boundActions =
-            "ToolPropertiesActions(&binding.dispatchUi, &binding.dispatchInteractiveUi, forms, session)";
+            "ToolPropertiesActions(&binding.dispatchUi, &binding.dispatchInteractiveUi, forms, session, activeTool)";
+        enum boundRead =
+            "ToolPropertiesReadRole(() => activeTool() !is null, activeToolId)";
         assert(identifierCount(binder, "binding") == 3
             && binder.count("&binding.dispatchUi") == 1
             && binder.count("&binding.dispatchInteractiveUi") == 1
-            && flatBinder.count(boundActions) == 1,
+            && flatBinder.count(boundActions) == 1
+            && flatBinder.count(boundRead) == 1,
             "6060 C11 binder census: production UI/interactive actions changed");
         const actions = bodyAt(panel, "struct ToolPropertiesActions");
         const flatActions = collapseWhitespace(actions);
-        enum formDraw =
-            "forms_.draw(form, provider, dispatch_, interactive_, activeToolId, stageId);";
-        assert(flatActions.count(formDraw) == 1
-            && flatActions.count("panel.draw(tool, session_);") == 1
-            && flatActions.count("panel.drawProvider(stage, session_);") == 1,
+        enum toolFormDraw =
+            "forms_.draw(form, tool, dispatch_, interactive_, activeToolId, );";
+        enum stageFormDraw =
+            "forms_.draw(*stageForm, stage, dispatch_, interactive_, , stage.id());";
+        assert(flatActions.count(toolFormDraw) == 1
+            && flatActions.count(stageFormDraw) == 1
+            && flatActions.count("panel.draw(activeTool_(), session_);") == 1
+            && flatActions.count("panel.drawProvider(stage, session_);") == 2,
             "6060 C11 action census: generic/interactive or legacy dispatch changed");
         const flatPanel = collapseWhitespace(rawPanel);
-        enum stageFormCall =
-            q{actions.drawForm(*stageForm, stage, "", stage.id());};
-        assert(flatPanel.count(stageFormCall) == 1,
-            "6060 C11 stage form call must carry the unique stage id exactly once");
+        enum toolFormLiteral =
+            q{forms_.draw(form, tool, dispatch_, interactive_, activeToolId, "");};
+        enum stageFormLiteral =
+            q{forms_.draw(*stageForm, stage, dispatch_, interactive_, "", stage.id());};
+        assert(flatPanel.count(toolFormLiteral) == 1
+            && flatPanel.count(stageFormLiteral) == 1,
+            "6060 C11 form calls must carry the live tool and unique stage id");
 
         assert(rawPanel.count("ImGui.Begin(\"Tool Properties\")") == 1
             && rawPanel.count("publishPanelZone(\"toolProps\")") == 1,
