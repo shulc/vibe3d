@@ -6,8 +6,10 @@ import commands.ai.toggle : AiToggleAction, AiToggleCommand;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 
-/// Registers the three AI state toggles. The policy gate stays at the caller.
-/// Task 6354: factory bodies remain typed while the registration call is gated.
+/// Registers the three AI state toggles. The policy gate stays at the caller
+/// and gates all THREE together, so nothing re-arms the advisor while the
+/// copilot is paused (task 0422; task 6354 moved the gate to the call site so
+/// these factory bodies stay typed).
 void registerAiToggleCommands(ref Registry reg, LiveSessionRole owner,
                               LiveViewModeRole live, EditorAiState aiState) {
     Command delegate() makeAiFactory(AiToggleAction action) {

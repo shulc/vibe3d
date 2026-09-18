@@ -876,16 +876,18 @@ void registerCommands(EditorApp app) {
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()));
     // The copilot pause (task 0422) gates registration at the composition root while
     // leaving both registrar bodies under semantic analysis.
-    static if (kCopilotEnabled)
+    static if (kCopilotEnabled) {
         registerAiToggleCommands(app.reg(), LiveSessionRole(app.sessionOwner),
             LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
             app.aiState);
+    }
     version (WithAI)
-    static if (kCopilotEnabled)
+    static if (kCopilotEnabled) {
         registerCopilotCommands(app.reg(), LiveSessionRole(app.sessionOwner),
             LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
             app.aiState, app.copilotPanel,
             () => app.reg().commandFactories["mesh.select"]());
+    }
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()));

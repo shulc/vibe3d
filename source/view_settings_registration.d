@@ -30,7 +30,7 @@ void registerViewSettingsCommands(ref Registry reg, LiveSessionRole owner,
         new CoordRoundingCommand(&owner.activeMesh(), live.view(), live.mode);
     // Trackball navigation (task 0573) — a viewport-navigation setting, so
     // its `viewport` subject writes THIS factory's camera, which is the
-    // active cell's (`cameraView`), resolved at fire time.
+    // active cell's — `live.view()`, resolved at fire time.
     reg.commandFactories["pref.trackball"] = () => cast(Command)
         new TrackballPrefCommand(&owner.activeMesh(), live.view(), live.mode);
     reg.commandFactories["path.define"] = () => cast(Command)
