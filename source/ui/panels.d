@@ -71,7 +71,9 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
 import ui.availability : actionRefusal, buttonUnavailable, recordDrawnButton;
-import ui.mode_popup : dynamicModeCheckedLabel, dynamicModePopupItems;
+import ui.mode_popup : dynamicModePopupItems;
+import ui.action_menu : firstCheckedLabel, popupActionNeedsAssimp,
+    popupItemChecked, popupWidgetId, selectButtonVariant;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
@@ -404,58 +406,6 @@ bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
         ImGui.GetWindowDrawList().AddText(tp, scCol, shortcut);
     }
     return clicked;
-}
-
-// Resolve a popup item's `checked:` block via the popup_state
-// registry. Producers publish via setStatePath; this is the only
-// consumer site.
-bool popupItemChecked(ref Checked chk) {
-    import popup_state : resolveChecked;
-    return resolveChecked(chk);
-}
-
-// True when a File-menu Import/Export command id targets a format that
-// routes through assimp (so it must be greyed out when libassimp is
-// unavailable). Ids look like "file.import.obj" / "file.export.gltf";
-// the trailing token is the extension consulted in the format registry.
-static bool popupActionNeedsAssimp(string commandId) {
-    import std.algorithm.searching : startsWith, findSplitAfter;
-    import io.formats : formatNeedsAssimp;
-    if (!commandId.startsWith("file.import.") &&
-        !commandId.startsWith("file.export."))
-        return false;
-    // last dot-separated token = bare ext ("obj", "gltf", ...)
-    auto split = commandId.findSplitAfter("file.import.");
-    string ext = split[1].length ? split[1]
-                                 : commandId.findSplitAfter("file.export.")[1];
-    return formatNeedsAssimp(ext);
-}
-
-// Walk popup items (recursing into submenus) and return the label
-// of the first one whose `checked:` resolves true. Powers
-// `Action.dynamicLabel` — a "popup face" that reflects the active
-// option. Returns "" when nothing matches.
-string firstCheckedLabel(ref PopupItem[] items) {
-    foreach (ref it; items) {
-        final switch (it.kind) {
-            case PopupItemKind.action:
-                if (it.checked.present && popupItemChecked(it.checked))
-                    return it.label;
-                break;
-            case PopupItemKind.submenu:
-                string s = firstCheckedLabel(it.subItems);
-                if (s.length > 0) return s;
-                break;
-            case PopupItemKind.dynamic:
-                string s = dynamicModeCheckedLabel(it);
-                if (s.length > 0) return s;
-                break;
-            case PopupItemKind.divider:
-            case PopupItemKind.header:
-                break;
-        }
-    }
-    return "";
 }
 
 // The editor's popup chrome — extracted to source/imgui_style.d
@@ -980,7 +930,7 @@ void dispatchAction(EditorApp app, ref Action action) {
 // source/ui/panels.d (task 0419 Phase 1 -- pure helpers). Both are used
 // bare below (renderPopupItems, drawSidePanel's renderButton) and
 // resolve via this import.
-import ui.panels : popupItemChecked, popupActionNeedsAssimp;
+import ui.action_menu : popupItemChecked, popupActionNeedsAssimp;
 
 // Live falloff-stack rows for the Falloff button's Alt popup. Lists
 // every contributing FalloffStage instance; clicking one removes it
@@ -1132,9 +1082,10 @@ void renderPopupItems(EditorApp app, ref PopupItem[] items) {
 // (chrome: 6 call sites; popup: 12 call sites; see the plan doc's Б3)
 // -- resolve via this import instead of a sibling nested-function
 // declaration.
-import ui.panels : firstCheckedLabel, pushPopupStyle, popPopupStyle,
-    drawSectionHeader, pushPanelChromeStyle, popPanelChromeStyle,
-    pushButtonBarStyle, popButtonBarStyle;
+import ui.action_menu : firstCheckedLabel, popupWidgetId, selectButtonVariant;
+import ui.panels : pushPopupStyle, popPopupStyle, drawSectionHeader,
+    pushPanelChromeStyle, popPanelChromeStyle, pushButtonBarStyle,
+    popButtonBarStyle;
 
 // Pick the variant a button currently represents.
 //
@@ -1151,118 +1102,6 @@ import ui.panels : firstCheckedLabel, pushPopupStyle, popPopupStyle,
 // nothing" while the tool is in fact running. (Found on the Pen button's Ctrl
 // variant, which activates the topology pen.) One-shot variants — command or
 // script — have no active state to latch and are unaffected.
-private void selectButtonVariant(ref Button btn, SDL_Keymod mods, string activeToolId,
-                                 out string label, out Action action, out string variant) {
-    label = btn.label;
-    action = btn.action;
-    variant = "";
-
-    static bool isActiveTool(ref Action a, string activeToolId) {
-        return a.kind == ActionKind.tool && a.id == activeToolId
-            && activeToolId.length > 0;
-    }
-
-    // macOS: a `ctrl:` variant answers to ⌘ and DELIBERATELY NOT to Control.
-    //
-    // Control+click is reserved by macOS itself as the secondary click — the OS
-    // delivers it as a RIGHT button, our ImGui backend maps right → button 1,
-    // and `ImGui.Button` only fires on button 0. So a Control+click on a panel
-    // button can never land, no matter what this function returns. Reported
-    // exactly that way: "with Ctrl I see the changed buttons, but I can't press
-    // them" — every ctrl: variant, not just the pen.
-    //
-    // Reacting to Control here would keep that trap alive: the label would
-    // promise a variant the click cannot reach. So on macOS Control selects
-    // nothing and ⌘ — a plain left click carrying a modifier — selects the
-    // variant. shortcuts.d is untouched; it keeps `ctrl+` and `cmd+` as
-    // distinct SHORTCUT spellings, which is a separate concern from clicks.
-    // Elsewhere the mask is plain KMOD_CTRL, so Linux/Windows are unchanged.
-    version (OSX) enum ctrlMask = KMOD_GUI;
-    else          enum ctrlMask = KMOD_CTRL;
-
-    if      (btn.ctrl.present  && (mods & ctrlMask))   { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
-    else if (btn.alt.present   && (mods & KMOD_ALT))   { label = btn.alt.label;   action = btn.alt.action;   variant = "_alt";   }
-    else if (btn.shift.present && (mods & KMOD_SHIFT)) { label = btn.shift.label; action = btn.shift.action; variant = "_shift"; }
-    // No modifier held: let an ACTIVE variant tool claim the button. The
-    // primary action is checked by the caller's own pressed-state logic, so
-    // only variants need claiming here.
-    else if (btn.ctrl.present  && isActiveTool(btn.ctrl.action,  activeToolId)) { label = btn.ctrl.label;  action = btn.ctrl.action;  variant = "_ctrl";  }
-    else if (btn.alt.present   && isActiveTool(btn.alt.action,   activeToolId)) { label = btn.alt.label;   action = btn.alt.action;   variant = "_alt";   }
-    else if (btn.shift.present && isActiveTool(btn.shift.action, activeToolId)) { label = btn.shift.label; action = btn.shift.action; variant = "_shift"; }
-}
-
-unittest {
-    // Regression: a sticky tool reached through a modifier variant must keep
-    // the button lit and labelled after the modifier is released. Before the
-    // active-variant rule the button fell back to its primary action, compared
-    // the active tool against the wrong id, and read as "the button did
-    // nothing" while the tool was running.
-    static Button penButton() {
-        Button b;
-        b.label  = "Pen";
-        b.action = Action(ActionKind.tool, "pen");
-        b.ctrl.present = true;
-        b.ctrl.label   = "Topology Pen";
-        b.ctrl.action  = Action(ActionKind.tool, "mesh.topoPen");
-        return b;
-    }
-    string label; Action action; string variant;
-    auto btn = penButton();
-
-    // 1. Ctrl HELD — the variant previews regardless of what is active.
-    selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
-    assert(action.id == "mesh.topoPen" && label == "Topology Pen" && variant == "_ctrl");
-
-    // 2. Ctrl RELEASED while the variant's tool is active — the button still
-    //    represents the variant. This is the bug this rule fixes.
-    selectButtonVariant(btn, KMOD_NONE, "mesh.topoPen", label, action, variant);
-    assert(action.id == "mesh.topoPen", "released modifier must not drop an active variant tool");
-    assert(label == "Topology Pen", "an active variant must keep its own label");
-
-    // 3. Primary tool active — primary wins, no variant claim.
-    selectButtonVariant(btn, KMOD_NONE, "pen", label, action, variant);
-    assert(action.id == "pen" && label == "Pen" && variant == "");
-
-    // 4. Nothing active — primary, unlit.
-    selectButtonVariant(btn, KMOD_NONE, "", label, action, variant);
-    assert(action.id == "pen" && variant == "");
-
-    // 5. Which physical modifier reaches a `ctrl:` variant is platform-split,
-    //    and only one half compiles per build — so pin BOTH rather than leave
-    //    it to whichever platform happens to run the suite.
-    version (OSX) {
-        // ⌘ selects it: a plain left click carrying a modifier.
-        selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
-        assert(action.id == "mesh.topoPen",
-               "macOS: Cmd must reach a ctrl: variant");
-        // Control must NOT — macOS turns Control+click into a right click, so
-        // the label would advertise a variant the click can never activate.
-        selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
-        assert(action.id == "pen" && label == "Pen",
-               "macOS: Control must not preview a variant it cannot click");
-    } else {
-        selectButtonVariant(btn, KMOD_GUI, "", label, action, variant);
-        assert(action.id == "pen",
-               "non-macOS: Super/Cmd must NOT alias Ctrl");
-        selectButtonVariant(btn, KMOD_CTRL, "", label, action, variant);
-        assert(action.id == "mesh.topoPen",
-               "non-macOS: Control selects the ctrl: variant");
-    }
-
-    // 6. A held modifier still beats an active variant of a DIFFERENT kind:
-    //    one-shot variants have no active state, so they must never claim the
-    //    button when unheld.
-    Button cmdBtn;
-    cmdBtn.label  = "Arc";
-    cmdBtn.action = Action(ActionKind.tool, "prim.arc");
-    cmdBtn.ctrl.present = true;
-    cmdBtn.ctrl.label   = "Unit Arc";
-    cmdBtn.ctrl.action  = Action(ActionKind.command, "prim.arc.unit");
-    selectButtonVariant(cmdBtn, KMOD_NONE, "prim.arc", label, action, variant);
-    assert(action.id == "prim.arc" && variant == "",
-           "a command variant must not claim the button");
-}
-
 // ---------------------------------------------------------------------------
 // The hidden-geometry readout (task 0613 S4, doc/hide_geometry_plan.md R9)
 // ---------------------------------------------------------------------------
@@ -1401,7 +1240,7 @@ void drawSidePanel(EditorApp app) {
             if (renderStyledButton(label, sc, on, isCommand,
                                    ImVec2(-1, 0), effDisabled)) {
                 if (action.kind == ActionKind.popup)
-                    ImGui.OpenPopup("##popup" ~ variant ~ "_" ~ btn.label);
+                    ImGui.OpenPopup(popupWidgetId(btn.label, variant));
                 else
                     dispatchAction(app, action);
             }
@@ -1427,7 +1266,7 @@ void drawSidePanel(EditorApp app) {
                 if (a.kind != ActionKind.popup) return;
                 pushPopupStyle();
                 scope(exit) popPopupStyle();
-                if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                if (ImGui.BeginPopup(popupWidgetId(btn.label, suf))) {
                     renderPopupItems(app, a.popupItems);
                     ImGui.EndPopup();
                 }
@@ -1659,7 +1498,7 @@ void drawStatusBar(EditorApp app) {
                           && popupItemChecked(action.checked));
                 }
 
-                string popupId = "##popup" ~ variant ~ "_" ~ btn.label;
+                string popupId = popupWidgetId(btn.label, variant);
                 // Auto-grow the button when the (possibly dynamic)
                 // label is wider than the default 85-px slot —
                 // otherwise long ACEN modes like "Selection Center
@@ -1749,7 +1588,7 @@ void drawStatusBar(EditorApp app) {
                     if (a.kind != ActionKind.popup) return;
                     pushPopupStyle();
                     scope(exit) popPopupStyle();
-                    if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                    if (ImGui.BeginPopup(popupWidgetId(btn.label, suf))) {
                         renderPopupItems(app, a.popupItems);
                         ImGui.EndPopup();
                     }

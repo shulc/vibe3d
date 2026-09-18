@@ -538,6 +538,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const rawApp = readText(root.buildPath("source", "app.d"));
     const rawEditor = readText(root.buildPath("source", "editor_app.d"));
     const rawPanel = readText(root.buildPath("source", "ui", "panels.d"));
+    const rawActionMenu = readText(root.buildPath("source", "ui", "action_menu.d"));
     const rawRegistration = readText(root.buildPath("source", "registration.d"));
     const rawProviders = readText(root.buildPath("source", "http_providers.d"));
     const app = blankNonCode(rawApp);
@@ -554,7 +555,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
         registrarBytes += readText(entry.name).length;
 
     assert(rawApp.length > 430_000 && rawEditor.length > 45_000
-        && rawPanel.length > 150_000
+        && rawPanel.length + rawActionMenu.length > 150_000
         && rawRegistration.length + registrarBytes > 110_000
         && rawProviders.length > 130_000,
         "6360 source population: a censused production file shrank unexpectedly");

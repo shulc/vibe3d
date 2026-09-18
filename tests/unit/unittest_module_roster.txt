@@ -500,6 +500,7 @@ tests.unit.transform_input_bank_census_test
 tests.unit.transform_registration_boundary_test
 tests.unit.transform_tool_registration_test
 tests.unit.tsan_sweep_cleanup_test
+tests.unit.ui.action_menu_roles_test
 tests.unit.ui.availability_test
 tests.unit.ui.channel_rows_test
 tests.unit.ui.channels_panel_roles_test
@@ -594,7 +595,6 @@ trackball
 ui.availability
 ui.image_rows
 ui.item_rows
-ui.panels
 ui.viewport_render_plan_test
 unit.bevel_cold_arm_param_image_test
 unit.prepared_tool_transition_test
