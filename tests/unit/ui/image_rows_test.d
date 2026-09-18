@@ -207,6 +207,28 @@ unittest {
         "the other rows are untouched by one item's disappearance");
 }
 
+// A memo key is payload IDENTITY, not a file path. Two document items may
+// deliberately name the same file while carrying different last-observed
+// metadata; sharing their cache slot would make the later row inherit the
+// earlier row's dimensions.
+unittest {
+    auto f = makeRowFixture("rows_memo_identity");
+    auto alpha = f.alpha.imageOrNull();
+    auto bravo = f.bravo.imageOrNull();
+    assert(alpha !is bravo && alpha.storedPath != bravo.storedPath,
+        "6530 memo identity fixture: distinct payloads and paths are required");
+
+    bravo.storedPath = alpha.storedPath;
+    assert(alpha.width == 3 && alpha.height == 2
+        && bravo.width == 5 && bravo.height == 7,
+        "6530 memo identity fixture: same-path payloads must disagree in dimensions");
+
+    ImageRow[] rows;
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[0].dimensions == "3 x 2" && rows[1].dimensions == "5 x 7",
+        "6530 memo identity: two payloads sharing storedPath cross-fed one memo slot");
+}
+
 // ---------------------------------------------------------------------------
 // R5 — the format column is the PIXEL FORMAT of THAT row's file.
 //
