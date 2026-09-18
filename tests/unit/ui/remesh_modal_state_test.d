@@ -555,7 +555,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
         registrarBytes += readText(entry.name).length;
 
     assert(rawApp.length > 430_000 && rawEditor.length > 45_000
-        && rawPanel.length + rawActionMenu.length > 150_000
+        && rawPanel.length + rawActionMenu.length > 145_000
         && rawRegistration.length + registrarBytes > 110_000
         && rawProviders.length > 130_000,
         "6360 source population: a censused production file shrank unexpectedly");

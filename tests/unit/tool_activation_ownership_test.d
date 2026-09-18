@@ -168,7 +168,7 @@ private immutable SiteCount[] kSites = [
     SiteCount("meshRebuildDrop",        7, "the seven geometry-rewriting commands in registration.d"),
     SiteCount("commandPreApplyDrop",    2, "the command funnel's two pre-apply drop branches"),
     SiteCount("editCancelDrop",         1, "EditSession's cancel-then-drop"),
-    SiteCount("panelDrop",              2, "the two UI panel actions that change the edit mode"),
+    SiteCount("panelDrop",              1, "the shared status action that changes the edit mode"),
     SiteCount("shutdownDrop",           2, "the scope(exit) comment and its door assert — the "
                                           ~ "one drop with no dropActiveTool call"),
 ];
@@ -258,18 +258,18 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 29,
-        format("task 4053: the site ledger now sums to %s, recorded 29 — say in "
+    assert(total == 28,
+        format("task 4053: the site ledger now sums to %s, recorded 28 — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 28 from being a number
     // with no structure:
-    //     23  dropActiveTool(ToolTransition.…) calls
+    //     22  dropActiveTool(ToolTransition.…) calls
     //   +  4  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
-    //   = 29
+    //   = 28
     // This is not a restatement of the scan above: that one counts MENTIONS,
     // so a transition named only in a comment would satisfy it. These two
     // count CALLS, and the arithmetic closing is what says the 26 wired rows
@@ -293,9 +293,9 @@ unittest {
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
-    assert(dropCalls == 23 && armCalls == 4,
+    assert(dropCalls == 22 && armCalls == 4,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 23 and 4. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 22 and 4. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,

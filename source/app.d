@@ -4416,9 +4416,8 @@ void main(string[] args) {
     import ui.action_menu : bindActionMenu;
     import ui.action_menu : dispatchAction;
     import ui.availability : actionRefusal;
-    auto actionMenuRoles = bindActionMenu(
-        (ref const Action a) => actionRefusal(
-            reg, a, document.hasEditTarget(), activeToolId),
+    auto actionMenuRoles = bindActionMenu((ref const Action a) => actionRefusal(reg,
+            a, document.hasEditTarget(), activeToolId),
         uiCommandDelegate,
         cast(void delegate(string))&activateToolById,
         cast(bool delegate(string))&tryOpenArgsDialog);
