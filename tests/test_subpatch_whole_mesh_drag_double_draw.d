@@ -221,7 +221,11 @@ struct PreviewState {
     bool active;
     bool pending;
     bool suppressCageUpload;
-    bool previewWritesDisplayBuffers;
+    string displayWriter;
+    string displayBasis;
+    ulong displayWrites;
+    bool displaySuperseded;
+    bool displayCarriesLiveEdit;
     bool pastCeiling;
 }
 
@@ -231,8 +235,12 @@ PreviewState previewState() {
     p.active = j["active"].type == JSONType.true_;
     p.pending = j["pending"].type == JSONType.true_;
     p.suppressCageUpload = j["suppressCageUpload"].type == JSONType.true_;
-    p.previewWritesDisplayBuffers =
-        j["previewWritesDisplayBuffers"].type == JSONType.true_;
+    p.displayWriter = j["displayWriter"].str;
+    p.displayBasis = j["displayBasis"].str;
+    p.displayWrites = cast(ulong)j["displayWrites"].integer;
+    p.displaySuperseded = j["displaySuperseded"].type == JSONType.true_;
+    p.displayCarriesLiveEdit =
+        j["displayCarriesLiveEdit"].type == JSONType.true_;
     p.pastCeiling = j["pastCeiling"].type == JSONType.true_;
     return p;
 }
@@ -269,14 +277,17 @@ void assertFrozenOwnership() {
     assert(surfaceSample().raw.length > 36,
            "6450 S-FROZEN: the old limit surface must remain in the VBO");
 
-    assert(!frozen.previewWritesDisplayBuffers,
-           "6450 S-FROZEN: a stale preview wrote no display VBO");
+    assert(!frozen.displayCarriesLiveEdit,
+           "6520 S-FROZEN: a stale preview payload must not claim the live edit");
 
     holdPreview(0);
     waitPreviewSettled();
-    auto live = previewState();
-    assert(live.active && live.previewWritesDisplayBuffers,
-           "6450 S-LIVE: the ownership word must not be stuck false");
+    auto live = waitPreviewState(
+        (p) => p.displayWrites > frozen.displayWrites,
+        "a completed display write after the preview hold");
+    assert(live.active && live.displayBasis == "preview"
+            && live.displayCarriesLiveEdit,
+           "6520 S-LIVE: the ownership record must not be stuck");
     assert(live.suppressCageUpload,
            "6450 S-LIVE: cage upload suppression must remain active");
 }

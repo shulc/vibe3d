@@ -31,7 +31,7 @@ import nfde;
 import app_version      : appAboutLines;
 import math;
 import mesh;
-import mesh_gpu : GpuMesh;
+import mesh_gpu : DisplayPayloadBasis, DisplayPayloadWriter, GpuMesh;
 import mesh_ops.loop_slice : loopSliceRingEdges;
 // Task 1906 stage 2 — the bus-driven per-mesh-address dirty epochs the display
 // and cage/preview upload families key on (see mesh_dirty.d's header).
@@ -5849,6 +5849,11 @@ void main(string[] args) {
                 // calls. Deleting the epoch read is §5's named mutation for
                 // this row and reddens `tests/test_bus_position_pixel.d` ARM A.
                 subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
+                if (subpatchPreview.lastRefreshFannedOut) {
+                    gpu.displayPayload.recordWrite(
+                        DisplayPayloadWriter.gpuFanOut,
+                        DisplayPayloadBasis.previewIndexed);
+                }
             }
         }
 
@@ -5877,10 +5882,9 @@ void main(string[] args) {
             immutable bool staleOnScreen = ifs.previewIndexSpaceStale();
             bool wantPreview = subpatchPreview.active || staleOnScreen;
             gpu.suppressCageUpload = wantPreview;
-            // Task 6450: a reused active preview can coexist with the frozen
-            // window; only an active, non-frozen preview owns these VBOs.
-            gpu.previewWritesDisplayBuffers =
-                subpatchPreview.active && !staleOnScreen;
+            // Task 6520: supersession remains an explicit protection for the
+            // active+stale state that is currently closed by construction.
+            gpu.displayPayload.setIndexSpaceSuperseded(staleOnScreen);
             const size_t cageAddr = cast(size_t)&mesh();
             bool versionChanged =
                 !gpuUploadedKey_.matches(cageAddr, g_geomEpochs.epochFor(cageAddr));

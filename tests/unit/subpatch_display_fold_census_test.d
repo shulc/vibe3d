@@ -5,8 +5,8 @@ module tests.unit.subpatch_display_fold_census_test;
 
 import std.algorithm : count;
 import std.exception : enforce;
-import std.file      : readText;
-import std.path      : buildPath, dirName;
+import std.file      : dirEntries, readText, SpanMode;
+import std.path      : buildPath, dirName, extension;
 import std.string    : indexOf;
 
 import tests.unit.census_symbols : blankNonCode;
@@ -73,8 +73,9 @@ unittest // the ownership predicate lives at the shared read seam
     const displayFold = bodyAt(meshGpu,
         "float[16] displayToolMatrix(const ref float[16] toolMat)");
 
-    assert(displayFold.indexOf("previewWritesDisplayBuffers") >= 0,
-        "6450 display fold stopped reading preview-buffer ownership");
+    assert(displayFold.length > 0
+        && displayFold.indexOf("displayPayload.carriesLiveEdit()") >= 0,
+        "6520 display fold stopped reading payload provenance");
     assert(displayFold.indexOf("suppressCageUpload") < 0,
         "6450 M-READ: display fold regressed to cage-upload suppression");
 }
@@ -104,9 +105,17 @@ unittest // publication, dirty key, writers, and reuse close the state census
         buildPath(repoRoot, "source", "subpatch_preview.d")));
     const mainBody = bodyAt(app, "void main(string[] args)");
 
-    assert(mainBody.indexOf(
-        "gpu.previewWritesDisplayBuffers =\n                subpatchPreview.active && !staleOnScreen;") >= 0,
-        "6450 preview-buffer ownership must exclude the frozen stale surface");
+    assert(mainBody.count(
+        "gpu.displayPayload.setIndexSpaceSuperseded(staleOnScreen);") == 1,
+        "6520 supersession must be published from the freeze predicate at one site");
+
+    const fanOut = bodyAt(mainBody,
+        "if (subpatchPreview.lastRefreshFannedOut)");
+    assert(mainBody.count(
+        "displayPayload.recordWrite(\n                        DisplayPayloadWriter.gpuFanOut,") == 1
+        && fanOut.indexOf("DisplayPayloadWriter.gpuFanOut") >= 0
+        && fanOut.indexOf("DisplayPayloadBasis.previewIndexed") >= 0,
+        "6520 provenance: GPU fan-out must record one preview-indexed write");
 
     const dirtyKeyLine = lineAt(mainBody, "_newKey.toolMat =");
     assert(dirtyKeyLine.indexOf("tt.gpuMatrix") >= 0
@@ -138,14 +147,78 @@ unittest // detached upload state mirrors ownership, while admission stays polic
     const empty = bodyAt(meshGpu, "private bool isDefaultEmptyGpuMesh(");
     const prepare = bodyAt(meshGpu, "bool beginPreparedUpload(");
 
-    assert(clone.indexOf(
-        "dst.previewWritesDisplayBuffers = src.previewWritesDisplayBuffers;") >= 0,
+    assert(clone.indexOf("dst.displayPayload = src.displayPayload;") >= 0,
         "6450 detached GPU state stopped mirroring display ownership");
-    assert(take.indexOf("gpu.previewWritesDisplayBuffers = false;") >= 0,
+    assert(take.indexOf(
+        "gpu.displayPayload = DisplayPayloadProvenance.init;") >= 0,
         "6450 moved-from GPU state retains display ownership");
-    assert(empty.indexOf("!gpu.previewWritesDisplayBuffers") >= 0,
+    assert(empty.indexOf(
+        "gpu.displayPayload == DisplayPayloadProvenance.init") >= 0,
         "6450 empty-state identity ignores display ownership");
     assert(prepare.indexOf("target.suppressCageUpload") >= 0
-        && prepare.indexOf("previewWritesDisplayBuffers") < 0,
+        && prepare.indexOf("displayPayload") < 0,
         "6450 prepared-upload admission confused policy with display ownership");
+}
+
+unittest // completed writes are recorded below every entry refusal
+{
+    const meshGpu = blankNonCode(readText(
+        buildPath(repoRoot, "source", "mesh_gpu.d")));
+    const upload = bodyAt(meshGpu, "void upload(ref const Mesh mesh,");
+    assert(upload.count("submitUploadGl();") == 1
+        && upload.count("publishSuppressedCagePosition(mesh);") == 1
+        && upload.count("displayPayload.recordWrite(") == 2,
+        "6520 provenance: full-upload write-site population changed");
+    const submit = upload.indexOf("submitUploadGl();");
+    const refused = upload.indexOf("publishSuppressedCagePosition(mesh);");
+    immutable size_t firstWrite = cast(size_t)upload.indexOf(
+        "displayPayload.recordWrite(");
+    const secondRel = upload[firstWrite + 1 .. $].indexOf(
+        "displayPayload.recordWrite(");
+    immutable size_t secondWrite = firstWrite + 1 + cast(size_t)secondRel;
+    assert(firstWrite > submit && secondWrite > submit
+        && firstWrite > refused && secondWrite > refused,
+        "6520 provenance: upload records authorship before its own write");
+
+    const positions = bodyAt(meshGpu,
+        "void refreshPositions(ref const Mesh mesh,");
+    assert(positions.count("displayPayload.recordWrite(") == 1
+        && positions.indexOf("faceTriStart.length != mesh.faces.length") >= 0
+        && positions.indexOf("displayPayload.recordWrite(")
+            > positions.indexOf("faceTriStart.length != mesh.faces.length"),
+        "6520 provenance: position refresh records before layout refusal");
+
+    const selected = bodyAt(meshGpu,
+        "void uploadSelectedVertices(ref const Mesh mesh,");
+    assert(selected.count("displayPayload.recordWrite(") == 1
+        && selected.indexOf("publishSuppressedCagePosition(mesh);") >= 0
+        && selected.indexOf("displayPayload.recordWrite(")
+            > selected.indexOf("publishSuppressedCagePosition(mesh);"),
+        "6520 provenance: selected upload records before refusal");
+
+    const nonFace = bodyAt(meshGpu,
+        "void refreshNonFacePositions(ref const Mesh mesh,");
+    assert(nonFace.count("displayPayload.recordWrite(") == 1,
+        "6520 provenance: non-face refresh write-site population changed");
+}
+
+unittest // deleted ownership channels stay absent from executable code
+{
+    size_t files;
+    foreach (root; ["source", "tools", "tests"]) {
+        foreach (de; dirEntries(buildPath(repoRoot, root), SpanMode.depth)) {
+            if (!de.isFile) continue;
+            const ext = extension(de.name);
+            if (ext != ".d" && ext != ".py") continue;
+            ++files;
+            const raw = readText(de.name);
+            const code = ext == ".d" ? blankNonCode(raw) : raw;
+            assert(code.indexOf("previewWritesDisplayBuffers") < 0,
+                "6520 census: the predicted preview-ownership word is back");
+            assert(code.indexOf("toolOwnsVbo") < 0,
+                "6520 census: the second drag-intent word is back");
+        }
+    }
+    assert(files > 100,
+        "6520 census: executable source population vanished");
 }

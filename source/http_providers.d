@@ -44,6 +44,7 @@ import imgui_impl_opengl3;
 import nfde;
 import math;
 import mesh;
+import mesh_gpu : DisplayPayloadBasis;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -1318,7 +1319,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
               ~ `"workerBuildNsTotal":%d,"workerAllocBytesTotal":%d,`
               ~ `"pendingFrames":%d,"topologiesCreated":%d,`
               ~ `"topologiesRetired":%d,"previewFaces":%d,"previewEdges":%d,`
-              ~ `"suppressCageUpload":%s,"previewWritesDisplayBuffers":%s,`
+              ~ `"suppressCageUpload":%s,"displayWriter":"%s",`
+              ~ `"displayBasis":"%s","displayWrites":%d,`
+              ~ `"displaySuperseded":%s,"displayCarriesLiveEdit":%s,`
               ~ `"pastCeiling":%s,`
               ~ `"estimatedMsRemaining":%d,"indicator":"%s"}`,
                 subpatchPreview.active         ? "true" : "false",
@@ -1338,7 +1341,14 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 subpatchPreview.mesh.faces.length,
                 subpatchPreview.mesh.edges.length,
                 gpu.suppressCageUpload ? "true" : "false",
-                gpu.previewWritesDisplayBuffers ? "true" : "false",
+                gpu.displayPayload.writer.to!string,
+                gpu.displayPayload.basis == DisplayPayloadBasis.cageIndexed
+                    ? "cage"
+                    : gpu.displayPayload.basis == DisplayPayloadBasis.previewIndexed
+                        ? "preview" : "none",
+                gpu.displayPayload.writes,
+                gpu.displayPayload.indexSpaceSuperseded ? "true" : "false",
+                gpu.displayPayload.carriesLiveEdit() ? "true" : "false",
                 subpatchPreview.buildPastCeiling() ? "true" : "false",
                 subpatchPreview.estimatedBuildMsRemaining(),
                 subpatchPreview.buildIndicatorText());

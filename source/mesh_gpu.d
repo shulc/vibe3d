@@ -298,6 +298,51 @@ private void publishSuppressedCagePosition(ref const Mesh mesh) {
     (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
 }
 
+/// Entry point that last completed a display-VBO write. It is independent of
+/// basis: fullUpload writes both cage- and preview-indexed payloads (task 6520).
+enum DisplayPayloadWriter : ubyte {
+    none,
+    fullUpload,
+    selectedVertexUpload,
+    positionRefresh,
+    nonFacePositionRefresh,
+    gpuFanOut,
+}
+
+/// Index space of the current display payload. This is the term the display
+/// matrix fold reads; writer identity cannot answer the same question.
+enum DisplayPayloadBasis : ubyte {
+    none,
+    cageIndexed,
+    previewIndexed,
+}
+
+struct DisplayPayloadProvenance {
+    DisplayPayloadWriter writer = DisplayPayloadWriter.none;
+    DisplayPayloadBasis basis = DisplayPayloadBasis.none;
+    // Completed writer calls. Entry refusals do not advance this counter;
+    // refreshNonFacePositions still counts an internal GL-map refusal because
+    // that producer reached the end of its attempted call.
+    ulong writes;
+    bool indexSpaceSuperseded;
+
+    bool carriesLiveEdit() const nothrow @nogc {
+        return basis == DisplayPayloadBasis.previewIndexed
+            && !indexSpaceSuperseded;
+    }
+
+    void recordWrite(DisplayPayloadWriter w, DisplayPayloadBasis b)
+            nothrow @nogc {
+        writer = w;
+        basis = b;
+        ++writes;
+    }
+
+    void setIndexSpaceSuperseded(bool value) nothrow @nogc {
+        indexSpaceSuperseded = value;
+    }
+}
+
 struct GpuMesh {
     GLuint faceVao, faceVbo;
     GLuint edgeVao, edgeVbo;
@@ -311,15 +356,13 @@ struct GpuMesh {
     // is currently displayed). Tool-side cage uploads become no-ops that
     // only bump the mesh's mutation version so the preview is rebuilt.
     bool   suppressCageUpload;
-    // Task 6450: unlike suppressCageUpload, this is true only while the
-    // displayed buffers are preview-owned; it remains true between writes.
-    bool   previewWritesDisplayBuffers;
+    DisplayPayloadProvenance displayPayload;
 
     /// Fold a transform tool's display request through the current buffer
     /// owner. A preview-written VBO already carries the live edit (task 6450).
     float[16] displayToolMatrix(const ref float[16] toolMat) const
             nothrow @nogc {
-        return previewWritesDisplayBuffers ? identityMatrix : toolMat;
+        return displayPayload.carriesLiveEdit() ? identityMatrix : toolMat;
     }
     // Maps each VBO line-segment to a source (cage) edge index when a
     // subpatch preview was uploaded. Empty for cage uploads, in which case
@@ -470,6 +513,12 @@ struct GpuMesh {
         g_fc.upload(cast(long)mesh.vertices.length);
         buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin);
         submitUploadGl();
+        if (edgeOrigin.length == 0 && vertOrigin.length == 0)
+            displayPayload.recordWrite(DisplayPayloadWriter.fullUpload,
+                                       DisplayPayloadBasis.cageIndexed);
+        else
+            displayPayload.recordWrite(DisplayPayloadWriter.fullUpload,
+                                       DisplayPayloadBasis.previewIndexed);
     }
 
     /// Allocation-only half of a full upload. `vpos` is resolved by the caller
@@ -1029,6 +1078,8 @@ struct GpuMesh {
             }
         }
         glBindVertexArray(0);
+        displayPayload.recordWrite(DisplayPayloadWriter.positionRefresh,
+                                   DisplayPayloadBasis.previewIndexed);
     }
 
     /// Edge + vertex VBO position refresh — the subset of
@@ -1098,6 +1149,8 @@ struct GpuMesh {
             }
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+        displayPayload.recordWrite(DisplayPayloadWriter.nonFacePositionRefresh,
+                                   DisplayPayloadBasis.previewIndexed);
     }
 
     // Drag-fast path: re-upload every VBO in full, but skip the GC churn
@@ -1245,6 +1298,8 @@ struct GpuMesh {
         }
 
         glBindVertexArray(0);
+        displayPayload.recordWrite(DisplayPayloadWriter.selectedVertexUpload,
+                                   DisplayPayloadBasis.cageIndexed);
     }
 
     // ---- counted draw submission -------------------------------------
@@ -2019,7 +2074,7 @@ private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
     gpu.weightStampName = null;
     gpu.weightStampValid = false;
     gpu.suppressCageUpload = false;
-    gpu.previewWritesDisplayBuffers = false;
+    gpu.displayPayload = DisplayPayloadProvenance.init;
     gpu.uploadVersion = 0;
     gpu.scratchFaceData = null;
     gpu.scratchFaceIdData = null;
@@ -2235,7 +2290,7 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     dst.faceTriStart = src.faceTriStart.dup;
     dst.faceTriCount = src.faceTriCount.dup;
     dst.suppressCageUpload = src.suppressCageUpload;
-    dst.previewWritesDisplayBuffers = src.previewWritesDisplayBuffers;
+    dst.displayPayload = src.displayPayload;
     dst.edgeOriginGpu = src.edgeOriginGpu.dup;
     dst.faceOriginGpu = src.faceOriginGpu.dup;
     dst.vertOriginGpu = src.vertOriginGpu.dup;
@@ -2265,7 +2320,8 @@ private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
     return peekGpuMeshNames(gpu) == GpuMeshNames.init &&
         gpu.faceVertCount == 0 && gpu.edgeVertCount == 0 && gpu.vertCount == 0 &&
         gpu.faceTriStart.length == 0 && gpu.faceTriCount.length == 0 &&
-        !gpu.suppressCageUpload && !gpu.previewWritesDisplayBuffers &&
+        !gpu.suppressCageUpload &&
+        gpu.displayPayload == DisplayPayloadProvenance.init &&
         gpu.edgeOriginGpu.length == 0 &&
         gpu.faceOriginGpu.length == 0 && gpu.vertOriginGpu.length == 0 &&
         gpu.faceCornerVert.length == 0 && gpu.weightStampMesh is null &&
