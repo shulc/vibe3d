@@ -353,31 +353,6 @@ private FrameProbeSnapshot frameProbeWireFixture() {
 
 private immutable frameProbeWireBytes = `{"frameCount":9100001,"total":{"p50_ns":101207,"p95_ns":102207,"p99_ns":102307,"max_ns":102407},"phases":{"eventNs":{"p95_ns":202207},"toolNs":{"p95_ns":302207},"cacheNs":{"p95_ns":402207},"drawNs":{"p95_ns":502207},"uploadNs":{"p95_ns":602207},"uiNs":{"p95_ns":702207}},"hitch_16ms":9200002,"hitch_33ms":9300003,"meshCacheRebuilds":9600006,"gcAllocBytes":9400004,"gcCollections":9500005,"gcPauseNs":9700007,"gcMaxPauseNs":9800008,"gcHitch_16ms":9900009,"steadyMaxAllocBytes":802307,"sumCacheNs":10000010,"worst":{"totalNs":102407,"eventNs":201107,"toolNs":302307,"cacheNs":402207,"drawNs":500907,"uploadNs":602107,"uiNs":700807,"gcAllocBytes":801907,"gcCollections":900707,"gcMaxPauseNs":1001907,"gcPauseNs":1100607,"gcCollectNs":1201807,"eventAlloc":1301707,"toolAlloc":1400407,"cacheAlloc":1501607,"drawAlloc":1600307,"uploadAlloc":1700207,"uiAlloc":1801407},"worstN":[{"totalNs":102407,"eventNs":201107,"toolNs":302307,"cacheNs":402207,"drawNs":500907,"uploadNs":602107,"uiNs":700807,"gcAllocBytes":801907,"gcCollections":900707,"gcMaxPauseNs":1001907,"gcPauseNs":1100607,"gcCollectNs":1201807,"eventAlloc":1301707,"toolAlloc":1400407,"cacheAlloc":1501607,"drawAlloc":1600307,"uploadAlloc":1700207,"uiAlloc":1801407},{"totalNs":102307,"eventNs":202207,"toolNs":302107,"cacheNs":401907,"drawNs":501807,"uploadNs":601707,"uiNs":701607,"gcAllocBytes":801807,"gcCollections":901407,"gcMaxPauseNs":1001307,"gcPauseNs":1101207,"gcCollectNs":1201107,"eventAlloc":1300907,"toolAlloc":1400807,"cacheAlloc":1500707,"drawAlloc":1600607,"uploadAlloc":1700407,"uiAlloc":1800307},{"totalNs":102207,"eventNs":200807,"toolNs":301907,"cacheNs":401607,"drawNs":500207,"uploadNs":601307,"uiNs":702407,"gcAllocBytes":801707,"gcCollections":902107,"gcMaxPauseNs":1000707,"gcPauseNs":1101807,"gcCollectNs":1200407,"eventAlloc":1300107,"toolAlloc":1401207,"cacheAlloc":1502307,"drawAlloc":1600907,"uploadAlloc":1700607,"uiAlloc":1801707},{"totalNs":102107,"eventNs":201907,"toolNs":301707,"cacheNs":401307,"drawNs":501107,"uploadNs":600907,"uiNs":700707,"gcAllocBytes":801607,"gcCollections":900307,"gcMaxPauseNs":1000107,"gcPauseNs":1102407,"gcCollectNs":1202207,"eventAlloc":1301807,"toolAlloc":1401607,"cacheAlloc":1501407,"drawAlloc":1601207,"uploadAlloc":1700807,"uiAlloc":1800607},{"totalNs":102007,"eventNs":200507,"toolNs":301507,"cacheNs":401007,"drawNs":502007,"uploadNs":600507,"uiNs":701507,"gcAllocBytes":801507,"gcCollections":901007,"gcMaxPauseNs":1002007,"gcPauseNs":1100507,"gcCollectNs":1201507,"eventAlloc":1301007,"toolAlloc":1402007,"cacheAlloc":1500507,"drawAlloc":1601507,"uploadAlloc":1701007,"uiAlloc":1802007},{"totalNs":101907,"eventNs":201607,"toolNs":301307,"cacheNs":400707,"drawNs":500407,"uploadNs":600107,"uiNs":702307,"gcAllocBytes":801407,"gcCollections":901707,"gcMaxPauseNs":1001407,"gcPauseNs":1101107,"gcCollectNs":1200807,"eventAlloc":1300207,"toolAlloc":1402407,"cacheAlloc":1502107,"drawAlloc":1601807,"uploadAlloc":1701207,"uiAlloc":1800907},{"totalNs":101807,"eventNs":200207,"toolNs":301107,"cacheNs":400407,"drawNs":501307,"uploadNs":602207,"uiNs":700607,"gcAllocBytes":801307,"gcCollections":902407,"gcMaxPauseNs":1000807,"gcPauseNs":1101707,"gcCollectNs":1200107,"eventAlloc":1301907,"toolAlloc":1400307,"cacheAlloc":1501207,"drawAlloc":1602107,"uploadAlloc":1701407,"uiAlloc":1802307},{"totalNs":101707,"eventNs":201307,"toolNs":300907,"cacheNs":400107,"drawNs":502207,"uploadNs":601807,"uiNs":701407,"gcAllocBytes":801207,"gcCollections":900607,"gcMaxPauseNs":1000207,"gcPauseNs":1102307,"gcCollectNs":1201907,"eventAlloc":1301107,"toolAlloc":1400707,"cacheAlloc":1500307,"drawAlloc":1602407,"uploadAlloc":1701607,"uiAlloc":1801207}]}`;
 
-unittest { // 6511 PP-6/PP-7: byte wire and idempotence
-    import std.digest : toHexString;
-    import std.digest.sha : sha256Of;
-    import std.regex : regex, replaceAll;
-    import std.algorithm.searching : canFind;
-
-    auto snapshot = frameProbeWireFixture();
-    assert(snapshot.frames.length == 25,
-        "6511 frame-probe fixture must retain 25 distinct records");
-    auto first = snapshot.toJson();
-    assert(first.length == 3665,
-        "6511 frame-probe fixture must retain its measured 3665-byte population");
-    assert(first == frameProbeWireBytes, "6511 frame-probe wire bytes changed");
-    assert(snapshot.frames.length == 25,
-        "6511 serializer mutated the frame fixture population");
-    assert(snapshot.toJson() == first,
-        "6511 frame-probe serialization must be idempotent");
-    auto shape = first.replaceAll(regex(`-?\d+`), "0");
-    assert(shape.length == 2646 && shape.canFind(`"worstN":[`),
-        "6511 phase-0 wire skeleton lost its measured population");
-    assert(sha256Of(shape).toHexString ==
-           "69F7CD7E3E4A5744AC4961B5D61648E7B358AD19614B7DE5E50A7E9154C755E2",
-        "6511 frame-probe wire shape changed from the phase-0 golden");
-}
-
 version (PerfProbe) {
     private void seedFrame(ref FrameProbe probe, long drawNs) {
         probe.beginFrame();
@@ -480,4 +455,29 @@ version (PerfProbe) {
             && probe.stats().meshCacheRebuilds == 0,
             "6511 reset did not preserve the published-counter contract");
     }
+}
+
+unittest { // 6511 PP-6/PP-7: byte wire and idempotence
+    import std.digest : toHexString;
+    import std.digest.sha : sha256Of;
+    import std.regex : regex, replaceAll;
+    import std.algorithm.searching : canFind;
+
+    auto snapshot = frameProbeWireFixture();
+    assert(snapshot.frames.length == 25,
+        "6511 frame-probe fixture must retain 25 distinct records");
+    auto first = snapshot.toJson();
+    assert(first.length == 3665,
+        "6511 frame-probe fixture must retain its measured 3665-byte population");
+    assert(first == frameProbeWireBytes, "6511 frame-probe wire bytes changed");
+    assert(snapshot.frames.length == 25,
+        "6511 serializer mutated the frame fixture population");
+    assert(snapshot.toJson() == first,
+        "6511 frame-probe serialization must be idempotent");
+    auto shape = first.replaceAll(regex(`-?\d+`), "0");
+    assert(shape.length == 2646 && shape.canFind(`"worstN":[`),
+        "6511 phase-0 wire skeleton lost its measured population");
+    assert(sha256Of(shape).toHexString ==
+           "69F7CD7E3E4A5744AC4961B5D61648E7B358AD19614B7DE5E50A7E9154C755E2",
+        "6511 frame-probe wire shape changed from the phase-0 golden");
 }
