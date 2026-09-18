@@ -1,5 +1,6 @@
 module tests.unit.transform_registration_boundary_test;
 
+import core.exception : AssertError;
 import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
@@ -16,6 +17,7 @@ import std.array : join;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : baseName, buildPath, dirName, relativePath;
+import std.exception : assertThrown;
 import std.string : indexOf, replace, split, startsWith, strip;
 import tests.unit.census_symbols : blankNonCode, countOccurrences,
     ImportDecl, importDeclarations, statementsContaining;
@@ -266,6 +268,8 @@ static assert(is(typeof(&registerTransformToolCommands) == void function(
     "6506 transform registrar signature changed");
 static assert(TransformToolDeps.tupleof.length == 7,
     "6506 TransformToolDeps field count changed");
+static assert(!__traits(compiles, TransformToolDeps()),
+    "6506 TransformToolDeps regained default construction");
 static assert(__traits(identifier, TransformToolDeps.tupleof[0]) == "gpu_"
     && is(typeof(TransformToolDeps.tupleof[0]) == GpuMesh*));
 static assert(__traits(identifier, TransformToolDeps.tupleof[1]) == "history_"
@@ -285,6 +289,30 @@ static assert(__traits(identifier, TransformToolDeps.tupleof[5])
 static assert(__traits(identifier, TransformToolDeps.tupleof[6])
         == "exploreSilentHover_"
     && is(typeof(TransformToolDeps.tupleof[6]) == bool delegate()));
+
+unittest { // L3d: every constructor collaborator is required independently
+    GpuMesh gpu;
+    auto history = new CommandHistory;
+    MeshVertexEdit delegate() vertex = () => null;
+    MeshMorphEdit delegate() morph = () => null;
+    LayerXformEdit delegate() item = () => null;
+    auto pipe = new PipeGizmoHost;
+    bool delegate() silent = () => false;
+    assertThrown!AssertError(TransformToolDeps(
+        null, history, vertex, morph, item, pipe, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, null, vertex, morph, item, pipe, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, history, null, morph, item, pipe, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, history, vertex, null, item, pipe, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, history, vertex, morph, null, pipe, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, history, vertex, morph, item, null, silent));
+    assertThrown!AssertError(TransformToolDeps(
+        &gpu, history, vertex, morph, item, pipe, null));
+}
 
 // L4: production alone assembles the registrar, and no deferred policy closes
 // over the by-value EditorApp parameter.
