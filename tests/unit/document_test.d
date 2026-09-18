@@ -744,6 +744,16 @@ unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order
     assert(refs.length == 0,
         "nothing links to clipA — sharing a file with clipB is not sharing "
         ~ "clipB's identity");
+
+    // A sparse slot is not a referrer and must not abort the reverse sweep.
+    // `Document` helpers consistently tolerate such slots while a document is
+    // being assembled/replaced; this pins the null term in `referrersOf`.
+    f.doc.layers ~= null;
+    f.doc.referrersOf(f.clipB, refs);
+    assert(refs.length == 2 && refs[0] is f.consumerX && refs[1] is f.consumerY,
+        "6530 referrers null slot: a sparse document slot changed the identity sweep");
+    f.doc.layers.length = f.doc.layers.length - 1;
+
     f.doc.referrersOf(f.clipC, refs);
     assert(refs.length == 1 && refs[0] is f.consumerX, "clipC has one referrer");
 }
