@@ -102,6 +102,7 @@ module ui.image_rows;
 
 import document        : Document, Layer, ImageData;
 import io.image_path   : storePathFor;
+import ui.retained_item : ConstItem;
 
 /// The empty-state line. The measured list has its own empty text rather than
 /// an empty rectangle; it has a second one pointing at a separate browsing
@@ -128,7 +129,9 @@ struct ImageRow {
     size_t index;
     /// The item itself. Identity is the only reliable handle (Ph3): an index
     /// is spliced by `layer.delete` and permuted by `layer.reorder`.
-    Layer  layer;
+    /// Rebindable because the caller reuses its row buffer; reads expose only
+    /// a const document identity (task 6530).
+    ConstItem layer;
 
     string name;         ///< line 1 of the name cell
     /// What the inline rename editor STARTS with — the item's raw `name`
@@ -336,14 +339,14 @@ private struct RowTextMemoSlot {
     size_t      touchedAt;  ///< the `g_rowTextSweep` value as of the last touch
 }
 
-private __gshared RowTextMemoSlot[ImageData] g_rowTextMemo;  // UI thread only
+private __gshared RowTextMemoSlot[const(ImageData)] g_rowTextMemo; // UI thread only
 private __gshared size_t                     g_rowTextSweep; // UI thread only
 
 /// Get-or-create `img`'s memo slot and stamp it as seen in the CURRENT sweep.
 /// Every one of the three memo functions below goes through this rather than
 /// touching `g_rowTextMemo` directly, so "reached the table this call" and
 /// "survives `sweepRowTextMemo`" cannot drift apart.
-private ref RowTextMemo touchRowTextMemo(ImageData img) {
+private ref RowTextMemo touchRowTextMemo(const(ImageData) img) {
     auto slot = img in g_rowTextMemo;
     if (slot is null) {
         g_rowTextMemo[img] = RowTextMemoSlot.init;
@@ -391,7 +394,7 @@ private void sweepRowTextMemo() {
 /// complete for every reachable state.)
 ///
 /// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
-string storePathForItem(ImageData img, string docPath) {
+string storePathForItem(const(ImageData) img, string docPath) {
     if (img is null) return "";
     ref slot = touchRowTextMemo(img);
     if (slot.storeValid
@@ -425,7 +428,7 @@ string storePathForItem(ImageData img, string docPath) {
 /// than cleared by whoever writes them.
 ///
 /// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
-string dimensionsTextFor(ImageData img) {
+string dimensionsTextFor(const(ImageData) img) {
     if (img is null) return "";
     ref slot = touchRowTextMemo(img);
     if (slot.dimsValid
@@ -558,7 +561,7 @@ private string elideUndecodable(string s, size_t maxChars) {
 /// empty path text it carries is the no-allocation branch anyway.
 ///
 /// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
-string elidedPathText(ImageData img, string pathText, size_t maxChars) {
+string elidedPathText(const(ImageData) img, string pathText, size_t maxChars) {
     if (img is null) return elideEnd(pathText, maxChars);
     ref slot = touchRowTextMemo(img);
     if (slot.elideValid
@@ -631,7 +634,7 @@ string elidedPathText(ref ImageRow r, size_t maxChars) {
 /// `.v3d`; two rules that agree today would make every path bug ambiguous
 /// about which of them was wrong. The tooltip is `storedPath` itself, which is
 /// absolute in memory — relative in the row, absolute on hover, as measured.
-void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
+void imageRowsInto(const(Document)* doc, string docPath, ref ImageRow[] outBuf) {
     // Task 0771 — the memo table's whole lifetime policy: bump the sweep
     // BEFORE walking any row, and prune on the way OUT regardless of which
     // return below fires (including the empty-list one right after this,
@@ -711,11 +714,11 @@ void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
 /// click time, by `imageRemoveConfirm`.
 struct ImageRemoveTarget {
     size_t index;   ///< index into `layers`; meaningless when `!enabled`
-    Layer  layer;   ///< the target item, or null
+    ConstItem layer; ///< the target item, or null; rebindable but read-only
     bool   enabled;
 }
 
-ImageRemoveTarget imageRemoveTarget(Document* doc) {
+ImageRemoveTarget imageRemoveTarget(const(Document)* doc) {
     import commands.layer.commands : canDeleteLayer;
     ImageRemoveTarget t;
     if (doc is null) return t;

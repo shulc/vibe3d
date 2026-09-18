@@ -41,7 +41,7 @@ public:
         assert(owner !is null);
         owner_ = owner;
     }
-    Document* document() { return owner_.documentPtr(); }
+    const(Document)* document() { return owner_.documentPtr(); }
 }
 
 struct ImageListActions {

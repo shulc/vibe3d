@@ -29,7 +29,7 @@ import ui.discard_guard : GuardRecord;
 import ui.image_list_panel : ImageListDrawSnapshot, ImageListDrawnRow,
     ImageListPanelRoles, bindImageListPanel, drawImageListPanel,
     imageListDrawSnapshot, resetImageListDrawSnapshot;
-import ui.image_rows : ImageRemoveConfirm;
+import ui.image_rows : ImageRemoveConfirm, ImageRemoveTarget, ImageRow;
 import ui.item_rename : ItemRenameState;
 import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
@@ -39,6 +39,31 @@ import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
 
+static assert(!__traits(compiles, (ImageListPanelRoles roles) {
+        Document* doc = roles.read.document();
+    }),
+    "6530 N1 document: the Images read role hands out a mutable Document*");
+static assert(__traits(compiles, (ImageListPanelRoles roles) {
+        const(Document)* doc = roles.read.document();
+    }),
+    "6530 N1 control: the same role expression must compile through const");
+static assert(!__traits(compiles, (ImageListPanelRoles roles) {
+        auto doc = roles.read.document();
+        doc.layers[0].name = "x";
+    }),
+    "6530 N1w document: the Images read role permits a document write");
+static assert(!__traits(compiles, (ImageRow row) {
+        Layer l = row.layer;
+    }),
+    "6530 N2 row.layer: a row hands out a mutable Layer");
+static assert(__traits(compiles, (ImageRow row) {
+        const(Layer) l = row.layer;
+    }),
+    "6530 N2 control: the same row expression must compile through const");
+static assert(!__traits(compiles, (ImageRow row) {
+        row.layer.name = "x";
+    }),
+    "6530 N2w row.layer: a row permits a document-item write");
 static assert(!__traits(compiles, (ImageRemoveConfirm c) {
         Layer l = c.referrers[0];
     }),
@@ -47,14 +72,6 @@ static assert(__traits(compiles, (ImageRemoveConfirm c) {
         const(Layer) l = c.referrers[0];
     }),
     "6530 N3 control: the same confirmation expression must compile through const");
-static assert(!__traits(compiles, (ImageRemoveWarning w) {
-        Layer l = w.referrers[0];
-    }),
-    "6530 N6 warning.referrers: the remove predicate hands out mutable referrers");
-static assert(__traits(compiles, (ImageRemoveWarning w) {
-        const(Layer) l = w.referrers[0];
-    }),
-    "6530 N6 control: the same warning expression must compile through const");
 static assert(!__traits(compiles, (RetainedItem t) {
         Layer l = t.item;
     }),
@@ -67,6 +84,22 @@ static assert(__traits(compiles, (RetainedItem t) {
         const(Object) o = t.item;
     }),
     "6530 N4 control: retained identity must remain usable as a const Object");
+static assert(!__traits(compiles, (ImageRemoveTarget t) {
+        Layer l = t.layer;
+    }),
+    "6530 N5 target.layer: the Remove target hands out a mutable Layer");
+static assert(__traits(compiles, (ImageRemoveTarget t) {
+        const(Layer) l = t.layer;
+    }),
+    "6530 N5 control: the same Remove-target expression must compile through const");
+static assert(!__traits(compiles, (ImageRemoveWarning w) {
+        Layer l = w.referrers[0];
+    }),
+    "6530 N6 warning.referrers: the remove predicate hands out mutable referrers");
+static assert(__traits(compiles, (ImageRemoveWarning w) {
+        const(Layer) l = w.referrers[0];
+    }),
+    "6530 N6 control: the same warning expression must compile through const");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");
