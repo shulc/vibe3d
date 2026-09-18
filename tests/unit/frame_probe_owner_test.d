@@ -112,8 +112,8 @@ version (PerfProbe) {} else unittest { // D-1: default answers without bridge wo
     auto readClient = request(port, "GET", "/api/frames", readReply);
     assert(waitUntil(() => atomicLoad(readReply.done)),
         "6511 default GET /api/frames did not answer");
-    assert(readReply.wire.canFind("HTTP/1.1 200 OK"));
-    assert(body(readReply.wire) == "{}"
+    assert(readReply.wire.canFind("HTTP/1.1 200 OK")
+        && body(readReply.wire) == "{}"
         && body(readReply.wire).length == 2,
         "6511 default build must answer {} without touching the bridge");
     readClient.join();
