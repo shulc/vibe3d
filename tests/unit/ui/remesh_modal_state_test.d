@@ -224,6 +224,9 @@ unittest { // popup handshake consumes success-close only inside the modal
     assert(snap.remeshMax.x > snap.remeshMin.x
         && snap.remeshMax.y > snap.remeshMin.y,
         "remesh modal did not publish a clickable Remesh button");
+    assert(snap.cancelMax.x > snap.cancelMin.x
+        && snap.cancelMax.y > snap.cancelMin.y,
+        "remesh modal did not publish a clickable Cancel button");
 
     ui.frame();
     assert(remeshModalDrawSnapshot().openCalls == 1,
