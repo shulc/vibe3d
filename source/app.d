@@ -2210,18 +2210,14 @@ void main(string[] args) {
     // layer becomes active. (`refreshDisplay`'s own active-mesh gate still
     // keeps a background owner from being uploaded.)
     MeshDirtyKey displayServiced_;
-    // A5 (post-gate fix): while the transform family drags, the VBO is
-    // tool-owned (baseline + live u_model) — re-uploading LIVE verts would
-    // double-apply the drag delta for any reader that renders with the tool
-    // matrix. Late-bound predicate (lifecycleRecordHook pattern: null until
-    // wired after `activeTool` is declared below); when it fires, readers
-    // keep the pre-bus mid-drag semantics (VBO as the tool left it); the
-    // epochs still advance, so the next non-tool-owned frame re-uploads.
-    bool delegate() displayVboOwnedByTool_ = null;
+    // TASK 6520: this late-bound predicate is tool intent and only holds
+    // display uploads during a drag. The author of the last completed write
+    // belongs to GpuMesh.displayPayload; intent is not authorship.
+    bool delegate() displayUploadsHeldByToolDrag_ = null;
     void ensureDisplayCurrent() {
         import display_sync : refreshDisplay;
         import mesh_dirty   : g_displayEpochs;
-        if (displayVboOwnedByTool_ !is null && displayVboOwnedByTool_()) return;
+        if (displayUploadsHeldByToolDrag_ !is null && displayUploadsHeldByToolDrag_()) return;
         Mesh* am = &mesh();
         const size_t a = cast(size_t)am;
         if (displayServiced_.matches(a, g_displayEpochs.epochFor(a))) return;
@@ -3494,9 +3490,9 @@ void main(string[] args) {
     app.subpatchPreviewPtr  = &subpatchPreview;
     app.gpuUploadedPreviewPtr = &gpuUploadedPreview;
     app.activeToolPtr       = &activeTool;
-    // A5: wire the guard's tool-owns-VBO predicate now that `activeTool`
-    // is lexically visible (the guard itself is declared far earlier).
-    displayVboOwnedByTool_  = () => activeTool !is null && activeTool.isDragging();
+    // TASK 6520: compute drag intent once, after `activeTool` is visible.
+    displayUploadsHeldByToolDrag_ =
+        () => activeTool !is null && activeTool.isDragging();
     app.runningPtr          = &running;
     app.historyPanelState = historyPanelState;
 
@@ -5631,18 +5627,10 @@ void main(string[] args) {
                 // place, same gate, same dedup against the mid-batch guard
                 // (both stamp `displayServiced_`).
                 const size_t ma = cast(size_t)&mesh();
-                // A5 (post-gate fix): mid-gesture the transform family owns
-                // the VBO — baseline verts with the live drag delta applied
-                // via u_model on top (per-frame edits publish Position while
-                // the tool draws matrix-composed). A full upload here would
-                // bake LIVE verts under a LIVE matrix and double-apply the
-                // delta (gpu_fold_parity / far_pivot_fold / chained_drag).
-                // Skip while dragging: only XfrmTransformTool overrides
-                // isDragging, and its mouseUp bake + commit publish resync
-                // the VBO at gesture end. Flags still reach every subscriber.
-                const bool toolOwnsVbo =
-                    activeTool !is null && activeTool.isDragging();
-                if (!toolOwnsVbo
+                // TASK 6520: both upload doors consult the same drag-intent
+                // policy. The display-payload author is recorded separately.
+                const bool displayUploadHeldByToolDrag = displayUploadsHeldByToolDrag_ !is null && displayUploadsHeldByToolDrag_();
+                if (!displayUploadHeldByToolDrag
                     && !displayServiced_.matches(ma, g_displayEpochs.epochFor(ma)))
                 {
                     gpu.upload(mesh);

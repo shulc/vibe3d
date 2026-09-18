@@ -43,6 +43,29 @@ private string lineAt(string code, string marker)
     return code[begin .. end];
 }
 
+unittest // task 6520: drag intent is computed once and shared by both policy doors
+{
+    const app = blankNonCode(readText(
+        buildPath(repoRoot, "source", "app.d")));
+    const mainBody = bodyAt(app, "void main(string[] args)");
+
+    assert(mainBody.length > 0 && mainBody.count("activeTool.isDragging()") >= 2,
+        "6520 intent: the production main body or drag-intent population vanished");
+    const flushGate = lineAt(mainBody,
+        "const bool displayUploadHeldByToolDrag =");
+    assert(flushGate.indexOf("displayUploadsHeldByToolDrag_(") >= 0
+        && flushGate.indexOf("isDragging") < 0,
+        "6520 intent: the flush-site upload gate recomputed the tool-drag bool");
+    assert(mainBody.count(
+        "activeTool !is null && activeTool.isDragging()") == 2,
+        "6520 intent: the tool-drag bool is computed more than once");
+    assert(mainBody.indexOf("bool toolOwnsVbo") < 0,
+        "6520 intent: the deleted flush-site ownership word is back");
+    assert(mainBody.count(
+        "displayUploadsHeldByToolDrag_ !is null") == 2,
+        "6520 intent: a policy door calls the predicate without its null guard");
+}
+
 unittest // the ownership predicate lives at the shared read seam
 {
     const meshGpu = blankNonCode(readText(
