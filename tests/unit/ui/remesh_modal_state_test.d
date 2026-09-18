@@ -136,7 +136,10 @@ unittest { // all eight fields belong to one state instance
 
     state.lastError = "old error";
     state.lastSummary = "old summary";
+    state.pendingClose = true;
     state.requestOpen();
+    assert(state.pendingClose,
+        "requestOpen cleared the preserved pending-close residual");
     assert(state.open && state.pendingOpen,
         "requestOpen did not arm the popup handshake");
     assert(state.lastError is null && state.lastSummary is null,
@@ -245,6 +248,10 @@ unittest { // popup handshake consumes success-close only inside the modal
     ui.frame();
     assert(remeshModalDrawSnapshot().openCalls == 2 && anyPopupOpen(),
         "remesh modal did not reopen through a fresh one-shot handshake");
+    ui.pressAt(center(snap.cancelMin, snap.cancelMax));
+    ui.release();
+    assert(!state.open && !anyPopupOpen(),
+        "Cancel did not close both the remesh owner and popup");
 }
 
 unittest { // real draw preserves in-range values and clamps both bound sides
@@ -447,11 +454,29 @@ unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
         ui.frame();
         ui.frame();
         auto snap = remeshModalDrawSnapshot();
+        state.targetQuads = 33_333;
+        state.adaptivity = 2.25f;
+        state.sharpEdge = 47.5f;
+        state.lastSummary = "stale";
+        state.lastError = "stale error";
+        assert(state.targetQuads == 33_333 && state.adaptivity == 2.25f
+            && state.sharpEdge == 47.5f && state.lastSummary == "stale"
+            && state.lastError == "stale error",
+            "selected-region launch controls were not armed");
         ui.pressAt(center(snap.remeshMin, snap.remeshMax));
         ui.release();
         waitForCapture(job, recordedInput);
-        assert(readText(argvLog).canFind("--mode"),
-            "selected region did not enter remesher region mode");
+        const argv = readText(argvLog);
+        assert(argv.length > 0 && argv.canFind("--mode"),
+            "selected region did not produce populated region-mode argv");
+        assert(argv.canFind("--target-quads 33333"),
+            "modal target-quads state did not reach remesher argv");
+        assert(argv.canFind("--adaptivity 2.25"),
+            "modal adaptivity state did not reach remesher argv");
+        assert(argv.canFind("--sharp-edge 47.5"),
+            "modal sharp-edge state did not reach remesher argv");
+        assert(state.lastSummary is null && state.lastError is null,
+            "Remesh press did not clear stale result text before launch");
         const captured = readObjVertices(recordedInput);
         assert(captured.length == 9,
             "selected region did not write its nine-position compact OBJ");
@@ -506,7 +531,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
     import std.algorithm.searching : canFind;
     import std.file : dirEntries, readText, SpanMode;
     import std.path : buildPath;
-    import std.string : indexOf;
+    import std.string : indexOf, lastIndexOf;
     import tests.unit.census_symbols : blankNonCode;
 
     const root = repositoryRoot();
@@ -570,6 +595,41 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const endAt = panel.indexOf("ImGui.EndPopup();", beginAt);
     assert(beginAt >= 0 && closeAt > beginAt && endAt > closeAt,
         "6360 popup handshake: pending-close consumption escaped BeginPopupModal");
+
+    // The widget LABELS cannot be censused: `blankNonCode` blanks string
+    // literals as well as comments, so every token here is code. The order
+    // matters behaviourally — a value a slider wrote this frame has to be
+    // clamped in the SAME frame, which is the one thing collapsing six inline
+    // clamps into one call could break, and no cell can see it (the widgets
+    // clamp their own drag gesture, so a hoisted call still looks right).
+    const drawEnd = panel.indexOf("version (unittest)", drawAt);
+    assert(drawEnd > drawAt,
+        "6360 slider order: drawRemeshModal body boundary was not found");
+    const drawBody = panel[drawAt .. drawEnd];
+    assert(drawBody.count("ImGui.SliderInt(") == 1
+        && drawBody.count("ImGui.SliderFloat(") == 2
+        && drawBody.count("clampToBounds();") == 1
+        && drawBody.count("&targetQuads") == 1
+        && drawBody.count("&adaptivity") == 1
+        && drawBody.count("&sharpEdge") == 1,
+        "6360 slider order: expected three sliders, three field pointers, one clamp");
+    const targetSliderAt = drawBody.indexOf("ImGui.SliderInt(");
+    const firstFloatAt = drawBody.indexOf("ImGui.SliderFloat(");
+    const lastFloatAt = drawBody.lastIndexOf("ImGui.SliderFloat(");
+    const clampAt = drawBody.indexOf("clampToBounds();");
+    assert(targetSliderAt >= 0 && firstFloatAt > targetSliderAt
+        && lastFloatAt > firstFloatAt && clampAt > lastFloatAt,
+        "6360 slider order: clampToBounds must run after all three sliders");
+    // Each slider must still address its OWN field: the two float sliders have
+    // the same signature, so swapping their pointers compiles and the argv cell
+    // above cannot see it (it writes the state fields directly).
+    assert(drawBody.indexOf("&targetQuads") > targetSliderAt
+        && drawBody.indexOf("&targetQuads") < firstFloatAt
+        && drawBody.indexOf("&adaptivity") > firstFloatAt
+        && drawBody.indexOf("&adaptivity") < lastFloatAt
+        && drawBody.indexOf("&sharpEdge") > lastFloatAt
+        && drawBody.indexOf("&sharpEdge") < clampAt,
+        "6360 slider binding: a slider stopped addressing its own state field");
 
     foreach (retired; ["RemeshModalRefs", "remeshRefs",
              "remeshModalOpenPtr", "remeshModalPendingOpenPtr",

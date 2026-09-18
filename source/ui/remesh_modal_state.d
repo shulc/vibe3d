@@ -17,6 +17,11 @@ final class RemeshModalState {
     string lastSummary;
 
     void requestOpen() {
+        // Task 6360 deliberately does NOT reset pendingClose here: this is a
+        // recorded residual, not an omitted line. `mesh.remesh.start` can arm a
+        // success-close while the modal is shut, and the next open then consumes
+        // it on its first frame. Adding the reset changes that behaviour, so it
+        // is pinned by a cell (remesh_modal_state_test.d, block 1).
         open = true;
         pendingOpen = true;
         lastError = null;
