@@ -573,14 +573,14 @@ unittest {
         && readRoute.canFind(".snapshot.toJson()"));
     assert(occurrences(resetRoute, "frameCountsBridge.submitClaimed(") == 1
         && !resetRoute.canFind(".reset("));
-    assert(occurrences(source, ".submitClaimed(") == 2);
+    assert(occurrences(source, ".submitClaimed(") == 4);
     immutable allTick = bodyAt(source, "public void tickAll()");
     assert(!allTick.canFind("tickFrameCounts")
         && !allTick.canFind("tickClaimed")
         && !allTick.canFind("frameCountsBridge"));
     immutable bridgeTick = bodyAt(source, "void tick()");
     assert(!bridgeTick.canFind("claimPending"));
-    assert(occurrences(source, "tickClaimed(") == 2);
+    assert(occurrences(source, "tickClaimed(") == 3);
     immutable ownerTick = bodyAt(source,
         "public void tickFrameCounts(ref FrameWorkProbe probe)");
     assert(ownerTick.canFind("frameCountsBridge.tickClaimed("));

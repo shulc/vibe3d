@@ -4788,10 +4788,11 @@ void main(string[] args) {
     httpServer.setEventPlayerSink(replaySink);
 
     while (running) {
-        // Task 6357: serve frame-work resets and detached snapshots on their
-        // owner thread after the prior close and before either new probe opens.
-        // The general bridge drain later in the frame must not serve them.
+        // Tasks 6357/6511: serve both frame probes on their owner thread after
+        // the prior close and before either new probe opens. The general bridge
+        // drain later in the frame must not serve either claimed queue.
         if (httpServer.running) httpServer.tickFrameCounts(g_fc);
+        if (httpServer.running) httpServer.tickFrames(g_frames);
         // Perf (doc/frame_probe_scenarios_plan.md, task 0195): the timing probe
         // opens before frame work; its close remains before present/flush.
         g_frames.beginFrame();
