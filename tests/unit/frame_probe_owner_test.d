@@ -4,7 +4,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : HttpServer;
-import perf_probe : FrameProbe, FrameRec, Phase, toJson;
+import perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
 import std.algorithm : canFind, count;
 import std.file : readText;
 import std.path : buildPath, dirName;
@@ -163,40 +163,41 @@ version (PerfProbe) unittest { // P-1: only the owner tick serves a read
 }
 
 version (PerfProbe) unittest { // P-2/P-4: timeout drops the entire reset
+    scope(exit) g_frames.reset();
+    g_frames.reset();
     immutable port = freePort();
     auto server = startedServer(port);
     scope(exit) if (server.running) server.stop();
     server.setFramesBudgetForTest(100.msecs);
     auto bridge = server.framesBridgeForTest();
-    FrameProbe probe;
-    seed(probe);
+    seed(g_frames);
 
     auto reply = new Reply();
     auto client = request(port, "POST", "/api/frames/reset", reply);
     assert(waitUntil(() => atomicLoad(reply.done)));
     assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout"));
     assert(body(reply.wire) == `{"error":"timeout waiting for main thread"}`);
-    assert(probe.stats().frameCount == 3,
+    assert(g_frames.stats().frameCount == 3,
         "6511 timed-out reset changed the probe before service");
 
     foreach (_; 0 .. 3) server.tickAll();
-    assert(probe.stats().frameCount == 3,
+    assert(g_frames.stats().frameCount == 3,
         "6511 expired reset was applied by a later generic drain");
     assert(bridge.claimPendingForTest() == 1,
         "6511 expired claimed reset disappeared before its owner tick");
-    server.tickFrames(probe);
-    assert(probe.stats().frameCount == 3,
+    server.tickFrames(g_frames);
+    assert(g_frames.stats().frameCount == 3,
         "6511 expired reset was applied on a later frame");
     assert(bridge.claimPendingForTest() == 0,
         "6511 owner tick did not discard the expired reset");
 
-    probe.beginFrame();
-    probe.addPhase(Phase.draw, 444);
-    probe.endFrame();
-    server.tickFrames(probe);
+    g_frames.beginFrame();
+    g_frames.addPhase(Phase.draw, 444);
+    g_frames.endFrame();
+    server.tickFrames(g_frames);
     FrameRec[4] recent;
-    assert(probe.copyRecent(recent[]) == 4
-        && probe.stats().frameCount == 4,
+    assert(g_frames.copyRecent(recent[]) == 4
+        && g_frames.stats().frameCount == 4,
         "6511 probe did not continue after dropping the expired reset");
     client.join();
 }
