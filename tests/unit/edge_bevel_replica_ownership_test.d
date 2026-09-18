@@ -227,7 +227,7 @@ private void cellC0_arrangementCensus() {
             "FORBIDDEN IDENTIFIER IN drawReplica: %s at lines %s; expected none",
             word, lines));
     }
-    foreach (field; ["gizmoValid", "anchor", "baseAnchor", "widthAxis",
+    foreach (field; ["gizmoValid", "baseAnchor", "anchor", "widthAxis",
                      "gizmoSelHash"]) {
         const lines = assignmentLinesInSymbol(edgeCode, field, replicaSymbol);
         assert(lines.length == 0, format(
