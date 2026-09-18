@@ -6,8 +6,11 @@ import std.file : SpanMode, dirEntries, readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : fabs;
+import std.meta : staticIndexOf;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
+import std.traits : Parameters, ReturnType, Unqual, fullyQualifiedName,
+    isDelegate, isFunctionPointer;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
@@ -23,14 +26,14 @@ import edit_session : EditSession;
 import editmode : EditMode;
 import forms : BindingException, Form, Row, g_forms, g_formsPanelEnabled,
     loadForms, planForm;
-import forms_render : FormsPanel;
+import forms_render : DispatchFn, FormsPanel, InteractiveDispatchFn;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import input_zones : clearZones;
 import math : Vec3;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
-import params : Param;
+import params : Param, ParamProvider;
 import property_panel : PanelIdKind, PropertyPanel, toolPropsIdsJson;
 import registry : Registry;
 import seltype : SelType;
@@ -38,15 +41,276 @@ import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+import toolpipe.stage : Stage, TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.tool_properties_panel : ToolPropertiesPanelRoles,
-    ToolPropertiesReadRole, bindToolPropertiesPanel, drawToolPropertiesPanel;
+static import ui.tool_properties_panel;
+import ui.tool_properties_panel : ToolPropertiesActions,
+    ToolPropertiesPanelRoles, ToolPropertiesReadRole,
+    ToolPropertiesStageInfo, bindToolPropertiesPanel,
+    drawToolPropertiesPanel;
 import view : View;
+
+private string memberList(T)() {
+    string result = "[";
+    bool first = true;
+    static foreach (name; __traits(allMembers, T)) {
+        if (!first) result ~= ",";
+        result ~= "\"" ~ name ~ "\"";
+        first = false;
+    }
+    return result ~ "]";
+}
+
+private enum memberPinSuffix = ". The lists are declaration-ORDER sensitive "
+    ~ "and are NOT a generated ledger: a new name here is a FINDING — a "
+    ~ "member was added, renamed, or reordered. Do not paste the actual list "
+    ~ "over the expected one until you can say which of the three happened "
+    ~ "and why the boundary still holds.";
+
+static assert([__traits(allMembers, ToolPropertiesReadRole)] == [
+        "activeTool_", "activeToolId_", "__ctor", "hasActiveTool",
+        "activeToolId", "enabledStages"],
+    "6504 G1 ToolPropertiesReadRole member set changed: "
+        ~ memberList!ToolPropertiesReadRole ~ memberPinSuffix);
+static assert([__traits(allMembers, ToolPropertiesActions)] == [
+        "dispatch_", "interactive_", "forms_", "session_", "activeTool_",
+        "__ctor", "drawToolForm", "drawFormedToolCustom", "drawToolParams",
+        "drawToolCustom", "stageHasPanelParams", "drawStageBody"],
+    "6504 G1 ToolPropertiesActions member set changed: "
+        ~ memberList!ToolPropertiesActions ~ memberPinSuffix);
+static assert([__traits(allMembers, ToolPropertiesPanelRoles)] == [
+        "read_", "actions_", "__ctor", "read", "actions"],
+    "6504 G1 ToolPropertiesPanelRoles member set changed: "
+        ~ memberList!ToolPropertiesPanelRoles ~ memberPinSuffix);
+static assert([__traits(allMembers, ToolPropertiesStageInfo)] == [
+        "id", "displayName", "taskCode"],
+    "6504 G1 ToolPropertiesStageInfo member set changed: "
+        ~ memberList!ToolPropertiesStageInfo ~ memberPinSuffix);
+static assert([__traits(allMembers, ui.tool_properties_panel)] == [
+        "object", "ImGui", "d_imgui", "ToolPropertiesStageInfo",
+        "ToolPropertiesReadRole", "ToolPropertiesActions",
+        "ToolPropertiesPanelRoles", "resolveStage",
+        "bindToolPropertiesPanel", "kToolPropsTabMain",
+        "kToolPropsTabSnapping", "g_toolPropsTab", "kSnappingHasOwnTab",
+        "warnStageFormOnce", "drawToolPropertiesPanel"],
+    "6504 G1 ui.tool_properties_panel member set changed: "
+        ~ memberList!ui.tool_properties_panel ~ memberPinSuffix);
+
+private enum string[] kCapabilityExempt = [
+    "property_panel.PropertyPanel"
+];
+
+private bool capabilityExempt(T)() {
+    foreach (name; kCapabilityExempt)
+        if (name == fullyQualifiedName!T) return true;
+    return false;
+}
+
+// Cycle-aware rather than depth-capped: revisiting a type ends that path, but
+// an arbitrarily deep acyclic wrapper remains visible to the boundary rule.
+private template CarriesCapability(X, Seen...) {
+    private template Decayed(Y) {
+        static if (is(Y : V[K], V, K))  alias Decayed = Unqual!V;
+        else static if (is(Y : E[], E)) alias Decayed = Unqual!E;
+        else static if (is(Y : E*, E))  alias Decayed = Unqual!E;
+        else                            alias Decayed = Unqual!Y;
+    }
+    alias D = Decayed!X;
+    static if (is(X == void*) || is(Unqual!X == void*))
+        enum CarriesCapability = true;
+    else static if (is(D : ParamProvider) || is(D == Param))
+        enum CarriesCapability = true;
+    else static if (capabilityExempt!D)
+        enum CarriesCapability = false;
+    else static if (is(D == Object))
+        enum CarriesCapability = true;
+    else static if (staticIndexOf!(D, Seen) >= 0)
+        enum CarriesCapability = false;
+    else static if (isDelegate!D || isFunctionPointer!D)
+        enum CarriesCapability = CarriesCapability!(ReturnType!D, Seen, D);
+    else static if (is(D == struct) || is(D == union)
+                    || is(D == class) || is(D == interface)) {
+        private bool anyField() {
+            bool hit;
+            static foreach (F; typeof(D.tupleof))
+                if (CarriesCapability!(F, Seen, D)) hit = true;
+            return hit;
+        }
+        enum CarriesCapability = anyField();
+    } else
+        enum CarriesCapability = false;
+}
+
+private enum bool generatedMember(string name) =
+    name == "this" || name == "__ctor" || name == "__dtor"
+    || name == "__xdtor" || name == "__postblit"
+    || name == "__xpostblit" || name == "opAssign" || name == "Monitor"
+    || name == "toString" || name == "toHash" || name == "opCmp"
+    || name == "opEquals" || name == "factory";
+
+private template CapabilityReturns(T, bool allPrivate) {
+    private string[] collect() {
+        string[] bad;
+        static foreach (name; __traits(allMembers, T)) {{
+            static if (!generatedMember!name) {
+                static if (allPrivate
+                        || (__traits(compiles, __traits(getVisibility,
+                                __traits(getMember, T, name)))
+                            && __traits(getVisibility,
+                                __traits(getMember, T, name)) != "private")) {
+                    static if (__traits(isTemplate,
+                            __traits(getMember, T, name)))
+                        bad ~= name ~ ":TEMPLATE";
+                    else static if (__traits(compiles,
+                            ReturnType!(__traits(getMember, T, name)))) {
+                        static if (CarriesCapability!(ReturnType!(
+                                __traits(getMember, T, name))))
+                            bad ~= name;
+                    } else static if (__traits(compiles,
+                            typeof(__traits(getMember, T, name)))) {
+                        static if (CarriesCapability!(typeof(
+                                __traits(getMember, T, name))))
+                            bad ~= name;
+                    } else
+                        bad ~= name ~ ":UNCLASSIFIABLE";
+                }
+            }
+        }}
+        return bad;
+    }
+    enum CapabilityReturns = collect();
+}
+
+private template CapabilityParams(T, bool withCtor) {
+    private string[] collect() {
+        string[] bad;
+        static foreach (name; __traits(allMembers, T)) {{
+            static if (!generatedMember!name || (withCtor && name == "__ctor")) {
+                static if (__traits(compiles, __traits(getVisibility,
+                            __traits(getMember, T, name)))
+                        && __traits(getVisibility,
+                            __traits(getMember, T, name)) != "private") {
+                    static if (__traits(compiles,
+                            Parameters!(__traits(getMember, T, name)))) {
+                        static foreach (i, P; Parameters!(
+                                __traits(getMember, T, name)))
+                            static if (CarriesCapability!P)
+                                bad ~= name ~ "#" ~ i.stringof;
+                    }
+                }
+            }
+        }}
+        return bad;
+    }
+    enum CapabilityParams = collect();
+}
+
+private string capabilityList(string[] names) {
+    string result = "[";
+    foreach (i, name; names) {
+        if (i) result ~= ",";
+        result ~= "\"" ~ name ~ "\"";
+    }
+    return result ~ "]";
+}
+
+private enum readReturns = CapabilityReturns!(ToolPropertiesReadRole, true);
+private enum readParams = CapabilityParams!(ToolPropertiesReadRole, true);
+private enum actionReturns = CapabilityReturns!(ToolPropertiesActions, false);
+private enum actionParams = CapabilityParams!(ToolPropertiesActions, false);
+static assert(readReturns.length == 0,
+    "6504 C10 R1: the read role hands back a capability: "
+        ~ capabilityList(readReturns));
+static assert(readParams.length == 0,
+    "6504 C10 R2: the read role asks its binder for a capability: "
+        ~ capabilityList(readParams));
+static assert(actionReturns.length == 0,
+    "6504 C10 R1: the action door hands a capability back to the body: "
+        ~ capabilityList(actionReturns));
+static assert(actionParams.length == 0,
+    "6504 C10 R2: the action door asks the drawing body for a capability: "
+        ~ capabilityList(actionParams));
+static assert(!CarriesCapability!ToolPropertiesStageInfo,
+    "6504 C10 descriptor: ToolPropertiesStageInfo carries a capability");
+static assert(!__traits(compiles, (PropertyPanel panel) {
+    Stage stage = panel.activeSlotStage_;
+}), "6504 exemption premise: PropertyPanel.activeSlotStage_ became reachable");
+static assert(kCapabilityExempt.length == 1,
+    "6504 exemption list grew");
+
+private class CapabilityBox { Tool tool; }
+private struct CapabilityClassTrap { CapabilityBox box; }
+private struct CapabilityObjectTrap { Object opaque; }
+private struct CapabilityVoidPointerTrap { void* opaque; }
+private struct CapabilityAaTrap { Stage[string] stages; }
+private struct CapabilityTemplateTrap { T get(T = Tool)() { return null; } }
+private struct CapabilityExportTrap { export Tool tool; }
+private struct CapabilityLevel1 { Tool delegate() value; }
+private struct CapabilityLevel2 { CapabilityLevel1 value; }
+private struct CapabilityLevel3 { CapabilityLevel2 value; }
+private struct CapabilityLevel4 { CapabilityLevel3 value; }
+private struct CapabilityLevel5 { CapabilityLevel4 value; }
+private struct CapabilityDeepTrap { CapabilityLevel5 value; }
+private struct CapabilityParamPointerTrap { Param* row; }
+private struct CapabilityPrivateTrap { private Tool cached_; }
+private struct CapabilityProviderSliceTrap { ParamProvider[] providers; }
+private struct CapabilityNamespace {
+    struct PropertyPanel { Stage stage; }
+}
+
+static assert(CarriesCapability!CapabilityClassTrap
+    && CarriesCapability!CapabilityObjectTrap
+    && CarriesCapability!CapabilityVoidPointerTrap
+    && CarriesCapability!CapabilityAaTrap
+    && CapabilityReturns!(CapabilityTemplateTrap, true).length == 1
+    && CarriesCapability!CapabilityExportTrap
+    && CarriesCapability!CapabilityDeepTrap
+    && CarriesCapability!CapabilityParamPointerTrap
+    && CapabilityReturns!(CapabilityPrivateTrap, true).length == 1
+    && CarriesCapability!CapabilityProviderSliceTrap,
+    "6504 C10-S instrument self-test: the rule missed a capability wrapper");
+static assert(CarriesCapability!(CapabilityNamespace.PropertyPanel),
+    "6504 C10-S instrument self-test: the rule cleared a homonym of the exempt type");
+static assert(!CarriesCapability!Form && !CarriesCapability!Row
+    && !CarriesCapability!ToolPropertiesStageInfo
+    && !CarriesCapability!DispatchFn && !CarriesCapability!string
+    && !CarriesCapability!FormsPanel,
+    "6504 C10-S instrument self-test: the rule rejected a planned value type");
 
 static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
     Tool tool = role.activeTool();
 }), "6504 C10: the read role must not return the active Tool");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.activeTool().activate();
+}), "6504 C10: the read role must not activate a Tool");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.activeTool().deactivate();
+}), "6504 C10: the read role must not deactivate a Tool");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.activeTool().drawProperties();
+}), "6504 C10: the read role must not custom-draw a Tool");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.activeTool().onParamChanged("x");
+}), "6504 C10: the read role must not write a Tool parameter");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    auto params = role.activeTool().params();
+}), "6504 C10: the read role must not expose raw Param pointers");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    auto stages = role.pipeStages();
+}), "6504 C10: the read role must not return pipeline stages");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.pipeStages()[0].setAttr("type", "linear");
+}), "6504 C10: the read role must not mutate a pipeline stage");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    (cast(Stage) role.pipeStages()[0]).setAttr("type", "linear");
+}), "6504 C10: casting must not recover a mutable pipeline stage");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.enabledStages()[0].setAttr("type", "linear");
+}), "6504 C10: stage metadata must not be a Stage");
+static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
+    role.enabledStages()[0].drawProperties();
+}), "6504 C10: stage metadata must not expose custom draw");
 static assert(!__traits(compiles, (ToolPropertiesReadRole role) {
     role.activeToolId() = "";
 }), "6060 C10: the read role must not expose a mutable active-tool-id slot");
@@ -615,8 +879,62 @@ unittest {
         assert(identifierCount(panel, "EditorApp") == 0
             && identifierCount(panel, "editor_app") == 0
             && identifierCount(panel, "panels") == 0
-            && panel.count("with (") == 0,
+            && panel.count("with (") == 0
+            && panel.count("with(") == 0,
             "6060 C11 role boundary: panel regained EditorApp/ui.panels coupling");
+
+        const drawBody = bodyAt(panel, "void drawToolPropertiesPanel(");
+        foreach (name; ["Stage", "Tool", "ParamProvider",
+                        "XfrmTransformTool", "drawProperties", "params",
+                        "allMut", "findById", "suppressTRSProperties",
+                        "resolveStage"])
+            assert(identifierCount(drawBody, name) == 0,
+                "6504 C11-a capability boundary: the drawing body names " ~ name);
+        foreach (name; ["activeTool_", "hasActiveTool_", "activeToolId_",
+                        "dispatch_", "interactive_", "forms_", "session_",
+                        "read_", "actions_", "activate", "deactivate",
+                        "onParamChanged", "setAttr", "interactiveParamEdit",
+                        "g_pipeCtx", "pipeline"])
+            assert(identifierCount(drawBody, name) == 0,
+                "6504 C11-a reach-around: the drawing body names a role's "
+                    ~ "private member or mutator (" ~ name ~ ")");
+        assert(drawBody.count("cast(") == 2
+            && drawBody.count("cast(Stage") == 0,
+            "6504 C11-a cast census: the drawing body recovered a mutable stage/tool");
+        assert(identifierCount(drawBody, "inMain") == 3,
+            "6504 C11-a page gate: the Main-page wrapper around the tool block "
+                ~ "and the section loop is gone or duplicated, and the "
+                ~ "Snapping page is not reachable from a headless cell");
+        assert(identifierCount(drawBody, "actions") == 7
+            && identifierCount(drawBody, "drawToolForm") == 1
+            && identifierCount(drawBody, "drawFormedToolCustom") == 1
+            && identifierCount(drawBody, "drawToolParams") == 1
+            && identifierCount(drawBody, "drawToolCustom") == 1
+            && identifierCount(drawBody, "stageHasPanelParams") == 1
+            && identifierCount(drawBody, "drawStageBody") == 2,
+            "6504 C11-a action census: the drawing body bypassed or duplicated "
+                ~ "the six action doors");
+        assert(rawPanel.count("tupleof") == 0
+            && rawPanel.count("getMember") == 0
+            && rawPanel.count("mixin") == 0,
+            "6504 G3 reflection census: tupleof/getMember/a string mixin reach "
+                ~ "past private (measured: even across modules), and "
+                ~ "blankNonCode cannot see a mixin — if this module legitimately "
+                ~ "needs one, the boundary needs a new argument, not a bigger ban list");
+        assert(identifierCount(panel, "ParamProvider") == 0
+            && identifierCount(panel, "allMut") == 0
+            && panel.count("cast(Stage") == 0
+            && panel.count("pipeline.findById(stageId)") == 1
+            && panel.count("pipeline.all()") == 1
+            && panel.count(".params()") == 1,
+            "6504 C11-b module census: the panel regained a provider/stage escape");
+
+        const readRole = bodyAt(panel, "struct ToolPropertiesReadRole");
+        assert(identifierCount(readRole, "Stage") == 0
+            && identifierCount(readRole, "Tool") == 0
+            && identifierCount(readRole, "params") == 0
+            && readRole.count("cast(") == 0,
+            "6504 C11-c read role: display metadata regained mutation capability");
 
         const binder = bodyAt(panel,
             "ToolPropertiesPanelRoles bindToolPropertiesPanel(");
@@ -633,6 +951,17 @@ unittest {
             "6060 C11 binder census: production UI/interactive actions changed");
         const actions = bodyAt(panel, "struct ToolPropertiesActions");
         const flatActions = collapseWhitespace(actions);
+        assert(identifierCount(actions, "Tool") == 2
+            && actions.count("Tool delegate()") == 2
+            && identifierCount(actions, "Stage") == 0
+            && identifierCount(actions, "ParamProvider") == 0
+            && identifierCount(actions, "params") == 1,
+            "6504 C11-d action-door storage: Tool must appear exactly twice in "
+                ~ "this struct — the private Tool delegate() activeTool_ field "
+                ~ "and the constructor's fifth parameter. A third occurrence "
+                ~ "is a cached tool between frames (or a Tool local that must "
+                ~ "be auto); two occurrences of something other than Tool "
+                ~ "delegate() is a stored handle.");
         enum toolFormDraw =
             "forms_.draw(form, tool, dispatch_, interactive_, activeToolId, );";
         enum stageFormDraw =
@@ -640,7 +969,13 @@ unittest {
         assert(flatActions.count(toolFormDraw) == 1
             && flatActions.count(stageFormDraw) == 1
             && flatActions.count("panel.draw(activeTool_(), session_);") == 1
-            && flatActions.count("panel.drawProvider(stage, session_);") == 2,
+            && flatActions.count("panel.drawProvider(stage, session_);") == 2
+            && flatActions.count(
+                "scope(exit) xf.suppressTRSProperties = false;") == 1
+            && flatActions.count("stage.drawProperties();") == 1
+            && flatActions.count("tool.drawProperties();") == 1
+            && flatActions.count("xf.drawProperties();") == 1
+            && flatActions.count("formByStage(stage.formFamilyId())") == 1,
             "6060 C11 action census: generic/interactive or legacy dispatch changed");
         const flatPanel = collapseWhitespace(rawPanel);
         enum toolFormLiteral =
@@ -676,14 +1011,34 @@ unittest {
 
         size_t sourceFiles;
         size_t oldSignatures;
+        size_t stackedCallers;
         foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d",
                                    SpanMode.depth)) {
             ++sourceFiles;
-            oldSignatures += blankNonCode(readText(entry.name))
-                .count("drawToolPropertiesPanel(EditorApp");
+            const source = blankNonCode(readText(entry.name));
+            oldSignatures += source.count("drawToolPropertiesPanel(EditorApp");
+            if (entry.name != repoRoot.buildPath(
+                    "source", "toolpipe", "pipeline.d"))
+                stackedCallers += source.count("addStacked(");
         }
         assert(sourceFiles > 500 && oldSignatures == 0,
             "6060 C11 source census: the EditorApp panel overload survived");
+        assert(stackedCallers == 1,
+            "6504 C11-h stacking census: a second addStacked caller can mint "
+                ~ "a duplicate stage id, and resolution by id then picks the "
+                ~ "wrong instance");
+
+        const snappingBody = bodyAt(panel, "if (!inMain)");
+        const enabledStagesBody = bodyAt(panel,
+            "ToolPropertiesStageInfo[] enabledStages()");
+        assert(identifierCount(snappingBody, "params") == 0
+            && identifierCount(snappingBody, "stageHasPanelParams") == 0
+            && identifierCount(snappingBody, "actions") == 1
+            && identifierCount(snappingBody, "drawStageBody") == 1
+            && identifierCount(enabledStagesBody, "params") == 0,
+            "6504 C11-g snap-page witness: the Snapping page gained a params() "
+                ~ "read, and a stage mirror is re-synced on the one page that "
+                ~ "must not touch it");
 
         const flatApp = collapseWhitespace(app);
         enum bindCall =
