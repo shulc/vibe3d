@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 561
-task-citation-lines 5149
+task-citation-lines 5148
 citing-files 431
 long-comment-runs 273
 files-with-long-runs 146
@@ -228,7 +228,7 @@ allow source/hover_state.d 1
 allow source/http_command_adapter.d 2
 allow source/http_json.d 7
 allow source/http_providers.d 68
-allow source/http_server.d 123
+allow source/http_server.d 122
 allow source/image_cache.d 3
 allow source/image_data.d 7
 allow source/image_plane.d 3

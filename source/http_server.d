@@ -19,8 +19,8 @@ import mesh : Mesh, Surface;
 public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta;
 import core.atomic;
-import perf_probe : g_perf, g_frames, g_commandGc, FrameWorkProbe,
-                    FrameWorkSnapshot;
+import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
+                    FrameWorkProbe, FrameWorkSnapshot;
 
 // For event player functionality
 import bindbc.sdl;
@@ -1346,6 +1346,12 @@ class HttpServer {
     private MainThreadBridge!(FrameCountsReq, FrameCountsResp) frameCountsBridge;
     private Duration frameCountsBudget_ = 5.seconds;
 
+    enum FramesOp : ubyte { read, reset }
+    struct FramesReq { FramesOp op; }
+    struct FramesResp { FrameProbeSnapshot snapshot; }
+    private MainThreadBridge!(FramesReq, FramesResp) framesBridge;
+    private Duration framesBudget_ = 5.seconds;
+
     public this(ushort port = 8080) {
         this.port = port;
         atomicStore(this.isRunning, false);
@@ -1776,6 +1782,11 @@ class HttpServer {
             (ref FrameCountsReq req, ref FrameCountsResp resp) {
                 assert(0, "frame-count bridge is served only by its owner tick");
             }, "/api/frames/counts");
+
+        framesBridge = new MainThreadBridge!(FramesReq, FramesResp)(this,
+            (ref FramesReq req, ref FramesResp resp) {
+                assert(0, "frame probe bridge is served only by its owner tick");
+            }, "/api/frames");
     }
 
     // Task 5820 invariant: both command entry services synchronously use this
@@ -1876,6 +1887,15 @@ class HttpServer {
 
         public auto frameCountsBridgeForTest() {
             return frameCountsBridge;
+        }
+
+        public void setFramesBudgetForTest(Duration budget) {
+            assert(budget >= Duration.zero);
+            framesBudget_ = budget;
+        }
+
+        public auto framesBridgeForTest() {
+            return framesBridge;
         }
 
         public auto modelOwnedTraceForTest() {
@@ -3242,38 +3262,72 @@ class HttpServer {
     }
 
     private void route_apiFramesReset(HttpRequest request, HttpResponse response) {
-        // Zero the per-frame ring + counters before a measured run
-        // (task 0195). No-op in the default build (g_frames.reset
-        // compiles away).
-        //
-        // Task 0763 — see /api/perf/reset for the decision this shares:
-        // tolerable HTTP-thread write into main-thread-owned state, not
-        // marshaled because the latency would land on every perf run's
-        // setup, not just this diagnostic's accuracy.
-        response.statusCode = 200;
-        response.body = "{\"status\":\"ok\"}";
+        // Task 6511: a perf build asks the owner to reset at the frame
+        // boundary; a default build has no live probe and touches no state.
         response.headers["Content-Type"] = "application/json";
-        version (PerfProbe) g_frames.reset();
+        version (PerfProbe) {
+            auto owned = framesBridge.submitClaimed(
+                FramesReq(FramesOp.reset), framesBudget_);
+            final switch (owned.kind) {
+            case BridgeResultKind.completed:
+                response.statusCode = 200;
+                response.body = "{\"status\":\"ok\"}";
+                break;
+            case BridgeResultKind.timedOut:
+                response.statusCode = 504;
+                response.body = "{\"error\":\"timeout waiting for main thread\"}";
+                break;
+            case BridgeResultKind.stopping:
+                response.statusCode = 503;
+                response.body = "{\"error\":\"HTTP server stopping\"}";
+                break;
+            case BridgeResultKind.failed:
+            case BridgeResultKind.submitted:
+                response.statusCode = 500;
+                response.body = "{\"error\":\"frame probe owner failed\"}";
+                break;
+            }
+        } else {
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+        }
     }
 
     private void route_apiFrames(HttpRequest request, HttpResponse response) {
-        // Per-frame phase-timing + GC-delta breakdown (task 0195,
-        // doc/frame_probe_scenarios_plan.md). Direct read of the
-        // process-wide FrameProbe from the HTTP thread — same
-        // no-lock diagnostic contract as /api/perf above (single-writer
-        // main-loop, write-then-advance ring discipline makes a racy
-        // read tear-free at frame granularity). Returns "{}" in the
-        // default (non-PerfProbe) build.
-        try {
+        // Task 6511: a perf build receives an owner-made detached snapshot;
+        // a default build has no live probe and answers immediately.
+        response.headers["Content-Type"] = "application/json";
+        version (PerfProbe) {
+            auto owned = framesBridge.submitClaimed(
+                FramesReq(FramesOp.read), framesBudget_);
+            final switch (owned.kind) {
+            case BridgeResultKind.completed:
+              try {
+                response.statusCode = 200;
+                response.body = owned.result.snapshot.toJson();
+              } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
+                               jsonEsc(e.msg) ~ "\"}";
+              }
+              break;
+            case BridgeResultKind.timedOut:
+                response.statusCode = 504;
+                response.body = "{\"error\":\"timeout waiting for main thread\"}";
+                break;
+            case BridgeResultKind.stopping:
+                response.statusCode = 503;
+                response.body = "{\"error\":\"HTTP server stopping\"}";
+                break;
+            case BridgeResultKind.failed:
+            case BridgeResultKind.submitted:
+                response.statusCode = 500;
+                response.body = "{\"error\":\"frame probe owner failed\"}";
+                break;
+            }
+        } else {
             response.statusCode = 200;
-            version (PerfProbe) response.body = g_frames.snapshot().toJson();
-            else response.body = "{}";
-            response.headers["Content-Type"] = "application/json";
-        } catch (Exception e) {
-            response.statusCode = 500;
-            response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
-                           jsonEsc(e.msg) ~ "\"}";
-            response.headers["Content-Type"] = "application/json";
+            response.body = "{}";
         }
     }
 
@@ -4741,6 +4795,22 @@ class HttpServer {
         });
     }
 
+    /// Serve FrameProbe reads and resets at the owner-thread frame boundary.
+    public void tickFrames(ref FrameProbe probe) {
+        FrameProbe* owner = &probe;
+        framesBridge.tickClaimed((ref FramesReq req,
+                                  ref FramesResp resp) nothrow {
+            final switch (req.op) {
+            case FramesOp.read:
+                resp.snapshot = owner.snapshot();
+                break;
+            case FramesOp.reset:
+                owner.reset();
+                break;
+            }
+        });
+    }
+
     /**
      * Give the HTTP replay producer its main-thread immediate-delivery sink.
      * The server owns the player but not editor input, so the composition root
@@ -4891,6 +4961,9 @@ enum Answered : ubyte {
     mainThread,  // marshaled through a MainThreadBridge
 }
 
+version (PerfProbe) private enum Answered kFramesAnswered = Answered.mainThread;
+else                private enum Answered kFramesAnswered = Answered.httpThread;
+
 struct RouteSpec {
     string   path;
     string   method;    // "" = any method (five routes genuinely mean this)
@@ -4921,8 +4994,8 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),
     RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.mainThread, "route_apiFramesCountsReset"),
     RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.mainThread, "route_apiFramesCounts"),
-    RouteSpec("/api/frames/reset",         "POST", Match.exact,  Answered.httpThread, "route_apiFramesReset"),
-    RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
+    RouteSpec("/api/frames/reset",         "POST", Match.exact,  kFramesAnswered, "route_apiFramesReset"),
+    RouteSpec("/api/frames",               "GET",  Match.exact,  kFramesAnswered, "route_apiFrames"),
     RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),
     RouteSpec("/api/cache/rebuilds",       "GET",  Match.exact,  Answered.httpThread, "route_apiCacheRebuilds"),
     RouteSpec("/api/gc/commands",          "GET",  Match.exact,  Answered.httpThread, "route_apiGcCommands"),
