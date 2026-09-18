@@ -2026,8 +2026,7 @@ void drawAi3dModal(EditorApp app) {
     }
 }
 
-void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob,
-                     MeshDg currentMesh) {
+void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg currentMesh) {
     assert(state !is null, "remesh modal requires panel state");
     assert(remeshJob !is null, "remesh modal requires the job owner");
     assert(currentMesh !is null, "remesh modal requires a live mesh provider");

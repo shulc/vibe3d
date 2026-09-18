@@ -78,6 +78,28 @@ private string uniqueTempStem(string label) {
         ~ thisProcessID.to!string ~ "_" ~ MonoTime.currTime.ticks.to!string);
 }
 
+private string repositoryRoot() {
+    import std.path : dirName;
+
+    return __FILE_FULL_PATH__.dirName.dirName.dirName.dirName;
+}
+
+private string collapseWhitespace(string text) {
+    string result;
+    bool spacing;
+    foreach (ch; text) {
+        const whitespace = ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t';
+        if (whitespace) {
+            spacing = result.length > 0;
+            continue;
+        }
+        if (spacing) result ~= ' ';
+        result ~= ch;
+        spacing = false;
+    }
+    return result;
+}
+
 private struct SavedHelperEnv {
     bool present;
     string value;
@@ -473,4 +495,94 @@ unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
         assert(readObjVertices(recordedInput).length == 49,
             "whole-mesh control did not write all 49 grid vertices");
     }
+}
+
+unittest { // production census: one owner, live provider, no pointer-era path
+    import std.algorithm : count;
+    import std.algorithm.searching : canFind;
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : buildPath;
+    import std.string : indexOf;
+    import tests.unit.census_symbols : blankNonCode;
+
+    const root = repositoryRoot();
+    const rawApp = readText(root.buildPath("source", "app.d"));
+    const rawEditor = readText(root.buildPath("source", "editor_app.d"));
+    const rawPanel = readText(root.buildPath("source", "ui", "panels.d"));
+    const rawRegistration = readText(root.buildPath("source", "registration.d"));
+    const rawProviders = readText(root.buildPath("source", "http_providers.d"));
+    const app = blankNonCode(rawApp);
+    const editor = blankNonCode(rawEditor);
+    const panel = blankNonCode(rawPanel);
+    const registration = blankNonCode(rawRegistration);
+    const providers = blankNonCode(rawProviders);
+    const flatApp = collapseWhitespace(app);
+    const flatPanel = collapseWhitespace(panel);
+
+    assert(rawApp.length > 430_000 && rawEditor.length > 45_000
+        && rawPanel.length > 150_000 && rawRegistration.length > 65_000
+        && rawProviders.length > 130_000,
+        "6360 source population: a censused production file shrank unexpectedly");
+
+    size_t sourceFiles;
+    string allSource;
+    foreach (entry; dirEntries(root.buildPath("source"), "*.d", SpanMode.depth)) {
+        ++sourceFiles;
+        allSource ~= blankNonCode(readText(entry.name));
+    }
+    assert(sourceFiles >= 561,
+        "6360 source population: fewer than the measured 561 D modules");
+
+    assert(app.count("auto remeshModalState = new RemeshModalState();") == 1
+        && allSource.count("new RemeshModalState()") == 1,
+        "6360 production owner: main must allocate exactly one RemeshModalState");
+    assert(app.count("app.remeshModalState") == 1
+        && app.count("drawRemeshModal(remeshModalState, remeshJob, app.meshDg);") == 1,
+        "6360 app wiring: EditorApp and draw must receive main's owner once");
+    assert(registration.count("remeshModalState.requestOpen();") == 1,
+        "6360 registration writer: mesh.remesh.open stopped using the shared owner");
+    assert(providers.count("remeshModalState.open") == 1,
+        "6360 diagnostics reader: modal state is missing or duplicated");
+
+    assert(flatPanel.count(
+        "void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg currentMesh) {") == 1
+        && allSource.count("drawRemeshModal(EditorApp") == 0,
+        "6360 panel signature: draw must accept state, job and live mesh provider only");
+    assert(app.count("auto cmd = cast(Remesh) reg.commandFactories[") == 1
+        && panel.count("auto cmd = cast(Remesh) reg.commandFactories[") == 0,
+        "6360 apply boundary: result application escaped tickRemeshJob");
+    assert(app.count("remeshModalState.noteSuccess(") == 1
+        && app.count("remeshModalState.noteFailure(") == 3,
+        "6360 poll continuation: success/failure publication counts changed");
+    assert(app.count("            tickRemeshJob();") == 1
+        && app.indexOf("            tickRemeshJob();")
+            < app.indexOf("drawRemeshModal(remeshModalState, remeshJob, app.meshDg);"),
+        "6360 frame order: remesh polling must remain before modal drawing");
+
+    const drawAt = panel.indexOf("void drawRemeshModal(");
+    const beginAt = panel.indexOf("if (ImGui.BeginPopupModal(", drawAt);
+    const closeAt = panel.indexOf("if (consumePendingClose())", drawAt);
+    const endAt = panel.indexOf("ImGui.EndPopup();", beginAt);
+    assert(beginAt >= 0 && closeAt > beginAt && endAt > closeAt,
+        "6360 popup handshake: pending-close consumption escaped BeginPopupModal");
+
+    foreach (retired; ["RemeshModalRefs", "remeshRefs",
+             "remeshModalOpenPtr", "remeshModalPendingOpenPtr",
+             "remeshModalPendingClosePtr", "remeshTargetQuadsPtr",
+             "remeshAdaptivityPtr", "remeshSharpEdgePtr",
+             "remeshLastErrorPtr", "remeshLastSummaryPtr"])
+        assert(!allSource.canFind(retired),
+            "6360 retired pointer storage returned: " ~ retired);
+
+    foreach (retiredLocal; ["bool remeshModalOpen;",
+             "bool remeshModalPendingOpen;", "bool remeshModalPendingClose;",
+             "int remeshTargetQuads = 20_000;",
+             "float remeshAdaptivity = 1.0f;",
+             "float remeshSharpEdge = 90.0f;", "string remeshLastError;",
+             "string remeshLastSummary;"])
+        assert(!flatApp.canFind(retiredLocal),
+            "6360 retired main-local modal storage returned: " ~ retiredLocal);
+
+    assert(editor.count("RemeshModalState remeshModalState;") == 1,
+        "6360 EditorApp keeper: shared state reference is missing or duplicated");
 }
