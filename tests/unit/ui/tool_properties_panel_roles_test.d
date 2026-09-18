@@ -1035,6 +1035,24 @@ unittest {
             "6060 C11 role boundary: panel regained EditorApp/ui.panels coupling");
 
         const drawBody = bodyAt(panel, "void drawToolPropertiesPanel(");
+        assert(rawPanel.count("tupleof") == 0
+            && rawPanel.count("getMember") == 0
+            && rawPanel.count("mixin") == 0,
+            "6504 G3 reflection census: tupleof/getMember/a string mixin reach "
+                ~ "past private (measured: even across modules), and "
+                ~ "blankNonCode cannot see a mixin — if this module legitimately "
+                ~ "needs one, the boundary needs a new argument, not a bigger ban list");
+        const snappingBody = bodyAt(panel, "if (!inMain)");
+        const enabledStagesBody = bodyAt(panel,
+            "ToolPropertiesStageInfo[] enabledStages()");
+        assert(identifierCount(snappingBody, "params") == 0
+            && identifierCount(snappingBody, "stageHasPanelParams") == 0
+            && identifierCount(snappingBody, "actions") == 1
+            && identifierCount(snappingBody, "drawStageBody") == 1
+            && identifierCount(enabledStagesBody, "params") == 0,
+            "6504 C11-g snap-page witness: the Snapping page gained a params() "
+                ~ "read, and a stage mirror is re-synced on the one page that "
+                ~ "must not touch it");
         foreach (name; ["Stage", "Tool", "ParamProvider",
                         "XfrmTransformTool", "drawProperties", "params",
                         "allMut", "findById", "suppressTRSProperties",
@@ -1065,13 +1083,6 @@ unittest {
             && identifierCount(drawBody, "drawStageBody") == 2,
             "6504 C11-a action census: the drawing body bypassed or duplicated "
                 ~ "the six action doors");
-        assert(rawPanel.count("tupleof") == 0
-            && rawPanel.count("getMember") == 0
-            && rawPanel.count("mixin") == 0,
-            "6504 G3 reflection census: tupleof/getMember/a string mixin reach "
-                ~ "past private (measured: even across modules), and "
-                ~ "blankNonCode cannot see a mixin — if this module legitimately "
-                ~ "needs one, the boundary needs a new argument, not a bigger ban list");
         assert(identifierCount(panel, "ParamProvider") == 0
             && identifierCount(panel, "allMut") == 0
             && panel.count("cast(Stage") == 0
@@ -1178,18 +1189,6 @@ unittest {
             "6504 C11-h stacking census: a second addStacked caller can mint "
                 ~ "a duplicate stage id, and resolution by id then picks the "
                 ~ "wrong instance");
-
-        const snappingBody = bodyAt(panel, "if (!inMain)");
-        const enabledStagesBody = bodyAt(panel,
-            "ToolPropertiesStageInfo[] enabledStages()");
-        assert(identifierCount(snappingBody, "params") == 0
-            && identifierCount(snappingBody, "stageHasPanelParams") == 0
-            && identifierCount(snappingBody, "actions") == 1
-            && identifierCount(snappingBody, "drawStageBody") == 1
-            && identifierCount(enabledStagesBody, "params") == 0,
-            "6504 C11-g snap-page witness: the Snapping page gained a params() "
-                ~ "read, and a stage mirror is re-synced on the one page that "
-                ~ "must not touch it");
 
         const flatApp = collapseWhitespace(app);
         enum bindCall =
