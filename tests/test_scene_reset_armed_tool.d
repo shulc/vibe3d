@@ -1,15 +1,11 @@
-// Regression test for the document-replace disarm seam. SceneReset crosses
-// source/tool_disarm.d before it snapshots or writes geometry, so an armed
-// Loop Slice is cancelled and dropped against its original cube. This locks
-// that production order: `file.new`, called
-// while a Loop Slice preview is armed (but not yet committed), must still
-// produce (a) a cleanly emptied scene -- 0 vertices, matching the existing
-// file.new contract in test_commands_file_misc.d -- and (b) exactly ONE new
-// undo entry (the SceneReset itself), never a second, bogus
-// "mesh.loop_slice_edit" entry ahead of it.
+// Regression test for the observable file.new outcome with an armed Loop
+// Slice: a cleanly emptied scene and exactly one SceneReset undo entry, never
+// a bogus mesh.loop_slice_edit entry. The first-layer production-drop witness
+// is test_reset_disarms_tool; this cell reads the shared disarm observation
+// only to attribute its final-state contract to the cancel-and-drop route.
 //
 // `dub build`/`dub test --config=tests` do NOT exercise app.d's installed
-// seam body with the real active tool; this suite cell does.
+// seam body with the real active tool; the two named suite cells do.
 
 import http_client : testBaseUrl, getJson;
 import http_command_helpers : commandBody;

@@ -7,6 +7,7 @@ import application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
 import command : Command, CommandOrigin;
 static import command;
+import commands.scene.load_mesh : MeshLoadRaw;
 import core.exception : AssertError;
 import document : Layer;
 import editmode : EditMode;
@@ -22,6 +23,7 @@ import shader : LitShader;
 import std.algorithm : count;
 import std.array : join;
 import std.conv : to;
+import std.exception : assertThrown;
 import std.file : exists, readText;
 import std.path : buildNormalizedPath, dirName;
 import std.string : indexOf, split;
@@ -35,6 +37,8 @@ import tool_disarm : DisarmMode, DisarmOutcome, g_disarmActiveTool,
 import tools.slice.edge_slice_tool : EdgeSliceTool;
 import tools.slice.loop_slice_tool : LoopSliceTool;
 import viewport : LayoutPreset, ViewportManager;
+
+static assert(!__traits(compiles, { SceneLifecycleDoors d; }));
 
 private string repoFile(string relative) {
     const path = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..",
@@ -356,6 +360,28 @@ unittest { // R5: factories resolve live roles/document and every door is requir
             && &rig.session.editMesh() is &rig.layerB.meshRef()
             && rig.layerB.meshRef().vertices.length == 6,
         "6480 R5 file.new floor: second live mesh is not primary");
+
+    rig.cells[0].distance = 11.0f;
+    rig.cells[1].distance = 17.0f;
+    auto load = cast(MeshLoadRaw)
+        rig.registry.commandFactories["scene.loadMesh"]();
+    assert(load !is null && load.meshPtr() is &rig.layerB.meshRef()
+            && load.viewRef() is rig.cells[1]
+            && load.editModeVal() == EditMode.Polygons,
+        "6480 R5 scene.loadMesh froze its mesh, view or mode value at registration");
+    assert(load.apply()
+            && rig.layerB.meshRef().vertices.length == 0
+            && rig.layerA.meshRef().vertices.length == 8
+            && rig.cells[0].distance == 11.0f
+            && rig.cells[1].distance == 3.0f
+            && rig.session.editMode == EditMode.Vertices,
+        "6480 R5 scene.loadMesh did not write through the live mesh/view/mode cells");
+    assert(load.revert()
+            && rig.layerB.meshRef().vertices.length == 6
+            && rig.layerA.meshRef().vertices.length == 8
+            && rig.session.editMode == EditMode.Polygons,
+        "6480 R5 scene.loadMesh did not restore through the live mode cell");
+
     auto fileNew = rig.binding.invokeLine("file.new", "",
         CommandInvocationContext(CommandOrigin.script, false));
     assert(fileNew.outcome == CommandInvocationOutcome.applied,
@@ -386,19 +412,11 @@ unittest { // R5: factories resolve live roles/document and every door is requir
 
     void delegate(EditMode) promote;
     void delegate() door;
-    size_t refusals;
-    void countRefusal(SceneLifecycleDoors delegate() make) {
-        try {
-            auto ignored = make();
-        } catch (AssertError) {
-            ++refusals;
-        }
-    }
-    countRefusal(() => SceneLifecycleDoors(promote, () {}, () {}));
-    countRefusal(() => SceneLifecycleDoors((EditMode mode) {}, door, () {}));
-    countRefusal(() => SceneLifecycleDoors((EditMode mode) {}, () {}, door));
-    assert(refusals == 3,
-        "6480 R5 all three lifecycle doors must be constructor-required");
+    assertThrown!AssertError(SceneLifecycleDoors(promote, () {}, () {}));
+    assertThrown!AssertError(
+        SceneLifecycleDoors((EditMode mode) {}, door, () {}));
+    assertThrown!AssertError(
+        SceneLifecycleDoors((EditMode mode) {}, () {}, door));
 }
 
 unittest { // R3: production wiring and the retired paths, deliberately last
@@ -421,7 +439,7 @@ unittest { // R3: production wiring and the retired paths, deliberately last
         ~ "app.sessionOwner.editModePtr()), SceneResetEffects(app.vpm, "
         ~ "app.subpatchPreviewPtr, &g_prefs, app.dropActiveTool, "
         ~ "app.resetAllPipeStages), SceneLifecycleDoors(app.promoteGeometryType, "
-        ~ "() { app.running = false; }, () => app.dropActiveTool( "
+        ~ "() { app.running = false; }, () => app.dropActiveTool("
         ~ "ToolTransition.sceneResetDrop)));";
     assert(registrationFlat.count(productionCall) == 1,
         "6480 R3 production call no longer binds the four lifecycle ids once");

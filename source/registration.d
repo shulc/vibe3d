@@ -907,8 +907,7 @@ void registerCommands(EditorApp app) {
                           app.dropActiveTool, app.resetAllPipeStages),
         SceneLifecycleDoors(app.promoteGeometryType,
                             () { app.running = false; },
-                            () => app.dropActiveTool(
-                                ToolTransition.sceneResetDrop)));
+                            () => app.dropActiveTool(ToolTransition.sceneResetDrop)));
     registerMeshCommands(app);
     registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,

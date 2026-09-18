@@ -214,8 +214,8 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // ladder. Task 5911; see doc/loop_slice_slider_hud_impl_plan.md for
 // the full mechanism-by-mechanism rationale (write-point redo invalidation
 // — task 0429, superseding the plan's navHistory redo-cancel —
-// scene.reset's `dropArmedPreview()` call and the `armedKey_`
-// mesh-swap guard) — none of that changed for v2, only WHAT gets latched
+// the `armedKey_` mesh-swap guard) — none of that changed for v2, only WHAT
+// gets latched
 // (`seeds_[]` instead of a single `seedEdge_`) and WHAT gets rebuilt from
 // (`positions_[]`/`current_` instead of a scalar `position_` + derived
 // even-spacing).
@@ -886,9 +886,8 @@ public:
         // edge case, cancels instead. Both commitEdit()/cancelLiveEdit()
         // self-guard against a mesh swapped out from under us (see their
         // bodies). Both reset doors drop the tool earlier, at the scene
-        // reset's disarm step, before the mesh is replaced; `file.new`'s
-        // `dropArmedPreview()` is only a fallback, and the guards cover the
-        // reset callback being reused without that disarm step.
+        // reset's disarm step, before the mesh is replaced; the guards cover
+        // the reset callback being reused without that disarm step.
         if (active && armed_) {
             if (built_) commitEdit();
             else        cancelLiveEdit();

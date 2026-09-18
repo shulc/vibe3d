@@ -406,16 +406,30 @@ unittest { // S9: production call, ordering and old-path census
                             "*_registration.d", SpanMode.shallow))
         regFiles ~= baseName(de.name);
     regFiles.sort;
-    size_t others;
+    size_t nonSelectionFiles, selectionExceptions, lifecycleExceptions;
     foreach (file; regFiles) {
-        if (file == "selection_command_registration.d") continue;
         const code = blankNonCode(readText(buildPath(repoRoot, "source", file)));
-        assert(code.count("editModePtr") == 0,
-            "6000 mode-cell reach: " ~ file ~ " reads the EditMode cell");
-        ++others;
+        if (file == "selection_command_registration.d") {
+            ++selectionExceptions;
+        } else {
+            assert(code.count("editModePtr") == 0,
+                "6000 mode-cell reach: " ~ file
+                ~ " reads editModePtr outside the selection registrar");
+            ++nonSelectionFiles;
+        }
+        if (file == "scene_file_lifecycle_registration.d") {
+            assert(code.count("modeCell") == 2,
+                "6000 mode-cell reach: the scene/file lifecycle registrar "
+                ~ "must own exactly its two declared modeCell reads");
+            ++lifecycleExceptions;
+        } else {
+            assert(code.count("modeCell") == 0,
+                "6000 mode-cell reach: " ~ file
+                ~ " reads modeCell outside the scene/file lifecycle registrar");
+        }
     }
-    assert(others >= 3
-        && regFiles.count("selection_command_registration.d") == 1,
+    assert(nonSelectionFiles >= 3 && selectionExceptions == 1
+        && lifecycleExceptions == 1,
         format("6000 mode-cell reach population: %s", regFiles));
 
     assert(reg.count("void registerSelectionCommands(") == 0,
