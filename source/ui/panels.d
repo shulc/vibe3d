@@ -290,6 +290,7 @@ import layer_params   : LayerPropsProvider, itemPropsTarget;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 import ui.guard_modal_state : GuardModalState;
+import ui.remesh_modal_state : RemeshModalState;
 import ui.viewport_props_role : ViewportCommandDispatch,
     ViewportPropertiesReadRole;
 import layout_reset_action : LayoutResetAction;
@@ -306,7 +307,7 @@ version (WithAI) {
 
 // Task-0419 relocations out of app.d (editor_app.d is the shared foundation
 // -- see its own "Task 0419" doc comment for the full rationale on each).
-import editor_app : EditorApp, Layout,
+import editor_app : EditorApp, Layout, MeshDg,
     kAiToggleAvailable, kGenerateAiAvailable,
     buildItemFrame;
 
@@ -1784,19 +1785,13 @@ void drawStatusBar(EditorApp app) {
 // =========================================================================
 // app.d decomp phase B: the four inline ImGui panels of app.d's main loop:
 //   drawAi3dModal            -- was app.d ~5650-5874 ("AI3D Generate modal")
-//   drawRemeshModal          -- was app.d ~5876-5978 ("Quad Remesh modal")
+//   drawRemeshModal          -- now takes its state, job and mesh provider
 //   drawQuitGuardModal       -- was app.d ~5980-6034 ("Unsaved-changes quit
 //                               guard + confirmation modal")
 //   drawCommandHistoryPanel  -- was app.d ~6304-6651 ("Command History")
-// The first two retain the original EditorApp seam. Their only body edits
-// vs the pre-move text are Edit-class-2 address-of sites (precedent:
-// registration.d's &promoteItemType): ImGui's SliderInt/SliderFloat/Checkbox
-// take a raw pointer, and `&prop` on a @property ref field yields the property
-// FUNCTION's address, so these widget calls read the `namePtr` storage field:
-//   &ai3dMaxFaces -> ai3dMaxFacesPtr, &remeshTargetQuads ->
-//   remeshTargetQuadsPtr, &remeshAdaptivity -> remeshAdaptivityPtr,
-//   &remeshSharpEdge -> remeshSharpEdgePtr. drawQuitGuardModal now receives
-// only its per-application state, test-mode gate and existing guard controller.
+// drawAi3dModal retains the original EditorApp seam and its Edit-class-2
+// pointer-backed widget storage. drawRemeshModal and drawQuitGuardModal receive
+// only their narrow per-application state and collaborator roles.
 // Command History now has an owned form state plus narrow read/action roles;
 // its visible drawing remains an ImGui adapter around HistoryPanelController.
 // =========================================================================
@@ -2031,49 +2026,47 @@ void drawAi3dModal(EditorApp app) {
     }
 }
 
-void drawRemeshModal(EditorApp app) {
-    with (app) {
+void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob,
+                     MeshDg currentMesh) {
+    assert(state !is null, "remesh modal requires panel state");
+    assert(remeshJob !is null, "remesh modal requires the job owner");
+    assert(currentMesh !is null, "remesh modal requires a live mesh provider");
+    with (state) {
         // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
         // Same BeginPopupModal convention as the AI3D modal above. Opened by
         // `mesh.remesh.open` (registered below, near the other mesh.remesh.*
         // factories). Unlike ai3dModal, this reads remeshJob.state()/busy()/
         // message() DIRECTLY every frame — RemeshJob is polled synchronously
         // in this same thread (no worker thread / event queue to snapshot).
-        if (remeshModalOpen) {
-            if (remeshModalPendingOpen) {
+        if (open) {
+            if (consumePendingOpen()) {
                 ImGui.OpenPopup("Remesh (Quad)");
-                remeshModalPendingOpen = false;
+                noteRemeshModalOpened();
             }
 
             if (ImGui.BeginPopupModal("Remesh (Quad)", null, ImGuiWindowFlags.AlwaysAutoResize)) {
                 // Auto-close once a remesh has actually landed (set by
                 // tickRemeshJob on a successful apply): the action happened, so
                 // the window dismisses itself — no manual close needed.
-                if (remeshModalPendingClose) {
-                    remeshModalPendingClose = false;
+                if (consumePendingClose()) {
                     ImGui.CloseCurrentPopup();
-                    remeshModalOpen = false;
+                    closeWindow();
                 }
 
                 ImGui.SetNextItemWidth(280);
-                ImGui.SliderInt("Target Quads", remeshTargetQuadsPtr,
+                ImGui.SliderInt("Target Quads", &targetQuads,
                                  MIN_REMESH_TARGET_QUADS, cast(int) MAX_REMESH_TARGET_QUADS);
                 // SliderInt's vMin/vMax only bound the drag/click gesture — its
-                // text-entry mode (Ctrl+click) can still land an out-of-range
-                // value, so clamp right after (same convention as ai3dMaxFaces
-                // above; the REAL authority is RemeshJob.start()'s kernel clamp).
-                if (remeshTargetQuads < MIN_REMESH_TARGET_QUADS) remeshTargetQuads = MIN_REMESH_TARGET_QUADS;
-                if (remeshTargetQuads > cast(int) MAX_REMESH_TARGET_QUADS) remeshTargetQuads = cast(int) MAX_REMESH_TARGET_QUADS;
+                // text-entry mode clamps only with ClampOnInput in the linked
+                // cimgui widgets implementation. The REAL authority remains
+                // RemeshJob.start()'s kernel clamp.
 
                 ImGui.SetNextItemWidth(280);
-                ImGui.SliderFloat("Adaptivity", remeshAdaptivityPtr, 0.0f, 10.0f);
-                if (remeshAdaptivity < 0.0f) remeshAdaptivity = 0.0f;
-                if (remeshAdaptivity > 10.0f) remeshAdaptivity = 10.0f;
+                ImGui.SliderFloat("Adaptivity", &adaptivity, 0.0f, 10.0f);
 
                 ImGui.SetNextItemWidth(280);
-                ImGui.SliderFloat("Sharp Edge (deg)", remeshSharpEdgePtr, 0.0f, 180.0f);
-                if (remeshSharpEdge < 0.0f) remeshSharpEdge = 0.0f;
-                if (remeshSharpEdge > 180.0f) remeshSharpEdge = 180.0f;
+                ImGui.SliderFloat("Sharp Edge (deg)", &sharpEdge, 0.0f, 180.0f);
+                clampToBounds();
 
                 ImGui.Separator();
 
@@ -2084,62 +2077,101 @@ void drawRemeshModal(EditorApp app) {
                 void closeRemeshModal() {
                     if (remeshJob.busy()) remeshJob.cancel();
                     ImGui.CloseCurrentPopup();
-                    remeshModalOpen = false;
+                    closeWindow();
                 }
 
                 const bool remeshBusy = remeshJob.busy();
                 if (!remeshBusy) {
-                    if (ImGui.Button("Remesh")) {
-                        remeshLastError   = null;
-                        remeshLastSummary = null;
+                    const remeshPressed = ImGui.Button("Remesh");
+                    noteRemeshModalRemeshRect();
+                    if (remeshPressed) {
+                        lastError = null;
+                        lastSummary = null;
                         RemeshParams p;
-                        p.targetQuads = remeshTargetQuads;
-                        p.adaptivity  = remeshAdaptivity;
-                        p.sharpEdge   = remeshSharpEdge;
+                        p.targetQuads = targetQuads;
+                        p.adaptivity  = adaptivity;
+                        p.sharpEdge   = sharpEdge;
                         // Task 0385: a non-empty face selection remeshes just
                         // that region and stitches it back in (see
                         // commands.mesh.remesh.RemeshStart, which mirrors this
                         // same selection -> region-mask translation for the
                         // headless/HTTP `mesh.remesh.start` path).
-                        const(bool)[] regionMask =
-                            mesh().hasAnySelectedFaces() ? mesh().selectedFaces : null;
-                        remeshJob.start(mesh(), p, regionMask);
+                        auto mesh = &currentMesh();
+                        const(bool)[] regionMask = mesh.hasAnySelectedFaces()
+                            ? mesh.selectedFaces : null;
+                        remeshJob.start(*mesh, p, regionMask);
                         if (remeshJob.state() == RemeshJob.State.failed)
-                            remeshLastError = remeshJob.message();
+                            lastError = remeshJob.message();
                     }
                     ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeRemeshModal();
+                    const cancelPressed = ImGui.Button("Cancel");
+                    noteRemeshModalCancelRect();
+                    if (cancelPressed) closeRemeshModal();
                 } else {
                     ImGui.TextUnformatted("Remeshing...");
                     ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeRemeshModal();
+                    const cancelPressed = ImGui.Button("Cancel");
+                    noteRemeshModalCancelRect();
+                    if (cancelPressed) closeRemeshModal();
                 }
 
                 // The error survives on screen across the modal staying open
                 // (a full success auto-closes it). A PARTIAL success (task
                 // 0386: some region components skipped) still auto-closes —
-                // remeshLastSummary shows for the one frame before that
+                // lastSummary shows for the one frame before that
                 // happens, same as a plain "Done" summary always has.
                 // TextUnformatted (not Text): either message can carry the
                 // helper's raw stderr tail with stray "%", which the printf-
                 // style ImGui.Text would read as a conversion off an empty
                 // va_list.
-                if (remeshLastError.length)
-                    ImGui.TextUnformatted("Error: " ~ remeshLastError);
-                else if (remeshLastSummary.length)
-                    ImGui.TextUnformatted(remeshLastSummary);
+                if (lastError.length)
+                    ImGui.TextUnformatted("Error: " ~ lastError);
+                else if (lastSummary.length)
+                    ImGui.TextUnformatted(lastSummary);
                 ImGui.EndPopup();
             } else {
                 // Closed via ESC — same semantics as the Cancel button: abort
                 // any in-flight job so it can't land after the modal is gone.
                 if (remeshJob.busy()) remeshJob.cancel();
-                remeshModalOpen = false;
+                closeWindow();
             }
         }
     }
 }
 
 version (unittest) {
+    struct RemeshModalDrawSnapshot {
+        size_t openCalls;
+        ImVec2 remeshMin;
+        ImVec2 remeshMax;
+        ImVec2 cancelMin;
+        ImVec2 cancelMax;
+    }
+
+    private __gshared RemeshModalDrawSnapshot g_remeshModalDrawSnapshot;
+
+    RemeshModalDrawSnapshot remeshModalDrawSnapshot() {
+        return g_remeshModalDrawSnapshot;
+    }
+
+    void resetRemeshModalDrawSnapshot() {
+        g_remeshModalDrawSnapshot = RemeshModalDrawSnapshot.init;
+    }
+
+    private void noteRemeshModalOpened() {
+        ++g_remeshModalDrawSnapshot.openCalls;
+    }
+
+    private void noteRemeshModalRemeshRect() {
+        g_remeshModalDrawSnapshot.remeshMin = ImGui.GetItemRectMin();
+        g_remeshModalDrawSnapshot.remeshMax = ImGui.GetItemRectMax();
+    }
+
+    private void noteRemeshModalCancelRect() {
+        g_remeshModalDrawSnapshot.cancelMin = ImGui.GetItemRectMin();
+        g_remeshModalDrawSnapshot.cancelMax = ImGui.GetItemRectMax();
+    }
+
     struct GuardModalDrawSnapshot {
         size_t discardOpenCalls;
         ImVec2 saveMin;
@@ -2157,6 +2189,10 @@ version (unittest) {
     void resetGuardModalDrawSnapshot() {
         g_guardModalDrawSnapshot = GuardModalDrawSnapshot.init;
     }
+} else {
+    private void noteRemeshModalOpened() {}
+    private void noteRemeshModalRemeshRect() {}
+    private void noteRemeshModalCancelRect() {}
 }
 
 private void cancelGuardPopup(GuardModalState state,

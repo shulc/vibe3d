@@ -13,6 +13,7 @@ import tool_activation_ownership : ToolTransition, ActivationDoor,
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
+import ui.remesh_modal_state : RemeshModalState;
 import layout_reset_action : LayoutResetAction, seedDefaultLayoutIfMissing;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
@@ -3110,20 +3111,10 @@ void main(string[] args) {
     bool     ai3dInstallConfirmOpen;
     bool     ai3dInstallConfirmPendingOpen;
 
-    // Quad Remesh modal (source/remesh/remesh_job.d). No health-check /
-    // event-queue snapshot needed like ai3dModal above — RemeshJob is polled
-    // synchronously in this same thread, so the modal reads its
-    // state()/message()/busy() directly every frame. Only the two things
-    // that don't survive a post-success clear() (see tickRemeshJob) are
-    // cached here for display.
-    bool   remeshModalOpen;
-    bool   remeshModalPendingOpen;
-    bool   remeshModalPendingClose;  // set on a successful remesh -> auto-close
-    int    remeshTargetQuads = 20_000;
-    float  remeshAdaptivity  = 1.0f;
-    float  remeshSharpEdge   = 90.0f;
-    string remeshLastError;
-    string remeshLastSummary;
+    // Quad Remesh modal. One reference-semantics owner carries its handshake,
+    // parameters and result text across registration, drawing, polling and
+    // diagnostics (task 6360; ui/remesh_modal_state.d).
+    auto remeshModalState = new RemeshModalState();
 
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
@@ -3515,13 +3506,9 @@ void main(string[] args) {
     app.ai3dRefs.ai3dPickedImagePathPtr  = &ai3dPickedImagePath;
     app.ai3dRefs.ai3dWorkerUrlBufPtr     = &ai3dWorkerUrlBuf;
 
-    app.remeshRefs.remeshModalOpenPtr        = &remeshModalOpen;
-    app.remeshRefs.remeshModalPendingOpenPtr = &remeshModalPendingOpen;
-    app.remeshRefs.remeshLastErrorPtr        = &remeshLastError;
-    app.remeshRefs.remeshLastSummaryPtr      = &remeshLastSummary;
-
-    // Phase-B pointer wiring for drawAi3dModal/drawRemeshModal.
-    // HistoryPanelState and GuardModalState own the other panel storage;
+    // Phase-B pointer wiring for drawAi3dModal.
+    // HistoryPanelState, GuardModalState and RemeshModalState own the other
+    // panel storage;
     // ai3dWorkerManager is assigned exactly once (~1179).
     app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
     app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
@@ -3530,11 +3517,8 @@ void main(string[] args) {
     app.ai3dInstallConfirmPendingOpenPtr = &ai3dInstallConfirmPendingOpen;
     app.ai3dMaxFacesPtr               = &ai3dMaxFaces;
     app.ai3dWorkerManager             = ai3dWorkerManager;
-    app.remeshModalPendingClosePtr    = &remeshModalPendingClose;
-    app.remeshTargetQuadsPtr          = &remeshTargetQuads;
-    app.remeshAdaptivityPtr           = &remeshAdaptivity;
-    app.remeshSharpEdgePtr            = &remeshSharpEdge;
     app.guardModalState               = guardModalState;
+    app.remeshModalState              = remeshModalState;
     app.history         = history;
     app.vpm             = vpm;
     app.litShader       = litShader;
@@ -4233,8 +4217,8 @@ void main(string[] args) {
                 // active tool at pre-apply, even when the command later
                 // evaluates to a no-op.
                 if (!remeshJob.sourceMatches(mesh())) {
-                    remeshLastSummary = null;
-                    remeshLastError = "mesh changed while remeshing; result discarded";
+                    remeshModalState.noteFailure(
+                        "mesh changed while remeshing; result discarded");
                     remeshJob.clear();
                     break;
                 }
@@ -4255,19 +4239,17 @@ void main(string[] args) {
                     // The mesh changed (visible in the viewport) — the action
                     // happened, so auto-close the modal. A failed/no-op remesh
                     // (below) keeps it open so the error stays visible.
-                    remeshLastError   = null;
-                    remeshLastSummary = "Done -- " ~ nFaces.to!string ~ " faces"
-                                      ~ (partialNote.length ? " (" ~ partialNote ~ ")" : "");
-                    remeshModalPendingClose = true;
+                    remeshModalState.noteSuccess(
+                        "Done -- " ~ nFaces.to!string ~ " faces"
+                        ~ (partialNote.length ? " (" ~ partialNote ~ ")" : ""));
                 } else {
-                    remeshLastSummary = null;
-                    remeshLastError   = "remesh produced no usable geometry";
+                    remeshModalState.noteFailure(
+                        "remesh produced no usable geometry");
                 }
                 remeshJob.clear();
                 break;
             case RemeshJob.State.failed:
-                remeshLastSummary = null;
-                remeshLastError   = remeshJob.message();
+                remeshModalState.noteFailure(remeshJob.message());
                 remeshJob.clear();
                 break;
         }
@@ -5304,9 +5286,9 @@ void main(string[] args) {
         drawAi3dModal(app);
 
         // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
-        // Moved VERBATIM to ui/panels.d's drawRemeshModal (app.d decomp,
-        // phase B; same `with (app)` seam as the 0419 panels).
-        drawRemeshModal(app);
+        // The panel receives only its persistent state, subprocess owner and
+        // live mesh provider; result application remains in tickRemeshJob().
+        drawRemeshModal(remeshModalState, remeshJob, app.meshDg);
 
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
         // The panel receives only its stable handshake state, the window gate

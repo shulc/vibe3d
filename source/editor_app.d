@@ -24,6 +24,7 @@ import http_server;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome;
 import ui.guard_modal_state : GuardModalState;
+import ui.remesh_modal_state : RemeshModalState;
 import ui.history_panel : HistoryPanelState;
 import log : logInfo, logWarn, logError;
 import prefs;
@@ -575,10 +576,9 @@ alias MeshDg        = ref Mesh delegate() nothrow @nogc;
 alias ViewDg         = ref View delegate();
 
 // ---------------------------------------------------------------------------
-// AI3D generate-modal field cluster (task 0415 Phase 2 -- symmetric pairing
-// with RemeshModalRefs below; the opponent's review caught this cluster
-// missing from plan v1 exactly because a flat ~43-field mesh makes a missing
-// symmetric sibling easy to overlook). Every leaf is individually
+// AI3D generate-modal field cluster (task 0415 Phase 2). The opponent's review
+// caught this cluster missing from plan v1 exactly because a flat ~43-field
+// mesh makes a missing sibling easy to overlook. Every leaf is individually
 // pointer-backed to its OWN separate main()-local -- these five locals are
 // NOT merged into one aggregate in main() itself, since that would ripple
 // edits across every OTHER app.d site outside the two registration spans
@@ -596,18 +596,6 @@ struct Ai3dModalRefs {
     @property ref string ai3dPickedImagePath() { return *ai3dPickedImagePathPtr; }
     char[256]* ai3dWorkerUrlBufPtr;
     @property ref char[256] ai3dWorkerUrlBuf() { return *ai3dWorkerUrlBufPtr; }
-}
-
-/// Quad-remesh modal field cluster -- symmetric to Ai3dModalRefs above.
-struct RemeshModalRefs {
-    bool* remeshModalOpenPtr;
-    @property ref bool remeshModalOpen() { return *remeshModalOpenPtr; }
-    bool* remeshModalPendingOpenPtr;
-    @property ref bool remeshModalPendingOpen() { return *remeshModalPendingOpenPtr; }
-    string* remeshLastErrorPtr;
-    @property ref string remeshLastError() { return *remeshLastErrorPtr; }
-    string* remeshLastSummaryPtr;
-    @property ref string remeshLastSummary() { return *remeshLastSummaryPtr; }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,9 +703,8 @@ struct EditorApp {
     // ---- late-bound read view, wired AFTER the ToolHost block in main() ----
     ToolHostReadView toolHostView;
 
-    // ---- modal clusters (grouped sub-structs, see above) ----
-    Ai3dModalRefs   ai3dRefs;
-    RemeshModalRefs remeshRefs;
+    // ---- remaining pointer-backed modal cluster (see above) ----
+    Ai3dModalRefs ai3dRefs;
 
     // ---- (в) by-value: class-ref/delegate locals assigned EXACTLY ONCE
     //      in main() (grep-verified `\bX\s*=[^=]` == 1 for every name below;
@@ -902,21 +889,15 @@ struct EditorApp {
     // InputRouter's shortcut path.
     // =========================================================================
 
-    // ---- forwards into ai3dRefs/remeshRefs (the 0415 clusters above): the
-    //      moved main-loop panel bodies read these bare under `with (app)`,
-    //      so EditorApp re-exposes the cluster leaves at its own top level.
-    //      (No new storage -- these forward to the same pointers the 0415
-    //      ctx block wires.) ----
+    // ---- forwards into ai3dRefs (the 0415 cluster above): the moved
+    //      main-loop panel body reads these bare under `with (app)`, so
+    //      EditorApp re-exposes the leaves at its own top level. (No new
+    //      storage -- these forward to the same pointers the ctx block wires.) ----
     @property ref Ai3dModalState ai3dModal() { return ai3dRefs.ai3dModal; }
     @property ref bool ai3dModalOpen() { return ai3dRefs.ai3dModalOpen; }
     @property ref bool ai3dModalPendingOpen() { return ai3dRefs.ai3dModalPendingOpen; }
     @property ref string ai3dPickedImagePath() { return ai3dRefs.ai3dPickedImagePath; }
     @property ref char[256] ai3dWorkerUrlBuf() { return ai3dRefs.ai3dWorkerUrlBuf; }
-    @property ref bool remeshModalOpen() { return remeshRefs.remeshModalOpen; }
-    @property ref bool remeshModalPendingOpen() { return remeshRefs.remeshModalPendingOpen; }
-    @property ref string remeshLastError() { return remeshRefs.remeshLastError; }
-    @property ref string remeshLastSummary() { return remeshRefs.remeshLastSummary; }
-
     // ---- AI3D Generate modal ----
     bool* ai3dWorkerStartingPtr;
     @property ref bool ai3dWorkerStarting() { return *ai3dWorkerStartingPtr; }
@@ -932,20 +913,15 @@ struct EditorApp {
     @property ref int ai3dMaxFaces() { return *ai3dMaxFacesPtr; }
     Ai3dWorkerManager ai3dWorkerManager;
 
-    // ---- Quad Remesh modal ----
-    bool* remeshModalPendingClosePtr;
-    @property ref bool remeshModalPendingClose() { return *remeshModalPendingClosePtr; }
-    int* remeshTargetQuadsPtr;
-    @property ref int remeshTargetQuads() { return *remeshTargetQuadsPtr; }
-    float* remeshAdaptivityPtr;
-    @property ref float remeshAdaptivity() { return *remeshAdaptivityPtr; }
-    float* remeshSharpEdgePtr;
-    @property ref float remeshSharpEdge() { return *remeshSharpEdgePtr; }
-
     // ---- quit guard + command-failure notice ----
     // Stable class reference shared with the panel and HTTP diagnostic. The
     // five mutable handshake fields live in GuardModalState, not EditorApp.
     GuardModalState guardModalState;
+
+    // Stable class reference shared by the registrar, renderer, async result
+    // continuation and HTTP diagnostic. Its eight mutable fields live in the
+    // state owner rather than in main()-frame pointer slots.
+    RemeshModalState remeshModalState;
 
     bool delegate(bool) navHistory;
 }

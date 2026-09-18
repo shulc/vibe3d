@@ -21,8 +21,7 @@ import tool_activation_ownership : ToolTransition;
 // not called anywhere yet. `dub build` glob-compiles source/ regardless of
 // import reachability (CLAUDE.md build note), so this file's own imports
 // are already gated by the compiler even before app.d references it.
-import editor_app : EditorApp, Ai3dModalState, Ai3dModalRefs, RemeshModalRefs,
-    MeshDg, ViewDg;
+import editor_app : EditorApp, Ai3dModalState, Ai3dModalRefs, MeshDg, ViewDg;
 
 import bindbc.sdl;
 import bindbc.opengl;
@@ -917,11 +916,10 @@ void registerCommands(EditorApp app) {
     app.reg().commandFactories["layout.reset"] = () => cast(Command)
         new UiLayoutResetCommand(&app.mesh(), app.cameraView(), app.editMode(),
                                  app.authorLayoutReset);
-    // The same three-deep `with` the flat body had, for the same reason the
-    // family functions keep it: identical name resolution, not a narrower one.
+    // Preserve the live `EditorApp` and AI3D scopes used by the flat body;
+    // Quad Remesh state now has one class owner rather than a leaf bundle.
     with (app) {
     with (ai3dRefs) {
-    with (remeshRefs) {
 
     // -----------------------------------------------------------------------
     // Selection-type authority (task 0621) — wired onto EVERY command.
@@ -963,21 +961,17 @@ void registerCommands(EditorApp app) {
     }
     }
     }
-    }
 }
 
 /// Mesh, polygon, vertex and UV operations — one family of the registration table (task 0722, audit
 /// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
 /// which keys are written is exactly what it was; and every key in the
 /// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
+/// not load-bearing between families either. The live `EditorApp` and AI3D
+/// scopes remain; the removed remesh leaf bundle no longer has a scope.
 private void registerMeshCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
-    with (remeshRefs) {
     reg.commandFactories["mesh.subdivide"] = () => cast(Command)
         new Subdivide(&mesh(), cameraView, editMode,
                       () => dropActiveTool(ToolTransition.meshRebuildDrop));
@@ -992,10 +986,7 @@ private void registerMeshCommands(EditorApp app) {
                    () => dropActiveTool(ToolTransition.meshRebuildDrop), remeshJob);
     reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
         new RemeshOpen(&mesh(), cameraView, editMode, () {
-            remeshModalOpen        = true;
-            remeshModalPendingOpen = true;
-            remeshLastError        = null;
-            remeshLastSummary      = null;
+            remeshModalState.requestOpen();
         });
     reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
         new SubdivideFaceted(&mesh(), cameraView, editMode,
@@ -1252,7 +1243,6 @@ private void registerMeshCommands(EditorApp app) {
     reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
         new MeshSessionEdit(&mesh(), cameraView, editMode,
                           "mesh.bevel_edit", "Bevel");
-    }
     }
     }
 }

@@ -219,9 +219,9 @@ final class RemeshStart : Command {
 // RemeshOpen — `mesh.remesh.open`, the `Remesh (Quad)…` menu action. Zero
 // params (so app.d's tryOpenArgsDialog does NOT pop the generic args
 // dialog — it runs directly on click, mirroring ai3d.generate.open). apply()
-// only opens the modal via `onOpen`; app.d wires that to set
-// remeshModalOpen/remeshModalPendingOpen and clear any stale error/summary
-// text from a previous run. Never a document mutation — no undo entry.
+// only opens the modal via `onOpen`; registration wires that callback to the
+// application's RemeshModalState handshake. Never a document mutation — no
+// undo entry.
 // ---------------------------------------------------------------------------
 
 final class RemeshOpen : Command {
