@@ -577,8 +577,9 @@ unittest { // C9/C10: real rows carry production commands and remove one extra
     string removeLine;
     bool resetLineSeen, secondRemoveSeen;
     foreach (row; activeRows) {
-        assert(row["source"].str == "popup" && row["kind"].str == "script",
-            "6560 falloff rows: every recorded row must be a popup script action");
+        assert(row["source"].str == "popup" && row["kind"].str == "script"
+            && !row["disabled"].boolean && row["reason"].str.length == 0,
+            "6560 falloff rows: every recorded row must be an enabled popup script action");
         const id = row["id"].str;
         if (id == "tool.pipe.attr falloff type none") resetLineSeen = true;
         if (id == "falloff.remove falloff#1") removeLine = id;
