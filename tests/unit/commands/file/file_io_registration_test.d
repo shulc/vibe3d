@@ -148,8 +148,11 @@ unittest { // a history-held command stays on A while new factories resolve B
 unittest { // production wiring and LAST-wrapper ordering
     const registrationPath = buildPath(repoRoot, "source", "registration.d");
     const fileIoPath = buildPath(repoRoot, "source", "file_io_registration.d");
+    const lifecyclePath = buildPath(repoRoot, "source",
+        "scene_file_lifecycle_registration.d");
     const registration = readText(registrationPath);
     const fileIo = readText(fileIoPath);
+    const lifecycle = readText(lifecyclePath);
 
     assert(fileIo.length > 2_000,
         "5790 production census population: file_io_registration.d is too small");
@@ -157,7 +160,8 @@ unittest { // production wiring and LAST-wrapper ordering
         && fileIo.count("editor_app") == 0,
         "5790 no-EditorApp witness: narrow registrar imports or names EditorApp");
     assert(fileIo.count("file.new") == 0
-        && registration.count("commandFactories[\"file.new\"]") == 1,
+        && lifecycle.count("commandFactories[\"file.new\"]") == 1
+        && registration.count("commandFactories[\"file.new\"]") == 0,
         "5790 scope fence: file.new left its application lifecycle family");
 
     enum productionCall =

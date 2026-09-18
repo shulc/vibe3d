@@ -236,8 +236,8 @@ unittest {
 // `with (app) { … }` — their factory lambdas read bare EditorApp names through it, and its
 // header says so — and `input_router.d` opens it in three handlers, each with
 // a comment on the `buildToolVts` rebinding hazard beside it. Those blocks are
-// deliberate. What this row refuses is a FOURTH input_router block or a
-// twelfth registration one born without anyone deciding: the failure mode
+// deliberate. What this row refuses is a FOURTH input_router block or another
+// registration block born without anyone deciding: the failure mode
 // is the one described at the top of this file, a bare name that silently
 // REBINDS to an `EditorApp` member of the same spelling, and it is invisible
 // at the point of introduction. So the set is enumerated, not merely
@@ -259,9 +259,7 @@ private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerPrimitiveTools", 1, "primitive registrations"),
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
     LedgerRow("registerCommands", 1, "top-level command registrations"),
-    LedgerRow("registerFileCommands", 1, "file commands"),
     LedgerRow("registerMeshCommands", 1, "mesh commands"),
-    LedgerRow("registerSceneLifecycleCommands", 1, "scene lifecycle commands"),
     LedgerRow("registerSelfTestCommands", 1, "self-test commands"),
     LedgerRow("InputRouter.handleWindowEvent", 1, "window-event handler"),
     LedgerRow("InputRouter.handleMouseWheel", 1, "mouse-wheel handler"),
@@ -320,8 +318,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 12)
-        problems ~= format("\n    with(app) population — recorded 12, scanner "
+    if (ledgerHits.length != 10)
+        problems ~= format("\n    with(app) population — recorded 10, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

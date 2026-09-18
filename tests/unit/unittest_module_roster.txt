@@ -192,6 +192,7 @@ tests.unit.commands.mesh.split_edge_provenance_test
 tests.unit.commands.mesh.symmetrize_test
 tests.unit.commands.mesh.symmetry_delta_test
 tests.unit.commands.pipe_command_registration_test
+tests.unit.commands.scene.scene_file_lifecycle_registration_test
 tests.unit.commands.scene.scene_reset_effects_test
 tests.unit.commands.select.loop_test
 tests.unit.commands.select.selection_command_registration_test

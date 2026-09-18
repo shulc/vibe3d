@@ -250,6 +250,8 @@ unittest { // production wiring, scope fences, and the single panel owner
     const registration = readText(buildPath(repoRoot, "source", "registration.d"));
     const registrar = readText(buildPath(repoRoot, "source",
         "history_macro_registration.d"));
+    const lifecycle = readText(buildPath(repoRoot, "source",
+        "scene_file_lifecycle_registration.d"));
     const app = readText(buildPath(repoRoot, "source", "app.d"));
 
     assert(registrar.length > 3_500,
@@ -268,8 +270,10 @@ unittest { // production wiring, scope fences, and the single panel owner
         "5810 registrar id population changed from 11");
     assert(registrar.count("scene.reset") == 0
         && registrar.count("scene.loadMesh") == 0
-        && registration.count("commandFactories[\"scene.reset\"]") == 1
-        && registration.count("commandFactories[\"scene.loadMesh\"]") == 1,
+        && lifecycle.count("commandFactories[\"scene.reset\"]") == 1
+        && lifecycle.count("commandFactories[\"scene.loadMesh\"]") == 1
+        && registration.count("commandFactories[\"scene.reset\"]") == 0
+        && registration.count("commandFactories[\"scene.loadMesh\"]") == 0,
         "5810 lifecycle scope fence: scene reset/load left the old registrar");
 
     enum productionCall =
