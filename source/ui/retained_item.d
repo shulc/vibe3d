@@ -1,6 +1,13 @@
 module ui.retained_item;
 
 import document : Document, Layer;
+import std.typecons : Rebindable;
+
+/// A document-item identity that UI storage may rebind but ordinary reads can
+/// only observe as `const(Layer)`. D still permits raw/private-field bypasses
+/// by construction; task 6530 pins the carrier members and signatures, while
+/// review owns byte-punning inside an existing body.
+alias ConstItem = Rebindable!(const(Layer));
 
 /// One document item that a UI operation keeps across frames: an open inline
 /// rename, or a remove waiting for its confirmation.
@@ -13,13 +20,13 @@ import document : Document, Layer;
 /// operation without dispatching a command. This is a target token, not a
 /// second primary: nothing else reads it.
 struct RetainedItem {
-    private Layer item_;
+    private ConstItem item_;
 
-    void hold(Layer item) { item_ = item; }
+    void hold(const(Layer) item) { item_ = item; }
     void release() { item_ = null; }
 
     @property bool held() const { return item_ !is null; }
-    @property inout(Layer) item() inout { return item_; }
+    @property const(Layer) item() const { return item_.get; }
 
     bool holds(const(Layer) item) const {
         return item_ !is null && item_ is item;

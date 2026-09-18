@@ -26,7 +26,7 @@ struct ItemRenameState {
         buffer[0 .. n] = value[0 .. n];
     }
 
-    void begin(Layer item, string seed) {
+    void begin(const(Layer) item, string seed) {
         target_.hold(item);
         setText(seed);
     }
@@ -88,7 +88,7 @@ public:
         return state_.activeFor(item);
     }
 
-    void begin(Layer item, string seed) {
+    void begin(const(Layer) item, string seed) {
         state_.begin(item, seed);
     }
 

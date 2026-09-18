@@ -744,7 +744,7 @@ struct ImageRemoveConfirm {
 /// from ONE sweep, so a panel comparing two confirmations compares what it
 /// showed. This is a click-time call: the reverse sweep it performs is
 /// O(items × slots) and belongs nowhere near a draw.
-ImageRemoveConfirm imageRemoveConfirm(Document* doc, Layer target) {
+ImageRemoveConfirm imageRemoveConfirm(const(Document)* doc, const(Layer) target) {
     import commands.image.commands : imageRemoveWarning;
     import std.conv : to;
     ImageRemoveConfirm confirm;

@@ -34,6 +34,7 @@ import ui.item_rename : ItemRenameState;
 import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
     resetLayerListDrawSnapshot;
+import ui.retained_item : RetainedItem;
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
@@ -54,6 +55,18 @@ static assert(__traits(compiles, (ImageRemoveWarning w) {
         const(Layer) l = w.referrers[0];
     }),
     "6530 N6 control: the same warning expression must compile through const");
+static assert(!__traits(compiles, (RetainedItem t) {
+        Layer l = t.item;
+    }),
+    "6530 N4 token.item: the retained token hands out a mutable Layer");
+static assert(__traits(compiles, (RetainedItem t) {
+        const(Layer) l = t.item;
+    }),
+    "6530 N4 control: the same retained identity must compile through const");
+static assert(__traits(compiles, (RetainedItem t) {
+        const(Object) o = t.item;
+    }),
+    "6530 N4 control: retained identity must remain usable as a const Object");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");

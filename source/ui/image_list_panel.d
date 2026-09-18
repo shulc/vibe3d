@@ -11,7 +11,7 @@ import ui.image_rows : ImageRemoveConfirm, ImageRow, elidedPathText,
 import ui.item_rename : ItemRenameDispatch, ItemRenameExit, ItemRenameState,
     bindItemRenameController;
 import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
-import ui.retained_item : RetainedItem;
+import ui.retained_item : ConstItem, RetainedItem;
 
 // CONTRACT (tasks 6040, 6359). This module places the Images list; `ui.image_rows`
 // decides which rows exist, their document indices, text, the Remove target
@@ -70,7 +70,7 @@ private:
 
     this() {}
 
-    void openConfirm(Layer item, ImageRemoveConfirm shown) {
+    void openConfirm(const(Layer) item, ImageRemoveConfirm shown) {
         confirmTarget_.hold(item);
         showConfirm(shown);
         confirmPendingOpen_ = true;
@@ -127,12 +127,12 @@ version (unittest) {
         bool confirmDrawn;
         string confirmText;
         size_t confirmIndex;
-        Object confirmTarget;
+        ConstItem confirmTarget;
         ImVec2 confirmMin, confirmMax;
     }
     struct ImageListConfirmView {
         bool held, pendingOpen;
-        Object target;
+        const(Object) target;
         string text;
         const(Layer)[] referrers;
     }
@@ -162,7 +162,8 @@ version (unittest) {
         g_imageListDrawSnapshot.removeMin = ImGui.GetItemRectMin();
         g_imageListDrawSnapshot.removeMax = ImGui.GetItemRectMax();
     }
-    private void recordImageConfirm(string text, size_t index, Layer target) {
+    private void recordImageConfirm(string text, size_t index,
+                                    const(Layer) target) {
         g_imageListDrawSnapshot.confirmDrawn = true;
         g_imageListDrawSnapshot.confirmText = text;
         g_imageListDrawSnapshot.confirmIndex = index;
@@ -191,7 +192,7 @@ version (unittest) {
     private void beginImageListDraw() {}
     private void recordImageLoad() {}
     private void recordImageRemove(bool, size_t) {}
-    private void recordImageConfirm(string, size_t, Layer) {}
+    private void recordImageConfirm(string, size_t, const(Layer)) {}
     private void recordImageMarker(size_t, string, bool, bool) {}
     private void recordImageName(bool) {}
 }
