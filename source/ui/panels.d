@@ -10,15 +10,10 @@ import tool_activation_ownership : ToolTransition;
 // established for registerTools/registerCommands. Full design + inventory +
 // per-field proof + phase log: doc/tasks/work/0419-app-decomp-panels.md.
 //
-// Phase 1 (this commit): only the CTX-FREE pure helpers move (11 named +
-// the two cross-boundary push/pop style pairs -- 13 free functions total,
-// param-less, no `EditorApp app` / `with(app)`). The four CTX-taking popup
-// helpers (dispatchAction/renderFalloffStackItems/renderDynamicPopupItems/
-// renderPopupItems) and all six panel entry points stay in app.d for now
-// (later 0419 phases) -- `dispatchAction` in particular is called from
-// inside `drawSidePanel`'s still-nested `renderButton`, so moving it before
-// its caller would just add an early cross-module `app,` edit for no
-// benefit at this phase boundary.
+// The panel entry points and panel-local helpers remain here. Task 6505 moved
+// the recursive popup/action cluster onward to `ui.action_menu`; side and
+// status now receive its narrow roles instead of forwarding `EditorApp` into
+// that cluster.
 //
 // Import surface: harvested from editor_app.d's own import block (itself a
 // harvest of app.d's top-level imports, per 0415) plus `Viewport3D` (needed
@@ -67,11 +62,9 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
 import ui.availability : actionRefusal, buttonUnavailable, recordDrawnButton;
-import ui.mode_popup : dynamicModePopupItems;
 import ui.action_menu : ActionMenuRoles, dispatchAction, firstCheckedLabel,
     popupItemChecked, popupWidgetId, renderButtonPopups, selectButtonVariant;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
@@ -867,33 +860,11 @@ void drawAboutPanel(EditorApp app) {
     }
 }
 
-// firstCheckedLabel / pushPopupStyle / popPopupStyle / drawSectionHeader
-// / pushPanelChromeStyle / popPanelChromeStyle / pushButtonBarStyle /
-// popButtonBarStyle relocated to source/ui/panels.d (task 0419 Phase 1
-// -- pure helpers, including the two cross-boundary style pairs). All
-// are used bare below and in main-body code well past this point
-// (chrome: 6 call sites; popup: 12 call sites; see the plan doc's Б3)
-// -- resolve via this import instead of a sibling nested-function
-// declaration.
+// Panel/chrome helpers stay bare below; this self-import preserves the
+// original lookup shape after the app.d decomposition.
 import ui.panels : pushPopupStyle, popPopupStyle, drawSectionHeader,
     pushPanelChromeStyle, popPanelChromeStyle, pushButtonBarStyle,
     popButtonBarStyle;
-
-// Pick the variant a button currently represents.
-//
-// A HELD modifier wins — that is the preview while you hold Ctrl/Alt/Shift.
-// Otherwise, if a variant's action is a tool AND that tool is the active one,
-// the button represents THAT variant: it keeps the variant's label and, because
-// the caller derives the pressed state from the returned `action`, it stays lit
-// after the modifier is released.
-//
-// Without the second rule a sticky tool reached through a modifier can never
-// show as active: the moment you let go of Ctrl the button falls back to its
-// primary action, compares the active tool against the WRONG id, goes dark, and
-// re-labels itself as the primary tool — so it reads as "the button did
-// nothing" while the tool is in fact running. (Found on the Pen button's Ctrl
-// variant, which activates the topology pen.) One-shot variants — command or
-// script — have no active state to latch and are unaffected.
 // ---------------------------------------------------------------------------
 // The hidden-geometry readout (task 0613 S4, doc/hide_geometry_plan.md R9)
 // ---------------------------------------------------------------------------
@@ -1221,6 +1192,8 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
                 // on-highlight. New status-line buttons use dedicated
                 // command ids; legacy script buttons are still supported
                 // through select.typeFrom's first argstring line.
+                // Only these command/script branches can populate editModeId,
+                // so a popup can never reach the post-dispatch panel drop.
                 string editModeId;
                 if (action.kind == ActionKind.command) {
                     if      (action.id == "select.vertex")  editModeId = "vertices";

@@ -7,7 +7,8 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
 
 import application_command_binding : ApplicationCommandBinding;
-import bindbc.sdl : SDL_Keymod, KMOD_ALT, KMOD_CTRL, KMOD_GUI, KMOD_NONE;
+import bindbc.sdl : SDL_Keymod, KMOD_ALT, KMOD_CTRL, KMOD_GUI, KMOD_NONE,
+    KMOD_SHIFT;
 import buttonset : Action, ActionKind, Button, Panel, PopupItem, PopupItemKind,
     loadButtons;
 import command : CmdFlags, Command, g_testMode;
@@ -234,11 +235,6 @@ private PopupItem[] firstRealPopup() {
 unittest { // C1: the production binder builds both roles over non-empty floors
     auto h = new ActionMenuHarness;
     auto roles = h.bind();
-    PopupItem[] popupRows = [
-        PopupItem(PopupItemKind.header, "Header"),
-        PopupItem(PopupItemKind.divider),
-        PopupItem(PopupItemKind.action, "Action")
-    ];
     auto floorAction = commandAction("probe.command");
     assert(roles.read.refusal(floorAction).length == 0,
         "6560 role floor: the production binder did not construct its read role");
@@ -247,8 +243,6 @@ unittest { // C1: the production binder builds both roles over non-empty floors
         "6560 role floor: the production binder did not construct its action role");
     assert(h.history.undoEntries().length == 0,
         "6560 binder floor: construction must not write history");
-    assert(popupRows.length == 3,
-        "6560 popup fixture floor: expected three distinct row kinds");
 }
 
 private Button penButton() {
@@ -316,14 +310,18 @@ unittest { // C2b: simultaneous held modifiers keep Ctrl above Alt
     btn.alt.present = true;
     btn.alt.label = "Alt Pen";
     btn.alt.action = Action(ActionKind.tool, "mesh.altPen");
-    assert(btn.ctrl.present && btn.alt.present,
-        "6560 modifier-priority floor: both variants must exist");
+    btn.shift.present = true;
+    btn.shift.label = "Shift Pen";
+    btn.shift.action = Action(ActionKind.tool, "mesh.shiftPen");
+    assert(btn.ctrl.present && btn.alt.present && btn.shift.present,
+        "6560 modifier-priority floor: all three variants must exist");
     version (OSX) enum testCtrl = KMOD_GUI;
     else          enum testCtrl = KMOD_CTRL;
-    selectButtonVariant(btn, cast(SDL_Keymod)(testCtrl | KMOD_ALT), "",
+    selectButtonVariant(btn,
+                        cast(SDL_Keymod)(testCtrl | KMOD_ALT | KMOD_SHIFT), "",
                         label, action, variant);
     assert(variant == "_ctrl",
-        "6560 modifier priority: ctrl must win over a simultaneously held alt");
+        "6560 modifier priority: ctrl must win over simultaneously held alt and shift");
 }
 
 unittest { // C2c: active variant claims retain Ctrl-before-Alt ordering
@@ -335,12 +333,27 @@ unittest { // C2c: active variant claims retain Ctrl-before-Alt ordering
     btn.alt.present = true;
     btn.alt.label = "Alt Shared Pen";
     btn.alt.action = Action(ActionKind.tool, "mesh.sharedPen");
+    btn.shift.present = true;
+    btn.shift.label = "Shift Shared Pen";
+    btn.shift.action = Action(ActionKind.tool, "mesh.sharedPen");
     immutable activeToolId = "mesh.sharedPen";
-    assert(btn.ctrl.present && btn.alt.present && activeToolId.length > 0,
-        "6560 active-variant floor: both variants and an active id must exist");
+    assert(btn.ctrl.present && btn.alt.present && btn.shift.present
+        && activeToolId.length > 0,
+        "6560 active-variant floor: all variants and an active id must exist");
     selectButtonVariant(btn, KMOD_NONE, activeToolId, label, action, variant);
     assert(label == btn.ctrl.label,
         "6560 active variant priority: ctrl must claim before alt when both name the active tool");
+    btn.ctrl.action = Action(ActionKind.tool, "mesh.ctrlOnlyPen");
+    selectButtonVariant(btn, KMOD_NONE, activeToolId, label, action, variant);
+    assert(label == btn.alt.label && variant == "_alt",
+        "6560 active variant priority: alt must claim before shift when both name the active tool");
+
+    btn.ctrl.action = Action(ActionKind.tool, "");
+    btn.alt.action = Action(ActionKind.tool, "mesh.altPen");
+    btn.shift.action = Action(ActionKind.tool, "mesh.shiftPen");
+    selectButtonVariant(btn, KMOD_NONE, "", label, action, variant);
+    assert(action.id == "pen" && variant.length == 0,
+        "6560 active variant guard: an empty tool id must not claim an idle button");
 }
 
 unittest { // C3: a modifier popup id remains addressable after modifier release
@@ -508,17 +521,16 @@ unittest { // C8: parameterized command rows stop at the args dialog
     auto roles = h.bind(true);
     h.clear();
     auto action = commandAction("probe.args");
-    immutable before = h.dispatchCount;
-    assert(h.dispatchCount == before,
+    assert(h.dispatchCount == 0,
         "6560 args-dialog floor: dispatch count changed before the row ran");
     dispatchAction(roles.actions, action);
-    assert(h.openArgsCount == 1 && h.dispatchCount == before,
+    assert(h.openArgsCount == 1 && h.dispatchCount == 0,
         "6560 args dialog: a command row with parameters must open the dialog instead of dispatching with empty arguments");
     assert(h.history.undoEntries().length == 0,
         "6560 args dialog: opening the dialog must not write history");
 }
 
-unittest { // C9/C10: the real stack renders three rows and removes one extra
+unittest { // C9/C10: real rows carry production commands and remove one extra
     const savedTestMode = g_testMode;
     g_testMode = true;
     scope (exit) g_testMode = savedTestMode;
@@ -526,14 +538,14 @@ unittest { // C9/C10: the real stack renders three rows and removes one extra
     scope (exit) g_pipeCtx = savedPipe;
     auto context = new ToolPipeContext;
     auto primary = new FalloffStage(null, null, "falloff");
-    primary.type = FalloffType.Linear;
     auto extra1 = new FalloffStage(null, null, "falloff#1");
-    extra1.type = FalloffType.Radial;
     auto extra2 = new FalloffStage(null, null, "falloff#2");
-    extra2.type = FalloffType.None;
     context.pipeline.add(primary);
     context.pipeline.addStacked(extra1);
     context.pipeline.addStacked(extra2);
+    primary.type = FalloffType.Linear;
+    extra1.type = FalloffType.Radial;
+    extra2.type = FalloffType.None;
     g_pipeCtx = context;
     assert(context.pipeline.findAllByTask(TaskCode.Wght).length == 3,
         "6560 falloff popup floor: the real pipeline must contain primary plus two extras");
@@ -549,19 +561,46 @@ unittest { // C9/C10: the real stack renders three rows and removes one extra
             if (stage !is null) context.pipeline.removeStage(stage);
         },
         (string) {}, (string) => false);
-    auto ui = openPanel(
-        () { renderFalloffStackItems(roles.actions); },
+    auto ui = openPanel(() {
+        beginButtonAvailabilityFrame(true, "", 0);
+        scope (exit) endButtonAvailabilityFrame();
+        renderFalloffStackItems(roles.actions);
+    },
         "action menu falloff host");
     scope (exit) ui.close();
     ui.frame();
+    auto activeRows = parseJSON(buttonAvailabilityJson())["buttons"].array;
+    assert(activeRows.length == 3,
+        "6560 falloff rows: active primary plus two stacked falloffs must be drawn");
+    string removeLine;
+    bool resetLineSeen, secondRemoveSeen;
+    foreach (row; activeRows) {
+        assert(row["source"].str == "popup" && row["kind"].str == "script",
+            "6560 falloff rows: every recorded row must be a popup script action");
+        const id = row["id"].str;
+        if (id == "tool.pipe.attr falloff type none") resetLineSeen = true;
+        if (id == "falloff.remove falloff#1") removeLine = id;
+        if (id == "falloff.remove falloff#2") secondRemoveSeen = true;
+    }
+    assert(resetLineSeen && removeLine.length > 0 && secondRemoveSeen,
+        "6560 falloff commands: drawn rows must carry both production command forms");
+
+    primary.type = FalloffType.None;
+    ui.frame();
+    auto inactiveRows = parseJSON(buttonAvailabilityJson())["buttons"].array;
+    assert(inactiveRows.length == 2,
+        "6560 inactive primary: only the two stacked falloffs may be drawn");
+    foreach (row; inactiveRows)
+        assert(row["id"].str != "tool.pipe.attr falloff type none",
+            "6560 inactive primary: the none-typed primary must stay hidden");
+
     immutable before = context.pipeline.findAllByTask(TaskCode.Wght).length;
     assert(before == 3,
         "6560 falloff click floor: the stack changed before the gesture");
-    // Measured on this binding: MenuItem row 1 does not land at the
-    // DragFloat-oriented HeadlessPanel GetFrameHeightWithSpacing pitch (row 0
-    // does). The plan's explicit degradation keeps the real three-stage walk
-    // above and pins dispatch plus the exact stacked id directly.
-    auto remove = scriptAction(["falloff.remove falloff#1"]);
+    // MenuItem row 1 is not hover-addressable through the DragFloat-oriented
+    // HeadlessPanel pitch, so dispatch the exact command recorded by the real
+    // production row above rather than copying its literal into the fixture.
+    auto remove = scriptAction([removeLine]);
     dispatchAction(roles.actions, remove);
     ui.frame();
     assert(context.pipeline.findById("falloff#1") is null,
@@ -635,6 +674,10 @@ unittest { // C11: status bar owns one role dispatch and one tool drop
         "6560 status census floor: drawStatusBar body is unexpectedly small");
     assert(body.count("dispatchAction(menu.actions, action)") == 1,
         "6560 status dispatch: drawStatusBar must use the shared action door exactly once");
+    const flatBody = collapseWhitespace(body);
+    assert(flatBody.count(
+            "if (action.kind == ActionKind.popup) { ImGui.OpenPopup(popupId); } else { dispatchAction(menu.actions, action);") == 1,
+        "6560 status popup branch: popup actions must open instead of dispatching and dropping the tool");
     assert(body.count("dropActiveTool(ToolTransition.panelDrop)") == 1,
         "6560 status drop: edit-mode actions must retain one post-dispatch tool drop");
     assert(body.count("tryOpenArgsDialog") == 0
@@ -747,6 +790,12 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         && falloff.count("actions.runScriptLine") == 0
         && falloff.count("dispatchAction(actions, action)") == 1,
         "6560 deferred falloff remove: pending or shared-dispatch structure changed");
+
+    const variantPopup = bodyAt(actionMenu,
+        "void renderVariantPopup(string buttonLabel, string variantSuffix, ref Action action,");
+    assert(variantPopup.count(
+            "if (action.kind != ActionKind.popup) return;") == 1,
+        "6560 popup-kind guard: a non-popup action must not enter the popup renderer");
 
     assert(panels.count("void dispatchAction(EditorApp") == 0
         && panels.count("void renderPopupItems(EditorApp") == 0

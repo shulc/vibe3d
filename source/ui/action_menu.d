@@ -135,10 +135,13 @@ void renderFalloffStackItems(ActionMenuActions actions) {
         const label = primary
             ? falloff.displayName()
             : falloff.displayName() ~ "  (" ~ falloff.id() ~ ")";
+        const commandLine = primary
+            ? "tool.pipe.attr falloff type none"
+            : "falloff.remove " ~ falloff.id();
+        recordDrawnButton("popup", label, ActionKind.script, commandLine,
+                          false, "");
         if (ImGui.MenuItem(label, "", false)) {
-            pending = primary
-                ? "tool.pipe.attr falloff type none"
-                : "falloff.remove " ~ falloff.id();
+            pending = commandLine;
         }
     }
     if (shown == 0) ImGui.TextDisabled("(no active falloff)");
@@ -246,6 +249,21 @@ string popupWidgetId(string buttonLabel, string variantSuffix) {
     return "##popup" ~ variantSuffix ~ "_" ~ buttonLabel;
 }
 
+// Pick the variant a button currently represents.
+//
+// A HELD modifier wins — that is the preview while you hold Ctrl/Alt/Shift.
+// Otherwise, if a variant's action is a tool AND that tool is the active one,
+// the button represents THAT variant: it keeps the variant's label and, because
+// the caller derives the pressed state from the returned `action`, it stays lit
+// after the modifier is released.
+//
+// Without the second rule a sticky tool reached through a modifier can never
+// show as active: the moment you let go of Ctrl the button falls back to its
+// primary action, compares the active tool against the WRONG id, goes dark, and
+// re-labels itself as the primary tool — so it reads as "the button did
+// nothing" while the tool is in fact running. (Found on the Pen button's Ctrl
+// variant, which activates the topology pen.) One-shot variants — command or
+// script — have no active state to latch and are unaffected.
 void selectButtonVariant(ref Button button, SDL_Keymod mods, string activeToolId,
                          out string label, out Action action, out string variant) {
     label = button.label;
@@ -257,6 +275,21 @@ void selectButtonVariant(ref Button button, SDL_Keymod mods, string activeToolId
             && activeId.length > 0;
     }
 
+    // macOS: a `ctrl:` variant answers to ⌘ and DELIBERATELY NOT to Control.
+    //
+    // Control+click is reserved by macOS itself as the secondary click — the OS
+    // delivers it as a RIGHT button, our ImGui backend maps right → button 1,
+    // and `ImGui.Button` only fires on button 0. So a Control+click on a panel
+    // button can never land, no matter what this function returns. Reported
+    // exactly that way: "with Ctrl I see the changed buttons, but I can't press
+    // them" — every ctrl: variant, not just the pen.
+    //
+    // Reacting to Control here would keep that trap alive: the label would
+    // promise a variant the click cannot reach. So on macOS Control selects
+    // nothing and ⌘ — a plain left click carrying a modifier — selects the
+    // variant. shortcuts.d is untouched; it keeps `ctrl+` and `cmd+` as
+    // distinct SHORTCUT spellings, which is a separate concern from clicks.
+    // Elsewhere the mask is plain KMOD_CTRL, so Linux/Windows are unchanged.
     version (OSX) enum ctrlMask = KMOD_GUI;
     else          enum ctrlMask = KMOD_CTRL;
 

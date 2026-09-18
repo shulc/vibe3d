@@ -4720,26 +4720,21 @@ void main(string[] args) {
     // `pickVertices`/`pickEdges`/`pickFaces`/`pickItems` by their bare names,
     // and step 3 is what deletes those.
 
-    // The entire former UI-panel block (app.d main()'s 23 nested functions)
-    // is now relocated to source/ui/panels.d across task 0419's phases:
+    // The former UI-panel block (app.d main()'s 23 nested functions) was
+    // relocated across task 0419's phases. Panel bodies and panel-local
+    // helpers remain in source/ui/panels.d:
     // drawButtonOutline/drawRaisedBevel/renderStyledButton (Phase 1, pure
     // helpers) + drawTabPanel (Phase 2) + drawViewportPropsPanel (Phase 3)
-    // + drawLayerListPanel (Phase 4) + dispatchAction/
-    // renderFalloffStackItems/renderDynamicPopupItems/renderPopupItems/
-    // drawSidePanel/drawStatusBar (Phase 5, moved together -- dispatchAction
-    // is called from renderFalloffStackItems/renderPopupItems/
-    // drawSidePanel's nested renderButton; renderPopupItems recurses into
-    // itself and is called from both drawSidePanel's and drawStatusBar's
-    // nested renderVariantPopup) + renderViewportSceneToFbo (Phase 6, keeps
+    // + drawLayerListPanel (Phase 4) + drawSidePanel/drawStatusBar (Phase 5)
+    // + renderViewportSceneToFbo (Phase 6, keeps
     // its original 6 params with `EditorApp app` prepended). All six
     // CTX-panel entry points take `EditorApp app` and are called
     // `xxxPanel(app, ...)` below. Only the symbols app.d's OWN remaining
     // code actually references are imported here (Phase 7 cleanup) --
-    // drawButtonOutline/drawRaisedBevel/renderStyledButton/dispatchAction/
-    // renderFalloffStackItems/renderDynamicPopupItems/renderPopupItems/
-    // firstCheckedLabel/drawSectionHeader/pushButtonBarStyle/
-    // popButtonBarStyle are now purely internal to ui.panels (only called
-    // from within the panel bodies themselves, never from app.d directly).
+    // drawButtonOutline/drawRaisedBevel/renderStyledButton/drawSectionHeader/
+    // pushButtonBarStyle/popButtonBarStyle are internal to ui.panels. Task
+    // 6505 moved dispatchAction and the recursive popup/falloff helpers to
+    // ui.action_menu; side/status consume that cluster through narrow roles.
     // drawLayerListPanel/drawViewportPropsPanel keep their own separate
     // local imports at their call sites, below.
     import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle;
