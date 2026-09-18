@@ -541,6 +541,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
         && allSource.count("new RemeshModalState()") == 1,
         "6360 production owner: main must allocate exactly one RemeshModalState");
     assert(app.count("app.remeshModalState") == 1
+        && flatApp.count("app.remeshModalState = remeshModalState;") == 1
         && app.count("drawRemeshModal(remeshModalState, remeshJob, app.meshDg);") == 1,
         "6360 app wiring: EditorApp and draw must receive main's owner once");
     assert(registration.count("remeshModalState.requestOpen();") == 1,
