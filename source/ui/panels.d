@@ -1315,42 +1315,12 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
                                   effDisabled, unavailWhy);
                 if (renderStyledButton(label, sc, on, /*isCommand=*/true,
                                        ImVec2(effW, 0), effDisabled)) {
-                    final switch (action.kind) {
-                        case ActionKind.tool:
-                            activateToolById(action.id);
-                            break;
-                        case ActionKind.command:
-                            // Same funnel as `dispatchAction`'s command case
-                            // (task 4062) — the status bar was the second copy
-                            // of the no-argument factory call.
-                            if (!tryOpenArgsDialog(action.id)) {
-                                if (uiCommandDelegate !is null)
-                                    uiCommandDelegate(action.id, "");
-                            }
-                            if (editModeId.length > 0)
-                                dropActiveTool(ToolTransition.panelDrop);
-                            break;
-                        case ActionKind.script:
-                            // typeFrom doesn't go through the args
-                            // dialog — dispatch each line via the
-                            // same path as /api/command argstring
-                            // bodies.
-                            foreach (line; action.scriptLines) {
-                                auto p2 = parseArgstring(line);
-                                if (p2.isEmpty) continue;
-                                if (uiCommandDelegate !is null)
-                                    uiCommandDelegate(p2.commandId,
-                                                            p2.params.toString());
-                            }
-                            // Activating an edit mode is conceptually
-                            // a tool change — drop any sticky tool
-                            // too.
-                            if (editModeId.length > 0)
-                                dropActiveTool(ToolTransition.panelDrop);
-                            break;
-                        case ActionKind.popup:
-                            ImGui.OpenPopup(popupId);
-                            break;
+                    if (action.kind == ActionKind.popup) {
+                        ImGui.OpenPopup(popupId);
+                    } else {
+                        dispatchAction(menu.actions, action);
+                        if (editModeId.length > 0)
+                            dropActiveTool(ToolTransition.panelDrop);
                     }
                 }
                 if (aiGateBlocked && ImGui.IsItemHovered())

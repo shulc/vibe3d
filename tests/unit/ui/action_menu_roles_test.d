@@ -1,6 +1,10 @@
 module tests.unit.ui.action_menu_roles_test;
 
+import std.algorithm : count;
+import std.file : readText;
 import std.json : parseJSON;
+import std.path : buildNormalizedPath, buildPath, dirName;
+import std.string : indexOf;
 
 import application_command_binding : ApplicationCommandBinding;
 import bindbc.sdl : SDL_Keymod, KMOD_ALT, KMOD_CTRL, KMOD_GUI, KMOD_NONE;
@@ -31,6 +35,9 @@ import ui.availability : beginButtonAvailabilityFrame,
     buttonAvailabilityJson, endButtonAvailabilityFrame;
 import view : View;
 import ImGui = d_imgui;
+
+private enum repoRoot = buildNormalizedPath(
+    dirName(__FILE_FULL_PATH__), "..", "..", "..");
 
 private final class MenuProbeState {
     size_t applies;
@@ -520,4 +527,95 @@ unittest { // C9/C10: the real stack renders three rows and removes one extra
         "6560 falloff click: the second popup row must remove falloff#1");
     assert(context.pipeline.findById("falloff") is primary,
         "6560 falloff click: removing a stacked extra must retain primary falloff");
+}
+
+private string bodyAt(string code, string marker) {
+    const at = code.indexOf(marker);
+    assert(at >= 0, "6560 census missing source marker " ~ marker);
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "6560 census found no body after " ~ marker);
+    const begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "6560 census found unterminated body after " ~ marker);
+    return null;
+}
+
+private bool identifierChar(char ch) {
+    return ch == '_' || (ch >= '0' && ch <= '9')
+        || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+}
+
+private size_t identifierCount(string code, string identifier) {
+    size_t total;
+    size_t from;
+    while (from < code.length) {
+        const hit = code.indexOf(identifier, from);
+        if (hit < 0) break;
+        const pos = cast(size_t)hit;
+        const left = pos == 0 || !identifierChar(code[pos - 1]);
+        const end = pos + identifier.length;
+        const right = end == code.length || !identifierChar(code[end]);
+        if (left && right) ++total;
+        from = end;
+    }
+    return total;
+}
+
+private string collapseWhitespace(string source) {
+    string result;
+    bool spacing;
+    foreach (ch; source) {
+        const whitespace = ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t';
+        if (whitespace) {
+            spacing = result.length > 0;
+            continue;
+        }
+        if (spacing) result ~= ' ';
+        result ~= ch;
+        spacing = false;
+    }
+    return result;
+}
+
+unittest { // C11: status bar owns one role dispatch and one tool drop
+    import tests.unit.census_symbols : blankNonCode;
+
+    const panels = blankNonCode(readText(
+        repoRoot.buildPath("source", "ui", "panels.d")));
+    const body = bodyAt(panels,
+        "void drawStatusBar(EditorApp app, ActionMenuRoles menu)");
+    assert(body.length > 4_000,
+        "6560 status census floor: drawStatusBar body is unexpectedly small");
+    assert(body.count("dispatchAction(menu.actions, action)") == 1,
+        "6560 status dispatch: drawStatusBar must use the shared action door exactly once");
+    assert(body.count("dropActiveTool(ToolTransition.panelDrop)") == 1,
+        "6560 status drop: edit-mode actions must retain one post-dispatch tool drop");
+    assert(body.count("tryOpenArgsDialog") == 0
+        && body.count("uiCommandDelegate") == 0
+        && body.count("activateToolById") == 0,
+        "6560 status boundary: drawStatusBar regained an application action door");
+}
+
+unittest { // C12: side panel consumes the shared dispatch and popup renderer
+    import tests.unit.census_symbols : blankNonCode;
+
+    const panels = blankNonCode(readText(
+        repoRoot.buildPath("source", "ui", "panels.d")));
+    const body = bodyAt(panels,
+        "void drawSidePanel(EditorApp app, ActionMenuRoles menu)");
+    assert(body.length > 3_000,
+        "6560 side census floor: drawSidePanel body is unexpectedly small");
+    assert(body.count("dispatchAction(menu.actions, action)") == 1,
+        "6560 side dispatch: drawSidePanel must use the shared action door exactly once");
+    assert(body.count(
+            "renderButtonPopups(btn, menu.read, menu.actions)") == 1,
+        "6560 side popup: drawSidePanel must submit the shared popup renderer exactly once");
+    assert(body.count("renderVariantPopup") == 0,
+        "6560 side boundary: the old nested popup renderer returned");
 }
