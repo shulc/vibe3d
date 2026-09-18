@@ -1,23 +1,30 @@
 module tests.unit.live_registration_rig;
 
 import ai.exploration : AiExplorationController;
+import ai.interaction_log_writer : AiInteractionLogWriter;
 import ai.state : EditorAiState;
 import application_command_binding : ApplicationCommandBinding;
 import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
+import commands.layer.xform_edit : LayerXformEdit;
+import commands.mesh.morph_edit : MeshMorphEdit;
+import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.host : ToolHost, ToolHostReadView;
 import document : Layer;
 import edit_session : EditSession;
 import editmode : EditMode;
+import editor_app : EditorApp;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import http_server : HttpServer;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import mesh : makeCube, makeOctahedron;
+import mesh : Mesh, makeCube, makeOctahedron;
+import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registry : Registry;
+import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import seltype : SelType;
 import session_owner : Session;
 import std.json : JSONValue;
@@ -53,6 +60,9 @@ final class LiveRegistrationRig {
     HttpServer httpServer;
     CommandHttpAdapter adapter;
     ToolHost host;
+
+    EditorApp app;
+    GpuMesh gpu;
 
     string[] activatePreparedIds;
     size_t deactivates;
@@ -138,6 +148,29 @@ final class LiveRegistrationRig {
     void registerLifecycle() {
         registerToolLifecycleCommands(
             registry, liveSession(), liveViewMode(), ToolHostReadView(&host));
+    }
+
+    void wireEditorApp() {
+        ref Mesh currentMesh() { return session.editMesh(); }
+        app.meshDg = cast(typeof(app.meshDg)) &currentMesh;
+        app.cameraViewDg = &liveView;
+        app.gpuPtr = &gpu;
+        app.sessionOwner = session;
+        app.regPtr = &registry;
+        app.history = history;
+        app.vxEditFactory = () => new MeshVertexEdit(
+            &session.editMesh(), liveView(), session.editMode);
+        app.morphEditFactory = () => new MeshMorphEdit(
+            &session.editMesh(), liveView(), session.editMode);
+        app.layerXformEditFactory = () => new LayerXformEdit(
+            &session.editMesh(), liveView(), session.editMode);
+        app.pipeGizmoHost = new PipeGizmoHost;
+        app.aiExplore = new AiExplorationController(0.0f, 6506u);
+        app.aiLogWriter = new AiInteractionLogWriter("");
+    }
+
+    Tool buildTransform(string key) {
+        return buildRegisteredXfrmTransformForOwnershipTest(app, key);
     }
 
     void bindStaleReset() {
