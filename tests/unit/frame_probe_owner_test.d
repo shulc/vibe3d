@@ -3,7 +3,7 @@ module tests.unit.frame_probe_owner_test;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : HttpServer;
+import http_server : ClaimProbePoint, HttpServer;
 import perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
 import std.algorithm : canFind, count;
 import std.file : readText;
@@ -190,6 +190,32 @@ version (PerfProbe) unittest { // P-2/P-4: timeout drops the entire reset
         "6511 expired reset was applied on a later frame");
     assert(bridge.claimPendingForTest() == 0,
         "6511 owner tick did not discard the expired reset");
+
+    // Hold the HTTP waiter before it can mark the call expired, then let the
+    // owner reach the extracted call before its deadline and claim it after.
+    // This isolates tickClaimed's own deadline check from the waiter path.
+    bridge.holdClaimForTest(ClaimProbePoint.enqueued, true);
+    scope(exit) bridge.holdClaimForTest(ClaimProbePoint.enqueued, false);
+    bridge.holdClaimForTest(ClaimProbePoint.extracted, true);
+    scope(exit) bridge.holdClaimForTest(ClaimProbePoint.extracted, false);
+    auto controlledReply = new Reply();
+    auto controlledClient = request(port, "POST", "/api/frames/reset",
+                                    controlledReply);
+    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.enqueued)));
+    auto owner = new Thread({ server.tickFrames(g_frames); });
+    owner.isDaemon = true;
+    owner.start();
+    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.extracted)));
+    Thread.sleep(150.msecs);
+    bridge.holdClaimForTest(ClaimProbePoint.extracted, false);
+    assert(waitUntil(() => !owner.isRunning));
+    assert(g_frames.stats().frameCount == 3,
+        "6511 expired reset was applied on a later frame");
+    bridge.holdClaimForTest(ClaimProbePoint.enqueued, false);
+    assert(waitUntil(() => atomicLoad(controlledReply.done))
+        && controlledReply.wire.canFind("HTTP/1.1 504 Gateway Timeout"));
+    controlledClient.join();
+    owner.join();
 
     g_frames.beginFrame();
     g_frames.addPhase(Phase.draw, 444);
