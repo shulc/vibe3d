@@ -1,36 +1,15 @@
-// Regression test for task 0415 (campaign 0407 §B.V1 step 1, Phase 2 step 0)
-// silent-bug #2: `activeTool` in the EditorApp ctx bag threaded through
-// registration.d's registerCommands MUST be pointer-backed
-// (`Tool* activeToolPtr` + a `@property` accessor that dereferences it on
-// every read), never a plain by-value
-// `Tool activeTool` field snapshotting whatever was active at ctx-assembly
-// time (always null, since the ctx is assembled early in main() before any
-// tool has ever been activated).
-//
-// `file.new`'s command factory (registerCommands, moved from former app.d
-// Span B) reads `activeTool` bare -- `if (auto lst = cast(LoopSliceTool)
-// activeTool) lst.dropArmedPreview();` (and the same for EdgeSliceTool) --
-// BEFORE the drop, `dropActiveTool(ToolTransition.sceneResetDrop)`. The
-// factory's own comment explains
-// why the order matters: `dropArmedPreview()` must run first because
-// `Tool.deactivate()`'s normal commit/cancel path would otherwise try to
-// commit or restore an armed Loop Slice cut against the mesh the reset
-// ALREADY overwrote in place, "corrupt[ing] the new mesh or fabricat[ing]
-// a bogus undo entry" (see LoopSliceTool.commitEdit()'s doc comment). If
-// `activeTool` were a stale by-value snapshot, the cast would silently
-// never match and this ordering guarantee would quietly stop holding.
-//
-// This locks the CONTRACT the code comments describe: `file.new`, called
+// Regression test for the document-replace disarm seam. SceneReset crosses
+// source/tool_disarm.d before it snapshots or writes geometry, so an armed
+// Loop Slice is cancelled and dropped against its original cube. This locks
+// that production order: `file.new`, called
 // while a Loop Slice preview is armed (but not yet committed), must still
 // produce (a) a cleanly emptied scene -- 0 vertices, matching the existing
 // file.new contract in test_commands_file_misc.d -- and (b) exactly ONE new
 // undo entry (the SceneReset itself), never a second, bogus
 // "mesh.loop_slice_edit" entry ahead of it.
 //
-// `dub build`/`dub test --config=tests` do NOT exercise this: app.d's
-// main() (where the ctx is assembled and registerCommands is actually
-// invoked, and where the REAL LoopSliceTool instance the factory casts
-// against actually lives) is excluded from the `dub test` build.
+// `dub build`/`dub test --config=tests` do NOT exercise app.d's installed
+// seam body with the real active tool; this suite cell does.
 
 import http_client : testBaseUrl, getJson;
 import http_command_helpers : commandBody;
@@ -168,9 +147,8 @@ unittest { // file.new with an ARMED Loop Slice preview: clean scene, one undo e
         "file.new with an armed Loop Slice preview should add exactly ONE " ~
         "undo entry; undo stack went from " ~ undoCountBefore.to!string ~
         " to " ~ undoArr.length.to!string ~
-        " entries (an extra entry means dropArmedPreview() didn't run " ~
-        "before the tool drop and a bogus Loop Slice commit slipped " ~
-        "through)");
+        " entries (an extra entry means the document-replace seam did not " ~
+        "drop the tool before geometry was recorded)");
     auto lastCommand = undoArr[$ - 1]["command"].str;
     assert(lastCommand == "scene.reset",
         "the new undo entry should be the scene.reset command (file.new's " ~
