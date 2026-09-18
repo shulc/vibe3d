@@ -144,7 +144,8 @@ version (PerfProbe) unittest { // P-1: only the owner tick serves a read
 
     auto reply = new Reply();
     auto client = request(port, "GET", "/api/frames", reply);
-    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1),
+        "6511 perf build must serve /api/frames through the owner bridge");
     foreach (_; 0 .. 5) {
         server.tickAll();
         assert(bridge.claimPendingForTest() == 1,
