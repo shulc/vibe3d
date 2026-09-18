@@ -218,6 +218,19 @@ unittest {
         "transform_tool_registration.d")));
     const bodies = bodyAt(code, "private XfrmTransformTool buildUnifiedTransform(")
         ~ bodyAt(code, "void registerTransformToolCommands(ref Registry reg,");
+    enum accessors = ["gpu", "history", "vertexEditFactory",
+        "morphEditFactory", "itemEditFactory", "pipeGizmoHost",
+        "exploreSilentHover"];
+    static foreach (member; [__traits(allMembers, TransformToolDeps)]) {{
+        static if (member != "__ctor") {
+            bool allowed;
+            foreach (accessor; accessors) if (member == accessor) allowed = true;
+            if (!allowed)
+                assert(identifierCount(bodies, member) == 0,
+                    "6506 forbidden private member `" ~ member
+                    ~ "` reached from the registrar body");
+        }
+    }}
     struct Row { string receiver, member; size_t count; }
     immutable rows = [
         Row("deps", "gpu", 9), Row("deps", "history", 9),
@@ -239,19 +252,6 @@ unittest {
             "6506 %s.%s used %d time(s), roster says %d",
             row.receiver, row.member, actual, row.count));
     }
-    enum accessors = ["gpu", "history", "vertexEditFactory",
-        "morphEditFactory", "itemEditFactory", "pipeGizmoHost",
-        "exploreSilentHover"];
-    static foreach (member; [__traits(allMembers, TransformToolDeps)]) {{
-        static if (member != "__ctor") {
-            bool allowed;
-            foreach (accessor; accessors) if (member == accessor) allowed = true;
-            if (!allowed)
-                assert(identifierCount(bodies, member) == 0,
-                    "6506 forbidden private member `" ~ member
-                    ~ "` reached from the registrar body");
-        }
-    }}
     assert(population == 59 && population >= 50,
         format("6506 registrar accessor population changed: %d/59 "
             ~ "(receiver tokens deps=%d owner=%d live=%d)", population,
