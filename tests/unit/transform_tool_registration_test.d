@@ -110,8 +110,9 @@ unittest {
         "6506 mesh floor: expected cube and octahedron");
 
     auto unified = cast(XfrmTransformTool) rig.buildTransform("move");
-    auto deform = cast(PushTool) rig.buildTransform("xfrm.push");
-    auto convolveA = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    auto deform = cast(PushTool) rig.registry.toolFactories["xfrm.push"]();
+    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto convolveA = cast(XfrmSmoothTool) smoothFactory();
     auto oldMesh = convolveA.preparedActivationMesh();
     rig.switchToB();
     assert(unified.preparedMeshForUpdate() is &rig.session.editMesh(),
@@ -119,7 +120,7 @@ unittest {
     assert(fieldOf!(Mesh* delegate())(deform, "meshSrc_")()
             is &rig.session.editMesh(),
         "6506 deform mesh source froze before the primary switch");
-    auto convolveB = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    auto convolveB = cast(XfrmSmoothTool) smoothFactory();
     assert(convolveB.preparedActivationMesh() is &rig.session.editMesh()
         && oldMesh is &rig.layerA.meshRef(),
         "6506 convolve: second factory call after primary switch returned old mesh");
@@ -133,9 +134,10 @@ unittest {
     assert(rig.session.editMode == EditMode.Vertices,
         "6506 mode floor: rig must begin in vertex mode");
     auto unified = cast(XfrmTransformTool) rig.buildTransform("move");
-    auto before = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto before = cast(XfrmSmoothTool) smoothFactory();
     rig.switchToB();
-    auto after = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    auto after = cast(XfrmSmoothTool) smoothFactory();
     assert(*fieldOf!(EditMode*)(unified, "editMode") == EditMode.Polygons,
         "6506 unified mode pointer froze before switchGeometryType");
     assert(fieldOf!Command(before, "inner").editModeVal() == EditMode.Vertices
@@ -149,9 +151,11 @@ unittest {
     rig.wireEditorApp();
     assert(rig.cells[0] !is rig.cells[1],
         "6506 view floor: expected distinct cells");
-    auto a = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    rig.buildTransform("move");
+    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto a = cast(XfrmSmoothTool) smoothFactory();
     rig.activeCell = 1;
-    auto b = cast(XfrmSmoothTool) rig.buildTransform("xfrm.smooth");
+    auto b = cast(XfrmSmoothTool) smoothFactory();
     assert(fieldOf!(typeof(rig.cells[0]))(a, "viewRef") is rig.cells[0]
         && fieldOf!(typeof(rig.cells[0]))(b, "viewRef") is rig.cells[1],
         "6506 convolve viewRef does not follow the active cell");
