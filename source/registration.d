@@ -107,6 +107,8 @@ import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import pipe_command_registration : registerPipeStageCommands;
+import scene_file_lifecycle_registration : SceneLifecycleDoors,
+    registerSceneFileLifecycleCommands;
 import selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
@@ -193,8 +195,6 @@ import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
-import commands.scene.reset;
-import commands.scene.load_mesh;
 import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
@@ -386,12 +386,6 @@ version (unittest)
 Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
     registerTransformTools(app);
     return app.reg.toolFactories[key]();
-}
-
-version (unittest)
-void registerSceneResetFamiliesForTest(EditorApp app, SceneResetEffects resetEffects) {
-    registerFileCommands(app, resetEffects);
-    registerSceneLifecycleCommands(app, resetEffects);
 }
 
 /// One typed registration owns both entries, so a paired id is written once.
@@ -906,11 +900,16 @@ void registerCommands(EditorApp app) {
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()));
-    registerFileCommands(app, SceneResetEffects(app.vpm, app.subpatchPreviewPtr,
-        &g_prefs, app.dropActiveTool, app.resetAllPipeStages));
+    registerSceneFileLifecycleCommands(app.reg(),
+        LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        SceneResetEffects(app.vpm, app.subpatchPreviewPtr, &g_prefs,
+                          app.dropActiveTool, app.resetAllPipeStages),
+        SceneLifecycleDoors(app.promoteGeometryType,
+                            () { app.running = false; },
+                            () => app.dropActiveTool(
+                                ToolTransition.sceneResetDrop)));
     registerMeshCommands(app);
-    registerSceneLifecycleCommands(app, SceneResetEffects(app.vpm, app.subpatchPreviewPtr,
-        &g_prefs, app.dropActiveTool, app.resetAllPipeStages));
     registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()),
@@ -962,68 +961,6 @@ void registerCommands(EditorApp app) {
         foreach (id; reg.commandFactories.keys)
             reg.commandFactories[id] = withSelType(reg.commandFactories[id],
                                                    selTypeSrc);
-    }
-    }
-    }
-    }
-}
-
-/// File and document lifecycle that still needs application-owned callbacks — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. Task 5790 moved only the
-/// load/open/save/saveAs/import/export factories to `file_io_registration`;
-/// `file.new` and quit stay here because their callbacks own app lifecycle.
-/// The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerFileCommands(EditorApp app, SceneResetEffects resetEffects) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-    // "File → New" = empty scene. Wraps SceneReset with the
-    // already-supported `setEmpty(true)` mode; undo restores
-    // whatever was open before.
-    reg.commandFactories["file.new"] = () {
-        auto c = new SceneReset(&mesh(), cameraView, editMode,
-                                 &editMode(),
-                                 () {
-                                     // Task 3130 normally crosses the shared
-                                     // seam before SceneReset mutates anything,
-                                     // so onResetTool reaches these casts with
-                                     // no active tool. Keep the old
-                                     // dropArmedPreview() calls only as a
-                                     // defensive fallback if this callback is
-                                     // ever reused without that seam; in that
-                                     // case they must still precede the
-                                     // generic drop below, which here is
-                                     // resetEffects.resetToolEffects().
-                                     if (auto lst = cast(LoopSliceTool) activeTool)
-                                         lst.dropArmedPreview();
-                                     if (auto est = cast(EdgeSliceTool) activeTool)
-                                         est.dropArmedPreview();
-                                     resetEffects.resetToolEffects();
-                                 },
-                                 () => resetEffects.resetViewport());
-        c.setDocument(&document());
-        c.setEmpty(true);
-        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
-        return cast(Command) c;
-    };
-    {
-        import commands.file.quit : FileQuit;
-        // Route close through the unsaved-changes guard (task 0434): set the
-        // request flag instead of clearing `running`. The main loop's per-frame
-        // quit-guard decides whether to prompt (dirty) or exit (clean / --test).
-        reg.commandFactories["file.quit"] = () => cast(Command)
-            // Task 1521: back to what it was before 0434 — the command SETS
-            // `running = false` and nothing else. The unsaved-work question is
-            // no longer asked here (nor by a second latch drained in the draw);
-            // it is asked once, by `runUiCommand`, for this command and the
-            // three other document-discarding ones alike.
-            new FileQuit(&mesh(), cameraView, editMode, () { running = false; });
     }
     }
     }
@@ -1320,35 +1257,6 @@ private void registerMeshCommands(EditorApp app) {
     }
     }
 }
-
-/// Scene lifecycle commands retain their application-owned GPU, viewport and
-/// tool callbacks. Task 5810 moved only history/macro factories to the narrow
-/// registrar; evidence lives in history_macro_registration_test. The `with`
-/// chain stays verbatim so bare names cannot silently rebind.
-private void registerSceneLifecycleCommands(EditorApp app,
-        SceneResetEffects resetEffects) {
-    with (app) {
-    with (ai3dRefs) {
-    with (remeshRefs) {
-    reg.commandFactories["scene.reset"] = () {
-        auto c = new SceneReset(&mesh(), cameraView, editMode,
-                       &editMode(),
-                       () => resetEffects.resetToolEffects(),
-                       () => resetEffects.resetViewport());
-        c.setDocument(&document());
-        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
-        return cast(Command) c;
-    };
-    reg.commandFactories["scene.loadMesh"] = () => cast(Command)
-        (new MeshLoadRaw(&mesh(), cameraView, editMode,
-                         &editMode(), &cameraView(),
-                         () => dropActiveTool(ToolTransition.sceneResetDrop)))
-        .setPromoteHook((EditMode m) => promoteGeometryType(m));
-    }
-    }
-    }
-}
-
 
 /// TASK 1410 — the deliberate-defect injector, registered ONLY in the four
 /// instrumented buildTypes (`check`, `check-unit`, `check-release`,

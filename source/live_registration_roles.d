@@ -55,4 +55,8 @@ public:
     EditMode mode() const nothrow @nogc {
         return *mode_;
     }
+
+    EditMode* modeCell() nothrow @nogc {
+        return mode_;
+    }
 }
