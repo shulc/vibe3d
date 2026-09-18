@@ -135,15 +135,30 @@ struct DragResult {
 }
 
 void prepareScene(bool subpatch, int[] selectedVerts = null,
-                  bool hideOne = false)
+                  bool hideOne = false, bool toggleOffAfter = false)
 {
     cmd(commandBody("scene.reset"));
     cmd("tool.pipe.attr snap enabled false");
     cmd("tool.pipe.attr symmetry enabled false");
-    if (subpatch) {
+    if (subpatch || toggleOffAfter) {
         cmd("select.typeFrom polygon");
         cmdId("mesh.subpatch_toggle");
         waitPreviewSettled();
+        if (toggleOffAfter) {
+            cmdId("mesh.subpatch_toggle");
+            bool disabled;
+            foreach (_; 0 .. 500) {
+                auto p = getJson("/api/subpatch/preview");
+                if (p["active"].type != JSONType.true_
+                    && p["pending"].type != JSONType.true_) {
+                    disabled = true;
+                    break;
+                }
+                Thread.sleep(20.msecs);
+            }
+            assert(disabled,
+                   "6520 handover B: subpatch did not settle after toggle-off");
+        }
         select("polygons", []);
     }
     cmd("select.typeFrom vertex");
@@ -161,9 +176,12 @@ DragResult runDrag(string toolId, bool subpatch, int[] selectedVerts = null,
                    bool hideOne = false, int centrePart = 3,
                    int grabPart = 0, bool offsetGrab = false,
                    double offsetX = 0, double offsetY = 0,
-                   int dragPx = 120, int steps = 16)
+                   int dragPx = 120, int steps = 16,
+                   bool toggleOffAfter = false,
+                   void delegate() atDragStartProbe = null,
+                   void delegate() midDragProbe = null)
 {
-    prepareScene(subpatch, selectedVerts, hideOne);
+    prepareScene(subpatch, selectedVerts, hideOne, toggleOffAfter);
     cmd("tool.set " ~ toolId ~ " on");
     Thread.sleep(300.msecs);
     auto c = fetchCamera();
@@ -191,10 +209,12 @@ DragResult runDrag(string toolId, bool subpatch, int[] selectedVerts = null,
 
     auto rest = surfaceSample();
     playSettled(hoverLog(c, x0, y0));
+    if (atDragStartProbe !is null) atDragStartProbe();
     playSettled(buildDragDownLog(c.vpX, c.vpY, c.width, c.height, x0, y0));
     playSettled(buildDragMotionLog(c.vpX, c.vpY, c.width, c.height,
                                    x0, y0, x1, y1, steps));
     auto mid = surfaceSample();
+    if (midDragProbe !is null) midDragProbe();
     double midCx, midCy;
     fetchHandlePart(centrePart, midCx, midCy, found);
     assert(found, "6450: centre handle disappeared mid-drag for " ~ toolId);
@@ -260,6 +280,125 @@ PreviewState waitPreviewState(bool delegate(PreviewState) accept,
         Thread.sleep(20.msecs);
     }
     assert(false, "6450: timed out waiting for " ~ label);
+}
+
+PreviewState waitHandover(bool delegate(PreviewState) accept,
+                          string delegate(PreviewState) failure,
+                          int timeoutMs = 10_000)
+{
+    PreviewState last;
+    foreach (_; 0 .. timeoutMs / 20) {
+        last = previewState();
+        if (accept(last)) { Thread.sleep(80.msecs); return previewState(); }
+        Thread.sleep(20.msecs);
+    }
+    assert(false, failure(last));
+}
+
+void assertBothAuthorHandovers() {
+    prepareScene(false);
+    surfaceSample();
+    auto atCage = previewState();
+    assert(atCage.displayWrites > 0,
+           "6520 handover: no display write recorded — the oracle cannot be measuring authorship");
+    assert(atCage.displayBasis == "cage",
+        format("6520 handover: the initial payload basis is not cage (basis=%s)",
+               atCage.displayBasis));
+    assert(!atCage.displayCarriesLiveEdit,
+           "6520 handover: a cage payload claimed the live edit");
+
+    cmd("select.typeFrom polygon");
+    cmdId("mesh.subpatch_toggle");
+    waitPreviewSettled();
+    auto preview = waitHandover(
+        (p) => p.displayWrites > atCage.displayWrites,
+        (p) => format("6520 handover A: the preview install recorded NO display write "
+                    ~ "(basis=%s, writes=%d)", p.displayBasis, p.displayWrites));
+    assert(preview.displayBasis == "preview",
+        format("6520 handover A: the basis did not move to the preview (basis=%s)",
+               preview.displayBasis));
+    assert(preview.displayCarriesLiveEdit,
+           "6520 handover A: the live preview must own the display payload");
+    assert(preview.displayWriter == "fullUpload",
+        format("6520 handover A: the preview install must be recorded as the "
+             ~ "full-upload writer, got %s", preview.displayWriter));
+
+    cmdId("mesh.subpatch_toggle");
+    auto back = waitHandover(
+        (p) => p.displayBasis == "cage"
+            && p.displayWrites > preview.displayWrites,
+        (p) => format("6520 handover B: the cage upload did not take the basis "
+                    ~ "back (basis=%s, writes=%d)", p.displayBasis,
+                      p.displayWrites));
+    assert(back.displayWriter == "fullUpload",
+        format("6520 handover B: the cage handover must be recorded as the "
+             ~ "full-upload writer, got %s", back.displayWriter));
+    assert(!back.displayCarriesLiveEdit,
+           "6520 handover B: the cage payload retained the live edit");
+
+    auto result = runDrag("move", false, null, false,
+                          toggleOffAfter: true);
+    assert(result.dragMoved > 0.1,
+           "6520 handover B: the toggle-off drag population floor failed");
+    assert(result.releaseShift <= 1e-4,
+           "6520 handover B: release moved the toggle-off picture");
+}
+
+long displayDeliveries() {
+    return getJson("/api/changes")["deliveryCount"].integer;
+}
+
+void assertAuthorSurvivesRefusalMidGesture() {
+    enum int steps = 12;
+    long polyBase, polyDelta;
+    ulong polyStartWrites;
+    PreviewState polyMid;
+    runDrag("move", false, [0, 1, 2, 3], steps: steps,
+        atDragStartProbe: {
+            polyBase = displayDeliveries();
+            polyStartWrites = previewState().displayWrites;
+        },
+        midDragProbe: {
+            polyMid = previewState();
+            polyDelta = displayDeliveries() - polyBase;
+            assert(polyMid.displayWriter == "selectedVertexUpload",
+                format("6520 mid-gesture polygon: the tool's own upload must be "
+                     ~ "the recorded writer, got %s", polyMid.displayWriter));
+        });
+
+    long subBase, subDelta;
+    ulong subStartWrites;
+    PreviewState subMid;
+    runDrag("move", true, [0, 1, 2, 3], steps: steps,
+        atDragStartProbe: {
+            subBase = displayDeliveries();
+            subStartWrites = previewState().displayWrites;
+        },
+        midDragProbe: {
+            subMid = previewState();
+            subDelta = displayDeliveries() - subBase;
+            assert(subMid.suppressCageUpload,
+                   "6520 mid-gesture: the refusal gate was not armed — nothing could refuse");
+            assert(subMid.displayBasis == "preview",
+                format("6520 mid-gesture: a refused cage upload changed the "
+                     ~ "recorded basis to %s", subMid.displayBasis));
+            assert(subMid.displayCarriesLiveEdit,
+                   "6520 mid-gesture: the live preview must still own the payload while the tool drags");
+            writefln("[6520] mid-drag writer = %s (fan-out proven ON: %s)",
+                     subMid.displayWriter,
+                     subMid.displayWriter != "positionRefresh");
+        });
+
+    writefln("[6520] Position delta poly/sub = %d / %d over %d steps; "
+           ~ "display writes started at %d / %d",
+             polyDelta, subDelta, steps, polyStartWrites, subStartWrites);
+    assert(polyDelta < subDelta,
+        format("6520 mid-gesture: the suppressed-cage publisher is invisible — "
+             ~ "polygon and subpatch partial drags delivered %d and %d over %d "
+             ~ "steps", polyDelta, subDelta, steps));
+    assert(subDelta <= 4 * steps,
+        format("6520 mid-gesture: the live-subpatch partial row exceeded its "
+             ~ "ceiling (%d over %d steps)", subDelta, steps));
 }
 
 void assertFrozenOwnership() {
@@ -486,6 +625,8 @@ unittest {
     assert(hidden.releaseShift <= 1e-4,
            "6450 hidden-vertex control: release moved the picture");
 
+    assertBothAuthorHandovers();
+    assertAuthorSurvivesRefusalMidGesture();
     assertFrozenOwnership();
     assertPreviewArmAfterLastMotion();
 
