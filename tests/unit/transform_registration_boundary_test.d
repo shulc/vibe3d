@@ -179,10 +179,6 @@ unittest {
     assert(transform.queue.length >= 200,
         format("6506 transform import closure too small: %d modules",
             transform.queue.length));
-    assert(transform.queue.length == 251 && positive.queue.length == 511,
-        format("6506 import closure census changed: transform=%d/251 "
-            ~ "registration=%d/511", transform.queue.length,
-            positive.queue.length));
     assert("editor_app" in positive.reached,
         "6506 positive control: registration does not reach editor_app");
     foreach (forbidden; ["editor_app", "registration", "app",
@@ -192,6 +188,10 @@ unittest {
             assert(false, "6506 transform_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("transform_tool_registration", forbidden,
                     transform));
+    assert(transform.queue.length == 251 && positive.queue.length == 511,
+        format("6506 import closure census changed: transform=%d/251 "
+            ~ "registration=%d/511", transform.queue.length,
+            positive.queue.length));
 }
 
 // L3a: compiler-owned complete member sets, including private members.
