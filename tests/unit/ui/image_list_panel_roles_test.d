@@ -626,8 +626,10 @@ unittest { // B7: a pending confirm resolves its target after a reorder
         && app.owner.document.isMember(imgTwo),
         "6530 reorder target: the confirm removed an item other than ImgOne");
     assert(app.history.undoEntries()[$ - 1].commandName == "image.remove"
-        && app.history.undoEntries()[$ - 1].args == `{"index":4}`,
-        "6530 reorder target: the confirm dispatched the index from before the reorder");
+        && app.history.undoEntries()[$ - 1].args == "index:4",
+        "6530 reorder target: the confirm dispatched the index from before the reorder; got "
+        ~ app.history.undoEntries()[$ - 1].commandName ~ " "
+        ~ app.history.undoEntries()[$ - 1].args);
 }
 
 private string bodyAt(string code, string marker) {
