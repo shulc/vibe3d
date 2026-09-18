@@ -54,6 +54,10 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
     assert(itemSpans.length == 15 && aiSpans.length == 5,
         format("6355 span population: found %d item and %d AI spans",
                itemSpans.length, aiSpans.length));
+    foreach (span; itemSpans)
+        assert(span.code.count("owner.document()") == 1,
+            "6355 live document census: " ~ span.id
+            ~ " does not resolve the item document once");
 
     immutable itemHookIds = [
         "layer.add", "layer.duplicate", "layer.delete", "layer.reorder",
@@ -72,6 +76,9 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
         const span = spanFor(aiSpans, id);
         assert(span.length && span.count("onActiveLayerChanged") == 1,
             "6355 hook census: " ~ id ~ " does not carry the AI hook once");
+        assert(span.count("owner.document()") == 1,
+            "6355 live document census: " ~ id
+            ~ " does not resolve the AI document once");
     }
     assert(spanFor(itemSpans, "imagePlane.setImage")
                .count("onActiveLayerChanged") == 0,
@@ -101,18 +108,20 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
     }
 
     size_t lifecycleFiles;
-    size_t directClears;
+    size_t directResets;
     foreach (folder; ["layer", "image_plane"])
         foreach (de; dirEntries(buildPath(repoRoot, "source", "commands", folder),
                                "*.d", SpanMode.depth)) {
             if (!isFile(de.name)) continue;
             ++lifecycleFiles;
-            directClears += blankNonCode(readText(de.name)).count("clearMorphTarget");
+            const code = blankNonCode(readText(de.name));
+            directResets += code.count("clearMorphTarget");
+            directResets += code.count("setMorphTarget");
         }
     assert(lifecycleFiles >= 2,
         "6355 lifecycle census floor: command directories were not scanned");
-    assert(directClears == 0,
-        "6355 lifecycle census: layer/image-plane commands must not clear morph routing directly");
+    assert(directResets == 0,
+        "6355 lifecycle census: layer/image-plane commands must not reset morph routing directly");
 }
 
 unittest { // C10: production wiring, old-path absence and call order
@@ -132,6 +141,16 @@ unittest { // C10: production wiring, old-path absence and call order
         && registration.count("(string path) {") == 1
         && registration.count("workerUrl.length ? workerUrl : );") == 1,
         "6355 production wiring: ai3d call text or modal callback changed");
+    foreach (write; [
+            "app.ai3dRefs.ai3dPickedImagePath = path;",
+            "app.ai3dRefs.ai3dModal = Ai3dModalState.init;",
+            "app.ai3dRefs.ai3dModalOpen = true;",
+            "app.ai3dRefs.ai3dModalPendingOpen = true;",
+        ])
+        assert(registration.count(write) == 1,
+            "6355 production wiring: modal callback lost or duplicated " ~ write);
+    assert(registration.count("app.ai3dController.probeHealth(") == 1,
+        "6355 production wiring: modal callback lost or duplicated probeHealth");
     assert(squash(registrationRaw).count(`"http://127.0.0.1:47831"`) == 1,
         "6355 production wiring: default AI worker URL changed");
 
