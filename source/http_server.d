@@ -3250,10 +3250,10 @@ class HttpServer {
         // tolerable HTTP-thread write into main-thread-owned state, not
         // marshaled because the latency would land on every perf run's
         // setup, not just this diagnostic's accuracy.
-        g_frames.reset();
         response.statusCode = 200;
         response.body = "{\"status\":\"ok\"}";
         response.headers["Content-Type"] = "application/json";
+        version (PerfProbe) g_frames.reset();
     }
 
     private void route_apiFrames(HttpRequest request, HttpResponse response) {
@@ -3266,7 +3266,8 @@ class HttpServer {
         // default (non-PerfProbe) build.
         try {
             response.statusCode = 200;
-            response.body = g_frames.toJson();
+            version (PerfProbe) response.body = g_frames.snapshot().toJson();
+            else response.body = "{}";
             response.headers["Content-Type"] = "application/json";
         } catch (Exception e) {
             response.statusCode = 500;

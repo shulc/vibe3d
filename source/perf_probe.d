@@ -503,6 +503,125 @@ struct FrameStatsSnapshot {
     long maxPauseNs;
 }
 
+/// Detached copy of the FrameProbe ring and its running aggregates. Task 6511.
+/// This stays outside `version (PerfProbe)` beside FrameStatsSnapshot so the
+/// default module gate can verify the diagnostic wire without a live probe.
+struct FrameProbeSnapshot {
+    FrameRec[] frames;
+    FrameStatsSnapshot stats;
+    long hitchGc16;
+    long sumCacheNs;
+
+    private static string recJson(const ref FrameRec r) {
+        import std.format : format;
+        return format(
+            `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
+            `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
+            `"gcCollections":%d,"gcMaxPauseNs":%d,"gcPauseNs":%d,` ~
+            `"gcCollectNs":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
+            `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
+            r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
+            r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
+            r.gcMaxPauseNs, r.gcPauseNs, r.gcCollectNs,
+            r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
+            r.uploadAlloc, r.uiAlloc);
+    }
+
+    /// Serialize the established /api/frames payload from detached data.
+    string toJson() {
+        import std.array     : appender;
+        import std.format    : formattedWrite;
+        import std.algorithm : sort;
+
+        size_t len = frames.length;
+        FrameRec[] s = frames;
+
+        auto app = appender!string();
+        app.put("{");
+        app.formattedWrite(`"frameCount":%d`, stats.frameCount);
+
+        long p50 = 0, p95 = 0, p99 = 0, mx = 0;
+        if (len > 0) {
+            long[] totals = new long[len];
+            foreach (i, ref r; s) totals[i] = r.totalNs;
+            totals.sort();
+            p50 = totals[(len - 1) * 50 / 100];
+            p95 = totals[(len - 1) * 95 / 100];
+            p99 = totals[(len - 1) * 99 / 100];
+            mx  = totals[len - 1];
+        }
+        app.formattedWrite(
+            `,"total":{"p50_ns":%d,"p95_ns":%d,"p99_ns":%d,"max_ns":%d}`,
+            p50, p95, p99, mx);
+
+        app.put(`,"phases":{`);
+        static immutable string[6] phaseNames =
+            ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
+        foreach (pi, name; phaseNames) {
+            long[] col = new long[len];
+            foreach (i, ref r; s) {
+                final switch (pi) {
+                    case 0: col[i] = r.eventNs;  break;
+                    case 1: col[i] = r.toolNs;   break;
+                    case 2: col[i] = r.cacheNs;  break;
+                    case 3: col[i] = r.drawNs;   break;
+                    case 4: col[i] = r.uploadNs; break;
+                    case 5: col[i] = r.uiNs;     break;
+                }
+            }
+            long pv = 0;
+            if (len > 0) { col.sort(); pv = col[(len - 1) * 95 / 100]; }
+            if (pi > 0) app.put(",");
+            app.formattedWrite(`"%s":{"p95_ns":%d}`, name, pv);
+        }
+        app.put("}");
+
+        app.formattedWrite(
+            `,"hitch_16ms":%d,"hitch_33ms":%d,"meshCacheRebuilds":%d,` ~
+            `"gcAllocBytes":%d,"gcCollections":%d,"gcPauseNs":%d,` ~
+            `"gcMaxPauseNs":%d,"gcHitch_16ms":%d`,
+            stats.hitch16, stats.hitch33, stats.meshCacheRebuilds,
+            stats.sumAllocBytes, stats.sumCollections, stats.sumPauseNs,
+            stats.maxPauseNs, hitchGc16);
+
+        enum size_t WarmupFrames = 3;
+        long steadyMaxAllocBytes = 0;
+        if (len > WarmupFrames) {
+            foreach (i; WarmupFrames .. len)
+                if (s[i].gcAllocBytes > steadyMaxAllocBytes)
+                    steadyMaxAllocBytes = s[i].gcAllocBytes;
+        }
+        app.formattedWrite(`,"steadyMaxAllocBytes":%d`, steadyMaxAllocBytes);
+        app.formattedWrite(`,"sumCacheNs":%d`, sumCacheNs);
+
+        if (len > 0) {
+            size_t worstIdx = 0;
+            foreach (i, ref r; s)
+                if (r.totalNs > s[worstIdx].totalNs) worstIdx = i;
+            app.put(`,"worst":`);
+            app.put(recJson(s[worstIdx]));
+        } else {
+            app.put(`,"worst":null`);
+        }
+
+        enum size_t WorstN = 8;
+        app.put(`,"worstN":[`);
+        if (len > 0) {
+            FrameRec[] byWorst = s.dup;
+            byWorst.sort!((a, b) => a.totalNs > b.totalNs);
+            size_t take = len < WorstN ? len : WorstN;
+            foreach (i; 0 .. take) {
+                if (i > 0) app.put(",");
+                app.put(recJson(byWorst[i]));
+            }
+        }
+        app.put("]");
+
+        app.put("}");
+        return app.data;
+    }
+}
+
 // ===========================================================================
 // Task 2070 — GC PAUSE / ALLOCATION SAMPLING, always compiled.
 //
@@ -1055,7 +1174,7 @@ version (PerfProbe) {
 
         /// By-value snapshot of the running (ring-eviction-proof) counters.
         /// No allocation.
-        FrameStatsSnapshot stats() const {
+        FrameStatsSnapshot stats() const nothrow {
             return FrameStatsSnapshot(frameCount, hitch16, hitch33,
                 sumAllocBytes, sumCollections, meshCacheRebuilds,
                 sumPauseNs, maxPauseNs);
@@ -1115,16 +1234,13 @@ version (PerfProbe) {
         //
         // Deliberately does NOT touch `cur_` / `frameStart_` / `allocBase_`
         // / `collBase_` — those are the main thread's IN-FLIGHT frame state
-        // between a `beginFrame()`/`endFrame()` pair. `reset()` is called
-        // from the HTTP thread (mirrors `/api/perf/reset`'s g_perf.reset()),
-        // so it can land mid-frame; a wholesale `this = FrameProbe.init`
-        // would zero `frameStart_` out from under the main thread's
-        // in-progress frame, and the next `endFrame()` would then compute
-        // `MonoTime.currTime - MonoTime.init` — a many-hour "elapsed"
-        // garbage sample. Only the published ring/counters are reset; the
-        // ring is not physically cleared (reads are gated by `ringLen`, so
-        // stale slots beyond it are never read).
-        void reset() {
+        // between a `beginFrame()`/`endFrame()` pair. Task 6511 serves reset
+        // on the owner thread at the frame boundary before `beginFrame()`;
+        // preserving this method-level contract also keeps a mid-frame caller
+        // from zeroing `frameStart_` into a many-hour garbage sample. Only the
+        // published ring/counters are reset; the ring is not physically
+        // cleared (reads are gated by `ringLen`, so stale slots stay hidden).
+        void reset() nothrow {
             ringLen = 0;
             ringPos = 0;
             frameCount = 0;
@@ -1139,131 +1255,10 @@ version (PerfProbe) {
             sumCacheNs = 0;
         }
 
-        private static string recJson(const ref FrameRec r) {
-            import std.format : format;
-            return format(
-                `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
-                `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
-                `"gcCollections":%d,"gcMaxPauseNs":%d,"gcPauseNs":%d,` ~
-                `"gcCollectNs":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
-                `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
-                r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
-                r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
-                r.gcMaxPauseNs, r.gcPauseNs, r.gcCollectNs,
-                r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
-                r.uploadAlloc, r.uiAlloc);
-        }
-
-        /// JSON snapshot: frame count, total-time percentiles, per-phase
-        /// p95s, hitch counts, mesh-cache-rebuild + GC aggregates, a
-        /// steady-state alloc/frame figure (F-I2, warmup-skipped), the
-        /// single worst frame (max totalNs), and a bounded worst-N list.
-        /// Computed on demand so the hot path never sorts.
-        string toJson() {
-            import std.array     : appender;
-            import std.format    : formattedWrite;
-            import std.algorithm : sort;
-
-            // Tear-free snapshot (write-then-advance discipline above): for
-            // any single measured window (frameCount <= Ring, true for every
-            // realistic scenario — the ring is reset between scenarios) the
-            // slots [0 .. len) are exactly the chronological frame order.
-            size_t len = ringLen;
-            FrameRec[] s = ring[0 .. len].dup;
-
-            auto app = appender!string();
-            app.put("{");
-            app.formattedWrite(`"frameCount":%d`, frameCount);
-
-            long p50 = 0, p95 = 0, p99 = 0, mx = 0;
-            if (len > 0) {
-                long[] totals = new long[len];
-                foreach (i, ref r; s) totals[i] = r.totalNs;
-                totals.sort();
-                p50 = totals[(len - 1) * 50 / 100];
-                p95 = totals[(len - 1) * 95 / 100];
-                p99 = totals[(len - 1) * 99 / 100];
-                mx  = totals[len - 1];
-            }
-            app.formattedWrite(
-                `,"total":{"p50_ns":%d,"p95_ns":%d,"p99_ns":%d,"max_ns":%d}`,
-                p50, p95, p99, mx);
-
-            // Per-phase p95 — sort each field's column independently (the
-            // columns are NOT required to correlate frame-to-frame).
-            app.put(`,"phases":{`);
-            static immutable string[6] phaseNames =
-                ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
-            foreach (pi, name; phaseNames) {
-                long[] col = new long[len];
-                foreach (i, ref r; s) {
-                    final switch (pi) {
-                        case 0: col[i] = r.eventNs;  break;
-                        case 1: col[i] = r.toolNs;   break;
-                        case 2: col[i] = r.cacheNs;  break;
-                        case 3: col[i] = r.drawNs;   break;
-                        case 4: col[i] = r.uploadNs; break;
-                        case 5: col[i] = r.uiNs;     break;
-                    }
-                }
-                long pv = 0;
-                if (len > 0) { col.sort(); pv = col[(len - 1) * 95 / 100]; }
-                if (pi > 0) app.put(",");
-                app.formattedWrite(`"%s":{"p95_ns":%d}`, name, pv);
-            }
-            app.put("}");
-
-            app.formattedWrite(
-                `,"hitch_16ms":%d,"hitch_33ms":%d,"meshCacheRebuilds":%d,` ~
-                `"gcAllocBytes":%d,"gcCollections":%d,"gcPauseNs":%d,` ~
-                `"gcMaxPauseNs":%d,"gcHitch_16ms":%d`,
-                hitch16, hitch33, meshCacheRebuilds,
-                sumAllocBytes, sumCollections, sumPauseNs,
-                maxPauseNs, hitchGc16);
-
-            // F-I2 (RECORDED, NON-GATING): steady-state alloc/frame after a
-            // K-frame warmup skip (lazy inits, first-frame ImGui layout).
-            // `gcAllocBytes` here is WHOLE-FRAME main-thread allocation, not
-            // drag-only — see the plan's Risks section on why a nonzero
-            // floor is expected (ImGui chrome rebuilds every frame) and why
-            // this is a measurement, not a gate.
-            enum size_t WarmupFrames = 3;
-            long steadyMaxAllocBytes = 0;
-            if (len > WarmupFrames) {
-                foreach (i; WarmupFrames .. len)
-                    if (s[i].gcAllocBytes > steadyMaxAllocBytes)
-                        steadyMaxAllocBytes = s[i].gcAllocBytes;
-            }
-            app.formattedWrite(`,"steadyMaxAllocBytes":%d`, steadyMaxAllocBytes);
-            app.formattedWrite(`,"sumCacheNs":%d`, sumCacheNs);
-
-            // Worst frame (max totalNs) — full record.
-            if (len > 0) {
-                size_t worstIdx = 0;
-                foreach (i, ref r; s)
-                    if (r.totalNs > s[worstIdx].totalNs) worstIdx = i;
-                app.put(`,"worst":`);
-                app.put(recJson(s[worstIdx]));
-            } else {
-                app.put(`,"worst":null`);
-            }
-
-            // Bounded worst-N (by totalNs, descending).
-            enum size_t WorstN = 8;
-            app.put(`,"worstN":[`);
-            if (len > 0) {
-                FrameRec[] byWorst = s.dup;
-                byWorst.sort!((a, b) => a.totalNs > b.totalNs);
-                size_t take = len < WorstN ? len : WorstN;
-                foreach (i; 0 .. take) {
-                    if (i > 0) app.put(",");
-                    app.put(recJson(byWorst[i]));
-                }
-            }
-            app.put("]");
-
-            app.put("}");
-            return app.data;
+        /// Copy the published ring and counters for owner-thread hand-off.
+        FrameProbeSnapshot snapshot() nothrow {
+            return FrameProbeSnapshot(ring[0 .. ringLen].dup, stats(),
+                                      hitchGc16, sumCacheNs);
         }
     }
 
@@ -1310,10 +1305,10 @@ version (PerfProbe) {
         pragma(inline, true) void addPhase(Phase, long) {}
         pragma(inline, true) void bumpMeshCacheRebuild() {}
         pragma(inline, true) size_t copyRecent(FrameRec[]) { return 0; }
-        pragma(inline, true) FrameStatsSnapshot stats() const { return FrameStatsSnapshot.init; }
+        pragma(inline, true) FrameStatsSnapshot stats() const nothrow { return FrameStatsSnapshot.init; }
         pragma(inline, true) void endFrame() {}
-        pragma(inline, true) void reset() {}
-        pragma(inline, true) string toJson() { return "{}"; }
+        pragma(inline, true) void reset() nothrow {}
+        pragma(inline, true) FrameProbeSnapshot snapshot() nothrow { return FrameProbeSnapshot.init; }
     }
 }
 
