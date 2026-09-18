@@ -356,7 +356,7 @@ unittest {
                      ~ "        session.tickParameterEvaluation();\n"
                      ~ "    }";
     enum phaseCall = "frameRunner.tickParameterEvaluation(session);";
-    enum sidePanelCall = "drawSidePanel(app);";
+    enum sidePanelCall = "drawSidePanel(app, actionMenuRoles);";
     assert(runnerCode.count(runnerPhase) == 1,
         "frame parameter owner: FrameRunner must own exactly one named "
       ~ "EditSession tick phase");

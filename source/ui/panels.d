@@ -72,8 +72,8 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // of what the bars actually drew. See source/ui/availability.d.
 import ui.availability : actionRefusal, buttonUnavailable, recordDrawnButton;
 import ui.mode_popup : dynamicModePopupItems;
-import ui.action_menu : firstCheckedLabel, popupActionNeedsAssimp,
-    popupItemChecked, popupWidgetId, selectButtonVariant;
+import ui.action_menu : ActionMenuRoles, dispatchAction, firstCheckedLabel,
+    popupItemChecked, popupWidgetId, renderButtonPopups, selectButtonVariant;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
@@ -867,213 +867,6 @@ void drawAboutPanel(EditorApp app) {
     }
 }
 
-// =============================================================================
-// Phase 5 -- CTX popup-cluster + side/status, moved TOGETHER (they are
-// mutually coupled: dispatchAction is called from renderFalloffStackItems/
-// renderPopupItems/drawSidePanel's renderButton; renderPopupItems recurses
-// into itself and is called from renderDynamicPopupItems + both
-// drawSidePanel's and drawStatusBar's nested renderVariantPopup). The four
-// CTX-helpers each become app-taking free functions; every cross-call between
-// them (8 sites) gets an explicit `app,` argument -- bare-call syntax no
-// longer resolves since these are no longer sibling nested functions sharing
-// one enclosing scope.
-// =============================================================================
-
-void dispatchAction(EditorApp app, ref Action action) {
-    with (app) {
-    import argstring : parseArgstring;
-    final switch (action.kind) {
-        case ActionKind.tool:
-            activateToolById(action.id);
-            break;
-        case ActionKind.command:
-            // TASK 4062 — THE THIRD FUNNEL, and the reason it was one at all.
-            // This case built the command from its factory and ran it with NO
-            // arguments: a panel row could name a command but never say
-            // anything to it, and a command that acquired an argument later
-            // silently kept its defaults here while the other two funnels bound
-            // one. Routing the id through `uiCommandDelegate` — the same
-            // application command binding the HTTP door also uses, under the
-            // UI refusal policy — means all three funnels reach `bindArgs`,
-            // and a panel row that grows an argument tomorrow needs no change
-            // here.
-            //
-            // TWO THINGS DIFFER from the `runCommand` call it replaces, both
-            // deliberate: the dispatch records the id it was asked for (a
-            // `runCommand` caller has none to give, and the guard record said
-            // so), and it records under `RecordMode.Coalescing` rather than
-            // `Record` — which changes nothing for a command that does not
-            // override `compareOp()`, and every command that does takes
-            // arguments this case cannot supply.
-            if (!tryOpenArgsDialog(action.id)) {
-                if (uiCommandDelegate !is null)
-                    uiCommandDelegate(action.id, "");
-            }
-            break;
-        case ActionKind.script:
-            foreach (line; action.scriptLines) {
-                auto parsed = parseArgstring(line);
-                if (parsed.isEmpty) continue;
-                if (uiCommandDelegate !is null)
-                    uiCommandDelegate(parsed.commandId,
-                                           parsed.params.toString());
-            }
-            break;
-        case ActionKind.popup:
-            // Nested popup not supported.
-            break;
-    }
-    }
-}
-
-// popupItemChecked / popupActionNeedsAssimp relocated to
-// source/ui/panels.d (task 0419 Phase 1 -- pure helpers). Both are used
-// bare below (renderPopupItems, drawSidePanel's renderButton) and
-// resolve via this import.
-import ui.action_menu : popupItemChecked, popupActionNeedsAssimp;
-
-// Live falloff-stack rows for the Falloff button's Alt popup. Lists
-// every contributing FalloffStage instance; clicking one removes it
-// from the queue. The primary ("falloff") is the compat anchor and
-// can't be deleted — clicking it instead resets its type to none
-// (the equivalent "drop from the active set"). Stacked extras
-// ("falloff#N") dispatch falloff.remove <id>.
-//
-// Defined BEFORE renderPopupItems: these are nested functions, and
-// D processes in-function declarations in order — renderPopupItems
-// (the caller) must see this name already declared.
-void renderFalloffStackItems(EditorApp app) {
-    with (app) {
-    if (g_pipeCtx is null) {
-        ImGui.TextDisabled("(no pipeline)");
-        return;
-    }
-    import toolpipe.stage          : TaskCode;
-    import toolpipe.stages.falloff : FalloffStage;
-    // Defer dispatch until after the loop — removing a stage mutates
-    // the pipeline; collect the chosen command line and run it once
-    // the menu walk is complete.
-    string pending;
-    int    shown = 0;
-    foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght)) {
-        auto fo = cast(FalloffStage) s;
-        if (fo is null) continue;
-        bool primary = fo.isPrimary();
-        // The anchor only counts as "active" when it carries a type;
-        // a stacked extra always has one (add requires it) — list it
-        // regardless so a degenerate none-typed extra is still
-        // removable.
-        if (primary && !fo.isActive()) continue;
-        ++shown;
-        string label = primary
-                     ? fo.displayName()
-                     : fo.displayName() ~ "  (" ~ fo.id() ~ ")";
-        if (ImGui.MenuItem(label, "", /*selected=*/false)) {
-            pending = primary
-                    ? "tool.pipe.attr falloff type none"
-                    : "falloff.remove " ~ fo.id();
-        }
-    }
-    if (shown == 0)
-        ImGui.TextDisabled("(no active falloff)");
-    if (pending.length > 0) {
-        Action a;
-        a.kind        = ActionKind.script;
-        a.scriptLines = [pending];
-        dispatchAction(app, a);
-    }
-    }
-}
-
-// Expand a `kind: dynamic` popup item into runtime-generated rows.
-// The config declares only the provider key (dynamicKind:); the
-// actual rows depend on live state the YAML can't enumerate. New
-// providers add a branch here. Unknown keys render a disabled hint
-// rather than throwing mid-frame.
-void renderDynamicPopupItems(EditorApp app, ref PopupItem provider) {
-    with (app) {
-    switch (provider.dynamicKind) {
-        case "falloffStack":
-            renderFalloffStackItems(app);
-            break;
-        case "acenModes":
-        case "acenStageModes":
-        case "axisModes":
-            PopupItem[] rows = dynamicModePopupItems(provider);
-            if (rows.length == 0)
-                ImGui.TextDisabled("(no modes configured)");
-            else
-                renderPopupItems(app, rows);
-            break;
-        default:
-            ImGui.TextDisabled("(unknown dynamic '%s')", provider.dynamicKind);
-            break;
-    }
-    }
-}
-
-// Render the body of a popup (between `BeginPopup` and `EndPopup`).
-// Action items dispatch via `dispatchAction`; dividers/headers are
-// non-interactive.
-void renderPopupItems(EditorApp app, ref PopupItem[] items) {
-    with (app) {
-    foreach (ref it; items) {
-        final switch (it.kind) {
-            case PopupItemKind.divider:
-                ImGui.Separator();
-                break;
-            case PopupItemKind.header:
-                // Pass D string directly — d_imgui's varargs path
-                // segfaults when %s + toStringz (immutable char*)
-                // are combined; the rest of the codebase passes D
-                // strings as %s args (see lines 3202 / 3218).
-                ImGui.TextDisabled("%s", it.label);
-                break;
-            case PopupItemKind.action:
-                bool checked = popupItemChecked(it.checked);
-                // Availability gating (asset-I/O Phase 6): grey out
-                // Import/Export items that route through assimp when the
-                // dynamic libassimp isn't loaded. Native .v3d and LWO are
-                // pure D and always enabled. The id encodes the target
-                // ext (file.import.obj / file.export.gltf / ...).
-                bool blocked = false;
-                if (it.action.kind == ActionKind.command)
-                    blocked = popupActionNeedsAssimp(it.action.id)
-                              && !isAssimpAvailable();
-                // TASK 0669 — the popup rows follow the same rule as the
-                // buttons: a row that would refuse is greyed, and says why.
-                // The MENU itself always opens (`actionRefusal` answers ""
-                // for a popup action) — a menu whose rows are unavailable
-                // still has to be readable.
-                string rowWhy = blocked
-                    ? "Requires libassimp — not loaded"
-                    : actionRefusal(reg, it.action, document.hasEditTarget(), activeToolId);
-                bool rowBlocked = blocked || rowWhy.length > 0;
-                recordDrawnButton("popup", it.label, it.action.kind, it.action.id,
-                                  rowBlocked, blocked ? "" : rowWhy);
-                if (rowBlocked) ImGui.BeginDisabled(true);
-                if (ImGui.MenuItem(it.label, "", checked) && !rowBlocked)
-                    dispatchAction(app, it.action);
-                if (rowBlocked) {
-                    ImGui.EndDisabled();
-                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                        ImGui.SetTooltip(rowWhy);
-                }
-                break;
-            case PopupItemKind.submenu:
-                if (ImGui.BeginMenu(it.label)) {
-                    renderPopupItems(app, it.subItems);
-                    ImGui.EndMenu();
-                }
-                break;
-            case PopupItemKind.dynamic:
-                renderDynamicPopupItems(app, it);
-                break;
-        }
-    }
-    }
-}
-
 // firstCheckedLabel / pushPopupStyle / popPopupStyle / drawSectionHeader
 // / pushPanelChromeStyle / popPanelChromeStyle / pushButtonBarStyle /
 // popButtonBarStyle relocated to source/ui/panels.d (task 0419 Phase 1
@@ -1082,7 +875,6 @@ void renderPopupItems(EditorApp app, ref PopupItem[] items) {
 // (chrome: 6 call sites; popup: 12 call sites; see the plan doc's Б3)
 // -- resolve via this import instead of a sibling nested-function
 // declaration.
-import ui.action_menu : firstCheckedLabel, popupWidgetId, selectButtonVariant;
 import ui.panels : pushPopupStyle, popPopupStyle, drawSectionHeader,
     pushPanelChromeStyle, popPanelChromeStyle, pushButtonBarStyle,
     popButtonBarStyle;
@@ -1157,7 +949,7 @@ string hiddenReadoutCompact(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
 }
 
 
-void drawSidePanel(EditorApp app) {
+void drawSidePanel(EditorApp app, ActionMenuRoles menu) {
     with (app) {
     pushPanelChromeStyle();
     scope(exit) popPanelChromeStyle();
@@ -1242,7 +1034,7 @@ void drawSidePanel(EditorApp app) {
                 if (action.kind == ActionKind.popup)
                     ImGui.OpenPopup(popupWidgetId(btn.label, variant));
                 else
-                    dispatchAction(app, action);
+                    dispatchAction(menu.actions, action);
             }
             if (aiGateBlocked && ImGui.IsItemHovered())
                 ImGui.SetTooltip("Not available in this build");
@@ -1262,19 +1054,7 @@ void drawSidePanel(EditorApp app) {
             // current variant's kind == popup, so on the first
             // post-release frame ImGui sees no BeginPopup for the
             // open ID and treats it as closed.
-            void renderVariantPopup(string suf, ref Action a) {
-                if (a.kind != ActionKind.popup) return;
-                pushPopupStyle();
-                scope(exit) popPopupStyle();
-                if (ImGui.BeginPopup(popupWidgetId(btn.label, suf))) {
-                    renderPopupItems(app, a.popupItems);
-                    ImGui.EndPopup();
-                }
-            }
-            renderVariantPopup("",       btn.action);
-            if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
-            if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
-            if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
+            renderButtonPopups(btn, menu.read, menu.actions);
         }
 
         if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
@@ -1350,7 +1130,7 @@ void drawSidePanel(EditorApp app) {
     }
 }
 
-void drawStatusBar(EditorApp app) {
+void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
     with (app) {
     pushPanelChromeStyle();
     scope(exit) popPanelChromeStyle();
@@ -1584,19 +1364,7 @@ void drawStatusBar(EditorApp app) {
                 // the user releases Alt — BeginPopup wouldn't be
                 // called for that variant on the first post-
                 // release frame and ImGui closes the popup.
-                void renderVariantPopup(string suf, ref Action a) {
-                    if (a.kind != ActionKind.popup) return;
-                    pushPopupStyle();
-                    scope(exit) popPopupStyle();
-                    if (ImGui.BeginPopup(popupWidgetId(btn.label, suf))) {
-                        renderPopupItems(app, a.popupItems);
-                        ImGui.EndPopup();
-                    }
-                }
-                renderVariantPopup("",       btn.action);
-                if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
-                if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
-                if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
+                renderButtonPopups(btn, menu.read, menu.actions);
             }
         }
         // R9 — the same readout, on the always-visible row. The side panel's

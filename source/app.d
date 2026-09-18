@@ -4413,6 +4413,15 @@ void main(string[] args) {
     app.uiCommandDelegate = uiCommandDelegate;
     app.formsInteractiveDispatch = formsInteractiveDispatch;
     app.replayUndoEntry = replayUndoEntry;
+    import ui.action_menu : bindActionMenu;
+    import ui.action_menu : dispatchAction;
+    import ui.availability : actionRefusal;
+    auto actionMenuRoles = bindActionMenu(
+        (ref const Action a) => actionRefusal(
+            reg, a, document.hasEditTarget(), activeToolId),
+        uiCommandDelegate,
+        cast(void delegate(string))&activateToolById,
+        cast(bool delegate(string))&tryOpenArgsDialog);
     import ui.layer_list_panel : bindLayerListPanel;
     auto layerListRoles = bindLayerListPanel(sessionOwner, commandBinding,
                                              formsPanel, toolHost.getActiveTool);
@@ -4524,6 +4533,8 @@ void main(string[] args) {
     // function's address, not the stored int's).
     InputRouter router;
     router.app              = app;
+    router.fireAction = (ref Action a) =>
+        dispatchAction(actionMenuRoles.actions, a);
     router.window           = window;
     router.playbackMode     = playbackMode;
     router.thickLineProgram = thickLineProgram;
@@ -5277,7 +5288,7 @@ void main(string[] args) {
             }
         }
         frameRunner.tickParameterEvaluation(session);
-        drawSidePanel(app);
+        drawSidePanel(app, actionMenuRoles);
         drawTabPanel(app);
 
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
@@ -5295,7 +5306,7 @@ void main(string[] args) {
         // and the existing application policy owner.
         drawQuitGuardModal(guardModalState, testMode, guardController);
 
-        drawStatusBar(app);
+        drawStatusBar(app, actionMenuRoles);
 
         // ---- Pie menu (task 1800) ------------------------------------------
         // Inside the availability bracket, so a wedge shows up in

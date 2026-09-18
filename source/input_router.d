@@ -143,6 +143,7 @@ import imgui_event_gate     : feedImGui, keyBelongsToEditor,
                               imguiPopupOpen, escapeReachesEditor;
 import item_pick            : ItemHit;
 import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
+import buttonset            : Action;
 
 /// The input-router cluster (task 0781). Constructed once in main() after
 /// EditorApp's own wiring, and threaded the same way ToolHost/vpm/etc.
@@ -150,6 +151,7 @@ import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
 /// shared-surface question (see module doc comment) has an owner's answer.
 struct InputRouter {
     EditorApp app;
+    void delegate(ref Action) fireAction;
 
     // Task 0781 step 2 -- the input/frame shared-state cluster
     // (source/input_frame_state.d), the SAME object main() holds. A class
@@ -1786,14 +1788,13 @@ struct InputRouter {
 
     void pieFireSlot(string menuId, int slot) {
         import pie_menus       : findPieMenu;
-        import ui.panels       : dispatchAction;
 
         auto m = findPieMenu(menuId);
         closePie();
         if (m is null || slot < 0 || slot >= cast(int) m.items.length) return;
 
         auto btn = m.items[slot];
-        dispatchAction(app, btn.action);
+        if (fireAction !is null) fireAction(btn.action);
     }
 
     void pieFireHovered() {
