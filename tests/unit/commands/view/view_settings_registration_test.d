@@ -403,17 +403,21 @@ unittest { // A9: production wiring and source ownership census
     enum callSettings = "registerViewSettingsCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), "
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()));";
-    enum callAi = "static if (kCopilotEnabled) "
+    // The BRACES are part of the pinned text on purpose: a braceless policy
+    // gate lets a statement appended below it escape the gate silently, and
+    // this pin is the only witness of the gated call sites (a typo in their
+    // ARGUMENTS compiles clean in every configuration while the flag is down).
+    enum callAi = "static if (kCopilotEnabled) { "
         ~ "registerAiToggleCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), "
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
-        ~ "app.aiState);";
-    enum callCopilot = "version (WithAI) static if (kCopilotEnabled) "
+        ~ "app.aiState); }";
+    enum callCopilot = "version (WithAI) static if (kCopilotEnabled) { "
         ~ "registerCopilotCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), "
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
         ~ "app.aiState, app.copilotPanel, "
-        ~ "() => app.reg().commandFactories[ ]());";
+        ~ "() => app.reg().commandFactories[ ]()); }";
     assert(registration.count(callSettings) == 1,
         "6354 production wiring: settings call text or multiplicity changed");
     assert(registration.count(callAi) == 1,
