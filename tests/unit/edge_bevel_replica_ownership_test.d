@@ -17,9 +17,13 @@ import overlay_space : OverlaySpace;
 import perf_probe : g_fc;
 import shader : LitShader, Shader;
 import std.conv : to;
+import std.file : readText;
 import std.format : format;
 import std.math : abs;
 import std.process : environment;
+import std.string : indexOf;
+import tests.unit.census_symbols : blankNonCode, countOccurrences,
+    enclosingSymbols, lineOf, symbolAt, symbolTokenHits;
 import tool : Tool;
 import toolpipe.packets : SubjectPacket;
 import tools.edit.edge_bevel : EdgeBevelTool;
@@ -123,6 +127,119 @@ private void assertStateEqual(const ubyte[] expected, const ubyte[] actual,
             label, i, expected[i], actual[i]));
 }
 
+private bool identChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9') || c == '_';
+}
+
+private size_t[] wordLinesInSymbol(string code, string word,
+                                   string wantedSymbol) {
+    size_t[] lines;
+    const symbols = enclosingSymbols(code);
+    size_t from;
+    while (from + word.length <= code.length) {
+        const rel = code[from .. $].indexOf(word);
+        if (rel < 0) break;
+        const at = from + cast(size_t)rel;
+        const end = at + word.length;
+        const before = at == 0 || !identChar(code[at - 1]);
+        const after = end == code.length || !identChar(code[end]);
+        if (before && after) {
+            immutable size_t line = lineOf(code, at);
+            if (symbolAt(symbols, line - 1) == wantedSymbol) lines ~= line;
+        }
+        from = at + word.length;
+    }
+    return lines;
+}
+
+private size_t[] assignmentLinesInSymbol(string code, string field,
+                                         string wantedSymbol) {
+    size_t[] lines;
+    const symbols = enclosingSymbols(code);
+    size_t from;
+    while (from + field.length <= code.length) {
+        const rel = code[from .. $].indexOf(field);
+        if (rel < 0) break;
+        const at = from + cast(size_t)rel;
+        const end = at + field.length;
+        const before = at == 0
+            || (!identChar(code[at - 1]) && code[at - 1] != '.');
+        const afterIdent = end < code.length && identChar(code[end]);
+        size_t eq = end;
+        while (eq < code.length && (code[eq] == ' ' || code[eq] == '\t'
+                                    || code[eq] == '\r' || code[eq] == '\n'))
+            ++eq;
+        const assigns = before && !afterIdent && eq < code.length
+            && code[eq] == '=' && (eq + 1 == code.length || code[eq + 1] != '=');
+        if (assigns) {
+            immutable size_t line = lineOf(code, at);
+            if (symbolAt(symbols, line - 1) == wantedSymbol) lines ~= line;
+        }
+        from = at + field.length;
+    }
+    return lines;
+}
+
+private size_t tokenCountInSymbol(string code, string file, string needle,
+                                  string wantedSymbol) {
+    size_t count;
+    foreach (ref hit; symbolTokenHits(code, file, needle))
+        if (hit.key == wantedSymbol) ++count;
+    return count;
+}
+
+private void cellC0_arrangementCensus() {
+    enum viewportPath = "source/ui/viewport_render.d";
+    const viewportCode = blankNonCode(readText(viewportPath));
+    assert(countOccurrences(viewportCode,
+        "bool visualOnly = (mode == OverlayMode.Visual);") == 1,
+        "C0 VIEWPORT MODE DERIVATION: expected exactly 1 production site");
+    assert(countOccurrences(viewportCode,
+        "inputs.activeTool.draw(shader, viewport, vts, inputs.plan, visualOnly);") == 1,
+        "C0 VIEWPORT TOOL CALL: expected exactly 1 production site");
+    immutable forwardCall =
+        "drawToolOverlays(inputs, mode, viewport, shader);";
+    assert(tokenCountInSymbol(viewportCode, viewportPath, forwardCall,
+        "ViewportSceneRenderer.drawToolOverlaysForTest") == 1,
+        "C0 FORWARDER BODY: expected drawToolOverlays(inputs, mode, viewport, shader) exactly once");
+
+    enum edgePath = "source/tools/edit/edge_bevel.d";
+    const edgeCode = blankNonCode(readText(edgePath));
+    enum drawSymbol = "EdgeBevelTool.draw";
+    enum replicaSymbol = "EdgeBevelTool.drawReplica";
+    assert(tokenCountInSymbol(edgeCode, edgePath, "if (visualOnly)",
+                              drawSymbol) == 1,
+        "C0 EDGE DISPATCH: expected exactly one if (visualOnly) in EdgeBevelTool.draw");
+
+    immutable deriveFloor = tokenCountInSymbol(edgeCode, edgePath,
+        "computePreparedGizmoFrame(", replicaSymbol);
+    immutable arrowFloor = tokenCountInSymbol(edgeCode, edgePath,
+        "replicaArrow_", replicaSymbol);
+    assert(deriveFloor > 0 && arrowFloor > 0, format(
+        "C0 DRAW REPLICA POPULATION: expected derive>0 and arrow>0 got derive=%s arrow=%s",
+        deriveFloor, arrowFloor));
+
+    foreach (word; ["cachedVp", "toolHandles", "widthArrow", "queryMouse",
+                    "rebuildPreview", "preview_", "before"]) {
+        const lines = wordLinesInSymbol(edgeCode, word, replicaSymbol);
+        assert(lines.length == 0, format(
+            "FORBIDDEN IDENTIFIER IN drawReplica: %s at lines %s; expected none",
+            word, lines));
+    }
+    foreach (field; ["gizmoValid", "anchor", "baseAnchor", "widthAxis",
+                     "gizmoSelHash"]) {
+        const lines = assignmentLinesInSymbol(edgeCode, field, replicaSymbol);
+        assert(lines.length == 0, format(
+            "FORBIDDEN WRITE IN drawReplica: assignment to `%s` at lines %s; expected none",
+            field, lines));
+    }
+
+    const appCode = blankNonCode(readText("source/app.d"));
+    assert(countOccurrences(appCode, "foreach (k; overlayDrawOrder(") == 1,
+        "C0 OWNER-LAST: expected exactly one overlayDrawOrder loop in source/app.d");
+}
+
 private void selectA(ref Mesh mesh) {
     immutable int edge = findEdge(mesh, 0, 1);
     assert(edge >= 0, "FIXTURE EDGE A: expected edge (0,1), got none");
@@ -131,6 +248,17 @@ private void selectA(ref Mesh mesh) {
 
 private ulong selectionA(ref Mesh mesh) {
     selectA(mesh);
+    return mesh.selectionSignature(EditMode.Edges);
+}
+
+private ulong switchSelectionToB(ref Mesh mesh) {
+    immutable int edgeA = findEdge(mesh, 0, 1);
+    immutable int edgeB = findEdge(mesh, 4, 7);
+    assert(edgeA >= 0 && edgeB >= 0, format(
+        "SELECTION B FIXTURE: expected A>=0 and B>=0 got A=%s B=%s",
+        edgeA, edgeB));
+    mesh.deselectEdge(edgeA);
+    mesh.selectEdge(edgeB);
     return mesh.selectionSignature(EditMode.Edges);
 }
 
@@ -235,6 +363,266 @@ private void cellC2_replicaThenOwner(ViewportSceneRenderer renderer,
                      "C2 OWNER STATE AFTER REPLICA");
 }
 
+private void assertReplicaB(EdgeBevelTool tool, ref Viewport replicaVp) {
+    Vec3 start, end;
+    size_t drawId;
+    tool.replicaArrowForTest(start, end, drawId);
+    assertVecNear(start, Vec3(1.5f, 7, 0), 1e-4f,
+                  "REPLICA WORLD START");
+    assertVecNear(end, Vec3(1.5f, 12, 0), 1e-4f,
+                  "REPLICA WORLD END");
+    assertProjected(start, replicaVp, 600.0f, 220.0f,
+                    "REPLICA FRESH PROJECTED START");
+    assertProjected(end, replicaVp, 600.0f, 120.0f,
+                    "REPLICA FRESH PROJECTED END");
+    const pass = g_fc.lastHandlePass();
+    assert(pass.submitted == 1, format(
+        "REPLICA HANDLE SUBMISSIONS: expected 1 got %s (tol 0)",
+        pass.submitted));
+    assert(pass.ids[0] == drawId, format(
+        "REPLICA HANDLE ID: expected replica %s got %s (tol 0)",
+        drawId, pass.ids[0]));
+}
+
+private void assertReplicaFrozenA(EdgeBevelTool tool,
+                                  ref Viewport replicaVp,
+                                  string reason) {
+    Vec3 start, end;
+    size_t drawId;
+    tool.replicaArrowForTest(start, end, drawId);
+    assertVecNear(start, Vec3(2, 0, 1), 1e-4f,
+                  "REPLICA FROZEN WORLD START " ~ reason);
+    assertVecNear(end, Vec3(2, 0, 6), 1e-4f,
+                  "REPLICA FROZEN WORLD END " ~ reason);
+    assertProjected(start, replicaVp, 580.0f, 360.0f,
+                    "REPLICA IGNORED THE FROZEN ANCHOR " ~ reason
+                    ~ " START");
+    assertProjected(end, replicaVp, 480.0f, 360.0f,
+                    "REPLICA IGNORED THE FROZEN ANCHOR " ~ reason
+                    ~ " END");
+}
+
+private void cellC3_freshness(ViewportSceneRenderer renderer, Shader shader,
+                              ref GpuMesh gpu, ref Viewport replicaVp,
+                              ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    immutable ulong sigA = selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    assertOwnerA(tool, ownerVp);
+    const before = tool.interactionStateBytesForTest();
+
+    immutable ulong sigB = switchSelectionToB(live);
+    assert(sigB != sigA, format(
+        "C3 SELECTION CHANGE: expected sigB != sigA, got A=%s B=%s",
+        sigA, sigB));
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assertReplicaB(tool, replicaVp);
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "OWNER INTERACTION STATE CHANGED AFTER FRESH REPLICA");
+
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    Vec3 ownerStart, ownerEnd;
+    size_t ownerId;
+    tool.widthArrowForTest(ownerStart, ownerEnd, ownerId);
+    assertVecNear(ownerStart, Vec3(1.5f, 8, 0), 1e-4f,
+                  "OWNER B WORLD START");
+    assertVecNear(ownerEnd, Vec3(1.5f, 18, 0), 1e-4f,
+                  "OWNER B WORLD END");
+    assertProjected(ownerStart, ownerVp, 400.0f, 150.0f,
+                    "OWNER B PROJECTED START");
+    assertProjected(ownerEnd, ownerVp, 400.0f, 50.0f,
+                    "OWNER B PROJECTED END");
+    const read = tool.readInteractionForTest();
+    assert(read.gizmoSelHash == sigB && read.cachedWidth == 800, format(
+        "OWNER B PUBLICATION: expected hash=%s width=800 got hash=%s width=%s",
+        sigB, read.gizmoSelHash, read.cachedWidth));
+
+    setOverrideMouse(400, 100);
+    SDL_MouseButtonEvent press;
+    press.button = SDL_BUTTON_LEFT;
+    press.x = 400;
+    press.y = 100;
+    VectorStack vts;
+    assert(tool.onMouseButtonDown(press, vts),
+        "OWNER B HIT TEST: expected true got false at (400,100)");
+    assert(tool.readInteractionForTest().dragPart == 0, format(
+        "OWNER B DRAG PART: expected 0 got %s (tol 0)",
+        tool.readInteractionForTest().dragPart));
+}
+
+private void cellC4_invalidOwnerFrame(ViewportSceneRenderer renderer,
+                                      Shader shader, ref GpuMesh gpu,
+                                      ref Viewport replicaVp,
+                                      ref Viewport ownerVp) {
+    Mesh live;
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    auto read = tool.readInteractionForTest();
+    assert(!read.gizmoValid, "C4 INVALID OWNER FRAME: expected false got true");
+    assert(g_fc.lastHandlePass().submitted == 0, format(
+        "C4 INVALID OWNER SUBMISSIONS: expected 0 got %s (tol 0)",
+        g_fc.lastHandlePass().submitted));
+    assert(read.cachedWidth == 800, format(
+        "C4 OWNER CACHED WIDTH: expected 800 got %s (tol 0)",
+        read.cachedWidth));
+
+    live = twoQuadsFixture();
+    immutable int edgeB = findEdge(live, 4, 7);
+    assert(edgeB >= 0, "C4 SELECTION B: expected edge (4,7), got none");
+    live.selectEdge(edgeB);
+    immutable ulong sigB = live.selectionSignature(EditMode.Edges);
+    assert(sigB != 0, "C4 SELECTION SIGNATURE: expected nonzero got 0");
+    const before = tool.interactionStateBytesForTest();
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assert(g_fc.lastHandlePass().submitted == 1, format(
+        "REPLICA DREW NOTHING on a valid current selection: submitted == %s, expected 1",
+        g_fc.lastHandlePass().submitted));
+    assertReplicaB(tool, replicaVp);
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "C4 OWNER INTERACTION STATE CHANGED");
+
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    assert(tool.readInteractionForTest().gizmoValid,
+        "C4 OWNER RECOVERY: expected valid frame got invalid");
+}
+
+private void beginWidthDrag(EdgeBevelTool tool) {
+    setOverrideMouse(330, 230);
+    SDL_MouseButtonEvent press;
+    press.button = SDL_BUTTON_LEFT;
+    press.x = 330;
+    press.y = 230;
+    VectorStack vts;
+    assert(tool.onMouseButtonDown(press, vts),
+        "WIDTH DRAG PRESS: expected true got false at (330,230)");
+}
+
+private void cellC5_activeDrag(ViewportSceneRenderer renderer, Shader shader,
+                               ref GpuMesh gpu, ref Viewport replicaVp,
+                               ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    beginWidthDrag(tool);
+    auto read = tool.readInteractionForTest();
+    assert(read.dragPart == 0 && !read.built, format(
+        "C5 ACTIVE DRAG FLOOR: expected dragPart=0 built=false got part=%s built=%s",
+        read.dragPart, read.built));
+    switchSelectionToB(live);
+    const before = tool.interactionStateBytesForTest();
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assertReplicaFrozenA(tool, replicaVp, "during an active drag");
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "C5 OWNER INTERACTION STATE CHANGED");
+}
+
+private int nearestUniqueVertex(ref Mesh mesh, Vec3 target, string label) {
+    int best = -1;
+    float bestD2 = float.max;
+    float secondD2 = float.max;
+    foreach (i, value; mesh.vertices) {
+        immutable Vec3 d = value - target;
+        immutable float d2 = d.x*d.x + d.y*d.y + d.z*d.z;
+        if (d2 < bestD2) {
+            secondD2 = bestD2;
+            bestD2 = d2;
+            best = cast(int)i;
+        } else if (d2 < secondD2) {
+            secondD2 = d2;
+        }
+    }
+    assert(best >= 0 && bestD2 <= 0.25f, format(
+        "%s nearest vertex: expected d2 <= 0.25 got index=%s d2=%.6f",
+        label, best, bestD2));
+    assert(secondD2 > 0.25f, format(
+        "%s uniqueness: expected second d2 > 0.25 got %.6f",
+        label, secondD2));
+    return best;
+}
+
+private void cellC6_builtPreview(ViewportSceneRenderer renderer, Shader shader,
+                                 ref GpuMesh gpu, ref Viewport replicaVp,
+                                 ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    beginWidthDrag(tool);
+
+    SDL_MouseMotionEvent motion;
+    motion.x = 324;
+    motion.y = 230;
+    VectorStack motionStack;
+    assert(tool.onMouseMotion(motion, motionStack),
+        "C6 MOTION: expected true got false for 6 px motion");
+    auto read = tool.readInteractionForTest();
+    assert(read.built, "C6 BUILT FLOOR: expected true got false at 6 px");
+
+    SDL_MouseButtonEvent release;
+    release.button = SDL_BUTTON_LEFT;
+    VectorStack releaseStack;
+    assert(tool.onMouseButtonUp(release, releaseStack),
+        "C6 RELEASE: expected true got false");
+    read = tool.readInteractionForTest();
+    assert(read.dragPart == -1 && read.built, format(
+        "C6 RELEASE FLOOR: expected dragPart=-1 built=true got part=%s built=%s",
+        read.dragPart, read.built));
+
+    immutable int a = nearestUniqueVertex(live, Vec3(0, 6, 0), "C6 B START");
+    immutable int b = nearestUniqueVertex(live, Vec3(3, 6, 0), "C6 B END");
+    assert(a != b, format(
+        "C6 B DISTINCT VERTICES: expected different indices got %s and %s",
+        a, b));
+    immutable int edgeB = findEdge(live, cast(uint)a, cast(uint)b);
+    assert(edgeB >= 0, format(
+        "C6 B EDGE: expected an edge between %s and %s, got none", a, b));
+    assert(!live.hasAnySelectedEdges(),
+        "C6 SELECTION RESET FLOOR: expected no selected edges after rebuild");
+    live.selectEdge(edgeB);
+    assert(live.selectionSignature(EditMode.Edges) != read.gizmoSelHash,
+        "C6 SELECTION CHANGE FLOOR: expected signature to differ from frozen frame");
+
+    const before = tool.interactionStateBytesForTest();
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assertReplicaFrozenA(tool, replicaVp, "with a built preview");
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "C6 OWNER INTERACTION STATE CHANGED");
+}
+
+private void cellC7_noEdges(ViewportSceneRenderer renderer, Shader shader,
+                            ref GpuMesh gpu, ref Viewport replicaVp) {
+    Mesh live;
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    const before = tool.interactionStateBytesForTest();
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assert(g_fc.lastHandlePass().submitted == 0, format(
+        "REPLICA SUBMITTED A HANDLE WITH NO VALID FRAME: submitted == %s, expected 0",
+        g_fc.lastHandlePass().submitted));
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "C7 OWNER INTERACTION STATE CHANGED");
+}
+
 unittest { runReplicaOwnershipWitness(); }
 
 private void runReplicaOwnershipWitness() {
@@ -290,6 +678,12 @@ private void runReplicaOwnershipWitness() {
     auto ownerVp = testViewport(800, 400, 20.0f);
 
     premiseFloors(replicaVp, ownerVp);
+    cellC0_arrangementCensus();
     cellC1_ownerOnly(renderer, shader, gpu, ownerVp);
     cellC2_replicaThenOwner(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC3_freshness(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC4_invalidOwnerFrame(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC5_activeDrag(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC6_builtPreview(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC7_noEdges(renderer, shader, gpu, replicaVp);
 }

@@ -359,7 +359,7 @@ public:
     // Receives the freshly-evaluated toolpipe vts; override to render
     // overlays (gizmos, falloff overlay, snap highlights, etc.).
     //
-    // `visualOnly` (task 0206, Quad/Split multi-cell overlays): true when
+    // `visualOnly` (tasks 0206/6512, Quad/Split multi-cell overlays): true when
     // this draw is a NON-interactive replica in a viewport cell OTHER than
     // the active/origin one. World-derived geometry (handler.draw, the
     // falloff gizmo, drawSnapOverlay/drawFalloffOverlay) still renders
@@ -369,8 +369,9 @@ public:
     // tool's event handlers under a FOREIGN cell's projection: `cachedVp`
     // writes and any ToolHandles register/hit-test (`begin`/`add`/
     // `update`) cycle. See XfrmTransformTool.draw + the Move/Rotate/Scale
-    // sub-tool draw()s for the gated sites. Default false ⇒ every existing
-    // call site (single-cell / `--test`) is byte-identical.
+    // sub-tool draw()s for the gated sites. EdgeBevelTool follows this with a
+    // local replica image and draw-only handle. Default false ⇒
+    // every existing call site (single-cell / `--test`) is byte-identical.
     void draw(const ref Shader shader, const ref Viewport vp,
               ref VectorStack vts, const ref DrawPlan plan,
               bool visualOnly = false) {}

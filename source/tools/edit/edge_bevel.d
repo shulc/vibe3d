@@ -468,6 +468,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
+        if (visualOnly) { drawReplica(shader, vp); return; }
         cachedVp = vp;
         if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Edges) != gizmoSelHash)
             computeGizmoFrame();
@@ -475,7 +476,7 @@ public:
 
         anchor = baseAnchor;   // LOCAL, like the kernel
 
-        // ONE overlay space for the pass (task 0645): the arm is positioned in
+        // ONE overlay space for the pass (tasks 0645/6512): the arm is positioned in
         // it and `toolHandles.update` below hit-tests this same object, so
         // drawing and hitting cannot land in different spaces.
         const auto os      = OverlaySpace.ofPrimary();
@@ -499,6 +500,31 @@ public:
     }
 
 private:
+    // A foreign-cell projection is draw geometry, not owner interaction
+    // state. Derive into a local image so a replica cannot replace
+    // the viewport, frozen frame, registered arrow, or arbiter used by events.
+    private void drawReplica(const ref Shader shader, const ref Viewport vp) {
+        PreparedEdgeBevelActivationImage image;
+        image.gizmoValid = gizmoValid;
+        image.anchor = anchor;
+        image.baseAnchor = baseAnchor;
+        image.widthAxis = widthAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        if (dragPart < 0 && !built
+            && mesh.selectionSignature(EditMode.Edges) != image.gizmoSelHash)
+            computePreparedGizmoFrame(*mesh, image);
+        if (!image.gizmoValid) return;
+
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(image.widthAxis);
+        const Vec3 anchorW = os.pos(image.baseAnchor);
+        const float armLen = gizmoSize(anchorW, vp, 1.0f);
+        replicaArrow_.start = anchorW + ax.dir * (armLen / 6.0f);
+        replicaArrow_.end = anchorW + ax.dir * armLen;
+        replicaArrow_.color = WIDTH_COLOR;
+        replicaArrow_.draw(shader, vp);
+    }
+
     bool[] currentMask() {
         // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
         return mesh.operandEdgeMask();
