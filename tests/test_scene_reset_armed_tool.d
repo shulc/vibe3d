@@ -130,6 +130,13 @@ unittest { // file.new with an ARMED Loop Slice preview: clean scene, one undo e
     assert(r["status"].str == "ok", "file.new failed: " ~ r.toString);
     settle();
 
+    auto disarm = getJson("/api/tool/disarm");
+    assert(disarm["hadTool"].boolean
+            && disarm["mode"].str == "cancelAndDrop"
+            && !disarm["stillArmed"].boolean,
+        "file.new with an armed Loop Slice must cross the production "
+        ~ "cancel-and-drop seam before reset effects; got " ~ disarm.toString);
+
     // (a) Clean, fully-emptied scene -- the documented file.new contract
     // (test_commands_file_misc.d), unaffected by the armed tool.
     auto afterModel = getModel();
