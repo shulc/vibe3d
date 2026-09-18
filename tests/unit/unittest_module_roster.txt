@@ -515,6 +515,7 @@ tests.unit.ui.item_rename_state_test
 tests.unit.ui.item_rows_test
 tests.unit.ui.layer_list_panel_roles_test
 tests.unit.ui.panels_test
+tests.unit.ui.remesh_modal_state_test
 tests.unit.ui.retained_item_ops_test
 tests.unit.ui.tool_properties_panel_roles_test
 tests.unit.ui.transform_panel_widget_test
