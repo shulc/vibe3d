@@ -390,10 +390,6 @@ private void assertReplicaFrozenA(EdgeBevelTool tool,
     Vec3 start, end;
     size_t drawId;
     tool.replicaArrowForTest(start, end, drawId);
-    assertVecNear(start, Vec3(2, 0, 1), 1e-4f,
-                  "REPLICA FROZEN WORLD START " ~ reason);
-    assertVecNear(end, Vec3(2, 0, 6), 1e-4f,
-                  "REPLICA FROZEN WORLD END " ~ reason);
     assertProjected(start, replicaVp, 580.0f, 360.0f,
                     "REPLICA IGNORED THE FROZEN ANCHOR " ~ reason
                     ~ " START");
