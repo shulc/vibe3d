@@ -11,7 +11,7 @@ import application_command_binding : ApplicationCommandBinding;
 import command : Command, g_testMode;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
-import commands.image.commands : ImageLoad, ImageRemove;
+import commands.image.commands : ImageLoad, ImageRemove, ImageRemoveWarning;
 import commands.layer.commands : LayerDelete, LayerRename, LayerSelect;
 import document : Document, ImageData, ItemKind, Layer;
 import edit_session : EditSession;
@@ -29,6 +29,7 @@ import ui.discard_guard : GuardRecord;
 import ui.image_list_panel : ImageListDrawSnapshot, ImageListDrawnRow,
     ImageListPanelRoles, bindImageListPanel, drawImageListPanel,
     imageListDrawSnapshot, resetImageListDrawSnapshot;
+import ui.image_rows : ImageRemoveConfirm;
 import ui.item_rename : ItemRenameState;
 import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
@@ -36,6 +37,23 @@ import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
+
+static assert(!__traits(compiles, (ImageRemoveConfirm c) {
+        Layer l = c.referrers[0];
+    }),
+    "6530 N3 confirm.referrers: the confirmation hands out mutable referrers");
+static assert(__traits(compiles, (ImageRemoveConfirm c) {
+        const(Layer) l = c.referrers[0];
+    }),
+    "6530 N3 control: the same confirmation expression must compile through const");
+static assert(!__traits(compiles, (ImageRemoveWarning w) {
+        Layer l = w.referrers[0];
+    }),
+    "6530 N6 warning.referrers: the remove predicate hands out mutable referrers");
+static assert(__traits(compiles, (ImageRemoveWarning w) {
+        const(Layer) l = w.referrers[0];
+    }),
+    "6530 N6 control: the same warning expression must compile through const");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");

@@ -64,7 +64,7 @@ final class ImageListPanelState {
 private:
     RetainedItem confirmTarget_;
     string confirmText_;
-    Layer[] confirmReferrers_;
+    const(Layer)[] confirmReferrers_;
     bool confirmPendingOpen_;
     ImageRow[] rows_;
 

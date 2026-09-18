@@ -2802,7 +2802,7 @@ unittest {
     assert(bY.linkSlots().length == 2 && bX.linkSlots().length == 1,
         "no slot was invented and none was lost");
 
-    Layer[] refs;
+    const(Layer)[] refs;
     back.referrersOf(bClipB, refs);
     assert(refs.length == 2 && refs[0] is bX && refs[1] is bY,
         "the reverse sweep finds BOTH consumers — a restore that stopped at "

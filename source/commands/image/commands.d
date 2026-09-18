@@ -200,8 +200,8 @@ private PickResult pathOrDialog(string arg, string who) {
 /// What a caller must know before removing an image item: whether anything
 /// still references it, and what.
 struct ImageRemoveWarning {
-    bool    inUse;      ///< true iff at least one item still links to the target
-    Layer[] referrers;  ///< those items, in `layers` order
+    bool           inUse;      ///< true iff at least one item still links to the target
+    const(Layer)[] referrers;  ///< those items, in `layers` order
 }
 
 /// The Images panel's confirm-before-remove predicate AND the warning
@@ -218,7 +218,7 @@ struct ImageRemoveWarning {
 /// It reports DANGLING referrers too (`referrersOf` matches on identity, not
 /// on resolution) — which is the right answer here, since the caller asking
 /// is the one about to make them dangle.
-ImageRemoveWarning imageRemoveWarning(Document* doc, Layer target) {
+ImageRemoveWarning imageRemoveWarning(const(Document)* doc, const(Layer) target) {
     ImageRemoveWarning w;
     if (doc is null || target is null) return w;
     doc.referrersOf(target, w.referrers);
@@ -546,7 +546,7 @@ final class ImageReload : ImageCommandBase {
 final class ImageRemove : ImageCommandBase {
     private int         indexArg = -1;
     private LayerDelete inner_;
-    private Layer[]     referrers_;
+    private const(Layer)[] referrers_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {

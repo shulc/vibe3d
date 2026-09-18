@@ -730,8 +730,8 @@ ImageRemoveTarget imageRemoveTarget(Document* doc) {
 /// What the user is asked to confirm before removing an image that something
 /// still references: the sentence, and the referrers it names BY IDENTITY.
 struct ImageRemoveConfirm {
-    string  text;       ///< `""` when nothing references the target
-    Layer[] referrers;  ///< the items `text` names, in `layers` order; owned
+    string         text;       ///< `""` when nothing references the target
+    const(Layer)[] referrers;  ///< the items `text` names, in `layers` order; owned
 }
 
 /// The confirmation for removing `target`, or an empty one when nothing

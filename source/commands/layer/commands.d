@@ -2590,7 +2590,7 @@ unittest {  // layer.delete on a MIDDLE image that two consumers still point
         "the untouched slot still resolves to clipC — by object, not by the "
         ~ "slot number clipC used to occupy");
 
-    Layer[] refs;
+    const(Layer)[] refs;
     doc.referrersOf(clipB, refs);
     assert(refs.length == 2 && refs[0] is cx && refs[1] is cy,
         "the reverse sweep still names both consumers of the deleted image");

@@ -727,7 +727,7 @@ unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order
         "linkSlots() is name-sorted regardless of insertion order");
 
     // The reverse direction. clipB has two referrers, in layers order.
-    Layer[] refs;
+    const(Layer)[] refs;
     f.doc.referrersOf(f.clipB, refs);
     assert(refs.length == 2, "clipB has two referrers");
     assert(refs[0] is f.consumerX && refs[1] is f.consumerY,
@@ -831,7 +831,7 @@ unittest {  // Deleting the MIDDLE clip: both links report themselves dangling,
     // clear-on-delete policy has to ask.
     assert(f.consumerX.link("backdropImage").targetUnchecked() is f.clipB,
         "a dangling link still names WHICH item it lost");
-    Layer[] refs;
+    const(Layer)[] refs;
     f.doc.referrersOf(f.clipB, refs);
     assert(refs.length == 2 && refs[0] is f.consumerX && refs[1] is f.consumerY,
         "referrersOf still finds both consumers of the deleted clip");

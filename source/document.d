@@ -953,16 +953,16 @@ struct Document {
     /// not on resolution), because the caller that most needs this list is
     /// the one asking about an item that has just left, or is about to.
     ///
-    /// Fills `outBuf` in place — the `selectedItemsInto` idiom, so a caller
-    /// that asks repeatedly keeps one buffer instead of churning an array.
-    void referrersOf(const(Layer) target, ref Layer[] outBuf) {
-        size_t n = 0;
-        if (target !is null)
-            foreach (l; layers) if (l !is null && l.linksTo(target)) ++n;
-        if (outBuf.length != n) outBuf.length = n;
-        if (n == 0) return;
-        size_t i = 0;
-        foreach (l; layers) if (l !is null && l.linksTo(target)) outBuf[i++] = l;
+    /// The output is a list of read-only identities. The production caller
+    /// supplies a fresh buffer at click time; appending moves its block once
+    /// for up to three referrers and twice from four (task 6530). Reused test
+    /// buffers may move once more than the old indexed fill. This query must
+    /// still never be reached from a draw, pick or per-frame path.
+    void referrersOf(const(Layer) target, ref const(Layer)[] outBuf) const {
+        outBuf.length = 0;
+        if (target is null) return;
+        foreach (l; layers)
+            if (l !is null && l.linksTo(target)) outBuf ~= l;
     }
 
     /// Build a one-layer document from an existing mesh. The mesh is moved
