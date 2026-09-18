@@ -54,6 +54,25 @@ private struct DoorCounts {
     size_t switchItem;
 }
 
+private struct ReachRow {
+    string file;
+    size_t count;
+    string why;
+}
+
+/// Exact per-file mode-cell capability ledger. A listed file must exist and
+/// remain populated; every unlisted registrar must stay at zero.
+private static immutable ReachRow[] kModeCellReach = [
+    ReachRow("scene_file_lifecycle_registration.d", 2,
+        "6356: two declared lifecycle doors"),
+    ReachRow("transform_tool_registration.d", 5,
+        "6506: one unified helper plus four deform factories"),
+];
+
+/// No shallow registrar names editModePtr on this HEAD. The former selection
+/// exception was empty and is intentionally replaced by an exact zero ledger.
+private static immutable ReachRow[] kEditModePtrReach = [];
+
 private SelectionTypeDoors rigDoors(LiveRegistrationRig rig, DoorCounts* n) {
     return SelectionTypeDoors(
         rig.session.editModePtr(),
@@ -406,31 +425,50 @@ unittest { // S9: production call, ordering and old-path census
                             "*_registration.d", SpanMode.shallow))
         regFiles ~= baseName(de.name);
     regFiles.sort;
-    size_t nonSelectionFiles, selectionExceptions, lifecycleExceptions;
+    size_t modeRowsSeen, editModePtrRowsSeen;
     foreach (file; regFiles) {
         const code = blankNonCode(readText(buildPath(repoRoot, "source", file)));
-        if (file == "selection_command_registration.d") {
-            ++selectionExceptions;
-        } else {
-            assert(code.count("editModePtr") == 0,
-                "6000 mode-cell reach: " ~ file
-                ~ " reads editModePtr outside the selection registrar");
-            ++nonSelectionFiles;
+        size_t expectedModeCells;
+        bool modeRecorded;
+        foreach (row; kModeCellReach) {
+            if (row.file != file) continue;
+            expectedModeCells = row.count;
+            modeRecorded = true;
+            ++modeRowsSeen;
         }
-        if (file == "scene_file_lifecycle_registration.d") {
-            assert(code.count("modeCell") == 2,
-                "6000 mode-cell reach: the scene/file lifecycle registrar "
-                ~ "must own exactly its two declared modeCell reads");
-            ++lifecycleExceptions;
-        } else {
-            assert(code.count("modeCell") == 0,
-                "6000 mode-cell reach: " ~ file
-                ~ " reads modeCell outside the scene/file lifecycle registrar");
+        const actualModeCells = code.count("modeCell");
+        assert(actualModeCells == (modeRecorded ? expectedModeCells : 0),
+            format("6000 mode-cell reach: %s reads modeCell %d time(s), ledger says %d",
+                file, actualModeCells, modeRecorded ? expectedModeCells : 0));
+        if (modeRecorded)
+            assert(expectedModeCells > 0,
+                "6000 mode-cell reach: a recorded modeCell row became empty: " ~ file);
+
+        size_t expectedEditModePtrs;
+        bool editModePtrRecorded;
+        foreach (row; kEditModePtrReach) {
+            if (row.file != file) continue;
+            expectedEditModePtrs = row.count;
+            editModePtrRecorded = true;
+            ++editModePtrRowsSeen;
         }
+        const actualEditModePtrs = code.count("editModePtr");
+        assert(actualEditModePtrs ==
+                (editModePtrRecorded ? expectedEditModePtrs : 0),
+            format("6000 mode-cell reach: %s reads editModePtr %d time(s), ledger says %d",
+                file, actualEditModePtrs,
+                editModePtrRecorded ? expectedEditModePtrs : 0));
+        if (editModePtrRecorded)
+            assert(expectedEditModePtrs > 0,
+                "6000 mode-cell reach: a recorded editModePtr row became empty: " ~ file);
     }
-    assert(nonSelectionFiles >= 3 && selectionExceptions == 1
-        && lifecycleExceptions == 1,
-        format("6000 mode-cell reach population: %s", regFiles));
+    assert(regFiles.length >= 13 && kModeCellReach.length == 2
+        && modeRowsSeen == kModeCellReach.length
+        && editModePtrRowsSeen == kEditModePtrReach.length,
+        format("6000 mode-cell reach population: files=%d mode rows=%d/%d "
+            ~ "editModePtr rows=%d/%d", regFiles.length, modeRowsSeen,
+            kModeCellReach.length, editModePtrRowsSeen,
+            kEditModePtrReach.length));
 
     assert(reg.count("void registerSelectionCommands(") == 0,
         "6000 old path: registration.d still defines the selection family");

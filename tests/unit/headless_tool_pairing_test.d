@@ -8,12 +8,16 @@ module tests.unit.headless_tool_pairing_test;
 import command : Command;
 import command_history : CommandHistory;
 import commands.tool.headless : ToolHeadlessCommand;
+import commands.layer.xform_edit : LayerXformEdit;
+import commands.mesh.morph_edit : MeshMorphEdit;
+import commands.mesh.vertex_edit : MeshVertexEdit;
 import document : Document, Layer;
 import editmode : EditMode;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import params : Param;
+import pipe_gizmo_host : PipeGizmoHost;
 import registration : registerTools;
 import registry : Registry, ToolFactory;
 import seltype : SelMode;
@@ -92,6 +96,13 @@ private Rig* makeRig() {
     r.app.sessionOwner = r.session;
     r.app.regPtr = &r.registry;
     r.app.history = new CommandHistory();
+    r.app.vxEditFactory = () => new MeshVertexEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.morphEditFactory = () => new MeshMorphEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.layerXformEditFactory = () => new LayerXformEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.pipeGizmoHost = new PipeGizmoHost;
     return r;
 }
 

@@ -229,6 +229,7 @@ def scan(root):
     params = []
     for p in [root / "source/tool.d", *tool_files]: params += _methods(p, ("params",))
     registration_sources = [
+        root / "source/transform_tool_registration.d",
         root / "source/registration.d",
     ]
     factories = []

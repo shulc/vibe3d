@@ -254,7 +254,6 @@ unittest {
 /// lines — the scanner is what separates them, which is why the recorded
 /// numbers are the scanner's and not grep's.
 private static immutable LedgerRow[] kWithAppCensus = [
-    LedgerRow("registerTransformTools", 1, "transform registrations"),
     LedgerRow("registerGeneratorTools", 1, "generator registrations"),
     LedgerRow("registerPrimitiveTools", 1, "primitive registrations"),
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
@@ -318,8 +317,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 10)
-        problems ~= format("\n    with(app) population — recorded 10, scanner "
+    if (ledgerHits.length != 9)
+        problems ~= format("\n    with(app) population — recorded 9, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

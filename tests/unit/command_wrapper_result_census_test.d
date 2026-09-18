@@ -66,6 +66,8 @@ unittest {
         "external CommandWrapperTool subclass roster changed: expected EdgeSlide");
 
     const registration = blankUnittestBodies(blankNonCode(readText(buildPath(
+        repoRoot, "source", "transform_tool_registration.d"))));
+    const compositionRoot = blankUnittestBodies(blankNonCode(readText(buildPath(
         repoRoot, "source", "registration.d"))));
     static foreach (name; ["XfrmSmoothTool", "XfrmJitterTool",
                            "XfrmQuantizeTool", "EdgeSlideTool"]) {
@@ -75,6 +77,11 @@ unittest {
     }
     assert(registration.count("typedToolFactory!Xfrm") >= 3,
         "factory census population floor lost the three xfrm wrappers");
+    static foreach (name; ["XfrmSmoothTool", "XfrmJitterTool",
+                           "XfrmQuantizeTool", "EdgeSlideTool"])
+        assert(compositionRoot.count("typedToolFactory!" ~ name) == 0
+            && compositionRoot.count("new " ~ name ~ "(") == 0,
+            "CommandWrapper factory adapter returned to registration.d: " ~ name);
 
     const prepared = blankUnittestBodies(blankNonCode(readText(buildPath(
         repoRoot, "source", "prepared_command_wrapper_activation.d"))));

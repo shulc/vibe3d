@@ -112,7 +112,7 @@ import std.conv      : to;
 import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : buildPath, dirName, relativePath;
 import std.regex     : regex, matchAll;
-import std.string    : indexOf, strip;
+import std.string    : indexOf, replace, strip;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
    countOccurrences, isIdentChar, lineOf, reconcile, symbolTokenHits;
@@ -303,22 +303,35 @@ private enum string kPenBundleField = "topoPenFactories";
 /// unwired one fails exactly the same silent way; they are not in the wire-name
 /// census (member 3) because they carry no wire name — the carrier class's own
 /// `name()` answers for them.
-private struct OtherRow { string field; string carrier; size_t binds; string why; }
+private struct OtherRow {
+    string file;
+    string field;
+    string spend;
+    string carrier;
+    size_t binds;
+    string why;
+}
 
 private enum OtherRow[] kOtherRows = [
-    OtherRow("vxEditFactory", "MeshVertexEdit", 10,
-        "ONE `setUndoBindings` inside `buildUnifiedTransform` (shared by the "
-      ~ "four unified transform ids), FOUR `setUndoBindings` for xfrm.push / "
-      ~ "xfrm.bend / xfrm.linearAlignTool / xfrm.radialAlignTool, FOUR "
-      ~ "`setGestureBindings` for the command-wrapper tools, plus ONE "
-      ~ "`setGestureBindings` for xfrm.magnet. That split is the residue "
-      ~ "member 5 rosters, and it does NOT close with this group: the "
-      ~ "transform zone is out of task 1905's scope by decision D1"),
-    OtherRow("morphEditFactory", "MeshMorphEdit", 1,
+    OtherRow("source/registration.d", "vxEditFactory", "vxEditFactory",
+        "MeshVertexEdit", 1,
+        "xfrm.magnet's one remaining gesture binding"),
+    OtherRow("source/registration.d", "morphEditFactory", "morphEditFactory",
+        "MeshMorphEdit", 0,
+        "the transform family owns the only morph-edit spend"),
+    OtherRow("source/registration.d", "layerXformEditFactory",
+        "layerXformEditFactory", "LayerXformEdit", 0,
+        "the transform family owns the only item-edit spend"),
+    OtherRow("source/transform_tool_registration.d", "vxEditFactory",
+        "deps.vertexEditFactory()", "MeshVertexEdit", 9,
+        "one unified helper, four deform tools, and four convolve tools"),
+    OtherRow("source/transform_tool_registration.d", "morphEditFactory",
+        "deps.morphEditFactory()", "MeshMorphEdit", 1,
         "the third `setUndoBindings` argument inside `buildUnifiedTransform`, "
       ~ "shared by move / rotate / scale / xfrm.transform (task 1069's "
       ~ "routed-gesture carrier)"),
-    OtherRow("layerXformEditFactory", "LayerXformEdit", 1,
+    OtherRow("source/transform_tool_registration.d", "layerXformEditFactory",
+        "deps.itemEditFactory()", "LayerXformEdit", 1,
         "the `setItemUndoFactory` inside `buildUnifiedTransform`, shared by "
       ~ "move / rotate / scale / xfrm.transform"),
 ];
@@ -341,20 +354,14 @@ private enum OtherRow[] kOtherRows = [
 unittest {
     string[] problems;
 
-    // Anti-duplication first: a typo in the roster throws when the file is
-    // read, but a DUPLICATE is silent and would leave one real field unscanned
-    // and green forever.
+    // The transform slice deliberately has one row per source file, so derive
+    // the unique app-field roster before checking declarations and wiring.
     string[] names;
     foreach (r; kSessionRows) names ~= r.field;
     foreach (r; kOtherRows)   names ~= r.field;
     auto sorted = names.dup;
     sorted.sort();
-    if (sorted.uniq.array.length != names.length)
-        problems ~= "    · the roster names only "
-                  ~ sorted.uniq.array.length.to!string ~ " DISTINCT field(s) "
-                  ~ "across " ~ names.length.to!string ~ " rows — a duplicate "
-                  ~ "leaves one factory unscanned, and its per-field checks "
-                  ~ "below then pass by never running";
+    auto uniqueNames = sorted.uniq.array;
 
     immutable appSrc  = stripCommentsAndStrings(readSource("source/app.d"));
     immutable edSrc   = stripCommentsAndStrings(readSource("source/editor_app.d"));
@@ -373,7 +380,7 @@ unittest {
                       ~ "`source/app.d` and rostered here WITH ITS CONSUMER; an "
                       ~ "unassigned delegate field is null and fails silently";
     }
-    foreach (n; names) {
+    foreach (n; uniqueNames) {
         bool present = false;
         foreach (d; declared) if (d == n) { present = true; break; }
         if (!present)
@@ -384,7 +391,7 @@ unittest {
     // (ii) each field is assigned exactly once in app.d, from the same-named
     //      local. `app.X = X;` — both halves matter: the left says the field is
     //      wired, the right says it is wired from the row built above.
-    foreach (n; names) {
+    foreach (n; uniqueNames) {
         immutable size_t lhs = countOccurrences(appSrc, "app." ~ n);
         if (lhs != 1)
             problems ~= "    · `source/app.d` names `app." ~ n ~ "` "
@@ -412,11 +419,10 @@ unittest {
                       ~ "records nothing";
     }
 
-    if (declared.length < kSessionRows.length + kOtherRows.length)
+    if (declared.length < uniqueNames.length)
         problems ~= "    · NON-VACUITY: the scan of `source/editor_app.d` found "
                   ~ declared.length.to!string ~ " factory field declaration(s), "
-                  ~ "and the roster holds "
-                  ~ (kSessionRows.length + kOtherRows.length).to!string
+                  ~ "and the roster holds " ~ uniqueNames.length.to!string
                   ~ ". The reader returned nothing, or the field spelling moved "
                   ~ "— the rows above are then measuring an empty list";
 
@@ -794,6 +800,14 @@ unittest {
     size_t total = 0, rosterTotal = 0;
 
     immutable regSrc = stripCommentsAndStrings(readSource("source/registration.d"));
+    immutable transformSrc = stripCommentsAndStrings(
+        readSource("source/transform_tool_registration.d"));
+    // The composition root hands these dependencies to the registrar; it is
+    // not a tool consumer. Keep this census on the places that spend them.
+    immutable regSpendSrc = regSrc
+        .replace("app.vxEditFactory", "")
+        .replace("app.morphEditFactory", "")
+        .replace("app.layerXformEditFactory", "");
 
     void check(string field, size_t want, string why) {
         auto hits = identHits(regSrc, field);
@@ -809,10 +823,32 @@ unittest {
     }
 
     foreach (r; kSessionRows) check(r.field, r.binds, r.why);
-    foreach (r; kOtherRows)   check(r.field, r.binds, r.why);
     check(kPenBundleField, 1,
         "`mesh.topoPen`'s one `setPenFactories` argument; the thirteen pen "
       ~ "factories travel as this one value (task 6352)");
+
+    size_t registrationOtherTotal, transformOtherTotal;
+    foreach (r; kOtherRows) {
+        const source = r.file == "source/registration.d"
+            ? regSpendSrc : transformSrc;
+        auto hits = r.file == "source/registration.d"
+            ? identHits(source, r.spend)
+            : needleLines(source, r.spend);
+        if (r.file == "source/registration.d") registrationOtherTotal += hits.length;
+        else transformOtherTotal += hits.length;
+        if (hits.length == r.binds) continue;
+        string at;
+        foreach (h; hits) at ~= h.to!string ~ " ";
+        problems ~= "    · `" ~ r.field ~ "` is spent " ~ hits.length.to!string
+                  ~ " time(s) in `" ~ r.file ~ "`, roster says "
+                  ~ r.binds.to!string ~ "  (" ~ r.why ~ ")"
+                  ~ (at.length ? "  [lines " ~ at.strip() ~ "]" : "");
+    }
+    if (registrationOtherTotal < 1 || transformOtherTotal < 11)
+        problems ~= "    · NON-VACUITY: per-file other-factory populations "
+                  ~ "fell below measured floors 1/11; got "
+                  ~ registrationOtherTotal.to!string ~ "/"
+                  ~ transformOtherTotal.to!string;
 
     if (total * 2 < rosterTotal)
         problems ~= "    · NON-VACUITY: the scan of `source/registration.d` "

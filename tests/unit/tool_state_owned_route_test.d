@@ -200,16 +200,16 @@ unittest {
     assert(mainBody.count("activeTool.update(vts)") == 1,
         "5940 S population floor: main must contain exactly one active-tool update");
 
-    auto registration = blankNonCode(readText(
-        buildPath(repoRoot, "source", "registration.d")));
+    auto registration = blankNonCode(readText(buildPath(
+        repoRoot, "source", "transform_tool_registration.d")));
     auto factories = bodyAt(registration,
-        "private void registerTransformTools(EditorApp app)");
+        "void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,");
     assert(factories.count("buildUnifiedTransform(") == 4,
         "5940 S production constructor floor: expected four Xfrm factories");
     auto builder = bodyAt(registration,
         "private XfrmTransformTool buildUnifiedTransform(");
     assert(builder.count("new XfrmTransformTool(") == 1
-        && builder.count("() => currentSelType(app.selTypeOrder)") == 1,
+        && builder.count("() => owner.subjectType()") == 1,
         "5940 S production constructor wiring lost the live subject source");
 }
 

@@ -57,14 +57,6 @@ import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
-import tools.transform.transform;
-import tools.transform.move;
-import tools.deform.push;
-import tools.deform.bend;
-import tools.alignment.linear_align_tool;
-import tools.alignment.radial_align_tool;
-import tools.transform.scale;
-import tools.transform.rotate;
 import tools.create.box;
 import tools.alignment.mirror;
 import tools.alignment.radial_sweep_tool;
@@ -80,7 +72,6 @@ import tools.create.vertex_place : VertexTool;
 import tools.edit.drag_weld    : DragWeldTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
 import tools.edit.edge_extend : EdgeExtendTool;
-import tools.slice.edge_slide : EdgeSlideTool;
 import tools.edit.poly_extrude : PolyExtrudeTool;
 import tools.alignment.radial_array_tool : RadialArrayTool;
 import tools.edit.poly_bevel : PolyBevelTool;
@@ -100,7 +91,6 @@ import tools.edit.vert_merge_tool : VertexMergeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
-import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 import tools.edit.topology_pen : TopologyPenTool;
 import file_io_registration : registerFileIoCommands;
 import history_macro_registration : registerHistoryCommands;
@@ -111,6 +101,8 @@ import scene_file_lifecycle_registration : SceneLifecycleDoors,
 import selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
+import transform_tool_registration : TransformToolDeps,
+    registerTransformToolCommands;
 import item_command_registration : ItemLifecycleDoors, registerItemCommands;
 import ai3d_command_registration : registerAi3dCommands;
 import commands.mesh.subdivide;
@@ -200,7 +192,6 @@ import snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
 import command;
 import registry;
-import tools.transform.xfrm_transform : XfrmTransformTool;
 import shortcuts;
 import buttonset;
 import ai.debug_trace : latestHandleDebugTraceJson;
@@ -268,120 +259,21 @@ void registerTools(EditorApp app) {
     registerEditTools(app);
 }
 
-/// The four unified-transform ids share this construction recipe; each row
-/// supplies only T/R/S and the handle family/presentation. Collaborators come
-/// from the registration-time EditorApp copy, while mesh, subject and item
-/// targets remain live callbacks read on every use. The `transform` row equals
-/// the XfrmTransformTool constructor defaults by contract. Task 6351; pinned by
-/// tests/unit/unified_transform_recipe_test.d.
-private struct TransformFactoryDefaults {
-    bool flagT, flagR, flagS;
-    int handleFamily;
-    string handlePresentation;
-
-    enum move      = TransformFactoryDefaults(true,  false, false, 0, "full");
-    enum rotate    = TransformFactoryDefaults(false, true,  false, 1, "full");
-    enum scale     = TransformFactoryDefaults(false, false, true,  2, "full");
-    // Equal to the XfrmTransformTool constructor defaults by contract, not by
-    // omission: presets on this base that set no handle fields inherit it.
-    enum transform = TransformFactoryDefaults(true,  true,  true,  0, "compact");
-}
-
-private XfrmTransformTool buildUnifiedTransform(EditorApp app,
-                                                TransformFactoryDefaults defaults) {
-    auto t = new XfrmTransformTool(() => &app.mesh(), &app.gpu(), &app.editMode(),
-        () => currentSelType(app.selTypeOrder),
-        // The moving target-narrowed set, not only the primary layer.
-        (ref Layer[] buf) => app.document().itemTransformTargets(buf));
-    t.flagT = defaults.flagT;
-    t.flagR = defaults.flagR;
-    t.flagS = defaults.flagS;
-    t.handleFamily = defaults.handleFamily;
-    t.handlePresentation = defaults.handlePresentation;
-    t.setUndoBindings(app.history, app.vxEditFactory, app.morphEditFactory);
-    t.setItemUndoFactory(app.layerXformEditFactory);
-    t.setPipeGizmoHost(app.pipeGizmoHost);
-    if (app.aiExplore.enabled && app.aiLogWriter.enabled)
-        t.setAiExploreSilentHover(true);
-    return t;
-}
-
-/// Transform, deform, align and convolve tools — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
+/// The transform registrar owns only explicit live roles and collaborators;
+/// this composition root is shared by production and the unittest door.
 private void registerTransformTools(EditorApp app) {
-    with (app) {
-    reg.toolFactories["move"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(app, TransformFactoryDefaults.move));
-    reg.toolFactories["rotate"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(app, TransformFactoryDefaults.rotate));
-    reg.toolFactories["scale"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(app, TransformFactoryDefaults.scale));
-    reg.toolFactories["xfrm.transform"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(app, TransformFactoryDefaults.transform));
-    reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {
-        auto t = new PushTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, vxEditFactory);
-        return t;
-    });
-    reg.toolFactories["xfrm.bend"] = typedToolFactory!BendTool(() {
-        auto t = new BendTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, vxEditFactory);
-        return t;
-    });
-    // Align deform-tools batch (task 0361) — same headless-attr-driven
-    // family as xfrm.push/xfrm.bend above (params()+applyHeadless() only,
-    // no gizmo drag; driven via `tool.attr ... ; tool.doApply` from the
-    // panel). Neutral tool ids per the task's public-repo naming rule.
-    reg.toolFactories["xfrm.linearAlignTool"] = typedToolFactory!LinearAlignTool(() {
-        auto t = new LinearAlignTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, vxEditFactory);
-        return t;
-    });
-    reg.toolFactories["xfrm.radialAlignTool"] = typedToolFactory!RadialAlignTool(() {
-        auto t = new RadialAlignTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, vxEditFactory);
-        return t;
-    });
-    // Convolve sub-tools (Deform → Smooth / Jitter / Quantize) —
-    // exposed as tools so the side-panel buttons use the same
-    // `tool.set xfrm.smooth on` activation shape. The
-    // underlying math reuses MeshSmooth / MeshJitter / MeshQuantize
-    // (one-shot, not brush-interactive). Brush interactivity is a
-    // follow-up; the tool surface is the prerequisite.
-    reg.toolFactories["xfrm.smooth"] = typedToolFactory!XfrmSmoothTool(() {
-        auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu());
-        t.setGestureBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return t;
-    });
-    reg.toolFactories["xfrm.jitter"] = typedToolFactory!XfrmJitterTool(() {
-        auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu());
-        t.setGestureBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return t;
-    });
-    reg.toolFactories["edge.slide"] = typedToolFactory!EdgeSlideTool(() {
-        auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu());
-        t.setGestureBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return t;
-    });
-    reg.toolFactories["xfrm.quantize"] = typedToolFactory!XfrmQuantizeTool(() {
-        auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu());
-        t.setGestureBindings(history, vxEditFactory);
-        t.setPipeGizmoHost(pipeGizmoHost);
-        return t;
-    });
-    }
+    auto explore = app.aiExplore;
+    auto logw = app.aiLogWriter;
+    registerTransformToolCommands(app.reg(),
+        LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        TransformToolDeps(app.gpuPtr, app.history, app.vxEditFactory,
+            app.morphEditFactory, app.layerXformEditFactory, app.pipeGizmoHost,
+            () => explore.enabled && logw.enabled));
 }
 
 version (unittest)
+/// Build any transform-family product through the production composition root.
 Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
     registerTransformTools(app);
     return app.reg.toolFactories[key]();

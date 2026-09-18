@@ -246,7 +246,8 @@ private enum string[] kG6WireIds = [
 
 unittest {
     // RAW source: the wire id IS a string literal and the stripper blanks it.
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable src = readText(buildPath(
+        repoRoot, "source", "transform_tool_registration.d"));
     string[] problems;
     size_t checked = 0;
 

@@ -1291,7 +1291,8 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
         shutil.copytree(ROOT / "source/tools", mutant_root / "source/tools")
-        for name in ("tool.d", "registration.d", "tool_presets.d"):
+        for name in ("tool.d", "registration.d", "tool_presets.d",
+                     "transform_tool_registration.d"):
             shutil.copy2(ROOT / "source" / name, mutant_root / "source" / name)
         transition_path = module_path(
             ROOT, "prepared_tool_transition", "prepared.tool_transition")
@@ -1388,7 +1389,7 @@ if not mutation_rejected(add_reachable_override_set, "hooks symbol mismatch",
     fail("P1.0b.0 added production factory/override/provider set did not fail")
 
 def change_factory_product(root):
-    p = root / "source/registration.d"
+    p = root / "source/transform_tool_registration.d"
     text = p.read_text()
     anchor = 'reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {'
     begin = text.find(anchor)
@@ -1415,9 +1416,9 @@ for label, edit in (
         fail(f"P1.0b.0 {label} factory product descriptor mutation did not fail")
 
 def drop_expression_factory_helper_write(root):
-    p = root / "source/registration.d"
+    p = root / "source/transform_tool_registration.d"
     text = p.read_text()
-    needle = "    t.setItemUndoFactory(app.layerXformEditFactory);\n"
+    needle = "    t.setItemUndoFactory(deps.itemEditFactory());\n"
     if needle not in text:
         fail("P1.0b.0 expression-helper body mutation anchor vanished")
     p.write_text(text.replace(needle, "", 1))
@@ -1426,13 +1427,13 @@ if not mutation_rejected(drop_expression_factory_helper_write,
     fail("P1.0b.0 expression-helper body mutation did not RED fingerprint")
 
 def change_expression_factory_defaults_row(root):
-    p = root / "source/registration.d"
+    p = root / "source/transform_tool_registration.d"
     text = p.read_text()
-    needle = "buildUnifiedTransform(app, TransformFactoryDefaults.move)"
+    needle = "buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.move)"
     if needle not in text:
         fail("P1.0b.0 expression-factory defaults mutation anchor vanished")
     p.write_text(text.replace(
-        needle, "buildUnifiedTransform(app, TransformFactoryDefaults.rotate)", 1))
+        needle, "buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.rotate)", 1))
 if not mutation_rejected(change_expression_factory_defaults_row,
                          "direct-body/product census changed"):
     fail("P1.0b.0 expression-factory defaults mutation did not RED fingerprint")

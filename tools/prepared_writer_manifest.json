@@ -16,7 +16,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "f5e11bc1302236e4216117a9c6c39f42a5addb64440e23f9b415b2975546b8a4",
+      "semantic_sha256": "26b933ffc2520c9ad3b6e22f82cc8e0edcbbd89658df6b6a64f2b724c1f6c01b",
       "symbol": "toolFactories[\"move\"]"
     },
     {
@@ -25,7 +25,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "6f0b405c95da7063568e547b409ead3a798d0118573c07cbadc4903d69280f5f",
+      "semantic_sha256": "24b1ce4b230128d953fe6cb0b3311c018ffc298c3d8c85c39d4c5534b30bb847",
       "symbol": "toolFactories[\"rotate\"]"
     },
     {
@@ -34,7 +34,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "e17332dd1893b32d082cc544e8d6684663669903bc5d2a2d08d954edff799d50",
+      "semantic_sha256": "b3e50350ad0d6b919be8c93f8876fcf150f56d37abed1ae322afe48a5a2ef5a3",
       "symbol": "toolFactories[\"scale\"]"
     },
     {
@@ -43,7 +43,7 @@
       "product_types": [
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "c7d2fad78712e92e27b71afa8af96e83b55fed9ff05df12f2f73923c10e116ea",
+      "semantic_sha256": "736e3bee7a08571c74c2fdc894daf6dd23336315c2bb9d23ccbbd0c569aa04f2",
       "symbol": "toolFactories[\"xfrm.transform\"]"
     },
     {
@@ -52,7 +52,7 @@
       "product_types": [
         "PushTool"
       ],
-      "semantic_sha256": "af80cfafc43f7401e4b86f68d86b7c9863d48998c6512f928bb710a803ebbb4c",
+      "semantic_sha256": "f740abf072475d38b71ef31487b2a409ede3e2a9e74d2f92c501f37a8e622314",
       "symbol": "toolFactories[\"xfrm.push\"]"
     },
     {
@@ -61,7 +61,7 @@
       "product_types": [
         "BendTool"
       ],
-      "semantic_sha256": "94cd46d652e131f188f7624d5df853dca3208e5d129902e77350e090976cd474",
+      "semantic_sha256": "5ad2aa697bd0c725229e48261e33097a4f208c560145227f511284a5d7ba3234",
       "symbol": "toolFactories[\"xfrm.bend\"]"
     },
     {
@@ -70,7 +70,7 @@
       "product_types": [
         "LinearAlignTool"
       ],
-      "semantic_sha256": "a98b6531a165d7867973bd86b93ef3f3be892cde7dff9b1f481d65dc85c3487c",
+      "semantic_sha256": "bf329b398f97caac390f03cd8bed92f5402eb6a750ff2637867b5e92aae16cc5",
       "symbol": "toolFactories[\"xfrm.linearAlignTool\"]"
     },
     {
@@ -79,7 +79,7 @@
       "product_types": [
         "RadialAlignTool"
       ],
-      "semantic_sha256": "9311edd0eb3cf17f77d718187f1f64622c4b38a878d56414c651dfd5549edd1f",
+      "semantic_sha256": "a8793b5021f4019e30d088223c75980e2f42f0aed5dc2523f9250ae3013f22e2",
       "symbol": "toolFactories[\"xfrm.radialAlignTool\"]"
     },
     {
@@ -88,7 +88,7 @@
       "product_types": [
         "XfrmSmoothTool"
       ],
-      "semantic_sha256": "748ff9217c8425b2cf65ebb1a1c2c2f52ff27256f87d371757dfaa4d0a462a8b",
+      "semantic_sha256": "9af05d48bc23d6967875189ba849170a0342ad419e5607b35d88535698ce8db7",
       "symbol": "toolFactories[\"xfrm.smooth\"]"
     },
     {
@@ -97,7 +97,7 @@
       "product_types": [
         "XfrmJitterTool"
       ],
-      "semantic_sha256": "77184bc88971bdd64da04ef27df362e63ddcc88ada58a442ba696e6c3c8823d2",
+      "semantic_sha256": "006673744603c5c67219e514efedde2a028f53359d8b281c79a0b619021dccf4",
       "symbol": "toolFactories[\"xfrm.jitter\"]"
     },
     {
@@ -106,7 +106,7 @@
       "product_types": [
         "EdgeSlideTool"
       ],
-      "semantic_sha256": "3451c8488b1cdaa2adaef987cacca65ff23cdd5e60aa61c686665da8d4cf54bb",
+      "semantic_sha256": "e010619981cf00f78e8aa55b8cd42130dc8112d37a7d5dc1b0cbf0502daf44cf",
       "symbol": "toolFactories[\"edge.slide\"]"
     },
     {
@@ -115,7 +115,7 @@
       "product_types": [
         "XfrmQuantizeTool"
       ],
-      "semantic_sha256": "69ff03de7dddacd28e8479305cf56036ae60447a08c4fa9e9641a36e945af19a",
+      "semantic_sha256": "dc24c7f453e77810909600488c717d0d55a1da3f66d3e97c98566e3435d46696",
       "symbol": "toolFactories[\"xfrm.quantize\"]"
     },
     {

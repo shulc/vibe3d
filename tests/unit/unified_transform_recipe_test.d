@@ -26,6 +26,7 @@ import seltype : SelType, SelMode;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import view : View;
 import std.conv : to;
 import std.file : readText;
 import std.meta : AliasSeq;
@@ -51,6 +52,7 @@ private struct Rig {
     GpuMesh gpu;
     Session* session;
     Layer a, b;
+    View view;
     EditorApp app;
 }
 
@@ -65,7 +67,10 @@ private Rig* makeRig() {
     r.session = Session.create(doc);
     auto s = r.session;
     ref Mesh currentMesh() { return s.document.activeMeshRef(); }
+    r.view = new View(0, 0, 800, 600);
+    ref View currentView() { return r.view; }
     r.app.meshDg = cast(typeof(r.app.meshDg)) &currentMesh;
+    r.app.cameraViewDg = &currentView;
     r.app.gpuPtr = &r.gpu;
     r.app.sessionOwner = r.session;
     r.app.regPtr = &r.registry;
@@ -270,10 +275,12 @@ private string bodyAt(string code, string marker) {
 // Block 5: source census — registration uses the helper; this witness does not
 // build an analogue of it.
 unittest {
-    immutable reg = blankNonCode(readText(
+    immutable root = blankNonCode(readText(
         buildPath(repoRoot, "source", "registration.d")));
+    immutable reg = blankNonCode(readText(buildPath(
+        repoRoot, "source", "transform_tool_registration.d")));
     immutable fam = bodyAt(reg,
-        "private void registerTransformTools(EditorApp app)");
+        "void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,");
     assert(countOccurrences(fam, "typedToolFactory!XfrmTransformTool(") == 4,
         "6351 census floor: four typed unified-transform entries");
     assert(countOccurrences(fam, "buildUnifiedTransform(") == 4
@@ -288,7 +295,10 @@ unittest {
             "6351 census helper: " ~ needle);
     assert(countOccurrences(reg, "new XfrmTransformTool(") == 1
         && countOccurrences(reg, "buildUnifiedTransform(") == 5,
-        "6351 census: one construction site and four helper calls in registration.d");
+        "6351 census: one construction site and four helper calls in transform registrar");
+    assert(countOccurrences(root, "new XfrmTransformTool(") == 0
+        && countOccurrences(root, "buildUnifiedTransform(") == 0,
+        "6351 census: unified construction recipe returned to registration.d");
 
     immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
     assert(countOccurrences(self,

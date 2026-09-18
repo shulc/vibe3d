@@ -9,36 +9,49 @@ module tests.unit.transform_history_ownership_census_test;
 
 import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
+import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import document : Document;
+import document : Document, Layer;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import registry : Registry;
+import seltype : SelMode;
 import session_owner : Session;
 import operator : VectorStack;
 import std.conv : to;
 import ai.exploration : AiExplorationController;
 import ai.interaction_log_writer : AiInteractionLogWriter;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import view : View;
 
 unittest // executes in the module-unittest gate, before any HTTP driver starts
 {
-    Mesh mesh = makeCube();
+    auto layer = new Layer;
+    layer.name = "transform-owner";
+    layer.meshRef() = makeCube();
+    Document document;
+    document.layers = [layer];
+    document.noteLayerListChanged();
+    document.selectItem(layer, SelMode.Set);
     GpuMesh gpu;
     Registry registry;
-    auto sessionOwner = Session.create(Document.init);
-    ref Mesh currentMesh() nothrow @nogc { return mesh; }
+    auto sessionOwner = Session.create(document);
+    ref Mesh currentMesh() nothrow @nogc { return sessionOwner.editMesh(); }
+    View view = new View(0, 0, 800, 600);
+    ref View currentView() { return view; }
 
     EditorApp app;
     app.meshDg = cast(typeof(app.meshDg)) &currentMesh;
+    app.cameraViewDg = cast(typeof(app.cameraViewDg)) &currentView;
     app.gpuPtr = &gpu;
     app.sessionOwner = sessionOwner;
     app.regPtr = &registry;
     app.history = new CommandHistory();
     app.vxEditFactory = () => cast(MeshVertexEdit) null;
+    app.morphEditFactory = () => cast(MeshMorphEdit) null;
     app.layerXformEditFactory = () => cast(LayerXformEdit) null;
     app.pipeGizmoHost = new PipeGizmoHost();
     app.aiExplore = new AiExplorationController(0, 42);

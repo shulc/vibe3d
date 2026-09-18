@@ -16,11 +16,15 @@ module tests.unit.topology_pen_factory_bundle_test;
 import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
+import commands.layer.xform_edit : LayerXformEdit;
+import commands.mesh.morph_edit : MeshMorphEdit;
+import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_new : MeshVertexNew;
 import document : Document, Layer;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
+import pipe_gizmo_host : PipeGizmoHost;
 import registration : registerTools;
 import registry : Registry;
 import seltype : SelMode;
@@ -83,6 +87,13 @@ private Rig* makeRig() {
     r.app.sessionOwner = r.session;
     r.app.regPtr = &r.registry;
     r.app.history = new CommandHistory();
+    r.app.vxEditFactory = () => new MeshVertexEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.morphEditFactory = () => new MeshMorphEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.layerXformEditFactory = () => new LayerXformEdit(
+        &r.session.document.activeMeshRef(), r.view, r.session.editMode);
+    r.app.pipeGizmoHost = new PipeGizmoHost;
     static foreach (f; FieldNameTuple!TopoPenFactories)
         __traits(getMember, r.app.topoPenFactories, f) = probe(r, f);
     return r;
