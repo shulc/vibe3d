@@ -1,7 +1,8 @@
 module tests.unit.ui.layer_list_panel_roles_test;
 
-import std.algorithm : canFind, count;
+import std.algorithm : canFind, count, sort;
 import core.exception : AssertError;
+import std.conv : to;
 import std.exception : assertThrown;
 import std.file : SpanMode, dirEntries, readText;
 import std.path : buildNormalizedPath, buildPath, dirName;
@@ -15,8 +16,10 @@ import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.layer.commands : LayerAttr, LayerRename, LayerSelect,
     LayerSetVisible;
-import document : Document, Layer;
+import commands.image_plane.commands : ImagePlaneAdd;
+import document : Document, ItemKind, Layer, kindInfo;
 import edit_session : EditSession;
+import editmode : EditMode;
 import forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
@@ -26,6 +29,7 @@ import mesh : makeCube;
 import registry : Registry;
 import seltype : SelType, currentSelType;
 import session_owner : Session;
+import tests.unit.census_symbols : blankNonCode;
 import tests.unit.ui.headless_panel : HeadlessPanel, KEY_LEFT_CTRL, MOD_CTRL,
     openPanel;
 import tool : Tool;
@@ -233,7 +237,9 @@ private final class LayerPanelHarness {
     FormsPanel forms;
     Tool activeTool;
     ItemRenameState renameState;
-    LayerListPanelRoles roles;
+    LayerListPanelRoles roles = void;
+    Layer empty;
+    Layer plane;
 
     this() {
         owner = Session.create(namedDocument(["Alpha", "Beta", "Gamma"]));
@@ -242,6 +248,34 @@ private final class LayerPanelHarness {
             && owner.document.layers[1].name == "Beta"
             && owner.document.layers[2].name == "Gamma",
             "6030 fixture floor needs Alpha/Beta/Gamma before binding");
+        wire();
+    }
+
+    this(bool withNonMeshItems) {
+        assert(withNonMeshItems);
+        Document document = namedDocument(["Alpha", "Beta", "Gamma"]);
+        empty = new Layer;
+        empty.kind = ItemKind.Empty;
+        empty.name = "Empty";
+        document.layers ~= empty;
+        View commandView = new View(0, 0, 800, 600);
+        auto add = new ImagePlaneAdd(document.activeMesh(), commandView,
+            EditMode.Vertices, &document, null);
+        assert(add.apply(), "6502 fixture: production imagePlane.add failed");
+        plane = add.created();
+        owner = Session.create(document);
+        assert(owner.document.layers.length == 5
+            && owner.document.layers[0].name == "Alpha"
+            && owner.document.layers[1].name == "Beta"
+            && owner.document.layers[2].name == "Gamma"
+            && owner.document.layers[3] is empty
+            && owner.document.layers[4] is plane
+            && kindInfo(empty.kind).canBePrimary == false,
+            "6502 fixture floor needs three meshes, Empty and a production image plane");
+        wire();
+    }
+
+    private void wire() {
         view = new View(0, 0, 800, 600);
         history = new CommandHistory;
         executor = new CommandExecutor(history,
@@ -330,7 +364,8 @@ unittest { // the all-valid action roster binds and every missing member fails
     auto app = new LayerPanelHarness;
     auto ok = bindLayerListPanel(app.owner, app.binding, app.forms,
                                  () => app.activeTool);
-    assert(ok.state !is null && ok.actions.commandDispatch() !is null
+    assert(ok.state !is null && ok.actions.tupleof[4] is ok.state
+        && ok.actions.commandDispatch() !is null
         && ok.read.document() !is null,
         "6502 floor: the all-valid Items roster must bind");
 
@@ -574,6 +609,245 @@ unittest { // M3: transform guard reads both live tool and live selection type
         "6030 transform guard armed without a transform tool");
 }
 
+unittest { // B-OWN: the provider belongs to this binding and its live focus
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness;
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    const snapshot = layerListDrawSnapshot();
+    assert(snapshot.formDrawn && snapshot.formBound
+        && snapshot.formTarget == 0 && snapshot.formWidth > 20
+        && snapshot.formRowH > 0,
+        "6502 B-OWN floor: Alpha's form was not drawn and bound");
+    assert(layerFormProvider(app.roles.state) !is null
+        && layerFormBoundItem(app.roles.state)
+            is app.owner.document.layers[0],
+        "6502 B-OWN: the binding state does not own the provider bound to its focus");
+}
+
+unittest { // B-NONE: an unresolved form target stays distinct from layer zero
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness;
+    auto only = new Layer;
+    only.kind = ItemKind.Empty;
+    only.name = "Only";
+    app.owner.document.layers = [only];
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    const snapshot = layerListDrawSnapshot();
+    assert(snapshot.formDrawn && !snapshot.formBound
+        && snapshot.formTarget == size_t.max,
+        "6502 B-NONE: an unresolved form target became layer zero");
+}
+
+unittest { // B-TWO: alternating bindings retain distinct provider identities
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto first = new LayerPanelHarness;
+    auto second = new LayerPanelHarness;
+    int which;
+    auto ui = openPanel(() {
+        ImGui.SetNextWindowSize(ImVec2(520, 900));
+        if (which == 0)
+            drawLayerListPanel(first.roles.read, first.roles.actions,
+                               first.renameState);
+        else
+            drawLayerListPanel(second.roles.read, second.roles.actions,
+                               second.renameState);
+    }, "Items alt host", 1280, 1000);
+    scope (exit) ui.close();
+
+    ui.frame();
+    auto firstProvider = layerFormProvider(first.roles.state);
+    assert(layerListDrawSnapshot().formBound && firstProvider !is null,
+        "6502 B-TWO floor: the first binding did not create its provider");
+    which = 1;
+    ui.frame();
+    auto secondProvider = layerFormProvider(second.roles.state);
+    assert(layerListDrawSnapshot().formBound && secondProvider !is null,
+        "6502 B-TWO floor: the second binding did not create its provider");
+    assert(firstProvider !is secondProvider,
+        "6502 B-TWO: two live bindings share one form provider");
+    which = 0;
+    ui.frame();
+    assert(layerFormProvider(first.roles.state) is firstProvider
+        && layerFormBoundItem(first.roles.state)
+            is first.owner.document.layers[0],
+        "6502 B-TWO: returning to the first binding lost its provider or document identity");
+}
+
+unittest { // B-FOCUS: one binding reuses its provider for the current item
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness;
+    app.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    auto provider = layerFormProvider(app.roles.state);
+    assert(layerListDrawSnapshot().formBound && provider !is null
+        && layerFormBoundItem(app.roles.state)
+            is app.owner.document.layers[1],
+        "6502 B-FOCUS floor: Beta did not bind the form provider");
+    app.binding.dispatchUi("layer.select", `{"index":2,"mode":"set"}`);
+    ui.frame();
+    assert(layerListDrawSnapshot().formBound
+        && layerListDrawSnapshot().formTarget == 2
+        && layerFormProvider(app.roles.state) is provider
+        && layerFormBoundItem(app.roles.state)
+            is app.owner.document.layers[2],
+        "6502 B-FOCUS: the provider did not follow the live focus by identity");
+}
+
+private extern (C) void igSetNextWindowCollapsed(bool collapsed, int cond);
+
+unittest { // B-REPLACE: a collapsed replacement cannot preserve stale identity
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness;
+    app.binding.dispatchUi("layer.select", `{"index":2,"mode":"set"}`);
+    auto oldFocus = app.owner.document.layers[2];
+    bool collapsed;
+    bool replace;
+    Document next = namedDocument(["Delta", "Epsilon"]);
+    auto ui = openPanel(() {
+        ImGui.SetNextWindowSize(ImVec2(520, 900));
+        igSetNextWindowCollapsed(collapsed, 1);
+        if (replace) {
+            *app.owner.documentPtr() = next;
+            replace = false;
+        }
+        drawLayerListPanel(app.roles.read, app.roles.actions, app.renameState);
+    }, "Items replacement host", 1280, 1000);
+    scope (exit) ui.close();
+
+    ui.frame();
+    const before = layerListDrawSnapshot();
+    const focusIndexBefore = app.owner.document.indexOf(
+        app.owner.document.focusedItem);
+    auto provider = layerFormProvider(app.roles.state);
+    assert(before.formBound && before.formTarget == 2
+        && layerFormBoundItem(app.roles.state) is oldFocus,
+        "6502 B-REPLACE floor: the old document was not bound at nonzero focus");
+    collapsed = true;
+    replace = true;
+    ui.frame();
+    assert(layerListDrawSnapshot().formTarget == before.formTarget
+        && layerFormBoundItem(app.roles.state) is oldFocus,
+        "6502 B-REPLACE hidden floor: the collapsed frame unexpectedly rewrote its snapshot or provider");
+    collapsed = false;
+    ui.frame();
+    const after = layerListDrawSnapshot();
+    const focusIndexAfter = app.owner.document.indexOf(
+        app.owner.document.focusedItem);
+    assert(focusIndexBefore != focusIndexAfter,
+        "6502 B-REPLACE floor: focus indices before and after replacement must differ");
+    assert(after.formBound && after.formTarget == 0
+        && after.rows.length == 3 && after.rows[1].name == "Delta"
+        && layerFormProvider(app.roles.state) is provider
+        && layerFormBoundItem(app.roles.state)
+            is app.owner.document.layers[0]
+        && layerFormBoundItem(app.roles.state) !is oldFocus,
+        "6502 B-REPLACE: the expanded draw retained the replaced document's item identity");
+}
+
+unittest { // B-PRIMARY: a non-primary focus still owns the form
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness(true);
+    app.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    app.binding.dispatchUi("layer.select", `{"index":3,"mode":"toggle"}`);
+    assert(app.owner.document.focusedItem is app.empty
+        && app.owner.document.primary is app.owner.document.layers[1]
+        && app.owner.document.focusedItem !is app.owner.document.primary,
+        "6502 B-PRIMARY floor: Empty focus did not diverge from Beta primary");
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    assert(layerListDrawSnapshot().formBound
+        && layerListDrawSnapshot().formTarget == 3
+        && layerFormBoundItem(app.roles.state) is app.empty,
+        "6502 B-PRIMARY: the form followed primary instead of the non-primary focus");
+}
+
+unittest { // B-PLANE: a production-created plane reaches the binding
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness(true);
+    assert(app.plane !is null && app.plane.imagePlaneOrNull() !is null,
+        "6502 B-PLANE floor: imagePlane.add did not create the plane payload");
+    app.binding.dispatchUi("layer.select", `{"index":4,"mode":"set"}`);
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    assert(layerListDrawSnapshot().formBound
+        && layerListDrawSnapshot().formTarget == 4
+        && layerFormBoundItem(app.roles.state) is app.plane,
+        "6502 B-PLANE reachability: the production plane did not reach the owned form provider");
+}
+
+unittest { // B-FORM: focus leads the gang dispatch and receives the edit
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness(true);
+    auto gang = new Layer;
+    gang.kind = ItemKind.Empty;
+    gang.name = "Empty";
+    app.owner.document.layers ~= gang;
+    app.binding.dispatchUi("layer.select", `{"index":5,"mode":"set"}`);
+    app.binding.dispatchUi("layer.select", `{"index":3,"mode":"toggle"}`);
+    assertHistoryHeadroom(app);
+    const alpha = app.owner.document.layers[0].name;
+    const beta = app.owner.document.layers[1].name;
+    const gamma = app.owner.document.layers[2].name;
+    const emptyName = app.empty.name;
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    const snapshot = layerListDrawSnapshot();
+    assert(snapshot.formDrawn && snapshot.formBound
+        && snapshot.formTarget == 3 && snapshot.formWidth > 20
+        && snapshot.formRowH > 0,
+        "6502 B-FORM floor: Empty's first form row was not recorded");
+    ui.pressAt(ImVec2(snapshot.formOrigin.x + 0.75f * snapshot.formWidth,
+                      snapshot.formOrigin.y + 0.5f * snapshot.formRowH));
+    ui.release();
+    ui.typeText("Q");
+    assert(app.empty.name != emptyName
+        && app.owner.document.layers[0].name == alpha
+        && app.owner.document.layers[1].name == beta
+        && app.owner.document.layers[2].name == gamma,
+        "6502 B-FORM: the form did not edit Empty while preserving all mesh names");
+    assert(app.history.undoEntries().length == 1
+        && app.history.undoEntries()[0].commandName == "layer.attr"
+        && app.records.length == 1 && app.records[0].id == "layer.attr"
+        && app.records[0].outcome == "applied",
+        "6502 B-FORM: the edit lost its one guarded layer.attr command");
+    assert(app.history.undoEntries()[0].args.canFind(`index:"3,5"`),
+        "6502 gang order: the dispatched layer.attr addressed the gang before the focus; args="
+        ~ app.history.undoEntries()[0].args);
+}
+
 private string bodyAt(string code, string marker) {
     const at = code.indexOf(marker);
     assert(at >= 0, "6030 census missing source marker " ~ marker);
@@ -611,6 +885,23 @@ private size_t identifierCount(string code, string identifier) {
     }
     return total;
 }
+
+private struct ItemStripSignalRow {
+    string path;
+    size_t casts, traits, tupleofs, mixins, unions;
+}
+
+private enum ItemStripSignalRow[] kItemStripSignalLedger = [
+    ItemStripSignalRow("source/ui/layer_list_panel.d", 7, 0, 0, 0, 0),
+    ItemStripSignalRow("source/ui/item_rows.d", 0, 0, 0, 0, 0),
+    ItemStripSignalRow("source/layer_params.d", 0, 0, 0, 0, 0),
+];
+
+private enum kItemStripSignalTokens =
+    ["cast", "__traits", "tupleof", "mixin", "union"];
+static assert(kItemStripSignalTokens ==
+        ["cast", "__traits", "tupleof", "mixin", "union"],
+    "6502 strip signal token roster changed — every measured column must remain in the exact scan below");
 
 private string collapseWhitespace(string text) {
     string result;
@@ -718,4 +1009,137 @@ unittest { // production binder, call sites and the retired EditorApp path
     assert(rawLayer.count("publishPanelZone(\"layerList\")") == 1
         && rawApp.count("DockBuilderDockWindow(\"Layers\"") == 3,
         "6030 dock/input contract: Layers zone or dock IDs changed");
+}
+
+unittest { // 6502 census: ownership regions, file totals and strip signal
+    const rawLayer = readText(repoRoot.buildPath(
+        "source", "ui", "layer_list_panel.d"));
+    const rawRows = readText(repoRoot.buildPath("source", "ui", "item_rows.d"));
+    const rawParams = readText(repoRoot.buildPath("source", "layer_params.d"));
+    const layer = blankNonCode(rawLayer);
+
+    string[] actualPaths;
+    string[] rawSources;
+    size_t sourceBytes;
+    foreach (row; kItemStripSignalLedger) {
+        actualPaths ~= row.path;
+        auto raw = readText(repoRoot.buildPath(row.path));
+        rawSources ~= raw;
+        sourceBytes += raw.length;
+    }
+    assert(kItemStripSignalLedger.length == 3 && rawSources.length == 3
+        && rawLayer.length + rawRows.length + rawParams.length > 100_000
+        && sourceBytes > 100_000,
+        "6502 strip signal population: expected three populated production files over 100000 bytes");
+
+    auto sortedActual = actualPaths.dup;
+    sortedActual.sort;
+    auto expectedPaths = ["source/layer_params.d", "source/ui/item_rows.d",
+                          "source/ui/layer_list_panel.d"];
+    expectedPaths.sort;
+    assert(sortedActual == expectedPaths,
+        "6502 strip signal shape: the ledger does not name exactly the three owned files");
+    foreach (path; expectedPaths) {
+        size_t appearances;
+        foreach (row; kItemStripSignalLedger)
+            if (row.path == path) ++appearances;
+        assert(appearances == 1,
+            "6502 strip signal shape: " ~ path ~ " appears "
+            ~ appearances.to!string ~ " times instead of once");
+    }
+
+    size_t casts, traits, tupleofs, mixins, unions;
+    foreach (row; kItemStripSignalLedger) {
+        casts += row.casts;
+        traits += row.traits;
+        tupleofs += row.tupleofs;
+        mixins += row.mixins;
+        unions += row.unions;
+    }
+    assert(casts == 7 && traits == 0 && tupleofs == 0
+        && mixins == 0 && unions == 0,
+        "6502 strip signal totals changed: cast=" ~ casts.to!string
+        ~ " __traits=" ~ traits.to!string ~ " tupleof="
+        ~ tupleofs.to!string ~ " mixin=" ~ mixins.to!string
+        ~ " union=" ~ unions.to!string);
+    foreach (i, row; kItemStripSignalLedger) {
+        const code = blankNonCode(rawSources[i]);
+        immutable recorded =
+            [row.casts, row.traits, row.tupleofs, row.mixins, row.unions];
+        assert(recorded.length == kItemStripSignalTokens.length,
+            "6502 strip signal token roster and recorded columns diverged");
+        foreach (column, token; kItemStripSignalTokens) {
+            const actual = identifierCount(code, token);
+            assert(actual == recorded[column],
+                "6502 strip signal: " ~ row.path ~ " " ~ token ~ " = "
+                ~ actual.to!string ~ ", recorded "
+                ~ recorded[column].to!string
+                ~ " — a row may only FALL; if the spelling left, lower it "
+                ~ "in this commit; if it appeared, treat that as a finding");
+        }
+    }
+
+    const drawBody = bodyAt(layer,
+        "void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,");
+    assert(drawBody.count("itemRowsInto") > 0
+        && drawBody.count("recordLayerRow") > 0
+        && drawBody.count("layerDeleteButtonState") > 0
+        && drawBody.count("EndDragDropTarget") > 0,
+        "6502 draw region: the Items draw body no longer spans the row loop and the form block — the nulls below would be measuring the wrong region");
+    assert(drawBody.count("struct LayerListActions") == 0
+        && drawBody.count("bindLayerListPanel") == 0
+        && drawBody.count("final class LayerListPanelState") == 0,
+        "6502 draw region: the Items draw body swallowed the action role or the binder");
+
+    const actionsBody = bodyAt(layer, "struct LayerListActions");
+    assert(actionsBody.count("drawItemForm") > 0
+        && actionsBody.count("resolveLive") > 0
+        && actionsBody.count("commandDispatch") > 0,
+        "6502 action region: the action-role region did not span drawItemForm/resolveLive");
+    assert(actionsBody.count("drawLayerListPanel") == 0
+        && actionsBody.count("beginLayerListDraw") == 0,
+        "6502 action region: the action-role region swallowed the draw body");
+
+    const readRoleBody = bodyAt(layer, "struct LayerListReadRole");
+    assert(readRoleBody.count("documentPtr") > 0
+        && readRoleBody.count("selTypeOrder") > 0
+        && readRoleBody.count("transformToolActive") > 0,
+        "6502 read region: the read-role region did not span its three accessors");
+    assert(readRoleBody.count("dispatch") == 0
+        && readRoleBody.count("forms_") == 0,
+        "6502 read region: the read-role region swallowed the action role");
+
+    assert(identifierCount(drawBody, "owner_") == 0,
+        "6502 read fence: the Items draw body names the read role's private member");
+    assert(identifierCount(drawBody, "state_") == 0,
+        "6502 write fence: the Items draw body names the binding's private form state");
+    assert(identifierCount(drawBody, "props_") == 0
+        && identifierCount(drawBody, "LayerPropsProvider") == 0
+        && identifierCount(drawBody, "layerProv") == 0
+        && layer.count("static LayerPropsProvider layerProv;") == 0,
+        "6502 provider fence: the Items draw body regained provider storage or access");
+    assert(identifierCount(drawBody, "static") == 3,
+        "6502 draw census: static locals changed; the removed frame-global provider may have returned");
+
+    assert(identifierCount(layer, "owner_") == 7,
+        "6502 read fence: owner_ is named "
+        ~ identifierCount(layer, "owner_").to!string ~ " times (recorded 7)");
+    assert(identifierCount(layer, "state_") == 15,
+        "6502 write fence: state_ is named "
+        ~ identifierCount(layer, "state_").to!string ~ " times (recorded 15)");
+    assert(identifierCount(layer, "props_") == 11,
+        "6502 write fence: props_ is named "
+        ~ identifierCount(layer, "props_").to!string ~ " times (recorded 11)");
+    assert(identifierCount(layer, "gangBuf_") == 7,
+        "6502 write fence: gangBuf_ is named "
+        ~ identifierCount(layer, "gangBuf_").to!string ~ " times (recorded 7)");
+    assert(identifierCount(layer, "LayerPropsProvider") == 3,
+        "6502 provider fence: LayerPropsProvider is named "
+        ~ identifierCount(layer, "LayerPropsProvider").to!string
+        ~ " times (recorded 3)");
+    assert(identifierCount(readRoleBody, "owner_") == 4,
+        "6502 read-role census: owner_ is no longer confined to its four recorded uses");
+    assert(identifierCount(actionsBody, "owner_") == 3
+        && identifierCount(actionsBody, "state_") == 15,
+        "6502 action-role census: owner_/state_ uses changed from 3/15");
 }
