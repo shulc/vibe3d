@@ -411,7 +411,8 @@ unittest {
     // the DEFINITION and not a second mention of the same key in a neighbouring
     // command entry; the uniqueness check below makes that a claim
     // rather than an assumption.
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable src = readText(buildPath(
+        repoRoot, "source", "edit_tool_registration.d"));
     string[] problems;
     size_t   checked = 0;
 

@@ -67,6 +67,8 @@ private static immutable ReachRow[] kModeCellReach = [
         "6356: two declared lifecycle doors"),
     ReachRow("create_tool_registration.d", 2,
         "6507: radialSweep + bridge take the mode cell"),
+    ReachRow("edit_tool_registration.d", 18,
+        "6670: eighteen edit tools take the live mode cell"),
     ReachRow("mesh_command_registration.d", 1,
         "6509: mesh.select takes the mode cell"),
     ReachRow("transform_tool_registration.d", 5,
@@ -470,7 +472,7 @@ unittest { // S9: production call, ordering and old-path census
             assert(expectedEditModePtrs > 0,
                 "6000 mode-cell reach: a recorded editModePtr row became empty: " ~ file);
     }
-    assert(regFiles.length >= 15 && kModeCellReach.length == 4
+    assert(regFiles.length >= 15 && kModeCellReach.length == 5
         && modeRowsSeen == kModeCellReach.length
         && editModePtrRowsSeen == kEditModePtrReach.length,
         format("6000 mode-cell reach population: files=%d mode rows=%d/%d "

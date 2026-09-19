@@ -423,6 +423,7 @@ unittest { // R5: factories resolve live roles/document and every door is requir
 
 unittest { // R3: production wiring and the retired paths, deliberately last
     const registrationRaw = repoFile("source/registration.d");
+    const editRegistrationRaw = repoFile("source/edit_tool_registration.d");
     const lifecycleRaw = repoFile("source/scene_file_lifecycle_registration.d");
     const effectsRaw = repoFile("source/scene_reset_effects.d");
     const appRaw = repoFile("source/app.d");
@@ -495,8 +496,8 @@ unittest { // R3: production wiring and the retired paths, deliberately last
         assert(lifecycleRaw.count(forbidden) == 0,
             "6480 R3 narrow registrar names forbidden token: " ~ forbidden);
     assert(registrationRaw.count("dropArmedPreview") == 0
-            && registrationRaw.count("LoopSliceTool") == 3
-            && registrationRaw.count("EdgeSliceTool") == 3,
+            && editRegistrationRaw.count("LoopSliceTool") == 3
+            && editRegistrationRaw.count("EdgeSliceTool") == 3,
         "6480 R3 dead slice prelude remains or required tool imports/factories moved");
 
     foreach (retired; ["vpm.resetToDefault()", "subpatchPreview.deactivate()",

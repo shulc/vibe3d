@@ -156,6 +156,186 @@
     },
     {
       "aggregate": "<module>",
+      "id": "mesh.dragWeld",
+      "product_types": [
+        "DragWeldTool"
+      ],
+      "semantic_sha256": "462f811985364917e0a9d0a989ccc296418aff3fad6022ba3ddb773e762a83f3",
+      "symbol": "registerTool(\"mesh.dragWeld\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.extrude",
+      "product_types": [
+        "EdgeExtrudeTool"
+      ],
+      "semantic_sha256": "cfafa706d54f9e06ed368beca1a4edb985b65e1b51f7dd9810e9b6299a1e9934",
+      "symbol": "registerTool(\"edge.extrude\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "poly.extrude",
+      "product_types": [
+        "PolyExtrudeTool"
+      ],
+      "semantic_sha256": "cec15e41ca94349418822a4f739c1d5274a2b161d649570d1535bcde87bf9a73",
+      "symbol": "registerTool(\"poly.extrude\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.radialArrayTool",
+      "product_types": [
+        "RadialArrayTool"
+      ],
+      "semantic_sha256": "bf02790556cc2ccab86a34b152ec60f73be270e70f70c4cf3f92046ca6ec1779",
+      "symbol": "registerTool(\"mesh.radialArrayTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "tool.strokeExtrude",
+      "product_types": [
+        "StrokeExtrudeTool"
+      ],
+      "semantic_sha256": "4246e8f40a1e6d89e55b15076449c3e35e8f28a711a5e426122948c091829949",
+      "symbol": "registerTool(\"tool.strokeExtrude\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.extend",
+      "product_types": [
+        "EdgeExtendTool"
+      ],
+      "semantic_sha256": "7eb6946fb9ecb0c9acaf0c5836f6f5baa6bb088720384dd9c9aac65fc75a87e2",
+      "symbol": "registerTool(\"edge.extend\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "poly.bevel",
+      "product_types": [
+        "PolyBevelTool"
+      ],
+      "semantic_sha256": "36f4a460b0f735d0d97b10c8e41fb7bef8ca8d85bd73de4ec2833f299395c5c0",
+      "symbol": "registerTool(\"poly.bevel\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.polyInsetTool",
+      "product_types": [
+        "PolyInsetTool"
+      ],
+      "semantic_sha256": "322c2531da0b69ddf2bc4aed343b66b1572d496ec81ad39ed2804ed862a1fc5d",
+      "symbol": "registerTool(\"mesh.polyInsetTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.smoothShiftTool",
+      "product_types": [
+        "SmoothShiftTool"
+      ],
+      "semantic_sha256": "f66c98de03e3208c07c3626a462c1ca9b27ad43f8a7e11161e20b647620f8491",
+      "symbol": "registerTool(\"mesh.smoothShiftTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.magnet",
+      "product_types": [
+        "MagnetTool"
+      ],
+      "semantic_sha256": "31d7084fcf453c7eaae4183834b88c87a635d9023b748386d48191a636aed53f",
+      "symbol": "registerTool(\"xfrm.magnet\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.bevel",
+      "product_types": [
+        "EdgeBevelTool"
+      ],
+      "semantic_sha256": "0eee34378fa97c28b306e1f5f2c246fe0d28accdd8c43b63ea5b9cabb8c1155f",
+      "symbol": "registerTool(\"edge.bevel\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.vertexBevel",
+      "product_types": [
+        "VertexBevelTool"
+      ],
+      "semantic_sha256": "5003e7c287a16539f3fa6f55866527b3f7aa7db6a08f6cc9b726a3ccb685458e",
+      "symbol": "registerTool(\"mesh.vertexBevel\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.vertexExtrude",
+      "product_types": [
+        "VertexExtrudeTool"
+      ],
+      "semantic_sha256": "ad7ffe9794c7bb630b3497512c6c88cc2b36cb6a12f7738d85a6006ede8dd3dd",
+      "symbol": "registerTool(\"mesh.vertexExtrude\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "vert.merge",
+      "product_types": [
+        "VertexMergeTool"
+      ],
+      "semantic_sha256": "a5bf9265a3cefd1e5ccc3b3748b156c2e3aa9bed120de264a9af6e286eec49ae",
+      "symbol": "registerTool(\"vert.merge\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.loopSliceTool",
+      "product_types": [
+        "LoopSliceTool"
+      ],
+      "semantic_sha256": "dc691e011e42947eac606661c08ab8882fa297bdd322731e84937e289186a958",
+      "symbol": "registerTool(\"mesh.loopSliceTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.sliceTool",
+      "product_types": [
+        "SliceTool"
+      ],
+      "semantic_sha256": "183754d132be4480a4a7944aac0901182f42f6f8e9b75e181d367f0315a7eac8",
+      "symbol": "registerTool(\"mesh.sliceTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.edgeSliceTool",
+      "product_types": [
+        "EdgeSliceTool"
+      ],
+      "semantic_sha256": "654c9d3ae61f80e16bf2d5811c697128a58a96332112f1f9c9a3fc3153d950d5",
+      "symbol": "registerTool(\"mesh.edgeSliceTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.reduceTool",
+      "product_types": [
+        "ReductionTool"
+      ],
+      "semantic_sha256": "f48925805a1c54cc33c089138d27e6e71fe3606649bbf7e9af6f2f77988ac781",
+      "symbol": "registerTool(\"mesh.reduceTool\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.clone",
+      "product_types": [
+        "CloneTool"
+      ],
+      "semantic_sha256": "46c30463353a1da3e8a020c8da1ba56a62b5f0a37f251fc6b8d46de2a3ec8964",
+      "symbol": "registerTool(\"mesh.clone\")"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.arrayTool",
+      "product_types": [
+        "ArrayTool"
+      ],
+      "semantic_sha256": "b6c91e13af335db73e42e94df067f4a63bf0aa5316f3f106adaac4034a19b523",
+      "symbol": "registerTool(\"mesh.arrayTool\")"
+    },
+    {
+      "aggregate": "<module>",
       "id": "move",
       "product_types": [
         "XfrmTransformTool"
@@ -261,186 +441,6 @@
       ],
       "semantic_sha256": "dc24c7f453e77810909600488c717d0d55a1da3f66d3e97c98566e3435d46696",
       "symbol": "registerTool(\"xfrm.quantize\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.dragWeld",
-      "product_types": [
-        "DragWeldTool"
-      ],
-      "semantic_sha256": "2a37917953bbda8fe594adbbb538b93a04ca6b056ea76199dae4b1711a7785e8",
-      "symbol": "registerTool(\"mesh.dragWeld\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "edge.extrude",
-      "product_types": [
-        "EdgeExtrudeTool"
-      ],
-      "semantic_sha256": "1b44cd02a412461c32d22c9537b3934fb2ca24c07f20f09c84202de0beb137b0",
-      "symbol": "registerTool(\"edge.extrude\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "poly.extrude",
-      "product_types": [
-        "PolyExtrudeTool"
-      ],
-      "semantic_sha256": "29a4887d11a2fa4e3bedcb11afe1b35699c964fe96df64caabd9be7b923a5174",
-      "symbol": "registerTool(\"poly.extrude\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.radialArrayTool",
-      "product_types": [
-        "RadialArrayTool"
-      ],
-      "semantic_sha256": "945cc76c49664ebf9101ae93f822fbedae2c79a4072ef1a6f03582c565b18e7e",
-      "symbol": "registerTool(\"mesh.radialArrayTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "tool.strokeExtrude",
-      "product_types": [
-        "StrokeExtrudeTool"
-      ],
-      "semantic_sha256": "9ec49c1bbcf7c46cc36386d22475d1cb49f77e0d497028f828a7fa4362274f59",
-      "symbol": "registerTool(\"tool.strokeExtrude\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "edge.extend",
-      "product_types": [
-        "EdgeExtendTool"
-      ],
-      "semantic_sha256": "86eaa02f663cf899d13086f4babc4eeee2c3402740bef7c0168e6e3d4f92ddfb",
-      "symbol": "registerTool(\"edge.extend\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "poly.bevel",
-      "product_types": [
-        "PolyBevelTool"
-      ],
-      "semantic_sha256": "bb1bad762ef7103be93aeae6f7cf4462eec4d8218f7c00170284fe0bc21ac80a",
-      "symbol": "registerTool(\"poly.bevel\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.polyInsetTool",
-      "product_types": [
-        "PolyInsetTool"
-      ],
-      "semantic_sha256": "a4d4785bddc256dd99f249eec530cc6ab042a408ea13ae70c6ba9bdb64712ad7",
-      "symbol": "registerTool(\"mesh.polyInsetTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.smoothShiftTool",
-      "product_types": [
-        "SmoothShiftTool"
-      ],
-      "semantic_sha256": "081df040cb924baa29465fc070036de3b94f418327af23d210c1567b16333263",
-      "symbol": "registerTool(\"mesh.smoothShiftTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "xfrm.magnet",
-      "product_types": [
-        "MagnetTool"
-      ],
-      "semantic_sha256": "d66522d134905f21ff6eb9f2275a35b61e024ed245f93423e72e44bb19acd6cf",
-      "symbol": "registerTool(\"xfrm.magnet\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "edge.bevel",
-      "product_types": [
-        "EdgeBevelTool"
-      ],
-      "semantic_sha256": "317364475b7cea5d33209c003b4566c58898e6e47502348bea303d1ce07fc0de",
-      "symbol": "registerTool(\"edge.bevel\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.vertexBevel",
-      "product_types": [
-        "VertexBevelTool"
-      ],
-      "semantic_sha256": "179fb25500cd13df1152608b56946372ddf347e4610d866865c294e8b4369aa6",
-      "symbol": "registerTool(\"mesh.vertexBevel\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.vertexExtrude",
-      "product_types": [
-        "VertexExtrudeTool"
-      ],
-      "semantic_sha256": "fdb954cb02469daee727b70197a4b5808d66b692b5b51ea3bc09d199610540fd",
-      "symbol": "registerTool(\"mesh.vertexExtrude\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "vert.merge",
-      "product_types": [
-        "VertexMergeTool"
-      ],
-      "semantic_sha256": "e6a2f866183b93ce6641803b09e29425ac0a29484b7f66a6d425caaa082d765c",
-      "symbol": "registerTool(\"vert.merge\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.loopSliceTool",
-      "product_types": [
-        "LoopSliceTool"
-      ],
-      "semantic_sha256": "60a8c223f73765886453c15695e8d31286d17f73d407f272adb04b9f1fc7c13f",
-      "symbol": "registerTool(\"mesh.loopSliceTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.sliceTool",
-      "product_types": [
-        "SliceTool"
-      ],
-      "semantic_sha256": "b98974dcdf0a905b1ff7c3e7de360b043da9cab9b8627ae25c08b2e81b827725",
-      "symbol": "registerTool(\"mesh.sliceTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.edgeSliceTool",
-      "product_types": [
-        "EdgeSliceTool"
-      ],
-      "semantic_sha256": "c299976df0c1940a114aa4269d8aa204074048053aef02dc17f83484b804891e",
-      "symbol": "registerTool(\"mesh.edgeSliceTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.reduceTool",
-      "product_types": [
-        "ReductionTool"
-      ],
-      "semantic_sha256": "18e16076cc9d9ebbb64b683d077d7e0afcfd55b92439aa2ccd86b92e89866c12",
-      "symbol": "registerTool(\"mesh.reduceTool\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.clone",
-      "product_types": [
-        "CloneTool"
-      ],
-      "semantic_sha256": "6e9083a0b0559653144322ee53ea2fa9380242cb8e4fc7215c51899befcfd3fb",
-      "symbol": "registerTool(\"mesh.clone\")"
-    },
-    {
-      "aggregate": "<module>",
-      "id": "mesh.arrayTool",
-      "product_types": [
-        "ArrayTool"
-      ],
-      "semantic_sha256": "32bed99bc2a30b0bc3871d14c4f6c8af0580da9a9b0b9f4bf2e74f9fb3e36423",
-      "symbol": "registerTool(\"mesh.arrayTool\")"
     },
     {
       "aggregate": "registerToolPresets",

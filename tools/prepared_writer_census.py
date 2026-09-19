@@ -14,6 +14,7 @@ DOMAINS = ("ToolState", "Mesh", "CommandHistory", "GpuGl",
            "SessionPipeStickyParam")
 REGISTRATION_SOURCE_NAMES = (
     "create_tool_registration.d",
+    "edit_tool_registration.d",
     "transform_tool_registration.d",
     "registration.d",
 )

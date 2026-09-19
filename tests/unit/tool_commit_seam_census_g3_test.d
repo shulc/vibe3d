@@ -333,7 +333,8 @@ unittest {
     // command entry; the uniqueness check below makes that a claim
     // rather than an assumption (`tool.strokeExtrude` has such a neighbour —
     // the one-shot `mesh.strokeExtrude` command — which is why it is checked).
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable src = readText(buildPath(
+        repoRoot, "source", "edit_tool_registration.d"));
     string[] problems;
     size_t   checked = 0;
 

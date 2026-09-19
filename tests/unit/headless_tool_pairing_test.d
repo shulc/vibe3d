@@ -10,6 +10,7 @@ import command_history : CommandHistory;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import document : Document, Layer;
 import editmode : EditMode;
@@ -106,6 +107,16 @@ private Rig* makeRig() {
         &r.session.document.activeMeshRef(), r.view, r.session.editMode);
     r.app.pipeGizmoHost = new PipeGizmoHost;
     r.app.bevelEditFactory = () => null;
+    r.app.loopSliceEditFactory = () => null;
+    r.app.reduceEditFactory = () => null;
+    r.app.cloneEditFactory = () => null;
+    r.app.arrayEditFactory = () => null;
+    r.app.edgeExtrudeEditFactory = () => null;
+    r.app.edgeExtendEditFactory = () => null;
+    r.app.polyExtrudeEditFactory = () => null;
+    r.app.radialArrayEditFactory = () => null;
+    r.app.smoothShiftEditFactory = () => null;
+    r.app.strokeExtrudeEditFactory = () => null;
     static foreach (f; FieldNameTuple!TopoPenFactories)
         __traits(getMember, r.app.topoPenFactories, f) = () => null;
     return r;

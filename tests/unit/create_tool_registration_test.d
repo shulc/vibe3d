@@ -50,6 +50,7 @@ unittest {
     static assert(kToolOnly.length == 3);
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
+    rig.wireEditToolDeps();
     registerTools(rig.app);
     foreach (id; kCreateIds)
         assert(rig.registry.hasTool(id),
@@ -66,6 +67,7 @@ unittest {
 unittest {
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
+    rig.wireEditToolDeps();
     registerTools(rig.app);
     rig.switchToB();
     foreach (id; kPairedIds) {
@@ -80,6 +82,7 @@ unittest {
 unittest {
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
+    rig.wireEditToolDeps();
     registerTools(rig.app);
     auto cube = cast(BoxTool) rig.registry.toolFactory("prim.cube")();
     auto mirror = cast(MirrorTool) rig.registry.toolFactory("mesh.mirrorTool")();
@@ -100,6 +103,7 @@ unittest {
 unittest {
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
+    rig.wireEditToolDeps();
     registerTools(rig.app);
     foreach (i, id; ["prim.cube", "mesh.mirrorTool"]) {
         immutable marker = 6507 + cast(int) i;
@@ -119,6 +123,7 @@ unittest {
     static assert(FieldNameTuple!TopoPenFactories.length == 13);
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
+    rig.wireEditToolDeps();
     static foreach (field; FieldNameTuple!TopoPenFactories)
         __traits(getMember, rig.app.topoPenFactories, field) = () =>
             new MeshSessionEdit(&rig.session.editMesh(), rig.liveView(),

@@ -97,6 +97,16 @@ private Rig* makeRig() {
     static foreach (f; FieldNameTuple!TopoPenFactories)
         __traits(getMember, r.app.topoPenFactories, f) = probe(r, f);
     r.app.bevelEditFactory = probe(r, "bevel");
+    r.app.loopSliceEditFactory = probe(r, "loopSlice");
+    r.app.reduceEditFactory = probe(r, "reduce");
+    r.app.cloneEditFactory = probe(r, "clone");
+    r.app.arrayEditFactory = probe(r, "array");
+    r.app.edgeExtrudeEditFactory = probe(r, "edgeExtrude");
+    r.app.edgeExtendEditFactory = probe(r, "edgeExtend");
+    r.app.polyExtrudeEditFactory = probe(r, "polyExtrude");
+    r.app.radialArrayEditFactory = probe(r, "radialArray");
+    r.app.smoothShiftEditFactory = probe(r, "smoothShift");
+    r.app.strokeExtrudeEditFactory = probe(r, "strokeExtrude");
     return r;
 }
 

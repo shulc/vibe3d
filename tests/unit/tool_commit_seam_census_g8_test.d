@@ -249,14 +249,14 @@ private string joinLines(const(string)[] xs) {
 // build a different carrier and therefore cannot share the builder
 // (`MeshVertexEdit` / `MeshMorphEdit` / `LayerXformEdit`). The field name is
 // the key everywhere below: `EditorApp` declares it, `app.d` assigns it,
-// `registration.d` spends it.
+// the registrar family spends it.
 // ---------------------------------------------------------------------------
 private struct Row {
     string field;   // the EditorApp field and the app.d local, same spelling
     string wire;    // MeshSessionEdit.name() — frozen, dispatched on
     string label;   // the constructor's default label
     string scope_;  // the third builder argument, "" when the default is taken
-    size_t binds;   // whole-identifier uses in source/registration.d
+    size_t binds;   // whole-identifier uses across registration modules
     string why;     // why this row's bind count is what it is
 }
 
@@ -335,7 +335,8 @@ private struct OtherRow {
 }
 
 private enum OtherRow[] kOtherRows = [
-    OtherRow("source/registration.d", "vxEditFactory", "vxEditFactory",
+    OtherRow("source/edit_tool_registration.d", "vxEditFactory",
+        "deps.vxEditFactory()",
         "MeshVertexEdit", 1,
         "xfrm.magnet's one remaining gesture binding"),
     OtherRow("source/registration.d", "morphEditFactory", "morphEditFactory",
@@ -824,19 +825,23 @@ unittest {
     immutable regSrc = stripCommentsAndStrings(readSource("source/registration.d"));
     immutable createSrc = stripCommentsAndStrings(
         readSource("source/create_tool_registration.d"));
+    immutable editSrc = stripCommentsAndStrings(
+        readSource("source/edit_tool_registration.d"));
     immutable transformSrc = stripCommentsAndStrings(
         readSource("source/transform_tool_registration.d"));
     // The composition root hands these dependencies to the registrar; it is
     // not a tool consumer. Blank only that call, so any other app.X read in
     // this file remains visible to the zero-spend rows below.
     immutable regSpendSrc = blankCallStatement(blankCallStatement(
-        regSrc, "registerTransformToolCommands(app.reg()"),
-        "registerCreateToolCommands(app.reg()");
+        blankCallStatement(regSrc, "registerTransformToolCommands(app.reg()"),
+        "registerCreateToolCommands(app.reg()"),
+        "registerEditToolCommands(app.reg()");
 
     void check(string field, size_t want, string why) {
         auto regHits = identHits(regSpendSrc, field);
         auto createHits = identHits(createSrc, "deps." ~ field ~ "()");
-        const got = regHits.length + createHits.length;
+        auto editHits = identHits(editSrc, "deps." ~ field ~ "()");
+        const got = regHits.length + createHits.length + editHits.length;
         total += got;
         rosterTotal += want;
         if (got == want) return;
@@ -855,21 +860,22 @@ unittest {
     if (penHits.length != 1)
         problems ~= "    · `topoPenFactories` is spent "
                   ~ penHits.length.to!string ~ " time(s), roster says 1";
-    if (identHits(regSpendSrc, "bevelEditFactory").length != 9
+    if (identHits(editSrc, "deps.bevelEditFactory()").length < 9
         || identHits(createSrc, "deps.bevelEditFactory()").length != 15)
         problems ~= "    · NON-VACUITY: bevel-edit per-file populations "
-                  ~ "must remain registration/create 9/15";
+                  ~ "must remain at least edit/create 9/15";
     // `mesh.topoPen` has one `setPenFactories` argument; the thirteen pen
     // factories travel as this one value (task 6352).
 
-    size_t registrationOtherTotal, transformOtherTotal;
+    size_t editOtherTotal, transformOtherTotal;
     foreach (r; kOtherRows) {
-        const source = r.file == "source/registration.d"
-            ? regSpendSrc : transformSrc;
-        auto hits = r.file == "source/registration.d"
-            ? identHits(source, r.spend)
-            : needleLines(source, r.spend);
-        if (r.file == "source/registration.d") registrationOtherTotal += hits.length;
+        const source = r.file == "source/registration.d" ? regSpendSrc
+            : r.file == "source/edit_tool_registration.d" ? editSrc
+            : transformSrc;
+        auto hits = r.file == "source/transform_tool_registration.d"
+            ? needleLines(source, r.spend)
+            : identHits(source, r.spend);
+        if (r.file == "source/edit_tool_registration.d") editOtherTotal += hits.length;
         else transformOtherTotal += hits.length;
         if (hits.length == r.binds) continue;
         string at;
@@ -879,14 +885,14 @@ unittest {
                   ~ r.binds.to!string ~ "  (" ~ r.why ~ ")"
                   ~ (at.length ? "  [lines " ~ at.strip() ~ "]" : "");
     }
-    if (registrationOtherTotal < 1 || transformOtherTotal < 11)
+    if (editOtherTotal < 1 || transformOtherTotal < 11)
         problems ~= "    · NON-VACUITY: per-file other-factory populations "
                   ~ "fell below measured floors 1/11; got "
-                  ~ registrationOtherTotal.to!string ~ "/"
+                  ~ editOtherTotal.to!string ~ "/"
                   ~ transformOtherTotal.to!string;
 
     if (total * 2 < rosterTotal)
-        problems ~= "    · NON-VACUITY: the scan of `source/registration.d` "
+        problems ~= "    · NON-VACUITY: the scan of registration modules "
                   ~ "found " ~ total.to!string ~ " factory use(s) in total; "
                   ~ "the roster expects " ~ rosterTotal.to!string ~ ". A "
                   ~ "number below half the roster means "
@@ -895,7 +901,7 @@ unittest {
                   ~ "be reported for a reason it does not have";
 
     assert(problems.length == 0,
-        "G8 census: a factory changed hands in `source/registration.d`.\n"
+        "G8 census: a factory changed hands across registration modules.\n"
       ~ joinLines(problems) ~ "\n"
       ~ "  All twenty-four MeshSessionEdit factories have the SAME type, so "
       ~ "passing one where another belongs compiles and records the edit under "

@@ -269,6 +269,7 @@ unittest {
     ];
     size_t[string] expectedMember = [
         "source/create_tool_registration.d": 1,
+        "source/edit_tool_registration.d": 1,
         "tests/unit/create_registration_boundary_test.d": 1,
         "tests/unit/topology_pen_factory_bundle_test.d": 2,
         "tests/unit/ui/image_list_panel_roles_test.d": 3,
