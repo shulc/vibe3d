@@ -27,6 +27,7 @@
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import forms : parseBinding, substituteQuery, valueToArgToken;
+import forms_render : textInputPresentation;
 
 import std.net.curl;
 import std.json;
@@ -322,9 +323,29 @@ unittest {
 
 
 // ---------------------------------------------------------------------------
-// 8. Task 6660: the shipped drawText seam uses the hint-bearing widget. The
-//    behavioral three-state cell lives in gang_mixed_test; this census keeps a
-//    rewire back to plain InputText from bypassing that production behavior.
+// 8. Task 6660: text presentation has three distinct states. Keep the typed
+//    state before the mixed-display assertion so restoring the old seed fails
+//    on the user-visible `(mixed)x` defect, not merely on buffer inspection.
+// ---------------------------------------------------------------------------
+unittest {
+    const single = textInputPresentation("Alpha", false);
+    assert(single.buffer == "Alpha" && single.hint.length == 0,
+        "6660 single text value must seed the editable buffer unchanged");
+
+    const mixed = textInputPresentation("Alpha", true);
+    const typed = mixed.buffer ~ "x";
+    assert(typed == "x",
+        "6660 mixed text plus one typed character must equal exactly 'x', not "
+            ~ "the placeholder plus input; got '" ~ typed ~ "'");
+    assert(mixed.buffer.length == 0 && mixed.hint == "(mixed)",
+        "6660 mixed text must expose an empty buffer with '(mixed)' as hint");
+}
+
+
+// ---------------------------------------------------------------------------
+// 9. Task 6660: the shipped drawText seam uses the hint-bearing widget. The
+//    headless widget cell lives in gang_mixed_test; this census keeps a rewire
+//    back to plain InputText from bypassing that production behavior.
 // ---------------------------------------------------------------------------
 unittest {
     import std.algorithm.searching : count;
