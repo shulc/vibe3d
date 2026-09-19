@@ -5,7 +5,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import application_command_binding : ApplicationCommandBinding;
 import commands.layer.commands : layerDeleteButtonState;
-import document : Document;
+import document : Document, Layer;
 import forms : Form;
 import forms_render : FormsPanel;
 import imgui_flag_boundary : inputTextSubmitOnEnter;
@@ -29,7 +29,7 @@ public:
         assert(owner !is null && activeTool !is null);
         owner_ = owner; activeTool_ = activeTool;
     }
-    Document* document() { return owner_.documentPtr(); }
+    const(Document)* document() { return owner_.documentPtr(); }
     SelType currentSelType() {
         import seltype : resolve = currentSelType;
         return resolve(owner_.selTypeOrder);
@@ -40,39 +40,104 @@ public:
     }
 }
 
+/// What one bound-and-drawn item form reports back to the panel.
+struct ItemFormOutcome {
+    /// `layers` index the form addresses; `size_t.max` when `!bound` — zero
+    /// is a valid layer index.
+    size_t targetIndex = size_t.max;
+    bool transformGuardArmed;
+    bool bound;
+}
+
+/// Everything the Items panel keeps between frames, owned by one binding.
+final class LayerListPanelState {
+private:
+    LayerPropsProvider props_;
+    Layer[] gangBuf_;
+    this() {}
+}
+
 struct LayerListActions {
 private:
+    Session* owner_;
     ItemRenameDispatch dispatch;
     ItemRenameDispatch interactive_;
     FormsPanel forms_;
+    LayerListPanelState state_;
+
+    /// Resolve a read-only identity against the live session document.
+    /// This is a lookup, not a cast: the action side owns mutation rights.
+    Layer resolveLive(Document* doc, const(Layer) id) {
+        if (doc is null || id is null) return null;
+        const i = doc.indexOf(id);
+        return i == doc.layers.length ? null : doc.layers[i];
+    }
 public:
     @disable this();
-    this(ItemRenameDispatch dispatch, ItemRenameDispatch interactive,
-         FormsPanel forms) {
-        assert(dispatch !is null && interactive !is null && forms !is null);
+    this(Session* owner, ItemRenameDispatch dispatch,
+         ItemRenameDispatch interactive, FormsPanel forms,
+         LayerListPanelState state) {
+        assert(owner !is null && dispatch !is null && interactive !is null
+            && forms !is null && state !is null);
+        owner_ = owner;
         this.dispatch = dispatch;
         interactive_ = interactive;
         forms_ = forms;
+        state_ = state;
     }
     ItemRenameDispatch commandDispatch() { return dispatch; }
-    void drawItemForm(ref Form form, LayerPropsProvider provider,
-                      string layerTargets) {
-        forms_.draw(form, provider, dispatch, interactive_, "", "",
-                    layerTargets);
+
+    ItemFormOutcome drawItemForm(ref Form form, const(Layer) target,
+                                 const(Layer)[] gang, bool toolActive,
+                                 SelType current) {
+        import std.conv : to;
+        auto doc = owner_.documentPtr();
+        auto live = resolveLive(doc, target);
+        if (live is null) return ItemFormOutcome.init;
+        if (state_.props_ is null)
+            state_.props_ = new LayerPropsProvider(live);
+        else
+            state_.props_.setLayer(live);
+        state_.props_.setTransformGuard(toolActive, current);
+        ItemFormOutcome outcome;
+        outcome.targetIndex = doc.indexOf(live);
+        string targets = to!string(outcome.targetIndex);
+        // Pre-size, fill by index, then truncate. Appending after `length = 0`
+        // moves this reusable block on every frame instead of retaining it.
+        if (state_.gangBuf_.length != gang.length)
+            state_.gangBuf_.length = gang.length;
+        size_t resolved;
+        foreach (g; gang) {
+            auto liveGang = resolveLive(doc, g);
+            if (liveGang is null) continue;
+            state_.gangBuf_[resolved++] = liveGang;
+            targets ~= "," ~ to!string(doc.indexOf(liveGang));
+        }
+        if (state_.gangBuf_.length != resolved)
+            state_.gangBuf_.length = resolved;
+        state_.props_.setGangTargets(state_.gangBuf_);
+        outcome.transformGuardArmed = !state_.props_.paramEnabled("pos.x");
+        outcome.bound = true;
+        forms_.draw(form, state_.props_, dispatch, interactive_, "", "",
+                    targets);
+        return outcome;
     }
 }
 
 struct LayerListPanelRoles {
     LayerListReadRole read;
     LayerListActions actions;
+    LayerListPanelState state;
 }
 
 LayerListPanelRoles bindLayerListPanel(Session* owner,
         ApplicationCommandBinding binding, FormsPanel forms,
         Tool delegate() activeTool) {
     assert(binding !is null && forms !is null);
+    auto state = new LayerListPanelState;
     return LayerListPanelRoles(LayerListReadRole(owner, activeTool),
-        LayerListActions(&binding.dispatchUi, &binding.dispatchInteractiveUi, forms));
+        LayerListActions(owner, &binding.dispatchUi,
+            &binding.dispatchInteractiveUi, forms, state), state);
 }
 
 // CONTRACT (task 6030). This module draws the Layers/Items layout and routes
@@ -103,6 +168,7 @@ version (unittest) {
         LayerListDrawnRow[] rows;
         ImVec2 deleteMin, deleteMax;
         bool formDrawn;
+        bool formBound;
         size_t formTarget;
         bool transformGuardArmed;
         ImVec2 formOrigin;
@@ -131,14 +197,23 @@ version (unittest) {
             index, name, role, visible, eyeMin, eyeMax, roleMin, roleMax,
             nameMin, nameMax);
     }
-    private void recordLayerForm(size_t target, bool guardArmed,
+    private void recordLayerForm(size_t target, bool guardArmed, bool bound,
                                  ImVec2 origin, float width, float rowH) {
         g_layerListDrawSnapshot.formDrawn = true;
+        g_layerListDrawSnapshot.formBound = bound;
         g_layerListDrawSnapshot.formTarget = target;
         g_layerListDrawSnapshot.transformGuardArmed = guardArmed;
         g_layerListDrawSnapshot.formOrigin = origin;
         g_layerListDrawSnapshot.formWidth = width;
         g_layerListDrawSnapshot.formRowH = rowH;
+    }
+    /// Which provider object this binding owns — identity comparison only.
+    const(Object) layerFormProvider(LayerListPanelState state) {
+        return state.props_;
+    }
+    /// Which item the owned provider is bound to, by identity.
+    const(Layer) layerFormBoundItem(LayerListPanelState state) {
+        return state.props_ is null ? null : state.props_.layer();
     }
 } else {
     private void beginLayerListDraw() {}
@@ -146,7 +221,8 @@ version (unittest) {
     private void recordLayerRow(size_t, string, RowRole, bool,
                                 ImVec2, ImVec2, ImVec2, ImVec2,
                                 ImVec2, ImVec2) {}
-    private void recordLayerForm(size_t, bool, ImVec2, float, float) {}
+    private void recordLayerForm(size_t, bool, bool, ImVec2, float, float) {}
+
 }
 void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                         ref ItemRenameState itemRenameState) {
@@ -639,13 +715,12 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
             if (g_formsPanelEnabled && read.document().layers.length) {
                 if (auto layerForm = formById("layer.props")) {
                     ImGui.Separator();
-                    // Cache ONE provider and re-point it at the current
-                    // primary each frame (allocation-free in steady state),
-                    // instead of allocating a fresh LayerPropsProvider per
-                    // frame. The provider's params() always alias the live
-                    // bound layer, so the rebind keeps it correct.
-                    static LayerPropsProvider layerProv;
                     auto propsTarget = itemPropsTarget(read.document());
+                    immutable ImVec2 formOrigin = ImGui.GetCursorScreenPos();
+                    immutable float formWidth = ImGui.GetContentRegionAvail().x;
+                    immutable float formRowH = ImGui.GetFrameHeightWithSpacing()
+                        - ImGui.GetStyle().ItemSpacing.y;
+                    ItemFormOutcome outcome;
                     // TASK 0654 — the properties form shows NOTHING when no
                     // item is selected. The `propsTarget = read.document().primary`
                     // fallback this replaces was written when a null target was
@@ -659,33 +734,6 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                     if (propsTarget is null) {
                         ImGui.TextDisabled("No item selected");
                     } else {
-                    if (layerProv is null)
-                        layerProv = new LayerPropsProvider(propsTarget);
-                    else
-                        layerProv.setLayer(propsTarget);
-                    // P4 primary-transform interlock: grey out the transform
-                    // rows while a transform tool is active. The panel always
-                    // binds the PRIMARY, so that is the only layer whose
-                    // transform could desync the live gizmo (the transform is
-                    // render-only; gizmo/drag run in the LOCAL frame). The
-                    // guard is mid-gesture only — it clears when the tool
-                    // drops; tool-free edits persist. (Same TransformTool
-                    // cast the deferred-drag draw site uses.)
-                    //
-                    // Task 0614 Phase 5: the CURRENT selection type goes with
-                    // it. Under `SelType.Item` the transform tool's only write
-                    // target is `Layer.xform` — these very rows — so there is
-                    // no second writer to desync from and the interlock must
-                    // not arm. Read live from the authority rather than cached
-                    // (seltype.d: `currentSelType` is THE answer to "what kind
-                    // of thing is selected"), so a mode flip is reflected on
-                    // the next frame with no invalidation step.
-                    layerProv.setTransformGuard(
-                        read.transformToolActive(),
-                        read.currentSelType());
-                    immutable bool transformGuardArmed =
-                        !layerProv.paramEnabled("pos.x");
-
                     // ---- TASK 1880: gang edit --------------------------
                     // Every OTHER selected item OF THE FOCUS'S KIND. The form
                     // then shows the placeholder on any row those items
@@ -705,36 +753,18 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                     // go stale — and it is empty in the ordinary one-item case,
                     // where `setGangTargets` early-outs and every widget
                     // behaves exactly as it did before this task.
-                    string layerTargets = to!string(read.document().indexOf(propsTarget));
-                    {
-                        import document : Layer;
-                        Layer[] gang;
+                        const(Layer)[] gang;
                         foreach (l; read.document().layers)
                             if (l !is null && l.selected && l !is propsTarget
                                 && l.kind == propsTarget.kind)
                                 gang ~= l;
-                        layerProv.setGangTargets(gang);
-                        // The WRITE target slot. The focus stays FIRST — it is
-                        // the layer the form is bound to and the one whose
-                        // value a non-mixed row is showing — and the rest of
-                        // the gang follows, so one dispatch is one undo entry
-                        // covering the whole selection.
-                        foreach (l; gang)
-                            layerTargets ~= "," ~ to!string(read.document().indexOf(l));
-                    }
-                    immutable ImVec2 formOrigin = ImGui.GetCursorScreenPos();
-                    immutable float formWidth = ImGui.GetContentRegionAvail().x;
-                    immutable float formRowH = ImGui.GetFrameHeightWithSpacing()
-                        - ImGui.GetStyle().ItemSpacing.y;
-                    recordLayerForm(read.document().indexOf(propsTarget),
-                        transformGuardArmed, formOrigin, formWidth, formRowH);
-                    // The dispatched `layer.attr <targets>` must address the
-                    // layer the form is BOUND to, not the primary — those are
-                    // the same index on an all-mesh document and a different
-                    // one the moment a non-mesh row takes the focus. Task 1880:
-                    // it is a LIST, so a gang edit is one command.
-                    actions.drawItemForm(*layerForm, layerProv, layerTargets);
+                        outcome = actions.drawItemForm(*layerForm, propsTarget,
+                            gang, read.transformToolActive(),
+                            read.currentSelType());
                     }   // task 0654: end of the has-a-target arm
+                    recordLayerForm(outcome.targetIndex,
+                        outcome.transformGuardArmed, outcome.bound,
+                        formOrigin, formWidth, formRowH);
                 }
             }
         }

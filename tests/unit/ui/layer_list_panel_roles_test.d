@@ -1,6 +1,8 @@
 module tests.unit.ui.layer_list_panel_roles_test;
 
 import std.algorithm : canFind, count;
+import core.exception : AssertError;
+import std.exception : assertThrown;
 import std.file : SpanMode, dirEntries, readText;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
@@ -31,10 +33,13 @@ import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import ui.discard_guard : GuardRecord;
 import ui.item_rename : ItemRenameState, bindItemRenameController;
+import ui.item_rename : ItemRenameDispatch;
 import ui.item_rows : ItemRow, RowRole;
 static import ui.item_rows;
 import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
-    LayerListPanelRoles, bindLayerListPanel, drawLayerListPanel,
+    ItemFormOutcome, LayerListActions, LayerListPanelRoles,
+    LayerListPanelState, LayerListReadRole, bindLayerListPanel,
+    drawLayerListPanel, layerFormBoundItem, layerFormProvider,
     layerListDrawSnapshot, resetLayerListDrawSnapshot;
 import view : View;
 import ImGui = d_imgui;
@@ -65,15 +70,19 @@ private template memberTypes(T) {
     enum memberTypes = collect();
 }
 
-static assert(__traits(compiles, {
-    LayerListPanelRoles roles = void;
-    auto dispatch = roles.actions.commandDispatch();
-}), "6030 action capability: external callers must be able to read dispatch");
-static assert(!__traits(compiles, {
-    LayerListPanelRoles roles = void;
-    roles.actions.dispatch = (string id, string paramsJson) {};
-}), "6030 action capability: external callers must not replace dispatch");
-
+static assert(!__traits(compiles, (LayerListPanelRoles roles) {
+        Document* document = roles.read.document();
+    }),
+    "6502 N1 document: the Items read role hands out a mutable Document*");
+static assert(__traits(compiles, (LayerListPanelRoles roles) {
+        const(Document)* document = roles.read.document();
+    }),
+    "6502 N1 control: the same role expression must compile through const");
+static assert(!__traits(compiles, (LayerListPanelRoles roles) {
+        auto document = roles.read.document();
+        document.layers[0].name = "x";
+    }),
+    "6502 N1w document: the Items read role permits a document write");
 static assert(!__traits(compiles, (ItemRow row) {
         Layer layer = row.layer;
     }),
@@ -113,6 +122,36 @@ static assert(typeof(__traits(getMember, ui.item_rows, "roleOf")).stringof
         == "RowRole(const(Document)* doc, const(Layer) l)",
     "6502 N5 roleOf: the row-role query must take a read-only document and identity; if only a parameter name changed, update the expected string and report it");
 
+static assert([__traits(allMembers, LayerListReadRole)] ==
+        ["owner_", "activeTool_", "__ctor", "document", "currentSelType",
+         "transformToolActive"],
+    "6502 F1 fence (names): the Items read role's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!LayerListReadRole ==
+        ["owner_: Session*", "activeTool_: Tool delegate()",
+         "__ctor: ref LayerListReadRole() | ref LayerListReadRole(Session* owner, Tool delegate() activeTool)",
+         "document: const(Document)*()", "currentSelType: SelType()",
+         "transformToolActive: bool()"],
+    "6502 F1 fence (types): a member of LayerListReadRole changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, LayerListActions)] ==
+        ["owner_", "dispatch", "interactive_", "forms_", "state_",
+         "resolveLive", "__ctor", "commandDispatch", "drawItemForm"],
+    "6502 F2 fence (names): the Items action role's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!LayerListActions ==
+        ["owner_: Session*", "dispatch: void delegate(string id, string paramsJson)",
+         "interactive_: void delegate(string id, string paramsJson)",
+         "forms_: FormsPanel", "state_: LayerListPanelState",
+         "resolveLive: Layer(Document* doc, const(Layer) id)",
+         "__ctor: ref LayerListActions() | ref LayerListActions(Session* owner, void delegate(string id, string paramsJson) dispatch, void delegate(string id, string paramsJson) interactive, FormsPanel forms, LayerListPanelState state)",
+         "commandDispatch: void delegate(string id, string paramsJson)()",
+         "drawItemForm: ItemFormOutcome(ref Form form, const(Layer) target, const(Layer)[] gang, bool toolActive, SelType current)"],
+    "6502 F2 fence (types): a member of LayerListActions changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, LayerListPanelRoles)] ==
+        ["read", "actions", "state"],
+    "6502 F3 fence (names): the Items role roster changed — a capability cannot be added or removed here without naming it");
+static assert(memberTypes!LayerListPanelRoles ==
+        ["read: LayerListReadRole", "actions: LayerListActions",
+         "state: LayerListPanelState"],
+    "6502 F3 fence (types): a member of LayerListPanelRoles changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
 static assert([__traits(allMembers, ItemRow)] ==
         ["index", "layer", "name", "renameSeed", "glyph", "depth",
          "role", "look", "isRoot", "visible", "canToggleVisible",
@@ -126,6 +165,35 @@ static assert(memberTypes!ItemRow ==
          "isSoleSelection: bool",
          "opAssign: pure nothrow @nogc ref @trusted ItemRow(ItemRow p) return"],
     "6502 F4 fence (types): a member of ItemRow changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert([__traits(allMembers, LayerListPanelState)] ==
+        ["props_", "gangBuf_", "__ctor", "toString", "toHash", "opCmp",
+         "opEquals", "Monitor", "factory"],
+    "6502 F5 fence (names): the Items binding state member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!LayerListPanelState ==
+        ["props_: LayerPropsProvider", "gangBuf_: Layer[]",
+         "__ctor: LayerListPanelState()", "toString: string()",
+         "toHash: nothrow @trusted ulong()", "opCmp: int(Object o)",
+         "opEquals: bool(Object o)", "Monitor: <no type>",
+         "factory: Object(string classname)"],
+    "6502 F5 fence (types): a member of LayerListPanelState changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert(LayerListReadRole.tupleof.length == 2
+        && is(typeof(LayerListReadRole.tupleof[0]) == Session*),
+    "6502 field roster: the Items read role must retain exactly its session and tool getter");
+static assert(LayerListActions.tupleof.length == 5,
+    "6502 field roster: the Items action role must retain exactly five capabilities");
+static assert(LayerListPanelState.tupleof.length == 2,
+    "6502 field roster: the Items binding state must retain exactly provider and gang buffer");
+
+static assert(__traits(compiles, {
+    LayerListPanelRoles roles = void;
+    auto dispatch = roles.actions.commandDispatch();
+}), "6030 action capability: external callers must be able to read dispatch");
+static assert(!__traits(compiles, {
+    LayerListPanelRoles roles = void;
+    roles.actions.dispatch = (string id, string paramsJson) {};
+}), "6030 action capability: external callers must not replace dispatch");
 
 static assert(__traits(compiles, (ItemRow row) {
         auto escaped = __traits(getMember, row.layer, "stripped");
@@ -256,6 +324,28 @@ private void assertHistoryHeadroom(LayerPanelHarness app) {
     app.records.length = 0;
     assert(app.history.undoEntries().length == 0 && app.records.length == 0,
         "6030 history floor must start from an empty stack and record list");
+}
+
+unittest { // the all-valid action roster binds and every missing member fails
+    auto app = new LayerPanelHarness;
+    auto ok = bindLayerListPanel(app.owner, app.binding, app.forms,
+                                 () => app.activeTool);
+    assert(ok.state !is null && ok.actions.commandDispatch() !is null
+        && ok.read.document() !is null,
+        "6502 floor: the all-valid Items roster must bind");
+
+    ItemRenameDispatch dispatch = &app.binding.dispatchUi;
+    ItemRenameDispatch interactive = &app.binding.dispatchInteractiveUi;
+    assertThrown!AssertError(LayerListActions(
+        null, dispatch, interactive, app.forms, ok.state));
+    assertThrown!AssertError(LayerListActions(
+        app.owner, null, interactive, app.forms, ok.state));
+    assertThrown!AssertError(LayerListActions(
+        app.owner, dispatch, null, app.forms, ok.state));
+    assertThrown!AssertError(LayerListActions(
+        app.owner, dispatch, interactive, null, ok.state));
+    assertThrown!AssertError(LayerListActions(
+        app.owner, dispatch, interactive, app.forms, null));
 }
 
 unittest { // M1: the once-bound role reads the document replaced in place
