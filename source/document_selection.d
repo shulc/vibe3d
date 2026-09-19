@@ -608,8 +608,10 @@ mixin template DocumentSelection() {
     /// direct field assignment — see `isMember`'s own comment.
     /// One `inout` definition preserves the caller's qualification: action
     /// callers still receive a mutable `Layer`, while read-only callers receive
-    /// only `const(Layer)`. A separate `const` overload that cast qualification
-    /// away would be a hole, not a convenience (task 6502).
+    /// only `const(Layer)`. This is a compiler-enforced mutation boundary, not
+    /// byte immutability: resolving `primary` may update Document's memo through
+    /// its existing internal cast. A separate `const` overload that cast
+    /// qualification away would be a hole, not a convenience (task 6502).
     inout(Layer) itemTransformTarget() inout {
         return isMember(focusedItem) ? focusedItem : primary;
     }

@@ -44,7 +44,7 @@ import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
     ItemFormOutcome, LayerListActions, LayerListPanelRoles,
     LayerListPanelState, LayerListReadRole, bindLayerListPanel,
     drawLayerListPanel, layerFormBoundItem, layerFormProvider,
-    layerListDrawSnapshot, resetLayerListDrawSnapshot;
+    layerFormGangMixed, layerListDrawSnapshot, resetLayerListDrawSnapshot;
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
@@ -144,7 +144,7 @@ static assert(memberTypes!LayerListActions ==
         ["owner_: Session*", "dispatch: void delegate(string id, string paramsJson)",
          "interactive_: void delegate(string id, string paramsJson)",
          "forms_: FormsPanel", "state_: LayerListPanelState",
-         "resolveLive: Layer(Document* doc, const(Layer) id)",
+         "resolveLive: Layer(Document* doc, const(Layer) id, out ulong index)",
          "__ctor: ref LayerListActions() | ref LayerListActions(Session* owner, void delegate(string id, string paramsJson) dispatch, void delegate(string id, string paramsJson) interactive, FormsPanel forms, LayerListPanelState state)",
          "commandDispatch: void delegate(string id, string paramsJson)()",
          "drawItemForm: ItemFormOutcome(ref Form form, const(Layer) target, const(Layer)[] gang, bool toolActive, SelType current)"],
@@ -372,15 +372,20 @@ unittest { // the all-valid action roster binds and every missing member fails
     ItemRenameDispatch dispatch = &app.binding.dispatchUi;
     ItemRenameDispatch interactive = &app.binding.dispatchInteractiveUi;
     assertThrown!AssertError(LayerListActions(
-        null, dispatch, interactive, app.forms, ok.state));
+        null, dispatch, interactive, app.forms, ok.state),
+        "6502 action roster: a null session owner must be rejected");
     assertThrown!AssertError(LayerListActions(
-        app.owner, null, interactive, app.forms, ok.state));
+        app.owner, null, interactive, app.forms, ok.state),
+        "6502 action roster: a null UI dispatch must be rejected");
     assertThrown!AssertError(LayerListActions(
-        app.owner, dispatch, null, app.forms, ok.state));
+        app.owner, dispatch, null, app.forms, ok.state),
+        "6502 action roster: a null interactive dispatch must be rejected");
     assertThrown!AssertError(LayerListActions(
-        app.owner, dispatch, interactive, null, ok.state));
+        app.owner, dispatch, interactive, null, ok.state),
+        "6502 action roster: a null forms panel must be rejected");
     assertThrown!AssertError(LayerListActions(
-        app.owner, dispatch, interactive, app.forms, null));
+        app.owner, dispatch, interactive, app.forms, null),
+        "6502 action roster: a null binding state must be rejected");
 }
 
 unittest { // M1: the once-bound role reads the document replaced in place
@@ -552,7 +557,7 @@ unittest { // M2: interactive form writes through guarded UI binding
     scope (exit) ui.close();
     ui.frame();
     auto snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && snapshot.formTarget == 1
+    assert(snapshot.formBlockEntered && snapshot.formTarget == 1
         && snapshot.formWidth > 20 && snapshot.formRowH > 0,
         "6030 form population: Beta's first form row was not recorded");
     const alpha = app.owner.document.layers[0].name;
@@ -592,20 +597,20 @@ unittest { // M3: transform guard reads both live tool and live selection type
     scope (exit) ui.close();
     ui.frame();
     auto snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && snapshot.transformGuardArmed,
+    assert(snapshot.formBlockEntered && snapshot.transformGuardArmed,
         "6030 transform guard did not arm for a live transform tool in geometry mode");
 
     app.owner.selTypeOrder.touch(SelType.Item);
     ui.frame();
     snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && !snapshot.transformGuardArmed,
+    assert(snapshot.formBlockEntered && !snapshot.transformGuardArmed,
         "6030 transform guard stayed armed in item mode");
 
     app.owner.selTypeOrder.touch(SelType.Vertex);
     app.activeTool = null;
     ui.frame();
     snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && !snapshot.transformGuardArmed,
+    assert(snapshot.formBlockEntered && !snapshot.transformGuardArmed,
         "6030 transform guard armed without a transform tool");
 }
 
@@ -619,7 +624,7 @@ unittest { // B-OWN: the provider belongs to this binding and its live focus
     scope (exit) ui.close();
     ui.frame();
     const snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && snapshot.formBound
+    assert(snapshot.formBlockEntered && snapshot.formBound
         && snapshot.formTarget == 0 && snapshot.formWidth > 20
         && snapshot.formRowH > 0,
         "6502 B-OWN floor: Alpha's form was not drawn and bound");
@@ -643,7 +648,7 @@ unittest { // B-NONE: an unresolved form target stays distinct from layer zero
     scope (exit) ui.close();
     ui.frame();
     const snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && !snapshot.formBound
+    assert(snapshot.formBlockEntered && !snapshot.formBound
         && snapshot.formTarget == size_t.max,
         "6502 B-NONE: an unresolved form target became layer zero");
 }
@@ -804,6 +809,31 @@ unittest { // B-PLANE: a production-created plane reaches the binding
         "6502 B-PLANE reachability: the production plane did not reach the owned form provider");
 }
 
+unittest { // B-GANG: the production binding passes its resolved gang to its provider
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness(true);
+    auto other = new Layer;
+    other.kind = ItemKind.Empty;
+    other.name = "Other Empty";
+    app.owner.document.layers ~= other;
+    app.binding.dispatchUi("layer.select", `{"index":3,"mode":"set"}`);
+    auto ui = app.open();
+    scope (exit) ui.close();
+    ui.frame();
+    assert(layerListDrawSnapshot().formBound
+        && !layerFormGangMixed(app.roles.state),
+        "6502 B-GANG floor: a single selected Empty reported a mixed name");
+
+    app.binding.dispatchUi("layer.select", `{"index":5,"mode":"toggle"}`);
+    ui.frame();
+    assert(layerListDrawSnapshot().formBound
+        && layerFormGangMixed(app.roles.state),
+        "6502 B-GANG: the resolved gang never reached the owned provider");
+}
+
 unittest { // B-FORM: focus leads the gang dispatch and receives the edit
     Form[] priorForms;
     installEnvironment(priorForms);
@@ -825,7 +855,7 @@ unittest { // B-FORM: focus leads the gang dispatch and receives the edit
     scope (exit) ui.close();
     ui.frame();
     const snapshot = layerListDrawSnapshot();
-    assert(snapshot.formDrawn && snapshot.formBound
+    assert(snapshot.formBlockEntered && snapshot.formBound
         && snapshot.formTarget == 3 && snapshot.formWidth > 20
         && snapshot.formRowH > 0,
         "6502 B-FORM floor: Empty's first form row was not recorded");
@@ -1127,9 +1157,9 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
     assert(identifierCount(layer, "state_") == 15,
         "6502 write fence: state_ is named "
         ~ identifierCount(layer, "state_").to!string ~ " times (recorded 15)");
-    assert(identifierCount(layer, "props_") == 11,
+    assert(identifierCount(layer, "props_") == 13,
         "6502 write fence: props_ is named "
-        ~ identifierCount(layer, "props_").to!string ~ " times (recorded 11)");
+        ~ identifierCount(layer, "props_").to!string ~ " times (recorded 13)");
     assert(identifierCount(layer, "gangBuf_") == 7,
         "6502 write fence: gangBuf_ is named "
         ~ identifierCount(layer, "gangBuf_").to!string ~ " times (recorded 7)");

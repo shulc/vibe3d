@@ -65,12 +65,15 @@ private:
     FormsPanel forms_;
     LayerListPanelState state_;
 
-    /// Resolve a read-only identity against the live session document.
-    /// This is a lookup, not a cast: the action side owns mutation rights.
-    Layer resolveLive(Document* doc, const(Layer) id) {
+    /// Resolve a read-only identity and its index against the live session
+    /// document. This is a lookup, not a cast: the action side owns mutation
+    /// rights. The null arm is defensive only: production passes identities
+    /// projected from this same frame's `doc.layers`.
+    Layer resolveLive(Document* doc, const(Layer) id, out size_t index) {
+        index = size_t.max;
         if (doc is null || id is null) return null;
-        const i = doc.indexOf(id);
-        return i == doc.layers.length ? null : doc.layers[i];
+        index = doc.indexOf(id);
+        return index == doc.layers.length ? null : doc.layers[index];
     }
 public:
     @disable this();
@@ -92,7 +95,8 @@ public:
                                  SelType current) {
         import std.conv : to;
         auto doc = owner_.documentPtr();
-        auto live = resolveLive(doc, target);
+        size_t liveIndex;
+        auto live = resolveLive(doc, target, liveIndex);
         if (live is null) return ItemFormOutcome.init;
         if (state_.props_ is null)
             state_.props_ = new LayerPropsProvider(live);
@@ -100,18 +104,19 @@ public:
             state_.props_.setLayer(live);
         state_.props_.setTransformGuard(toolActive, current);
         ItemFormOutcome outcome;
-        outcome.targetIndex = doc.indexOf(live);
+        outcome.targetIndex = liveIndex;
         string targets = to!string(outcome.targetIndex);
-        // Pre-size, fill by index, then truncate. Appending after `length = 0`
-        // moves this reusable block on every frame instead of retaining it.
+        // Refill the binding-owned scratch slice by index, then truncate any
+        // identities that did not resolve against the current document.
         if (state_.gangBuf_.length != gang.length)
             state_.gangBuf_.length = gang.length;
         size_t resolved;
         foreach (g; gang) {
-            auto liveGang = resolveLive(doc, g);
+            size_t gangIndex;
+            auto liveGang = resolveLive(doc, g, gangIndex);
             if (liveGang is null) continue;
             state_.gangBuf_[resolved++] = liveGang;
-            targets ~= "," ~ to!string(doc.indexOf(liveGang));
+            targets ~= "," ~ to!string(gangIndex);
         }
         if (state_.gangBuf_.length != resolved)
             state_.gangBuf_.length = resolved;
@@ -167,7 +172,7 @@ version (unittest) {
     struct LayerListDrawSnapshot {
         LayerListDrawnRow[] rows;
         ImVec2 deleteMin, deleteMax;
-        bool formDrawn;
+        bool formBlockEntered;
         bool formBound;
         size_t formTarget;
         bool transformGuardArmed;
@@ -199,7 +204,7 @@ version (unittest) {
     }
     private void recordLayerForm(size_t target, bool guardArmed, bool bound,
                                  ImVec2 origin, float width, float rowH) {
-        g_layerListDrawSnapshot.formDrawn = true;
+        g_layerListDrawSnapshot.formBlockEntered = true;
         g_layerListDrawSnapshot.formBound = bound;
         g_layerListDrawSnapshot.formTarget = target;
         g_layerListDrawSnapshot.transformGuardArmed = guardArmed;
@@ -214,6 +219,10 @@ version (unittest) {
     /// Which item the owned provider is bound to, by identity.
     const(Layer) layerFormBoundItem(LayerListPanelState state) {
         return state.props_ is null ? null : state.props_.layer();
+    }
+    /// Whether the production-owned provider currently sees a mixed name.
+    bool layerFormGangMixed(LayerListPanelState state) {
+        return state.props_ !is null && state.props_.paramMixed("name");
     }
 } else {
     private void beginLayerListDraw() {}
