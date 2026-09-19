@@ -1,6 +1,8 @@
 module tests.unit.ui.channels_panel_roles_test;
 
 import std.algorithm : count;
+import core.exception : AssertError;
+import std.exception : assertThrown;
 import std.file : SpanMode, dirEntries, readText;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.range : walkLength;
@@ -34,9 +36,11 @@ import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
     channelsModel;
-import ui.channels_panel : ChannelsDrawSnapshot, ChannelsPanelRoles, ChannelsPanelState,
-    bindChannelsPanel, channelsDrawSnapshot, drawChannelsPanel,
-    resetChannelsDrawSnapshot;
+import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
+    ChannelsPanelRoles, ChannelsPanelState, ChannelsReadRole,
+    bindChannelsPanel, channelsBoundItem, channelsDrawSnapshot,
+    channelsFormProvider, channelsInteractiveWriter, channelsStateWithResolver,
+    drawChannelsPanel, resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import ui.retained_item : ConstItem;
 import view : View;
@@ -66,6 +70,20 @@ private template memberTypes(T) {
     }
     enum memberTypes = collect();
 }
+
+static assert(!__traits(compiles, (ChannelsPanelRoles roles) {
+        Document* document = roles.read.document();
+    }),
+    "6503 N1 document: the Channels read role hands out a mutable Document*");
+static assert(__traits(compiles, (ChannelsPanelRoles roles) {
+        const(Document)* document = roles.read.document();
+    }),
+    "6503 N1 control: the same role expression must compile through const");
+static assert(!__traits(compiles, (ChannelsPanelRoles roles) {
+        auto document = roles.read.document();
+        document.layers[0].name = "x";
+    }),
+    "6503 N1w document: the Channels read role permits a document write");
 
 static assert(!__traits(compiles, (ChannelsKey key) {
         Layer item = key.item;
@@ -163,6 +181,58 @@ static assert(ChannelsModel.tupleof.length == 6,
     "6503 field roster: the Channels model must retain exactly its six read-model fields");
 static assert(is(typeof(ChannelsDrawSnapshot.retainedItem) == ConstItem),
     "6503 snapshot slot: the retained-item slot stopped being a read-only identity");
+
+static assert([__traits(allMembers, ChannelsReadRole)] ==
+        ["owner_", "activeTool_", "__ctor", "document", "currentSelType",
+         "transformToolActive", "editMesh"],
+    "6503 F1 fence (names): the Channels read role's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ChannelsReadRole ==
+        ["owner_: Session*", "activeTool_: Tool delegate()",
+         "__ctor: ref ChannelsReadRole() | ref ChannelsReadRole(Session* owner, Tool delegate() activeTool)",
+         "document: const(Document)*()", "currentSelType: SelType()",
+         "transformToolActive: bool()", "editMesh: const(Mesh)*()"],
+    "6503 F1 fence (types): a member of ChannelsReadRole changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ChannelsActions)] ==
+        ["interactive_", "forms_", "__ctor", "drawChannelForm"],
+    "6503 F2 fence (names): the Channels action role's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ChannelsActions ==
+        ["interactive_: void delegate(string, string)",
+         "forms_: FormsPanel",
+         "__ctor: ref ChannelsActions() | ref ChannelsActions(void delegate(string, string) interactive, FormsPanel forms)",
+         "drawChannelForm: void(ref Form form, ChannelsProvider provider)"],
+    "6503 F2 fence (types): a member of ChannelsActions changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ChannelsPanelState)] ==
+        ["provider_", "model_", "resolve_", "__ctor", "retainOnly",
+         "refresh", "dropMemo", "providerMatchesModel",
+         "armTransformGuard", "transformGuardArmed", "toString", "toHash",
+         "opCmp", "opEquals", "Monitor", "factory"],
+    "6503 F3 fence (names): the Channels panel state's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ChannelsPanelState ==
+        ["provider_: ChannelsProvider", "model_: ChannelsModel",
+         "resolve_: Layer delegate(const(Layer) id)",
+         "__ctor: ChannelsPanelState(Layer delegate(const(Layer) id) resolve)",
+         "retainOnly: void(const(Layer) item)",
+         "refresh: bool(const(Document)* doc, const(Layer) item)",
+         "dropMemo: bool()", "providerMatchesModel: const bool()",
+         "armTransformGuard: void(bool toolActive, SelType current)",
+         "transformGuardArmed: const bool()", "toString: string()",
+         "toHash: nothrow @trusted ulong()", "opCmp: int(Object o)",
+         "opEquals: bool(Object o)", "Monitor: <no type>",
+         "factory: Object(string classname)"],
+    "6503 F3 fence (types): a member of ChannelsPanelState changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ChannelsPanelRoles)] ==
+        ["read", "actions", "state"],
+    "6503 F4 fence (names): the Channels roles tuple's member set changed — a capability cannot be added or removed here without naming it");
+static assert(memberTypes!ChannelsPanelRoles ==
+        ["read: ChannelsReadRole", "actions: ChannelsActions",
+         "state: ChannelsPanelState"],
+    "6503 F4 fence (types): a member of ChannelsPanelRoles changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert(ChannelsReadRole.tupleof.length == 2
+        && is(typeof(ChannelsReadRole.tupleof[0]) == Session*),
+    "6503 field roster: the Channels read role must retain exactly its session and tool getter");
+static assert(ChannelsPanelState.tupleof.length == 3,
+    "6503 field roster: the Channels state must retain provider, model, and resolver only");
 
 static assert(__traits(compiles, {
     ChannelsPanelRoles roles = void;
@@ -304,6 +374,31 @@ private ChannelsDrawSnapshot fresh(ref HeadlessPanel ui) {
 private ChannelsDrawSnapshot settle(ref HeadlessPanel ui) {
     fresh(ui);
     return fresh(ui);
+}
+
+unittest { // the all-valid role roster binds and every missing member fails
+    auto h = new ChannelsHarness;
+    auto ok = bindChannelsPanel(h.owner, h.binding, h.forms,
+                                () => h.activeTool);
+    assert(ok.state !is null && ok.read.document() !is null
+        && channelsFormProvider(ok.state) is null,
+        "6503 floor: the all-valid Channels roster must bind, with an empty memo");
+    assert(channelsInteractiveWriter(ok.actions)
+            is &h.binding.dispatchInteractiveUi,
+        "6503 interactive writer: the Channels binding stored the ordinary UI dispatch instead of the interactive one");
+
+    void delegate(string, string) interactive =
+        &h.binding.dispatchInteractiveUi;
+    assertThrown!AssertError(channelsStateWithResolver(null),
+        "6503 state roster: a null item resolver must be rejected");
+    assertThrown!AssertError(ChannelsActions(null, h.forms),
+        "6503 action roster: a null interactive writer must be rejected");
+    assertThrown!AssertError(ChannelsActions(interactive, null),
+        "6503 action roster: a null forms panel must be rejected");
+    assertThrown!AssertError(ChannelsReadRole(null, () => h.activeTool),
+        "6503 read roster: a null session owner must be rejected");
+    assertThrown!AssertError(ChannelsReadRole(h.owner, null),
+        "6503 read roster: a null active-tool getter must be rejected");
 }
 
 private ImVec2 center(ImVec2 lo, ImVec2 hi) {

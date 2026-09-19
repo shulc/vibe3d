@@ -25,7 +25,7 @@ import ui.retained_item : ConstItem;
 // the synthesised form to the shared `FormsPanel` with the application
 // binding's interactive dispatch. It holds no Document, primary or Tool
 // between frames. Its only retained state is the binding's own
-// `ChannelsPanelState`: a row memo keyed on the live focus item, index and
+// `ChannelsPanelState`: a row memo keyed on the live focus identity, index and
 // parameter count, re-validated on every visible draw and emptied, before
 // `Begin`, on every call whose focus is not the memoised item — so a hidden
 // tab never keeps a replaced document alive. The header NAME is not memoised;
@@ -56,7 +56,7 @@ public:
         owner_ = owner;
         activeTool_ = activeTool;
     }
-    Document* document() { return owner_.documentPtr(); }
+    const(Document)* document() { return owner_.documentPtr(); }
     SelType currentSelType() {
         import seltype : resolve = currentSelType;
         return resolve(owner_.selTypeOrder);
@@ -85,37 +85,80 @@ public:
     }
 }
 
+/// How the binding turns a read-only identity into the writable item its
+/// provider needs: a lookup in the live document, never a cast (task 6503).
+alias ChannelsItemResolve = Layer delegate(const(Layer) id);
+
+/// The one place an identity becomes the item, and the only write capability
+/// the memo holds. A `Session*` field would be wider than this question.
+private Layer liveItem(Session* owner, const(Layer) id) {
+    if (owner is null || id is null) return null;
+    auto doc = owner.documentPtr();
+    const i = doc.indexOf(id);
+    return i == doc.layers.length ? null : doc.layers[i];
+}
+
 /// The panel's retained memo, owned by ONE binding: `bindChannelsPanel` is the
 /// only constructor call, so two bindings never share rows or a provider.
 final class ChannelsPanelState {
 private:
-    ChannelsProvider provider_;
-    ChannelsModel    model_;
+    ChannelsProvider    provider_;
+    ChannelsModel       model_;
+    ChannelsItemResolve resolve_;
 
-    this() {}
+    this(ChannelsItemResolve resolve) {
+        assert(resolve !is null);
+        resolve_ = resolve;
+    }
 
     /// Keep the memo only while it describes `item`; a null or different
     /// focus empties it. Runs on every draw call, visible or not.
-    void retainOnly(Layer item) {
+    void retainOnly(const(Layer) item) {
         if (model_.key.item is item) return;
         provider_ = null;
         model_    = ChannelsModel.init;
     }
 
     /// Rebuild on a key miss (item, index, parameter count); true when rebuilt.
-    /// Precondition: `retainOnly(item)` ran first, so a live provider is
-    /// already bound to `item`.
-    bool refresh(Document* doc, Layer item) {
+    bool refresh(const(Document)* doc, const(Layer) item) {
         if (provider_ !is null) {
             const k = ChannelsKey(ConstItem(item), doc.indexOf(item),
                                   provider_.params().length);
             if (k == model_.key) return false;
-            provider_.rebind(item);
+            auto live = resolve_(item);
+            if (live is null) return dropMemo();
+            provider_.rebind(live);
         } else {
-            provider_ = new ChannelsProvider(item);
+            auto live = resolve_(item);
+            if (live is null) return dropMemo();
+            provider_ = new ChannelsProvider(live);
         }
         model_ = channelsModel(doc, item, provider_.params());
         return true;
+    }
+
+    /// Defensive stale-identity arm: leave no half-bound memo behind. The
+    /// three narrow doors below and the unittest disabled-row recorder are
+    /// null-safe; the shared renderer also returns on a null provider.
+    bool dropMemo() {
+        provider_ = null;
+        model_ = ChannelsModel.init;
+        return false;
+    }
+
+    /// Does this memo's provider describe the item the model names?
+    bool providerMatchesModel() const {
+        return provider_ !is null && provider_.boundItem() is model_.key.item;
+    }
+
+    /// The base provider's interlock, driven live from the read authority.
+    void armTransformGuard(bool toolActive, SelType current) {
+        if (provider_ !is null) provider_.setTransformGuard(toolActive, current);
+    }
+
+    /// Is the 12-row item transform greyed right now?
+    bool transformGuardArmed() const {
+        return provider_ !is null && !provider_.paramEnabled("pos.x");
     }
 }
 
@@ -131,7 +174,7 @@ ChannelsPanelRoles bindChannelsPanel(Session* owner,
     assert(binding !is null && forms !is null);
     return ChannelsPanelRoles(ChannelsReadRole(owner, activeTool),
         ChannelsActions(&binding.dispatchInteractiveUi, forms),
-        new ChannelsPanelState);
+        new ChannelsPanelState((const(Layer) id) => liveItem(owner, id)));
 }
 
 version (unittest) {
@@ -182,10 +225,11 @@ version (unittest) {
         g_channelsDrawSnapshot.provider = state.provider_;
         g_channelsDrawSnapshot.channelCount = state.model_.channelCount;
     }
-    private void recordChannelsDisabled(ChannelsProvider provider) {
+    private void recordChannelsDisabled(ChannelsPanelState state) {
         size_t n;
-        foreach (ref p; provider.params())
-            if (!provider.paramEnabled(p.name)) ++n;
+        if (state.provider_ !is null)
+            foreach (ref p; state.provider_.params())
+                if (!state.provider_.paramEnabled(p.name)) ++n;
         g_channelsDrawSnapshot.disabledChannels = n;
     }
     private void recordChannelsRetained(ChannelsPanelState state) {
@@ -210,12 +254,30 @@ version (unittest) {
     private void recordVertexMapLine(string line) {
         g_channelsDrawSnapshot.mapLines ~= line;
     }
+    /// Which provider this binding owns — identity comparison only.
+    const(Object) channelsFormProvider(ChannelsPanelState state) {
+        return state.provider_;
+    }
+    /// Which item this binding's provider is bound to, by identity.
+    const(Layer) channelsBoundItem(ChannelsPanelState state) {
+        return state.provider_ is null ? null : state.provider_.boundItem();
+    }
+    /// Which writer the binder actually stored — identity, not spelling.
+    void delegate(string, string) channelsInteractiveWriter(ChannelsActions a) {
+        return a.interactive_;
+    }
+    /// Exercise the private resolver precondition without widening production
+    /// construction beyond `bindChannelsPanel`.
+    ChannelsPanelState channelsStateWithResolver(ChannelsItemResolve resolve) {
+        alias State = ChannelsPanelState;
+        return new State(resolve);
+    }
 } else {
     private void recordChannelsBegin() {}
     private void recordChannelsHeader(string, string) {}
     private void recordChannelsProvider(bool) {}
     private void recordChannelsMemo(bool, ChannelsPanelState) {}
-    private void recordChannelsDisabled(ChannelsProvider) {}
+    private void recordChannelsDisabled(ChannelsPanelState) {}
     private void recordChannelsRetained(ChannelsPanelState) {}
     private void recordChannelsGuard(bool) {}
     private void recordChannelsForm() {}
@@ -259,8 +321,7 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
         } else {
             const rebuilt = state.refresh(read.document(), item);
             recordChannelsMemo(rebuilt, state);
-            recordChannelsProvider(
-                state.provider_.boundItem() is state.model_.key.item);
+            recordChannelsProvider(state.providerMatchesModel());
 
             // Header: whose channels these are, read live every draw. `%s`
             // rather than passing the name as the format string — it is user
@@ -279,10 +340,10 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
             // gizmo's only write target IS these rows, so it must not arm —
             // the narrowing lives in `setTransformGuard`, read live from the
             // authority rather than cached.
-            state.provider_.setTransformGuard(read.transformToolActive(),
-                                              read.currentSelType());
-            recordChannelsGuard(!state.provider_.paramEnabled("pos.x"));
-            recordChannelsDisabled(state.provider_);
+            state.armTransformGuard(read.transformToolActive(),
+                                    read.currentSelType());
+            recordChannelsGuard(state.transformGuardArmed());
+            recordChannelsDisabled(state);
 
             // The SAME renderer the properties form uses, so a row here is
             // resolved, drawn and written back by exactly one implementation.
