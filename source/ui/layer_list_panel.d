@@ -174,6 +174,8 @@ version (unittest) {
     struct LayerListDrawSnapshot {
         LayerListDrawnRow[] rows;
         ImVec2 deleteMin, deleteMax;
+        bool disclosureDrawn;
+        bool disclosureExpanded;
         bool formBlockEntered;
         bool formBound;
         size_t formTarget;
@@ -195,6 +197,10 @@ version (unittest) {
     private void recordLayerDelete() {
         g_layerListDrawSnapshot.deleteMin = ImGui.GetItemRectMin();
         g_layerListDrawSnapshot.deleteMax = ImGui.GetItemRectMax();
+    }
+    private void recordLayerDisclosure(bool expanded) {
+        g_layerListDrawSnapshot.disclosureDrawn = true;
+        g_layerListDrawSnapshot.disclosureExpanded = expanded;
     }
     private void recordLayerRow(size_t index, string name, RowRole role,
                                 bool visible, ImVec2 eyeMin, ImVec2 eyeMax,
@@ -229,6 +235,7 @@ version (unittest) {
 } else {
     private void beginLayerListDraw() {}
     private void recordLayerDelete() {}
+    private void recordLayerDisclosure(bool) {}
     private void recordLayerRow(size_t, string, RowRole, bool,
                                 ImVec2, ImVec2, ImVec2, ImVec2,
                                 ImVec2, ImVec2) {}
@@ -544,9 +551,11 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                 if (r.isRoot) {
                     if (ImGui.InvisibleButton("##disc", ImVec2(cellW, rowH)))
                         state.rootExpanded_ = !state.rootExpanded_;
+                    immutable bool disclosureExpanded = state.rootExpanded_;
+                    recordLayerDisclosure(disclosureExpanded);
                     drawDisclosure(dl,
                         ImVec2(dp.x + cellW * 0.5f, dp.y + rowH * 0.5f),
-                        gRad, state.rootExpanded_, txtCol);
+                        gRad, disclosureExpanded, txtCol);
                 } else {
                     ImGui.Dummy(ImVec2(cellW, rowH));
                 }

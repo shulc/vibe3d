@@ -388,6 +388,9 @@ unittest { // the all-valid action roster binds and every missing member fails
     assertThrown!AssertError(LayerListActions(
         app.owner, dispatch, interactive, app.forms, null),
         "6502 action roster: a null binding state must be rejected");
+    assertThrown!AssertError(drawLayerListPanel(
+        ok.read, ok.actions, null, app.renameState),
+        "6590 draw roster: a null binding state must be rejected before drawing");
 }
 
 unittest { // M1: the once-bound role reads the document replaced in place
@@ -751,17 +754,23 @@ unittest { // 6590: collapsing one binding must not collapse its peer
     // one following frame observes the toggled expansion state.
     ui.frame();
     assert(layerListDrawSnapshot().rows.length == 1
-        && layerListDrawSnapshot().rows[0].index == kNoLayerIndex,
+        && layerListDrawSnapshot().rows[0].index == kNoLayerIndex
+        && layerListDrawSnapshot().disclosureDrawn
+        && !layerListDrawSnapshot().disclosureExpanded,
         "6590 disclosure floor: clicking the first root did not collapse its rows from four to one");
 
     which = 1;
     ui.frame();
-    assert(layerListDrawSnapshot().rows.length == 4,
+    assert(layerListDrawSnapshot().rows.length == 4
+        && layerListDrawSnapshot().disclosureDrawn
+        && layerListDrawSnapshot().disclosureExpanded,
         "6590 shared rootExpanded: collapsing the first binding also collapsed the second binding");
 
     which = 0;
     ui.frame();
-    assert(layerListDrawSnapshot().rows.length == 1,
+    assert(layerListDrawSnapshot().rows.length == 1
+        && layerListDrawSnapshot().disclosureDrawn
+        && !layerListDrawSnapshot().disclosureExpanded,
         "6590 retained rootExpanded: returning to the first binding lost its collapsed state");
 }
 
@@ -1230,6 +1239,8 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
     assert(identifierCount(layer, "rowBuf_") == 3
         && identifierCount(layer, "rootExpanded_") == 5,
         "6590 state census: rowBuf_/rootExpanded_ uses changed from 3/5");
+    assert(identifierCount(drawBody, "disclosureExpanded") == 3,
+        "6590 disclosure coupling: one value must feed both the recorder and glyph");
 
     assert(identifierCount(layer, "owner_") == 7,
         "6502 read fence: owner_ is named "
