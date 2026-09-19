@@ -29,8 +29,9 @@
 // `/api/subpatch/preview` all answer WHILE a build is in flight. The price is
 // a new rule: A TEST THAT NEEDS THE LIMIT SURFACE MUST WAIT FOR
 // `pending == false`. `waitPreviewSettled()` below is that wait. RECORDED
-// input (`/api/play-events`, `--playback`) needs no such call: the barrier
-// holds it, which is what M-DET witnesses.
+// input (`/api/play-events`, `--playback`) is held by the product barrier;
+// M-DET observes that hold separately, then uses the explicit pending-state
+// barrier before it samples the limit surface (task 6690).
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
 import std.net.curl;
@@ -145,13 +146,15 @@ void hold(long ms, long ceilingMs = 0) {
 
 /// THE NEW CONTRACT, in one function. Anything that wants the LIMIT surface
 /// (`/api/pick` in preview mode, `/api/gpu/face-vbo`) waits here first.
-void waitPreviewSettled(int timeoutMs = 30_000) {
+Prev waitPreviewSettled(int timeoutMs = 30_000) {
     foreach (_; 0 .. timeoutMs / 20) {
-        if (!prev().pending) { Thread.sleep(60.msecs); return; }
+        auto state = prev();
+        if (!state.pending) return state;
         Thread.sleep(20.msecs);
     }
     assert(false, "subpatch preview build did not settle within "
                   ~ timeoutMs.to!string ~ " ms");
+    return Prev.init; // unreachable; satisfies the value-returning test helper
 }
 
 // The strip fixture, verbatim from tests/test_hide_geometry_pick.d — six quads
@@ -181,7 +184,7 @@ string lassoLog(Vp vp) {
     immutable int x1 = vp.x + vp.w - 8, y1 = vp.y + vp.h - 8;
     return format(
         `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
-        `{"t":150.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":0.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
         `{"t":200.0,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
         `{"t":250.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":1,"yrel":0,"state":4,"mod":0}` ~ "\n" ~
         `{"t":300.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":1,"state":4,"mod":0}` ~ "\n" ~
@@ -191,21 +194,35 @@ string lassoLog(Vp vp) {
         x0, y0, x0, y0, x1, y0, x1, y1, x0, y1, x0, y1);
 }
 
-/// Post a recorded log and poll until the player says it finished.
-/// `budgetMs` is generous on purpose: under the barrier the whole log waits
-/// for the build, so the poll has to outlast the hold.
-bool playAndWait(string log, int budgetMs = 12_000) {
+/// Accept a recorded log on the main-thread player. The response is returned
+/// only after `PlaybackController.accept`, so the following status read cannot
+/// belong to the preceding log in the worker's reused editor process.
+void startPlayback(string log) {
     auto resp = post(BASE ~ "/api/play-events", log);
-    assert(parseJSON(cast(string)resp)["status"].str == "success",
-        "play-events failed: " ~ cast(string)resp);
+    auto accepted = parseJSON(cast(string)resp);
+    assert(accepted["status"].str == "success",
+           "play-events failed: " ~ cast(string)resp);
+}
+
+JSONValue playbackStatus() {
+    return getJson("/api/play-events/status");
+}
+
+/// Poll the accepted playback until every event has been delivered. Event
+/// delivery uses the app's immediate sink, so `finished` is set only after the
+/// final handler has returned; no post-playback sleep is a completion barrier.
+bool waitPlaybackFinished(int budgetMs = 12_000) {
     foreach (_; 0 .. budgetMs / 50) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) {
-            Thread.sleep(250.msecs);      // post-playback drain settle
+        if (playbackStatus()["finished"].type == JSONType.TRUE)
             return true;
-        }
         Thread.sleep(50.msecs);
     }
     return false;
+}
+
+bool playAndWait(string log, int budgetMs = 12_000) {
+    startPlayback(log);
+    return waitPlaybackFinished(budgetMs);
 }
 
 /// Length, in floats, of the face position VBO as it stands ON THE GPU.
@@ -252,9 +269,11 @@ immutable int[] kCageEdgeSet    = [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
 unittest {
     stripWithLivePreview();
 
-    // Hold RECEPTION. The worker still finishes normally, so `/api/reset`
-    // and the join stay instant; what is delayed is the publish.
-    hold(2000);
+    // Hold RECEPTION until this cell releases it. The log's first input event
+    // is due at t=0, so the product barrier must keep all six events pending.
+    // The separate pending-state wait below owns preview completion rather
+    // than inferring it from elapsed time or from playback completion.
+    hold(-1);
     scope(exit) hold(0);
 
     // Changing the HIDE mask changes which limit faces are kept, i.e. the
@@ -268,7 +287,19 @@ unittest {
         ~ "arrival — otherwise a stale trace picks against a live cage");
 
     selectMode("edges", []);
-    assert(playAndWait(lassoLog(viewport())),
+    startPlayback(lassoLog(viewport()));
+    auto held = playbackStatus();
+    assert(held["total"].integer == 6
+            && held["remaining"].integer == 6,
+        "recorded input advanced while the preview build was still held — "
+        ~ "the scripted-input barrier was bypassed: " ~ held.toString);
+
+    hold(0);
+    auto settled = waitPreviewSettled();
+    assert(settled.builds == during.builds + 1,
+        "the explicit preview barrier did not observe this build landing: "
+        ~ during.to!string ~ " -> " ~ settled.to!string);
+    assert(waitPlaybackFinished(),
         "the lasso log never finished — the barrier is not bounded");
 
     auto got = selected("selectedEdges");
