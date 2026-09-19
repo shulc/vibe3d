@@ -89,7 +89,7 @@ static assert([__traits(allMembers, ToolPropertiesStageInfo)] == [
         ~ memberList!ToolPropertiesStageInfo ~ memberPinSuffix);
 static assert([__traits(allMembers, ui.tool_properties_panel)] == [
         "object", "ImGui", "d_imgui", "ToolPropertiesStageInfo",
-        "ToolPropertiesReadRole", "ToolPropertiesActions",
+        "g_enabledStageInfoScratch", "ToolPropertiesReadRole", "ToolPropertiesActions",
         "ToolPropertiesPanelRoles", "resolveStage",
         "bindToolPropertiesPanel", "kToolPropsTabMain",
         "kToolPropsTabSnapping", "g_toolPropsTab", "kSnappingHasOwnTab",
@@ -233,9 +233,8 @@ static assert(actionParams.length == 0,
         ~ capabilityList(actionParams));
 static assert(!CarriesCapability!ToolPropertiesStageInfo,
     "6504 C10 descriptor: ToolPropertiesStageInfo carries a capability");
-static assert(!__traits(compiles, (PropertyPanel panel) {
-    Stage stage = panel.activeSlotStage_;
-}), "6504 exemption premise: PropertyPanel.activeSlotStage_ became reachable");
+static assert(CapabilityReturns!(PropertyPanel, false).length == 0,
+    "6504 exemption premise: PropertyPanel gained a public capability return");
 static assert(kCapabilityExempt.length == 1,
     "6504 exemption list grew");
 
@@ -334,12 +333,18 @@ private final class ProbeLegacyTool : Tool {
     float amount;
     size_t draws;
     bool dropped;
+    string[] order;
     void delegate() onWrite;
 
     this(string id) { this.id = id; }
     override string name() const { return id; }
     override Param[] params() {
         return [Param.float_("amount", "Amount", &amount, 0.0f)];
+    }
+    override bool paramEnabled(string name) const {
+        auto self = cast(ProbeLegacyTool) this;
+        self.order ~= "row";
+        return true;
     }
     override void onParamChanged(string name) {
         if (onWrite !is null) onWrite();
@@ -348,6 +353,7 @@ private final class ProbeLegacyTool : Tool {
         assert(!dropped,
             "6504 C12 drop witness: custom draw ran on a tool dropped mid-frame");
         ++draws;
+        order ~= "custom";
     }
 }
 
@@ -758,6 +764,8 @@ unittest {
                        "probe.legacyA", "amount") == 1
             && legacy.draws == 1,
             "6060 C4 legacy witness: schema row or custom draw was lost");
+        assert(legacy.order == ["row", "custom"],
+            "6504 C4 tool order witness: custom draw did not run after the schema rows");
     }
 
     { // C5: Tool and pipeline reads stay live after the once-only bind.
@@ -930,6 +938,84 @@ unittest {
             "6504 C12 drop witness: the action door drew a tool that had been dropped mid-frame");
     }
 
+    { // RV1: Snap metadata keeps a schema-bearing stage off the Main page.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto snap = new ProbeCountStage(
+            TaskCode.Snap, "probe.snap", 0x90);
+        app.pipe.pipeline.add(snap);
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        assert(snap.pipeEnabled && snap.paramsCalls > 0
+            && app.pipe.pipeline.findById("probe.snap") is snap,
+            "6504 RV1 population: the schema-bearing Snap stage did not reach the Main-page filter");
+        assert(!sectionKeys().canFind("probe.snap")
+            && idCount(cast(string) PanelIdKind.Row, "probe.snap") == 0,
+            "6504 RV1 task-code witness: a Snap stage drew a section on the Main page");
+    }
+
+    { // RV2: section metadata carries the human stage label, not its id.
+        loadFormFile("falloff.yaml");
+        auto app = new ToolPropsHarness;
+        auto stage = app.addFalloff();
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        string[] labels;
+        foreach (item; idItems())
+            if (item["kind"].str == cast(string) PanelIdKind.Section
+                && item["key"].str == stage.id())
+                labels ~= item["label"].str;
+        assert(labels.length == 1 && stage.displayName() != stage.id(),
+            "6504 RV2 population: the falloff section or its distinct human label is missing");
+        assert(labels[0] == stage.displayName(),
+            "6504 RV2 display-name witness: the section label fell back to the stage id");
+    }
+
+    { // RV3: a pipe-disabled stage is absent even when it has a schema.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto disabled = new ProbeCountStage(
+            TaskCode.Path, "probe.disabled", 0x90);
+        disabled.pipeEnabled = false;
+        app.pipe.pipeline.add(disabled);
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        assert(!disabled.pipeEnabled
+            && app.pipe.pipeline.findById("probe.disabled") is disabled,
+            "6504 RV3 population: the pipe-disabled schema stage was not registered");
+        assert(disabled.paramsCalls == 0
+            && !sectionKeys().canFind("probe.disabled")
+            && idCount(cast(string) PanelIdKind.Row, "probe.disabled") == 0,
+            "6504 RV3 pipe-enabled witness: a disabled stage reached the Main-page section path");
+    }
+
+    { // C15: an enabled but schema-less stage has no section on the Main page.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto stage = app.addInactiveFalloff();
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        assert(stage.pipeEnabled && !stage.isActive()
+            && stage.params().length == 0
+            && app.pipe.pipeline.findById("falloff") !is null,
+            "6504 C15 population: the probe falloff must be registered, enabled and schema-less");
+        assert(!sectionKeys().canFind("falloff")
+            && idCount(cast(string) PanelIdKind.Row, "falloff") == 0,
+            "6504 C15 schema-less-stage witness: a registered stage with no panel schema drew a section anyway");
+    }
+
     { // C13: stage schema reads and custom UI retain their per-frame order.
         loadFormFile("transform.yaml");
         auto app = new ToolPropsHarness;
@@ -952,24 +1038,6 @@ unittest {
         assert(probe.order.length > 0 && probe.order[$ - 1] == "custom"
             && probe.order.count("row") == visible,
             "6504 C13 order witness: stage custom draw did not run after the schema rows");
-    }
-
-    { // C15: an enabled but schema-less stage has no section on the Main page.
-        loadFormFile("transform.yaml");
-        auto app = new ToolPropsHarness;
-        auto stage = app.addInactiveFalloff();
-        app.bind();
-        auto ui = app.open();
-        scope(exit) ui.close();
-
-        ui.frame();
-        assert(stage.pipeEnabled && !stage.isActive()
-            && stage.params().length == 0
-            && app.pipe.pipeline.findById("falloff") !is null,
-            "6504 C15 population: the probe falloff must be registered, enabled and schema-less");
-        assert(!sectionKeys().canFind("falloff")
-            && idCount(cast(string) PanelIdKind.Row, "falloff") == 0,
-            "6504 C15 schema-less-stage witness: a registered stage with no panel schema drew a section anyway");
     }
 
     { // C14: removal during an earlier section makes the later section vanish.
@@ -1049,10 +1117,11 @@ unittest {
             && identifierCount(snappingBody, "stageHasPanelParams") == 0
             && identifierCount(snappingBody, "actions") == 1
             && identifierCount(snappingBody, "drawStageBody") == 1
+            && identifierCount(snappingBody, "taskCode") == 1
             && identifierCount(enabledStagesBody, "params") == 0,
             "6504 C11-g snap-page witness: the Snapping page gained a params() "
-                ~ "read, and a stage mirror is re-synced on the one page that "
-                ~ "must not touch it");
+                ~ "read, lost its task-code filter, or re-synced a stage mirror "
+                ~ "on the one page that must not touch it");
         foreach (name; ["Stage", "Tool", "ParamProvider",
                         "XfrmTransformTool", "drawProperties", "params",
                         "allMut", "findById", "suppressTRSProperties",
@@ -1092,11 +1161,12 @@ unittest {
             "6504 C11-b module census: the panel regained a provider/stage escape");
 
         const readRole = bodyAt(panel, "struct ToolPropertiesReadRole");
-        assert(identifierCount(readRole, "Stage") == 0
+        assert(identifierCount(readRole, "enabledStages") == 1
+            && identifierCount(readRole, "Stage") == 0
             && identifierCount(readRole, "Tool") == 0
             && identifierCount(readRole, "params") == 0
             && readRole.count("cast(") == 0,
-            "6504 C11-c read role: display metadata regained mutation capability");
+            "6504 C11-c read-role slice: enabledStages vanished, or display metadata regained mutation capability");
 
         const binder = bodyAt(panel,
             "ToolPropertiesPanelRoles bindToolPropertiesPanel(");

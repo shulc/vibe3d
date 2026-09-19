@@ -20,6 +20,8 @@ struct ToolPropertiesStageInfo {
     TaskCode taskCode;
 }
 
+private __gshared ToolPropertiesStageInfo[] g_enabledStageInfoScratch;
+
 struct ToolPropertiesReadRole {
 private:
     bool delegate() activeTool_;
@@ -35,14 +37,15 @@ public:
     string activeToolId() { return activeToolId_(); }
     ToolPropertiesStageInfo[] enabledStages() {
         import toolpipe.pipeline : g_pipeCtx;
-        ToolPropertiesStageInfo[] result;
-        if (g_pipeCtx is null) return result;
+        g_enabledStageInfoScratch.length = 0;
+        g_enabledStageInfoScratch.assumeSafeAppend();
+        if (g_pipeCtx is null) return g_enabledStageInfoScratch;
         foreach (stage; g_pipeCtx.pipeline.all()) {
             if (!stage.pipeEnabled) continue;
-            result ~= ToolPropertiesStageInfo(
+            g_enabledStageInfoScratch ~= ToolPropertiesStageInfo(
                 stage.id(), stage.displayName(), stage.taskCode());
         }
-        return result;
+        return g_enabledStageInfoScratch;
     }
 }
 
