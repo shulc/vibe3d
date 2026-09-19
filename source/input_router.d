@@ -532,7 +532,11 @@ struct InputRouter {
                         return;
                     }
                     if (!tryOpenArgsDialog(*id))
+                    {
+                        if ((*id in reg.commandFactories) is null)
+                            throw new Exception("registry: '" ~ *id ~ "' is not registered");
                         runCommand(reg.commandFactories[*id]());
+                    }
                     return;
                   }
                   {
@@ -1978,6 +1982,8 @@ struct InputRouter {
             case SDL_QUIT:
                 {
                     import commands.file.quit : FileQuit;
+                    if (("file.quit" in app.reg.commandFactories) is null)
+                        throw new Exception("registry: 'file.quit' is not registered");
                     auto q = cast(FileQuit) app.reg.commandFactories["file.quit"]();
                     if (q !is null) q.setFromWindowClose(true);
                     app.runUiCommand(q, RecordMode.Record, "file.quit");

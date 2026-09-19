@@ -160,12 +160,20 @@ package(tests.unit) string balancedSpan(
     return "";
 }
 
+package(tests.unit) string toolRegistrationHead(string id) {
+    return "reg.toolFactories[\"" ~ id ~ "\"] = ";
+}
+
+package(tests.unit) string commandRegistrationHead(string id) {
+    return "reg.commandFactories[\"" ~ id ~ "\"] = ";
+}
+
 /// Extract one brace-lambda tool registration in either the literal legacy
 /// assignment or the paired helper form. The source stays raw for id matching;
 /// the same-length code projection owns brace balancing so literals/comments
 /// cannot extend the block into the next registration.
 package string toolRegistrationBlock(string src, string id, out string problem) {
-    immutable oldHead = "reg.toolFactories[\"" ~ id ~ "\"] = ";
+    immutable oldHead = toolRegistrationHead(id);
     immutable pairedHead = "reg, \"" ~ id ~ "\", () {";
     immutable size_t oldDefs = countOccurrences(src, oldHead);
     immutable size_t pairedDefs = countOccurrences(src, pairedHead);

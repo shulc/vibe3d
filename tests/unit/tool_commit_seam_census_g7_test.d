@@ -118,7 +118,8 @@ import std.traits    : FieldNameTuple;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
    balancedSpan, blankNonCode, countOccurrences, enclosingSymbols, historySurface,
-   isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits;
+   isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits,
+   toolRegistrationHead;
 import tools.edit.topology_pen.defs : TopoPenFactories;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -441,7 +442,7 @@ unittest {
     string[] problems;
     size_t   checked = 0;
 
-    immutable needle = "reg.toolFactories[\"mesh.topoPen\"] = ";
+    immutable needle = toolRegistrationHead("mesh.topoPen");
     immutable size_t defs = countOccurrences(src, needle);
     if (defs != 1) {
         problems ~= "    · wire id `mesh.topoPen`: found " ~ defs.to!string

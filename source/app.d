@@ -4155,6 +4155,8 @@ void main(string[] args) {
                 // queued case: `!sawDownloaded`). No extra app-side guard
                 // needed here.
                 const prefixLen = ev.jobId.length < 8 ? ev.jobId.length : 8;
+                if (("ai3d.importResult" in reg.commandFactories) is null)
+                    throw new Exception("registry: 'ai3d.importResult' is not registered");
                 auto imp = cast(Ai3dImportResult)
                     reg.commandFactories["ai3d.importResult"]();
                 imp.setInput(ev.objPath, "AI 3D " ~ ev.jobId[0 .. prefixLen]);
@@ -4227,6 +4229,8 @@ void main(string[] args) {
                 // success) — null on a fully clean run. Read it BEFORE
                 // clear() below, which wipes it.
                 const string partialNote = remeshJob.message();
+                if (("mesh.remesh" in reg.commandFactories) is null)
+                    throw new Exception("registry: 'mesh.remesh' is not registered");
                 auto cmd = cast(Remesh) reg.commandFactories["mesh.remesh"]();
                 runCommand(cmd);
                 // runCommand can no-op: Remesh.evaluate rejects (returns false,
@@ -4386,8 +4390,12 @@ void main(string[] args) {
     guardController = new GuardedActionController(GuardedActionPorts(
         (Command c, RecordMode m) => executor.applyOrRefire(c, m, null),
         () => docDirty(),
-        () => executor.applyOrRefire(
-            reg.commandFactories["file.save"](), RecordMode.Record, null),
+        () {
+            if (("file.save" in reg.commandFactories) is null)
+                throw new Exception("registry: 'file.save' is not registered");
+            return executor.applyOrRefire(
+                reg.commandFactories["file.save"](), RecordMode.Record, null);
+        },
         cast(void delegate(Command))&raiseCommandNotice,
         GuardObservationPorts(
             (record) => recordGuardRequest(record),
