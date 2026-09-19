@@ -21,9 +21,11 @@ import guarded_action_controller : GuardObservationPorts,
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import http_server : HttpServer;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import math : Vec3;
 import mesh : Mesh, makeCube, makeOctahedron;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
+import remesh.remesh_job : RemeshJob;
 import registry : Registry;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import seltype : SelType;
@@ -35,7 +37,9 @@ import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
 import tools.edit.topology_pen.defs : TopoPenFactories;
+import ui.remesh_modal_state : RemeshModalState;
 import view : View;
+import viewport : LayoutPreset, ViewportManager;
 
 private void noOpResetUi() {}
 private void noOpClearTraces() {}
@@ -66,11 +70,16 @@ final class LiveRegistrationRig {
 
     EditorApp app;
     GpuMesh gpu;
+    ViewportManager vpm;
+    RemeshJob remeshJob;
+    RemeshModalState remeshModalState;
 
     string[] activatePreparedIds;
     size_t deactivates;
     size_t staleResets;
     size_t liveResets;
+    size_t meshRebuildDrops;
+    EditMode[] promotions;
 
     this() {
         session = Session.bootstrap(makeCube());
@@ -175,6 +184,21 @@ final class LiveRegistrationRig {
         app.aiLogWriter = new AiInteractionLogWriter("");
     }
 
+    void wireMeshCommandDeps() {
+        vpm = new ViewportManager(0, 0, 800, 600);
+        vpm.applyLayout(LayoutPreset.Quad);
+        remeshJob = new RemeshJob;
+        remeshModalState = new RemeshModalState;
+        app.vpm = vpm;
+        app.remeshJob = remeshJob;
+        app.remeshModalState = remeshModalState;
+        app.dropActiveTool = (ToolTransition transition) {
+            ++meshRebuildDrops;
+            activeTool = null;
+        };
+        app.promoteGeometryType = (EditMode mode) { promotions ~= mode; };
+    }
+
     Tool buildTransform(string key) {
         return buildRegisteredXfrmTransformForOwnershipTest(app, key);
     }
@@ -219,6 +243,19 @@ unittest {
         "5980 rig population: cell switch did not change the live View");
     assert(rig.session.editMode == EditMode.Polygons,
         "5980 rig population: geometry switch did not change the live mode");
+}
+
+unittest { // 6509: resolved Quad snapshot must differ from the raw active cell
+    auto rig = new LiveRegistrationRig;
+    rig.wireEditorApp();
+    rig.wireMeshCommandDeps();
+    rig.vpm.activeId = 0;
+    rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
+    const resolved = rig.vpm.originSnapshot();
+    const raw = rig.vpm.views[0].camera;
+    assert(resolved.focus.x == 37.0f && raw.focus.x != resolved.focus.x,
+        "6509 rig floor: the Quad follow link does not make originSnapshot() "
+      ~ "differ numerically from the active cell's own camera");
 }
 
 unittest {
