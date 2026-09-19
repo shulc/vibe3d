@@ -598,9 +598,17 @@ string toJson(ref FrameProbeSnapshot snapshot) {
 
         if (len > 0) {
             size_t worstIdx = 0;
-            // Task 6614: strict `>` keeps the first frame in this detached
-            // sequence. Equal-total fixtures are intentionally absent because
-            // the wire contract does not promise a tie order.
+            // Task 6680: strict `>` keeps the first frame in this detached
+            // sequence — `snapshot()` is `ring[0 .. ringLen].dup`, so that is
+            // PHYSICAL order, not chronological once the ring has wrapped.
+            // The DIRECTION is pinned, twice, in `perf_probe_test.d` (`:528`
+            // against live `toJson` output, `:557` against frozen bytes); only
+            // the TIE order is unpinned, and equal-total fixtures are absent
+            // deliberately because the wire contract does not promise one.
+            // On a tie that also makes `worst` and `worstN[0]` free to name
+            // DIFFERENT frames, since `worstN`'s `sort!` below is unstable and
+            // `:528` compares `totalNs` alone — equal totals, so it cannot see
+            // the difference and is not meant to.
             foreach (i, ref r; s)
                 if (r.totalNs > s[worstIdx].totalNs) worstIdx = i;
             app.put(`,"worst":`);
