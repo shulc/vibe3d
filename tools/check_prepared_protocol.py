@@ -13,7 +13,8 @@ import hashlib
 from prepared_writer_census import (scan as scan_writer_graph,
     canonical as canonical_writer_graph, _balanced as balanced_source,
     _semantic_digest as semantic_digest, module_path,
-    persisted_manifest as persisted_writer_manifest)
+    persisted_manifest as persisted_writer_manifest,
+    REGISTRATION_SOURCE_NAMES as writer_registration_source_names)
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -1291,9 +1292,11 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
         shutil.copytree(ROOT / "source/tools", mutant_root / "source/tools")
-        for name in ("tool.d", "registration.d", "tool_presets.d",
-                     "transform_tool_registration.d"):
+        for name in ("tool.d", "tool_presets.d"):
             shutil.copy2(ROOT / "source" / name, mutant_root / "source" / name)
+        for name in writer_registration_source_names:
+            shutil.copy2(ROOT / "source" / name,
+                         mutant_root / "source" / name)
         transition_path = module_path(
             ROOT, "prepared_tool_transition", "prepared.tool_transition")
         transition_relative = transition_path.relative_to(ROOT)
@@ -1306,7 +1309,11 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
         (mutant_root / "config").mkdir()
         shutil.copy2(ROOT / "config/tool_presets.yaml", mutant_root / "config/tool_presets.yaml")
         edit(mutant_root)
-        actual = scan_writer_graph(mutant_root)
+        try:
+            actual = scan_writer_graph(mutant_root)
+        except ValueError as error:
+            fail(f"P1.0b.0 writer census mutation could not read its shared "
+                 f"registration source roster: {error}")
         if inspect is not None:
             inspect(actual)
         try:

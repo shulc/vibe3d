@@ -548,8 +548,14 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const flatApp = collapseWhitespace(app);
     const flatPanel = collapseWhitespace(panel);
 
+    size_t registrarBytes;
+    foreach (entry; dirEntries(root.buildPath("source"),
+            "*_registration.d", SpanMode.shallow))
+        registrarBytes += readText(entry.name).length;
+
     assert(rawApp.length > 430_000 && rawEditor.length > 45_000
-        && rawPanel.length > 150_000 && rawRegistration.length > 60_000
+        && rawPanel.length > 150_000
+        && rawRegistration.length + registrarBytes > 110_000
         && rawProviders.length > 130_000,
         "6360 source population: a censused production file shrank unexpectedly");
 

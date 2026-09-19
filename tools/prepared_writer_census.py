@@ -12,6 +12,10 @@ import re
 
 DOMAINS = ("ToolState", "Mesh", "CommandHistory", "GpuGl",
            "SessionPipeStickyParam")
+REGISTRATION_SOURCE_NAMES = (
+    "transform_tool_registration.d",
+    "registration.d",
+)
 
 def _mask_comments(text):
     return re.sub(r"//[^\n]*|/\*.*?\*/|/\+.*?\+/", lambda m: " " * len(m.group()),
@@ -228,10 +232,8 @@ def scan(root):
         hooks += _methods(p, ("activate", "update", "onParamChanged", "deactivate"))
     params = []
     for p in [root / "source/tool.d", *tool_files]: params += _methods(p, ("params",))
-    registration_sources = [
-        root / "source/transform_tool_registration.d",
-        root / "source/registration.d",
-    ]
+    registration_sources = [root / "source" / name
+                            for name in REGISTRATION_SOURCE_NAMES]
     factories = []
     factory_head = re.compile(
         r'reg\.toolFactories\["([^"]+)"\]\s*=\s*'
@@ -243,7 +245,13 @@ def scan(root):
         r'registerHeadlessTool!(\w+)\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\)\s*\{')
     assignment_count = 0
     for registration_source in registration_sources:
-        reg = registration_source.read_text()
+        try:
+            reg = registration_source.read_text()
+        except OSError as error:
+            relative = registration_source.relative_to(root)
+            raise ValueError(
+                f"prepared writer registration source is unavailable: "
+                f"{relative}: {error.strerror}") from error
         for m in factory_head.finditer(reg):
             body = None
             cursor = m.end()

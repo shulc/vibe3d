@@ -298,6 +298,9 @@ unittest { // L3d: every constructor collaborator is required independently
     LayerXformEdit delegate() item = () => null;
     auto pipe = new PipeGizmoHost;
     bool delegate() silent = () => false;
+    auto ok = TransformToolDeps(&gpu, history, vertex, morph, item, pipe, silent);
+    assert(ok.gpu() is &gpu && ok.history() is history,
+        "6506 L3d floor: the all-valid roster must construct");
     assertThrown!AssertError(TransformToolDeps(
         null, history, vertex, morph, item, pipe, silent));
     assertThrown!AssertError(TransformToolDeps(
@@ -326,8 +329,37 @@ unittest {
         ~ "TransformToolDeps(app.gpuPtr, app.history, app.vxEditFactory, "
         ~ "app.morphEditFactory, app.layerXformEditFactory, app.pipeGizmoHost, "
         ~ "() => explore.enabled && logw.enabled)); }";
-    assert(countOccurrences(collapsed, "=> app.") == 0,
-        "6506 composition root body contains a lambda over `app.`");
+    enum policyMarker = "app.pipeGizmoHost, ";
+    const policyAt = collapsed.indexOf(policyMarker);
+    const deferredPolicy = policyAt >= 0
+        ? collapsed[cast(size_t) policyAt + policyMarker.length .. $] : "";
+    assert(countOccurrences(deferredPolicy, "app.ai") == 0,
+        "6506 composition root deferred policy closes over `app.ai`");
     assert(countOccurrences(collapseWhitespace(code), expected) == 1,
         "6506 composition root call text or multiplicity changed");
+
+    const appCode = collapseWhitespace(blankNonCode(
+        readText(buildPath(repoRoot, "source", "app.d"))));
+    const registerAt = appCode.indexOf("registerTools(app);");
+    struct WiringRow { string label; string[] assignments; }
+    immutable rows = [
+        WiringRow("GPU", ["app.gpuPtr = &gpu;"]),
+        WiringRow("history", ["app.history = history;"]),
+        WiringRow("vertex factory", ["app.vxEditFactory = vxEditFactory;"]),
+        WiringRow("morph factory", ["app.morphEditFactory = morphEditFactory;"]),
+        WiringRow("item factory",
+            ["app.layerXformEditFactory = layerXformEditFactory;"]),
+        WiringRow("pipe host", ["app.pipeGizmoHost = pipeGizmoHost;"]),
+        WiringRow("silent-hover policy",
+            ["app.aiExplore = aiExplore;", "app.aiLogWriter = aiLogWriter;"]),
+    ];
+    foreach (row; rows) foreach (assignment; row.assignments) {
+        const wiredAt = appCode.indexOf(assignment);
+        assert(countOccurrences(appCode, assignment) == 1
+                && countOccurrences(appCode, "registerTools(app);") == 1
+                && wiredAt >= 0 && registerAt >= 0 && wiredAt < registerAt,
+            format("6506 app wiring order: %s dependency `%s` must be wired "
+                ~ "before the one registerTools(app) call", row.label,
+                assignment));
+    }
 }

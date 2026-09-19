@@ -112,7 +112,7 @@ import std.conv      : to;
 import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : buildPath, dirName, relativePath;
 import std.regex     : regex, matchAll;
-import std.string    : indexOf, replace, strip;
+import std.string    : indexOf, strip;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
    countOccurrences, isIdentChar, lineOf, reconcile, symbolTokenHits;
@@ -202,6 +202,28 @@ private size_t[] identHits(string src, string ident) {
         hits ~= lineOf(src, p);
     }
     return hits;
+}
+
+/// Blank exactly the named call statement while preserving line offsets.
+private string blankCallStatement(string src, string call) {
+    const hit = src.indexOf(call);
+    if (hit < 0) return src;
+    size_t end = cast(size_t) hit + call.length;
+    while (end < src.length && src[end] != '(') ++end;
+    if (end == src.length) return src;
+    size_t depth;
+    do {
+        if (src[end] == '(') ++depth;
+        else if (src[end] == ')') --depth;
+        ++end;
+    } while (end < src.length && depth != 0);
+    while (end < src.length && src[end] != ';') ++end;
+    if (end < src.length) ++end;
+
+    string blanked;
+    foreach (ch; src[cast(size_t) hit .. end])
+        blanked ~= ch == '\n' ? '\n' : ' ';
+    return src[0 .. cast(size_t) hit] ~ blanked ~ src[end .. $];
 }
 
 /// Every `.d` under `source/`, repo-relative, sorted. The two walking members
@@ -803,11 +825,10 @@ unittest {
     immutable transformSrc = stripCommentsAndStrings(
         readSource("source/transform_tool_registration.d"));
     // The composition root hands these dependencies to the registrar; it is
-    // not a tool consumer. Keep this census on the places that spend them.
-    immutable regSpendSrc = regSrc
-        .replace("app.vxEditFactory", "")
-        .replace("app.morphEditFactory", "")
-        .replace("app.layerXformEditFactory", "");
+    // not a tool consumer. Blank only that call, so any other app.X read in
+    // this file remains visible to the zero-spend rows below.
+    immutable regSpendSrc = blankCallStatement(
+        regSrc, "registerTransformToolCommands(app.reg()");
 
     void check(string field, size_t want, string why) {
         auto hits = identHits(regSrc, field);

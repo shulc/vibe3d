@@ -203,10 +203,7 @@ unittest {
     targets(buf);
     assert(buf.length == 1 && buf[0] is rig.layerA,
         "6506 item targets floor: primary A was not resolved");
-    // setPrimary is an ordering operation and deliberately preserves the
-    // existing selected set; make B exclusive before moving it to the head.
     rig.session.document.selectItem(rig.layerB, SelMode.Set);
-    rig.session.document.setPrimary(rig.layerB);
     targets(buf);
     assert(buf.length == 1 && buf[0] is rig.layerB,
         "6506 item targets froze primary A");
