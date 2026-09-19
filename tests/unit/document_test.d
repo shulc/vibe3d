@@ -742,8 +742,8 @@ unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order
     assert(f.clipA !is f.clipB, "…and are still two distinct items");
     f.doc.referrersOf(f.clipA, refs);
     assert(refs.length == 0,
-        "nothing links to clipA — sharing a file with clipB is not sharing "
-        ~ "clipB's identity");
+        "nothing links to clipA — referrersOf did not clear the output buffer "
+        ~ "before scanning the next target; got " ~ refs.length.to!string);
 
     // A sparse slot is not a referrer and must not abort the reverse sweep.
     // `Document` helpers consistently tolerate such slots while a document is

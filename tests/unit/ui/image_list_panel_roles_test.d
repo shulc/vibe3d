@@ -188,6 +188,15 @@ static assert(memberTypes!RetainedItem ==
     ~ "pin) or by widening an existing member's type (this pin). Regenerate "
     ~ "with the pragma probe, read the diff, and argue the change — do not "
     ~ "paste the actual list over the expected one.");
+static assert([__traits(allMembers, ImageRemoveWarning)] ==
+        ["inUse", "referrers"],
+    "6530 F6 fence (names): ImageRemoveWarning's member set changed — a "
+    ~ "capability cannot be added here without naming it");
+static assert(memberTypes!ImageRemoveWarning ==
+        ["inUse: bool", "referrers: const(Layer)[]"],
+    "6530 F6 fence (types): a member of ImageRemoveWarning changed its TYPE "
+    ~ "or SIGNATURE — regenerate with the pragma probe, read the diff, and "
+    ~ "argue the change; do not paste the actual list over the expected one");
 
 static assert(ImageListReadRole.tupleof.length == 1,
     "6530 read role fence: the Images read role no longer has exactly one field");
@@ -683,6 +692,13 @@ private enum StripSignalRow[] kStripSignalLedger = [
     StripSignalRow("source/document_selection.d", 5, 0, 0, 1, 0),
 ];
 
+private enum kStripSignalTokens =
+    ["cast", "__traits", "tupleof", "mixin", "union"];
+static assert(kStripSignalTokens ==
+        ["cast", "__traits", "tupleof", "mixin", "union"],
+    "6530 strip signal token roster changed — every measured column must "
+    ~ "remain in the exact scan below");
+
 private string collapseWhitespace(string text) {
     string result;
     bool spacing;
@@ -859,26 +875,18 @@ unittest { // 6530: read-role fence and strip-token signal
 
     foreach (i, row; kStripSignalLedger) {
         const code = blankNonCode(rawSources[i]);
-        const actualCast = identifierCount(code, "cast");
-        const actualTraits = identifierCount(code, "__traits");
-        const actualTupleof = identifierCount(code, "tupleof");
-        const actualMixin = identifierCount(code, "mixin");
-        const actualUnion = identifierCount(code, "union");
-        assert(actualCast == row.casts,
-            "6530 strip signal: " ~ row.path ~ " cast = "
-            ~ actualCast.to!string ~ ", recorded " ~ row.casts.to!string
-            ~ " — a row may only FALL; if the strip left, lower the row in this commit");
-        assert(actualTraits == row.traits,
-            "6530 strip signal: " ~ row.path ~ " __traits = "
-            ~ actualTraits.to!string ~ ", recorded " ~ row.traits.to!string);
-        assert(actualTupleof == row.tupleofs,
-            "6530 strip signal: " ~ row.path ~ " tupleof = "
-            ~ actualTupleof.to!string ~ ", recorded " ~ row.tupleofs.to!string);
-        assert(actualMixin == row.mixins,
-            "6530 strip signal: " ~ row.path ~ " mixin = "
-            ~ actualMixin.to!string ~ ", recorded " ~ row.mixins.to!string);
-        assert(actualUnion == row.unions,
-            "6530 strip signal: " ~ row.path ~ " union = "
-            ~ actualUnion.to!string ~ ", recorded " ~ row.unions.to!string);
+        immutable recorded =
+            [row.casts, row.traits, row.tupleofs, row.mixins, row.unions];
+        assert(recorded.length == kStripSignalTokens.length,
+            "6530 strip signal token roster and recorded columns diverged");
+        foreach (column, token; kStripSignalTokens) {
+            const actual = identifierCount(code, token);
+            assert(actual == recorded[column],
+                "6530 strip signal: " ~ row.path ~ " " ~ token ~ " = "
+                ~ actual.to!string ~ ", recorded "
+                ~ recorded[column].to!string
+                ~ " — a row may only FALL; if the strip left, lower the row "
+                ~ "in this commit");
+        }
     }
 }

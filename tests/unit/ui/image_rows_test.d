@@ -226,13 +226,16 @@ unittest {
     ImageRow[] rows;
     imageRowsInto(&f.doc, f.docPath, rows);
     assert(rows[0].dimensions == "3 x 2" && rows[1].dimensions == "5 x 7",
-        "6530 memo identity: two payloads sharing storedPath cross-fed one memo slot");
+        "6530 memo identity value control: same-path payloads lost their own dimensions");
 
+    // `dimensionsTextFor` revalidates width/height/missing, so the values above
+    // stay correct even with a path key. Warm allocation is the discriminator.
     immutable before = GC.stats().allocatedInCurrentThread;
     imageRowsInto(&f.doc, f.docPath, rows);
     immutable after = GC.stats().allocatedInCurrentThread;
     assert(after == before,
-        "6530 memo identity: a warm same-path frame recomputed because two "
+        "6530 memo identity allocation witness: a warm same-path frame "
+        ~ "recomputed because two "
         ~ "payload identities shared one memo slot; allocated "
         ~ to!string(after - before) ~ " bytes");
 }
