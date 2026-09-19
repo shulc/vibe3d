@@ -96,6 +96,7 @@ private Rig* makeRig() {
     r.app.pipeGizmoHost = new PipeGizmoHost;
     static foreach (f; FieldNameTuple!TopoPenFactories)
         __traits(getMember, r.app.topoPenFactories, f) = probe(r, f);
+    r.app.bevelEditFactory = probe(r, "bevel");
     return r;
 }
 

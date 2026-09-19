@@ -36,6 +36,7 @@ import tools.create.torus : TorusTool;
 import tools.create.tube : TubeTool;
 import tools.edit.bridge_tool : BridgeTool;
 import tools.edit.tack : TackTool;
+import tools.edit.topology_pen.defs : TopoPenFactories;
 import view : View;
 
 import std.algorithm : map, sort;
@@ -45,7 +46,7 @@ import std.file : readText;
 import std.meta : AliasSeq;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
-import std.traits : BaseClassesTuple;
+import std.traits : BaseClassesTuple, FieldNameTuple;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -103,6 +104,9 @@ private Rig* makeRig() {
     r.app.layerXformEditFactory = () => new LayerXformEdit(
         &r.session.document.activeMeshRef(), r.view, r.session.editMode);
     r.app.pipeGizmoHost = new PipeGizmoHost;
+    r.app.bevelEditFactory = () => null;
+    static foreach (f; FieldNameTuple!TopoPenFactories)
+        __traits(getMember, r.app.topoPenFactories, f) = () => null;
     return r;
 }
 
