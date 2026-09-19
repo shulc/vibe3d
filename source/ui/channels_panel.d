@@ -13,6 +13,7 @@ import tool : Tool;
 import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
                          channelsModel;
 import ui.panel_chrome : popPanelChromeStyle, pushPanelChromeStyle;
+import ui.retained_item : ConstItem;
 
 // ---------------------------------------------------------------------------
 // Channels panel (tasks 0637, 6050, 6358) — EVERY channel of the focused item,
@@ -106,14 +107,14 @@ private:
     /// already bound to `item`.
     bool refresh(Document* doc, Layer item) {
         if (provider_ !is null) {
-            const k = ChannelsKey(item, doc.indexOf(item),
+            const k = ChannelsKey(ConstItem(item), doc.indexOf(item),
                                   provider_.params().length);
             if (k == model_.key) return false;
             provider_.rebind(item);
         } else {
             provider_ = new ChannelsProvider(item);
         }
-        model_ = channelsModel(doc);
+        model_ = channelsModel(doc, item, provider_.params());
         return true;
     }
 }
@@ -146,7 +147,7 @@ version (unittest) {
         size_t channelCount;
         size_t disabledChannels;
         bool retainedReported;
-        Object retainedItem;
+        ConstItem retainedItem;
         bool retainsProvider;
         bool transformGuardArmed;
         bool formDrawn;

@@ -24,6 +24,7 @@ import math : Vec3;
 import mesh : MapKind, Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import morph_target : clearMorphTarget, setMorphTarget;
+import params : Param;
 import registry : Registry;
 import seltype : SelType, currentSelType;
 import session_owner : Session;
@@ -31,11 +32,13 @@ import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.channel_rows : ChannelsModel, ChannelsProvider;
+import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
+    channelsModel;
 import ui.channels_panel : ChannelsDrawSnapshot, ChannelsPanelRoles, ChannelsPanelState,
     bindChannelsPanel, channelsDrawSnapshot, drawChannelsPanel,
     resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
+import ui.retained_item : ConstItem;
 import view : View;
 import d_imgui.imgui_h : ImVec2;
 
@@ -63,6 +66,38 @@ private template memberTypes(T) {
     }
     enum memberTypes = collect();
 }
+
+static assert(!__traits(compiles, (ChannelsKey key) {
+        Layer item = key.item;
+    }),
+    "6503 N2 key.item: the Channels memo key hands out a mutable Layer");
+static assert(__traits(compiles, (ChannelsKey key) {
+        const(Layer) item = key.item;
+    }),
+    "6503 N2 control: the same key expression must compile through const");
+static assert(__traits(compiles, (ChannelsKey key, Layer someMutableLayer) {
+        key.item = someMutableLayer;
+        bool isNull = key.item is null;
+        bool isSame = key.item is someMutableLayer;
+    }),
+    "6503 N2r key.item: the key's identity slot must stay REBINDABLE — the memo assigns the whole model");
+static assert(!__traits(compiles, (ChannelsModel model) {
+        Layer item = model.key.item;
+    }),
+    "6503 N3 model.key.item: the Channels read model hands a mutable Layer out of its key");
+static assert(__traits(compiles, (ChannelsModel model) {
+        const(Layer) item = model.key.item;
+    }),
+    "6503 N3 control: the same model expression must compile through const");
+static assert(!__traits(compiles, (const(Param)[] ps) {
+        *(ps[0].fptr) = 1.0f;
+    }),
+    "6503 N7 fact: a const parameter snapshot cannot write through a float pointer");
+static assert(__traits(compiles, (const(Document)* doc, const(Layer) item,
+                                  const(Param)[] ps) {
+        auto model = channelsModel(doc, item, ps);
+    }),
+    "6503 N7 control: the Channels model builder still requires a writable document, item, or parameter snapshot");
 
 static assert(!__traits(compiles, (ChannelsProvider p) {
         auto base = p.base();
@@ -103,6 +138,31 @@ static assert(memberTypes!ChannelsProvider ==
          "opEquals: bool(Object o)", "Monitor: <no type>",
          "factory: Object(string classname)"],
     "6503 F7 fence (types): a member of ChannelsProvider changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert([__traits(allMembers, ChannelsKey)] ==
+        ["item", "index", "paramCount", "opAssign"],
+    "6503 F5 fence (names): the Channels key's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ChannelsKey ==
+        ["item: Rebindable!(const(Layer))", "index: ulong",
+         "paramCount: ulong",
+         "opAssign: pure nothrow @nogc ref @trusted ChannelsKey(ChannelsKey p) return"],
+    "6503 F5 fence (types): a member of ChannelsKey changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+static assert([__traits(allMembers, ChannelsModel)] ==
+        ["bound", "kindText", "index", "form", "channelCount", "key",
+         "opAssign"],
+    "6503 F6 fence (names): the Channels model's member set changed — the key's assignment surface may have drifted");
+static assert(memberTypes!ChannelsModel ==
+        ["bound: bool", "kindText: string", "index: ulong", "form: Form",
+         "channelCount: ulong", "key: ChannelsKey",
+         "opAssign: pure nothrow @nogc ref @trusted ChannelsModel(ChannelsModel p) return"],
+    "6503 F6 fence (types): a member of ChannelsModel changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert(ChannelsKey.tupleof.length == 3,
+    "6503 field roster: the Channels key must retain exactly item, index, and parameter count");
+static assert(ChannelsModel.tupleof.length == 6,
+    "6503 field roster: the Channels model must retain exactly its six read-model fields");
+static assert(is(typeof(ChannelsDrawSnapshot.retainedItem) == ConstItem),
+    "6503 snapshot slot: the retained-item slot stopped being a read-only identity");
 
 static assert(__traits(compiles, {
     ChannelsPanelRoles roles = void;

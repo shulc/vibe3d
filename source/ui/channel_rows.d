@@ -55,8 +55,8 @@ module ui.channel_rows;
 //     a filter over 24 rows is chrome, and the reference's channels panel was
 //     never measured for one (its clip list has none — that IS measured).
 //
-// COST. `channelsModel` allocates: it builds a provider, a `params()` snapshot
-// and one command string per row. It is therefore NOT a per-frame call — the
+// COST. `channelsModel` allocates one command string per row. It is therefore
+// NOT a per-frame call — the
 // panel memoises it on the model's own `key` (see `ChannelsModel.key`) and
 // rebuilds only when the bound item, its index or its param count changes.
 // Values are NOT baked into the rows: the renderer reads them live from the
@@ -64,10 +64,11 @@ module ui.channel_rows;
 // ---------------------------------------------------------------------------
 
 import document     : Document, Layer, ItemKind, kindInfo;
-import layer_params : LayerPropsProvider, itemPropsTarget;
+import layer_params : LayerPropsProvider;
 import params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;
 import seltype      : SelType;
+import ui.retained_item : ConstItem;
 
 import std.algorithm : startsWith;
 import std.conv      : to;
@@ -215,7 +216,11 @@ struct ChannelsModel {
 
 /// See `ChannelsModel.key`.
 struct ChannelsKey {
-    Layer  item;
+    /// A read-only identity (task 6503). `ConstItem`, not `const(Layer)`: the
+    /// memo assigns the WHOLE model, and a const class field would make
+    /// `ChannelsModel` unassignable. Built as `ChannelsKey(ConstItem(item), …)`
+    /// — there is no implicit conversion into the slot, measured.
+    ConstItem item;
     size_t index;
     size_t paramCount;
 }
@@ -242,7 +247,7 @@ string channelsHeaderName(const(Layer) item)
 /// item, so the live index is known at build time and there is nothing for a
 /// rebind to fix. (`FormsPanel.draw` is therefore passed an empty `layerIndex`,
 /// which leaves these literals alone.)
-Form channelsFormFor(Param[] ps, string idxToken, string kindHeadingText)
+Form channelsFormFor(const(Param)[] ps, string idxToken, string kindHeadingText)
 {
     Form f;
     f.id        = "channels";
@@ -284,31 +289,25 @@ Form channelsFormFor(Param[] ps, string idxToken, string kindHeadingText)
     return f;
 }
 
-/// The whole model for the item the panel binds.
+/// The whole model for the identity the caller passes.
 ///
-/// BINDS THE ITEM-SELECTION FOCUS, through `itemPropsTarget` — never
-/// `document.primary`. `primary` is by invariant a `canBePrimary` item, i.e.
-/// always a mesh, so a panel bound to it could not show an image plane's
-/// channels AT ALL and this task would close nothing. This is the same rule the
-/// properties form follows (`layer_params.d`), reached through the same
-/// function so the two surfaces cannot disagree about which item is being
-/// edited.
-ChannelsModel channelsModel(Document* doc)
+/// The focus-selection rule belongs to the production caller in
+/// `ui/channels_panel.d`: it still uses `itemPropsTarget`, never
+/// `document.primary`. This builder only reads the supplied identity and the
+/// caller-owned parameter snapshot. Building a second `LayerPropsProvider`
+/// here was a write capability inside the read-model builder, and it cost one
+/// provider plus one `params()` snapshot per rebuild (task 6503).
+ChannelsModel channelsModel(const(Document)* doc, const(Layer) item,
+                            const(Param)[] ps)
 {
     ChannelsModel m;
-    if (doc is null || doc.layers.length == 0) return m;
-
-    auto item = itemPropsTarget(doc);
-    if (item is null) return m;
-
-    auto prov = new LayerPropsProvider(item);
-    auto ps   = prov.params();
+    if (doc is null || item is null) return m;
 
     m.bound    = true;
     m.kindText = kindHeading(item.kind);
     m.index    = doc.indexOf(item);
     m.form     = channelsFormFor(ps, m.index.to!string, m.kindText);
-    m.key      = ChannelsKey(item, m.index, ps.length);
+    m.key      = ChannelsKey(ConstItem(item), m.index, ps.length);
 
     foreach (ref r; m.form.rows)
         if (r.kind == RowKind.control) m.channelCount++;

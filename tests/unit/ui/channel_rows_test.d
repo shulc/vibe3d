@@ -11,6 +11,15 @@ import std.algorithm : startsWith;
 import std.conv      : to;
 import ui.channel_rows;
 
+/// The production shape in one line: the model over a read-only document, the
+/// focus identity, and the param snapshot a provider owns. Pure-model tests
+/// build this collaborator themselves; panel-role tests exercise the real join.
+private ChannelsModel modelFor(ref Document doc) {
+    auto item = itemPropsTarget(&doc);
+    if (item is null) return channelsModel(&doc, null, null);
+    return channelsModel(&doc, item, (new LayerPropsProvider(item)).params());
+}
+
 // ---------------------------------------------------------------------------
 // THE TEST THIS TASK IS FOR: a row exists for every one of the plane's ten
 // channels, and the RENDERER'S OWN resolver finds a widget for each.
@@ -64,11 +73,10 @@ unittest {
     assert(doc.primary is doc.layers[0] && doc.focusedItem is plane,
         "fixture: a plane can never be primary, so focus != primary");
 
-    auto m = channelsModel(&doc);
+    auto m = modelFor(doc);
     assert(m.bound, "an item is bound");
     assert(m.key.item is plane && channelsHeaderName(m.key.item) == "the plane",
-        "the panel headers the FOCUSED item; bound to the primary it would "
-        ~ "read '" ~ doc.primary.name ~ "'");
+        "the model headers the identity it was given");
     assert(m.index == 1,
         "…and addresses its index; the primary's is 0 — every row's write "
         ~ "would land on the wrong item");
@@ -137,7 +145,7 @@ unittest {
     auto doc = Document.bootstrap(makeCube());
     doc.layers[0].name = "just a mesh";
 
-    auto m = channelsModel(&doc);
+    auto m = modelFor(doc);
     assert(m.bound && channelsHeaderName(m.key.item) == "just a mesh");
     assert(m.channelCount == 14,
         "a mesh has 14 channels — 12 transform + name + visible; read "
@@ -356,7 +364,7 @@ unittest {
     import seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
-    auto a = channelsModel(&doc);
+    auto a = modelFor(doc);
 
     auto plane = new Layer;
     plane.name = "p";
@@ -364,14 +372,14 @@ unittest {
     doc.layers ~= plane;
     doc.selectItem(plane, SelMode.Set);
 
-    auto b = channelsModel(&doc);
+    auto b = modelFor(doc);
     assert(b.key != a.key, "the bound item changed: the key must change");
     assert(b.channelCount == 14,
         "a payload-less plane exposes only the base bundle; read "
         ~ b.channelCount.to!string);
 
     plane.imagePlaneRef() = new ImagePlaneData();
-    auto c = channelsModel(&doc);
+    auto c = modelFor(doc);
     assert(c.channelCount == 24, "the payload's ten channels appear");
     assert(c.key != b.key,
         "same item, same index, MORE params — the key must still change or a "
@@ -383,9 +391,9 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     Document empty;
-    auto m = channelsModel(&empty);
+    auto m = modelFor(empty);
     assert(!m.bound && m.form.rows.length == 0 && m.channelCount == 0);
-    assert(channelsModel(null).bound == false);
+    assert(channelsModel(null, null, null).bound == false);
 }
 
 unittest { // 6358: the header name is the item's live name, with one fallback
