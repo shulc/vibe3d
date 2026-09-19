@@ -948,10 +948,10 @@ unittest {
         auto ui = app.open();
         scope(exit) ui.close();
 
-        ui.frame();
-        assert(snap.pipeEnabled && snap.paramsCalls > 0
+        assert(snap.pipeEnabled && snap.params().length == 1
             && app.pipe.pipeline.findById("probe.snap") is snap,
             "6504 RV1 population: the schema-bearing Snap stage did not reach the Main-page filter");
+        ui.frame();
         assert(!sectionKeys().canFind("probe.snap")
             && idCount(cast(string) PanelIdKind.Row, "probe.snap") == 0,
             "6504 RV1 task-code witness: a Snap stage drew a section on the Main page");
