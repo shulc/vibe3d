@@ -89,7 +89,7 @@ static assert([__traits(allMembers, ToolPropertiesStageInfo)] == [
         ~ memberList!ToolPropertiesStageInfo ~ memberPinSuffix);
 static assert([__traits(allMembers, ui.tool_properties_panel)] == [
         "object", "ImGui", "d_imgui", "ToolPropertiesStageInfo",
-        "g_enabledStageInfoScratch", "ToolPropertiesReadRole", "ToolPropertiesActions",
+        "ToolPropertiesReadRole", "ToolPropertiesActions",
         "ToolPropertiesPanelRoles", "resolveStage",
         "bindToolPropertiesPanel", "kToolPropsTabMain",
         "kToolPropsTabSnapping", "g_toolPropsTab", "kSnappingHasOwnTab",
@@ -1079,6 +1079,60 @@ unittest {
             && idCount(cast(string) PanelIdKind.Row, "probe.b") == 0
             && b.customDraws == 1,
             "6504 C14 de-registered-stage witness: a stage removed during an earlier section still reached the panel");
+    }
+
+    { // RX: a nested stage read must not overwrite the outer section walk.
+        // The first re-entrancy probe was symmetric and therefore useless: its
+        // nested rebuild produced the same elements at the same addresses, so
+        // the shared scratch still passed.  Only this asymmetric transition
+        // from exactly three stages to exactly two distinguishes the alias.
+        loadFormFile("transform.yaml");
+        auto app = new ToolPropsHarness;
+        auto a = new ProbeCountStage(TaskCode.Cons, "probe.rx-a", 0x10);
+        auto b = new ProbeCountStage(TaskCode.Actr, "probe.rx-b", 0x20);
+        auto c = new ProbeCountStage(TaskCode.Path, "probe.rx-c", 0x30);
+        app.pipe.pipeline.add(a);
+        app.pipe.pipeline.add(b);
+        app.pipe.pipeline.add(c);
+        assert(app.pipe.pipeline.all().length == 3
+            && app.pipe.pipeline.all()[0] is a
+            && app.pipe.pipeline.all()[1] is b
+            && app.pipe.pipeline.all()[2] is c,
+            "RX population floor: the rig must begin with exactly three ordered stages");
+
+        bool armed;
+        size_t nestedLength;
+        a.onCustomDraw = () {
+            if (!armed) return;
+            assert(app.pipe.pipeline.removeStage(b),
+                "RX mutation needle: the first stage could not remove the middle stage");
+            auto nested = app.roles.read.enabledStages();
+            nestedLength = nested.length;
+        };
+        app.bind();
+        auto ui = app.open();
+        scope(exit) ui.close();
+
+        ui.frame();
+        auto sections = sectionKeys();
+        assert(sections.length == 3
+            && sections.count("probe.rx-a") == 1
+            && sections.count("probe.rx-b") == 1
+            && sections.count("probe.rx-c") == 1,
+            "RX population floor: all three stage sections must draw before the mutation is armed");
+
+        armed = true;
+        ui.frame();
+        sections = sectionKeys();
+        assert(nestedLength == 2
+            && app.pipe.pipeline.all().length == 2
+            && app.pipe.pipeline.findById("probe.rx-b") is null,
+            "RX structural witness: the nested stage list must be shorter by exactly one");
+        assert(sections.length == 2
+            && sections.count("probe.rx-a") == 1
+            && sections.count("probe.rx-b") == 0
+            && sections.count("probe.rx-c") == 1,
+            "RX re-entrancy witness: re-reading the shared stage scratch from inside a section body drew a section twice or lost one");
     }
 
     { // C11: source census pins the production binder and guarded draw site.

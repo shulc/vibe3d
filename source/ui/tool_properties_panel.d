@@ -20,8 +20,6 @@ struct ToolPropertiesStageInfo {
     TaskCode taskCode;
 }
 
-private __gshared ToolPropertiesStageInfo[] g_enabledStageInfoScratch;
-
 struct ToolPropertiesReadRole {
 private:
     bool delegate() activeTool_;
@@ -37,15 +35,18 @@ public:
     string activeToolId() { return activeToolId_(); }
     ToolPropertiesStageInfo[] enabledStages() {
         import toolpipe.pipeline : g_pipeCtx;
-        g_enabledStageInfoScratch.length = 0;
-        g_enabledStageInfoScratch.assumeSafeAppend();
-        if (g_pipeCtx is null) return g_enabledStageInfoScratch;
+        // Section bodies may mutate the pipeline and re-enter this method, so
+        // each result owns its storage.  Any future scratch buffer
+        // must return a copy or explicitly prevent re-entry.  Witness: RX in
+        // tool_properties_panel_roles_test.
+        ToolPropertiesStageInfo[] result;
+        if (g_pipeCtx is null) return result;
         foreach (stage; g_pipeCtx.pipeline.all()) {
             if (!stage.pipeEnabled) continue;
-            g_enabledStageInfoScratch ~= ToolPropertiesStageInfo(
+            result ~= ToolPropertiesStageInfo(
                 stage.id(), stage.displayName(), stage.taskCode());
         }
-        return g_enabledStageInfoScratch;
+        return result;
     }
 }
 
@@ -144,7 +145,7 @@ ToolPropertiesPanelRoles bindToolPropertiesPanel(
             &binding.dispatchInteractiveUi, forms, session, activeTool));
 }
 
-// CONTRACT (tasks 6060, 6504). Tool Properties reads only live display identity
+// CONTRACT (tasks 6060, 6504, 6650). Tool Properties reads only live display identity
 // and stage metadata; the action door resolves the current Tool/Stage at each
 // draw and owns forms, legacy providers and custom UI. No mutable provider
 // crosses back into the drawing body. The window-level Begin/End and chrome
