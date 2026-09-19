@@ -257,6 +257,7 @@ private bool sameRows(const size_t[string] actual,
 unittest {
     size_t[string] expectedTuple = [
         "tests/unit/create_registration_boundary_test.d": 11,
+        "tests/unit/edit_registration_boundary_test.d": 16,
         "tests/unit/topology_pen_factory_bundle_test.d": 2,
         "tests/unit/ui/image_list_panel_roles_test.d": 4,
         "tests/unit/ui/layer_list_panel_roles_test.d": 7,
@@ -271,6 +272,7 @@ unittest {
         "source/create_tool_registration.d": 1,
         "source/edit_tool_registration.d": 1,
         "tests/unit/create_registration_boundary_test.d": 1,
+        "tests/unit/edit_registration_boundary_test.d": 3,
         "tests/unit/topology_pen_factory_bundle_test.d": 2,
         "tests/unit/ui/image_list_panel_roles_test.d": 3,
         "tests/unit/ui/layer_list_panel_roles_test.d": 5,
