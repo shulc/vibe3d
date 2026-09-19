@@ -19,6 +19,7 @@ import forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
+import layer_params : itemPropsTarget;
 import mesh : makeCube;
 import registry : Registry;
 import seltype : SelType, currentSelType;
@@ -46,6 +47,19 @@ static assert(!__traits(compiles, {
     LayerListPanelRoles roles = void;
     roles.actions.dispatch = (string id, string paramsJson) {};
 }), "6030 action capability: external callers must not replace dispatch");
+
+static assert(!__traits(compiles, (const(Document)* doc) {
+        Layer target = itemPropsTarget(doc);
+    }),
+    "6502 N3 propsTarget: the focus query hands a mutable Layer out of a read-only document");
+static assert(__traits(compiles, (const(Document)* doc) {
+        const(Layer) target = itemPropsTarget(doc);
+    }),
+    "6502 N3 control: the focus query must answer a read-only document with a read-only identity");
+static assert(__traits(compiles, (Document* doc) {
+        Layer target = itemPropsTarget(doc);
+    }),
+    "6502 N3m control: a mutable caller must still receive a mutable Layer — this query is ONE definition, not a narrowing");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");

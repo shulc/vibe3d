@@ -567,7 +567,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // The `layer.delete` refusal predicate — TRUE iff `target` can be removed
 // from `doc`. Shared by `LayerDelete.apply` (below) and the Layers panel's
-// Delete button (`layerDeleteButtonState`, `source/ui/panels.d`) so the
+// Delete button (`layerDeleteButtonState`, `source/ui/layer_list_panel.d`) so the
 // button's enabled state and the command's own refusal are always evaluated
 // against the SAME candidate layer through the SAME logic (task 0615 Stage
 // 6 review round 2, blocker 2). Two independent copies is exactly how the
@@ -602,11 +602,11 @@ bool canDeleteLayer(const(Document)* doc, const(Layer) target) {
 /// `doc.activeIndex`/`doc.primary`. A non-mesh row can be the focus without
 /// ever becoming primary (§L2), so the two diverge exactly when a non-mesh
 /// item is selected; using `activeIndex` there deletes a different layer
-/// than the one the user highlighted. `source/ui/panels.d` calls this
+/// than the one the user highlighted. `source/ui/layer_list_panel.d` calls this
 /// directly (not a hand-copy of the formula) so the drawn state and the
 /// dispatched command can never disagree — see `canDeleteLayer` above.
 struct LayerDeleteButtonState { size_t index; bool enabled; }
-LayerDeleteButtonState layerDeleteButtonState(Document* doc) {
+LayerDeleteButtonState layerDeleteButtonState(const(Document)* doc) {
     auto   target = doc.focusedItem;
     size_t idx    = doc.indexOf(target);
     bool   ok     = idx < doc.layers.length && canDeleteLayer(doc, target);

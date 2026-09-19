@@ -521,7 +521,9 @@ final class LayerPropsProvider : ParamProvider, MixedValueProvider {
 /// property task 0614 shipped; keeping a second copy of the rule here is how
 /// it would have stopped being true. The doc comment above still describes the
 /// rule — the implementation is one call away.
-Layer itemPropsTarget(Document* doc) {
+/// One definition follows the caller's qualification: read models get a const
+/// identity while action callers retain the mutable target they already own.
+inout(Layer) itemPropsTarget(inout(Document)* doc) {
     if (doc is null) return null;
     return doc.itemTransformTarget();
 }

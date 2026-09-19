@@ -606,11 +606,11 @@ mixin template DocumentSelection() {
     /// `isMember` rather than a null check: `focusedItem` can go STALE
     /// (non-null, no longer in `layers`) while a loader replaces `layers` by
     /// direct field assignment — see `isMember`'s own comment.
-    /// NOT `const`: it hands back a MUTABLE `Layer` (the caller writes
-    /// `xform` through it), and a `const` overload would have to cast the
-    /// constness off its own fields to do that — a hole, not a convenience.
-    /// Every consumer already holds a mutable `Document`.
-    Layer itemTransformTarget() {
+    /// One `inout` definition preserves the caller's qualification: action
+    /// callers still receive a mutable `Layer`, while read-only callers receive
+    /// only `const(Layer)`. A separate `const` overload that cast qualification
+    /// away would be a hole, not a convenience (task 6502).
+    inout(Layer) itemTransformTarget() inout {
         return isMember(focusedItem) ? focusedItem : primary;
     }
 
@@ -688,7 +688,7 @@ mixin template DocumentSelection() {
     /// highlight a layer that does not move, and the fix is to make that
     /// observable rather than to hide it). No stored state — this is
     /// `itemTransformTargets` membership, spelled without the buffer.
-    bool isTransformTarget(const(Layer) l) {
+    bool isTransformTarget(const(Layer) l) const {
         if (!movesWithGizmo(l)) return false;
         // Task 0671: the SAME condition as `itemTransformTargets`, restated
         // here for the same reason it was restated before — these two must not
