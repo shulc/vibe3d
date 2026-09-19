@@ -34,10 +34,32 @@ import std.math : fabs;
 import std.conv : to;
 import std.algorithm.searching : canFind;
 import std.format : format;
+import std.file : readText;
+import std.path : buildPath, dirName;
+import std.string : indexOf;
 
 void main() {}
 
 alias baseUrl = testBaseUrl;
+
+private enum repoRoot = dirName(dirName(__FILE_FULL_PATH__));
+
+private string bodyAt(string code, string marker) {
+    const at = code.indexOf(marker);
+    assert(at >= 0, "6660 census missing source marker " ~ marker);
+    size_t i = cast(size_t) at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "6660 census found no body after " ~ marker);
+    const begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "6660 census found an unterminated drawText body");
+    return null;
+}
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
@@ -296,4 +318,21 @@ unittest {
     assert(substituteQuery(b, JSONValue(bare))
             == "layer.attr 0 name " ~ bare,
         "6613 pure bareword control was unnecessarily quoted");
+}
+
+
+// ---------------------------------------------------------------------------
+// 8. Task 6660: the shipped drawText seam uses the hint-bearing widget. The
+//    behavioral three-state cell lives in gang_mixed_test; this census keeps a
+//    rewire back to plain InputText from bypassing that production behavior.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm.searching : count;
+
+    const source = readText(buildPath(repoRoot, "source", "forms_render.d"));
+    const drawText = bodyAt(source,
+        "private void drawText(ref Row row, ref ResolvedControl rc");
+    assert(drawText.count("ImGui.InputTextWithHint(") == 1
+        && drawText.count("ImGui.InputText(") == 0,
+        "6660 drawText must route through InputTextWithHint exactly once");
 }

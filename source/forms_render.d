@@ -75,6 +75,21 @@ alias DispatchFn = void delegate(string commandId, string paramsJson);
 /// edit (re-eval seam). Same wire shape as DispatchFn.
 alias InteractiveDispatchFn = void delegate(string commandId, string paramsJson);
 
+/// Editable contents and non-value hint for one text control. A mixed field
+/// deliberately has no editable contents: the marker is presentation only.
+struct TextInputPresentation {
+    string buffer;
+    string hint;
+}
+
+TextInputPresentation textInputPresentation(string value, bool mixed)
+    pure nothrow @safe
+{
+    return mixed
+         ? TextInputPresentation("", kMixedPlaceholder)
+         : TextInputPresentation(value, "");
+}
+
 // ---------------------------------------------------------------------------
 // FormsPanel — one instance serves the panel in ui/tool_properties_panel.d. Holds the
 // per-control active-item scratch buffers across frames; everything else is
@@ -618,14 +633,16 @@ class FormsPanel {
     {
         import core.stdc.string : strlen;
         char[256] buf;
-        // Task 6613: the mixed marker is currently editable buffer contents.
-        // A plain click does not select it, so typing may append to the marker;
-        // the owner must choose the replacement policy before this stays.
-        string cur = mixed ? kMixedPlaceholder : *rc.param.sptr;
+        // Task 6660: a mixed field starts with an empty editable buffer and
+        // shows the marker only as a hint, so the first typed character is the
+        // whole value. An actual empty value and a mixed value therefore have
+        // identical buffer contents and are distinguished only by the hint.
+        auto presentation = textInputPresentation(*rc.param.sptr, mixed);
+        string cur = presentation.buffer;
         size_t len = cur.length < buf.length - 1 ? cur.length : buf.length - 1;
         buf[0 .. len] = cur[0 .. len];
         buf[len] = '\0';
-        if (ImGui.InputText(label, buf[])) {
+        if (ImGui.InputTextWithHint(label, presentation.hint, buf[])) {
             string nv = cast(string) buf[0 .. strlen(buf.ptr)].dup;
             writeValue(row, JSONValue(nv), idispatch);
         }

@@ -5,12 +5,10 @@
 // Why this is a unit test and not a suite test
 // ---------------------------------------------------------------------------
 // The collapse is a pure question over the subjects' values — "do they agree on
-// this channel" — and `LayerPropsProvider` answers it with no ImGui, no
-// document globals and no HTTP. Asserting it here is asserting the DECISION.
-// What is deliberately NOT claimed by this file is the rendering: that a mixed
-// row draws the placeholder lives inside an ImGui widget call, and this
-// repository has shipped a panel whose declared contents were rendered nowhere
-// while the test asserting the declaration passed throughout.
+// this channel" — and `LayerPropsProvider` answers it with no document globals
+// or HTTP. G1–G6 assert that DECISION. Task 6660 adds the narrow rendering
+// exception in G7: a headless ImGui frame drives the shipped FormsPanel text
+// widget, because buffer contents versus hint cannot be proved by the provider.
 //
 // ---------------------------------------------------------------------------
 // The mechanism being pinned, which was READ rather than designed
@@ -41,11 +39,18 @@
 // ---------------------------------------------------------------------------
 module tests.unit.gang_mixed_test;
 
+import ImGui = d_imgui;
+import d_imgui.imgui_h : ImVec2;
+
 import std.format : format;
+import std.json   : parseJSON;
 
 import document     : Layer, ItemKind;
+import forms        : Form, Row;
+import forms_render : FormsPanel, textInputPresentation;
 import layer_params : LayerPropsProvider;
 import params       : kMixedPlaceholder;
+import tests.unit.ui.headless_panel : openPanel;
 
 /// A mesh layer at a given x, with a name.
 private Layer meshAt(string name, float x) {
@@ -54,6 +59,52 @@ private Layer meshAt(string name, float x) {
     l.name = name;
     l.xform.pos.x = x;
     return l;
+}
+
+/// Drive the shipped FormsPanel text widget with one ordinary click followed
+/// by typed text. The click lands at the right edge of the widget's own live
+/// rectangle, so it appends instead of relying on selection/focus policy.
+private string typeIntoName(Layer focus, Layer[] gang, string typed) {
+    auto provider = new LayerPropsProvider(focus);
+    provider.setGangTargets(gang);
+
+    Form form;
+    form.showLabel = false;
+    form.rows = [Row.makeControl("layer.attr 0 name ?", "Name", "name")];
+
+    auto panel = new FormsPanel;
+    ImVec2 fieldMin;
+    ImVec2 fieldMax;
+    string written;
+    size_t writes;
+    auto ui = openPanel(() {
+        panel.draw(form, provider, null,
+            (string commandId, string paramsJson) {
+                auto params = parseJSON(paramsJson);
+                auto pos = params["_positional"].array;
+                assert(commandId == "layer.attr" && pos.length == 3
+                    && pos[1].str == "name",
+                    "6660 widget dispatched the wrong binding: "
+                        ~ commandId ~ " " ~ paramsJson);
+                written = pos[2].str;
+                ++writes;
+            });
+        fieldMin = ImGui.GetItemRectMin();
+        fieldMax = ImGui.GetItemRectMax();
+    }, "Mixed text input");
+    scope(exit) ui.close();
+
+    ui.frame();
+    assert(fieldMax.x > fieldMin.x && fieldMax.y > fieldMin.y,
+        "6660 text-input population: FormsPanel drew no input rectangle");
+    const click = ImVec2(fieldMax.x - 4.0f,
+                         (fieldMin.y + fieldMax.y) * 0.5f);
+    ui.pressAt(click);
+    ui.release();
+    ui.typeText(typed);
+    assert(writes > 0,
+        "6660 text-input population: typing dispatched no value");
+    return written;
 }
 
 unittest {  // G1 — the placeholder is one literal, and it is the one shipped
@@ -158,4 +209,21 @@ unittest {  // G6 — the gang is not limited to one other subject
                ~ "agreeing target answers false here"));
     assert(!prov.paramMixed("name"),
         "and the channel they all agree on is still not mixed");
+}
+
+unittest {  // G7 — mixed text is a hint, never editable buffer contents
+    const single = textInputPresentation("Alpha", false);
+    assert(single.buffer == "Alpha" && single.hint.length == 0,
+        "6660 single text value must seed the editable buffer unchanged");
+
+    auto focus = meshAt("Alpha", 1.0f);
+    auto other = meshAt("Beta", 1.0f);
+    const typed = typeIntoName(focus, [other], "x");
+    assert(typed == "x",
+        "6660 mixed text plus one typed character must equal exactly 'x', not "
+            ~ "the placeholder plus input; got '" ~ typed ~ "'");
+
+    const mixed = textInputPresentation("Alpha", true);
+    assert(mixed.buffer.length == 0 && mixed.hint == kMixedPlaceholder,
+        "6660 mixed text must expose an empty buffer with '(mixed)' as hint");
 }
