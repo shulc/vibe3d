@@ -31,13 +31,39 @@ import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import ui.discard_guard : GuardRecord;
 import ui.item_rename : ItemRenameState, bindItemRenameController;
-import ui.item_rows : RowRole;
+import ui.item_rows : ItemRow, RowRole;
+static import ui.item_rows;
 import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
     LayerListPanelRoles, bindLayerListPanel, drawLayerListPanel,
     layerListDrawSnapshot, resetLayerListDrawSnapshot;
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
+
+private template memberTypes(T) {
+    private string[] collect() {
+        string[] result;
+        foreach (name; __traits(allMembers, T)) {
+            static if (__traits(compiles, __traits(getOverloads, T, name))
+                       && __traits(getOverloads, T, name).length > 0) {
+                string joined;
+                foreach (i, overload; __traits(getOverloads, T, name)) {
+                    if (i) joined ~= " | ";
+                    joined ~= typeof(overload).stringof;
+                }
+                result ~= name ~ ": " ~ joined;
+            } else static if (__traits(compiles,
+                                       typeof(__traits(getMember, T, name)))) {
+                result ~= name ~ ": "
+                    ~ typeof(__traits(getMember, T, name)).stringof;
+            } else {
+                result ~= name ~ ": <no type>";
+            }
+        }
+        return result;
+    }
+    enum memberTypes = collect();
+}
 
 static assert(__traits(compiles, {
     LayerListPanelRoles roles = void;
@@ -47,6 +73,25 @@ static assert(!__traits(compiles, {
     LayerListPanelRoles roles = void;
     roles.actions.dispatch = (string id, string paramsJson) {};
 }), "6030 action capability: external callers must not replace dispatch");
+
+static assert(!__traits(compiles, (ItemRow row) {
+        Layer layer = row.layer;
+    }),
+    "6502 N2 row.layer: an item row hands out a mutable Layer");
+static assert(__traits(compiles, (ItemRow row) {
+        const(Layer) layer = row.layer;
+    }),
+    "6502 N2 control: the same row expression must compile through const");
+static assert(!__traits(compiles, (ItemRow row) {
+        row.layer.name = "x";
+    }),
+    "6502 N2w row.layer: an item row permits a document-item write");
+static assert(__traits(compiles, (ItemRow row, Layer someMutableLayer) {
+        row.layer = someMutableLayer;
+        bool isNull = row.layer is null;
+        bool isSame = row.layer is someMutableLayer;
+    }),
+    "6502 N2r row.layer: the row's identity slot must stay REBINDABLE — the reusable row buffer is refilled in place");
 
 static assert(!__traits(compiles, (const(Document)* doc) {
         Layer target = itemPropsTarget(doc);
@@ -60,6 +105,32 @@ static assert(__traits(compiles, (Document* doc) {
         Layer target = itemPropsTarget(doc);
     }),
     "6502 N3m control: a mutable caller must still receive a mutable Layer — this query is ONE definition, not a narrowing");
+
+static assert(typeof(__traits(getMember, ui.item_rows, "rowParentOf")).stringof
+        == "const(Layer)(const(Document)* doc, const(Layer) l)",
+    "6502 N4 rowParentOf: the row-parent walk must take a read-only document and answer a read-only identity; if only a parameter name changed, update the expected string and report it");
+static assert(typeof(__traits(getMember, ui.item_rows, "roleOf")).stringof
+        == "RowRole(const(Document)* doc, const(Layer) l)",
+    "6502 N5 roleOf: the row-role query must take a read-only document and identity; if only a parameter name changed, update the expected string and report it");
+
+static assert([__traits(allMembers, ItemRow)] ==
+        ["index", "layer", "name", "renameSeed", "glyph", "depth",
+         "role", "look", "isRoot", "visible", "canToggleVisible",
+         "canRename", "dimmed", "isSoleSelection", "opAssign"],
+    "6502 F4 fence (names): ItemRow's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ItemRow ==
+        ["index: ulong", "layer: Rebindable!(const(Layer))", "name: string",
+         "renameSeed: string", "glyph: ItemGlyph", "depth: int",
+         "role: RowRole", "look: RowLook", "isRoot: bool", "visible: bool",
+         "canToggleVisible: bool", "canRename: bool", "dimmed: bool",
+         "isSoleSelection: bool",
+         "opAssign: pure nothrow @nogc ref @trusted ItemRow(ItemRow p) return"],
+    "6502 F4 fence (types): a member of ItemRow changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
+
+static assert(__traits(compiles, (ItemRow row) {
+        auto escaped = __traits(getMember, row.layer, "stripped");
+    }),
+    "6502 N-remnant: private-field reflection compiles in D by construction and has no mutation witness. If this fails, first check whether the stored identity became mutable again (the real N1–N5 failures above); only if those hold did the language close the hole.");
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");

@@ -62,6 +62,7 @@ module ui.item_rows;
 // ---------------------------------------------------------------------------
 
 import document : Document, Layer, ItemKind, kindInfo;
+import ui.retained_item : ConstItem;
 
 /// The glyph a row draws in its TYPE cell.
 ///
@@ -231,7 +232,8 @@ struct ItemRow {
     /// The item itself, or `null` on the root. Identity is the only reliable
     /// handle: an index is spliced by `layer.delete` and permuted by
     /// `layer.reorder`.
-    Layer layer;
+    ConstItem layer;
+    // The slot is reusable, but the identity it yields is read-only.
 
     string name;        ///< what the name cell shows
     /// What the inline rename editor STARTS with — the item's raw `name`
@@ -381,7 +383,7 @@ unittest {
 /// unselected edit target came to be drawn as selected. Neither the edit
 /// target nor the focus is consulted now — see `RowRole`'s comment for the
 /// measurement that removed them.
-private RowRole roleOf(Document* doc, Layer l) {
+private RowRole roleOf(const(Document)* doc, const(Layer) l) {
     if (!l.selected)            return RowRole.None;
     if (doc.isFirstSelected(l)) return RowRole.SelectedFirst;
     return RowRole.Selected;
@@ -395,9 +397,10 @@ private RowRole roleOf(Document* doc, Layer l) {
 /// unlisted parent, and the walk is CAP-BOUNDED for the same reason
 /// `layer.parent`'s own cycle guard is: a hand-edited `.v3d` can carry a
 /// cycle this process never created.
-private Layer rowParentOf(Document* doc, Layer l) {
+private const(Layer) rowParentOf(const(Document)* doc, const(Layer) l) {
     size_t cap = doc.layers.length;
-    Layer p = l.parent;
+    // ConstItem preserves rebinding while the ancestry walk stays read-only.
+    ConstItem p = l.parent;
     while (p !is null && cap-- > 0) {
         if (isItemRow(p)) return p;
         p = p.parent;
@@ -418,7 +421,7 @@ private Layer rowParentOf(Document* doc, Layer l) {
 ///
 /// Fills in place (the `Document.selectedItemsInto` / `imageRowsInto` idiom)
 /// so a panel holding one static buffer does not churn an array per frame.
-void itemRowsInto(Document* doc, string docPath, bool dirty,
+void itemRowsInto(const(Document)* doc, string docPath, bool dirty,
                   bool rootExpanded, ref ItemRow[] outBuf) {
     size_t n = 1;                                   // the root always exists
     if (doc !is null && rootExpanded)
@@ -458,7 +461,7 @@ void itemRowsInto(Document* doc, string docPath, bool dirty,
     // same `@property`-in-a-loop trap this codebase has been bitten by twice.
     immutable size_t selCount = doc.selectedItemCount();
 
-    void emit(Layer l, size_t li, int depth) {
+    void emit(const(Layer) l, size_t li, int depth) {
         if (emitted[li]) return;
         emitted[li] = true;
         ItemRow r;
