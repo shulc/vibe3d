@@ -41,7 +41,7 @@ import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : baseName, buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 
@@ -401,9 +401,13 @@ unittest { // S9: production call, ordering and old-path census
     const reg = squash(blankNonCode(regSrc));
     const sel = blankNonCode(selSrc);
     const app = squash(blankNonCode(appSrc));
-    assert(regSrc.length > 50_000 && selSrc.length > 4_000
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000
+        && selSrc.length > 4_000
         && appSrc.length > 100_000,
-        "6000 census population: a source file is implausibly small");
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the selection registration witness is reading truncated source");
 
     foreach (needle; ["EditorApp", "editor_app", "Ai3dModalRefs",
                       "RemeshModalRefs", "with (", "app."])

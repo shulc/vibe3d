@@ -16,7 +16,7 @@ import commands.mesh.select : MeshSelect;
 import copilot_command_registration : registerCopilotCommands;
 import copilot_panel : CopilotPanel;
 import editmode : EditMode;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import trackball : TrackballOption;
 import view_settings_registration : registerViewSettingsCommands;
@@ -361,8 +361,11 @@ unittest { // A9: production wiring and source ownership census
         buildPath(repoRoot, "source", "ai_command_registration.d"));
     const copilotRaw = readText(
         buildPath(repoRoot, "source", "copilot_command_registration.d"));
-    assert(registrationRaw.length > 50_000,
-        "6354 A9 population: registration.d is missing or truncated");
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000,
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the view settings witness is reading truncated source");
     assert(settingsRaw.length > 1_500,
         "6354 A9 population: settings registrar is missing or truncated");
     assert(aiRaw.length > 500,

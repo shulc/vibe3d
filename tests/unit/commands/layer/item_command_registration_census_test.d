@@ -7,7 +7,7 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : ctRegex, matchAll, replaceAll;
 import std.string : indexOf;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
@@ -126,8 +126,11 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
 
 unittest { // C10: production wiring, old-path absence and call order
     const registrationRaw = readText(buildPath(repoRoot, "source", "registration.d"));
-    assert(registrationRaw.length > 50_000,
-        "6355 production wiring floor: registration.d is missing or truncated");
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000,
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the item registration witness is reading truncated source");
     const registration = squash(blankNonCode(registrationRaw));
     enum callItem = "registerItemCommands(app.reg(), "
         ~ "LiveSessionRole(app.sessionOwner), "

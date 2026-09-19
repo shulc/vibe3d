@@ -127,6 +127,24 @@ package size_t countOccurrences(string hay, string needle) {
     return n;
 }
 
+/// Bytes of the registration family: `registration.d` plus every
+/// `source/*_registration.d`. The total is conserved when a registrar is
+/// extracted from the root, unlike a floor on `registration.d` alone.
+/// `files` includes the root and is floored by every caller so an empty or
+/// truncated glob cannot make the byte census vacuously useful.
+package(tests.unit) size_t registrationFamilyBytes(
+        string repoRoot, out size_t files) {
+    const sourceDir = buildPath(repoRoot, "source");
+    size_t bytes;
+    files = 1;
+    bytes += readText(buildPath(sourceDir, "registration.d")).length;
+    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow)) {
+        ++files;
+        bytes += readText(de.name).length;
+    }
+    return bytes;
+}
+
 /// The span starting at `open` through its matching delimiter, inclusive.
 /// Returns "" for a missing opener or an unclosed span so callers can put an
 /// area-specific population floor above the census that consumes it.
@@ -1273,6 +1291,13 @@ PROBE";
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
+    size_t registrationFiles;
+    const registrationBytes = registrationFamilyBytes(
+        repoRoot, registrationFiles);
+    assert(registrationFiles >= 15 && registrationBytes > 110_000,
+        format("6509 registration-family helper reached only %d file(s) / "
+             ~ "%d byte(s)", registrationFiles, registrationBytes));
+
     size_t nFiles = 0, nWithMembers = 0, nLines = 0;
     auto bad = appender!string;
     foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {

@@ -27,7 +27,7 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : regex, replaceAll;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
-    statementsContaining, symbolTokenHits;
+    registrationFamilyBytes, statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
@@ -359,10 +359,13 @@ unittest { // P6: production owns the narrow registrar call and ordering
     const moduleCode = blankNonCode(moduleRaw);
     const registration = blankNonCode(registrationRaw);
     const editorApp = blankNonCode(editorAppRaw);
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
     assert(moduleRaw.length > 3_000
-        && registrationRaw.length > 50_000
+        && registrarFiles >= 15 && familyBytes > 110_000
         && editorAppRaw.length > 40_000,
-        "5990 P6 source population: a production file is implausibly small");
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the pipe registration witness is reading truncated source");
 
     foreach (forbidden; ["EditorApp", "editor_app", "Ai3dModalRefs",
                          "RemeshModalRefs", "with (", "app.", "*host",

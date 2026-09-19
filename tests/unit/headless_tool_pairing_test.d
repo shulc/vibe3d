@@ -22,7 +22,8 @@ import registration : registerTools;
 import registry : Registry, ToolFactory;
 import seltype : SelMode;
 import session_owner : Session;
-import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences;
+import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences,
+    registrationFamilyBytes;
 import tool : Tool;
 import tools.alignment.mirror : MirrorTool;
 import tools.alignment.radial_sweep_tool : RadialSweepTool;
@@ -148,8 +149,11 @@ unittest {
     immutable registration = blankNonCode(
         rawRegistration ~ registrationCommentDecoy);
     immutable create = blankNonCode(rawCreate ~ structuralCommentDecoy);
-    assert(rawRegistration.length > 50_000,
-        "6353 source population: registration.d is unexpectedly small");
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000,
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the headless pairing witness is reading truncated source");
     assert(rawCreate.length > 8_000,
         "6353 source population: create_tool_registration.d is unexpectedly small");
 

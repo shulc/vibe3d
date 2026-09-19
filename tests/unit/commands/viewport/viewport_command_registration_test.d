@@ -28,7 +28,7 @@ import editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import math : Vec3;
 import prefs : g_prefs;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import view : View;
 import viewport : LayoutPreset, ViewportManager;
@@ -339,10 +339,13 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
     const registrarRaw = readText(
         buildPath(repoRoot, "source", "viewport_command_registration.d"));
     const appRaw = readText(buildPath(repoRoot, "source", "app.d"));
-    assert(registrationRaw.length > 50_000
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000
         && registrarRaw.length > 2_000
         && appRaw.length > 100_000,
-        "6010 census population: a production source is missing or truncated");
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the viewport registration witness is reading truncated source");
 
     const registrar = blankNonCode(registrarRaw);
     foreach (banned; ["EditorApp", "editor_app", "Ai3dModalRefs",

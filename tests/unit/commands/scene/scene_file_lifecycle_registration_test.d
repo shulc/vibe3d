@@ -28,7 +28,7 @@ import std.file : exists, readText;
 import std.path : buildNormalizedPath, dirName;
 import std.string : indexOf, split;
 import subpatch_preview : SubpatchPreview;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
@@ -40,9 +40,11 @@ import viewport : LayoutPreset, ViewportManager;
 
 static assert(!__traits(compiles, { SceneLifecycleDoors d; }));
 
+private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..",
+    "..", "..", "..");
+
 private string repoFile(string relative) {
-    const path = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..",
-                                     "..", "..", relative);
+    const path = buildNormalizedPath(repoRoot, relative);
     assert(exists(path), "6480 production census cannot find " ~ relative);
     return readText(path);
 }
@@ -424,9 +426,13 @@ unittest { // R3: production wiring and the retired paths, deliberately last
     const lifecycleRaw = repoFile("source/scene_file_lifecycle_registration.d");
     const effectsRaw = repoFile("source/scene_reset_effects.d");
     const appRaw = repoFile("source/app.d");
-    assert(registrationRaw.length > 50_000 && lifecycleRaw.length > 2_500
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000
+            && lifecycleRaw.length > 2_500
             && effectsRaw.length > 1_000 && appRaw.length > 100_000,
-        "6480 R3 source population floor: a production file is implausibly small");
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the scene lifecycle witness is reading truncated source");
     const registration = blankNonCode(registrationRaw);
     const lifecycle = blankNonCode(lifecycleRaw);
     const effects = blankNonCode(effectsRaw);

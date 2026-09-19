@@ -36,7 +36,7 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : ctRegex, matchAll;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
-    statementsContaining, symbolTokenHits;
+    registrationFamilyBytes, statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;
 
@@ -421,10 +421,13 @@ unittest { // U8: production owns the same live inputs and wrapper order
     const registration = blankNonCode(registrationRaw);
     const app = blankNonCode(appRaw);
 
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
     assert(registrarRaw.length > 4_000
-        && registrationRaw.length > 50_000
+        && registrarFiles >= 15 && familyBytes > 110_000
         && appRaw.length > 100_000,
-        "5980 U8 source population floor: a production file is implausibly small");
+        "6509 census population: the registration family shrank unexpectedly — "
+      ~ "the tool lifecycle witness is reading truncated source");
     foreach (forbidden; ["EditorApp", "editor_app", "Ai3dModalRefs",
                          "RemeshModalRefs", "with (", "*host", "ToolHost*",
                          "ToolHost *", "tupleof", "getMember"])
