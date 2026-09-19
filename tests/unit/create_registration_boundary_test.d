@@ -301,6 +301,31 @@ static assert(__traits(identifier, CreateToolDeps.tupleof[3]) == "bevelEditFacto
 static assert(__traits(identifier, CreateToolDeps.tupleof[4]) == "penFactories_"
     && is(typeof(CreateToolDeps.tupleof[4]) == TopoPenFactories));
 
+private TopoPenFactories completePenBundle() {
+    TopoPenFactories bundle;
+    static foreach (field; FieldNameTuple!TopoPenFactories)
+        __traits(getMember, bundle, field) = () => null;
+    return bundle;
+}
+
+unittest { // L3d: positive control precedes each independently missing input.
+    GpuMesh gpu;
+    auto history = new CommandHistory;
+    MeshSessionEdit delegate() bevel = () => null;
+    auto pen = completePenBundle();
+    auto lit = LitShader.init;
+    auto ok = CreateToolDeps(&gpu, lit, history, bevel, pen);
+    assert(ok.gpu() is &gpu && ok.litShader() is lit
+        && ok.history() is history && ok.bevelEditFactory() is bevel
+        && ok.penFactories().build is pen.build,
+        "6507 floor: the all-valid roster must construct and hold each member");
+    assertThrown!AssertError(CreateToolDeps(null, lit, history, bevel, pen));
+    assertThrown!AssertError(CreateToolDeps(&gpu, lit, null, bevel, pen));
+    assertThrown!AssertError(CreateToolDeps(&gpu, lit, history, null, pen));
+    pen.build = null;
+    assertThrown!AssertError(CreateToolDeps(&gpu, lit, history, bevel, pen));
+}
+
 unittest {
     const code = blankNonCode(readText(buildPath(repoRoot, "source",
         "create_tool_registration.d")));
@@ -326,30 +351,6 @@ unittest {
     assert(rosterRows == 5, "6507 storage population: expected five members");
 }
 
-private TopoPenFactories completePenBundle() {
-    TopoPenFactories bundle;
-    static foreach (field; FieldNameTuple!TopoPenFactories)
-        __traits(getMember, bundle, field) = () => null;
-    return bundle;
-}
-
-unittest { // L3d: positive control precedes each independently missing input.
-    GpuMesh gpu;
-    auto history = new CommandHistory;
-    MeshSessionEdit delegate() bevel = () => null;
-    auto pen = completePenBundle();
-    auto lit = LitShader.init;
-    auto ok = CreateToolDeps(&gpu, lit, history, bevel, pen);
-    assert(ok.gpu() is &gpu && ok.litShader() is lit
-        && ok.history() is history && ok.bevelEditFactory() is bevel
-        && ok.penFactories().build is pen.build,
-        "6507 floor: the all-valid roster must construct and hold each member");
-    assertThrown!AssertError(CreateToolDeps(null, lit, history, bevel, pen));
-    assertThrown!AssertError(CreateToolDeps(&gpu, lit, null, bevel, pen));
-    assertThrown!AssertError(CreateToolDeps(&gpu, lit, history, null, pen));
-    pen.build = null;
-    assertThrown!AssertError(CreateToolDeps(&gpu, lit, history, bevel, pen));
-}
 
 private enum kExpectedCall = "{ registerCreateToolCommands(app.reg(), "
     ~ "LiveSessionRole(app.sessionOwner), "
