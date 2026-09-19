@@ -154,10 +154,12 @@ version (PerfProbe) unittest { // P-1: only the owner tick serves a read
             "6511 generic drain served the frame-probe claim");
     }
     server.tickFrames(probe);
-    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(waitUntil(() => atomicLoad(reply.done)),
+        "6511 owner-served frame read did not complete");
     auto expected = probe.snapshot();
     assert(reply.wire.canFind("HTTP/1.1 200 OK")
-        && reply.wire.canFind("Content-Type: application/json"));
+        && reply.wire.canFind("Content-Type: application/json"),
+        "6511 owner-served frame read lost its 200/JSON response");
     assert(body(reply.wire) == expected.toJson()
         && body(reply.wire).canFind(`"frameCount":3`),
         "6511 perf build must serve /api/frames through the owner bridge");
@@ -176,8 +178,10 @@ version (PerfProbe) unittest { // P-2/P-4: timeout drops the entire reset
 
     auto reply = new Reply();
     auto client = request(port, "POST", "/api/frames/reset", reply);
-    assert(waitUntil(() => atomicLoad(reply.done)));
-    assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout"));
+    assert(waitUntil(() => atomicLoad(reply.done)),
+        "6511 timed-out frame reset did not complete its HTTP reply");
+    assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout"),
+        "6511 timed-out frame reset lost its 504 mapping");
     assert(body(reply.wire) == `{"error":"timeout waiting for main thread"}`);
     assert(g_frames.stats().frameCount == 3,
         "6511 timed-out reset changed the probe before service");
@@ -240,7 +244,8 @@ version (PerfProbe) unittest { // P-3: stopping before claim returns 503
 
     auto reply = new Reply();
     auto client = request(port, "POST", "/api/frames/reset", reply);
-    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1),
+        "6511 stopping fixture never exposed a pending frame reset");
     auto stopper = new Thread({ server.stop(); });
     stopper.isDaemon = true;
     stopper.start();
@@ -265,7 +270,8 @@ version (PerfProbe) unittest { // Sweep: a read timeout keeps its HTTP mapping
 
     auto reply = new Reply();
     auto client = request(port, "GET", "/api/frames", reply);
-    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(waitUntil(() => atomicLoad(reply.done)),
+        "6511 timed-out frame read did not complete its HTTP reply");
     assert(reply.wire.canFind("HTTP/1.1 504 Gateway Timeout")
         && body(reply.wire) == `{"error":"timeout waiting for main thread"}`,
         "6511 frame read timeout lost its 504 mapping");
@@ -377,6 +383,9 @@ unittest { // C-1: production wiring owns exactly these two routes
     assert(occurrences(source, ".submitClaimed(") == 4);
     assert(occurrences(source, "tickClaimed(") == 3);
     immutable allTick = bodyAt(source, "public void tickAll()");
+    assert(allTick.canFind("foreach (b; bridges) b.tick();"),
+        "6511 tickAll floor: the generic drain vanished, the negations below "
+        ~ "hold over an empty body");
     assert(!allTick.canFind("tickFrames")
         && !allTick.canFind("framesBridge"));
     immutable ownerTick = bodyAt(source,

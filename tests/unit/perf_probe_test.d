@@ -413,6 +413,25 @@ version (PerfProbe) {
             "6511 snapshot served a live aggregate: frameCount");
     }
 
+    unittest { // 6511 REVIEW FIX: seed the wire-only cache accumulator
+        import std.algorithm.searching : canFind;
+
+        FrameProbe probe;
+        foreach (_; 0 .. 3) {
+            probe.beginFrame();
+            probe.addPhase(Phase.cache, 4242);
+            probe.endFrame();
+        }
+        auto snapshot = probe.snapshot();
+        assert(snapshot.frames.length == 3,
+            "6511 cache-seed fixture lost its three records");
+        assert(snapshot.sumCacheNs == 3 * 4242,
+            "6511 snapshot dropped sumCacheNs, which /api/frames publishes as "
+            ~ "sumCacheNs and tools/perf/lib/http.d reads");
+        assert(snapshot.toJson().canFind(`"sumCacheNs":12726`),
+            "6511 the wire lost the seeded sumCacheNs value");
+    }
+
     unittest { // 6511 PP-3: running aggregates survive ring eviction
         FrameProbe probe;
         foreach (i; 0 .. 8195) seedFrame(probe, 100 + i);
@@ -472,6 +491,52 @@ version (PerfProbe) {
     }
 }
 
+unittest { // 6511 REVIEW FIX: percentile index arithmetic is observable
+    import std.json : parseJSON;
+
+    enum size_t n = 101;
+    FrameProbeSnapshot snapshot;
+    snapshot.frames = new FrameRec[n];
+    foreach (i, ref r; snapshot.frames) {
+        immutable v = cast(long)i;
+        r.totalNs = 1_000 + v;
+        r.eventNs = 2_000 + v;
+        r.toolNs = 3_000 + v;
+        r.cacheNs = 4_000 + v;
+        r.drawNs = 5_000 + v;
+        r.uploadNs = 6_000 + v;
+        r.uiNs = 7_000 + v;
+    }
+    auto j = parseJSON(snapshot.toJson());
+    assert(j["total"]["p50_ns"].integer == 1_050,
+        "6511 total p50 index moved from 50 to 51");
+    assert(j["total"]["p95_ns"].integer == 1_095,
+        "6511 total p95 index moved from 95 to 94");
+    assert(j["total"]["p99_ns"].integer == 1_099,
+        "6511 total p99 index moved from 99 to 98");
+    static immutable string[6] names =
+        ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
+    foreach (pi, name; names)
+        assert(j["phases"][name]["p95_ns"].integer
+               == cast(long)((pi + 2) * 1_000 + 95),
+            "6511 phase p95 index moved from 95 to 94: " ~ name);
+}
+
+unittest { // 6511 REVIEW FIX: pin the lower edge of the steady window
+    import std.json : parseJSON;
+
+    FrameProbeSnapshot snapshot;
+    snapshot.frames = new FrameRec[5];
+    static immutable long[5] allocs = [9, 9, 9, 7, 5];
+    foreach (i, ref r; snapshot.frames) {
+        r.totalNs = cast(long)(100 + i);
+        r.gcAllocBytes = allocs[i];
+    }
+    auto j = parseJSON(snapshot.toJson());
+    assert(j["steadyMaxAllocBytes"].integer == 7,
+        "6511 steady allocation window no longer starts at frame index 3");
+}
+
 unittest { // 6511 PP-6/PP-7: byte wire and idempotence
     import std.digest : toHexString;
     import std.digest.sha : sha256Of;
@@ -482,6 +547,57 @@ unittest { // 6511 PP-6/PP-7: byte wire and idempotence
     assert(snapshot.frames.length == 25,
         "6511 frame-probe fixture must retain 25 distinct records");
     auto first = snapshot.toJson();
+
+    // Narrow needles stay above the broad byte/length pins so the first red
+    // line names the serializer defect rather than only the changed payload.
+    {
+        import std.json : parseJSON;
+        auto j = parseJSON(first);
+        auto tot = j["total"];
+        long trueMax = 0;
+        foreach (ref r; snapshot.frames)
+            if (r.totalNs > trueMax) trueMax = r.totalNs;
+        assert(tot["max_ns"].integer == trueMax,
+            "6511 total.max_ns is not the largest totalNs: the totals sort "
+            ~ "was lost");
+        assert(tot["p50_ns"].integer <= tot["p95_ns"].integer
+            && tot["p95_ns"].integer <= tot["p99_ns"].integer
+            && tot["p99_ns"].integer <= tot["max_ns"].integer,
+            "6511 total percentile channels are out of order: p50/p95/p99 "
+            ~ "were swapped");
+        assert(j["worstN"].array.length == 8,
+            "6511 worstN population floor: the bounded list is not 8 long");
+        foreach (i; 1 .. j["worstN"].array.length)
+            assert(j["worstN"][i - 1]["totalNs"].integer
+                 > j["worstN"][i]["totalNs"].integer,
+                "6511 worstN is not descending: the byWorst sort was lost");
+        assert(j["worstN"][0]["totalNs"].integer == j["worst"]["totalNs"].integer,
+            "6511 worstN head is not the worst frame");
+        assert(snapshot.frames[0].totalNs == 100_007
+            && snapshot.frames[$ - 1].totalNs == 102_307,
+            "6511 the serializer reordered the caller's ring in place");
+        static immutable string[6] names =
+            ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
+        foreach (pi, name; names) {
+            long[] col = new long[kFrameFixtureN];
+            foreach (i, ref r; snapshot.frames) {
+                final switch (pi) {
+                    case 0: col[i] = r.eventNs;  break;
+                    case 1: col[i] = r.toolNs;   break;
+                    case 2: col[i] = r.cacheNs;  break;
+                    case 3: col[i] = r.drawNs;   break;
+                    case 4: col[i] = r.uploadNs; break;
+                    case 5: col[i] = r.uiNs;     break;
+                }
+            }
+            import std.algorithm : sort;
+            col.sort();
+            assert(j["phases"][name]["p95_ns"].integer
+                 == col[(kFrameFixtureN - 1) * 95 / 100],
+                "6511 phase p95 is not the sorted column's 95th percentile: "
+                ~ name);
+        }
+    }
     assert(first.length == 3665,
         "6511 frame-probe fixture must retain its measured 3665-byte population");
     assert(first == frameProbeWireBytes, "6511 frame-probe wire bytes changed");
@@ -495,4 +611,26 @@ unittest { // 6511 PP-6/PP-7: byte wire and idempotence
     assert(sha256Of(shape).toHexString ==
            "69F7CD7E3E4A5744AC4961B5D61648E7B358AD19614B7DE5E50A7E9154C755E2",
         "6511 frame-probe wire shape changed from the phase-0 golden");
+}
+
+unittest { // 6511 REVIEW FIX: constructor and strict warmup guard census
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.regex : matchAll, regex;
+    import std.string : count;
+    import tests.unit.census_symbols : blankNonCode;
+
+    enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable source = blankNonCode(readText(
+        buildPath(repoRoot, "source", "perf_probe.d")));
+    size_t ctorHits;
+    foreach (_; source.matchAll(regex(
+        `return\s+FrameProbeSnapshot\s*\(\s*ring\[0\s*\.\.\s*ringLen\]\.dup\s*,` ~
+        `\s*stats\(\)\s*,\s*hitchGc16\s*,\s*sumCacheNs\s*\)\s*;`)))
+        ++ctorHits;
+    assert(ctorHits == 1,
+        "6511 snapshot ctor dropped a field the wire reads "
+        ~ "(gcHitch_16ms/sumCacheNs)");
+    assert(source.count("if (len > WarmupFrames)") == 1,
+        "6511 steady-window guard lost its strict lower-edge spelling");
 }

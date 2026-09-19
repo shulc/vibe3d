@@ -58,6 +58,9 @@ unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
     immutable serviceFramesAt = app.indexOf(serviceFrames);
     immutable timingAt = app.indexOf(timing);
     immutable allocationAt = app.indexOf(allocation);
+    assert(serviceCountsAt >= 0 && serviceFramesAt >= 0 && timingAt >= 0
+        && allocationAt >= 0,
+        "6511 order floor: a marker vanished, the ordering below is comparing -1");
     assert(serviceCountsAt < serviceFramesAt && serviceFramesAt < timingAt
         && timingAt < allocationAt,
         "6511 tickFrames must precede both probe begins");
