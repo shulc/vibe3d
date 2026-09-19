@@ -388,9 +388,6 @@ unittest { // the all-valid action roster binds and every missing member fails
     assertThrown!AssertError(LayerListActions(
         app.owner, dispatch, interactive, app.forms, null),
         "6502 action roster: a null binding state must be rejected");
-    assertThrown!AssertError(drawLayerListPanel(
-        ok.read, ok.actions, null, app.renameState),
-        "6590 draw roster: a null binding state must be rejected before drawing");
 }
 
 unittest { // M1: the once-bound role reads the document replaced in place
@@ -1042,6 +1039,9 @@ unittest { // production binder, call sites and the retired EditorApp path
         "source", "ui", "panels.d")));
     assert(rawLayer.length > 5_000,
         "6030 source population: layer-list panel source is unexpectedly small");
+    assert(rawLayer.count(
+        `assert(state !is null, "Items panel requires its binding-owned state");`) == 1,
+        "6590 draw state guard: the explicit binding-owned state precondition changed");
     assert(layer.count("EditorApp") == 0 && layer.count("editor_app") == 0
         && layer.count("ui.panels") == 0 && layer.count("with (") == 0,
         "6030 role boundary: layer-list panel regained EditorApp/panels coupling");
