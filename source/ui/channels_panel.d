@@ -121,16 +121,17 @@ private:
 
     /// Rebuild on a key miss (item, index, parameter count); true when rebuilt.
     bool refresh(const(Document)* doc, const(Layer) item) {
-        if (provider_ !is null) {
+        const hasProvider = provider_ !is null;
+        if (hasProvider) {
             const k = ChannelsKey(ConstItem(item), doc.indexOf(item),
                                   provider_.params().length);
             if (k == model_.key) return false;
-            auto live = resolve_(item);
-            if (live is null) return dropMemo();
+        }
+        auto live = resolve_(item);
+        if (live is null) return dropMemo();
+        if (hasProvider) {
             provider_.rebind(live);
         } else {
-            auto live = resolve_(item);
-            if (live is null) return dropMemo();
             provider_ = new ChannelsProvider(live);
         }
         model_ = channelsModel(doc, item, provider_.params());
