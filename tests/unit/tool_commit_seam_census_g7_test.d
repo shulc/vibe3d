@@ -117,7 +117,7 @@ import std.string    : indexOf, strip;
 import std.traits    : FieldNameTuple;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
-   blankNonCode, countOccurrences, enclosingSymbols, historySurface,
+   balancedSpan, blankNonCode, countOccurrences, enclosingSymbols, historySurface,
    isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits;
 import tools.edit.topology_pen.defs : TopoPenFactories;
 
@@ -447,11 +447,14 @@ unittest {
         problems ~= "    · wire id `mesh.topoPen`: found " ~ defs.to!string
                   ~ " registration definitions, expected exactly 1";
     } else {
-        auto at   = src.indexOf(needle);
-        auto rest = src[cast(size_t) at .. $];
-        auto end  = rest.indexOf("});");
-        immutable block = (end < 0) ? rest : rest[0 .. cast(size_t) end];
-        ++checked;
+        const at = cast(size_t) src.indexOf(needle);
+        const braceRel = src[at .. $].indexOf('{');
+        const block = braceRel < 0 ? ""
+            : balancedSpan(src, at + cast(size_t) braceRel, '{', '}');
+        if (!block.length)
+            problems ~= "    · `mesh.topoPen` slice floor: balancedSpan "
+                      ~ "returned an empty registration body";
+        else ++checked;
 
         if (countOccurrences(block, "setGestureBindings(") != 1)
             problems ~= "    · `mesh.topoPen` does not bind through "
@@ -617,21 +620,6 @@ private enum string[] kStructFields = [FieldNameTuple!TopoPenFactories];
 private enum string kBinderDecl  = "void setPenFactories(";
 private enum string kBuilderDecl = "TopoPenFactories buildTopoPenFactories()";
 
-/// The substring of `src` starting at `open` (which must index an opening
-/// bracket) and ending at its match, brackets included. Returns "" when the
-/// bracket never closes, so the caller reports a finding instead of aborting.
-private string balanced(string src, size_t open, char lo, char hi) {
-    int depth = 0;
-    foreach (i; open .. src.length) {
-        if (src[i] == lo) ++depth;
-        else if (src[i] == hi) {
-            --depth;
-            if (depth == 0) return src[open .. i + 1];
-        }
-    }
-    return "";
-}
-
 unittest {
     immutable toolSrc = stripCommentsOnly(
         readText(buildPath(repoRoot, kPenDir, "tool.d")));
@@ -652,7 +640,10 @@ unittest {
     else {
         immutable size_t open = cast(size_t) toolSrc.indexOf(kBinderDecl)
                               + kBinderDecl.length - 1;
-        auto plist = balanced(toolSrc, open, '(', ')');
+        auto plist = balancedSpan(toolSrc, open, '(', ')');
+        if (!plist.length)
+            bad ~= "    · `setPenFactories` parameter slice floor: "
+                 ~ "balancedSpan returned an empty span";
         auto params = plist.length >= 2 ? plist[1 .. $ - 1].strip() : "";
         auto toks = params.split();
         if (params.indexOf(",") >= 0 || toks.length != 2
@@ -670,14 +661,22 @@ unittest {
             bad ~= "    · the `mesh.topoPen` registration block was not found in "
                  ~ "source/registration.d";
         else {
-            auto block = balanced(regSrc, cast(size_t) at + key.length - 1, '{', '}');
+            auto block = balancedSpan(
+                regSrc, cast(size_t) at + key.length - 1, '{', '}');
+            if (!block.length)
+                bad ~= "    · `mesh.topoPen` named-binding slice floor: "
+                     ~ "balancedSpan returned an empty body";
             immutable ptrdiff_t call = block.indexOf("setPenFactories(");
             if (call < 0 || countOccurrences(block, "setPenFactories(") != 1)
                 bad ~= "    · the `mesh.topoPen` block calls setPenFactories "
                      ~ countOccurrences(block, "setPenFactories(").to!string
                      ~ " time(s), expected 1";
             else {
-                auto args = balanced(block, cast(size_t) call + "setPenFactories".length, '(', ')');
+                auto args = balancedSpan(block,
+                    cast(size_t) call + "setPenFactories".length, '(', ')');
+                if (!args.length)
+                    bad ~= "    · `setPenFactories` argument slice floor: "
+                         ~ "balancedSpan returned an empty span";
                 immutable arg = args.length >= 2 ? args[1 .. $ - 1].strip() : "";
                 if (arg.matchAll(regex(`^\w+$`)).empty)
                     bad ~= "    · the `mesh.topoPen` block passes `" ~ arg ~ "` to "
@@ -728,7 +727,11 @@ unittest {
              ~ " time(s) in source/app.d, expected 1";
     else {
         immutable ptrdiff_t brace = appSrc[cast(size_t) bAt .. $].indexOf("{");
-        auto body_ = brace < 0 ? "" : balanced(appSrc, cast(size_t)(bAt + brace), '{', '}');
+        auto body_ = brace < 0 ? "" : balancedSpan(
+            appSrc, cast(size_t)(bAt + brace), '{', '}');
+        if (!body_.length)
+            bad ~= "    · buildTopoPenFactories body slice floor: balancedSpan "
+                 ~ "returned an empty body";
         auto locals = body_.matchAll(regex(`TopoPenFactories\s+(\w+)\s*;`)).array;
         string local = locals.length == 1 ? locals[0][1] : "";
         immutable size_t statements = countOccurrences(body_, ";");

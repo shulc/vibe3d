@@ -127,6 +127,21 @@ package size_t countOccurrences(string hay, string needle) {
     return n;
 }
 
+/// The span starting at `open` through its matching delimiter, inclusive.
+/// Returns "" for a missing opener or an unclosed span so callers can put an
+/// area-specific population floor above the census that consumes it.
+package(tests.unit) string balancedSpan(
+        string src, size_t open, char lo, char hi) {
+    if (open >= src.length || src[open] != lo) return "";
+    int depth;
+    foreach (i; open .. src.length) {
+        if (src[i] == lo) ++depth;
+        else if (src[i] == hi && --depth == 0)
+            return src[open .. i + 1];
+    }
+    return "";
+}
+
 /// Extract one brace-lambda tool registration in either the literal legacy
 /// assignment or the paired helper form. The source stays raw for id matching;
 /// the same-length code projection owns brace balancing so literals/comments
