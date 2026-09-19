@@ -503,7 +503,7 @@ struct FrameStatsSnapshot {
     long maxPauseNs;
 }
 
-/// Detached copy of the FrameProbe ring and its running aggregates. Task 6511.
+/// Detached copy of the FrameProbe ring and its running aggregates.
 /// This stays outside `version (PerfProbe)` beside FrameStatsSnapshot so the
 /// default module gate can verify the diagnostic wire without a live probe.
 struct FrameProbeSnapshot {
@@ -598,6 +598,9 @@ string toJson(ref FrameProbeSnapshot snapshot) {
 
         if (len > 0) {
             size_t worstIdx = 0;
+            // Task 6614: strict `>` keeps the first frame in this detached
+            // sequence. Equal-total fixtures are intentionally absent because
+            // the wire contract does not promise a tie order.
             foreach (i, ref r; s)
                 if (r.totalNs > s[worstIdx].totalNs) worstIdx = i;
             app.put(`,"worst":`);

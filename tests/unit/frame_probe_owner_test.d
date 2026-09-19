@@ -207,14 +207,17 @@ version (PerfProbe) unittest { // P-2/P-4: timeout drops the entire reset
     auto controlledReply = new Reply();
     auto controlledClient = request(port, "POST", "/api/frames/reset",
                                     controlledReply);
-    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.enqueued)));
+    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.enqueued)),
+        "6680 controlled reset did not reach the enqueued claim hold");
     auto owner = new Thread({ server.tickFrames(g_frames); });
     owner.isDaemon = true;
     owner.start();
-    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.extracted)));
+    assert(waitUntil(() => bridge.claimReachedForTest(ClaimProbePoint.extracted)),
+        "6680 reset owner did not reach the extracted claim hold");
     Thread.sleep(150.msecs);
     bridge.holdClaimForTest(ClaimProbePoint.extracted, false);
-    assert(waitUntil(() => !owner.isRunning));
+    assert(waitUntil(() => !owner.isRunning),
+        "6680 reset owner did not finish after the extracted hold was released");
     assert(g_frames.stats().frameCount == 3,
         "6511 expired reset was applied on a later frame");
     bridge.holdClaimForTest(ClaimProbePoint.enqueued, false);
@@ -249,8 +252,10 @@ version (PerfProbe) unittest { // P-3: stopping before claim returns 503
     auto stopper = new Thread({ server.stop(); });
     stopper.isDaemon = true;
     stopper.start();
-    assert(waitUntil(() => !stopper.isRunning));
-    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(waitUntil(() => !stopper.isRunning),
+        "6680 server stop did not finish with a pending frame reset");
+    assert(waitUntil(() => atomicLoad(reply.done)),
+        "6680 stopped frame reset did not complete its HTTP reply");
     assert(reply.wire.canFind("HTTP/1.1 503 Service Unavailable"));
     assert(body(reply.wire) == `{"error":"HTTP server stopping"}`);
     assert(bridge.claimPendingForTest() == 0,
@@ -286,12 +291,15 @@ version (PerfProbe) unittest { // Sweep: stopping a pending read maps to 503
 
     auto reply = new Reply();
     auto client = request(port, "GET", "/api/frames", reply);
-    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1),
+        "6680 stopping-read fixture never exposed a pending frame read");
     auto stopper = new Thread({ server.stop(); });
     stopper.isDaemon = true;
     stopper.start();
-    assert(waitUntil(() => !stopper.isRunning));
-    assert(waitUntil(() => atomicLoad(reply.done)));
+    assert(waitUntil(() => !stopper.isRunning),
+        "6680 server stop did not finish with a pending frame read");
+    assert(waitUntil(() => atomicLoad(reply.done)),
+        "6680 stopped frame read did not complete its HTTP reply");
     assert(reply.wire.canFind("HTTP/1.1 503 Service Unavailable")
         && body(reply.wire) == `{"error":"HTTP server stopping"}`,
         "6511 stopped frame read lost its 503 mapping");
@@ -309,7 +317,8 @@ version (PerfProbe) unittest { // P-5/P-6: reset boundary then full next frame
 
     auto resetReply = new Reply();
     auto resetClient = request(port, "POST", "/api/frames/reset", resetReply);
-    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1),
+        "6680 reset-boundary fixture never exposed a pending frame reset");
     probe.beginFrame();
     probe.addPhase(Phase.draw, 111);
     probe.endFrame();
@@ -318,7 +327,8 @@ version (PerfProbe) unittest { // P-5/P-6: reset boundary then full next frame
         && probe.stats().frameCount == 4,
         "6511 reset-boundary premise must include the just-finished frame");
     server.tickFrames(probe);
-    assert(waitUntil(() => atomicLoad(resetReply.done)));
+    assert(waitUntil(() => atomicLoad(resetReply.done)),
+        "6680 owner-served frame reset did not complete its HTTP reply");
     assert(resetReply.wire.canFind("HTTP/1.1 200 OK")
         && body(resetReply.wire) == `{"status":"ok"}`);
     FrameRec[1] cleared;
@@ -331,9 +341,11 @@ version (PerfProbe) unittest { // P-5/P-6: reset boundary then full next frame
     probe.endFrame();
     auto readReply = new Reply();
     auto readClient = request(port, "GET", "/api/frames", readReply);
-    assert(waitUntil(() => bridge.claimPendingForTest() == 1));
+    assert(waitUntil(() => bridge.claimPendingForTest() == 1),
+        "6680 next-frame fixture never exposed a pending frame read");
     server.tickFrames(probe);
-    assert(waitUntil(() => atomicLoad(readReply.done)));
+    assert(waitUntil(() => atomicLoad(readReply.done)),
+        "6680 owner-served next-frame read did not complete its HTTP reply");
     FrameRec[1] next;
     assert(probe.copyRecent(next[]) == 1 && next[0].drawNs == 222,
         "6511 next frame after reset was not counted completely");

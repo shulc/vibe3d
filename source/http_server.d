@@ -3302,15 +3302,9 @@ class HttpServer {
                 FramesReq(FramesOp.read), framesBudget_);
             final switch (owned.kind) {
             case BridgeResultKind.completed:
-              try {
                 response.statusCode = 200;
                 response.body = owned.result.snapshot.toJson();
-              } catch (Exception e) {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
-                               jsonEsc(e.msg) ~ "\"}";
-              }
-              break;
+                break;
             case BridgeResultKind.timedOut:
                 response.statusCode = 504;
                 response.body = "{\"error\":\"timeout waiting for main thread\"}";
