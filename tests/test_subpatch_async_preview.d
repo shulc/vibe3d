@@ -183,6 +183,14 @@ string lassoLog(Vp vp) {
     immutable int x0 = vp.x + 8,      y0 = vp.y + 8;
     immutable int x1 = vp.x + vp.w - 8, y1 = vp.y + vp.h - 8;
     return format(
+        // These two `t` values are LOAD-BEARING and their requirement lives ~90
+        // lines away, at the scripted-input barrier that asserts
+        // `total == remaining == 6`. That equality needs the replay to have
+        // delivered NOTHING yet at the moment it is read, and a first entry at
+        // t=0 is what puts the whole log behind the hold. Move this 0.000 to
+        // 150.0 and the barrier's witness goes GREEN while proving nothing —
+        // measured 2026-09-19 (review mutation MUT-D). This fixture is shared by
+        // three cells, so the timestamp cannot be changed for one of them.
         `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
         `{"t":0.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
         `{"t":200.0,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
