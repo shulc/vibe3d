@@ -250,15 +250,30 @@ unittest {
 //    The mixed marker is a display hint, never editable buffer contents.
 // ---------------------------------------------------------------------------
 unittest {
-    import argstring : parseArgstring;
+    import argstring : isArgstringBareword, isArgstringBarewordChar,
+        parseArgstring;
+
+    foreach (c; "Aa09_./-?#")
+        assert(isArgstringBarewordChar(c),
+            "6613 argstring bareword predicate rejected an admitted character");
+    foreach (c; "()[]'= ")
+        assert(!isArgstringBarewordChar(c),
+            "6613 argstring bareword predicate admitted structural punctuation");
+    assert(isArgstringBareword("falloff#1")
+        && !isArgstringBareword("#comment"),
+        "6613 '#' is bare only after token start");
 
     auto b = parseBinding("layer.attr 0 name ?");
     const mixedAppend = substituteQuery(b, JSONValue("(mixed)x"));
     assert(mixedAppend == `layer.attr 0 name "(mixed)x"`,
         "6613 forms write left '(' bare: " ~ mixedAppend);
 
+    const leadingHash = substituteQuery(b, JSONValue("#name"));
+    assert(leadingHash == `layer.attr 0 name "#name"`,
+        "6613 forms write emitted a token-start comment: " ~ leadingHash);
+
     immutable values = ["(mixed)x", "left[right]", "a=b", "it's",
-                        `say"hi`, `c:\tmp`];
+                        `say"hi`, `c:\tmp`, "#name"];
     foreach (value; values) {
         const line = substituteQuery(b, JSONValue(value));
         auto parsed = parseArgstring(line);
