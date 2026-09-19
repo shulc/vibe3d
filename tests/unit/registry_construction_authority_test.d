@@ -17,7 +17,8 @@ import live_registration_roles : LiveSessionRole;
 import mesh : Mesh;
 import registry : CommandFactory, Registry;
 import seltype : SelType;
-import tests.unit.census_symbols : blankNonCode, symbolTokenHits;
+import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes,
+    symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import view : View;
 
@@ -350,7 +351,9 @@ unittest {
         "6510 composition-window positive control is blind");
     auto bindHits = symbolTokenHits(registration, "source/registration.d",
                                     "bindSelTypeAuthority(");
-    assert(registration.length > 30_000 && bindHits.length == 1
+    size_t registrarFiles;
+    const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
+    assert(registrarFiles >= 15 && familyBytes > 110_000 && bindHits.length == 1
         && bindHits[0].key == "registerCommands",
         "6510 selection authority bind left registerCommands");
 }
