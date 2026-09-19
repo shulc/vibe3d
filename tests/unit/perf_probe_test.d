@@ -491,52 +491,6 @@ version (PerfProbe) {
     }
 }
 
-unittest { // 6511 REVIEW FIX: percentile index arithmetic is observable
-    import std.json : parseJSON;
-
-    enum size_t n = 101;
-    FrameProbeSnapshot snapshot;
-    snapshot.frames = new FrameRec[n];
-    foreach (i, ref r; snapshot.frames) {
-        immutable v = cast(long)i;
-        r.totalNs = 1_000 + v;
-        r.eventNs = 2_000 + v;
-        r.toolNs = 3_000 + v;
-        r.cacheNs = 4_000 + v;
-        r.drawNs = 5_000 + v;
-        r.uploadNs = 6_000 + v;
-        r.uiNs = 7_000 + v;
-    }
-    auto j = parseJSON(snapshot.toJson());
-    assert(j["total"]["p50_ns"].integer == 1_050,
-        "6511 total p50 index moved from 50 to 51");
-    assert(j["total"]["p95_ns"].integer == 1_095,
-        "6511 total p95 index moved from 95 to 94");
-    assert(j["total"]["p99_ns"].integer == 1_099,
-        "6511 total p99 index moved from 99 to 98");
-    static immutable string[6] names =
-        ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
-    foreach (pi, name; names)
-        assert(j["phases"][name]["p95_ns"].integer
-               == cast(long)((pi + 2) * 1_000 + 95),
-            "6511 phase p95 index moved from 95 to 94: " ~ name);
-}
-
-unittest { // 6511 REVIEW FIX: pin the lower edge of the steady window
-    import std.json : parseJSON;
-
-    FrameProbeSnapshot snapshot;
-    snapshot.frames = new FrameRec[5];
-    static immutable long[5] allocs = [9, 9, 9, 7, 5];
-    foreach (i, ref r; snapshot.frames) {
-        r.totalNs = cast(long)(100 + i);
-        r.gcAllocBytes = allocs[i];
-    }
-    auto j = parseJSON(snapshot.toJson());
-    assert(j["steadyMaxAllocBytes"].integer == 7,
-        "6511 steady allocation window no longer starts at frame index 3");
-}
-
 unittest { // 6511 PP-6/PP-7: byte wire and idempotence
     import std.digest : toHexString;
     import std.digest.sha : sha256Of;
@@ -611,6 +565,52 @@ unittest { // 6511 PP-6/PP-7: byte wire and idempotence
     assert(sha256Of(shape).toHexString ==
            "69F7CD7E3E4A5744AC4961B5D61648E7B358AD19614B7DE5E50A7E9154C755E2",
         "6511 frame-probe wire shape changed from the phase-0 golden");
+}
+
+unittest { // 6511 REVIEW FIX: percentile index arithmetic is observable
+    import std.json : parseJSON;
+
+    enum size_t n = 101;
+    FrameProbeSnapshot snapshot;
+    snapshot.frames = new FrameRec[n];
+    foreach (i, ref r; snapshot.frames) {
+        immutable v = cast(long)i;
+        r.totalNs = 1_000 + v;
+        r.eventNs = 2_000 + v;
+        r.toolNs = 3_000 + v;
+        r.cacheNs = 4_000 + v;
+        r.drawNs = 5_000 + v;
+        r.uploadNs = 6_000 + v;
+        r.uiNs = 7_000 + v;
+    }
+    auto j = parseJSON(snapshot.toJson());
+    assert(j["total"]["p50_ns"].integer == 1_050,
+        "6511 total p50 index moved from 50 to 51");
+    assert(j["total"]["p95_ns"].integer == 1_095,
+        "6511 total p95 index moved from 95 to 94");
+    assert(j["total"]["p99_ns"].integer == 1_099,
+        "6511 total p99 index moved from 99 to 98");
+    static immutable string[6] names =
+        ["eventNs", "toolNs", "cacheNs", "drawNs", "uploadNs", "uiNs"];
+    foreach (pi, name; names)
+        assert(j["phases"][name]["p95_ns"].integer
+               == cast(long)((pi + 2) * 1_000 + 95),
+            "6511 phase p95 index moved from 95 to 94: " ~ name);
+}
+
+unittest { // 6511 REVIEW FIX: pin the lower edge of the steady window
+    import std.json : parseJSON;
+
+    FrameProbeSnapshot snapshot;
+    snapshot.frames = new FrameRec[5];
+    static immutable long[5] allocs = [9, 9, 9, 7, 5];
+    foreach (i, ref r; snapshot.frames) {
+        r.totalNs = cast(long)(100 + i);
+        r.gcAllocBytes = allocs[i];
+    }
+    auto j = parseJSON(snapshot.toJson());
+    assert(j["steadyMaxAllocBytes"].integer == 7,
+        "6511 steady allocation window no longer starts at frame index 3");
 }
 
 unittest { // 6511 REVIEW FIX: constructor and strict warmup guard census
