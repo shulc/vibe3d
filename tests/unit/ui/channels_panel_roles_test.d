@@ -19,7 +19,7 @@ import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import image_data : ImagePlaneData;
-import layer_params : itemPropsTarget;
+import layer_params : LayerPropsProvider, itemPropsTarget;
 import math : Vec3;
 import mesh : MapKind, Mesh, makeCube;
 import mesh_gpu : GpuMesh;
@@ -31,13 +31,78 @@ import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.channel_rows : ChannelsModel;
+import ui.channel_rows : ChannelsModel, ChannelsProvider;
 import ui.channels_panel : ChannelsDrawSnapshot, ChannelsPanelRoles, ChannelsPanelState,
     bindChannelsPanel, channelsDrawSnapshot, drawChannelsPanel,
     resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import view : View;
 import d_imgui.imgui_h : ImVec2;
+
+private template memberTypes(T) {
+    private string[] collect() {
+        string[] result;
+        foreach (name; __traits(allMembers, T)) {
+            static if (__traits(compiles, __traits(getOverloads, T, name))
+                       && __traits(getOverloads, T, name).length > 0) {
+                string joined;
+                foreach (i, overload; __traits(getOverloads, T, name)) {
+                    if (i) joined ~= " | ";
+                    joined ~= typeof(overload).stringof;
+                }
+                result ~= name ~ ": " ~ joined;
+            } else static if (__traits(compiles,
+                                       typeof(__traits(getMember, T, name)))) {
+                result ~= name ~ ": "
+                    ~ typeof(__traits(getMember, T, name)).stringof;
+            } else {
+                result ~= name ~ ": <no type>";
+            }
+        }
+        return result;
+    }
+    enum memberTypes = collect();
+}
+
+static assert(!__traits(compiles, (ChannelsProvider p) {
+        auto base = p.base();
+    }),
+    "6503 N4 provider.base: the Channels provider hands out its writable base provider");
+static assert(__traits(compiles, (ChannelsProvider p) {
+        const(Layer) item = p.boundItem();
+    }),
+    "6503 N4 control: the replacement door must expose a read-only bound identity");
+static assert(!__traits(compiles, (ChannelsProvider p) {
+        Layer item = p.boundItem();
+    }),
+    "6503 N5 provider.boundItem: the Channels provider hands out a mutable Layer");
+static assert(!__traits(compiles, (LayerPropsProvider p) {
+        Layer item = p.layer();
+    }),
+    "6503 N6 layer provider: LayerPropsProvider.layer hands out a mutable Layer");
+static assert(__traits(compiles, (LayerPropsProvider p) {
+        const(Layer) item = p.layer();
+    }),
+    "6503 N6 control: LayerPropsProvider.layer must still expose a read-only identity");
+
+static assert([__traits(allMembers, ChannelsProvider)] ==
+        ["base_", "blocked_", "__ctor", "rebind", "boundItem",
+         "setTransformGuard", "rebuildBlocked", "params", "paramEnabled",
+         "onParamChanged", "toString", "toHash", "opCmp", "opEquals",
+         "Monitor", "factory"],
+    "6503 F7 fence (names): the Channels provider's member set changed — a capability cannot be added here without naming it");
+static assert(memberTypes!ChannelsProvider ==
+        ["base_: LayerPropsProvider", "blocked_: bool[string]",
+         "__ctor: ChannelsProvider(Layer l)", "rebind: void(Layer l)",
+         "boundItem: const const(Layer)()",
+         "setTransformGuard: void(bool toolActive, SelType current)",
+         "rebuildBlocked: void()", "params: Param[]()",
+         "paramEnabled: const bool(string name)",
+         "onParamChanged: void(string name)", "toString: string()",
+         "toHash: nothrow @trusted ulong()", "opCmp: int(Object o)",
+         "opEquals: bool(Object o)", "Monitor: <no type>",
+         "factory: Object(string classname)"],
+    "6503 F7 fence (types): a member of ChannelsProvider changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
 
 static assert(__traits(compiles, {
     ChannelsPanelRoles roles = void;

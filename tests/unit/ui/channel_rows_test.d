@@ -333,7 +333,7 @@ unittest {
     assert(p2.paramEnabled("pos.x"), "no tool active: the transform row is live");
     {
         import seltype : SelType;
-        p2.base.setTransformGuard(true, SelType.Vertex);
+        p2.setTransformGuard(true, SelType.Vertex);
         assert(!p2.paramEnabled("pos.x"),
             "the base's mid-gesture transform interlock still greys the row "
             ~ "through the decorator");

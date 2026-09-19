@@ -259,7 +259,7 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
             const rebuilt = state.refresh(read.document(), item);
             recordChannelsMemo(rebuilt, state);
             recordChannelsProvider(
-                state.provider_.base.layer() is state.model_.key.item);
+                state.provider_.boundItem() is state.model_.key.item);
 
             // Header: whose channels these are, read live every draw. `%s`
             // rather than passing the name as the format string — it is user
@@ -278,8 +278,8 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
             // gizmo's only write target IS these rows, so it must not arm —
             // the narrowing lives in `setTransformGuard`, read live from the
             // authority rather than cached.
-            state.provider_.base.setTransformGuard(read.transformToolActive(),
-                                                   read.currentSelType());
+            state.provider_.setTransformGuard(read.transformToolActive(),
+                                              read.currentSelType());
             recordChannelsGuard(!state.provider_.paramEnabled("pos.x"));
             recordChannelsDisabled(state.provider_);
 

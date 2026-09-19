@@ -65,8 +65,12 @@ final class LayerPropsProvider : ParamProvider, MixedValueProvider {
 
     this(Layer l) { layer_ = l; }
 
-    /// The wrapped layer (for callers that need it back).
-    Layer layer() { return layer_; }
+    /// The wrapped layer as an IDENTITY (task 6503). A caller that must WRITE
+    /// item fields resolves the identity against the live document it already
+    /// holds; handing the item itself out of a read surface is the capability
+    /// this slice removes. `const` on the receiver too, so a const provider
+    /// reference answers it.
+    const(Layer) layer() const { return layer_; }
 
     /// Re-point this provider at a different layer. Lets a per-frame caller
     /// (the layer-props panel) keep ONE provider instance and rebind it to the

@@ -67,6 +67,7 @@ import document     : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider, itemPropsTarget;
 import params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;
+import seltype      : SelType;
 
 import std.algorithm : startsWith;
 import std.conv      : to;
@@ -354,9 +355,17 @@ final class ChannelsProvider : ParamProvider {
     /// miss only (see `ChannelsModel.key`).
     void rebind(Layer l) { base_.setLayer(l); rebuildBlocked(); }
 
-    /// The wrapped provider, for the caller that must drive the base's own
-    /// per-frame interlock (`setTransformGuard`).
-    LayerPropsProvider base() { return base_; }
+    /// The bound item as an IDENTITY, for the panel's provider/model coherence
+    /// check. Replaces `base()`, which handed out the whole base provider —
+    /// `setLayer`, `params()` and a writable `Layer` (task 6503).
+    const(Layer) boundItem() const { return base_.layer(); }
+
+    /// The base provider's own mid-gesture transform interlock, passed through
+    /// so the panel never needs the base provider itself. The narrowing itself
+    /// still lives in `setTransformGuard` (layer_params.d) and is read live.
+    void setTransformGuard(bool toolActive, SelType current) {
+        base_.setTransformGuard(toolActive, current);
+    }
 
     private void rebuildBlocked()
     {
