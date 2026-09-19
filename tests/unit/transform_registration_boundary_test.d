@@ -333,6 +333,17 @@ unittest {
     const policyAt = collapsed.indexOf(policyMarker);
     const deferredPolicy = policyAt >= 0
         ? collapsed[cast(size_t) policyAt + policyMarker.length .. $] : "";
+    // POPULATION FLOOR for the needle below, and it must stay ABOVE it.
+    //
+    // The needle is scoped by a marker, so with the marker gone the slice is the
+    // empty string and `countOccurrences("", "app.ai") == 0` passes over nothing.
+    // Renaming or reordering `app.pipeGizmoHost` in that argument list would then
+    // disarm the named witness silently and leave only the text pin — the state
+    // this ordering exists to prevent, one level up. H/J/K each scope their own
+    // needle by their own marker, so each needs its own copy of this floor.
+    assert(policyAt >= 0 && deferredPolicy.length > 0,
+        "6506 policy-slice floor: the `app.pipeGizmoHost, ` marker vanished, so "
+        ~ "the `app.ai` needle below is measuring an empty string");
     assert(countOccurrences(deferredPolicy, "app.ai") == 0,
         "6506 composition root deferred policy closes over `app.ai`");
     assert(countOccurrences(collapseWhitespace(code), expected) == 1,
