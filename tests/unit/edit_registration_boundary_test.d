@@ -255,10 +255,18 @@ unittest {
             positive.queue.length));
 }
 
+private enum string[] kSessionFields = [
+    "bevelEditFactory", "loopSliceEditFactory", "reduceEditFactory",
+    "cloneEditFactory", "arrayEditFactory", "edgeExtrudeEditFactory",
+    "edgeExtendEditFactory", "polyExtrudeEditFactory",
+    "radialArrayEditFactory", "smoothShiftEditFactory",
+    "strokeExtrudeEditFactory",
+];
+
 // L3a: compiler-owned complete member sets. The shared live roles are already
 // pinned by create_registration_boundary_test and
-// transform_registration_boundary_test. The factory list is intentionally
-// ordered: it is the sole witness for declaration-order drift (M19).
+// transform_registration_boundary_test. The ordered factory expectation is
+// shared with L3c so the two witnesses cannot drift independently.
 static assert([__traits(allMembers, EditToolDeps)] == [
     "gpu_", "litShader_", "history_", "pipeGizmoHost_", "vxEditFactory_",
     "sessions_", "__ctor", "gpu", "litShader", "history", "pipeGizmoHost",
@@ -268,12 +276,7 @@ static assert([__traits(allMembers, EditToolDeps)] == [
     "polyExtrudeEditFactory", "radialArrayEditFactory",
     "smoothShiftEditFactory", "strokeExtrudeEditFactory"],
     "6670 EditToolDeps member set changed");
-static assert([__traits(allMembers, EditSessionFactories)] == [
-    "bevelEditFactory", "loopSliceEditFactory", "reduceEditFactory",
-    "cloneEditFactory", "arrayEditFactory", "edgeExtrudeEditFactory",
-    "edgeExtendEditFactory", "polyExtrudeEditFactory",
-    "radialArrayEditFactory", "smoothShiftEditFactory",
-    "strokeExtrudeEditFactory"],
+static assert([__traits(allMembers, EditSessionFactories)] == kSessionFields,
     "6670 ordered EditSessionFactories member set changed");
 static assert([__traits(allMembers, edit_tool_registration)] == [
     "object", "EditSessionFactories", "EditToolDeps",
@@ -357,13 +360,6 @@ static assert(__traits(identifier, EditToolDeps.tupleof[4]) == "vxEditFactory_"
     && is(typeof(EditToolDeps.tupleof[4]) == MeshVertexEdit delegate()));
 static assert(__traits(identifier, EditToolDeps.tupleof[5]) == "sessions_"
     && is(typeof(EditToolDeps.tupleof[5]) == EditSessionFactories));
-private enum string[] kSessionFields = [
-    "bevelEditFactory", "loopSliceEditFactory", "reduceEditFactory",
-    "cloneEditFactory", "arrayEditFactory", "edgeExtrudeEditFactory",
-    "edgeExtendEditFactory", "polyExtrudeEditFactory",
-    "radialArrayEditFactory", "smoothShiftEditFactory",
-    "strokeExtrudeEditFactory",
-];
 static foreach (i, field; kSessionFields) {
     static assert(__traits(identifier, EditSessionFactories.tupleof[i]) == field);
     static assert(is(typeof(EditSessionFactories.tupleof[i]) ==

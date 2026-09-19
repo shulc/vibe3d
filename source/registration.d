@@ -210,18 +210,6 @@ private void registerEditTools(EditorApp app) {
                 strokeExtrudeEditFactory: app.strokeExtrudeEditFactory)));
 }
 
-version (unittest)
-/// Build any edit-family product through the production composition root.
-Tool buildRegisteredEditToolForOwnershipTest(EditorApp app, string key) {
-    Registry staged;
-    auto stagedApp = app;
-    stagedApp.regPtr = &staged;
-    registerEditTools(stagedApp);
-    app.reg = staged;
-    return app.reg.toolFactory(key)();
-}
-
-
 /// Registers the remaining command entries — tool.*,
 /// ui.*, layer.*, ai3d.*, select.*, mesh.*, history.*, and macro.*.
 ///
