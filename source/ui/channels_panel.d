@@ -272,6 +272,14 @@ version (unittest) {
         alias State = ChannelsPanelState;
         return new State(resolve);
     }
+    /// Exercise the private guard door without publishing it in production.
+    void channelsArmTransformGuard(ChannelsPanelState state, bool toolActive,
+                                   SelType current) {
+        state.armTransformGuard(toolActive, current);
+    }
+    bool channelsTransformGuardArmed(ChannelsPanelState state) {
+        return state.transformGuardArmed();
+    }
 } else {
     private void recordChannelsBegin() {}
     private void recordChannelsHeader(string, string) {}

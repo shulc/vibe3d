@@ -1,8 +1,9 @@
 module tests.unit.ui.channels_panel_roles_test;
 
-import std.algorithm : count;
+import std.algorithm : count, sort;
 import core.exception : AssertError;
 import std.exception : assertThrown;
+import std.conv : to;
 import std.file : SpanMode, dirEntries, readText;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.range : walkLength;
@@ -38,9 +39,11 @@ import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
     channelsModel;
 import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
     ChannelsPanelRoles, ChannelsPanelState, ChannelsReadRole,
-    bindChannelsPanel, channelsBoundItem, channelsDrawSnapshot,
+    bindChannelsPanel, channelsArmTransformGuard, channelsBoundItem,
+    channelsDrawSnapshot,
     channelsFormProvider, channelsInteractiveWriter, channelsStateWithResolver,
-    drawChannelsPanel, resetChannelsDrawSnapshot;
+    channelsTransformGuardArmed, drawChannelsPanel,
+    resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import ui.retained_item : ConstItem;
 import view : View;
@@ -844,6 +847,98 @@ unittest { // I6: a collapsed (hidden-tab) panel keeps only the current focus
         "6358 hidden recovery: expanding again did not rebuild the memo");
 }
 
+unittest { // B1: the provider belongs to this binding (control for B2)
+    auto h = new ChannelsHarness;
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const snapshot = settle(ui);
+    assert(snapshot.drawn && snapshot.bound && snapshot.formDrawn
+        && snapshot.providerMatchesModel && snapshot.channelCount == 14,
+        "6503 B1 floor: the binding did not draw one coherent mesh form");
+    assert(channelsFormProvider(roles.state) !is null
+        && channelsBoundItem(roles.state)
+            is itemPropsTarget(h.owner.documentPtr()),
+        "6503 B1 binding provider: state does not own the provider bound to its focus");
+}
+
+unittest { // B2: two bindings own distinct providers bound to their sessions
+    auto a = new ChannelsHarness;
+    auto b = new ChannelsHarness;
+    b.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    const focusA = itemPropsTarget(a.owner.documentPtr());
+    const focusB = itemPropsTarget(b.owner.documentPtr());
+    assert(focusA !is null && focusB !is null && focusA !is focusB,
+        "6503 B2 floor: the two sessions need distinct focused identities");
+    auto rolesA = a.bind();
+    auto rolesB = b.bind();
+    ChannelsPanelRoles* current = &rolesA;
+    auto ui = openPanel(
+        () { drawChannelsPanel(current.read, current.actions, current.state); },
+        "Channels host", 1280, 1200);
+    scope (exit) ui.close();
+    const snapA = settle(ui);
+    current = &rolesB;
+    const snapB = settle(ui);
+    assert(snapA.drawn && snapA.bound && snapA.formDrawn
+        && snapB.drawn && snapB.bound && snapB.formDrawn,
+        "6503 B2 floor: both bindings must draw their populated forms");
+    assert(channelsFormProvider(rolesA.state) !is null
+        && channelsFormProvider(rolesB.state) !is null
+        && channelsBoundItem(rolesA.state) is focusA
+        && channelsBoundItem(rolesB.state) is focusB,
+        "6503 B2 floor: each binding must remain bound to its own focus");
+    assert(channelsFormProvider(rolesA.state)
+            !is channelsFormProvider(rolesB.state),
+        "6503 per-binding provider: two Channels bindings share one provider");
+}
+
+unittest { // B3: equal-looking items remain distinct memo identities
+    import mesh : makeCube;
+    auto h = new ChannelsHarness;
+    h.alpha.name = "Same";
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const before = settle(ui);
+    const oldFocus = channelsBoundItem(roles.state);
+    assert(before.bound && before.formDrawn && before.channelCount == 14
+        && oldFocus is h.alpha,
+        "6503 B3 floor: the old equal-looking mesh was not bound");
+
+    auto next = Document.bootstrap(makeCube());
+    next.layers[0].name = "Same";
+    const newFocus = next.layers[0];
+    *h.owner.documentPtr() = next;
+    const after = fresh(ui);
+    assert(after.bound && after.formDrawn && after.modelRebuilt
+        && after.channelCount == before.channelCount,
+        "6503 B3 floor: equal row counts must survive document replacement");
+    assert(channelsBoundItem(roles.state) is newFocus
+        && channelsBoundItem(roles.state) !is oldFocus,
+        "6503 memo identity: equal item contents hid a changed identity");
+}
+
+unittest { // B4: the transform guard crosses only the narrow state door
+    auto h = new ChannelsHarness;
+    auto roles = h.bind();
+    auto ui = openChannels(roles);
+    scope (exit) ui.close();
+    const snapshot = settle(ui);
+    assert(snapshot.bound && snapshot.formDrawn && snapshot.channelCount == 14
+        && channelsFormProvider(roles.state) !is null,
+        "6503 B4 floor: the state needs a populated provider");
+    channelsArmTransformGuard(roles.state, false, SelType.Vertex);
+    assert(!channelsTransformGuardArmed(roles.state),
+        "6503 B4 floor: no transform tool must leave rows enabled");
+    channelsArmTransformGuard(roles.state, true, SelType.Vertex);
+    assert(channelsTransformGuardArmed(roles.state),
+        "6503 transform interlock: the item transform rows did not grey while a transform tool is up over a geometry selection");
+    channelsArmTransformGuard(roles.state, true, SelType.Item);
+    assert(!channelsTransformGuardArmed(roles.state),
+        "6503 transform interlock: item selection kept its own transform rows grey");
+}
+
 private string bodyAt(string code, string marker) {
     const at = code.indexOf(marker);
     assert(at >= 0, "6050 census missing source marker " ~ marker);
@@ -895,18 +990,95 @@ private string collapseWhitespace(string text) {
     return result;
 }
 
+private struct ChannelsStripSignalRow {
+    string path;
+    size_t casts, traits, tupleofs, mixins, unions;
+}
+
+private enum ChannelsStripSignalRow[] kChannelsStripSignalLedger = [
+    ChannelsStripSignalRow("source/ui/channels_panel.d", 1, 0, 0, 0, 0),
+    ChannelsStripSignalRow("source/ui/channel_rows.d", 0, 0, 0, 0, 0),
+];
+
+private enum kChannelsStripSignalTokens =
+    ["cast", "__traits", "tupleof", "mixin", "union"];
+static assert(kChannelsStripSignalTokens ==
+        ["cast", "__traits", "tupleof", "mixin", "union"],
+    "6503 strip signal token roster changed — every measured column must remain in the exact scan below");
+
 unittest { // M6a-d and the retired EditorApp path: production source census
     import tests.unit.census_symbols : blankNonCode;
 
     const rawApp = readText(repoRoot.buildPath("source", "app.d"));
     const rawChannels = readText(repoRoot.buildPath(
         "source", "ui", "channels_panel.d"));
+    const rawRows = readText(repoRoot.buildPath(
+        "source", "ui", "channel_rows.d"));
     const app = blankNonCode(rawApp);
     const channels = blankNonCode(rawChannels);
     const panels = blankNonCode(readText(repoRoot.buildPath(
         "source", "ui", "panels.d")));
     assert(rawChannels.length > 5_000,
         "6050 source population: channels panel source is unexpectedly small");
+
+    string[] actualStripPaths;
+    string[] rawStripSources;
+    size_t stripSourceBytes;
+    foreach (row; kChannelsStripSignalLedger) {
+        actualStripPaths ~= row.path;
+        auto raw = readText(repoRoot.buildPath(row.path));
+        rawStripSources ~= raw;
+        stripSourceBytes += raw.length;
+    }
+    assert(kChannelsStripSignalLedger.length == 2
+        && rawStripSources.length == 2 && rawChannels.length + rawRows.length > 30_000
+        && stripSourceBytes > 30_000,
+        "6503 strip signal population: expected two populated production files over 30000 bytes");
+    auto sortedStripPaths = actualStripPaths.dup;
+    sortedStripPaths.sort;
+    auto expectedStripPaths = ["source/ui/channel_rows.d",
+                               "source/ui/channels_panel.d"];
+    expectedStripPaths.sort;
+    assert(sortedStripPaths == expectedStripPaths,
+        "6503 strip signal shape: the ledger does not name exactly the two owned files");
+    foreach (path; expectedStripPaths) {
+        size_t appearances;
+        foreach (row; kChannelsStripSignalLedger)
+            if (row.path == path) ++appearances;
+        assert(appearances == 1,
+            "6503 strip signal shape: " ~ path ~ " appears "
+            ~ appearances.to!string ~ " times instead of once");
+    }
+    size_t stripCasts, stripTraits, stripTupleofs, stripMixins, stripUnions;
+    foreach (row; kChannelsStripSignalLedger) {
+        stripCasts += row.casts;
+        stripTraits += row.traits;
+        stripTupleofs += row.tupleofs;
+        stripMixins += row.mixins;
+        stripUnions += row.unions;
+    }
+    assert(stripCasts == 1 && stripTraits == 0 && stripTupleofs == 0
+        && stripMixins == 0 && stripUnions == 0,
+        "6503 strip signal totals changed: cast=" ~ stripCasts.to!string
+        ~ " __traits=" ~ stripTraits.to!string ~ " tupleof="
+        ~ stripTupleofs.to!string ~ " mixin=" ~ stripMixins.to!string
+        ~ " union=" ~ stripUnions.to!string);
+    foreach (i, row; kChannelsStripSignalLedger) {
+        const code = blankNonCode(rawStripSources[i]);
+        immutable recorded =
+            [row.casts, row.traits, row.tupleofs, row.mixins, row.unions];
+        assert(recorded.length == kChannelsStripSignalTokens.length,
+            "6503 strip signal token roster and recorded columns diverged");
+        foreach (column, token; kChannelsStripSignalTokens) {
+            const actual = identifierCount(code, token);
+            assert(actual == recorded[column],
+                "6503 strip signal: " ~ row.path ~ " " ~ token ~ " = "
+                ~ actual.to!string ~ ", recorded "
+                ~ recorded[column].to!string
+                ~ " — a row may only FALL; if the spelling left, lower it "
+                ~ "in this commit; if it appeared, treat that as a finding");
+        }
+    }
     foreach (forbidden; ["EditorApp", "editor_app", "ui.panels",
                          "ui.layer_list_panel", "with (", "activeMesh"])
         assert(channels.count(forbidden) == 0,
@@ -919,6 +1091,44 @@ unittest { // M6a-d and the retired EditorApp path: production source census
 
     const binder = bodyAt(channels,
         "ChannelsPanelRoles bindChannelsPanel(Session* owner,");
+    const drawBody = bodyAt(channels, "void drawChannelsPanel(");
+    const readRole = bodyAt(channels, "struct ChannelsReadRole");
+    const actions = bodyAt(channels, "struct ChannelsActions");
+    const stateBody = bodyAt(channels, "final class ChannelsPanelState");
+    assert(drawBody.count("recordChannelsBegin") > 0
+        && drawBody.count("recordChannelsRetained") > 0
+        && drawBody.count("drawVertexMapsSection") > 0,
+        "6503 draw region: the Channels draw body no longer spans its form and maps sections");
+    assert(drawBody.count("struct ChannelsActions") == 0
+        && drawBody.count("final class ChannelsPanelState") == 0
+        && drawBody.count("bindChannelsPanel") == 0,
+        "6503 draw region: the Channels draw body swallowed a role, state, or binder");
+    assert(actions.count("drawChannelForm") > 0
+        && actions.count("forms_.draw") > 0,
+        "6503 action region: the action role no longer spans its form write");
+    assert(actions.count("drawChannelsPanel") == 0
+        && actions.count("bindChannelsPanel") == 0,
+        "6503 action region: the action-role region swallowed the draw body");
+    assert(readRole.count("documentPtr") > 0
+        && readRole.count("editMesh") > 0
+        && readRole.count("activeTool_") > 0,
+        "6503 read region: the read role no longer spans its live readers");
+    assert(readRole.count("interactive_") == 0
+        && readRole.count("provider_") == 0,
+        "6503 read region: the read role swallowed a write capability");
+    assert(stateBody.count("providerMatchesModel") > 0
+        && stateBody.count("armTransformGuard") > 0
+        && stateBody.count("dropMemo") > 0,
+        "6503 state region: the memo state no longer spans its narrow doors");
+    assert(stateBody.count("drawChannelsPanel") == 0
+        && stateBody.count("bindChannelsPanel") == 0,
+        "6503 state region: the memo state swallowed draw or binder code");
+    assert(binder.count("ChannelsPanelRoles") > 0
+        && binder.count("liveItem") > 0,
+        "6503 binder region: the live resolver is no longer composed by the binder");
+    assert(binder.count("drawChannelsPanel") == 0
+        && binder.count("final class ChannelsPanelState") == 0,
+        "6503 binder region: the binder swallowed state or draw code");
     assert(binder.count("binding.") == 1
         && binder.count("&binding.dispatchUi") == 0
         && binder.count("&binding.dispatchInteractiveUi") == 1,
@@ -927,7 +1137,35 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         && channels.count("new ChannelsPanelState") == 1
         && identifierCount(channels, "static") == 0,
         "6358 state census: bind owns the only construction and draw has no static; A/B/A covers a module singleton");
-    const drawBody = bodyAt(channels, "void drawChannelsPanel(");
+    assert(identifierCount(drawBody, "owner_") == 0,
+        "6503 read fence: the Channels draw body names the read role's private session");
+    assert(identifierCount(drawBody, "documentPtr") == 0,
+        "6503 read fence: the Channels draw body reads the live document directly");
+    assert(identifierCount(drawBody, "resolve_") == 0,
+        "6503 write fence: the Channels draw body reached the memo's item resolver");
+    assert(identifierCount(drawBody, "params") == 0
+        && identifierCount(drawBody, "setLayer") == 0,
+        "6503 write fence: the Channels draw body reached writable parameter pointers");
+    assert(identifierCount(drawBody, "base") == 0,
+        "6503 provider fence: the Channels draw body regained the broad base-provider door");
+    assert(identifierCount(drawBody, "provider_") == 1,
+        "6503 provider handle fence: the Channels draw body must name the provider exactly once, only to hand it to the action side");
+    assert(identifierCount(drawBody, "static") == 0
+        && identifierCount(drawBody, "cast") == 0,
+        "6503 draw fence: the Channels draw body gained static state or a qualifier-removing cast");
+    assert(identifierCount(channels, "documentPtr") == 2,
+        "6503 file census: a new reader of the live document appeared");
+    assert(identifierCount(channels, "base") == 0,
+        "6503 file census: the broad base-provider door returned");
+    assert(identifierCount(channels, "resolve_") == 3,
+        "6503 file census: a new reader of the binding's private resolver appeared");
+    assert(identifierCount(channels, "provider_") == 23,
+        "6503 file census: a new reader of the binding's private provider appeared");
+    assert(drawBody.count(
+            "recordChannelsProvider(state.providerMatchesModel());") == 1
+        && drawBody.count(
+            "state.armTransformGuard(read.transformToolActive(),") == 1,
+        "6503 narrow-door census: provider coherence or the transform guard bypassed state");
     const retainAt = drawBody.indexOf("state.retainOnly(item);");
     const drawBeginAt = drawBody.indexOf("ImGui.Begin(");
     assert(drawBody.count("const title = channelsHeaderName(item);") == 1
@@ -937,13 +1175,11 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         && retainAt >= 0 && drawBeginAt > retainAt
         && drawBody.count(".title") == 0,
         "6358 draw census: computed, drawn, or recorded live header, or pre-Begin retention changed");
-    const readRole = bodyAt(channels, "struct ChannelsReadRole");
     assert(readRole.count("owner_.documentPtr()") == 1
         && readRole.count("owner_.editMesh()") == 1
         && readRole.count("owner_.selTypeOrder") == 1
         && readRole.count("cast(TransformTool) activeTool_()") == 1,
         "6050 read-role census: a live owner/tool read was duplicated or replaced");
-    const actions = bodyAt(channels, "struct ChannelsActions");
     assert(actions.count("forms_.draw(form, provider, null, interactive_,") == 1
         && actions.count("void delegate(string, string) interactive_;") == 1,
         "6050 action census: the private interactive-only writer shape changed");
