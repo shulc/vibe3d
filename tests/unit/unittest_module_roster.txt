@@ -312,6 +312,7 @@ tests.unit.mesh_analysis_test
 tests.unit.mesh_bbox_test
 tests.unit.mesh_bevel_census_test
 tests.unit.mesh_by_value_gate
+tests.unit.mesh_command_registration_test
 tests.unit.mesh_corner_provenance_test
 tests.unit.mesh_dirty_cliff_series_test
 tests.unit.mesh_edge_chain_test
@@ -351,6 +352,7 @@ tests.unit.mesh_ops.vertex_pos_grid_test
 tests.unit.mesh_ops_import_boundary_test
 tests.unit.mesh_planes_census_test
 tests.unit.mesh_planes_test
+tests.unit.mesh_registration_boundary_test
 tests.unit.mesh_selection_marks_bus_test
 tests.unit.mesh_selsets_polygon_carry_test
 tests.unit.mesh_selsets_test
