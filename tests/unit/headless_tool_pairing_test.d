@@ -22,7 +22,7 @@ import registration : registerTools;
 import registry : Registry, ToolFactory;
 import seltype : SelMode;
 import session_owner : Session;
-import tests.unit.census_symbols : blankNonCode, countOccurrences;
+import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences;
 import tool : Tool;
 import tools.alignment.mirror : MirrorTool;
 import tools.alignment.radial_sweep_tool : RadialSweepTool;
@@ -139,55 +139,82 @@ unittest {
 
     immutable rawRegistration = readText(
         buildPath(repoRoot, "source", "registration.d"));
+    immutable rawCreate = readText(
+        buildPath(repoRoot, "source", "create_tool_registration.d"));
+    enum registrationCommentDecoy = "// new ToolHeadlessCommand(\n";
     enum structuralCommentDecoy =
         "// registerHeadlessTool! private void registerHeadlessTool( "
       ~ "new ToolHeadlessCommand(\n";
     immutable registration = blankNonCode(
-        rawRegistration ~ structuralCommentDecoy);
+        rawRegistration ~ registrationCommentDecoy);
+    immutable create = blankNonCode(rawCreate ~ structuralCommentDecoy);
     assert(rawRegistration.length > 50_000,
         "6353 source population: registration.d is unexpectedly small");
-    assert(countOccurrences(registration, "registerHeadlessTool!") == 13,
-        "6353 source population: expected 13 paired helper calls");
-    assert(countOccurrences(registration, "private void registerHeadlessTool(") == 1,
-        "6353 helper population: expected one private registerHeadlessTool");
-    assert(countOccurrences(registration, "new ToolHeadlessCommand(") == 4,
-        "6353 wrapper population: expected helper plus three Convolve wrappers");
+    assert(rawCreate.length > 8_000,
+        "6353 source population: create_tool_registration.d is unexpectedly small");
 
-    const helperAt = registration.indexOf("private void registerHeadlessTool(");
-    const generatorAt = registration.indexOf("private void registerGeneratorTools(");
-    const primitiveAt = registration.indexOf("private void registerPrimitiveTools(");
-    const editAt = registration.indexOf("private void registerEditTools(");
-    assert(helperAt >= 0 && helperAt < generatorAt && generatorAt < primitiveAt
-        && primitiveAt < editAt,
-        "6353 source order: helper/family declarations moved or vanished");
-    const helper = registration[cast(size_t) helperAt .. cast(size_t) generatorAt];
+    assert(countOccurrences(registration, "new ToolHeadlessCommand(") == 3,
+        "6353 wrapper population: expected three residual Convolve wrappers");
+    assert(countOccurrences(registration, "registerHeadlessTool!") == 0,
+        "6353 old path: paired helper calls survived in registration.d");
+    assert(countOccurrences(registration,
+            "private void registerHeadlessTool(") == 0,
+        "6353 old path: paired helper survived in registration.d");
+
+    assert(countOccurrences(create, "registerHeadlessTool!") == 13,
+        "6353 source population: expected 13 paired helper calls");
+    assert(countOccurrences(create, "private void registerHeadlessTool(") == 1,
+        "6353 helper population: expected one private registerHeadlessTool");
+    assert(countOccurrences(create, "new ToolHeadlessCommand(") == 1,
+        "6353 wrapper population: expected one create-family wrapper recipe");
+
+    string spanAt(string marker, string label) {
+        const at = create.indexOf(marker);
+        assert(at >= 0, "6353 " ~ label ~ " slice floor: marker vanished: " ~ marker);
+        const brace = create[cast(size_t) at .. $].indexOf('{');
+        assert(brace >= 0, "6353 " ~ label ~ " slice floor: body opener vanished");
+        const span = balancedSpan(
+            create, cast(size_t) at + cast(size_t) brace, '{', '}');
+        assert(span.length != 0, "6353 " ~ label
+            ~ " slice floor: balancedSpan returned an empty span for marker "
+            ~ marker);
+        return span;
+    }
+
+    const helper = spanAt("private void registerHeadlessTool(", "helper");
+    const generator = spanAt("private void registerGeneratorTools(", "generator");
+    const primitive = spanAt("private void registerPrimitiveTools(", "primitive");
     assert(countOccurrences(helper,
             "reg.toolFactories[id] = typedToolFactory!T(") == 1,
         "6353 helper: typed tool write must occur exactly once");
     assert(countOccurrences(helper, "reg.commandFactories[id] = ") == 1,
-        "6353 helper: command write must occur exactly once in the helper byte range");
+        "6353 helper: command write must occur exactly once");
     assert(countOccurrences(helper, "new ToolHeadlessCommand(") == 1,
         "6353 helper: wrapper construction must occur exactly once");
-
-    const generator = registration[cast(size_t) generatorAt .. cast(size_t) primitiveAt];
-    const primitive = registration[cast(size_t) primitiveAt .. cast(size_t) editAt];
     assert(countOccurrences(generator, "registerHeadlessTool!") == 4,
         "6353 generator population: expected four paired calls");
     assert(countOccurrences(primitive, "registerHeadlessTool!") == 9,
         "6353 primitive population: expected nine paired calls");
+    assert(countOccurrences(generator, "registerHeadlessTool!")
+         + countOccurrences(primitive, "registerHeadlessTool!")
+         == countOccurrences(create, "registerHeadlessTool!"),
+        "6353 family reconciliation: 4 + 9 paired calls must cover all 13");
+
     foreach (id; kPaired) {
-        assert(countOccurrences(rawRegistration,
-                "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
-            "6353 old channel: literal tool assignment survived for " ~ id);
-        assert(countOccurrences(rawRegistration,
-                "reg.commandFactories[\"" ~ id ~ "\"]") == 0,
-            "6353 old channel: literal command assignment survived for " ~ id);
+        foreach (raw; [rawRegistration, rawCreate]) {
+            assert(countOccurrences(raw,
+                    "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
+                "6353 old channel: literal tool assignment survived for " ~ id);
+            assert(countOccurrences(raw,
+                    "reg.commandFactories[\"" ~ id ~ "\"]") == 0,
+                "6353 old channel: literal command assignment survived for " ~ id);
+        }
     }
     foreach (id; kToolOnly) {
-        assert(countOccurrences(rawRegistration,
+        assert(countOccurrences(rawCreate,
                 "reg.toolFactories[\"" ~ id ~ "\"] = ") == 1,
-            "6353 command-negative source: flat tool registration moved for " ~ id);
-        assert(countOccurrences(rawRegistration,
+            "6353 command-negative source: create tool registration moved for " ~ id);
+        assert(countOccurrences(rawCreate,
                 "reg, \"" ~ id ~ "\", () {") == 0,
             "6353 command-negative source: tool-only id became paired: " ~ id);
     }
@@ -197,7 +224,6 @@ unittest {
         && app.indexOf("registerTools(app);") < app.indexOf("registerCommands(app);"),
         "6353 source order: registerTools must precede registerCommands/withSelType");
 }
-
 // Block 1: the real registry contains every pair, with the wrapper metadata
 // derived from the same id.
 unittest {

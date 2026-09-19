@@ -190,9 +190,9 @@ unittest {
             assert(false, "6506 transform_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("transform_tool_registration", forbidden,
                     transform));
-    assert(transform.queue.length == 251 && positive.queue.length == 511,
+    assert(transform.queue.length == 251 && positive.queue.length == 512,
         format("6506 import closure census changed: transform=%d/251 "
-            ~ "registration=%d/511", transform.queue.length,
+            ~ "registration=%d/512", transform.queue.length,
             positive.queue.length));
 }
 

@@ -103,6 +103,7 @@ import selection_command_registration : SelectionTypeDoors,
 import tool_lifecycle_registration : registerToolLifecycleCommands;
 import transform_tool_registration : TransformToolDeps,
     registerTransformToolCommands;
+import create_tool_registration : CreateToolDeps, registerCreateToolCommands;
 import item_command_registration : ItemLifecycleDoors, registerItemCommands;
 import ai3d_command_registration : registerAi3dCommands;
 import commands.mesh.subdivide;
@@ -254,8 +255,7 @@ void registerTools(EditorApp app) {
     // Task 0722 (audit §2C A9): the 600-line flat body is four family
     // functions below, called in the order the flat list wrote them in.
     registerTransformTools(app);
-    registerGeneratorTools(app);
-    registerPrimitiveTools(app);
+    registerCreateTools(app);
     registerEditTools(app);
 }
 
@@ -279,174 +279,14 @@ Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
     return app.reg.toolFactories[key]();
 }
 
-/// One typed registration owns both entries, so a paired id is written once.
-/// The command deliberately resolves the registry slot when it is created,
-/// preserving replacement of a tool factory after registration. This helper
-/// stays in this module because the prepared-writer census copies its body.
-/// Task 6353; evidence: tests/unit/headless_tool_pairing_test.d.
-private void registerHeadlessTool(T : Tool)(ref Registry reg, string id,
-        T delegate() factory, LiveSessionRole owner, LiveViewModeRole live) {
-    auto regPtr = &reg;
-    reg.toolFactories[id] = typedToolFactory!T(factory);
-    reg.commandFactories[id] = () => cast(Command)
-        new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
-                                id, regPtr.toolFactories[id]);
+/// The create registrar owns only explicit live roles and collaborators.
+private void registerCreateTools(EditorApp app) {
+    registerCreateToolCommands(app.reg(),
+        LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        CreateToolDeps(app.gpuPtr, app.litShader, app.history,
+            app.bevelEditFactory, app.topoPenFactories));
 }
-
-/// Generator-preview and topology tools — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerGeneratorTools(EditorApp app) {
-    with (app) {
-    auto headlessOwner = LiveSessionRole(sessionOwner);
-    auto headlessLive = LiveViewModeRole(cameraViewDg, sessionOwner.editModePtr());
-
-    registerHeadlessTool!MirrorTool(reg, "mesh.mirrorTool", () {
-        auto t = new MirrorTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    // Radial Sweep — interactive revolve/lathe (task 0326), promoting the
-    // pre-existing `mesh.sweep` one-shot command to a drag/handle tool.
-    // Generator-preview architecture identical to mesh.mirrorTool above
-    // (own preview mesh, commits once at deactivate()); reuses the same
-    // generic bevelEditFactory/MeshSessionEdit snapshot-diff undo path.
-    // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
-    // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
-    // Extrude port, the natural claimant of the bare "sweep" name since it
-    // shares the same `revolveProfile`/`revolveProfileEx` kernel
-    // (source/mesh_ops/revolve.d — free functions since task 1903 Stage E2).
-    registerHeadlessTool!RadialSweepTool(reg, "mesh.radialSweepTool", () {
-        auto t = new RadialSweepTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    // Tack (task 0126) — rigid polygon-to-polygon alignment. Mirrors the
-    // mesh.mirrorTool block above: same generic MeshSessionEdit/bevelEditFactory
-    // undo path, registered with the paired headless helper.
-    registerHeadlessTool!TackTool(reg, "mesh.tack", () {
-        auto t = new TackTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    // Topology Pen is not registered through registerHeadlessTool. TWO
-    // binders, and neither is optional: `setGestureBindings` carries history
-    // plus the placement gesture's per-click `MeshVertexNew`; `setPenFactories`
-    // carries the other gestures' thirteen factories as ONE named
-    // `TopoPenFactories` value built in app.d (task 6352), so no argument
-    // position can re-pair a gesture with a sibling's wire name. Member 5 of
-    // tests/unit/tool_commit_seam_census_g7_test.d requires one call of each.
-    reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {
-        auto t = new TopologyPenTool(() => &mesh(), &gpu());
-        t.setGestureBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode));
-        t.setPenFactories(topoPenFactories);
-        return t;
-    });
-
-    // Bridge (task 0357) — interactive multi-span/twist bridge, promoted
-    // from the one-shot mesh.bridge command. Same generic MeshSessionEdit/
-    // bevelEditFactory undo path and paired headless wiring as Mirror/Tack.
-    registerHeadlessTool!BridgeTool(reg, "mesh.bridgeTool", () {
-        auto t = new BridgeTool(() => &mesh(), &gpu(), litShader, &editMode());
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-    }
-}
-
-/// Primitive create tools, the pen and vertex place — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The `with` chain is
-/// reproduced verbatim rather than narrowed to what this family happens
-/// to use: narrowing it could silently re-point a bare identifier at a
-/// same-named EditorApp member.
-private void registerPrimitiveTools(EditorApp app) {
-    with (app) {
-    auto headlessOwner = LiveSessionRole(sessionOwner);
-    auto headlessLive = LiveViewModeRole(cameraViewDg, sessionOwner.editModePtr());
-
-    registerHeadlessTool!BoxTool(reg, "prim.cube", () {
-        auto t = new BoxTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!SphereTool(reg, "prim.sphere", () {
-        auto t = new SphereTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!SphereTool(reg, "prim.ellipsoid", () {
-        auto t = new SphereTool(() => &mesh(), &gpu(), litShader, /*ellipsoidMode=*/true);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!CylinderTool(reg, "prim.cylinder", () {
-        auto t = new CylinderTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!TubeTool(reg, "prim.tube", () {
-        auto t = new TubeTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!ConeTool(reg, "prim.cone", () {
-        auto t = new ConeTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!CapsuleTool(reg, "prim.capsule", () {
-        auto t = new CapsuleTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!TorusTool(reg, "prim.torus", () {
-        auto t = new TorusTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    registerHeadlessTool!ArcTool(reg, "prim.arc", () {
-        auto t = new ArcTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    }, headlessOwner, headlessLive);
-
-    // Pen is interactive only and is not registered through registerHeadlessTool.
-    reg.toolFactories["pen"] = typedToolFactory!PenTool(() {
-        auto t = new PenTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    });
-
-    // Vertex placement is not registered through registerHeadlessTool; headless
-    // geometry creation uses mesh.addVertex
-    // (task 0131).
-    reg.toolFactories["prim.vertex"] = typedToolFactory!VertexTool(() {
-        auto t = new VertexTool(() => &mesh(), &gpu(), litShader);
-        t.setGestureBindings(history, bevelEditFactory);
-        return t;
-    });
-    }
-}
-
 /// Mesh edit, slice and duplication tools — one family of the registration table (task 0722, audit
 /// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
 /// which keys are written is exactly what it was; and every key in the

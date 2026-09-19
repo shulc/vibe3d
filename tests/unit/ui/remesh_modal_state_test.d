@@ -548,11 +548,16 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const flatApp = collapseWhitespace(app);
     const flatPanel = collapseWhitespace(panel);
 
-    size_t registrarBytes;
+    size_t registrarBytes, registrarFiles;
     foreach (entry; dirEntries(root.buildPath("source"),
-            "*_registration.d", SpanMode.shallow))
+            "*_registration.d", SpanMode.shallow)) {
+        ++registrarFiles;
         registrarBytes += readText(entry.name).length;
+    }
 
+    assert(registrarFiles >= 14,
+        "6360 registrar population: the *_registration.d glob returned fewer "
+      ~ "than 14 files");
     assert(rawApp.length > 430_000 && rawEditor.length > 45_000
         && rawPanel.length > 130_000
         && rawRegistration.length + registrarBytes > 110_000

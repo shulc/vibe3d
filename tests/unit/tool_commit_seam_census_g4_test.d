@@ -375,9 +375,11 @@ unittest {
     // the DEFINITION and not the second mention of the same key inside the
     // neighbouring `commandFactories` entry; the uniqueness check below is what
     // makes that claim rather than assumes it.
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable regSrc = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable createSrc = readText(buildPath(
+        repoRoot, "source", "create_tool_registration.d"));
     string[] problems;
-    size_t checked = 0;
+    size_t checked = 0, createChecked = 0, residualChecked = 0;
 
     auto ids = kG4WireIds.dup;
     ids.sort();
@@ -388,6 +390,8 @@ unittest {
                   ~ "one registration unchecked";
 
     foreach (id; kG4WireIds) {
+        const moved = id == "mesh.tack" || id == "mesh.bridgeTool";
+        const src = moved ? createSrc : regSrc;
         string problem;
         immutable block = toolRegistrationBlock(src, id, problem);
         if (problem.length != 0) {
@@ -395,6 +399,7 @@ unittest {
             continue;
         }
         ++checked;
+        if (moved) ++createChecked; else ++residualChecked;
         if (countOccurrences(block, "setGestureBindings(") != 1)
             problems ~= "    · `" ~ id ~ "` does not bind through "
                       ~ "setGestureBindings exactly once. An unbound tool is "
@@ -413,6 +418,9 @@ unittest {
                   ~ " of " ~ kG4WireIds.length.to!string ~ " registration "
                   ~ "blocks. The scan is reading the wrong file — every per-id "
                   ~ "row above then passes by never running";
+    if (createChecked != 2 || residualChecked != 9)
+        problems ~= "    · NON-VACUITY: expected create/residual registration "
+                  ~ "populations 2/9";
     assert(problems.length == 0,
         "G4 census: a registration left the base binder.\n" ~ joinLines(problems));
 }

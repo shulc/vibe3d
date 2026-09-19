@@ -437,7 +437,7 @@ unittest {
     // Comments stripped, string literals KEPT: the wire id is a string literal,
     // and the block's own comments name both binders in prose.
     immutable src = stripCommentsOnly(
-        readText(buildPath(repoRoot, "source", "registration.d")));
+        readText(buildPath(repoRoot, "source", "create_tool_registration.d")));
     string[] problems;
     size_t   checked = 0;
 
@@ -624,7 +624,7 @@ unittest {
     immutable toolSrc = stripCommentsOnly(
         readText(buildPath(repoRoot, kPenDir, "tool.d")));
     immutable regSrc  = stripCommentsOnly(
-        readText(buildPath(repoRoot, "source", "registration.d")));
+        readText(buildPath(repoRoot, "source", "create_tool_registration.d")));
     immutable appSrc  = stripCommentsOnly(
         readText(buildPath(repoRoot, "source", "app.d")));
 
@@ -659,7 +659,7 @@ unittest {
         immutable ptrdiff_t at = regSrc.indexOf(key);
         if (at < 0)
             bad ~= "    · the `mesh.topoPen` registration block was not found in "
-                 ~ "source/registration.d";
+                 ~ "source/create_tool_registration.d";
         else {
             auto block = balancedSpan(
                 regSrc, cast(size_t) at + key.length - 1, '{', '}');
@@ -678,11 +678,11 @@ unittest {
                     bad ~= "    · `setPenFactories` argument slice floor: "
                          ~ "balancedSpan returned an empty span";
                 immutable arg = args.length >= 2 ? args[1 .. $ - 1].strip() : "";
-                if (arg.matchAll(regex(`^\w+$`)).empty)
+                if (arg != "deps.penFactories()")
                     bad ~= "    · the `mesh.topoPen` block passes `" ~ arg ~ "` to "
-                         ~ "setPenFactories; expected the one EditorApp field the "
-                         ~ "builder fills";
-                else passed = arg;
+                         ~ "setPenFactories; expected the CreateToolDeps accessor "
+                         ~ "that carries the builder's one bundle";
+                else passed = "topoPenFactories";
             }
             auto flat = block.matchAll(regex(`topoPen\w*EditFactory`)).array;
             if (flat.length != 0)

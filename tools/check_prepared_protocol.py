@@ -1455,7 +1455,7 @@ if not mutation_rejected(change_expression_factory_defaults_row,
     fail("P1.0b.0 expression-factory defaults mutation did not RED fingerprint")
 
 def capture_paired_factory_early(root):
-    p = root / "source/registration.d"
+    p = root / "source/create_tool_registration.d"
     text = p.read_text()
     assign = "    reg.toolFactories[id] = typedToolFactory!T(factory);\n"
     lookup = "                                id, regPtr.toolFactories[id]);\n"
@@ -1470,11 +1470,12 @@ if not mutation_rejected(capture_paired_factory_early,
     fail("P1.0b.0 paired early capture did not RED fingerprint")
 
 def swap_paired_factory_row(root):
-    p = root / "source/registration.d"
+    p = root / "source/create_tool_registration.d"
     text = p.read_text()
-    sphere = "new SphereTool(() => &mesh(), &gpu(), litShader);"
-    ellipsoid = ("new SphereTool(() => &mesh(), &gpu(), litShader, "
-                 "/*ellipsoidMode=*/true);")
+    sphere = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(), "
+              "deps.litShader());")
+    ellipsoid = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(),\n"
+                 "            deps.litShader(), true);")
     if text.count(sphere) != 1 or text.count(ellipsoid) != 1:
         fail("P1.0b.0 paired row-swap mutation anchor vanished")
     marker = "new SphereTool(/*P1_PAIRED_SWAP*/);"

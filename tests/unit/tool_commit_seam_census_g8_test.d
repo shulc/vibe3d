@@ -822,31 +822,50 @@ unittest {
     size_t total = 0, rosterTotal = 0;
 
     immutable regSrc = stripCommentsAndStrings(readSource("source/registration.d"));
+    immutable createSrc = stripCommentsAndStrings(
+        readSource("source/create_tool_registration.d"));
     immutable transformSrc = stripCommentsAndStrings(
         readSource("source/transform_tool_registration.d"));
     // The composition root hands these dependencies to the registrar; it is
     // not a tool consumer. Blank only that call, so any other app.X read in
     // this file remains visible to the zero-spend rows below.
-    immutable regSpendSrc = blankCallStatement(
-        regSrc, "registerTransformToolCommands(app.reg()");
+    immutable regSpendSrc = blankCallStatement(blankCallStatement(
+        regSrc, "registerTransformToolCommands(app.reg()"),
+        "registerCreateToolCommands(app.reg()");
 
     void check(string field, size_t want, string why) {
-        auto hits = identHits(regSrc, field);
-        total += hits.length;
+        auto regHits = identHits(regSpendSrc, field);
+        auto createHits = identHits(createSrc, "deps." ~ field ~ "()");
+        const got = regHits.length + createHits.length;
+        total += got;
         rosterTotal += want;
-        if (hits.length == want) return;
+        if (got == want) return;
         string at;
-        foreach (h; hits) at ~= h.to!string ~ " ";
-        problems ~= "    · `" ~ field ~ "` is spent " ~ hits.length.to!string
-                  ~ " time(s) in `source/registration.d`, roster says "
+        foreach (h; regHits) at ~= h.to!string ~ " ";
+        problems ~= "    · `" ~ field ~ "` is spent " ~ got.to!string
+                  ~ " time(s) across registration modules, roster says "
                   ~ want.to!string ~ "  (" ~ why ~ ")"
                   ~ (at.length ? "  [lines " ~ at.strip() ~ "]" : "");
     }
 
     foreach (r; kSessionRows) check(r.field, r.binds, r.why);
-    check(kPenBundleField, 1,
+    auto penHits = identHits(createSrc, "deps.penFactories()");
+    total += penHits.length;
+    rosterTotal += 1;
+    if (penHits.length != 1)
+        problems ~= "    · `topoPenFactories` is spent "
+                  ~ penHits.length.to!string ~ " time(s), roster says 1";
+    if (identHits(regSpendSrc, "bevelEditFactory").length != 9
+        || identHits(createSrc, "deps.bevelEditFactory()").length != 15)
+        problems ~= "    · NON-VACUITY: bevel-edit per-file populations "
+                  ~ "must remain registration/create 9/15";
+    if (penHits.length == 1) {
+        // Keep the reason adjacent to the measured singleton.
+        immutable penWhy =
         "`mesh.topoPen`'s one `setPenFactories` argument; the thirteen pen "
-      ~ "factories travel as this one value (task 6352)");
+      ~ "factories travel as this one value (task 6352)";
+        assert(penWhy.length > 0);
+    }
 
     size_t registrationOtherTotal, transformOtherTotal;
     foreach (r; kOtherRows) {

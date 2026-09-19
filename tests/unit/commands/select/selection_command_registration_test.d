@@ -65,6 +65,8 @@ private struct ReachRow {
 private static immutable ReachRow[] kModeCellReach = [
     ReachRow("scene_file_lifecycle_registration.d", 2,
         "6356: two declared lifecycle doors"),
+    ReachRow("create_tool_registration.d", 2,
+        "6507: radialSweep + bridge take the mode cell"),
     ReachRow("transform_tool_registration.d", 5,
         "6506: one unified helper plus four deform factories"),
 ];
@@ -462,7 +464,7 @@ unittest { // S9: production call, ordering and old-path census
             assert(expectedEditModePtrs > 0,
                 "6000 mode-cell reach: a recorded editModePtr row became empty: " ~ file);
     }
-    assert(regFiles.length >= 13 && kModeCellReach.length == 2
+    assert(regFiles.length >= 14 && kModeCellReach.length == 3
         && modeRowsSeen == kModeCellReach.length
         && editModePtrRowsSeen == kEditModePtrReach.length,
         format("6000 mode-cell reach population: files=%d mode rows=%d/%d "

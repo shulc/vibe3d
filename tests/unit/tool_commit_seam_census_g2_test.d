@@ -401,13 +401,17 @@ unittest {
     // the DEFINITION and not the second mention of the same key in the
     // neighbouring `commandFactories` entry; the uniqueness check below makes
     // that a claim rather than an assumption.
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable regSrc = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable createSrc = readText(buildPath(
+        repoRoot, "source", "create_tool_registration.d"));
     string[] problems;
-    size_t checked = 0;
+    size_t checked = 0, createChecked = 0, residualChecked = 0;
 
     foreach (row; kG2Registrations) {
         immutable id  = row[0];
         immutable fac = row[1];
+        const moved = id == "mesh.mirrorTool" || id == "mesh.radialSweepTool";
+        const src = moved ? createSrc : regSrc;
         string problem;
         immutable block = toolRegistrationBlock(src, id, problem);
         if (problem.length != 0) {
@@ -415,6 +419,7 @@ unittest {
             continue;
         }
         ++checked;
+        if (moved) ++createChecked; else ++residualChecked;
 
         if (countOccurrences(block, "setGestureBindings(") != 1)
             problems ~= "    · `" ~ id ~ "` does not bind through "
@@ -425,7 +430,10 @@ unittest {
                       ~ "tool has no such method any more, so this would not "
                       ~ "even compile; if you are reading this, the id resolved "
                       ~ "to the wrong block";
-        if (countOccurrences(block, "setGestureBindings(history, " ~ fac ~ ")") != 1)
+        const binding = moved
+            ? "setGestureBindings(deps.history(), deps." ~ fac ~ "())"
+            : "setGestureBindings(history, " ~ fac ~ ")";
+        if (countOccurrences(block, binding) != 1)
             problems ~= "    · `" ~ id ~ "` no longer binds `" ~ fac ~ "`. The "
                       ~ "frozen cell for this tool in "
                       ~ "`tests/fixtures/tool_gesture/g2.json` records the wire "
@@ -439,6 +447,8 @@ unittest {
       ~ kG2Registrations.length.to!string ~ " registration blocks. The scan is "
       ~ "reading the wrong file or the needle stopped matching — every per-id "
       ~ "check above then passes vacuously.");
+    assert(createChecked == 2 && residualChecked == 3,
+        "G2 census: expected create/residual registration populations 2/3");
     assert(problems.length == 0,
         "G2 census: a registration left the base binder.\n" ~ joinLines(problems));
 }

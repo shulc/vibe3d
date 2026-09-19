@@ -49,7 +49,7 @@ import std.array     : appender;
 import std.conv      : to;
 import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName;
-import std.string    : indexOf;
+import std.string    : indexOf, startsWith;
 
 import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
    blankNonCode, countOccurrences, enclosingSymbols, historySurface,
@@ -329,11 +329,15 @@ unittest {
     // the DEFINITION and not the second mention of the same key inside the
     // neighbouring `commandFactories` entry; the uniqueness assert below is what
     // makes that claim rather than assumes it.
-    immutable src = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable regSrc = readText(buildPath(repoRoot, "source", "registration.d"));
+    immutable createSrc = readText(buildPath(
+        repoRoot, "source", "create_tool_registration.d"));
     string[] problems;
-    size_t checked = 0;
+    size_t checked = 0, createChecked = 0, residualChecked = 0;
 
     foreach (id; kG1WireIds) {
+        const moved = id.startsWith("prim.") || id == "pen";
+        const src = moved ? createSrc : regSrc;
         string problem;
         immutable block = toolRegistrationBlock(src, id, problem);
         if (problem.length != 0) {
@@ -341,6 +345,7 @@ unittest {
             continue;
         }
         ++checked;
+        if (moved) ++createChecked; else ++residualChecked;
         if (countOccurrences(block, "setGestureBindings(") != 1)
             problems ~= "    · `" ~ id ~ "` does not bind through "
                       ~ "setGestureBindings exactly once";
@@ -356,6 +361,8 @@ unittest {
       ~ kG1WireIds.length.to!string ~ " registration blocks. The scan is "
       ~ "reading the wrong file or the stripper ate it — every per-id check "
       ~ "above then passes vacuously.");
+    assert(createChecked == 11 && residualChecked == 3,
+        "G1 census: expected create/residual registration populations 11/3");
     assert(problems.length == 0,
         "G1 census: a registration left the base binder.\n" ~ joinLines(problems));
 }
