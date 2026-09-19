@@ -679,6 +679,8 @@ private void cellC9_oneDeriveForAllReplicas(ViewportSceneRenderer renderer,
         drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
     drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
     immutable size_t calls = tool.preparedGizmoFrameCallsForTest();
+    // The isolated old-path mutation measured 4 here: one derive per replica
+    // plus one for the owner.  The shared memo makes the whole frame cost one.
     assert(calls == 1, format(
         "REPLICA FRAME DERIVE COUNT: expected 1 for %s replicas plus owner got %s",
         replicaCount, calls));
