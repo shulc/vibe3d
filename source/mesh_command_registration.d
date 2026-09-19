@@ -142,6 +142,9 @@ public:
 
 /// Register mesh, polygon, vertex and UV commands against explicit live roles
 /// and the five narrow capabilities that the family consumes.
+/// Sliced CONTIGUOUSLY, so the order in which keys are written is exactly what
+/// it was; and every key in the table is written exactly once, so order is not
+/// load-bearing between families.
 void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, MeshCommandDeps deps) {
     auto regPtr = &reg;

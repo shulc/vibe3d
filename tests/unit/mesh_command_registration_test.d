@@ -113,11 +113,24 @@ unittest {
         && rig.registry.commandFactories["select.remove"]
             is rig.registry.commandFactories["mesh.remove"],
         "6509 alias ceiling: select.delete/remove stopped sharing their mesh delegates");
+    foreach (id; kMeshIds) {
+        auto command = rig.registry.commandFactories[id]();
+        assert(command.meshPtr() is &rig.layerA.meshRef(),
+            "6509 A command mesh: " ~ id ~ " did not begin on layer A");
+        assert(command.viewRef is rig.cells[0],
+            "6509 A command view: " ~ id ~ " did not begin on cell 0");
+        assert(command.editModeVal == EditMode.Vertices,
+            "6509 A command mode: " ~ id ~ " did not begin in Vertices");
+    }
     rig.switchToB();
     foreach (id; kMeshIds) {
         auto command = rig.registry.commandFactories[id]();
         assert(command.meshPtr() is &rig.layerB.meshRef(),
             "6509 live command mesh: " ~ id ~ " retained layer A");
+        assert(command.viewRef is rig.cells[1],
+            "6509 live command view: " ~ id ~ " retained cell 0");
+        assert(command.editModeVal == EditMode.Polygons,
+            "6509 live command mode: " ~ id ~ " retained Vertices");
     }
 }
 
@@ -145,9 +158,15 @@ unittest {
             "6509 resolved viewport: the provider froze the registration-time snapshot");
         rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
     }
-    auto plain = rig.registry.commandFactories["mesh.subdivide"]();
-    assert(fieldOf!(Viewport delegate())(plain, "resolvedVpProvider") is null,
-        "6509 resolved viewport ceiling: provider escaped the three consumers");
+    foreach (id; kMeshIds) {
+        if (id == "mesh.screenSlice" || id == "mesh.select"
+                || id == "mesh.transform") continue;
+        auto command = rig.registry.commandFactories[id]();
+        assert(fieldOf!(Viewport delegate())(
+                command, "resolvedVpProvider") is null,
+            "6509 resolved viewport ceiling: provider escaped the three "
+          ~ "consumers through " ~ id);
+    }
 }
 
 // B3: the full production path wraps the mesh family only after registration.

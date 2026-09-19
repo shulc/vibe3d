@@ -197,6 +197,9 @@ unittest {
     const code = blankNonCode(raw);
     assert(raw.length > 20_000,
         "6509 boundary population: mesh registrar source is unexpectedly small");
+    assert(countOccurrences(code, "reg.commandFactories[") == 111,
+        "6509 boundary population: code projection must contain exactly 111 "
+      ~ "mesh command-factory writes");
     immutable moved = ["EditorApp", "with (", "vpm", "remeshModalState"];
     immutable before = [1, 2, 3, 1];
     foreach (i, needle; moved)
@@ -378,6 +381,9 @@ unittest {
     assert(rosterRows == 5, "6509 storage population: expected five members");
 }
 
+// This exact-text pin is the only witness that distinguishes originSnapshot
+// from the same-typed inputSnapshot sibling: in Quad with hoveredId == -1,
+// overlayOwnerId() == activeId, so the two providers behave identically.
 private enum kExpectedCall = "registerMeshCommands(app.reg(), "
     ~ "LiveSessionRole(app.sessionOwner), "
     ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
