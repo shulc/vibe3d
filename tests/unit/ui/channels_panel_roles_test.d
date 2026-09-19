@@ -779,6 +779,8 @@ unittest { // I5: a payload appearing under the same item and index is a memo mi
         && base.channelCount == 2 && base.disabledChannels == 1,
         "6358 payload floor: the payload-less Image did not memoise its base rows");
     const providerBeforeMiss = channelsFormProvider(roles.state);
+    assert(providerBeforeMiss !is null && !channelsDrawSnapshot().modelRebuilt,
+        "6503 provider timing: captured before the miss");
     logo.imageRef() = new ImageData();
     const grown = fresh(ui);
     assert(grown.bound && grown.title == "Logo" && grown.provider !is null,
