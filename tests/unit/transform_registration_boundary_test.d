@@ -298,6 +298,19 @@ unittest { // L3d: every constructor collaborator is required independently
     LayerXformEdit delegate() item = () => null;
     auto pipe = new PipeGizmoHost;
     bool delegate() silent = () => false;
+    // POSITIVE CONTROL for the negatives below: without it, seven assertThrown
+    // read as "each collaborator is independently required" while a constructor
+    // that refuses EVERYTHING — the all-valid roster included — satisfies all
+    // seven. Measured: an unconditional refusal left this whole module green
+    // before this line existed, and reddens it now (5/603 failing modules
+    // became 6/603, the added one being this file).
+    //
+    // WHICH of its two halves reports, because H/J/K copy this: for a ctor that
+    // refuses everything the CONSTRUCTION throws, so the throw's own line is the
+    // red and the message below never prints. The message prints for the other
+    // half — a ctor that ACCEPTS a valid roster and then stores the wrong thing,
+    // e.g. an accessor handing back null. Both are the control's job; only the
+    // second speaks in its own words.
     auto ok = TransformToolDeps(&gpu, history, vertex, morph, item, pipe, silent);
     assert(ok.gpu() is &gpu && ok.history() is history,
         "6506 L3d floor: the all-valid roster must construct");
