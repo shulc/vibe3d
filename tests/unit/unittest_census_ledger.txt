@@ -228,9 +228,3 @@ drop 0 1 5900 the two-frame timing floor guarded a difference that no longer exi
 # cache at every run, pick, and layer boundary. MeshDirtyKey's own ABA cell now
 # owns the remaining address/epoch defence-in-depth comparator mutation.
 drop 2 6 6207 unreachable run/pick key terms and their isolated struct assertions were retired; boundary clear owns invalidation and MeshDirtyKey owns its comparator witness
-
-# Task 6512 keeps the active-drag and built-preview cells at the reviewed
-# projection boundary. Two extra world-coordinate checks ran before the named
-# projection witnesses and made their prescribed mutations fail at the wrong
-# assertion; the C3 world-coordinate witness remains.
-drop 0 2 6512 C5 and C6 assert the frozen replica projection before state equality; C3 retains the independent world-coordinate oracle

@@ -4663,12 +4663,21 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
         "preview_.reset()" not in builder and
         tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
         tool.count("image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;") == 3 and
-        tool.count("image.gizmoSelHash = gizmoSelHash;") == 3 and
+        # Four hashes are intentional: prepared build, owner derive, the
+        # unittest seam, and drawReplica's read-only owner fallback.  The last
+        # one seeds the shared replica memo without publishing interaction
+        # state; collapsing this back to three reintroduces a per-cell derive.
+        tool.count("image.gizmoSelHash = gizmoSelHash;") == 4 and
         "active = true; built = false; dragPart = -1; width_ = 0.0f;" in installer and
         "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;" in installer and
-        "gizmoSelHash = image.gizmoSelHash; image.clear();" in installer and
+        "gizmoSelHash = image.gizmoSelHash;" in installer and
+        "publishOwnerFrameToReplica();" in installer and
+        "image.clear();" in installer and
+        installer.find("gizmoSelHash = image.gizmoSelHash;") <
+            installer.find("publishOwnerFrameToReplica();") <
+            installer.find("image.clear();") and
         not re.search(r"\b(roundLevel_|widthMode_)\s*=", installer) and
         "void reset() nothrow @nogc" in preview and
         "hasLast_      = false;" in preview and
@@ -4741,8 +4750,10 @@ for target, old, new, label in (
      "widthAxis = image.widthAxis;", "drop base anchor"),
     ("tool", "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;",
      "baseAnchor = image.baseAnchor;", "drop width axis"),
-    ("tool", "gizmoSelHash = image.gizmoSelHash; image.clear();",
-     "image.clear();", "drop selection hash"),
+    ("tool", "gizmoSelHash = image.gizmoSelHash;",
+     "", "drop selection hash"),
+    ("tool", "publishOwnerFrameToReplica();",
+     "", "drop installed replica memo"),
     ("tool", "bool any = source.hasAnySelectedEdges();", "bool any = false;", "drop selected-edge branch"),
     ("tool", "if (!source.isEdgeSelected(ei)) continue;", "", "drop selected-edge guard"),
     ("tool", "len > 1e-6f", "len >= 0", "drop axis fallback threshold"),

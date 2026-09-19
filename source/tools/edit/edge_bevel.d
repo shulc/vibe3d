@@ -132,6 +132,10 @@ private:
 
     Arrow       widthArrow;
     Arrow       replicaArrow_;
+    // One draw-only frame image is shared by every foreign cell.  The owner
+    // publishes its frozen frame here; after a selection change the first
+    // replica refreshes it and the remaining replicas plus the owner reuse it.
+    PreparedEdgeBevelActivationImage replicaImage_;
     ToolHandles toolHandles;
 
     enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
@@ -203,7 +207,9 @@ public:
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
-        gizmoSelHash = image.gizmoSelHash; image.clear();
+        gizmoSelHash = image.gizmoSelHash;
+        publishOwnerFrameToReplica();
+        image.clear();
     }
     final PreparedSessionActivateEffect prepareActivate(
             PreparedRecordContext context) {
@@ -468,10 +474,26 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
-        if (visualOnly) { drawReplica(shader, vp); return; }
+        if (visualOnly) {
+            // Visual cells do not run arbitration, but they draw the resident
+            // owner's paint state.  This mirrors display state only; the
+            // replica remains absent from ToolHandles and cannot become hot.
+            replicaArrow_.setState(widthArrow.getState());
+            replicaArrow_.setEngaged(widthArrow.isEngaged());
+            drawReplica(shader, vp);
+            return;
+        }
         cachedVp = vp;
-        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Edges) != gizmoSelHash)
-            computeGizmoFrame();
+        if (dragPart < 0 && !built) {
+            immutable ulong signature = mesh.selectionSignature(EditMode.Edges);
+            if (signature != gizmoSelHash) {
+                if (replicaImage_.valid &&
+                    replicaImage_.gizmoSelHash == signature)
+                    publishGizmoFrame(replicaImage_);
+                else
+                    computeGizmoFrame();
+            }
+        }
         if (!gizmoValid) return;
 
         anchor = baseAnchor;   // LOCAL, like the kernel
@@ -506,13 +528,14 @@ private:
     private void drawReplica(const ref Shader shader, const ref Viewport vp) {
         PreparedEdgeBevelActivationImage image;
         image.gizmoValid = gizmoValid;
-        image.anchor = anchor;
         image.baseAnchor = baseAnchor;
         image.widthAxis = widthAxis;
         image.gizmoSelHash = gizmoSelHash;
-        if (dragPart < 0 && !built
-            && mesh.selectionSignature(EditMode.Edges) != image.gizmoSelHash)
-            computePreparedGizmoFrame(*mesh, image);
+        if (dragPart < 0 && !built) {
+            immutable ulong signature = mesh.selectionSignature(EditMode.Edges);
+            ensureReplicaFrame(signature, image);
+            image = replicaImage_;
+        }
         if (!image.gizmoValid) return;
 
         const auto os = OverlaySpace.ofPrimary();
@@ -523,6 +546,28 @@ private:
         replicaArrow_.end = anchorW + ax.dir * armLen;
         replicaArrow_.color = WIDTH_COLOR;
         replicaArrow_.draw(shader, vp);
+    }
+
+    private void ensureReplicaFrame(ulong signature,
+            ref const PreparedEdgeBevelActivationImage ownerImage) {
+        // A newly installed tool can reach a visual draw before any explicit
+        // cache publication.  Seed from the complete owner image only when it
+        // already describes this selection; otherwise derive current geometry.
+        if (!replicaImage_.valid && ownerImage.gizmoSelHash == signature) {
+            replicaImage_.valid = true;
+            replicaImage_.gizmoValid = ownerImage.gizmoValid;
+            replicaImage_.anchor = ownerImage.anchor;
+            replicaImage_.baseAnchor = ownerImage.baseAnchor;
+            replicaImage_.widthAxis = ownerImage.widthAxis;
+            replicaImage_.gizmoSelHash = ownerImage.gizmoSelHash;
+        }
+        if (replicaImage_.valid && replicaImage_.gizmoSelHash == signature)
+            return;
+
+        replicaImage_.clear();
+        replicaImage_.valid = true;
+        replicaImage_.gizmoSelHash = signature;
+        computePreparedGizmoFrame(*mesh, replicaImage_);
     }
 
     bool[] currentMask() {
@@ -536,13 +581,30 @@ private:
         image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
         image.gizmoSelHash = gizmoSelHash;
         computePreparedGizmoFrame(*mesh, image);
+        publishGizmoFrame(image);
+        publishOwnerFrameToReplica();
+    }
+
+    private void publishGizmoFrame(
+            ref const PreparedEdgeBevelActivationImage image) {
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
         gizmoSelHash = image.gizmoSelHash;
     }
 
+    private void publishOwnerFrameToReplica() nothrow @nogc {
+        replicaImage_.clear();
+        replicaImage_.valid = true;
+        replicaImage_.gizmoValid = gizmoValid;
+        replicaImage_.anchor = anchor;
+        replicaImage_.baseAnchor = baseAnchor;
+        replicaImage_.widthAxis = widthAxis;
+        replicaImage_.gizmoSelHash = gizmoSelHash;
+    }
+
     private static void computePreparedGizmoFrame(ref Mesh source,
             ref PreparedEdgeBevelActivationImage image) {
+        version(unittest) ++preparedGizmoFrameCallsForTest_;
         image.gizmoValid = false;
         if (source.edges.length == 0) return;
         image.anchor = source.selectionCentroidEdges();
@@ -657,6 +719,8 @@ private:
 
 public:
     version(unittest) {
+        private static size_t preparedGizmoFrameCallsForTest_;
+
         private static void appendRaw(T)(ref ubyte[] bytes,
                                          ref const T value) {
             bytes ~= (cast(const(ubyte)*) &value)[0 .. T.sizeof];
@@ -693,6 +757,30 @@ public:
             start = widthArrow.start;
             end = widthArrow.end;
             drawId = widthArrow.drawIdentity();
+        }
+
+        final void replicaPaintForTest(out Vec3 base, out Vec3 resolved,
+                out HandleState state, out bool engaged) const {
+            base = replicaArrow_.color;
+            resolved = replicaArrow_.resolvedColorForTest(base);
+            state = replicaArrow_.getState();
+            engaged = replicaArrow_.isEngaged();
+        }
+
+        final void widthPaintForTest(out Vec3 base, out Vec3 resolved,
+                out HandleState state, out bool engaged) const {
+            base = widthArrow.color;
+            resolved = widthArrow.resolvedColorForTest(base);
+            state = widthArrow.getState();
+            engaged = widthArrow.isEngaged();
+        }
+
+        final void resetPreparedGizmoFrameCallsForTest() nothrow @nogc {
+            preparedGizmoFrameCallsForTest_ = 0;
+        }
+
+        final size_t preparedGizmoFrameCallsForTest() const nothrow @nogc {
+            return preparedGizmoFrameCallsForTest_;
         }
 
         final ubyte[] interactionStateBytesForTest() const {

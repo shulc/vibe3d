@@ -310,10 +310,10 @@ bool testFlowA() {
 //
 // Three replicas now run `activeTool.draw` under FOREIGN cell projections
 // before the owner's own draw. Most tools do not honour the `visualOnly`
-// contract — measured on this tree, only 10 of the 38 `Tool.draw` overrides
-// read the flag at all, and 21 of the other 28 write `cachedVp` and/or run a
+// contract — measured on this tree, only 11 of the 38 `Tool.draw` overrides
+// read the flag at all, and 20 of the other 27 write `cachedVp` and/or run a
 // full `ToolHandles` register/hit-test cycle unconditionally. `EdgeBevelTool`
-// is one of those 21.
+// moved to the reader set; its cachedVp assignment itself did not disappear.
 //
 // What keeps that safe is `viewport.overlayDrawOrder`: every non-owner cell is
 // visited FIRST and the owner LAST, so each foreign write is overwritten before

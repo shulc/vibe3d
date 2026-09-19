@@ -7,7 +7,7 @@ import bindbc.sdl;
 import display_state : DrawPlan;
 import editmode : EditMode;
 import eventlog : parkOverrideMouse, setOverrideMouse;
-import handler : getGizmoPixels, setGizmoPixels;
+import handler : HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, Viewport, isOrtho, lookAt, orthographicMatrix,
     projectToWindowFull;
 import mesh : Mesh;
@@ -213,12 +213,16 @@ private void cellC0_arrangementCensus() {
         "C0 EDGE DISPATCH: expected exactly one if (visualOnly) in EdgeBevelTool.draw");
 
     immutable deriveFloor = tokenCountInSymbol(edgeCode, edgePath,
-        "computePreparedGizmoFrame(", replicaSymbol);
+        "ensureReplicaFrame(", replicaSymbol);
     immutable arrowFloor = tokenCountInSymbol(edgeCode, edgePath,
         "replicaArrow_", replicaSymbol);
     assert(deriveFloor > 0 && arrowFloor > 0, format(
-        "C0 DRAW REPLICA POPULATION: expected derive>0 and arrow>0 got derive=%s arrow=%s",
+        "C0 DRAW REPLICA POPULATION: expected cache-derive>0 and arrow>0 got derive=%s arrow=%s",
         deriveFloor, arrowFloor));
+    immutable ownerPublish = tokenCountInSymbol(edgeCode, edgePath,
+        "publishOwnerFrameToReplica();", "EdgeBevelTool.computeGizmoFrame");
+    assert(ownerPublish == 1, format(
+        "C0 OWNER MEMO PUBLICATION: expected 1 got %s", ownerPublish));
 
     foreach (word; ["cachedVp", "toolHandles", "widthArrow", "queryMouse",
                     "rebuildPreview", "preview_", "before"]) {
@@ -396,6 +400,13 @@ private void assertReplicaFrozenA(EdgeBevelTool tool,
     assertProjected(end, replicaVp, 480.0f, 360.0f,
                     "REPLICA IGNORED THE FROZEN ANCHOR " ~ reason
                     ~ " END");
+    // Keep the independent world-space witness below the projected boundary:
+    // the projection is the named first red line, while these two assertions
+    // retain the channel that can move along kView's depth without moving px/py.
+    assertVecNear(start, Vec3(2, 0, 1), 1e-4f,
+                  "FROZEN REPLICA WORLD START " ~ reason);
+    assertVecNear(end, Vec3(2, 0, 6), 1e-4f,
+                  "FROZEN REPLICA WORLD END " ~ reason);
 }
 
 private void cellC3_freshness(ViewportSceneRenderer renderer, Shader shader,
@@ -619,6 +630,110 @@ private void cellC7_noEdges(ViewportSceneRenderer renderer, Shader shader,
                      "C7 OWNER INTERACTION STATE CHANGED");
 }
 
+private void cellC8_ownerMemoFreezesReplica(ViewportSceneRenderer renderer,
+                                            Shader shader, ref GpuMesh gpu,
+                                            ref Viewport replicaVp,
+                                            ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    immutable ulong sigA = selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    assertOwnerA(tool, ownerVp);
+
+    // Position is deliberately version/signature-silent here.  The resident
+    // owner frame must seed the replica memo, or the foreign cell re-derives a
+    // shifted anchor even though the selection identity did not change.
+    live.vertices[0].x += 5.0f;
+    immutable ulong afterMove = live.selectionSignature(EditMode.Edges);
+    assert(afterMove == sigA, format(
+        "C8 SIGNATURE FLOOR: expected unchanged %s got %s", sigA, afterMove));
+    const before = tool.interactionStateBytesForTest();
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    assertReplicaFrozenA(tool, replicaVp,
+                         "after a signature-stable vertex move");
+    assertStateEqual(before, tool.interactionStateBytesForTest(),
+                     "C8 OWNER INTERACTION STATE CHANGED");
+}
+
+private void cellC9_oneDeriveForAllReplicas(ViewportSceneRenderer renderer,
+                                             Shader shader, ref GpuMesh gpu,
+                                             ref Viewport replicaVp,
+                                             ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+
+    immutable ulong sigB = switchSelectionToB(live);
+    tool.resetPreparedGizmoFrameCallsForTest();
+    enum size_t replicaCount = 3;
+    foreach (_; 0 .. replicaCount)
+        drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    immutable size_t calls = tool.preparedGizmoFrameCallsForTest();
+    assert(calls == 1, format(
+        "REPLICA FRAME DERIVE COUNT: expected 1 for %s replicas plus owner got %s",
+        replicaCount, calls));
+    assert(tool.readInteractionForTest().gizmoSelHash == sigB, format(
+        "C9 OWNER PUBLICATION: expected hash=%s got %s", sigB,
+        tool.readInteractionForTest().gizmoSelHash));
+}
+
+private void cellC10_replicaMirrorsResidentPaint(
+        ViewportSceneRenderer renderer, Shader shader, ref GpuMesh gpu,
+        ref Viewport replicaVp, ref Viewport ownerVp) {
+    auto live = twoQuadsFixture();
+    selectionA(live);
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    setOverrideMouse(330, 230);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+
+    Vec3 ownerBase, ownerResolved, replicaBase, replicaResolved;
+    HandleState ownerState, replicaState;
+    bool ownerEngaged, replicaEngaged;
+    tool.widthPaintForTest(ownerBase, ownerResolved, ownerState, ownerEngaged);
+    assert(ownerState == HandleState.Rollover && !ownerEngaged, format(
+        "C10 OWNER HOT FLOOR: expected rollover/false got %s/%s",
+        ownerState, ownerEngaged));
+
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    tool.replicaPaintForTest(replicaBase, replicaResolved,
+                             replicaState, replicaEngaged);
+    assertVecNear(replicaBase, Vec3(0.20f, 0.45f, 1.00f), 0,
+                  "REPLICA BASE COLOR");
+    assert(replicaState == ownerState && !replicaEngaged, format(
+        "REPLICA HOT STATE: expected %s/false got %s/%s",
+        ownerState, replicaState, replicaEngaged));
+    assertVecNear(replicaResolved, Vec3(1.00f, 0.90f, 0.40f), 0,
+                  "REPLICA HOT COLOR");
+
+    beginWidthDrag(tool);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
+    tool.widthPaintForTest(ownerBase, ownerResolved, ownerState, ownerEngaged);
+    assert(ownerState == HandleState.Rollover && ownerEngaged, format(
+        "C10 OWNER ENGAGED FLOOR: expected rollover/true got %s/%s",
+        ownerState, ownerEngaged));
+    drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
+    tool.replicaPaintForTest(replicaBase, replicaResolved,
+                             replicaState, replicaEngaged);
+    assert(replicaState == ownerState && replicaEngaged, format(
+        "REPLICA ENGAGED STATE: expected %s/true got %s/%s",
+        ownerState, replicaState, replicaEngaged));
+    assertVecNear(replicaResolved, ownerResolved, 0,
+                  "REPLICA ENGAGED COLOR");
+}
+
 unittest { runReplicaOwnershipWitness(); }
 
 private void runReplicaOwnershipWitness() {
@@ -682,4 +797,8 @@ private void runReplicaOwnershipWitness() {
     cellC5_activeDrag(renderer, shader, gpu, replicaVp, ownerVp);
     cellC6_builtPreview(renderer, shader, gpu, replicaVp, ownerVp);
     cellC7_noEdges(renderer, shader, gpu, replicaVp);
+    cellC8_ownerMemoFreezesReplica(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC9_oneDeriveForAllReplicas(renderer, shader, gpu, replicaVp, ownerVp);
+    cellC10_replicaMirrorsResidentPaint(renderer, shader, gpu,
+                                        replicaVp, ownerVp);
 }

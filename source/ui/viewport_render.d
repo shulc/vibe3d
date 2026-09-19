@@ -1084,7 +1084,7 @@ public:
     //                   under THIS cell's vp with visualOnly=true, which
     //                   ASKS the tool to skip its cachedVp / ToolHandles
     //                   writes (see Tool.draw's doc comment). Most tools do
-    //                   not honour that ask — measured: 10 of 38 overrides
+    //                   not honour that ask — measured: 11 of 38 overrides
     //                   read the flag — so what actually keeps a replica
     //                   from corrupting the owner's interaction state is
     //                   `overlayDrawOrder` visiting the owner LAST.

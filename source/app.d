@@ -7132,8 +7132,8 @@ void main(string[] args) {
         // the owner's dogfood report.
         //
         // The allowlist's premise (that only wired tools are safe) does not
-        // survive measurement either: of the 38 `Tool.draw` overrides only 10
-        // read `visualOnly`, and 21 of the other 28 write `cachedVp` and/or
+        // survive measurement either: of the 38 `Tool.draw` overrides only 11
+        // read `visualOnly`, and 20 of the other 27 write `cachedVp` and/or
         // run a `ToolHandles` cycle unconditionally — including the two that
         // WERE eligible via `CommandWrapperTool`'s subclasses. What actually
         // makes a replica harmless is `overlayDrawOrder` visiting the owner

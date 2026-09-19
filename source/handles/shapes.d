@@ -136,12 +136,18 @@ public:
     void setEngaged(bool e) { engaged = e; }
     bool isEngaged() const  { return engaged; }
 
-    version(unittest) final ubyte[] handlerStateBytesForTest() const {
-        ubyte[] bytes;
-        bytes ~= (cast(const(ubyte)*) &state)[0 .. state.sizeof];
-        bytes ~= (cast(const(ubyte)*) &visible)[0 .. visible.sizeof];
-        bytes ~= (cast(const(ubyte)*) &engaged)[0 .. engaged.sizeof];
-        return bytes;
+    version(unittest) {
+        final ubyte[] handlerStateBytesForTest() const {
+            ubyte[] bytes;
+            bytes ~= (cast(const(ubyte)*) &state)[0 .. state.sizeof];
+            bytes ~= (cast(const(ubyte)*) &visible)[0 .. visible.sizeof];
+            bytes ~= (cast(const(ubyte)*) &engaged)[0 .. engaged.sizeof];
+            return bytes;
+        }
+
+        final Vec3 resolvedColorForTest(Vec3 idle) const {
+            return drawColor(idle);
+        }
     }
 
     // What this handle is doing, in the only terms the colour law cares about.

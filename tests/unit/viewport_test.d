@@ -283,8 +283,8 @@ unittest {
     // on, so state it as a law over every owner rather than as two literals.
     //
     // Since 1650 EVERY non-owner cell draws a `Visual` replica, and most tools
-    // do not honour `Tool.draw`'s `visualOnly` contract (measured: 10 of 38
-    // `Tool.draw` overrides read the flag; 21 of the other 28 write `cachedVp`
+    // do not honour `Tool.draw`'s `visualOnly` contract (measured: 11 of 38
+    // `Tool.draw` overrides read the flag; 20 of the other 27 write `cachedVp`
     // and/or run a `ToolHandles` register/hit-test cycle regardless). What
     // keeps that safe is that the owner's `Interactive` draw runs LAST and
     // overwrites whatever the replicas left. Reverse this order and the
@@ -891,4 +891,3 @@ unittest {
     m.views[0].indRotate = true;
     m.views[0].masterId  = -1;
 }
-

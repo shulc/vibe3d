@@ -30,8 +30,8 @@ enum OverlayMode { None, Visual, Interactive }
 ///
 /// What makes dropping the list safe is NOT that every tool honours
 /// `Tool.draw`'s `visualOnly` contract — measured, most do not: of the 38
-/// `Tool.draw` overrides only 10 read the flag in their body, and 21 of the
-/// remaining 28 write `cachedVp` and/or run a `ToolHandles` register/hit-test
+/// `Tool.draw` overrides only 11 read the flag in their body, and 20 of the
+/// remaining 27 write `cachedVp` and/or run a `ToolHandles` register/hit-test
 /// cycle unconditionally. It is `viewport.overlayDrawOrder`, which visits every
 /// non-owner cell FIRST and the owner LAST: every one of those writes is
 /// overwritten by the owner's own `Interactive` draw before the frame ends, and
