@@ -510,6 +510,17 @@ public:
     }
 }
 
+// Paired positive control for the external construction-authority fence.
+// This expression must remain valid inside Registry's owning module; the
+// external half proves that the same expression is rejected by visibility.
+unittest {
+    static assert(__traits(compiles, {
+        CommandFactory factory;
+        Registry reg;
+        reg.commandFactories_["k"] = factory;
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests: the resolves-back gate in cacheSupportedModes() (command-scoped
 // only — see doc/registry_name_integrity_plan.md).

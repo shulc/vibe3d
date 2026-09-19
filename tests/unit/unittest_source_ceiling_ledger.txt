@@ -14,7 +14,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 565
-unittest-blocks 693
+unittest-blocks 694
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -134,7 +134,7 @@ block source/prepared_vertex_merge_activation.d 1
 block source/prepared_vertex_merge_param_update.d 1
 block source/prepared_xfrm_activation_session.d 1
 block source/record_observer_hub.d 1
-block source/registry.d 8
+block source/registry.d 9
 block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
 block source/screen_buckets.d 1
