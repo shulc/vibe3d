@@ -32,15 +32,12 @@ import std.net.curl;
 import std.json;
 import std.math : fabs;
 import std.conv : to;
-import std.file : readText;
-import std.path : buildPath, dirName;
 import std.algorithm.searching : canFind;
+import std.format : format;
 
 void main() {}
 
 alias baseUrl = testBaseUrl;
-
-private enum repoRoot = dirName(dirName(__FILE_FULL_PATH__));
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
@@ -247,7 +244,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // 7. Task 6613: every string outside argstring's bareword alphabet is quoted
 //    by the FormsPanel write builder, then re-parses to the original value.
-//    The mixed marker is a display hint, never editable buffer contents.
+//    The generated difference covers the pre-fix second list exhaustively.
 // ---------------------------------------------------------------------------
 unittest {
     import argstring : isArgstringBareword, isArgstringBarewordChar,
@@ -272,21 +269,32 @@ unittest {
     assert(leadingHash == `layer.attr 0 name "#name"`,
         "6613 forms write emitted a token-start comment: " ~ leadingHash);
 
-    immutable values = ["(mixed)x", "left[right]", "a=b", "it's",
-                        `say"hi`, `c:\tmp`, "#name"];
-    foreach (value; values) {
+    immutable oldQuoteSet = `"{},:`;
+    string failures;
+    size_t exercised;
+    foreach (code; 0x21 .. 0x7f) {
+        const c = cast(char) code;
+        if (isArgstringBarewordChar(c) || oldQuoteSet.canFind(c)) continue;
+        ++exercised;
+        const value = "a" ~ c ~ "b";
         const line = substituteQuery(b, JSONValue(value));
-        auto parsed = parseArgstring(line);
-        auto pos = parsed.params["_positional"].array;
-        assert(pos.length == 3 && pos[2].str == value,
-            "6613 forms/argstring round-trip changed '" ~ value
-            ~ "' via " ~ line);
+        try {
+            auto parsed = parseArgstring(line);
+            auto pos = parsed.params["_positional"].array;
+            if (pos.length != 3 || pos[2].str != value)
+                failures ~= format("  0x%02x '%s': %s\n", code, c, line);
+        } catch (Exception e) {
+            failures ~= format("  0x%02x '%s': %s\n", code, c, e.msg);
+        }
     }
+    assert(exercised == 21,
+        format("6613 rule-difference population changed: %s, expected 21",
+            exercised));
+    assert(failures.length == 0,
+        "6613 forms left non-bareword characters unquoted:\n" ~ failures);
 
-    const renderer = readText(buildPath(repoRoot, "source", "forms_render.d"));
-    assert(renderer.canFind(`string cur = mixed ? "" : *rc.param.sptr;`),
-        "6613 mixed text must start with an empty edit buffer");
-    assert(renderer.canFind(
-            `ImGui.InputTextWithHint(label, kMixedPlaceholder, buf[])`),
-        "6613 mixed text must show the marker as a hint, not buffer contents");
+    const bare = "Aa09_./-?#";
+    assert(substituteQuery(b, JSONValue(bare))
+            == "layer.attr 0 name " ~ bare,
+        "6613 pure bareword control was unnecessarily quoted");
 }

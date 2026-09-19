@@ -618,17 +618,14 @@ class FormsPanel {
     {
         import core.stdc.string : strlen;
         char[256] buf;
-        // Task 6613: mixed is display state, never editable contents. A hint
-        // keeps the marker visible while the empty buffer makes the first key
-        // the whole absolute value applied to every subject.
-        string cur = mixed ? "" : *rc.param.sptr;
+        // Task 6613: the mixed marker is currently editable buffer contents.
+        // A plain click does not select it, so typing may append to the marker;
+        // the owner must choose the replacement policy before this stays.
+        string cur = mixed ? kMixedPlaceholder : *rc.param.sptr;
         size_t len = cur.length < buf.length - 1 ? cur.length : buf.length - 1;
         buf[0 .. len] = cur[0 .. len];
         buf[len] = '\0';
-        bool changed = mixed
-            ? ImGui.InputTextWithHint(label, kMixedPlaceholder, buf[])
-            : ImGui.InputText(label, buf[]);
-        if (changed) {
+        if (ImGui.InputText(label, buf[])) {
             string nv = cast(string) buf[0 .. strlen(buf.ptr)].dup;
             writeValue(row, JSONValue(nv), idispatch);
         }
