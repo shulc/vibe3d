@@ -215,6 +215,26 @@ unittest { // 6. the About window draws the shared array, not a literal
     auto end  = rest.indexOf("\n// ====");
     auto body_ = end >= 0 ? rest[0 .. end] : rest;
 
+    // POPULATION CEILING on the slice, and it stays ABOVE the scan below.
+    //
+    // The region is delimited by a PROSE banner, so a legitimate comment edit
+    // widens it without touching any code this cell is about. Measured: the
+    // `// ====` heading that closed this function headed the popup cluster a
+    // later slice moved to `ui.action_menu`, the heading went with the code it
+    // described, and the region grew from 24 lines to 496 — whereupon the digit
+    // scan below reported a version literal that belongs to code far away. A
+    // true red for a false reason is worse than a green: it sends the reader to
+    // the wrong file with a message naming the wrong defect.
+    //
+    // So the slice says how big it is before anything reads it. A region this
+    // cell can still judge is tens of lines; the floor catches a banner landing
+    // immediately after the signature.
+    const sliceLines = body_.splitLines.length;
+    assert(end >= 0 && sliceLines > 4 && sliceLines < 80,
+        "drawAboutPanel's scanned region is " ~ sliceLines.to!string
+        ~ " lines — the `// ====` banner that closes it is gone or has moved, "
+        ~ "so the scan below is reading code that is not this function");
+
     // Strip line comments before scanning: the body explains itself, and the
     // explanation must not be what trips the check.
     string code;

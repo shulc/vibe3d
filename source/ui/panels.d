@@ -860,6 +860,20 @@ void drawAboutPanel(EditorApp app) {
     }
 }
 
+// =============================================================================
+// Panel/chrome helpers and the readouts below
+// =============================================================================
+//
+// This banner is STRUCTURAL, not decoration: `tests/test_app_version.d`'s
+// About-window census slices `drawAboutPanel`'s body from its signature to the
+// next `// ====` banner, and the banner that used to close it headed the popup
+// cluster this slice moved to `ui.action_menu`. Removing that heading with the
+// code it described widened the scanned region from 24 lines to 496, and the
+// census then found a digit inside a string literal belonging to code far below
+// — a true red for a false reason. The census now also floors the region's
+// size, so a future removal says so in its own words; this banner keeps the
+// region honest in the first place.
+
 // Panel/chrome helpers stay bare below; this self-import preserves the
 // original lookup shape after the app.d decomposition.
 import ui.panels : pushPopupStyle, popPopupStyle, drawSectionHeader,
