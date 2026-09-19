@@ -747,6 +747,9 @@ unittest { // 6590: collapsing one binding must not collapse its peer
 
     ui.pressAt(disclosureCenter);
     ui.release();
+    assert(layerListDrawSnapshot().disclosureDrawn
+        && !layerListDrawSnapshot().disclosureExpanded,
+        "6590 disclosure timing: the release frame drew the pre-click expansion state");
     // InvisibleButton reports the release after this frame's rows were built;
     // one following frame observes the toggled expansion state.
     ui.frame();
@@ -772,6 +775,24 @@ unittest { // 6590: collapsing one binding must not collapse its peer
     assert(layerListDrawSnapshot().disclosureDrawn
         && !layerListDrawSnapshot().disclosureExpanded,
         "6590 disclosure glyph: the returning first binding drew an expanded disclosure");
+
+    const collapsed = layerListDrawSnapshot();
+    const collapsedRoot = collapsed.rows[0];
+    immutable float collapsedCellW = collapsedRoot.eyeMax.x
+        - collapsedRoot.eyeMin.x;
+    assert(collapsedCellW > 0
+        && collapsedRoot.roleMax.y > collapsedRoot.roleMin.y,
+        "6590 reopen floor: the collapsed root cells have no clickable geometry");
+    immutable ImVec2 reopenCenter = ImVec2(
+        collapsedRoot.roleMax.x + collapsedCellW * 0.5f,
+        (collapsedRoot.roleMin.y + collapsedRoot.roleMax.y) * 0.5f);
+    ui.pressAt(reopenCenter);
+    ui.release();
+    ui.frame();
+    assert(layerListDrawSnapshot().rows.length == 4
+        && layerListDrawSnapshot().disclosureDrawn
+        && layerListDrawSnapshot().disclosureExpanded,
+        "6590 reopen root: the collapsed first binding could not expand again");
 }
 
 unittest { // B-FOCUS: one binding reuses its provider for the current item
@@ -1242,7 +1263,9 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
     assert(identifierCount(layer, "rowBuf_") == 3
         && identifierCount(layer, "rootExpanded_") == 5,
         "6590 state census: rowBuf_/rootExpanded_ uses changed from 3/5");
-    assert(identifierCount(drawBody, "disclosureExpanded") == 3,
+    assert(identifierCount(drawBody, "disclosureExpanded") == 3
+        && drawBody.count("recordLayerDisclosure(disclosureExpanded);") == 1
+        && drawBody.count("gRad, disclosureExpanded, txtCol);") == 1,
         "6590 disclosure coupling: one value must feed both the recorder and glyph");
 
     assert(identifierCount(layer, "owner_") == 7,
