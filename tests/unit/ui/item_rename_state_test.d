@@ -60,9 +60,9 @@ private final class RenameApplicationHarness {
             registry, executor, editSession, history, guard,
             (Command) {}, (string) {});
 
-        registry.commandFactories["layer.rename"] = () => cast(Command)
+        registry.registerCommand("layer.rename", () => cast(Command)
             new LayerRename(owner.document.activeMesh(), view,
-                owner.editMode, owner.documentPtr(), null);
+                owner.editMode, owner.documentPtr(), null));
     }
 
     ItemRenameController layersPanel() {

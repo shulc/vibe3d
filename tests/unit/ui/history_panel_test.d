@@ -102,17 +102,17 @@ private final class HistoryPanelActionHarness {
             (Command) {}, (string) {});
         macroRecorder = new MacroRecorder();
 
-        registry.commandFactories["probe.first"] = () => cast(Command)
+        registry.registerCommand("probe.first", () => cast(Command)
             new HistoryPanelProbeCommand(
-                &mesh, view, "probe.first", &firstCalls);
-        registry.commandFactories["probe.second"] = () => cast(Command)
+                &mesh, view, "probe.first", &firstCalls));
+        registry.registerCommand("probe.second", () => cast(Command)
             new HistoryPanelProbeCommand(
-                &mesh, view, "probe.second", &secondCalls);
-        registry.commandFactories["probe.refused"] = () => cast(Command)
+                &mesh, view, "probe.second", &secondCalls));
+        registry.registerCommand("probe.refused", () => cast(Command)
             new HistoryPanelProbeCommand(
-                &mesh, view, "probe.refused", &refusedCalls, false);
-        registry.commandFactories["macro.record"] = () => cast(Command)
-            new MacroRecord(&mesh, view, EditMode.Polygons, macroRecorder);
+                &mesh, view, "probe.refused", &refusedCalls, false));
+        registry.registerCommand("macro.record", () => cast(Command)
+            new MacroRecord(&mesh, view, EditMode.Polygons, macroRecorder));
 
         actions = bindHistoryPanelActions(
             history,

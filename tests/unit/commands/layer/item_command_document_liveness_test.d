@@ -10,7 +10,7 @@ import tests.unit.live_registration_rig : LiveRegistrationRig;
 
 private Command commandFor(LiveRegistrationRig rig, string id,
                            string args = null) {
-    auto command = rig.registry.commandFactories[id]();
+    auto command = rig.registry.makeCommand(id);
     if (args.length) bindArgs(command, args);
     return command;
 }

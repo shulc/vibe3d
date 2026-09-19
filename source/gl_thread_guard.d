@@ -137,7 +137,7 @@ private string describeThread(Thread t) nothrow
 // ---------------------------------------------------------------------------
 // Unittests. These exercise the guard's own logic; the guard's behaviour in
 // the live binary was verified separately by restoring the 0579 shape (a
-// `reg.toolFactories["move"]()` inside the registry closure) and observing it
+// `reg.toolFactory("move")()` inside the registry closure) and observing it
 // fire — see the task log. A guard that has only ever been reasoned about is
 // worth nothing.
 // ---------------------------------------------------------------------------

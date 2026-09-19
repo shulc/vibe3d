@@ -19,7 +19,7 @@
 #   * Toolbar Transform activates `xfrm.transform`.
 #   * Every preset in config/tool_presets.yaml whose `base:` is one of
 #     move / rotate / scale / xfrm.transform registers its OWN factory id
-#     (source/tool_presets.d: reg.toolFactories[p.id]); activating the preset
+#     (source/tool_presets.d: reg.registerTool(p.id, ...)); activating the preset
 #     records the PRESET id as activeToolId (e.g. TransformMove, xfrm.flex,
 #     xfrm.softMove, ...). All of these construct an XfrmTransformTool.
 #

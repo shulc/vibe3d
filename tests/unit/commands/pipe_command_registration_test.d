@@ -99,9 +99,8 @@ private CommandInvocationResult invokeApplied(
 
 private void checkFactory(T)(LiveRegistrationRig rig, string id,
                              ref size_t checked) {
-    auto factory = id in rig.registry.commandFactories;
-    assert(factory !is null, "5990 P1 missing factory: " ~ id);
-    auto command = (*factory)();
+    auto command = rig.registry.makeCommand(id);
+    assert(command !is null, "5990 P1 missing factory: " ~ id);
     assert(cast(T)command !is null,
         "5990 P1 factory built the wrong class for " ~ id);
     ++checked;
@@ -119,9 +118,9 @@ unittest { // P1: every one of the 27 ids builds its intended class
     auto rig = new LiveRegistrationRig;
     auto stages = new PipeStages(rig);
     registerPipe(rig);
-    assert(rig.registry.commandFactories.length == 27,
+    assert(rig.registry.commandIds().length == 27,
         format("5990 P1 population: found %s pipe ids",
-               rig.registry.commandFactories.length));
+               rig.registry.commandIds().length));
 
     size_t checked;
     checkFactory!WorkplaneResetCommand(rig, "workplane.reset", checked);
@@ -271,13 +270,13 @@ unittest { // P3: all 27 factories resolve mesh/View/Mode at creation
     auto stages = new PipeStages(rig);
     registerPipe(rig);
 
-    auto ids = rig.registry.commandFactories.keys.array;
+    auto ids = rig.registry.commandIds();
     ids.sort;
     assert(ids.length == 27,
         "5990 P3 live-context population must contain 27 factories");
     size_t beforeCount;
     foreach (id; ids) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr is &rig.layerA.meshRef(),
             "5990 P3 A mesh context mismatch for " ~ id);
         assert(command.viewRef is rig.cells[0],
@@ -292,7 +291,7 @@ unittest { // P3: all 27 factories resolve mesh/View/Mode at creation
     rig.switchToB();
     size_t meshCount;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().meshPtr
+        assert(rig.registry.makeCommand(id).meshPtr
                 is &rig.layerB.meshRef(),
             "5990 P3 late mesh: " ~ id);
         ++meshCount;
@@ -301,7 +300,7 @@ unittest { // P3: all 27 factories resolve mesh/View/Mode at creation
         "5990 P3 late-mesh witness did not inspect all factories");
     size_t viewCount;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().viewRef is rig.cells[1],
+        assert(rig.registry.makeCommand(id).viewRef is rig.cells[1],
             "5990 P3 late view: " ~ id);
         ++viewCount;
     }
@@ -309,7 +308,7 @@ unittest { // P3: all 27 factories resolve mesh/View/Mode at creation
         "5990 P3 late-View witness did not inspect all factories");
     size_t modeCount;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().editModeVal
+        assert(rig.registry.makeCommand(id).editModeVal
                 == EditMode.Polygons,
             "5990 P3 late mode: " ~ id);
         ++modeCount;
@@ -372,9 +371,9 @@ unittest { // P6: production owns the narrow registrar call and ordering
                          "ToolHost*", "ToolHost *", "tupleof", "getMember"])
         assert(moduleCode.count(forbidden) == 0,
             "5990 P6 narrow registrar regained forbidden code: " ~ forbidden);
-    assert(moduleCode.count("reg.commandFactories[") == 12,
+    assert(moduleCode.count("reg.registerCommand(") == 12,
         format("5990 P6 factory-row population changed to %s",
-               moduleCode.count("reg.commandFactories[")));
+               moduleCode.count("reg.registerCommand(")));
 
     const readHits = symbolTokenHits(moduleCode,
         "source/pipe_command_registration.d", "host.read()");
@@ -396,7 +395,7 @@ unittest { // P6: production owns the narrow registrar call and ordering
     foreach (statement; statements) {
         const lambdaAt = statement.indexOf("() =>");
         const readAt = statement.indexOf("host.read()");
-        const startsFactory = statement.indexOf("reg.commandFactories[") == 0;
+        const startsFactory = statement.indexOf("reg.registerCommand(") == 0;
         const startsReturn = statement.indexOf("return () =>") == 0;
         if (statement.count("host.read()") != 1
                 || (!startsFactory && !startsReturn)
@@ -434,11 +433,8 @@ unittest { // P6: production owns the narrow registrar call and ordering
     assert(flat.count(productionCall) == 1,
         "5990 P6 production call no longer passes the real Session, live "
       ~ "View/Mode source, and ToolHost read view inline");
-    const callAt = flat.indexOf(productionCall);
-    const wrapperAt = flat.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapperAt > callAt,
-        "5990 P6 pipe registration moved after currentType wrapping");
+    assert(flat.indexOf(productionCall) >= 0,
+        "5990 P6 production registrar call disappeared");
     assert(editorApp.count("toolHost()") == 0,
         "5990 P6 EditorApp retained the ToolHost forwarder");
     assert(editorApp.count("ToolHostReadView toolHostView;") == 1

@@ -132,9 +132,9 @@ unittest { // S1: every id still builds its original concrete class
     auto rig = new LiveRegistrationRig;
     DoorCounts n;
     register(rig, &n);
-    assert(rig.registry.commandFactories.length == 29,
+    assert(rig.registry.commandIds().length == 29,
         format("6000 population: expected 29 selection ids, got %d",
-               rig.registry.commandFactories.length));
+               rig.registry.commandIds().length));
     TypeInfo_Class[] expected = [
         typeid(SelectionExpand), typeid(SelectionContract), typeid(SelectMore),
         typeid(SelectLess), typeid(SelectLoop), typeid(SelectRing),
@@ -152,7 +152,7 @@ unittest { // S1: every id still builds its original concrete class
     assert(expected.length == kIds.length, "6000 id/class table out of step");
     size_t checked;
     foreach (i, id; kIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(typeid(command) is expected[i],
             "6000 id->class witness: " ~ id ~ " built " ~ typeid(command).name);
         ++checked;
@@ -173,7 +173,7 @@ unittest { // S2: primary, View and mode resolve when the command is created
 
     size_t early;
     foreach (id; kIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr is meshA && command.viewRef is rig.cells[0]
             && command.editModeVal == EditMode.Vertices,
             "6000 pre-switch floor: " ~ id ~ " did not see A/cell0/Vertices");
@@ -185,7 +185,7 @@ unittest { // S2: primary, View and mode resolve when the command is created
     assert(rig.session.editMode == EditMode.Polygons && rig.activeCell == 1,
         "6000 switch floor: B/cell1/Polygons not reached");
     Command[] late;
-    foreach (id; kIds) late ~= rig.registry.commandFactories[id]();
+    foreach (id; kIds) late ~= rig.registry.makeCommand(id);
     assert(late.length == 29, "6000 post-switch population floor");
     foreach (i, command; late)
         assert(command.meshPtr is meshB,
@@ -415,7 +415,7 @@ unittest { // S9: production call, ordering and old-path census
                       "RemeshModalRefs", "with (", "app."])
         assert(sel.count(needle) == 0,
             "6000 no-app witness: selection registrar names " ~ needle);
-    assert(sel.count("reg.commandFactories[") == 29,
+    assert(sel.count("reg.registerCommand(") == 29,
         "6000 census: 29 factory rows");
     assert(sel.count("doors.editMode_") == 11
         && sel.count("owner.document()") == 1
@@ -505,12 +505,8 @@ unittest { // S9: production call, ordering and old-path census
     assert(reg.count(call) == 1,
         "6000 production wiring witness: registerCommands does not call the "
       ~ "selection registrar with the real Session, mode cell and three doors");
-    const callAt = reg.indexOf(call);
-    const wrapAt = reg.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapAt > callAt,
-        "6000 ordering witness: selection registration moved after the "
-      ~ "selection-type wrapper");
+    assert(reg.indexOf(call) >= 0,
+        "6000 production selection registrar call disappeared");
 
     immutable assigns = [
         "app.promoteGeometryType = cast(void delegate(EditMode))&promoteGeometryType;",

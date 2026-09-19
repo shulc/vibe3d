@@ -7,6 +7,8 @@ import editmode;
 import shader;
 import tool;
 import command;
+import live_registration_roles : LiveSessionRole;
+import seltype : SelType;
 
 // ---------------------------------------------------------------------------
 // AppContext — raw references to per-app state shared by tools and commands
@@ -79,8 +81,97 @@ unittest {
 }
 
 struct Registry {
-    ToolFactory[string]    toolFactories;
-    CommandFactory[string] commandFactories;
+private:
+    ToolFactory[string]    toolFactories_;
+    CommandFactory[string] commandFactories_;
+    SelType delegate()     selTypeAuthority_;
+    size_t                 commandsBuiltWithoutAuthority_;
+
+public:
+    void registerCommand(string id, CommandFactory factory) {
+        if (factory is null)
+            throw new Exception("registry: command '" ~ id ~ "' has a null factory");
+        if (id in commandFactories_)
+            throw new Exception("registry: command '" ~ id ~ "' is already registered");
+        commandFactories_[id] = factory;
+    }
+
+    void registerTool(string id, ToolFactory factory) {
+        if (factory is null)
+            throw new Exception("registry: tool '" ~ id ~ "' has a null factory");
+        if (id in toolFactories_)
+            throw new Exception("registry: tool '" ~ id ~ "' is already registered");
+        toolFactories_[id] = factory;
+    }
+
+    void replaceCommand(string id, CommandFactory factory) {
+        if (factory is null)
+            throw new Exception("registry: command '" ~ id ~ "' has a null factory");
+        if (id !in commandFactories_)
+            throw new Exception("registry: command '" ~ id ~ "' is not registered");
+        commandFactories_[id] = factory;
+    }
+
+    void replaceTool(string id, ToolFactory factory) {
+        if (factory is null)
+            throw new Exception("registry: tool '" ~ id ~ "' has a null factory");
+        if (id !in toolFactories_)
+            throw new Exception("registry: tool '" ~ id ~ "' is not registered");
+        toolFactories_[id] = factory;
+    }
+
+    void aliasCommand(string sourceId, string aliasId) {
+        auto source = sourceId in commandFactories_;
+        if (source is null)
+            throw new Exception("registry: command '" ~ sourceId ~ "' is not registered");
+        if (aliasId in commandFactories_)
+            throw new Exception("registry: command '" ~ aliasId ~ "' is already registered");
+        commandFactories_[aliasId] = *source;
+    }
+
+    bool hasCommand(string id) const {
+        return (id in commandFactories_) !is null;
+    }
+
+    bool hasTool(string id) const {
+        return (id in toolFactories_) !is null;
+    }
+
+    string[] commandIds() const {
+        return commandFactories_.keys;
+    }
+
+    string[] toolIds() const {
+        return toolFactories_.keys;
+    }
+
+    ToolFactory toolFactory(string id) {
+        auto factory = id in toolFactories_;
+        return factory is null ? null : *factory;
+    }
+
+    Command makeCommand(string id) {
+        auto factory = id in commandFactories_;
+        if (factory is null) return null;
+        auto command = (*factory)();
+        if (selTypeAuthority_ !is null)
+            command.setSelTypeProvider(selTypeAuthority_);
+        else
+            ++commandsBuiltWithoutAuthority_;
+        return command;
+    }
+
+    void bindSelTypeAuthority(LiveSessionRole owner) {
+        if (commandsBuiltWithoutAuthority_ != 0) {
+            import std.conv : to;
+            throw new Exception("registry: "
+                ~ commandsBuiltWithoutAuthority_.to!string
+                ~ " command(s) were constructed before the selection-type authority "
+                ~ "was bound — they carry currentType()'s fallback. Move the bind "
+                ~ "above the first construction (task 6510).");
+        }
+        selTypeAuthority_ = () => owner.subjectType();
+    }
 
     // Per-tool side-effect hook run RIGHT BEFORE the factory in the
     // user-driven activation path (NOT in `cacheSupportedModes`, so
@@ -172,11 +263,12 @@ struct Registry {
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
-    /// `commandFactories[*]` / `toolFactories[*]` assignments.
+    /// command/tool registrations.
     void cacheSupportedModes() {
         import params : paramsSchemaJson;
-        foreach (id, factory; commandFactories) {
-            auto cmd = factory();
+        const commandKeys = commandIds();
+        foreach (id; commandKeys) {
+            auto cmd = makeCommand(id);
             commandModes[id] = cmd.supportedModes().dup;
             commandNames[id] = cmd.name;
             commandParamsJson[id] = paramsSchemaJson(cmd.params());
@@ -190,18 +282,19 @@ struct Registry {
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
-            // commandFactories). This is "resolves-back", NOT "name()==id":
+            // the command registry). This is "resolves-back", NOT "name()==id":
             // alias keys (file.open, file.import.*, file.export.*) legitimately
             // share one command class + name() with a DIFFERENT key, and that
             // is fine as long as the name() itself is some live key. Scoped to
-            // commandFactories ONLY — tool name() is a display string by
+            // commands ONLY — tool name() is a display string by
             // design and is not part of this contract.
-            if (cmd.name !in commandFactories)
+            if (!hasCommand(cmd.name))
                 throw new Exception("registry: command '" ~ id ~ "' name() '"
                     ~ cmd.name ~ "' is not a registered command key");
         }
-        foreach (id, factory; toolFactories) {
-            auto tool = factory();
+        const toolKeys = toolIds();
+        foreach (id; toolKeys) {
+            auto tool = toolFactories_[id]();
             toolModes[id]       = tool.supportedModes().dup;
             toolParamsJson[id]  = paramsSchemaJson(tool.params());
             toolNeedsTarget[id] = tool.needsEditTarget();
@@ -223,8 +316,8 @@ struct Registry {
         import std.format    : format;
         import std.algorithm : sort;
 
-        auto cmds  = commandFactories.keys.dup;
-        auto tools = toolFactories.keys.dup;
+        auto cmds  = commandIds();
+        auto tools = toolIds();
         cmds.sort();
         tools.sort();
 
@@ -438,8 +531,8 @@ version (unittest) {
 // resolves to the OTHER (primary) key, which is itself registered. No throw.
 unittest {
     Registry reg;
-    reg.commandFactories["thing.primary"] = () => cast(Command) new _RegTestCmd("thing.primary");
-    reg.commandFactories["thing.alias"]   = () => cast(Command) new _RegTestCmd("thing.primary");
+    reg.registerCommand("thing.primary", () => cast(Command) new _RegTestCmd("thing.primary"));
+    reg.registerCommand("thing.alias", () => cast(Command) new _RegTestCmd("thing.primary"));
     reg.cacheSupportedModes();  // must not throw
     assert(reg.commandNames["thing.primary"] == "thing.primary");
     assert(reg.commandNames["thing.alias"]   == "thing.primary");
@@ -448,7 +541,7 @@ unittest {
 // (b) A drifting command entry — name() is not any registered key. Throws.
 unittest {
     Registry reg;
-    reg.commandFactories["thing.drifted"] = () => cast(Command) new _RegTestCmd("Thing Drifted");
+    reg.registerCommand("thing.drifted", () => cast(Command) new _RegTestCmd("Thing Drifted"));
     bool threw = false;
     try {
         reg.cacheSupportedModes();
@@ -507,8 +600,8 @@ unittest {
     import std.json : parseJSON, JSONType;
 
     Registry reg;
-    reg.commandFactories["thing.cmd"] = () => cast(Command) new _RegParamCmd("thing.cmd");
-    reg.toolFactories["thing.tool"]   = () => cast(Tool)    new _RegParamTool();
+    reg.registerCommand("thing.cmd", () => cast(Command) new _RegParamCmd("thing.cmd"));
+    reg.registerTool("thing.tool", () => cast(Tool)    new _RegParamTool());
     reg.cacheSupportedModes();
 
     auto jc = parseJSON(reg.commandParamsJson["thing.cmd"]);
@@ -526,7 +619,7 @@ unittest {
     // A registrant with no params still gets an entry — an ABSENT key would
     // make the endpoint fall back to its `[]` default and hide the difference
     // between "no params" and "never walked".
-    reg.commandFactories["thing.bare"] = () => cast(Command) new _RegTestCmd("thing.bare");
+    reg.registerCommand("thing.bare", () => cast(Command) new _RegTestCmd("thing.bare"));
     reg.cacheSupportedModes();
     assert("thing.bare" in reg.commandParamsJson);
     assert(reg.commandParamsJson["thing.bare"] == "[]");
@@ -537,7 +630,7 @@ unittest {
 // stand-in, so it fails on any future edit that reaches for a factory there.
 //
 // Mutation: put the factory call back where the endpoint used to have it —
-// in `registryJson`, emit `paramsSchemaJson(commandFactories[k]().params())`
+// in `registryJson`, emit `paramsSchemaJson(makeCommand(k).params())`
 // instead of `commandParamsJson.get(k, "[]")` — and this fails with
 // "answering /api/registry?params=1 constructed 32 tool/command instance(s)
 // on the calling thread — a tool constructor is GL work (verified: 32).
@@ -546,8 +639,8 @@ unittest {
     import std.json : parseJSON;
 
     Registry reg;
-    reg.commandFactories["thing.cmd"] = () => cast(Command) new _RegParamCmd("thing.cmd");
-    reg.toolFactories["thing.tool"]   = () => cast(Tool)    new _RegParamTool();
+    reg.registerCommand("thing.cmd", () => cast(Command) new _RegParamCmd("thing.cmd"));
+    reg.registerTool("thing.tool", () => cast(Tool)    new _RegParamTool());
 
     _regCtorCalls = 0;
     reg.cacheSupportedModes();
@@ -612,10 +705,10 @@ unittest {
     import std.algorithm : canFind;
 
     Registry reg;
-    reg.commandFactories["thing.op"]   = () => cast(Command) new _RegOpCmd();
-    reg.commandFactories["thing.bare"] = () => cast(Command) new _RegTestCmd("thing.bare");
-    reg.toolFactories["thing.tool"]    = () => cast(Tool)    new _RegParamTool();
-    reg.toolFactories["thing.free"]    = () => cast(Tool)    new _RegFreeTool();
+    reg.registerCommand("thing.op", () => cast(Command) new _RegOpCmd());
+    reg.registerCommand("thing.bare", () => cast(Command) new _RegTestCmd("thing.bare"));
+    reg.registerTool("thing.tool", () => cast(Tool)    new _RegParamTool());
+    reg.registerTool("thing.free", () => cast(Tool)    new _RegFreeTool());
     reg.cacheSupportedModes();
 
     // An Operator needs a target by the BASE rule — no override, no list.
@@ -641,9 +734,9 @@ unittest {
     import command : kNoEditTargetReason;
 
     Registry reg;
-    reg.commandFactories["thing.op"]   = () => cast(Command) new _RegOpCmd();
-    reg.commandFactories["thing.bare"] = () => cast(Command) new _RegTestCmd("thing.bare");
-    reg.toolFactories["thing.tool"]    = () => cast(Tool)    new _RegParamTool();
+    reg.registerCommand("thing.op", () => cast(Command) new _RegOpCmd());
+    reg.registerCommand("thing.bare", () => cast(Command) new _RegTestCmd("thing.bare"));
+    reg.registerTool("thing.tool", () => cast(Tool)    new _RegParamTool());
     reg.cacheSupportedModes();
 
     // WITH a target nothing is refused.

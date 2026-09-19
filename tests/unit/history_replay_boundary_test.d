@@ -360,20 +360,20 @@ private final class Fixture {
         host.resetActiveTool = (id) => false;
         host.session = () => session;
 
-        registry.commandFactories["probe.moveSelected"] = () =>
-            cast(Command)new MoveSelectedCommand(&mesh, view, state);
-        registry.commandFactories["probe.refuse"] = () =>
-            cast(Command)new RefusingCommand(&mesh, view, state);
-        registry.commandFactories["probe.guarded"] = () =>
-            cast(Command)new GuardedCommand(&mesh, view, state);
-        registry.commandFactories["probe.query"] = () =>
-            cast(Command)new QueryCommand(&mesh, view, state);
-        registry.commandFactories["probe.throw"] = () =>
-            cast(Command)new ThrowingCommand(&mesh, view, state);
-        registry.commandFactories["tool.attr"] = () =>
-            cast(Command)new ToolAttrCommand(&mesh, view, EditMode.Vertices, host);
-        registry.commandFactories["scene.reset"] = () =>
-            cast(Command)new GuardedCommand(&mesh, view, state);
+        registry.registerCommand("probe.moveSelected", () =>
+            cast(Command)new MoveSelectedCommand(&mesh, view, state));
+        registry.registerCommand("probe.refuse", () =>
+            cast(Command)new RefusingCommand(&mesh, view, state));
+        registry.registerCommand("probe.guarded", () =>
+            cast(Command)new GuardedCommand(&mesh, view, state));
+        registry.registerCommand("probe.query", () =>
+            cast(Command)new QueryCommand(&mesh, view, state));
+        registry.registerCommand("probe.throw", () =>
+            cast(Command)new ThrowingCommand(&mesh, view, state));
+        registry.registerCommand("tool.attr", () =>
+            cast(Command)new ToolAttrCommand(&mesh, view, EditMode.Vertices, host));
+        registry.registerCommand("scene.reset", () =>
+            cast(Command)new GuardedCommand(&mesh, view, state));
 
         auto binding = new ApplicationCommandBinding(
             registry, executor, session, history, guard,

@@ -76,10 +76,10 @@ public:
 private void registerHeadlessTool(T : Tool)(ref Registry reg, string id,
         T delegate() factory, LiveSessionRole owner, LiveViewModeRole live) {
     auto regPtr = &reg;
-    reg.toolFactories[id] = typedToolFactory!T(factory);
-    reg.commandFactories[id] = () => cast(Command)
+    reg.registerTool(id, typedToolFactory!T(factory));
+    reg.registerCommand(id, () => cast(Command)
         new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
-                                id, regPtr.toolFactories[id]);
+                                id, regPtr.toolFactory(id)));
 }
 
 /// Register generator-preview, topology, and primitive creation tools through
@@ -127,13 +127,13 @@ private void registerGeneratorTools(ref Registry reg, LiveSessionRole owner,
     // `TopoPenFactories` value built in app.d (task 6352), so no argument
     // position can re-pair a gesture with a sibling's wire name. Member 5 of
     // tests/unit/tool_commit_seam_census_g7_test.d requires one call of each.
-    reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {
+    reg.registerTool("mesh.topoPen", typedToolFactory!TopologyPenTool(() {
         auto t = new TopologyPenTool(() => &owner.activeMesh(), deps.gpu());
         t.setGestureBindings(deps.history(), () => new MeshVertexNew(
             &owner.activeMesh(), live.view(), live.mode()));
         t.setPenFactories(deps.penFactories());
         return t;
-    });
+    }));
 
     registerHeadlessTool!BridgeTool(reg, "mesh.bridgeTool", () {
         auto t = new BridgeTool(() => &owner.activeMesh(), deps.gpu(),
@@ -192,14 +192,14 @@ private void registerPrimitiveTools(ref Registry reg, LiveSessionRole owner,
         return t;
     }, owner, live);
 
-    reg.toolFactories["pen"] = typedToolFactory!PenTool(() {
+    reg.registerTool("pen", typedToolFactory!PenTool(() {
         auto t = new PenTool(() => &owner.activeMesh(), deps.gpu(), deps.litShader());
         t.setGestureBindings(deps.history(), deps.bevelEditFactory());
         return t;
-    });
-    reg.toolFactories["prim.vertex"] = typedToolFactory!VertexTool(() {
+    }));
+    reg.registerTool("prim.vertex", typedToolFactory!VertexTool(() {
         auto t = new VertexTool(() => &owner.activeMesh(), deps.gpu(), deps.litShader());
         t.setGestureBindings(deps.history(), deps.bevelEditFactory());
         return t;
-    });
+    }));
 }

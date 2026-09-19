@@ -334,18 +334,18 @@ private final class ChannelsHarness {
         binding = new ApplicationCommandBinding(
             registry, executor, editSession, history, guard,
             (Command) {}, (string) {});
-        registry.commandFactories["layer.select"] = () => cast(Command)
+        registry.registerCommand("layer.select", () => cast(Command)
             new LayerSelect(&owner.editMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.rename"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.rename", () => cast(Command)
             new LayerRename(&owner.editMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.reorder"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.reorder", () => cast(Command)
             new LayerReorder(&owner.editMesh(), view, owner.editMode,
-                             owner.documentPtr(), null);
-        registry.commandFactories["layer.attr"] = () => cast(Command)
+                             owner.documentPtr(), null));
+        registry.registerCommand("layer.attr", () => cast(Command)
             new LayerAttr(&owner.editMesh(), view, owner.editMode,
-                          owner.documentPtr(), null);
+                          owner.documentPtr(), null));
 
         forms = new FormsPanel;
         toolMesh = makeCube();

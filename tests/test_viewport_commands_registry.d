@@ -1,6 +1,6 @@
 // test_viewport_commands_registry.d — task 0761: the ten `viewport.*`
 // commands moved out of the HTTP delegate's own interception and into
-// `reg.commandFactories`. Pins the three things the move was a decision
+// Registry command construction. Pins the three things the move was a decision
 // about (see doc/tasks/done/0761-*):
 //
 //   1. all ten ids are visible on GET /api/registry;

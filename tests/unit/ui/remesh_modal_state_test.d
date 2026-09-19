@@ -593,8 +593,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
         "void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg currentMesh) {") == 1
         && allSource.count("drawRemeshModal(EditorApp") == 0,
         "6360 panel signature: draw must accept state, job and live mesh provider only");
-    assert(app.count("auto cmd = cast(Remesh) reg.commandFactories[") == 1
-        && panel.count("auto cmd = cast(Remesh) reg.commandFactories[") == 0,
+    assert(app.count("auto cmd = cast(Remesh) reg.makeCommand(") == 1
+        && panel.count("auto cmd = cast(Remesh) reg.makeCommand(") == 0,
         "6360 apply boundary: result application escaped tickRemeshJob");
     assert(app.count("remeshModalState.noteSuccess(") == 1
         && app.count("remeshModalState.noteFailure(") == 3,

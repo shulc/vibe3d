@@ -21,34 +21,34 @@ import viewport : ViewportManager;
 void registerViewportCommands(ref Registry reg, LiveSessionRole owner,
                               LiveViewModeRole live, ViewportManager vpm) {
     assert(vpm !is null, "viewport registration requires a ViewportManager");
-    reg.commandFactories["viewport.fit"] = () => cast(Command)
+    reg.registerCommand("viewport.fit", () => cast(Command)
         new Fit(&owner.activeMesh(), vpm.focusOwnerCamera(vpm.activeId),
-                vpm.scaleOwnerCamera(vpm.activeId), live.mode, owner.document());
-    reg.commandFactories["viewport.fit_selected"] = () => cast(Command)
+                vpm.scaleOwnerCamera(vpm.activeId), live.mode, owner.document()));
+    reg.registerCommand("viewport.fit_selected", () => cast(Command)
         new FitSelected(&owner.activeMesh(), vpm.focusOwnerCamera(vpm.activeId),
                         vpm.scaleOwnerCamera(vpm.activeId), live.mode,
-                        owner.document());
-    reg.commandFactories["viewport.view"] = () => cast(Command)
-        new ViewportViewPreset(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.layout"] = () => cast(Command)
-        new ViewportLayoutPreset(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.indCenter"] = () => cast(Command)
+                        owner.document()));
+    reg.registerCommand("viewport.view", () => cast(Command)
+        new ViewportViewPreset(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.layout", () => cast(Command)
+        new ViewportLayoutPreset(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.indCenter", () => cast(Command)
         new ViewportIndependence(&owner.activeMesh(), live.view(), live.mode, vpm,
-                                 ViewportIndepAxis.Center);
-    reg.commandFactories["viewport.indScale"] = () => cast(Command)
+                                 ViewportIndepAxis.Center));
+    reg.registerCommand("viewport.indScale", () => cast(Command)
         new ViewportIndependence(&owner.activeMesh(), live.view(), live.mode, vpm,
-                                 ViewportIndepAxis.Scale);
-    reg.commandFactories["viewport.indRotate"] = () => cast(Command)
+                                 ViewportIndepAxis.Scale));
+    reg.registerCommand("viewport.indRotate", () => cast(Command)
         new ViewportIndependence(&owner.activeMesh(), live.view(), live.mode, vpm,
-                                 ViewportIndepAxis.Rotate);
-    reg.commandFactories["viewport.displayStyle"] = () => cast(Command)
-        new ViewportDisplayStyle(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.wireOverlay"] = () => cast(Command)
-        new ViewportWireOverlay(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.wireAlpha"] = () => cast(Command)
-        new ViewportWireAlpha(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.gridSteps"] = () => cast(Command)
-        new ViewportGridSteps(&owner.activeMesh(), live.view(), live.mode, vpm);
-    reg.commandFactories["viewport.master"] = () => cast(Command)
-        new ViewportMaster(&owner.activeMesh(), live.view(), live.mode, vpm);
+                                 ViewportIndepAxis.Rotate));
+    reg.registerCommand("viewport.displayStyle", () => cast(Command)
+        new ViewportDisplayStyle(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.wireOverlay", () => cast(Command)
+        new ViewportWireOverlay(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.wireAlpha", () => cast(Command)
+        new ViewportWireAlpha(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.gridSteps", () => cast(Command)
+        new ViewportGridSteps(&owner.activeMesh(), live.view(), live.mode, vpm));
+    reg.registerCommand("viewport.master", () => cast(Command)
+        new ViewportMaster(&owner.activeMesh(), live.view(), live.mode, vpm));
 }

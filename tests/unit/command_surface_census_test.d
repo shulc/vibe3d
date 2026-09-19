@@ -3,7 +3,7 @@
 //
 // This is the reverse of startup validation: startup proves that configured
 // actions resolve to known factories, while this census starts at every
-// `commandFactories` id and refuses one that disappears from every configured
+// registered command id and refuses one that disappears from every configured
 // surface without being named. The scan covers buttons, status-line actions,
 // pie actions, both shortcut maps, forms, and tool presets. YAML comments are
 // blanked so prose cannot manufacture a surface.
@@ -25,7 +25,8 @@ import buttonset : ActionKind, allButtons, loadButtons;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-private enum registeredIdRe = ctRegex!(`reg\.commandFactories\["([^"]+)"\]`);
+private enum registeredIdRe = ctRegex!(`reg\.registerCommand\(\s*"([^"]+)"\s*,`);
+private enum aliasIdRe = ctRegex!(`reg\.aliasCommand\(\s*"[^"]+"\s*,\s*"([^"]+)"`);
 private enum pairedRegisteredIdRe = ctRegex!(
     `registerHeadlessTool!\w+\s*\(\s*reg\s*,\s*"([^"]+)"`);
 private enum configTokenRe = ctRegex!(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+`);
@@ -39,10 +40,10 @@ private enum registrarEntryRe = ctRegex!(
 // such as `file.import` and misses every real suffixed command. Keep their
 // expansions named, and pin each construction expression below.
 private static immutable string[] dynamicRegistrationExpressions = [
-    `reg.commandFactories["actr." ~ p.name]`,
-    `reg.commandFactories["falloff." ~ ty]`,
-    `reg.commandFactories["file.import" ~ importExt]`,
-    `reg.commandFactories["file.export" ~ exportExt]`,
+    `reg.registerCommand("actr." ~ p.name,`,
+    `reg.registerCommand("falloff." ~ ty,`,
+    `reg.registerCommand("file.import" ~ importExt,`,
+    `reg.registerCommand("file.export" ~ exportExt,`,
 ];
 
 private string[] quotedValuesBetween(string src, string anchor, string terminator)
@@ -172,6 +173,8 @@ private string[] registeredCommandIds()
     const registration = registrationText();
     bool[string] seen;
     foreach (m; matchAll(registration, registeredIdRe))
+        seen[m[1].idup] = true;
+    foreach (m; matchAll(registration, aliasIdRe))
         seen[m[1].idup] = true;
     size_t pairedIds;
     foreach (m; matchAll(registration, pairedRegisteredIdRe)) {

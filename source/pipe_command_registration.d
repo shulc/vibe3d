@@ -21,17 +21,17 @@ void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, ToolHostReadView host) {
 
     // workplane.* commands target the singleton WorkplaneStage.
-    reg.commandFactories["workplane.reset"] = () => cast(Command)
-        new WorkplaneResetCommand(&owner.activeMesh(), live.view(), live.mode);
-    reg.commandFactories["workplane.edit"] = () => cast(Command)
-        new WorkplaneEditCommand(&owner.activeMesh(), live.view(), live.mode);
-    reg.commandFactories["workplane.rotate"] = () => cast(Command)
-        new WorkplaneRotateCommand(&owner.activeMesh(), live.view(), live.mode);
-    reg.commandFactories["workplane.offset"] = () => cast(Command)
-        new WorkplaneOffsetCommand(&owner.activeMesh(), live.view(), live.mode);
-    reg.commandFactories["workplane.alignToSelection"] = () => cast(Command)
+    reg.registerCommand("workplane.reset", () => cast(Command)
+        new WorkplaneResetCommand(&owner.activeMesh(), live.view(), live.mode));
+    reg.registerCommand("workplane.edit", () => cast(Command)
+        new WorkplaneEditCommand(&owner.activeMesh(), live.view(), live.mode));
+    reg.registerCommand("workplane.rotate", () => cast(Command)
+        new WorkplaneRotateCommand(&owner.activeMesh(), live.view(), live.mode));
+    reg.registerCommand("workplane.offset", () => cast(Command)
+        new WorkplaneOffsetCommand(&owner.activeMesh(), live.view(), live.mode));
+    reg.registerCommand("workplane.alignToSelection", () => cast(Command)
         new WorkplaneAlignToSelectionCommand(
-            &owner.activeMesh(), live.view(), live.mode);
+            &owner.activeMesh(), live.view(), live.mode));
 
     // actr.<mode> presets update ACEN and AXIS atomically.
     static struct Preset { string name; string acen; string axis; }
@@ -54,8 +54,7 @@ void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
                                   nm, a, x);
     }
     foreach (p; presets) {
-        reg.commandFactories["actr." ~ p.name] =
-            makeFactory(p.name, p.acen, p.axis);
+        reg.registerCommand("actr." ~ p.name, makeFactory(p.name, p.acen, p.axis));
     }
 
     // falloff.<type> updates the primary WGHT stage; the remaining verbs
@@ -68,21 +67,21 @@ void registerPipeStageCommands(ref Registry reg, LiveSessionRole owner,
     static immutable string[] falloffTypes =
         ["linear", "radial", "cylinder", "screen", "lasso", "vertexMap"];
     foreach (ty; falloffTypes)
-        reg.commandFactories["falloff." ~ ty] = makeFalloffFactory(ty);
+        reg.registerCommand("falloff." ~ ty, makeFalloffFactory(ty));
 
-    reg.commandFactories["falloff.add"] = () => cast(Command)
+    reg.registerCommand("falloff.add", () => cast(Command)
         new FalloffAddCommand(
-            &owner.activeMesh(), live.view(), live.mode, host.read());
-    reg.commandFactories["falloff.remove"] = () => cast(Command)
+            &owner.activeMesh(), live.view(), live.mode, host.read()));
+    reg.registerCommand("falloff.remove", () => cast(Command)
         new FalloffRemoveCommand(
-            &owner.activeMesh(), live.view(), live.mode, host.read());
-    reg.commandFactories["falloff.clear"] = () => cast(Command)
+            &owner.activeMesh(), live.view(), live.mode, host.read()));
+    reg.registerCommand("falloff.clear", () => cast(Command)
         new FalloffClearCommand(
-            &owner.activeMesh(), live.view(), live.mode, host.read());
-    reg.commandFactories["falloff.autosize"] = () => cast(Command)
+            &owner.activeMesh(), live.view(), live.mode, host.read()));
+    reg.registerCommand("falloff.autosize", () => cast(Command)
         new FalloffAutoSizeCommand(
-            &owner.activeMesh(), live.view(), live.mode, host.read());
-    reg.commandFactories["falloff.reverse"] = () => cast(Command)
+            &owner.activeMesh(), live.view(), live.mode, host.read()));
+    reg.registerCommand("falloff.reverse", () => cast(Command)
         new FalloffReverseCommand(
-            &owner.activeMesh(), live.view(), live.mode, host.read());
+            &owner.activeMesh(), live.view(), live.mode, host.read()));
 }

@@ -135,7 +135,7 @@ unittest {
     assert(countOccurrences(self, "registerTools(") == 4
         && countOccurrences(self, "new ToolHeadlessCommand(") == 0
         && countOccurrences(self, "registerHeadlessTool!") == 0
-        && countOccurrences(self, "reg.commandFactories[") == 0,
+        && countOccurrences(self, "reg.registerCommand(") == 0,
         "6353 self-census: the witness must drive production registration");
 
     immutable rawRegistration = readText(
@@ -199,9 +199,9 @@ unittest {
     const generator = spanAt("private void registerGeneratorTools(", "generator");
     const primitive = spanAt("private void registerPrimitiveTools(", "primitive");
     assert(countOccurrences(helper,
-            "reg.toolFactories[id] = typedToolFactory!T(") == 1,
+            "reg.registerTool(id, typedToolFactory!T(") == 1,
         "6353 helper: typed tool write must occur exactly once");
-    assert(countOccurrences(helper, "reg.commandFactories[id] = ") == 1,
+    assert(countOccurrences(helper, "reg.registerCommand(id, ") == 1,
         "6353 helper: command write must occur exactly once");
     assert(countOccurrences(helper, "new ToolHeadlessCommand(") == 1,
         "6353 helper: wrapper construction must occur exactly once");
@@ -217,16 +217,16 @@ unittest {
     foreach (id; kPaired) {
         foreach (raw; [rawRegistration, rawMesh, rawCreate]) {
             assert(countOccurrences(raw,
-                    "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
+                    "reg.registerTool(\"" ~ id ~ "\", ") == 0,
                 "6353 old channel: literal tool assignment survived for " ~ id);
             assert(countOccurrences(raw,
-                    "reg.commandFactories[\"" ~ id ~ "\"]") == 0,
+                    "reg.registerCommand(\"" ~ id ~ "\",") == 0,
                 "6353 old channel: literal command assignment survived for " ~ id);
         }
     }
     foreach (id; kToolOnly) {
         assert(countOccurrences(rawCreate,
-                "reg.toolFactories[\"" ~ id ~ "\"] = ") == 1,
+                "reg.registerTool(\"" ~ id ~ "\", ") == 1,
             "6353 command-negative source: create tool registration moved for " ~ id);
         assert(countOccurrences(rawCreate,
                 "reg, \"" ~ id ~ "\", () {") == 0,
@@ -236,7 +236,7 @@ unittest {
     immutable app = readText(buildPath(repoRoot, "source", "app.d"));
     assert(app.indexOf("registerTools(app);") >= 0
         && app.indexOf("registerTools(app);") < app.indexOf("registerCommands(app);"),
-        "6353 source order: registerTools must precede registerCommands/withSelType");
+        "6353 source order: paired tool registrations must precede command registration");
 }
 // Block 1: the real registry contains every pair, with the wrapper metadata
 // derived from the same id.
@@ -248,11 +248,11 @@ unittest {
     auto firstView = r.view;
     registerTools(r.app);
     foreach (id; kPaired) {
-        assert(id in r.registry.toolFactories,
+        assert(r.registry.hasTool(id),
             "6353 population: registry lacks " ~ id ~ " tool factory");
-        assert(id in r.registry.commandFactories,
+        assert(r.registry.hasCommand(id),
             "6353 population: registry lacks " ~ id);
-        auto cmd = r.registry.commandFactories[id]();
+        auto cmd = r.registry.makeCommand(id);
         assert(cmd !is null, "6353 population: null command for " ~ id);
         assert(cmd.name() == id,
             "6353 name: " ~ id ~ " wrapper reports name '" ~ cmd.name() ~ "'");
@@ -278,7 +278,7 @@ unittest {
     assert(r.view !is firstView,
         "6353 live-role fixture: second View must differ from the first");
     foreach (id; kPaired) {
-        auto cmd = r.registry.commandFactories[id]();
+        auto cmd = r.registry.makeCommand(id);
         assert(cmd.meshPtr() is &secondLayer.meshRef(),
             "6353 live role: " ~ id ~ " wrapper retained the registration-time Mesh");
         assert(cmd.viewRef() is r.view,
@@ -293,9 +293,9 @@ unittest {
     auto r = makeRig();
     registerTools(r.app);
     foreach (id; kToolOnly) {
-        assert(id in r.registry.toolFactories,
+        assert(r.registry.hasTool(id),
             "6353 command-negative floor: registry lacks tool " ~ id);
-        assert(id !in r.registry.commandFactories,
+        assert(!r.registry.hasCommand(id),
             "6353 command-negative: " ~ id ~ " must have no command factory");
     }
 }
@@ -309,10 +309,8 @@ unittest {
     foreach (i, id; kPaired) {
         immutable marker = 100 + cast(int) i;
         ToolFactory probe = () => new MarkerTool(marker);
-        auto reboundFactories = r.registry.toolFactories.dup;
-        reboundFactories[id] = probe;
-        r.registry.toolFactories = reboundFactories;
-        auto cmd = cast(ToolHeadlessCommand) r.registry.commandFactories[id]();
+        r.registry.replaceTool(id, probe);
+        auto cmd = cast(ToolHeadlessCommand) r.registry.makeCommand(id);
         assert(cmd !is null, "6353 late lookup: wrapper type changed for " ~ id);
         auto held = fieldOf!ToolFactory(cmd, "factory");
         assert(held is probe,
@@ -356,15 +354,15 @@ unittest {
     auto r = makeRig();
     registerTools(r.app);
     foreach (row; rows) {
-        auto product = r.registry.toolFactories[row.id]();
+        auto product = r.registry.toolFactory(row.id)();
         assert(product !is null && row.matches(product),
             "6353 product: " ~ row.id ~ " did not build " ~ row.expected);
     }
-    auto ellipsoid = cast(SphereTool) r.registry.toolFactories["prim.ellipsoid"]();
+    auto ellipsoid = cast(SphereTool) r.registry.toolFactory("prim.ellipsoid")();
     assert(ellipsoid.preparedSphereClearMethod,
         "6353 product: prim.ellipsoid built a SphereTool with ellipsoidMode=false "
       ~ "(the ctor flag, not the class, is what separates this pair)");
-    auto sphere = cast(SphereTool) r.registry.toolFactories["prim.sphere"]();
+    auto sphere = cast(SphereTool) r.registry.toolFactory("prim.sphere")();
     assert(!sphere.preparedSphereClearMethod,
         "6353 product: prim.sphere built a SphereTool with ellipsoidMode=true "
       ~ "(the ctor flag, not the class, is what separates this pair)");

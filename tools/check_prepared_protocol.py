@@ -1371,8 +1371,8 @@ def add_reachable_override_set(root):
     registration = root / "source/registration.d"
     registration.write_text(registration.read_text() +
         '\nvoid p1ReachableMutant() { import tools.p1_census_mutant : P1CensusMutant; '
-        'reg.toolFactories["p1.reachable"] = typedToolFactory!P1CensusMutant('
-        '() { return new P1CensusMutant(); }); }\n')
+        'reg.registerTool("p1.reachable", typedToolFactory!P1CensusMutant('
+        '() { return new P1CensusMutant(); })); }\n')
     compile_fixture = root / "p1_typed_registration_compile.d"
     compile_fixture.write_text("module p1_typed_registration_compile; struct Param {} "
         "class Tool { void deactivate() {} void onParamChanged(string name) {} "
@@ -1392,7 +1392,7 @@ def inspect_reachable_override_set(actual):
         "hooks": {("P1CensusMutant", "deactivate"),
                   ("P1CensusMutant", "onParamChanged")},
         "params": {("P1CensusMutant", "params")},
-        "factories": {("<module>", 'toolFactories["p1.reachable"]')},
+        "factories": {("<module>", 'registerTool("p1.reachable")')},
         "products": {("P1CensusMutant", "factoryProduct")},
     }
     for section, required in expected.items():
@@ -1407,7 +1407,7 @@ if not mutation_rejected(add_reachable_override_set, "hooks symbol mismatch",
 def change_factory_product(root):
     p = root / "source/transform_tool_registration.d"
     text = p.read_text()
-    anchor = 'reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {'
+    anchor = 'reg.registerTool("xfrm.push", typedToolFactory!PushTool(() {'
     begin = text.find(anchor)
     product = text.find("new PushTool(", begin)
     if begin < 0 or product < 0: fail("P1.0b.0 factory product mutation anchor vanished")
@@ -1457,12 +1457,12 @@ if not mutation_rejected(change_expression_factory_defaults_row,
 def capture_paired_factory_early(root):
     p = root / "source/create_tool_registration.d"
     text = p.read_text()
-    assign = "    reg.toolFactories[id] = typedToolFactory!T(factory);\n"
-    lookup = "                                id, regPtr.toolFactories[id]);\n"
+    assign = "    reg.registerTool(id, typedToolFactory!T(factory));\n"
+    lookup = "                                id, regPtr.toolFactory(id)));\n"
     if text.count(assign) != 1 or text.count(lookup) != 1:
         fail("P1.0b.0 paired early-capture mutation anchor vanished")
     text = text.replace(assign, assign
-        + "    auto captured = regPtr.toolFactories[id];\n", 1)
+        + "    auto captured = regPtr.toolFactory(id);\n", 1)
     text = text.replace(lookup, "                                id, captured);\n", 1)
     p.write_text(text)
 if not mutation_rejected(capture_paired_factory_early,

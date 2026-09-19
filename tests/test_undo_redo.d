@@ -401,7 +401,7 @@ unittest { // /api/history returns {undo:[...], redo:[...]} with labels
 
 // ---------------------------------------------------------------------------
 // history.undo / history.redo as commands (Ctrl+Z / Ctrl+Shift+Z dispatch
-// path: shortcuts.yaml maps to commandFactories[id]().apply()).
+// path: shortcuts.yaml maps to makeCommand(id).apply()).
 // ---------------------------------------------------------------------------
 
 unittest { // history.undo via /api/command performs an undo

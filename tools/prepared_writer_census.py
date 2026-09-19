@@ -237,7 +237,7 @@ def scan(root):
                             for name in REGISTRATION_SOURCE_NAMES]
     factories = []
     factory_head = re.compile(
-        r'reg\.toolFactories\["([^"]+)"\]\s*=\s*'
+        r'reg\.registerTool\(\s*"([^"]+)"\s*,\s*'
         r'typedToolFactory!(\w+)\s*\(\s*\(\)\s*')
     # Paired tool+headless-command registration keeps the per-product body at
     # the call site and the shared recipe in one private helper. Fingerprint
@@ -268,7 +268,7 @@ def scan(root):
                 helper_name = call.group(1)
                 call_open = expression_start + call.end() - 1
                 call_end = _balanced_parentheses(reg, call_open)
-                if not re.match(r"\s*\)\s*;", reg[call_end:]):
+                if not re.match(r"\s*\)\s*\)\s*;", reg[call_end:]):
                     raise ValueError(
                         f'expression factory {m.group(1)} has trailing expression syntax')
                 expression = reg[expression_start:call_end]
@@ -281,7 +281,7 @@ def scan(root):
             if body is None:
                 continue
             factories.append({"id": m.group(1), "aggregate": _aggregate(reg, m.start()),
-                              "symbol": "toolFactories[\"%s\"]" % m.group(1),
+                              "symbol": "registerTool(\"%s\")" % m.group(1),
                               "product_types": [m.group(2)],
                               "semantic_sha256": _semantic_digest(body)})
 
@@ -298,7 +298,7 @@ def scan(root):
                     + " } privateHelperBody { " + helper_body + " }")
             paired_rows += 1
             factories.append({"id": m.group(2), "aggregate": _aggregate(reg, m.start()),
-                              "symbol": "toolFactories[\"%s\"]" % m.group(2),
+                              "symbol": "registerTool(\"%s\")" % m.group(2),
                               "product_types": [m.group(1)],
                               "semantic_sha256": _semantic_digest(body)})
         if len(re.findall(r"\bregisterHeadlessTool!", reg)) != paired_rows:
@@ -308,13 +308,13 @@ def scan(root):
         # These are per-file structural invariants. Sum only after each source
         # has proved its own assignment shapes.
         literal_assign = len(re.findall(
-            r'\breg\.toolFactories\s*\["[^"]+"\]\s*=', reg))
+            r'\breg\.registerTool\s*\(\s*"[^"]+"\s*,', reg))
         any_assign = len(re.findall(
-            r"\breg\.toolFactories\s*\[[^]]+\]\s*=", reg))
+            r"\breg\.(?:registerTool|replaceTool)\s*\(", reg))
         helper_decls = len(re.findall(
             r"(?m)^[ \t]*private[ \t]+void[ \t]+registerHeadlessTool\s*\(", reg))
         helper_assign = len(re.findall(
-            r"\breg\.toolFactories\s*\[\s*id\s*\]\s*=", reg))
+            r"\breg\.registerTool\s*\(\s*id\s*,", reg))
         if paired_rows and helper_decls != 1:
             raise ValueError(
                 f"expected one private registerHeadlessTool in {registration_source}, "
@@ -322,10 +322,10 @@ def scan(root):
         if paired_rows and helper_assign != 1:
             raise ValueError(
                 f"the paired helper in {registration_source} assigns "
-                f"toolFactories {helper_assign} time(s)")
+                f"through registerTool {helper_assign} time(s)")
         if any_assign != literal_assign + helper_assign:
             raise ValueError(
-                f"a third toolFactories assignment shape appeared in "
+                f"a third tool registration shape appeared in "
                 f"{registration_source}: any={any_assign} "
                 f"literal={literal_assign} helper={helper_assign}")
         assignment_count += literal_assign + paired_rows
@@ -333,7 +333,7 @@ def scan(root):
     # Runtime-generated preset ids are a production factory path too. Its
     # product is the product of the referenced base factory, not a new class.
     presets = (root / "source/tool_presets.d").read_text()
-    preset_assign = list(re.finditer(r"reg\.toolFactories\[p\.id\]\s*=\s*typedPresetFactory\s*;", presets))
+    preset_assign = list(re.finditer(r"reg\.registerTool\(p\.id\s*,\s*typedPresetFactory\s*\);", presets))
     if len(preset_assign) != 1:
         raise ValueError("expected the single generated preset factory assignment")
     maker = re.search(r"ToolFactory\s+makeFactory\(T\)\([^)]*\)\s*\{", presets)
@@ -341,13 +341,13 @@ def scan(root):
     maker_end = _balanced(presets, maker.end())
     maker_body = presets[maker.end():maker_end-1]
     factories.append({"id": "<generated:p.id>", "aggregate": "registerToolPresets",
-                      "symbol": "toolFactories[p.id]", "product_types": [],
+                      "symbol": "registerTool(p.id)", "product_types": [],
                       "semantic_sha256": _semantic_digest(maker_body)})
 
     # Exhaustive production assignment proof. The explicitly listed registrar
     # sources have no generated ids; tool_presets.d has one dynamic assignment.
     assignment_count += len(re.findall(
-        r"\breg\.toolFactories\s*\[[^]]+\]\s*=", presets))
+        r"\breg\.(?:registerTool|replaceTool)\s*\(", presets))
     if assignment_count != len(factories):
         raise ValueError(f"factory assignment census mismatch: source={assignment_count} rows={len(factories)}")
 

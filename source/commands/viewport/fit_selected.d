@@ -22,8 +22,8 @@ class FitSelected : Command {
     // Nullable, and the arm is skipped when it is null: a unittest or headless
     // caller that constructs this class bare keeps the exact pre-1880
     // behaviour. The current selection TYPE needs no plumbing at all —
-    // `Command.currentType()` is already wired onto every registered factory
-    // (registration.d's `withSelType` wrap), and its unwired fallback
+    // `Command.currentType()` is wired by `Registry.makeCommand`, and its
+    // unwired fallback
     // `geometrySelType(editMode)` cannot return `Item`, so an unwired command
     // takes the geometry arms by construction rather than by a second check.
     private Document* doc_;

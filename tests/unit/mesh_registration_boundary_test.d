@@ -197,9 +197,10 @@ unittest {
     const code = blankNonCode(raw);
     assert(raw.length > 20_000,
         "6509 boundary population: mesh registrar source is unexpectedly small");
-    assert(countOccurrences(code, "reg.commandFactories[") == 111,
+    assert(countOccurrences(code, "reg.registerCommand(") == 107
+            && countOccurrences(code, "reg.aliasCommand(") == 2,
         "6509 boundary population: code projection must contain exactly 111 "
-      ~ "mesh command-factory writes");
+      ~ "mesh command registrations");
     immutable moved = ["EditorApp", "with (", "vpm", "remeshModalState"];
     immutable before = [1, 2, 3, 1];
     foreach (i, needle; moved)
@@ -298,10 +299,10 @@ unittest {
             "6509 %s.%s used %d time(s), roster says %d",
             row.receiver, row.member, actual, row.count));
     }
-    assert(countOccurrences(body, "regPtr.toolFactories[") == 3,
+    assert(countOccurrences(body, "regPtr.toolFactory(") == 3,
         "6509 registry idiom: expected three late tool-factory reads");
-    assert(countOccurrences(body, "reg.toolFactories[") == 0,
-        "6509 registry idiom: the family reads reg.toolFactories directly "
+    assert(countOccurrences(body, "reg.toolFactory(") == 0,
+        "6509 registry idiom: the family reads reg.toolFactory directly "
       ~ "instead of the address local");
     static foreach (member; [__traits(allMembers, MeshCommandDeps)]) {{
         static if (member != "__ctor" && member[$ - 1] == '_')

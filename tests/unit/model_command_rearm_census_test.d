@@ -53,12 +53,12 @@ private final class PolicyCommand : Command {
 
 unittest { // Published sets are populated, exact and disjoint by observed data.
     Registry registry;
-    registry.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
-        new PolicyCommand("mesh.subpatch_toggle", CmdFlags.Model);
-    registry.commandFactories["mesh.bevel"] = () => cast(Command)
-        new PolicyCommand("mesh.bevel", CmdFlags.Model);
-    registry.commandFactories["tool.attr"] = () => cast(Command)
-        new PolicyCommand("tool.attr", CmdFlags.SideEffect);
+    registry.registerCommand("mesh.subpatch_toggle", () => cast(Command)
+        new PolicyCommand("mesh.subpatch_toggle", CmdFlags.Model));
+    registry.registerCommand("mesh.bevel", () => cast(Command)
+        new PolicyCommand("mesh.bevel", CmdFlags.Model));
+    registry.registerCommand("tool.attr", () => cast(Command)
+        new PolicyCommand("tool.attr", CmdFlags.SideEffect));
     registry.cacheSupportedModes();
 
     auto wire = parseJSON(registry.registryJson(false));

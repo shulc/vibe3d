@@ -2,7 +2,7 @@ module editor_app;
 
 // Task 0415 (campaign 0407 §B.V1 step 1): the "зачаток EditorApp" context bag
 // threaded through registerTools/registerCommands (source/registration.d),
-// which host the ~213 commandFactories + ~66 toolFactories previously
+// which host the command/tool registration families previously
 // registered inline in app.d's main(). Full design + inventory +
 // verification log: doc/tasks/done/0415-registration-app-decomp.md.
 //

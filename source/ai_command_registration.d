@@ -17,7 +17,7 @@ void registerAiToggleCommands(ref Registry reg, LiveSessionRole owner,
             new AiToggleCommand(&owner.activeMesh(), live.view(), live.mode,
                                 aiState, action);
     }
-    reg.commandFactories["ai.toggle"] = makeAiFactory(AiToggleAction.toggle);
-    reg.commandFactories["ai.enable"] = makeAiFactory(AiToggleAction.enable);
-    reg.commandFactories["ai.disable"] = makeAiFactory(AiToggleAction.disable);
+    reg.registerCommand("ai.toggle", makeAiFactory(AiToggleAction.toggle));
+    reg.registerCommand("ai.enable", makeAiFactory(AiToggleAction.enable));
+    reg.registerCommand("ai.disable", makeAiFactory(AiToggleAction.disable));
 }

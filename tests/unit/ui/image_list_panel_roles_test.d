@@ -274,24 +274,24 @@ private final class ImagePanelHarness {
             GuardObservationPorts((r) { records ~= r; }, (a, p) {}, (p) {})));
         binding = new ApplicationCommandBinding(registry, executor,
             editSession, history, guard, (Command) {}, (string) {});
-        registry.commandFactories["layer.select"] = () => cast(Command)
+        registry.registerCommand("layer.select", () => cast(Command)
             new LayerSelect(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.rename"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.rename", () => cast(Command)
             new LayerRename(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.delete"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.delete", () => cast(Command)
             new LayerDelete(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.reorder"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.reorder", () => cast(Command)
             new LayerReorder(owner.document.activeMesh(), view, owner.editMode,
-                             owner.documentPtr(), null);
-        registry.commandFactories["image.load"] = () => cast(Command)
+                             owner.documentPtr(), null));
+        registry.registerCommand("image.load", () => cast(Command)
             new ImageLoad(owner.document.activeMesh(), view, owner.editMode,
-                          owner.documentPtr(), null);
-        registry.commandFactories["image.remove"] = () => cast(Command)
+                          owner.documentPtr(), null));
+        registry.registerCommand("image.remove", () => cast(Command)
             new ImageRemove(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
+                            owner.documentPtr(), null));
         imageRoles = bindImageListPanel(owner, binding);
         assert(imageRoles.state !is null,
             "6359 state floor: bindImageListPanel returned no ImageListPanelState");

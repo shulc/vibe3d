@@ -22,7 +22,7 @@ import commands.mesh.select : MeshSelect;
 /// `meshSelectFactory`), so it inherits that factory's already-wired
 /// `promoteGeometryType` hook (the geometry-selection funnel that does NOT
 /// drop the active tool — NOT `switchGeometryType`) and resolved-viewport
-/// provider — see app.d's `reg.commandFactories["mesh.select"]` entry. This
+/// provider — see app.d's `reg.makeCommand("mesh.select")` lookup. This
 /// is a reuse, not a reimplementation: undo/history/the SelType funnel all
 /// behave exactly like every other selection UI (see MeshSelect's doc
 /// comment + drawLayerListPanel's "NEVER mutates directly" rule, app.d:8312).

@@ -4,7 +4,7 @@ import tool_activation_ownership : ToolTransition;
 
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration previously inline in app.d's
-// main() (~213 commandFactories + ~66 toolFactories assignments). Design +
+// main() (~213 command + ~66 tool registrations). Design +
 // inventory + verification log: doc/tasks/done/0415-registration-app-decomp.md.
 //
 // Both functions take `EditorApp app` BY VALUE and open `with (app) { ... }`
@@ -161,7 +161,7 @@ version (WithAI) {
     import copilot_overlay : drawCopilotFindingOverlay;
 }
 
-/// Registers every `reg.toolFactories[id]` and the paired headless wrappers
+/// Registers every tool through `registerTool` and the paired headless wrappers
 /// (app.d's former Span A, ~2876-3364: move/rotate/scale through the
 /// mesh.*Tool generator-preview family). Phase 1 (0415).
 ///
@@ -195,8 +195,12 @@ private void registerTransformTools(EditorApp app) {
 version (unittest)
 /// Build any transform-family product through the production composition root.
 Tool buildRegisteredXfrmTransformForOwnershipTest(EditorApp app, string key) {
-    registerTransformTools(app);
-    return app.reg.toolFactories[key]();
+    Registry staged;
+    auto stagedApp = app;
+    stagedApp.regPtr = &staged;
+    registerTransformTools(stagedApp);
+    app.reg = staged;
+    return app.reg.toolFactory(key)();
 }
 
 /// The create registrar owns only explicit live roles and collaborators.
@@ -221,32 +225,32 @@ private void registerEditTools(EditorApp app) {
     // Drag Weld — drag a source vertex onto a target vertex to weld them.
     // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
     // entry per completed gesture. Gated to Vertices mode.
-    reg.toolFactories["mesh.dragWeld"] = typedToolFactory!DragWeldTool(() {
+    reg.registerTool("mesh.dragWeld", typedToolFactory!DragWeldTool(() {
         auto t = new DragWeldTool(() => &mesh(), &gpu(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Edge Extrude — interactive (drag → extrude/width) + headless
     // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
     // tool: own typed edit factory (MeshSessionEdit, not vxEditFactory),
     // wired via the prim.cube registration template. Gated to Edges mode by
     // EdgeExtrudeTool.supportedModes().
-    reg.toolFactories["edge.extrude"] = typedToolFactory!EdgeExtrudeTool(() {
+    reg.registerTool("edge.extrude", typedToolFactory!EdgeExtrudeTool(() {
         auto t = new EdgeExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, edgeExtrudeEditFactory);
         return t;
-    });
+    }));
 
     // Face Extrude — interactive (drag → distance along region normal) + headless
     // (tool.attr poly.extrude distance <v>; tool.doApply). Topology-creating
     // tool: own typed edit factory (MeshSessionEdit, snapshot-only undo).
     // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
-    reg.toolFactories["poly.extrude"] = typedToolFactory!PolyExtrudeTool(() {
+    reg.registerTool("poly.extrude", typedToolFactory!PolyExtrudeTool(() {
         auto t = new PolyExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, polyExtrudeEditFactory);
         return t;
-    });
+    }));
 
     // Radial Array — interactive (angle-cube haul → End Angle; axis-arrow haul
     // → Offset; off-handle click → reposition Center) + headless (tool.attr
@@ -255,11 +259,11 @@ private void registerEditTools(EditorApp app) {
     // insertion, no new layers) already exercised by the one-shot
     // mesh.radial_array command. Topology-creating tool: own typed edit
     // factory (MeshSessionEdit, snapshot-only undo).
-    reg.toolFactories["mesh.radialArrayTool"] = typedToolFactory!RadialArrayTool(() {
+    reg.registerTool("mesh.radialArrayTool", typedToolFactory!RadialArrayTool(() {
         auto t = new RadialArrayTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, radialArrayEditFactory);
         return t;
-    });
+    }));
 
     // Stroke Extrude — interactive (click-drag draws a camera-raycast
     // world-space path, selected polygons extrude along it in bands) +
@@ -269,41 +273,41 @@ private void registerEditTools(EditorApp app) {
     // basic/captured scope. Topology-creating tool: own typed edit factory
     // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode
     // by StrokeExtrudeTool.supportedModes().
-    reg.toolFactories["tool.strokeExtrude"] = typedToolFactory!StrokeExtrudeTool(() {
+    reg.registerTool("tool.strokeExtrude", typedToolFactory!StrokeExtrudeTool(() {
         auto t = new StrokeExtrudeTool(() => &mesh(), &gpu(), litShader);
         t.setGestureBindings(history, strokeExtrudeEditFactory);
         return t;
-    });
+    }));
 
     // Edge Extend — interactive (drag → world-axis Offset via the embedded
     // transform gizmo's Move bank) + headless (tool.attr edge.extend offsetX...;
     // tool.doApply). Topology-creating tool: own typed edit factory
     // (MeshSessionEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
-    reg.toolFactories["edge.extend"] = typedToolFactory!EdgeExtendTool(() {
+    reg.registerTool("edge.extend", typedToolFactory!EdgeExtendTool(() {
         auto t = new EdgeExtendTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, edgeExtendEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return t;
-    });
+    }));
 
     // Poly Bevel — interactive + headless (inset, shift params). Topology-creating
     // tool: reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Polygons.
-    reg.toolFactories["poly.bevel"] = typedToolFactory!PolyBevelTool(() {
+    reg.registerTool("poly.bevel", typedToolFactory!PolyBevelTool(() {
         auto t = new PolyBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
     // Polygon Inset — interactive (task 0359 promotion of the one-shot
     // mesh.poly_inset command). One attribute (inset), always per-polygon,
     // no drawn gizmo (toolcard-confirmed) — a generic viewport click+drag
     // hauls the value. Reuses the generic MeshSessionEdit/bevelEditFactory
     // before/after-snapshot undo path, same as mesh.mirrorTool/mesh.tack
     // above. Gated to Polygons.
-    reg.toolFactories["mesh.polyInsetTool"] = typedToolFactory!PolyInsetTool(() {
+    reg.registerTool("mesh.polyInsetTool", typedToolFactory!PolyInsetTool(() {
         auto t = new PolyInsetTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Smooth Shift + Thicken — interactive (2 handles: Offset, Scale) + headless
     // (tool.attr mesh.smoothShiftTool shift/scale/maxAngle/thicken/sharp <v>;
@@ -312,11 +316,11 @@ private void registerEditTools(EditorApp app) {
     // SmoothShiftTool.supportedModes(). The reference editor's Thicken toolbar
     // button is confirmed (task 0358) to be THIS SAME tool with thicken=1
     // forced, not a separate tool — see config/buttons.yaml.
-    reg.toolFactories["mesh.smoothShiftTool"] = typedToolFactory!SmoothShiftTool(() {
+    reg.registerTool("mesh.smoothShiftTool", typedToolFactory!SmoothShiftTool(() {
         auto t = new SmoothShiftTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, smoothShiftEditFactory);
         return t;
-    });
+    }));
     // TASK 1905 — `vxEditFactory` is spent at TEN sites in this file: FIVE
     // transform-zone `setUndoBindings` calls (the unified-transform helper plus
     // push, bend and the two align tools), and FIVE `setGestureBindings` calls
@@ -348,32 +352,32 @@ private void registerEditTools(EditorApp app) {
     // decision D1. Member 6 of the same census pins the ten-site five/five
     // split, and member 5 pins the surviving binder declarations, so neither
     // can grow in silence.
-    reg.toolFactories["xfrm.magnet"] = typedToolFactory!MagnetTool(() {
+    reg.registerTool("xfrm.magnet", typedToolFactory!MagnetTool(() {
         auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode());
         t.setGestureBindings(history, vxEditFactory);
         return t;
-    });
+    }));
 
     // Edge Bevel — interactive + headless (width param). Topology-creating tool:
     // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.
-    reg.toolFactories["edge.bevel"] = typedToolFactory!EdgeBevelTool(() {
+    reg.registerTool("edge.bevel", typedToolFactory!EdgeBevelTool(() {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Vertex Bevel — interactive (task 0360 promotion of the one-shot
     // mesh.vertexBevel command). Single-handle Inset, ACTR-anchored,
     // mirrors EdgeBevelTool one element type down. Reuses bevelEditFactory
     // (MeshSessionEdit snapshot undo) and the SAME id as the pre-existing
-    // one-shot command (reg.commandFactories["mesh.vertexBevel"] below,
+    // one-shot command (`mesh.vertexBevel` below,
     // untouched) — separate registries, same precedent as poly.extrude/
     // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
-    reg.toolFactories["mesh.vertexBevel"] = typedToolFactory!VertexBevelTool(() {
+    reg.registerTool("mesh.vertexBevel", typedToolFactory!VertexBevelTool(() {
         auto t = new VertexBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Vertex Extrude — interactive (task 0360 promotion of the one-shot
     // mesh.vertexExtrude command). Two independent handles (Extrude/shift,
@@ -381,11 +385,11 @@ private void registerEditTools(EditorApp app) {
     // bevelEditFactory (MeshSessionEdit snapshot undo); same id as the
     // pre-existing one-shot command, separate registries (see
     // mesh.vertexBevel above). Gated to Vertices mode.
-    reg.toolFactories["mesh.vertexExtrude"] = typedToolFactory!VertexExtrudeTool(() {
+    reg.registerTool("mesh.vertexExtrude", typedToolFactory!VertexExtrudeTool(() {
         auto t = new VertexExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Vertex Merge — interactive (task 0360 promotion of the one-shot
     // vert.merge command). No drawn handle — a generic viewport haul, same
@@ -393,28 +397,28 @@ private void registerEditTools(EditorApp app) {
     // snapshot undo); same id as the pre-existing one-shot command (which
     // keeps its own range/keep/morph params, untouched — see
     // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
-    reg.toolFactories["vert.merge"] = typedToolFactory!VertexMergeTool(() {
+    reg.registerTool("vert.merge", typedToolFactory!VertexMergeTool(() {
         auto t = new VertexMergeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Loop Slice — hover-seeded interactive edge-loop cut. Topology-creating
     // tool: reuses the SAME collectEdgeRing/insertEdgeLoops kernel as the
     // mesh.loopSlice/mesh.addLoop commands (untouched); mutate/revert preview,
     // one MeshSessionEdit undo entry PER committed cut. Gated to Edges mode.
-    reg.toolFactories["mesh.loopSliceTool"] = typedToolFactory!LoopSliceTool(() {
+    reg.registerTool("mesh.loopSliceTool", typedToolFactory!LoopSliceTool(() {
         auto t = new LoopSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, loopSliceEditFactory);
         return t;
-    });
+    }));
 
     // Slice (plane/line) — interactive Start→End line cut with a plane
     // PERPENDICULAR to the work plane (mesh.sliceTool, task 0266 S0). Reuses
     // mesh_ops.cut.cutByPlane; one MeshSnapshot undo entry per committed slice
     // (reuses the generic bevelEditFactory snapshot command, labelled "Slice").
     // Distinct from the camera-plane one-shot mesh.screenSlice command.
-    reg.toolFactories["mesh.sliceTool"] = typedToolFactory!SliceTool(() {
+    reg.registerTool("mesh.sliceTool", typedToolFactory!SliceTool(() {
         auto t = new SliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         // TASK 1905 — `bevelEditFactory` is spent at TWENTY-FOUR sites in this
         // file and ALL twenty-four are on the base seam; ZERO are left on a
@@ -434,7 +438,7 @@ private void registerEditTools(EditorApp app) {
         // of `tests/unit/tool_commit_seam_census_g8_test.d`.
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Edge Slice — interactive two-edge strip cut (mesh.edgeSliceTool):
     // hover an edge -> click latches edge A + tA -> drag scrubs tA -> click a
@@ -445,45 +449,45 @@ private void registerEditTools(EditorApp app) {
     // bevelEditFactory snapshot command, labelled "Edge Slice"). The one-shot
     // mesh.edgeSlice command stays registered below for headless/scripting.
     // Gated to Edges mode.
-    reg.toolFactories["mesh.edgeSliceTool"] = typedToolFactory!EdgeSliceTool(() {
+    reg.registerTool("mesh.edgeSliceTool", typedToolFactory!EdgeSliceTool(() {
         auto t = new EdgeSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, bevelEditFactory);
         return t;
-    });
+    }));
 
     // Mesh Reduction — interactive + headless (ratio, preserveBoundary params).
     // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshSessionEdit.
     // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
-    reg.toolFactories["mesh.reduceTool"] = typedToolFactory!ReductionTool(() {
+    reg.registerTool("mesh.reduceTool", typedToolFactory!ReductionTool(() {
         auto t = new ReductionTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setGestureBindings(history, reduceEditFactory);
         return t;
-    });
+    }));
 
     // Clone — interactive drag-place a single copy of the selection (offset
     // by the drag delta on the most-facing screen plane).  Snapshot undo via
     // MeshSessionEdit; gated to Polygons mode.  Drag→offset feel is a
     // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
-    reg.toolFactories["mesh.clone"] = typedToolFactory!CloneTool(() {
+    reg.registerTool("mesh.clone", typedToolFactory!CloneTool(() {
         auto t = new CloneTool(() => &mesh(), &gpu(), &editMode());
         t.setGestureBindings(history, cloneEditFactory);
         return t;
-    });
+    }));
 
     // Array — interactive 3-axis grid array (task 0355), promoting the
     // one-shot mesh.array command's 1D line kernel to Mesh.arrayFacesGrid.
     // Snapshot undo via MeshSessionEdit; edit-mode-orthogonal (same face-
     // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
-    reg.toolFactories["mesh.arrayTool"] = typedToolFactory!ArrayTool(() {
+    reg.registerTool("mesh.arrayTool", typedToolFactory!ArrayTool(() {
         auto t = new ArrayTool(() => &mesh(), &gpu(), &editMode());
         t.setGestureBindings(history, arrayEditFactory);
         return t;
-    });
+    }));
     }
 }
 
 
-/// Registers the remaining `reg.commandFactories[id]` entries — tool.*,
+/// Registers the remaining command entries — tool.*,
 /// ui.*, layer.*, ai3d.*, select.*, mesh.*, history.*, and macro.*.
 ///
 /// Families that still need broad EditorApp state retain their local
@@ -491,13 +495,11 @@ private void registerEditTools(EditorApp app) {
 /// roles and narrow collaborators at the calls below, so they do not resolve
 /// those inputs through the residual nested `with` block.
 void registerCommands(EditorApp app) {
-    // The family functions and narrow registrars below are called in the flat
-    // list's order. The task-0621 selection-type wrap
-    // stays HERE and stays LAST -- it walks the FINISHED dictionary, so it
-    // must run after every family. It also depends on app.d calling
-    // registerTools BEFORE registerCommands, because ~13 tool-paired
-    // commands are registered over there: the note below says "this
-    // function", and that was already only half of where the keys come from.
+    app.reg().bindSelTypeAuthority(LiveSessionRole(app.sessionOwner));
+    // Registry construction owns selection-type attachment (task 0621).
+    // Binding is first so every command built by any family receives the live
+    // authority; the registry latch rejects construction before this point.
+    // Registrar ordering is no longer part of that invariant.
     //
     // Item and AI-3D factories have separate narrow inputs. The composition
     // root retains the modal writer and passes AI registration one callback.
@@ -546,7 +548,7 @@ void registerCommands(EditorApp app) {
         registerCopilotCommands(app.reg(), LiveSessionRole(app.sessionOwner),
             LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
             app.aiState, app.copilotPanel,
-            () => app.reg().commandFactories["mesh.select"]());
+            () => app.reg().makeCommand("mesh.select"));
     }
     registerFileIoCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
@@ -565,54 +567,9 @@ void registerCommands(EditorApp app) {
                          app.sessionOwner.editModePtr()),
         app.history, app.historyPanelState, app.macroRecorder);
     registerSelfTestCommands(app);
-    app.reg().commandFactories["layout.reset"] = () => cast(Command)
+    app.reg().registerCommand("layout.reset", () => cast(Command)
         new UiLayoutResetCommand(&app.mesh(), app.cameraView(), app.editMode(),
-                                 app.authorLayoutReset);
-    // Preserve the live `EditorApp` and AI3D scopes used by the flat body;
-    // Quad Remesh state now has one class owner rather than a leaf bundle.
-    with (app) {
-    with (ai3dRefs) {
-
-    // -----------------------------------------------------------------------
-    // Selection-type authority (task 0621) — wired onto EVERY command.
-    // -----------------------------------------------------------------------
-    // THE RULE lives on `Command.currentType()` (source/command.d): a command
-    // asks the CURRENT selection type, never the derived `editMode`, because
-    // under `SelType.Item` the latter retains the pre-switch geometry type and
-    // the command then acts on a selection the user cannot see.
-    //
-    // This wraps every registered factory rather than adding the provider to
-    // the ~200 construction sites above, and that is the point rather than a
-    // shortcut: the seam this task closes exists BECAUSE the app layer and the
-    // command layer read different authorities, and an opt-in-per-command
-    // wiring would let the next command be added without one. Wrapping the
-    // whole dictionary means a command cannot be registered without the
-    // authority, so `currentType()`'s null fallback is unreachable in
-    // production and only unit tests that construct a command directly ever
-    // take it.
-    //
-    // Placement: LAST in this function, after every `commandFactories[...]`
-    // assignment (including those in the nested `with`/scope blocks above), so
-    // the walk sees the complete dictionary. Any factory registered after this
-    // point would silently miss the provider — add new ones above.
-    //
-    // `reg.commandFactories.keys` snapshots the key set into a fresh array, so
-    // re-assigning existing keys during the walk neither rehashes nor
-    // invalidates the iteration. The wrapper is built by a named helper, not
-    // by a lambda written inline in the loop body, so each closure captures
-    // its OWN `inner` — the standard idiom in this file (cf. `makeFactory`).
-    {
-        auto selTypeSrc = () => currentSelType(selTypeOrder);
-        static Command delegate() withSelType(Command delegate() inner,
-                                              SelType delegate() src) {
-            return () { auto c = inner(); c.setSelTypeProvider(src); return c; };
-        }
-        foreach (id; reg.commandFactories.keys)
-            reg.commandFactories[id] = withSelType(reg.commandFactories[id],
-                                                   selTypeSrc);
-    }
-    }
-    }
+                                 app.authorLayoutReset));
 }
 
 /// The mesh-command registrar owns explicit live roles and five narrow
@@ -650,9 +607,8 @@ void registerMeshCommandsForOwnershipTest(EditorApp app) {
 /// Modelled on the `version (WithAI)` copilot block above: version-gated
 /// import, version-gated registration, no other file aware of either.
 ///
-/// It must be called BEFORE `registerCommands`'s selection-type wrap, like
-/// every other family — the wrap walks the FINISHED dictionary and anything
-/// registered after it silently misses the authority.
+/// Construction attaches the selection-type authority inside Registry, so
+/// this version-gated family has the same path as every other command.
 ///
 /// The key registered here and `SelfTestFaultCommand.name()` are the SAME
 /// string on purpose and not by coincidence: `Registry.cacheSupportedModes()`
@@ -665,8 +621,8 @@ void registerSelfTestCommands(EditorApp app) {
     version (SanitizerSelfTest) {
         import selftest_fault : SelfTestFaultCommand;
         with (app) {
-            reg.commandFactories["selftest.fault"] = () => cast(Command)
-                new SelfTestFaultCommand(&mesh(), cameraView, editMode);
+            reg.registerCommand("selftest.fault", () => cast(Command)
+                new SelfTestFaultCommand(&mesh(), cameraView, editMode));
         }
     }
 }

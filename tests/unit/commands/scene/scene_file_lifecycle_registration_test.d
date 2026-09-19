@@ -123,11 +123,11 @@ unittest { // R2: both reset doors cross the production-shaped disarm phase firs
         rig.liveViewMode(), SceneResetEffects(viewports, &preview, &prefs,
             drop, resetPipes), SceneLifecycleDoors(promote, () {},
             () => drop(ToolTransition.sceneResetDrop)));
-    assert(rig.registry.commandFactories.length == 4
-            && "file.new" in rig.registry.commandFactories
-            && "file.quit" in rig.registry.commandFactories
-            && "scene.reset" in rig.registry.commandFactories
-            && "scene.loadMesh" in rig.registry.commandFactories,
+    assert(rig.registry.commandIds().length == 4
+            && rig.registry.hasCommand("file.new")
+            && rig.registry.hasCommand("file.quit")
+            && rig.registry.hasCommand("scene.reset")
+            && rig.registry.hasCommand("scene.loadMesh"),
         "6480 R2 population: the registrar must own exactly four lifecycle ids");
 
     // This is intentionally the same algorithmic body as app.d's seam. The
@@ -278,7 +278,7 @@ unittest { // R4: scene.loadMesh receives the narrow drop, not full reset effect
     viewports.applyLayout(LayoutPreset.Quad);
     prefs.viewportLayout = LayoutPreset.Quad;
     const cached = primeTopologyCache(preview);
-    assert("scene.loadMesh" in rig.registry.commandFactories && cached >= 1
+    assert(rig.registry.hasCommand("scene.loadMesh") && cached >= 1
             && preview.active && preview.reusablePreviewReady
             && preview.osdAccel.valid && viewports.cellCount == 4
             && prefs.viewportLayout == LayoutPreset.Quad
@@ -321,14 +321,14 @@ unittest { // R5: factories resolve live roles/document and every door is requir
         SceneLifecycleDoors((EditMode mode) {
             rig.session.promoteGeometryType(mode);
         }, () { ++quitRequests; }, () { rig.activeTool = null; }));
-    assert(rig.registry.commandFactories.length == 4,
+    assert(rig.registry.commandIds().length == 4,
         "6480 R5 population: expected four live factories");
 
     auto meshA = &rig.layerA.meshRef();
     auto viewA = rig.liveView();
     size_t controls;
     foreach (id; ["file.new", "file.quit", "scene.reset", "scene.loadMesh"]) {
-        auto built = rig.registry.commandFactories[id]();
+        auto built = rig.registry.makeCommand(id);
         assert(built.meshPtr() is meshA && built.viewRef() is viewA
                 && built.editModeVal() == EditMode.Vertices,
             "6480 R5 control did not resolve layer A/cell 0/Vertices: " ~ id);
@@ -342,7 +342,7 @@ unittest { // R5: factories resolve live roles/document and every door is requir
         "6480 R5 live-view floor did not switch to cell 1");
     size_t targets;
     foreach (id; ["file.new", "file.quit", "scene.reset", "scene.loadMesh"]) {
-        auto built = rig.registry.commandFactories[id]();
+        auto built = rig.registry.makeCommand(id);
         assert(built.viewRef() is rig.cells[1]
                 && built.editModeVal() == EditMode.Polygons,
             "6480 R5 live View/Mode retained registration-time state: " ~ id);
@@ -353,7 +353,7 @@ unittest { // R5: factories resolve live roles/document and every door is requir
     const oldTestMode = command.g_testMode;
     scope(exit) command.g_testMode = oldTestMode;
     command.g_testMode = false;
-    auto quit = rig.registry.commandFactories["file.quit"]();
+    auto quit = rig.registry.makeCommand("file.quit");
     assert(quit.apply() && quitRequests == 1,
         "6480 R5 requestQuit door did not fire exactly once");
 
@@ -366,7 +366,7 @@ unittest { // R5: factories resolve live roles/document and every door is requir
     rig.cells[0].distance = 11.0f;
     rig.cells[1].distance = 17.0f;
     auto load = cast(MeshLoadRaw)
-        rig.registry.commandFactories["scene.loadMesh"]();
+        rig.registry.makeCommand("scene.loadMesh");
     assert(load !is null && load.meshPtr() is &rig.layerB.meshRef()
             && load.viewRef() is rig.cells[1]
             && load.editModeVal() == EditMode.Polygons,
@@ -451,11 +451,6 @@ unittest { // R3: production wiring and the retired paths, deliberately last
         "6480 R3 production call no longer binds the four lifecycle ids once");
     assert(registration.count("SceneResetEffects(") == 1,
         "6480 R3 reset effects must be constructed exactly once");
-    const callAt = registrationFlat.indexOf(productionCall);
-    const wrapperAt = registrationFlat.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapperAt > callAt,
-        "6480 R3 lifecycle registration moved after the selection-type wrapper");
 
     enum recipe = "auto c = new SceneReset(&owner.activeMesh(), live.view(), "
         ~ "live.mode, live.modeCell(), () => effects.resetToolEffects(), "
@@ -466,24 +461,26 @@ unittest { // R3: production wiring and the retired paths, deliberately last
             && lifecycle.count("c.setPromoteHook(doors.promoteGeometry());") == 1,
         "6480 R3 the named reset recipe changed or was duplicated");
     assert(lifecycleFlat.count(
-            "sceneResetFactory(owner, live, resetEffects, doors, true);") == 1
+            "sceneResetFactory(owner, live, resetEffects, doors, true));") == 1
             && lifecycleFlat.count(
-            "sceneResetFactory(owner, live, resetEffects, doors, false);") == 1,
+            "sceneResetFactory(owner, live, resetEffects, doors, false));") == 1,
         "6480 R3 file.new/scene.reset lost their true/false recipe bindings");
-    const fileNewAt = lifecycleRaw.indexOf(`reg.commandFactories["file.new"]`);
+    const fileNewAt = lifecycleRaw.indexOf(`reg.registerCommand("file.new",`);
     const trueAt = lifecycle.indexOf(
-        "sceneResetFactory(owner, live, resetEffects, doors, true);");
+        "sceneResetFactory(owner, live, resetEffects, doors, true));");
     const sceneResetAt = lifecycleRaw.indexOf(
-        `reg.commandFactories["scene.reset"]`);
+        `reg.registerCommand("scene.reset",`);
     assert(fileNewAt >= 0 && trueAt > fileNewAt
             && sceneResetAt > trueAt,
         "6480 R3 empty=true is not bound to file.new before scene.reset");
+    assert(registration.count("bindSelTypeAuthority(") == 1,
+        "6480 R3 registry construction authority bind changed");
 
     enum loadSlots = "(new MeshLoadRaw(&owner.activeMesh(), live.view(), "
         ~ "live.mode, live.modeCell(), &live.view(), "
-        ~ "doors.dropForSceneLoad())) .setPromoteHook(doors.promoteGeometry());";
+        ~ "doors.dropForSceneLoad())) .setPromoteHook(doors.promoteGeometry()));";
     enum quitSlots = "new FileQuit(&owner.activeMesh(), live.view(), live.mode, "
-        ~ "doors.requestQuit());";
+        ~ "doors.requestQuit()));";
     assert(lifecycleFlat.count(loadSlots) == 1
             && lifecycleFlat.count(quitSlots) == 1,
         "6480 R3 load/quit factories lost their narrow lifecycle doors");

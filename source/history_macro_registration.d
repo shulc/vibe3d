@@ -32,34 +32,34 @@ void registerHistoryCommands(ref Registry reg,
     assert(panelState !is null, "history registration requires panel state");
     assert(macroRecorder !is null, "history registration requires macro recorder");
 
-    reg.commandFactories["history.undo"] = () => cast(Command)
-        new HistoryUndo(&session.activeMesh(), live.view(), live.mode, history);
-    reg.commandFactories["history.redo"] = () => cast(Command)
-        new HistoryRedo(&session.activeMesh(), live.view(), live.mode, history);
-    reg.commandFactories["history.show"] = () => cast(Command)
+    reg.registerCommand("history.undo", () => cast(Command)
+        new HistoryUndo(&session.activeMesh(), live.view(), live.mode, history));
+    reg.registerCommand("history.redo", () => cast(Command)
+        new HistoryRedo(&session.activeMesh(), live.view(), live.mode, history));
+    reg.registerCommand("history.show", () => cast(Command)
         new HistoryShow(&session.activeMesh(), live.view(), live.mode,
-                        () { panelState.visible = !panelState.visible; });
-    reg.commandFactories["history.clear"] = () => cast(Command)
+                        () { panelState.visible = !panelState.visible; }));
+    reg.registerCommand("history.clear", () => cast(Command)
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
-                         () { history.clear(); });
+                         () { history.clear(); }));
 
     // Test-only lockout is the hard record/undo/redo/fire gate, distinct from
     // Suspend, and /api/undo/status exposes it as lockout:true. HistoryClear's
     // closure wrapper keeps these SideEffect commands unrecorded and out of UI.
-    reg.commandFactories["undo.lockout.on"] = () => cast(Command)
+    reg.registerCommand("undo.lockout.on", () => cast(Command)
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
-                         () { history.setLockout(true); });
-    reg.commandFactories["undo.lockout.off"] = () => cast(Command)
+                         () { history.setLockout(true); }));
+    reg.registerCommand("undo.lockout.off", () => cast(Command)
         new HistoryClear(&session.activeMesh(), live.view(), live.mode,
-                         () { history.setLockout(false); });
+                         () { history.setLockout(false); }));
     // These probes drive both isUndoable() overrides through normal dispatch:
     // the Model command opts out; the SideEffect command opts in.
-    reg.commandFactories["undo.test.suppress"] = () => cast(Command)
-        new UndoSuppressNoop(&session.activeMesh(), live.view(), live.mode);
-    reg.commandFactories["undo.test.force"] = () => cast(Command)
-        new UndoForceNoop(&session.activeMesh(), live.view(), live.mode);
+    reg.registerCommand("undo.test.suppress", () => cast(Command)
+        new UndoSuppressNoop(&session.activeMesh(), live.view(), live.mode));
+    reg.registerCommand("undo.test.force", () => cast(Command)
+        new UndoForceNoop(&session.activeMesh(), live.view(), live.mode));
 
-    reg.commandFactories["history.saveAsScript"] = () => cast(Command)
+    reg.registerCommand("history.saveAsScript", () => cast(Command)
         new HistorySaveAsScript(&session.activeMesh(), live.view(), live.mode,
             () {
                 string[] lines;
@@ -70,12 +70,12 @@ void registerHistoryCommands(ref Registry reg,
                     lines ~= serializeCommandLine(e.commandName, e.args);
                 }
                 return lines;
-            });
+            }));
 
-    reg.commandFactories["macro.record"] = () => cast(Command)
+    reg.registerCommand("macro.record", () => cast(Command)
         new MacroRecord(&session.activeMesh(), live.view(), live.mode,
-                        macroRecorder);
-    reg.commandFactories["macro.saveRecorded"] = () => cast(Command)
+                        macroRecorder));
+    reg.registerCommand("macro.saveRecorded", () => cast(Command)
         new MacroSaveRecorded(&session.activeMesh(), live.view(), live.mode,
-                              macroRecorder);
+                              macroRecorder));
 }

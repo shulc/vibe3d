@@ -3588,7 +3588,7 @@ void main(string[] args) {
             case ActivationDoor.legacyDeactivate:
                 assert(0, "a drop door cannot own an arm");
         }
-        auto factory = id in reg.toolFactories;
+        auto factory = reg.toolFactory(id);
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
 
@@ -3606,7 +3606,7 @@ void main(string[] args) {
         ifs.buildToolVts(poseSubject, pose);
         const threadIdentity = cast(ulong)cast(void*)Thread.getThis();
         const contextIdentity = cast(ulong)SDL_GL_GetCurrentContext();
-        auto prepared = prepareArm(*factory, id, activeTool, history,
+        auto prepared = prepareArm(factory, id, activeTool, history,
             recordObserverHub, document.primary, g_pipeCtx.pipeline, pipeAttrs,
             pipeGizmoHost, namedArgs, pose, threadIdentity, contextIdentity,
             &mesh(), cameraView, editMode, activeToolId,
@@ -3731,7 +3731,7 @@ void main(string[] args) {
 
     // Tool presets — declarative `base tool + pipe-stage attrs`
     // bundles loaded from `config/tool_presets.yaml`.
-    // Each entry registers as a new `reg.toolFactories[id]` that
+    // Each entry registers through `reg.registerTool(id, ...)` and
     // calls the named base factory and then applies `setAttr` per
     // pipe stage. Done AFTER all base factories are registered so
     // `registerToolPresets` can look up bases by id.
@@ -3777,10 +3777,10 @@ void main(string[] args) {
 
         FormValidators fv;
         fv.toolAttrs = (string toolId) {
-            auto factory = toolId in reg.toolFactories;
+            auto factory = reg.toolFactory(toolId);
             if (factory is null) return null;
             string[] names;
-            foreach (ref p; (*factory)().params())
+            foreach (ref p; factory().params())
                 names ~= p.name;
             return names;
         };
@@ -3790,8 +3790,7 @@ void main(string[] args) {
             if (stage is null) return null;
             return stage.knownAttrs();
         };
-        fv.commandExists = (string cmdId) =>
-            (cmdId in reg.commandFactories) !is null;
+        fv.commandExists = (string cmdId) => reg.hasCommand(cmdId);
         // The layer (item) namespace's universe is the UNION over every item
         // kind, because ONE form serves them all: its per-kind section binds
         // channels only a plane's provider returns, and those rows are hidden
@@ -3868,11 +3867,11 @@ void main(string[] args) {
         void check(Action a) {
             final switch (a.kind) {
                 case ActionKind.tool:
-                    if ((a.id in reg.toolFactories) is null)
+                    if (!reg.hasTool(a.id))
                         missing ~= " tool:" ~ a.id;
                     break;
                 case ActionKind.command:
-                    if ((a.id in reg.commandFactories) is null)
+                    if (!reg.hasCommand(a.id))
                         missing ~= " command:" ~ a.id;
                     break;
                 case ActionKind.script:
@@ -3880,7 +3879,7 @@ void main(string[] args) {
                         try {
                             auto parsed = parseArgstring(line);
                             if (parsed.isEmpty) continue;
-                            if ((parsed.commandId in reg.commandFactories) is null)
+                            if (!reg.hasCommand(parsed.commandId))
                                 missing ~= " script-cmd:" ~ parsed.commandId;
                         } catch (Exception e) {
                             missing ~= " script-parse-err:[" ~ line ~ "]";
@@ -3942,10 +3941,10 @@ void main(string[] args) {
         import std.array : appender;
         auto missing = appender!string();
         foreach (id, sc; shortcuts.byToolId)
-            if ((id in reg.toolFactories) is null)
+            if (!reg.hasTool(id))
                 missing ~= " tool:" ~ id;
         foreach (id, sc; shortcuts.byCommandId)
-            if ((id in reg.commandFactories) is null)
+            if (!reg.hasCommand(id))
                 missing ~= " command:" ~ id;
         if (missing.data.length > 0)
             throw new Exception(shortcutsPath ~ " references unknown ids:" ~ missing.data);
@@ -3987,7 +3986,7 @@ void main(string[] args) {
     // NOT commit the open edit. See doc/tool_settings_persist_plan.md Stage B.
     toolHost.resetActiveTool = (string optId) {
         string id = optId.length ? optId : activeToolId;
-        if (id.length == 0 || (id in reg.toolFactories) is null) return false;
+        if (id.length == 0 || !reg.hasTool(id)) return false;
         // Discard any in-progress preview so reset THROWS the edit away
         // rather than committing it (EditSession.discardOpenEdit — touches no
         // history; cancel bodies are pure mesh restores). With `dirty`
@@ -4155,10 +4154,10 @@ void main(string[] args) {
                 // queued case: `!sawDownloaded`). No extra app-side guard
                 // needed here.
                 const prefixLen = ev.jobId.length < 8 ? ev.jobId.length : 8;
-                if (("ai3d.importResult" in reg.commandFactories) is null)
+                if (!reg.hasCommand("ai3d.importResult"))
                     throw new Exception("registry: 'ai3d.importResult' is not registered");
                 auto imp = cast(Ai3dImportResult)
-                    reg.commandFactories["ai3d.importResult"]();
+                    reg.makeCommand("ai3d.importResult");
                 imp.setInput(ev.objPath, "AI 3D " ~ ev.jobId[0 .. prefixLen]);
                 runCommand(imp);
                 if (imp.succeeded()) {
@@ -4229,9 +4228,9 @@ void main(string[] args) {
                 // success) — null on a fully clean run. Read it BEFORE
                 // clear() below, which wipes it.
                 const string partialNote = remeshJob.message();
-                if (("mesh.remesh" in reg.commandFactories) is null)
+                if (!reg.hasCommand("mesh.remesh"))
                     throw new Exception("registry: 'mesh.remesh' is not registered");
-                auto cmd = cast(Remesh) reg.commandFactories["mesh.remesh"]();
+                auto cmd = cast(Remesh) reg.makeCommand("mesh.remesh");
                 runCommand(cmd);
                 // runCommand can no-op: Remesh.evaluate rejects (returns false,
                 // applied()==false) when every rebuilt face was dropped by the
@@ -4264,9 +4263,8 @@ void main(string[] args) {
     // other commands (no params, or id not found).
     bool tryOpenArgsDialog(string commandId) {
         import args_dialog : visibleParamCount;
-        auto factory = commandId in reg.commandFactories;
-        if (factory is null) return false;
-        auto cmd = (*factory)();
+        auto cmd = reg.makeCommand(commandId);
+        if (cmd is null) return false;
         // TASK 4062 — VISIBLE params, not any params. `params()` is the
         // positional-argument declaration now, so a command that takes a wire
         // argument has a schema even when there is nothing for a human to fill
@@ -4391,10 +4389,10 @@ void main(string[] args) {
         (Command c, RecordMode m) => executor.applyOrRefire(c, m, null),
         () => docDirty(),
         () {
-            if (("file.save" in reg.commandFactories) is null)
+            if (!reg.hasCommand("file.save"))
                 throw new Exception("registry: 'file.save' is not registered");
             return executor.applyOrRefire(
-                reg.commandFactories["file.save"](), RecordMode.Record, null);
+                reg.makeCommand("file.save"), RecordMode.Record, null);
         },
         cast(void delegate(Command))&raiseCommandNotice,
         GuardObservationPorts(

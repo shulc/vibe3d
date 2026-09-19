@@ -297,18 +297,18 @@ private final class LayerPanelHarness {
             registry, executor, editSession, history, guard,
             (Command) {}, (string) {});
 
-        registry.commandFactories["layer.select"] = () => cast(Command)
+        registry.registerCommand("layer.select", () => cast(Command)
             new LayerSelect(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.setVisible"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.setVisible", () => cast(Command)
             new LayerSetVisible(owner.document.activeMesh(), view,
-                owner.editMode, owner.documentPtr(), null);
-        registry.commandFactories["layer.rename"] = () => cast(Command)
+                owner.editMode, owner.documentPtr(), null));
+        registry.registerCommand("layer.rename", () => cast(Command)
             new LayerRename(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.attr"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.attr", () => cast(Command)
             new LayerAttr(owner.document.activeMesh(), view, owner.editMode,
-                          owner.documentPtr(), null);
+                          owner.documentPtr(), null));
 
         forms = new FormsPanel;
         // Production binds once after its document and command binding exist.

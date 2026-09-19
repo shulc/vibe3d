@@ -33,20 +33,19 @@ unittest { // every format factory retains its own configure argument
         LiveViewModeRole(cast(LiveView)&liveView,
                              session.editModePtr()));
 
-    assert(reg.commandFactories.length == 12,
+    assert(reg.commandIds().length == 12,
         "5790 configure witness population: expected 12 file-I/O ids");
-    assert(reg.commandFactories["file.open"] ==
-           reg.commandFactories["file.load"],
-        "file.open must remain the file.load factory alias");
-    auto load = cast(FileLoad)reg.commandFactories["file.load"]();
+    assert(reg.makeCommand("file.open").name == "file.load",
+        "file.open must remain a behavioral alias of file.load");
+    auto load = cast(FileLoad)reg.makeCommand("file.load");
     assert(load !is null && load.configuredMode == FileLoadMode.open
         && load.configuredExtension is null,
         "5790 file.load framing witness: expected open mode with no extension");
-    auto save = cast(FileSave)reg.commandFactories["file.save"]();
+    auto save = cast(FileSave)reg.makeCommand("file.save");
     assert(save !is null && save.configuredMode == FileSaveMode.save
         && save.configuredExtension is null,
         "5790 file.save framing witness: expected save mode with no extension");
-    auto saveAs = cast(FileSave)reg.commandFactories["file.saveAs"]();
+    auto saveAs = cast(FileSave)reg.makeCommand("file.saveAs");
     assert(saveAs !is null && saveAs.configuredMode == FileSaveMode.saveAs
         && saveAs.configuredExtension is null,
         "5790 file.saveAs framing witness: expected saveAs mode with no extension");
@@ -56,7 +55,7 @@ unittest { // every format factory retains its own configure argument
     assert(importIds.length == 2 && importExts.length == 2,
         "5790 import configure population must be exactly two witnesses");
     foreach (i, id; importIds) {
-        auto c = cast(FileLoad)reg.commandFactories[id]();
+        auto c = cast(FileLoad)reg.makeCommand(id);
         assert(c !is null && c.configuredMode == FileLoadMode.importSingle,
             "5790 import configure witness did not build importSingle");
         assert(c.configuredExtension == importExts[i],
@@ -69,7 +68,7 @@ unittest { // every format factory retains its own configure argument
     assert(exportIds.length == 2 && exportExts.length == 2,
         "5790 export configure population must be exactly two witnesses");
     foreach (i, id; exportIds) {
-        auto c = cast(FileSave)reg.commandFactories[id]();
+        auto c = cast(FileSave)reg.makeCommand(id);
         assert(c !is null && c.configuredMode == FileSaveMode.exportSingle,
             "5790 export configure witness did not build exportSingle");
         assert(c.configuredExtension == exportExts[i],
@@ -102,7 +101,7 @@ unittest { // a history-held command stays on A while new factories resolve B
         requestDocRebaseline();
     }
 
-    auto save = cast(FileSave)reg.commandFactories["file.save"]();
+    auto save = cast(FileSave)reg.makeCommand("file.save");
     save.setPath(path);
     assert(save.apply(), "setup: write the A cube fixture");
 
@@ -115,7 +114,7 @@ unittest { // a history-held command stays on A while new factories resolve B
     layerA.meshRef() = makeGridPlane(1);
     assert(layerA.meshRef().vertices.length == 4,
         "setup: A starts as a four-vertex grid before import");
-    auto oldCommand = cast(FileLoad)reg.commandFactories["file.import.lwo"]();
+    auto oldCommand = cast(FileLoad)reg.makeCommand("file.import.lwo");
     auto meshA = &layerA.meshRef();
     assert(oldCommand.meshPtr is meshA,
         "setup: the history command was created against A");
@@ -128,7 +127,7 @@ unittest { // a history-held command stays on A while new factories resolve B
     session.document.setPrimary(layerB);
     session.switchGeometryType(EditMode.Polygons);
     camera = cameraB;
-    auto newCommand = cast(FileLoad)reg.commandFactories["file.import.lwo"]();
+    auto newCommand = cast(FileLoad)reg.makeCommand("file.import.lwo");
     auto meshB = &layerB.meshRef();
 
     assert(history.undo(), "old history command must remain undoable after A to B");
@@ -145,7 +144,7 @@ unittest { // a history-held command stays on A while new factories resolve B
         "5790 live View/Mode witness: command creation used registration-time state");
 }
 
-unittest { // production wiring and LAST-wrapper ordering
+unittest { // production wiring and registry-owned construction
     const registrationPath = buildPath(repoRoot, "source", "registration.d");
     const fileIoPath = buildPath(repoRoot, "source", "file_io_registration.d");
     const lifecyclePath = buildPath(repoRoot, "source",
@@ -160,8 +159,8 @@ unittest { // production wiring and LAST-wrapper ordering
         && fileIo.count("editor_app") == 0,
         "5790 no-EditorApp witness: narrow registrar imports or names EditorApp");
     assert(fileIo.count("file.new") == 0
-        && lifecycle.count("commandFactories[\"file.new\"]") == 1
-        && registration.count("commandFactories[\"file.new\"]") == 0,
+        && lifecycle.count("registerCommand(\"file.new\"") == 1
+        && registration.count("registerCommand(\"file.new\"") == 0,
         "5790 scope fence: file.new left its application lifecycle family");
 
     enum productionCall =
@@ -170,10 +169,8 @@ unittest { // production wiring and LAST-wrapper ordering
         "5790 production wiring witness: registerCommands no longer calls the "
         ~ "narrow file-I/O registrar with the real Session");
 
-    const callAt = registration.indexOf(productionCall);
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapperAt >= 0 && callAt < wrapperAt,
-        "5790 selection wrapper ordering witness: file-I/O registration moved "
-        ~ "after the LAST selection-type wrapper");
+    assert(registration.indexOf(productionCall) >= 0,
+        "5790 production wiring call disappeared from registerCommands");
+    assert(registration.count("bindSelTypeAuthority(") == 1,
+        "5790 registry construction authority bind changed");
 }

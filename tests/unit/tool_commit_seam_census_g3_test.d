@@ -330,7 +330,7 @@ unittest {
     // file where it has to be: the stripper blanks string literals, and the wire
     // id IS a string literal. The needle keeps `] = ` on the end so it matches
     // the DEFINITION and not a second mention of the same key in a neighbouring
-    // `commandFactories` entry; the uniqueness check below makes that a claim
+    // command entry; the uniqueness check below makes that a claim
     // rather than an assumption (`tool.strokeExtrude` has such a neighbour —
     // the one-shot `mesh.strokeExtrude` command — which is why it is checked).
     immutable src = readText(buildPath(repoRoot, "source", "registration.d"));

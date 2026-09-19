@@ -22,19 +22,19 @@ void registerAi3dCommands(ref Registry reg, LiveSessionRole owner,
         && openGenerate !is null,
         "ai3d registration requires the active-layer hook, the controller and the open door");
 
-    reg.commandFactories["ai3d.importResult"] = () => cast(Command)
+    reg.registerCommand("ai3d.importResult", () => cast(Command)
         new Ai3dImportResult(&owner.activeMesh(), live.view(), live.mode,
-                             owner.document(), onActiveLayerChanged);
-    reg.commandFactories["ai3d.generate"] = () => cast(Command)
+                             owner.document(), onActiveLayerChanged));
+    reg.registerCommand("ai3d.generate", () => cast(Command)
         new Ai3dGenerate(&owner.activeMesh(), live.view(), live.mode,
-                         owner.document(), onActiveLayerChanged);
-    reg.commandFactories["ai3d.generate.start"] = () => cast(Command)
+                         owner.document(), onActiveLayerChanged));
+    reg.registerCommand("ai3d.generate.start", () => cast(Command)
         new Ai3dGenerateStartTestCommand(&owner.activeMesh(), live.view(),
-                                         live.mode, controller);
-    reg.commandFactories["ai3d.generate.cancel"] = () => cast(Command)
+                                         live.mode, controller));
+    reg.registerCommand("ai3d.generate.cancel", () => cast(Command)
         new Ai3dGenerateCancelTestCommand(&owner.activeMesh(), live.view(),
-                                          live.mode, controller);
-    reg.commandFactories["ai3d.generate.open"] = () => cast(Command)
+                                          live.mode, controller));
+    reg.registerCommand("ai3d.generate.open", () => cast(Command)
         new Ai3dGenerateOpen(&owner.activeMesh(), live.view(), live.mode,
-                             openGenerate);
+                             openGenerate));
 }

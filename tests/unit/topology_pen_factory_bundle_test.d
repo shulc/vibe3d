@@ -102,9 +102,9 @@ private Rig* makeRig() {
 
 private TopologyPenTool buildPen(Rig* r) {
     registerTools(r.app);
-    auto factory = "mesh.topoPen" in r.app.reg.toolFactories;
+    auto factory = r.app.reg.toolFactory("mesh.topoPen");
     assert(factory !is null, "6352 population: registry lacks mesh.topoPen");
-    auto t = cast(TopologyPenTool) (*factory)();
+    auto t = cast(TopologyPenTool) factory();
     assert(t !is null, "6352 population: mesh.topoPen did not build a TopologyPenTool");
     return t;
 }

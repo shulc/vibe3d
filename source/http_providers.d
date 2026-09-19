@@ -2534,10 +2534,9 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                     throw new Exception("'index' out of range");
                 insertAt = cast(size_t)raw;
             }
-            auto factory = "layer.add" in reg.commandFactories;
-            if (factory is null)
+            if (!reg.hasCommand("layer.add"))
                 throw new Exception("unknown command id 'layer.add'");
-            auto cmd = cast(LayerAdd)(*factory)();
+            auto cmd = cast(LayerAdd)reg.makeCommand("layer.add");
             if (cmd is null)
                 throw new Exception("command 'layer.add' has the wrong type");
             cmd.configureInjection(k, insertAt, name);

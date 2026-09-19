@@ -373,7 +373,7 @@ unittest {
     // file where it has to be: the stripper blanks string literals, and the wire
     // id IS a string literal. The needle keeps `] = ` on the end so it matches
     // the DEFINITION and not the second mention of the same key inside the
-    // neighbouring `commandFactories` entry; the uniqueness check below is what
+    // neighbouring command entry; the uniqueness check below is what
     // makes that claim rather than assumes it.
     immutable regSrc = readText(buildPath(repoRoot, "source", "registration.d"));
     immutable createSrc = readText(buildPath(

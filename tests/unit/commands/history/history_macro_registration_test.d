@@ -120,46 +120,46 @@ private final class RegistrationHarness {
 
 unittest { // real owners, clear/lockout, and macro record/save factories
     auto h = new RegistrationHarness();
-    assert(h.registry.commandFactories.length == 11,
+    assert(h.registry.commandIds().length == 11,
         "5810 registrar population: expected exactly 11 history/macro ids");
 
     assert(!h.panelState.visible,
         "5810 panel owner setup must start hidden");
-    assert(h.registry.commandFactories["history.show"]().apply()
+    assert(h.registry.makeCommand("history.show").apply()
         && h.panelState.visible,
         "5810 history.show did not mutate the real panel owner");
-    assert(h.registry.commandFactories["history.show"]().apply()
+    assert(h.registry.makeCommand("history.show").apply()
         && !h.panelState.visible,
         "5810 history.show toggled a copied panel owner");
 
     assert(h.history.fire(h.probe()) && h.history.undoEntries().length == 1,
         "5810 clear setup did not populate history");
-    assert(h.registry.commandFactories["history.clear"]().apply()
+    assert(h.registry.makeCommand("history.clear").apply()
         && h.history.undoEntries().length == 0
         && h.history.redoEntries().length == 0,
         "5810 history.clear did not clear both stacks");
 
-    assert(h.registry.commandFactories["undo.lockout.on"]().apply(),
+    assert(h.registry.makeCommand("undo.lockout.on").apply(),
         "5810 lockout-on factory refused");
     const blockedValue = h.value;
     assert(!h.history.fire(h.probe("probe.blocked"))
         && h.value == blockedValue
         && h.history.undoEntries().length == 0,
         "5810 lockout allowed apply or history recording");
-    assert(h.registry.commandFactories["undo.lockout.off"]().apply()
+    assert(h.registry.makeCommand("undo.lockout.off").apply()
         && h.history.fire(h.probe()),
         "5810 lockout-off did not restore history service");
 
     h.history.clear();
     h.history.onRecord = (line, flags) =>
         h.macroRecorder.onCommandRecorded(line, flags);
-    assert(h.registry.commandFactories["macro.record"]().apply()
+    assert(h.registry.makeCommand("macro.record").apply()
         && h.macroRecorder.active && h.macroRecorder.length == 0,
         "5810 macro.record did not start a fresh recorder");
     assert(h.history.fire(h.probe()) && h.macroRecorder.length == 1,
         "5810 macro recorder did not observe the replayable command");
 
-    auto stop = h.registry.commandFactories["macro.record"]();
+    auto stop = h.registry.makeCommand("macro.record");
     auto stopArgs = parseJSON(`{"state":0}`);
     injectParamsInto(stop.params(), stopArgs);
     assert(stop.apply() && !h.macroRecorder.active
@@ -173,7 +173,7 @@ unittest { // real owners, clear/lockout, and macro record/save factories
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
     auto save = cast(MacroSaveRecorded)
-        h.registry.commandFactories["macro.saveRecorded"]();
+        h.registry.makeCommand("macro.saveRecorded");
     assert(save !is null, "5810 macro.saveRecorded factory returned wrong type");
     auto saveArgs = parseJSON(`{"path":"/var/tmp/vibe3d-5810-macro.lxm"}`);
     injectParamsInto(save.params(), saveArgs);
@@ -206,7 +206,7 @@ unittest { // script export sees one lifecycle and one replayable row
     const path = buildPath("/var/tmp", "vibe3d-5810-history.lxm");
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
-    auto save = h.registry.commandFactories["history.saveAsScript"]();
+    auto save = h.registry.makeCommand("history.saveAsScript");
     auto args = parseJSON(`{"path":"/var/tmp/vibe3d-5810-history.lxm"}`);
     injectParamsInto(save.params(), args);
     assert(save.apply() && exists(path),
@@ -222,7 +222,7 @@ unittest { // raw command undo and panel cursor deliberately diverge live
     raw.populateTwo();
     auto rawTool = new RegistrationKeepAliveTool();
     raw.activeTool = rawTool;
-    assert(raw.registry.commandFactories["history.undo"]().apply(),
+    assert(raw.registry.makeCommand("history.undo").apply(),
         "5810 raw trajectory: history.undo factory refused");
     assert(raw.value == 1
         && raw.history.undoEntries().length == 1
@@ -266,14 +266,14 @@ unittest { // production wiring, scope fences, and the single panel owner
         && registrar.count("EditSession") == 0
         && registrar.count(".navigate(") == 0,
         "5810 raw-door fence: history.undo/redo stopped stepping CommandHistory directly");
-    assert(registrar.count("reg.commandFactories[") == 11,
+    assert(registrar.count("reg.registerCommand(") == 11,
         "5810 registrar id population changed from 11");
     assert(registrar.count("scene.reset") == 0
         && registrar.count("scene.loadMesh") == 0
-        && lifecycle.count("commandFactories[\"scene.reset\"]") == 1
-        && lifecycle.count("commandFactories[\"scene.loadMesh\"]") == 1
-        && registration.count("commandFactories[\"scene.reset\"]") == 0
-        && registration.count("commandFactories[\"scene.loadMesh\"]") == 0,
+        && lifecycle.count("registerCommand(\"scene.reset\"") == 1
+        && lifecycle.count("registerCommand(\"scene.loadMesh\"") == 1
+        && registration.count("registerCommand(\"scene.reset\"") == 0
+        && registration.count("registerCommand(\"scene.loadMesh\"") == 0,
         "5810 lifecycle scope fence: scene reset/load left the old registrar");
 
     enum productionCall =
@@ -283,11 +283,8 @@ unittest { // production wiring, scope fences, and the single panel owner
             "app.history, app.historyPanelState, app.macroRecorder);") == 1,
         "5810 production wiring witness: registerCommands no longer calls the "
         ~ "narrow registrar with the real owners");
-    const callAt = registration.indexOf(productionCall);
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapperAt >= 0 && callAt < wrapperAt,
-        "5810 LAST-wrapper ordering: history/macro registration moved after it");
+    assert(registration.count("bindSelTypeAuthority(") == 1,
+        "5810 registry construction authority bind changed");
     assert(app.count("new HistoryPanelState()") == 1
         && registration.count("new HistoryPanelState()") == 0
         && registrar.count("new HistoryPanelState()") == 0,

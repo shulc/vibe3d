@@ -16,26 +16,26 @@ import registry : CommandFactory, Registry;
 void registerFileIoCommands(ref Registry reg,
                             LiveSessionRole session,
                             LiveViewModeRole live) {
-    reg.commandFactories["file.load"] = () {
+    reg.registerCommand("file.load", () {
         auto c = new FileLoad(&session.activeMesh(), live.view(), live.mode,
                               session.document());
         c.configure(FileLoadMode.open);
         return cast(Command) c;
-    };
-    reg.commandFactories["file.open"] = reg.commandFactories["file.load"];
+    });
+    reg.aliasCommand("file.load", "file.open");
 
-    reg.commandFactories["file.save"] = () {
+    reg.registerCommand("file.save", () {
         auto c = new FileSave(&session.activeMesh(), live.view(), live.mode,
                               session.document());
         c.configure(FileSaveMode.save);
         return cast(Command) c;
-    };
-    reg.commandFactories["file.saveAs"] = () {
+    });
+    reg.registerCommand("file.saveAs", () {
         auto c = new FileSave(&session.activeMesh(), live.view(), live.mode,
                               session.document());
         c.configure(FileSaveMode.saveAs);
         return cast(Command) c;
-    };
+    });
 
     CommandFactory importFactory(string ext) {
         return () {
@@ -46,7 +46,7 @@ void registerFileIoCommands(ref Registry reg,
         };
     }
     foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"])
-        reg.commandFactories["file.import" ~ importExt] = importFactory(importExt);
+        reg.registerCommand("file.import" ~ importExt, importFactory(importExt));
 
     CommandFactory exportFactory(string ext) {
         return () {
@@ -57,5 +57,5 @@ void registerFileIoCommands(ref Registry reg,
         };
     }
     foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"])
-        reg.commandFactories["file.export" ~ exportExt] = exportFactory(exportExt);
+        reg.registerCommand("file.export" ~ exportExt, exportFactory(exportExt));
 }

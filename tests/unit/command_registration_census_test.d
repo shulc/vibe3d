@@ -2,7 +2,7 @@
 // the REVERSE census of the production registration modules (task 4066, row 10).
 //
 // WHAT THE CONTRACT IS. The registration modules are where a wire id is bound
-// to a factory (`reg.commandFactories["…"] = () => cast(Command) new X(…)`),
+// to a factory (`reg.registerCommand("…", () => cast(Command) new X(…))`),
 // and the FORWARD direction is already closed: `registerCommands` wraps the
 // finished dictionary with the selection-type provider, so a factory cannot
 // be registered without it. What nothing closed was the reverse. A

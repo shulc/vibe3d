@@ -124,24 +124,24 @@ private final class RetainedHarness {
             GuardObservationPorts((r) { records ~= r; }, (a, p) {}, (p) {})));
         binding = new ApplicationCommandBinding(registry, executor,
             editSession, history, guard, (Command) {}, (string) {});
-        registry.commandFactories["layer.select"] = () => cast(Command)
+        registry.registerCommand("layer.select", () => cast(Command)
             new LayerSelect(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.rename"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.rename", () => cast(Command)
             new LayerRename(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["layer.delete"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("layer.delete", () => cast(Command)
             new LayerDelete(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["image.remove"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("image.remove", () => cast(Command)
             new ImageRemove(owner.document.activeMesh(), view, owner.editMode,
-                            owner.documentPtr(), null);
-        registry.commandFactories["imagePlane.add"] = () => cast(Command)
+                            owner.documentPtr(), null));
+        registry.registerCommand("imagePlane.add", () => cast(Command)
             new ImagePlaneAdd(owner.document.activeMesh(), view, owner.editMode,
-                              owner.documentPtr(), null);
-        registry.commandFactories["imagePlane.setImage"] = () => cast(Command)
+                              owner.documentPtr(), null));
+        registry.registerCommand("imagePlane.setImage", () => cast(Command)
             new ImagePlaneSetImage(owner.document.activeMesh(), view, owner.editMode,
-                                   owner.documentPtr());
+                                   owner.documentPtr()));
         forms = new FormsPanel;
         layerRoles = bindLayerListPanel(owner, binding, forms, () => activeTool);
         imageRoles = bindImageListPanel(owner, binding);

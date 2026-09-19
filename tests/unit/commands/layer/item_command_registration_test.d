@@ -53,7 +53,7 @@ private void registerFamilies(LiveRegistrationRig rig,
 
 private Command commandFor(LiveRegistrationRig rig, string id,
                            string args = null) {
-    auto command = rig.registry.commandFactories[id]();
+    auto command = rig.registry.makeCommand(id);
     if (args.length) bindArgs(command, args);
     return command;
 }
@@ -70,32 +70,31 @@ unittest { // C0: the witness drives production instead of rebuilding it
         assert(self.count(constructed) == 0,
             "6355 self-census: the test constructs its own collaborator: "
             ~ constructed);
-    assert(self.matchAll(ctRegex!(`reg\s*\.\s*commandFactories\s*\[`)).empty,
+    assert(self.matchAll(ctRegex!(`reg\s*\.\s*registerCommand\s*\(`)).empty,
         "6355 self-census: the test writes a stand-in production registry");
 }
 
 unittest { // C1: exact population and key-to-class identity
     auto rig = new LiveRegistrationRig;
-    assert(rig.registry.commandFactories.length == 0,
+    assert(rig.registry.commandIds().length == 0,
         "6355 population floor: the rig registry must begin empty");
     registerItemCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
         ItemLifecycleDoors((size_t previous, size_t next) {}, () {}));
     static assert(kItemIds.length == 15);
-    assert(rig.registry.commandFactories.length == 15,
+    assert(rig.registry.commandIds().length == 15,
         format("6355 item population: expected 15 ids, got %d",
-               rig.registry.commandFactories.length));
+               rig.registry.commandIds().length));
     registerAi3dCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
         (size_t previous, size_t next) {}, new Ai3dJobController,
         (string path) {});
     static assert(kAi3dIds.length == 5);
-    assert(rig.registry.commandFactories.length == 20,
+    assert(rig.registry.commandIds().length == 20,
         format("6355 total population: expected 20 ids, got %d",
-               rig.registry.commandFactories.length));
+               rig.registry.commandIds().length));
     size_t visited;
     foreach (id; kItemIds[] ~ kAi3dIds[]) {
-        auto factory = id in rig.registry.commandFactories;
-        assert(factory !is null, "6355 population: missing " ~ id);
-        auto command = (*factory)();
+        auto command = rig.registry.makeCommand(id);
+        assert(command !is null, "6355 population: missing " ~ id);
         assert(command.name() == id,
             id ~ " built the wrong command class: " ~ command.name());
         ++visited;
@@ -110,7 +109,7 @@ unittest { // C3: every factory resolves Mesh, View and EditMode at fire time
     auto viewA = rig.liveView();
     size_t controls;
     foreach (id; kItemIds[] ~ kAi3dIds[]) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr() is meshA,
             "6355 live input control: " ~ id ~ " did not take layer A");
         assert(command.viewRef() is viewA,
@@ -127,7 +126,7 @@ unittest { // C3: every factory resolves Mesh, View and EditMode at fire time
         "6355 live input fixture did not change all three inputs");
     size_t targets;
     foreach (id; kItemIds[] ~ kAi3dIds[]) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr() is &rig.layerB.meshRef(),
             "6355 live Mesh target: " ~ id
             ~ " retained the registration-time mesh");
@@ -165,7 +164,7 @@ unittest { // C5b: all three AI-3D doors are mandatory
         controller, null));
     registerAi3dCommands(rig.registry, rig.liveSession(), rig.liveViewMode(),
         hook, controller, openGenerate);
-    assert(rig.registry.commandFactories.length == 5,
+    assert(rig.registry.commandIds().length == 5,
         "6355 AI door floor: live doors did not register exactly five ids");
 }
 

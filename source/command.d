@@ -784,14 +784,14 @@ class Command {
     // REMEMBERED type on purpose is legitimate there and nowhere else so far;
     // if you add such a command, say in a comment that you meant it.
     //
-    // Mechanism: the app wires one live provider onto every registered
-    // command factory (registration.d), so this is the same authority the
+    // Mechanism: `Registry.makeCommand` attaches one live provider to every
+    // constructed registered command, so this is the same authority the
     // toolpipe's SubjectPacket carries. Operator commands can equivalently
     // read `subj.selType` off the packet they already hold — `applyImpl()` above
     // stamps it from here.
     //
-    // HAZARD, for whoever makes a WRAPPED command type-aware: the provider is
-    // setter-injected onto the instance the FACTORY returned, so a command
+    // HAZARD, for whoever makes a composed command type-aware: the provider is
+    // setter-injected onto the instance construction returned, so a command
     // that builds another command inside itself (CompositeCommand, the
     // copilot cycle/select pair, the vertex-edit and layer-xform run merges,
     // the layer-delete an image command delegates to) hands the inner
@@ -801,8 +801,8 @@ class Command {
     // forward the provider explicitly (`inner.setSelTypeProvider(...)`)
     // rather than assuming construction carried it.
 
-    // Install the live selection-type authority. Called by the app's command
-    // registration for EVERY registered factory, never by a command itself —
+    // Install the live selection-type authority. Called by Registry's command
+    // construction door, never by a command itself —
     // same injection shape as `setResolvedVpProvider`. `final` so no override
     // can bypass `currentType()`.
     final void setSelTypeProvider(SelType delegate() provider) {

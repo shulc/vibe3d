@@ -129,8 +129,8 @@ unittest {
             (pending) {})));
 
     Registry registry;
-    registry.commandFactories["mesh.move_vertex"] = () => cast(Command)
-        new MeshMoveVertex(&owner.editMesh(), view, owner.editMode);
+    registry.registerCommand("mesh.move_vertex", () => cast(Command)
+        new MeshMoveVertex(&owner.editMesh(), view, owner.editMode));
     auto binding = new ApplicationCommandBinding(
         registry, executor, editSession, history, guard,
         (Command command) {},

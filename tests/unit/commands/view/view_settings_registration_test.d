@@ -46,7 +46,7 @@ private void registerLive(LiveRegistrationRig rig) {
 
 private void setTrackball(LiveRegistrationRig rig, int cell) {
     rig.activeCell = cell;
-    auto command = rig.registry.commandFactories["pref.trackball"]();
+    auto command = rig.registry.makeCommand("pref.trackball");
     bindArgs(command, `{"subject":"viewport","value":"on"}`);
     assert(command.apply(),
         "6354 trackball fixture: pref.trackball viewport on refused");
@@ -71,24 +71,23 @@ unittest { // A0: the witness drives production instead of rebuilding it
         "6354 self-census: the test constructs its own snap.toggle analogue");
     assert(self.count("new TrackballPrefCommand(") == 0,
         "6354 self-census: the test constructs its own pref.trackball analogue");
-    assert(self.matchAll(ctRegex!(`reg\s*\.\s*commandFactories\s*\[`)).empty,
+    assert(self.matchAll(ctRegex!(`reg\s*\.\s*registerCommand\s*\(`)).empty,
         "6354 self-census: the test writes a stand-in production registry");
 }
 
 unittest { // A1: exact population and key-to-command identity
     auto rig = new LiveRegistrationRig;
-    assert(rig.registry.commandFactories.length == 0,
+    assert(rig.registry.commandIds().length == 0,
         "6354 fixture: the rig must start with an empty command registry");
     registerLive(rig);
     static assert(kLiveIds.length == 8);
-    assert(rig.registry.commandFactories.length == 8,
+    assert(rig.registry.commandIds().length == 8,
         format("6354 population: expected exactly 8 view/settings ids, got %d",
-               rig.registry.commandFactories.length));
+               rig.registry.commandIds().length));
     foreach (id; kLiveIds) {
-        auto factory = id in rig.registry.commandFactories;
-        assert(factory !is null,
+        auto command = rig.registry.makeCommand(id);
+        assert(command !is null,
             "6354 population: " ~ id ~ " is not registered");
-        auto command = (*factory)();
         assert(command.name() == id,
             "6354 population: " ~ id ~ " built the wrong command class: "
             ~ command.name());
@@ -130,7 +129,7 @@ unittest { // A4: every factory resolves View at fire time
     auto firstView = rig.liveView();
     size_t n;
     foreach (id; kLiveIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.viewRef() is firstView,
             "6354 live View control: " ~ id ~ " did not take cell 0");
         ++n;
@@ -141,7 +140,7 @@ unittest { // A4: every factory resolves View at fire time
         "6354 live View fixture: the cell switch did not change the View");
     n = 0;
     foreach (id; kLiveIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.viewRef() is rig.liveView(),
             "6354 live View target: " ~ id
             ~ " retained the registration-time View");
@@ -156,7 +155,7 @@ unittest { // A5: every factory resolves Mesh at fire time
     auto meshA = &rig.layerA.meshRef();
     size_t n;
     foreach (id; kLiveIds) {
-        assert(rig.registry.commandFactories[id]().meshPtr() is meshA,
+        assert(rig.registry.makeCommand(id).meshPtr() is meshA,
             "6354 live Mesh control: " ~ id ~ " did not take layer A");
         ++n;
     }
@@ -166,7 +165,7 @@ unittest { // A5: every factory resolves Mesh at fire time
         "6354 live Mesh fixture: primary switch did not change the mesh");
     n = 0;
     foreach (id; kLiveIds) {
-        assert(rig.registry.commandFactories[id]().meshPtr()
+        assert(rig.registry.makeCommand(id).meshPtr()
                is &rig.layerB.meshRef(),
             "6354 live Mesh target: " ~ id
             ~ " retained the registration-time mesh");
@@ -180,7 +179,7 @@ unittest { // A6: every factory resolves EditMode at fire time
     registerLive(rig);
     size_t n;
     foreach (id; kLiveIds) {
-        assert(rig.registry.commandFactories[id]().editModeVal()
+        assert(rig.registry.makeCommand(id).editModeVal()
                == EditMode.Vertices,
             "6354 live mode control: " ~ id ~ " did not take Vertices");
         ++n;
@@ -191,7 +190,7 @@ unittest { // A6: every factory resolves EditMode at fire time
         "6354 live mode fixture: geometry type did not change");
     n = 0;
     foreach (id; kLiveIds) {
-        assert(rig.registry.commandFactories[id]().editModeVal()
+        assert(rig.registry.makeCommand(id).editModeVal()
                == EditMode.Polygons,
             "6354 live mode target: " ~ id
             ~ " retained the registration-time mode");
@@ -207,15 +206,15 @@ unittest { // A7: mesh.select lookup stays lazy through registration
     auto panel = new CopilotPanel;
     seedFinding(panel);
     size_t sentinelCalls;
-    rig.registry.commandFactories["mesh.select"] = () => makeMeshSelect(rig);
+    rig.registry.registerCommand("mesh.select", () => makeMeshSelect(rig));
     registerCopilotCommands(
         rig.registry, rig.liveSession(), rig.liveViewMode(), ai, panel,
-        () => rig.registry.commandFactories["mesh.select"]());
-    assert("copilot.selectFinding" in rig.registry.commandFactories,
+        () => rig.registry.makeCommand("mesh.select"));
+    assert(rig.registry.hasCommand("copilot.selectFinding"),
         "6354 A7 population: the copilot family did not register");
     size_t registered;
     foreach (id; kCopilotIds) {
-        auto registeredCommand = rig.registry.commandFactories[id]();
+        auto registeredCommand = rig.registry.makeCommand(id);
         assert(registeredCommand.name() == id,
             "6354 copilot population: " ~ id
             ~ " built a command whose name is " ~ registeredCommand.name());
@@ -223,11 +222,11 @@ unittest { // A7: mesh.select lookup stays lazy through registration
     }
     assert(registered == 4,
         "6354 copilot population ran over fewer than four ids");
-    rig.registry.commandFactories["mesh.select"] = () {
+    rig.registry.replaceCommand("mesh.select", () {
         ++sentinelCalls;
         return makeMeshSelect(rig);
-    };
-    auto command = rig.registry.commandFactories["copilot.selectFinding"]();
+    });
+    auto command = rig.registry.makeCommand("copilot.selectFinding");
     bindArgs(command, `{"index":0}`);
     assert(command.apply(),
         "6354 A7 fixture: selectFinding refused before the mesh.select lookup");
@@ -242,26 +241,27 @@ unittest { // A8a: AI action and EditorAiState collaborators are distinct
     registerAiToggleCommands(
         rig.registry, rig.liveSession(), rig.liveViewMode(), aiX);
     foreach (id; kAiIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.name() == id,
             "6354 ai action witness: " ~ id
             ~ " built a command whose name is " ~ command.name());
     }
-    assert(rig.registry.commandFactories["ai.enable"]().apply(),
+    assert(rig.registry.makeCommand("ai.enable").apply(),
         "6354 ai state witness: ai.enable for X refused");
     assert(aiX.enabled && !aiY.enabled,
         "6354 ai state witness: the first registration did not target X only");
-    assert(rig.registry.commandFactories["ai.enable"]().apply() && aiX.enabled,
+    assert(rig.registry.makeCommand("ai.enable").apply() && aiX.enabled,
         "6354 ai action witness: ai.enable is not idempotent");
     aiX.setEnabled(false);
-    assert(rig.registry.commandFactories["ai.toggle"]().apply() && aiX.enabled,
+    assert(rig.registry.makeCommand("ai.toggle").apply() && aiX.enabled,
         "6354 ai action witness: ai.toggle did not turn X on");
-    assert(rig.registry.commandFactories["ai.toggle"]().apply() && !aiX.enabled,
+    assert(rig.registry.makeCommand("ai.toggle").apply() && !aiX.enabled,
         "6354 ai action witness: ai.toggle does not alternate");
 
+    auto second = new LiveRegistrationRig;
     registerAiToggleCommands(
-        rig.registry, rig.liveSession(), rig.liveViewMode(), aiY);
-    assert(rig.registry.commandFactories["ai.enable"]().apply(),
+        second.registry, second.liveSession(), second.liveViewMode(), aiY);
+    assert(second.registry.makeCommand("ai.enable").apply(),
         "6354 ai state witness: ai.enable for Y refused");
     assert(aiY.enabled && !aiX.enabled,
         "6354 ai state witness: re-registration did not retarget Y");
@@ -275,21 +275,23 @@ unittest { // A8b: CopilotPanel collaborator follows re-registration
     auto panelY = new CopilotPanel;
     seedFinding(panelX);
     seedFinding(panelY);
-    rig.registry.commandFactories["mesh.select"] = () => makeMeshSelect(rig);
+    rig.registry.registerCommand("mesh.select", () => makeMeshSelect(rig));
     registerCopilotCommands(
         rig.registry, rig.liveSession(), rig.liveViewMode(), ai, panelX,
-        () => rig.registry.commandFactories["mesh.select"]());
-    auto command = rig.registry.commandFactories["copilot.selectFinding"]();
+        () => rig.registry.makeCommand("mesh.select"));
+    auto command = rig.registry.makeCommand("copilot.selectFinding");
     bindArgs(command, `{"index":0}`);
     assert(command.apply(),
         "6354 panel witness: selectFinding for X refused");
     assert(panelX.active() == 0 && panelY.active() == -1,
         "6354 panel witness: the first registration did not target X only");
 
+    auto second = new LiveRegistrationRig;
+    second.registry.registerCommand("mesh.select", () => makeMeshSelect(second));
     registerCopilotCommands(
-        rig.registry, rig.liveSession(), rig.liveViewMode(), ai, panelY,
-        () => rig.registry.commandFactories["mesh.select"]());
-    command = rig.registry.commandFactories["copilot.selectFinding"]();
+        second.registry, second.liveSession(), second.liveViewMode(), ai, panelY,
+        () => second.registry.makeCommand("mesh.select"));
+    command = second.registry.makeCommand("copilot.selectFinding");
     bindArgs(command, `{"index":0}`);
     assert(command.apply(),
         "6354 panel witness: selectFinding for Y refused");
@@ -316,7 +318,7 @@ unittest { // A8c: all seven gated factories keep live base inputs
         "6354 gated context fixture: View did not change");
     size_t n;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().viewRef() is rig.liveView(),
+        assert(rig.registry.makeCommand(id).viewRef() is rig.liveView(),
             "6354 gated View witness: " ~ id ~ " retained cell 0");
         ++n;
     }
@@ -328,7 +330,7 @@ unittest { // A8c: all seven gated factories keep live base inputs
         "6354 gated context fixture: Mesh did not change");
     n = 0;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().meshPtr()
+        assert(rig.registry.makeCommand(id).meshPtr()
                is &rig.layerB.meshRef(),
             "6354 gated Mesh witness: " ~ id ~ " retained layer A");
         ++n;
@@ -340,7 +342,7 @@ unittest { // A8c: all seven gated factories keep live base inputs
         "6354 gated context fixture: EditMode did not change");
     n = 0;
     foreach (id; ids) {
-        assert(rig.registry.commandFactories[id]().editModeVal()
+        assert(rig.registry.makeCommand(id).editModeVal()
                == EditMode.Polygons,
             "6354 gated mode witness: " ~ id ~ " retained Vertices");
         ++n;
@@ -387,7 +389,7 @@ unittest { // A9: production wiring and source ownership census
         size_t assignments;
         bool[string] distinct;
         foreach (m; raw.matchAll(ctRegex!(
-                `reg\.commandFactories\["([^"]+)"\]\s*=`))) {
+                `reg\.registerCommand\(\s*"([^"]+)"`))) {
             ++assignments;
             distinct[m.captures[1]] = true;
         }
@@ -420,7 +422,7 @@ unittest { // A9: production wiring and source ownership census
         ~ "LiveSessionRole(app.sessionOwner), "
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
         ~ "app.aiState, app.copilotPanel, "
-        ~ "() => app.reg().commandFactories[ ]()); }";
+        ~ "() => app.reg().makeCommand( )); }";
     assert(registration.count(callSettings) == 1,
         "6354 production wiring: settings call text or multiplicity changed");
     assert(registration.count(callAi) == 1,
@@ -428,15 +430,15 @@ unittest { // A9: production wiring and source ownership census
     assert(registration.count(callCopilot) == 1,
         "6354 production wiring: copilot call text, arguments, or gates changed");
     assert(squash(registrationRaw).count(
-        `() => app.reg().commandFactories["mesh.select"]())`) == 1,
+        `() => app.reg().makeCommand("mesh.select"))`) == 1,
         "6354 lazy lookup witness: production no longer passes a fire-time lookup");
 
     assert(registration.count("registerViewCommands") == 0,
         "6354 old-path witness: registerViewCommands still exists");
-    foreach (prefix; [`commandFactories["snap.`, `commandFactories["ai.`,
-                      `commandFactories["copilot.`, `commandFactories["path.`,
-                      `commandFactories["symmetry.`, `commandFactories["pref.`,
-                      `commandFactories["ui.copilotPanel`])
+    foreach (prefix; [`registerCommand("snap.`, `registerCommand("ai.`,
+                      `registerCommand("copilot.`, `registerCommand("path.`,
+                      `registerCommand("symmetry.`, `registerCommand("pref.`,
+                      `registerCommand("ui.copilotPanel`])
         assert(registrationRaw.count(prefix) == 0,
             "6354 old-path witness: registration.d still owns " ~ prefix);
     foreach (className; ["SnapToggleCommand", "ConstrainToggleCommand",
@@ -451,8 +453,6 @@ unittest { // A9: production wiring and source ownership census
     const settingsAt = registration.indexOf("registerViewSettingsCommands(");
     const aiAt = registration.indexOf("registerAiToggleCommands(");
     const copilotAt = registration.indexOf("registerCopilotCommands(");
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
     assert(viewportAt >= 0,
         "6354 ordering floor: viewport registrar call is missing");
     assert(settingsAt > viewportAt,
@@ -461,6 +461,4 @@ unittest { // A9: production wiring and source ownership census
         "6354 ordering: AI registrar moved before settings");
     assert(copilotAt > aiAt,
         "6354 ordering: copilot registrar moved before AI toggles");
-    assert(wrapperAt > copilotAt,
-        "6354 ordering: selection-type wrapper no longer follows the family");
 }

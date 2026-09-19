@@ -255,9 +255,8 @@ struct InputRouter {
     bool runCommandWithArgs(string commandId, string argstr) {
         import argstring    : parseArgstring;
         import command_args : bindArgs;
-        auto factory = commandId in app.reg.commandFactories;
-        if (factory is null) return false;
-        auto cmd = (*factory)();
+        auto cmd = app.reg.makeCommand(commandId);
+        if (cmd is null) return false;
         if (argstr.length > 0) {
             auto pj = parseArgstring(commandId ~ " " ~ argstr).params;
             bindArgs(cmd, pj);
@@ -533,9 +532,9 @@ struct InputRouter {
                     }
                     if (!tryOpenArgsDialog(*id))
                     {
-                        if ((*id in reg.commandFactories) is null)
+                        if (!reg.hasCommand(*id))
                             throw new Exception("registry: '" ~ *id ~ "' is not registered");
-                        runCommand(reg.commandFactories[*id]());
+                        runCommand(reg.makeCommand(*id));
                     }
                     return;
                   }
@@ -615,7 +614,7 @@ struct InputRouter {
             }
 
             // Ctrl+Z / Ctrl+Shift+Z are dispatched via shortcuts.yaml as the
-            // history.undo / history.redo commands (registered in commandFactories
+            // history.undo / history.redo commands (registered in Registry
             // above) — see config/shortcuts.yaml.
 
             switch (kev.keysym.sym) {
@@ -1982,9 +1981,9 @@ struct InputRouter {
             case SDL_QUIT:
                 {
                     import commands.file.quit : FileQuit;
-                    if (("file.quit" in app.reg.commandFactories) is null)
+                    if (!app.reg.hasCommand("file.quit"))
                         throw new Exception("registry: 'file.quit' is not registered");
-                    auto q = cast(FileQuit) app.reg.commandFactories["file.quit"]();
+                    auto q = cast(FileQuit) app.reg.makeCommand("file.quit");
                     if (q !is null) q.setFromWindowClose(true);
                     app.runUiCommand(q, RecordMode.Record, "file.quit");
                 }

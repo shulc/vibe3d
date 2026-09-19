@@ -64,8 +64,8 @@ DispatchResult dispatchStatAction(Document* doc, Mesh* mesh, EditMode editMode,
         default:
             return DispatchResult(false, "no such command id: " ~ commandId, null);
     }
-    // The production path wraps EVERY factory with the selection-type
-    // authority (`registration.d`), and `select.set.apply` reads it to pick its
+    // The production `Registry.makeCommand` path attaches the selection-type
+    // authority, and `select.set.apply` reads it to pick its
     // domain — so a test dispatcher that omitted it would silently exercise the
     // unwired fallback instead of the shipped behaviour.
     c.setSelTypeProvider(() => current);

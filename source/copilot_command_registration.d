@@ -17,17 +17,17 @@ void registerCopilotCommands(ref Registry reg, LiveSessionRole owner,
                              LiveViewModeRole live, EditorAiState aiState,
                              CopilotPanel copilotPanel,
                              Command delegate() meshSelectFactory) {
-    reg.commandFactories["copilot.analyze"] = () => cast(Command)
+    reg.registerCommand("copilot.analyze", () => cast(Command)
         new CopilotAnalyzeCommand(&owner.activeMesh(), live.view(), live.mode,
-                                  copilotPanel);
-    reg.commandFactories["copilot.selectFinding"] = () => cast(Command)
+                                  copilotPanel));
+    reg.registerCommand("copilot.selectFinding", () => cast(Command)
         new CopilotSelectFindingCommand(&owner.activeMesh(), live.view(),
-            live.mode, copilotPanel, aiState, meshSelectFactory);
+            live.mode, copilotPanel, aiState, meshSelectFactory));
     // Prev/Next delegates the actual act-on to the same lazy mesh.select door.
-    reg.commandFactories["copilot.cycleFinding"] = () => cast(Command)
+    reg.registerCommand("copilot.cycleFinding", () => cast(Command)
         new CopilotCycleFindingCommand(&owner.activeMesh(), live.view(),
-            live.mode, copilotPanel, aiState, meshSelectFactory);
-    reg.commandFactories["ui.copilotPanel"] = () => cast(Command)
-        new UiCopilotPanelCommand(&owner.activeMesh(), live.view(), live.mode);
+            live.mode, copilotPanel, aiState, meshSelectFactory));
+    reg.registerCommand("ui.copilotPanel", () => cast(Command)
+        new UiCopilotPanelCommand(&owner.activeMesh(), live.view(), live.mode));
 }
 }

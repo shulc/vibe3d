@@ -237,10 +237,10 @@ unittest { // command adapter owns reset policy without an EditorApp capture
 
     bool resetSucceeds = true;
     Registry registry;
-    registry.commandFactories["scene.reset"] = () =>
-        cast(Command)new AdapterProbeCommand(resetSucceeds, true);
-    registry.commandFactories["probe.query"] = () =>
-        cast(Command)new AdapterProbeCommand(true, false, `{"value":7}`);
+    registry.registerCommand("scene.reset", () =>
+        cast(Command)new AdapterProbeCommand(resetSucceeds, true));
+    registry.registerCommand("probe.query", () =>
+        cast(Command)new AdapterProbeCommand(true, false, `{"value":7}`));
     auto binding = new ApplicationCommandBinding(
         registry, executor, session, history, guard,
         (Command command) {},

@@ -161,11 +161,11 @@ package(tests.unit) string balancedSpan(
 }
 
 package(tests.unit) string toolRegistrationHead(string id) {
-    return "reg.toolFactories[\"" ~ id ~ "\"] = ";
+    return "reg.registerTool(\"" ~ id ~ "\", ";
 }
 
 package(tests.unit) string commandRegistrationHead(string id) {
-    return "reg.commandFactories[\"" ~ id ~ "\"] = ";
+    return "reg.registerCommand(\"" ~ id ~ "\", ";
 }
 
 /// Extract one brace-lambda tool registration in either the literal legacy
@@ -1259,10 +1259,10 @@ registerHeadlessTool!BoxTool(reg, "prim.cube", () {
 registerHeadlessTool!SphereTool(reg, "prim.sphere", () {
     return new SphereTool();
 }, owner, live);
-reg.toolFactories["pen"] = typedToolFactory!PenTool(() {
+reg.registerTool("pen", typedToolFactory!PenTool(() {
     return new PenTool();
 });
-reg.toolFactories["prim.vertex"] = typedToolFactory!VertexTool(() {
+reg.registerTool("prim.vertex", typedToolFactory!VertexTool(() {
     return new VertexTool();
 });
 PROBE";

@@ -514,7 +514,7 @@ unittest {
 // ===========================================================================
 // ARM B — THE MANDATORY NEGATIVE CONTROL. Same rig, same displacement, driven
 // by the scripted path: `/api/transform` builds `mesh.transform`
-// (`http_providers.d`, `reg.commandFactories["mesh.transform"]`), whose
+// (`http_providers.d`, `reg.makeCommand("mesh.transform")`), whose
 // kernel calls `mesh.commitChange(MeshEditScope.Position)` and BUMPS
 // `mutationVersion`.
 //

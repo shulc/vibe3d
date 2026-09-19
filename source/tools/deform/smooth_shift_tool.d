@@ -263,7 +263,7 @@ public:
     // (review fix, task 0358): those 5 Param-backed fields are owned by a
     // strict layering — ctor default < preset YAML `attrs:` < sticky user
     // default < live user edit — established BEFORE activate() ever runs
-    // (reg.toolFactories[id]() builds a fresh instance and applies the
+    // (`reg.toolFactory(id)()` builds a fresh instance and applies the
     // preset's attrs; activateToolById() then applies sticky defaults; only
     // THEN does the arm run this tool's activate()). A prior version reset all
     // 5 fields to hardcoded defaults here, which unconditionally clobbered

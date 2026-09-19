@@ -14,7 +14,7 @@ import std.conv : to;
 import std.file : readText;
 import std.meta : AliasSeq;
 import std.path : buildNormalizedPath, buildPath, dirName;
-import std.string : indexOf;
+import std.string : count, indexOf;
 import std.traits : BaseClassesTuple;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
@@ -90,7 +90,7 @@ private LiveRegistrationRig wiredRig() {
     rig.wireEditorApp();
     rig.wireMeshCommandDeps();
     foreach (id; ["xfrm.smooth", "xfrm.jitter", "xfrm.quantize"])
-        rig.registry.toolFactories[id] = () => new MarkerTool(0);
+        rig.registry.registerTool(id, () => new MarkerTool(0));
     return rig;
 }
 
@@ -106,15 +106,13 @@ unittest {
     static assert(kMeshIds.length == 109);
     auto rig = registeredRig();
     foreach (id; kMeshIds)
-        assert(id in rig.registry.commandFactories,
+        assert(rig.registry.hasCommand(id),
             "6509 population: registry lacks mesh command " ~ id);
-    assert(rig.registry.commandFactories["select.delete"]
-            is rig.registry.commandFactories["mesh.delete"]
-        && rig.registry.commandFactories["select.remove"]
-            is rig.registry.commandFactories["mesh.remove"],
-        "6509 alias ceiling: select.delete/remove stopped sharing their mesh delegates");
+    assert(rig.registry.makeCommand("select.delete").name == "mesh.delete"
+        && rig.registry.makeCommand("select.remove").name == "mesh.remove",
+        "6509 alias ceiling: select aliases stopped building their mesh commands");
     foreach (id; kMeshIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr() is &rig.layerA.meshRef(),
             "6509 A command mesh: " ~ id ~ " did not begin on layer A");
         assert(command.viewRef is rig.cells[0],
@@ -124,7 +122,7 @@ unittest {
     }
     rig.switchToB();
     foreach (id; kMeshIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr() is &rig.layerB.meshRef(),
             "6509 live command mesh: " ~ id ~ " retained layer A");
         assert(command.viewRef is rig.cells[1],
@@ -147,7 +145,7 @@ unittest {
         "6509 resolved viewport floor: raw and resolved cameras agree");
     registerMeshCommandsForOwnershipTest(rig.app);
     foreach (id; ["mesh.screenSlice", "mesh.select", "mesh.transform"]) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         auto provider = fieldOf!(Viewport delegate())(
             command, "resolvedVpProvider");
         assert(provider !is null && provider().focus.x == expected.focus.x,
@@ -161,7 +159,7 @@ unittest {
     foreach (id; kMeshIds) {
         if (id == "mesh.screenSlice" || id == "mesh.select"
                 || id == "mesh.transform") continue;
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(fieldOf!(Viewport delegate())(
                 command, "resolvedVpProvider") is null,
             "6509 resolved viewport ceiling: provider escaped the three "
@@ -169,16 +167,13 @@ unittest {
     }
 }
 
-// B3: the full production path wraps the mesh family only after registration.
-// Live Item-vs-geometry authority is already distinguished by the shared rig.
+// B3: the full production path binds construction authority exactly once.
 unittest {
     const code = blankNonCode(readText(
         buildPath(repoRoot, "source", "registration.d")));
-    const familyAt = code.indexOf("registerMeshFamily(app);");
-    const wrapAt = code.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(familyAt >= 0 && wrapAt >= 0 && familyAt < wrapAt,
-        "6509 selection authority: the mesh family no longer precedes the final wrap");
+    assert(code.indexOf("registerMeshFamily(app);") >= 0
+        && code.count("bindSelTypeAuthority(") == 1,
+        "6509 selection authority: production construction bind changed");
 }
 
 // B4: the three Convolve wrappers resolve the tool slot when the command is
@@ -188,9 +183,9 @@ unittest {
     foreach (i, id; ["xfrm.smooth", "xfrm.jitter", "xfrm.quantize"]) {
         immutable marker = 6509 + cast(int) i;
         ToolFactory probe = () => new MarkerTool(marker);
-        rig.registry.toolFactories[id] = probe;
+        rig.registry.replaceTool(id, probe);
         auto command = cast(ToolHeadlessCommand)
-            rig.registry.commandFactories[id]();
+            rig.registry.makeCommand(id);
         assert(command !is null,
             "6509 late lookup floor: wrapper type changed for " ~ id);
         auto held = fieldOf!ToolFactory(command, "factory");
@@ -224,7 +219,7 @@ unittest {
             m.selectFace(0);
             m.selectFace(1);
         }
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         if (id == "mesh.remesh") {
             auto remesh = cast(Remesh) command;
             assert(remesh !is null, "6509 remesh fixture: factory type changed");
@@ -247,7 +242,7 @@ unittest {
     assert(!rig.remeshModalState.open && !rig.remeshModalState.pendingOpen
         && rig.meshRebuildDrops == 7,
         "6509 remesh-door floor: state changed before mesh.remesh.open");
-    auto open = rig.registry.commandFactories["mesh.remesh.open"]();
+    auto open = rig.registry.makeCommand("mesh.remesh.open");
     open.apply();
     assert(rig.remeshModalState.open && rig.remeshModalState.pendingOpen,
         "6509 remesh door: mesh.remesh.open did not open the shared modal state");
@@ -266,11 +261,11 @@ unittest {
     m.selectVertex(0);
     m.selectVertex(1);
     m.selectVertex(2);
-    rig.registry.commandFactories["mesh.makePolygon"]().apply();
+    rig.registry.makeCommand("mesh.makePolygon").apply();
     assert(rig.promotions == [EditMode.Polygons],
         "6509 promote door: mesh.makePolygon did not promote to polygons");
 
-    auto select = cast(MeshSelect) rig.registry.commandFactories["mesh.select"]();
+    auto select = cast(MeshSelect) rig.registry.makeCommand("mesh.select");
     assert(select !is null, "6509 promote fixture: mesh.select type changed");
     select.setMode("edges");
     select.setIndices([0]);
@@ -279,7 +274,7 @@ unittest {
         "6509 promote door: mesh.select did not promote to edges");
 
     const before = rig.promotions.length;
-    rig.registry.commandFactories["mesh.subdivide"]().apply();
+    rig.registry.makeCommand("mesh.subdivide").apply();
     assert(rig.promotions.length == before,
         "6509 promote ceiling: mesh.subdivide reached the promote door");
 }

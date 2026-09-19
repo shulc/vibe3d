@@ -94,10 +94,9 @@ public:
         import perf_probe : Cat, g_perf;
         import std.json : JSONType, parseJSON;
 
-        auto factory = id in registry.commandFactories;
-        if (factory is null)
+        auto command = registry.makeCommand(id);
+        if (command is null)
             throw new Exception("unknown command id '" ~ id ~ "'");
-        auto command = (*factory)();
 
         if (context.interactive)
             if (auto attr = cast(ToolAttrCommand) command)

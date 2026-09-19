@@ -379,7 +379,7 @@ unittest {
 /// Throws if a preset references an unknown base tool.
 void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
     foreach (ref p; presets) {
-        if ((p.base in reg.toolFactories) is null)
+        if (!reg.hasTool(p.base))
             throw new Exception(format(
                 "tool_presets: preset '%s' references unknown base '%s'",
                 p.id, p.base));
@@ -390,12 +390,12 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
         // preset). The `presetCopy` parameter trick forces a copy.
         ToolFactory makeFactory(T)(ToolPreset presetCopy) {
             return typedToolFactory!T(() {
-                auto baseFactory = presetCopy.base in reg.toolFactories;
+                auto baseFactory = reg.toolFactory(presetCopy.base);
                 if (baseFactory is null)
                     throw new Exception(format(
                         "tool_presets: base '%s' for preset '%s' vanished",
                         presetCopy.base, presetCopy.id));
-                auto t = cast(T)(*baseFactory)();
+                auto t = cast(T)baseFactory();
                 assert(t !is null, "typed preset base factory descriptor drift");
                 t.presetFlags = presetCopy.flags;
                 if (presetCopy.toolAttrs.length > 0)
@@ -438,7 +438,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 throw new Exception(format(
                     "tool_presets: preset '%s' has undescribed typed base '%s'", p.id, p.base));
         }
-        reg.toolFactories[p.id] = typedPresetFactory;
+        reg.registerTool(p.id, typedPresetFactory);
         reg.preActivate[p.id]   = makePreActivate(p);
         // Copy both AA levels: the loader's ToolPreset storage is temporary,
         // while the prepared activation descriptor must remain owner-stable

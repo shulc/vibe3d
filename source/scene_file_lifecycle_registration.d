@@ -64,16 +64,14 @@ private CommandFactory sceneResetFactory(LiveSessionRole owner,
 void registerSceneFileLifecycleCommands(ref Registry reg,
         LiveSessionRole owner, LiveViewModeRole live,
         SceneResetEffects resetEffects, SceneLifecycleDoors doors) {
-    reg.commandFactories["file.new"] =
-        sceneResetFactory(owner, live, resetEffects, doors, true);
-    reg.commandFactories["file.quit"] = () => cast(Command)
+    reg.registerCommand("file.new", sceneResetFactory(owner, live, resetEffects, doors, true));
+    reg.registerCommand("file.quit", () => cast(Command)
         new FileQuit(&owner.activeMesh(), live.view(), live.mode,
-                     doors.requestQuit());
-    reg.commandFactories["scene.reset"] =
-        sceneResetFactory(owner, live, resetEffects, doors, false);
-    reg.commandFactories["scene.loadMesh"] = () => cast(Command)
+                     doors.requestQuit()));
+    reg.registerCommand("scene.reset", sceneResetFactory(owner, live, resetEffects, doors, false));
+    reg.registerCommand("scene.loadMesh", () => cast(Command)
         (new MeshLoadRaw(&owner.activeMesh(), live.view(), live.mode,
                          live.modeCell(), &live.view(),
                          doors.dropForSceneLoad()))
-            .setPromoteHook(doors.promoteGeometry());
+            .setPromoteHook(doors.promoteGeometry()));
 }

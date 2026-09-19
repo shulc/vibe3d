@@ -159,14 +159,14 @@ private final class ActionMenuHarness {
             registry, executor, editSession, history, guard,
             (Command) {}, (string) {});
         state = new MenuProbeState;
-        registry.commandFactories["probe.script"] = () => cast(Command)
-            new MenuProbeCommand(owner, view, "probe.script", state, true, true);
-        registry.commandFactories["probe.command"] = () => cast(Command)
-            new MenuProbeCommand(owner, view, "probe.command", state);
-        registry.commandFactories["probe.refuse"] = () => cast(Command)
-            new MenuProbeCommand(owner, view, "probe.refuse", state, false);
-        registry.commandFactories["probe.args"] = () => cast(Command)
-            new MenuProbeCommand(owner, view, "probe.args", state, true, true);
+        registry.registerCommand("probe.script", () => cast(Command)
+            new MenuProbeCommand(owner, view, "probe.script", state, true, true));
+        registry.registerCommand("probe.command", () => cast(Command)
+            new MenuProbeCommand(owner, view, "probe.command", state));
+        registry.registerCommand("probe.refuse", () => cast(Command)
+            new MenuProbeCommand(owner, view, "probe.refuse", state, false));
+        registry.registerCommand("probe.args", () => cast(Command)
+            new MenuProbeCommand(owner, view, "probe.args", state, true, true));
     }
 
     ActionMenuRoles bind(bool openParameterized = false) {

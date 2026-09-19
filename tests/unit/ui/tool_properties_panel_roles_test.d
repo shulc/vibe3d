@@ -447,10 +447,10 @@ private final class ToolPropsHarness {
         host.getActiveTool = () => slot;
         host.getActiveToolId = () => slotId;
         host.session = () => session;
-        registry.commandFactories["tool.attr"] = () => cast(Command)
-            new ToolAttrCommand(&mesh, view, editMode, host);
-        registry.commandFactories["tool.pipe.attr"] = () => cast(Command)
-            new ToolPipeAttrCommand(&mesh, view, editMode, host);
+        registry.registerCommand("tool.attr", () => cast(Command)
+            new ToolAttrCommand(&mesh, view, editMode, host));
+        registry.registerCommand("tool.pipe.attr", () => cast(Command)
+            new ToolPipeAttrCommand(&mesh, view, editMode, host));
 
         forms = new FormsPanel;
         forms.setTweakEndHook(() { binding.endInteractiveTweak(); });

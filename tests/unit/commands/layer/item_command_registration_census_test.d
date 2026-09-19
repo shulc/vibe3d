@@ -25,7 +25,7 @@ private FactorySpan[] factorySpans(string source) {
     struct Marker { size_t at; string id; }
     Marker[] markers;
     foreach (m; source.matchAll(ctRegex!(
-            `reg\.commandFactories\[\s*"([^"]+)"\s*\]\s*=`)))
+            `reg\.registerCommand\(\s*"([^"]+)"`)))
         markers ~= Marker(cast(size_t) m.pre.length, m.captures[1].idup);
     FactorySpan[] spans;
     foreach (i, marker; markers) {
@@ -157,8 +157,8 @@ unittest { // C10: production wiring, old-path absence and call order
     assert(squash(registrationRaw).count(`"http://127.0.0.1:47831"`) == 1,
         "6355 production wiring: default AI worker URL changed");
 
-    foreach (prefix; [`commandFactories["layer.`, `commandFactories["image.`,
-                      `commandFactories["imagePlane.`, `commandFactories["ai3d.`])
+    foreach (prefix; [`registerCommand("layer.`, `registerCommand("image.`,
+                      `registerCommand("imagePlane.`, `registerCommand("ai3d.`])
         assert(registrationRaw.count(prefix) == 0,
             "6355 old-path witness: registration.d still owns " ~ prefix);
     foreach (className; ["LayerAdd", "LayerDuplicate", "LayerDelete",
@@ -177,12 +177,10 @@ unittest { // C10: production wiring, old-path absence and call order
     const itemAt = registration.indexOf("registerItemCommands(");
     const aiAt = registration.indexOf("registerAi3dCommands(");
     const pipeAt = registration.indexOf("registerPipeStageCommands(");
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
     assert(lifecycleAt >= 0 && itemAt > lifecycleAt,
         "6355 ordering floor: item registrar does not follow tool lifecycle");
     assert(aiAt > itemAt && pipeAt > aiAt,
         "6355 ordering: item/AI/pipe registrar order changed");
-    assert(wrapperAt > pipeAt,
-        "6355 ordering: selection-type wrapper no longer follows the family");
+    assert(registration.count("bindSelTypeAuthority(") == 1,
+        "6355 registry construction authority bind changed");
 }

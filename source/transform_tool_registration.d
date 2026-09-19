@@ -117,66 +117,66 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
 /// Convolve products intentionally retain their gesture-specific bindings.
 void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, TransformToolDeps deps) {
-    reg.toolFactories["move"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.move));
-    reg.toolFactories["rotate"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.rotate));
-    reg.toolFactories["scale"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.scale));
-    reg.toolFactories["xfrm.transform"] = typedToolFactory!XfrmTransformTool(
-        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.transform));
-    reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {
+    reg.registerTool("move", typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.move)));
+    reg.registerTool("rotate", typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.rotate)));
+    reg.registerTool("scale", typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.scale)));
+    reg.registerTool("xfrm.transform", typedToolFactory!XfrmTransformTool(
+        () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.transform)));
+    reg.registerTool("xfrm.push", typedToolFactory!PushTool(() {
         auto t = new PushTool(() => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setUndoBindings(deps.history(), deps.vertexEditFactory());
         return t;
-    });
-    reg.toolFactories["xfrm.bend"] = typedToolFactory!BendTool(() {
+    }));
+    reg.registerTool("xfrm.bend", typedToolFactory!BendTool(() {
         auto t = new BendTool(() => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setUndoBindings(deps.history(), deps.vertexEditFactory());
         return t;
-    });
+    }));
     // Align deform tools are headless-attribute driven; they have no gizmo
     // drag and intentionally receive no morph-edit factory.
-    reg.toolFactories["xfrm.linearAlignTool"] = typedToolFactory!LinearAlignTool(() {
+    reg.registerTool("xfrm.linearAlignTool", typedToolFactory!LinearAlignTool(() {
         auto t = new LinearAlignTool(
             () => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setUndoBindings(deps.history(), deps.vertexEditFactory());
         return t;
-    });
-    reg.toolFactories["xfrm.radialAlignTool"] = typedToolFactory!RadialAlignTool(() {
+    }));
+    reg.registerTool("xfrm.radialAlignTool", typedToolFactory!RadialAlignTool(() {
         auto t = new RadialAlignTool(
             () => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setUndoBindings(deps.history(), deps.vertexEditFactory());
         return t;
-    });
+    }));
     // These remain command-wrapper tools with gesture bindings, not members of
     // the paired headless-tool recipe.
-    reg.toolFactories["xfrm.smooth"] = typedToolFactory!XfrmSmoothTool(() {
+    reg.registerTool("xfrm.smooth", typedToolFactory!XfrmSmoothTool(() {
         auto t = new XfrmSmoothTool(
             &owner.activeMesh(), live.view(), live.mode(), deps.gpu());
         t.setGestureBindings(deps.history(), deps.vertexEditFactory());
         t.setPipeGizmoHost(deps.pipeGizmoHost());
         return t;
-    });
-    reg.toolFactories["xfrm.jitter"] = typedToolFactory!XfrmJitterTool(() {
+    }));
+    reg.registerTool("xfrm.jitter", typedToolFactory!XfrmJitterTool(() {
         auto t = new XfrmJitterTool(
             &owner.activeMesh(), live.view(), live.mode(), deps.gpu());
         t.setGestureBindings(deps.history(), deps.vertexEditFactory());
         t.setPipeGizmoHost(deps.pipeGizmoHost());
         return t;
-    });
-    reg.toolFactories["edge.slide"] = typedToolFactory!EdgeSlideTool(() {
+    }));
+    reg.registerTool("edge.slide", typedToolFactory!EdgeSlideTool(() {
         auto t = new EdgeSlideTool(
             &owner.activeMesh(), live.view(), live.mode(), deps.gpu());
         t.setGestureBindings(deps.history(), deps.vertexEditFactory());
         t.setPipeGizmoHost(deps.pipeGizmoHost());
         return t;
-    });
-    reg.toolFactories["xfrm.quantize"] = typedToolFactory!XfrmQuantizeTool(() {
+    }));
+    reg.registerTool("xfrm.quantize", typedToolFactory!XfrmQuantizeTool(() {
         auto t = new XfrmQuantizeTool(
             &owner.activeMesh(), live.view(), live.mode(), deps.gpu());
         t.setGestureBindings(deps.history(), deps.vertexEditFactory());
         t.setPipeGizmoHost(deps.pipeGizmoHost());
         return t;
-    });
+    }));
 }

@@ -148,84 +148,84 @@ public:
 void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, MeshCommandDeps deps) {
     auto regPtr = &reg;
-    reg.commandFactories["mesh.subdivide"] = () => cast(Command)
+    reg.registerCommand("mesh.subdivide", () => cast(Command)
         new Subdivide(&owner.activeMesh(), live.view(), live.mode(),
-                      deps.meshRebuildDrop());
+                      deps.meshRebuildDrop()));
     // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
     // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
     // the ai3d drain for how the result lands); `mesh.remesh` is the
     // undoable apply that a successful job's result is fired through.
-    reg.commandFactories["mesh.remesh.start"] = () => cast(Command)
-        new RemeshStart(&owner.activeMesh(), live.view(), live.mode(), deps.remeshJob());
-    reg.commandFactories["mesh.remesh"] = () => cast(Command)
+    reg.registerCommand("mesh.remesh.start", () => cast(Command)
+        new RemeshStart(&owner.activeMesh(), live.view(), live.mode(), deps.remeshJob()));
+    reg.registerCommand("mesh.remesh", () => cast(Command)
         new Remesh(&owner.activeMesh(), live.view(), live.mode(),
-                   deps.meshRebuildDrop(), deps.remeshJob());
-    reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
-        new RemeshOpen(&owner.activeMesh(), live.view(), live.mode(), deps.requestRemeshOpen());
-    reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
+                   deps.meshRebuildDrop(), deps.remeshJob()));
+    reg.registerCommand("mesh.remesh.open", () => cast(Command)
+        new RemeshOpen(&owner.activeMesh(), live.view(), live.mode(), deps.requestRemeshOpen()));
+    reg.registerCommand("mesh.subdivide_faceted", () => cast(Command)
         new SubdivideFaceted(&owner.activeMesh(), live.view(), live.mode(),
-                             deps.meshRebuildDrop());
-    reg.commandFactories["mesh.triple"] = () => cast(Command)
+                             deps.meshRebuildDrop()));
+    reg.registerCommand("mesh.triple", () => cast(Command)
         new MeshTriple(&owner.activeMesh(), live.view(), live.mode(),
-                       deps.meshRebuildDrop());
-    reg.commandFactories["mesh.quadruple"] = () => cast(Command)
+                       deps.meshRebuildDrop()));
+    reg.registerCommand("mesh.quadruple", () => cast(Command)
         new MeshQuadruple(&owner.activeMesh(), live.view(), live.mode(),
-                          deps.meshRebuildDrop());
-    reg.commandFactories["mesh.detriangulate"] = () => cast(Command)
+                          deps.meshRebuildDrop()));
+    reg.registerCommand("mesh.detriangulate", () => cast(Command)
         new MeshDetriangulate(&owner.activeMesh(), live.view(), live.mode(),
-                              deps.meshRebuildDrop());
-    reg.commandFactories["mesh.mergeFaces"] = () => cast(Command)
+                              deps.meshRebuildDrop()));
+    reg.registerCommand("mesh.mergeFaces", () => cast(Command)
         new MeshMergeFaces(&owner.activeMesh(), live.view(), live.mode(),
-                           deps.meshRebuildDrop());
-    reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
-        new SubpatchToggle(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.hide"] = () => cast(Command)
-        new MeshHide(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.hideUnselected"] = () => cast(Command)
-        new MeshHideUnselected(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.hideInvert"] = () => cast(Command)
-        new MeshHideInvert(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.unhideAll"] = () => cast(Command)
-        new MeshUnhideAll(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.setMaterial"] = () => cast(Command)
-        new MeshSetMaterial(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.setPart"] = () => cast(Command)
-        new MeshSetPart(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.split_edge"] = () => cast(Command)
-        new MeshSplitEdge(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.addPoint"] = () => cast(Command)
-        new MeshAddPoint(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.splitFace"] = () => cast(Command)
-        new MeshSplitFace(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edgeJoin"] = () => cast(Command)
-        new MeshEdgeJoin(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.spinEdge"] = () => cast(Command)
-        new MeshSpinEdge(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.addLoop"] = () => cast(Command)
-        new MeshAddLoop(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.loopSlice"] = () => cast(Command)
-        new MeshLoopSlice(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
-        new MeshEdgeExtrude(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.vertexExtrude"] = () => cast(Command)
-        new MeshVertexExtrude(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.vertexBevel"] = () => cast(Command)
-        new MeshVertexBevel(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
-        new MeshPolygonInset(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.spikey"] = () => cast(Command)
-        new MeshSpikey(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.bevel"] = () => cast(Command)
-        new MeshBevel(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["poly.extrude"] = () => cast(Command)
-        new MeshFaceExtrude(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.bridge"] = () => cast(Command)
-        new MeshBridge(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.axisSlice"] = () => cast(Command)
-        new MeshAxisSlice(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.julienne"] = () => cast(Command)
-        new MeshJulienne(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.screenSlice"] = () {
+                           deps.meshRebuildDrop()));
+    reg.registerCommand("mesh.subpatch_toggle", () => cast(Command)
+        new SubpatchToggle(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.hide", () => cast(Command)
+        new MeshHide(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.hideUnselected", () => cast(Command)
+        new MeshHideUnselected(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.hideInvert", () => cast(Command)
+        new MeshHideInvert(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.unhideAll", () => cast(Command)
+        new MeshUnhideAll(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.setMaterial", () => cast(Command)
+        new MeshSetMaterial(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.setPart", () => cast(Command)
+        new MeshSetPart(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.split_edge", () => cast(Command)
+        new MeshSplitEdge(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.addPoint", () => cast(Command)
+        new MeshAddPoint(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.splitFace", () => cast(Command)
+        new MeshSplitFace(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edgeJoin", () => cast(Command)
+        new MeshEdgeJoin(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.spinEdge", () => cast(Command)
+        new MeshSpinEdge(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.addLoop", () => cast(Command)
+        new MeshAddLoop(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.loopSlice", () => cast(Command)
+        new MeshLoopSlice(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edge_extrude", () => cast(Command)
+        new MeshEdgeExtrude(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.vertexExtrude", () => cast(Command)
+        new MeshVertexExtrude(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.vertexBevel", () => cast(Command)
+        new MeshVertexBevel(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.poly_inset", () => cast(Command)
+        new MeshPolygonInset(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.spikey", () => cast(Command)
+        new MeshSpikey(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.bevel", () => cast(Command)
+        new MeshBevel(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("poly.extrude", () => cast(Command)
+        new MeshFaceExtrude(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.bridge", () => cast(Command)
+        new MeshBridge(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.axisSlice", () => cast(Command)
+        new MeshAxisSlice(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.julienne", () => cast(Command)
+        new MeshJulienne(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.screenSlice", () {
         auto c = new MeshScreenSlice(&owner.activeMesh(), live.view(), live.mode());
         // Viewport camera single-source (0181): resolve the camera-plane cut
         // through the follow-aware snapshot instead of the cell's raw own
@@ -233,188 +233,188 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         // hazard note.
         c.setResolvedVpProvider(deps.originSnapshot());
         return cast(Command) c;
-    };
-    reg.commandFactories["mesh.edgeSlice"] = () => cast(Command)
-        new MeshEdgeSlice(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.thicken"] = () => cast(Command)
-        new MeshThicken(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
-        new MeshSmoothShift(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
-        new MeshEdgeExtend(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
-        new MeshMoveVertex(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.addVertex"] = () => cast(Command)
-        new MeshVertexNew(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.centerVertices"] = () => cast(Command)
-        new MeshCenterVertices(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.setPosition"] = () => cast(Command)
-        new MeshSetPosition(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.delete"] = () => cast(Command)
-        new MeshDelete(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.remove"] = () => cast(Command)
-        new MeshRemove(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.flip"] = () => cast(Command)
-        new MeshFlip(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.duplicate"] = () => cast(Command)
-        new MeshDuplicate(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.copy"] = () => cast(Command)
-        new MeshCopy(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.paste"] = () => cast(Command)
-        new MeshPaste(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.cut"] = () => cast(Command)
-        new MeshCut(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.mirror"] = () => cast(Command)
-        new MeshMirror(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.symmetrize"] = () => cast(Command)
-        new MeshSymmetrize(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.array"] = () => cast(Command)
-        new MeshArray(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.clone"] = () => cast(Command)
-        new MeshClone(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.radial_array"] = () => cast(Command)
-        new MeshRadialArray(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.sweep"] = () => cast(Command)
-        new MeshSweep(&owner.activeMesh(), live.view(), live.mode());
+    });
+    reg.registerCommand("mesh.edgeSlice", () => cast(Command)
+        new MeshEdgeSlice(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.thicken", () => cast(Command)
+        new MeshThicken(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.smooth_shift", () => cast(Command)
+        new MeshSmoothShift(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edge_extend", () => cast(Command)
+        new MeshEdgeExtend(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.move_vertex", () => cast(Command)
+        new MeshMoveVertex(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.addVertex", () => cast(Command)
+        new MeshVertexNew(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.centerVertices", () => cast(Command)
+        new MeshCenterVertices(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.setPosition", () => cast(Command)
+        new MeshSetPosition(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.delete", () => cast(Command)
+        new MeshDelete(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.remove", () => cast(Command)
+        new MeshRemove(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.flip", () => cast(Command)
+        new MeshFlip(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.duplicate", () => cast(Command)
+        new MeshDuplicate(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.copy", () => cast(Command)
+        new MeshCopy(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.paste", () => cast(Command)
+        new MeshPaste(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.cut", () => cast(Command)
+        new MeshCut(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.mirror", () => cast(Command)
+        new MeshMirror(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.symmetrize", () => cast(Command)
+        new MeshSymmetrize(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.array", () => cast(Command)
+        new MeshArray(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.clone", () => cast(Command)
+        new MeshClone(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.radial_array", () => cast(Command)
+        new MeshRadialArray(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.sweep", () => cast(Command)
+        new MeshSweep(&owner.activeMesh(), live.view(), live.mode()));
     // One-shot, headlessly-testable path-follow extrude (task 0323 —
     // explicit world-space path-point param; see MeshStrokeExtrude's doc
     // comment). The interactive tool.strokeExtrude drives its own commit
     // through the separate record-flavor MeshSessionEdit instead of
     // this factory.
-    reg.commandFactories["mesh.strokeExtrude"] = () => cast(Command)
-        new MeshStrokeExtrude(&owner.activeMesh(), live.view(), live.mode());
+    reg.registerCommand("mesh.strokeExtrude", () => cast(Command)
+        new MeshStrokeExtrude(&owner.activeMesh(), live.view(), live.mode()));
     // Aliases — select.delete and select.remove delegate to the
     // same factory delegates as mesh.delete / mesh.remove respectively.
-    reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];
-    reg.commandFactories["select.remove"] = reg.commandFactories["mesh.remove"];
-    reg.commandFactories["vert.merge"] = () => cast(Command)
-        new MeshVertMerge(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.weldVertexPair"] = () => cast(Command)
-        new MeshWeldVertexPair(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["poly.unify"] = () => cast(Command)
-        new MeshUnify(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.cleanup"] = () => cast(Command)
-        new MeshCleanup(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.fixOrientation"] = () => cast(Command)
-        new MeshFixOrientation(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["vert.join"] = () => cast(Command)
-        new MeshVertJoin(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.collapse"] = () => cast(Command)
-        new MeshCollapse(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.vertexSplit"] = () => cast(Command)
-        new MeshVertexSplit(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.reduce"] = () => cast(Command)
-        new MeshReduce(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.makePolygon"] = () {
+    reg.aliasCommand("mesh.delete", "select.delete");
+    reg.aliasCommand("mesh.remove", "select.remove");
+    reg.registerCommand("vert.merge", () => cast(Command)
+        new MeshVertMerge(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.weldVertexPair", () => cast(Command)
+        new MeshWeldVertexPair(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("poly.unify", () => cast(Command)
+        new MeshUnify(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.cleanup", () => cast(Command)
+        new MeshCleanup(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.fixOrientation", () => cast(Command)
+        new MeshFixOrientation(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("vert.join", () => cast(Command)
+        new MeshVertJoin(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.collapse", () => cast(Command)
+        new MeshCollapse(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.vertexSplit", () => cast(Command)
+        new MeshVertexSplit(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.reduce", () => cast(Command)
+        new MeshReduce(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.makePolygon", () {
         auto c = new MeshMakePolygon(&owner.activeMesh(), live.view(), live.mode());
         // Task 1180: the new face is the command's PRODUCT and re-pointing at
         // it changes the element type — route that through the geometry-type
         // funnel (promote, no tool-drop), same hook mesh.select takes.
         c.setPromoteHook(deps.promoteGeometryType());
         return cast(Command) c;
-    };
-    reg.commandFactories["mesh.select"] = () {
+    });
+    reg.registerCommand("mesh.select", () {
         auto c = new MeshSelect(&owner.activeMesh(), live.view(), live.mode(), live.modeCell());
         c.setPromoteHook(deps.promoteGeometryType());
         // Viewport camera single-source (0181): see mesh.screenSlice above.
         c.setResolvedVpProvider(deps.originSnapshot());
         return cast(Command) c;
-    };
-    reg.commandFactories["mesh.transform"] = () {
+    });
+    reg.registerCommand("mesh.transform", () {
         auto c = new MeshTransform(&owner.activeMesh(), live.view(), live.mode());
         // Viewport camera single-source (0181): see mesh.screenSlice above.
         c.setResolvedVpProvider(deps.originSnapshot());
         return cast(Command) c;
-    };
-    reg.commandFactories["mesh.quantize"] = () => cast(Command)
-        new MeshQuantize(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.jitter"] = () => cast(Command)
-        new MeshJitter(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.magnet"] = () => cast(Command)
-        new MeshMagnet(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.weightmap.create"] = () => cast(Command)
-        new WeightmapCreate(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.weightmap.remove"] = () => cast(Command)
-        new WeightmapRemove(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.weightmap.rename"] = () => cast(Command)
-        new WeightmapRename(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
-        new WeightmapSet(&owner.activeMesh(), live.view(), live.mode());
+    });
+    reg.registerCommand("mesh.quantize", () => cast(Command)
+        new MeshQuantize(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.jitter", () => cast(Command)
+        new MeshJitter(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.magnet", () => cast(Command)
+        new MeshMagnet(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.weightmap.create", () => cast(Command)
+        new WeightmapCreate(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.weightmap.remove", () => cast(Command)
+        new WeightmapRemove(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.weightmap.rename", () => cast(Command)
+        new WeightmapRename(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.weightmap.set", () => cast(Command)
+        new WeightmapSet(&owner.activeMesh(), live.view(), live.mode()));
     // Task 1090. The odd sibling of the four above: it writes the SESSION's
     // current-map name, not the mesh, so it is `CmdFlags.UI` and records no
     // undo entry. Registered here anyway — the map selection belongs to the
     // weight-map family, not to the viewport family, because it is global
     // state about a MESH channel and only its consumer is per-cell.
-    reg.commandFactories["mesh.weightmap.select"] = () => cast(Command)
-        new WeightmapSelect(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.create"] = () => cast(Command)
-        new MorphCreate(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.remove"] = () => cast(Command)
-        new MorphRemove(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.rename"] = () => cast(Command)
-        new MorphRename(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.select"] = () => cast(Command)
-        new MorphSelect(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.set"] = () => cast(Command)
-        new MorphSet(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.clear"] = () => cast(Command)
-        new MorphClear(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.morph.apply"] = () => cast(Command)
-        new MorphApplyCmd(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edgeCrease.set"] = () => cast(Command)
-        new EdgeCreaseSet(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edgeCrease.clear"] = () => cast(Command)
-        new EdgeCreaseClear(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.flip"] = () => cast(Command)
-        new UvFlip(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.mirror"] = () => cast(Command)
-        new UvMirror(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.rotate"] = () => cast(Command)
-        new UvRotate(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.project"] = () => cast(Command)
-        new UvProject(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.fit"] = () => cast(Command)
-        new UvFit(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.pack"] = () => cast(Command)
-        new UvPack(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.delete"] = () => cast(Command)
-        new UvDelete(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.rename"] = () => cast(Command)
-        new UvRename(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.copy"] = () => cast(Command)
-        new UvCopy(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.clear"] = () => cast(Command)
-        new UvClear(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.relax"] = () => cast(Command)
-        new UvRelax(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["uv.unwrap"] = () => cast(Command)
-        new UvUnwrap(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
-        new MeshEdgeSlide(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.smooth"] = () => cast(Command)
-        new MeshSmooth(&owner.activeMesh(), live.view(), live.mode());
+    reg.registerCommand("mesh.weightmap.select", () => cast(Command)
+        new WeightmapSelect(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.create", () => cast(Command)
+        new MorphCreate(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.remove", () => cast(Command)
+        new MorphRemove(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.rename", () => cast(Command)
+        new MorphRename(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.select", () => cast(Command)
+        new MorphSelect(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.set", () => cast(Command)
+        new MorphSet(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.clear", () => cast(Command)
+        new MorphClear(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.morph.apply", () => cast(Command)
+        new MorphApplyCmd(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edgeCrease.set", () => cast(Command)
+        new EdgeCreaseSet(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edgeCrease.clear", () => cast(Command)
+        new EdgeCreaseClear(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.flip", () => cast(Command)
+        new UvFlip(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.mirror", () => cast(Command)
+        new UvMirror(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.rotate", () => cast(Command)
+        new UvRotate(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.project", () => cast(Command)
+        new UvProject(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.fit", () => cast(Command)
+        new UvFit(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.pack", () => cast(Command)
+        new UvPack(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.delete", () => cast(Command)
+        new UvDelete(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.rename", () => cast(Command)
+        new UvRename(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.copy", () => cast(Command)
+        new UvCopy(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.clear", () => cast(Command)
+        new UvClear(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.relax", () => cast(Command)
+        new UvRelax(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("uv.unwrap", () => cast(Command)
+        new UvUnwrap(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.edge_slide", () => cast(Command)
+        new MeshEdgeSlide(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.smooth", () => cast(Command)
+        new MeshSmooth(&owner.activeMesh(), live.view(), live.mode()));
     // Headless aliases for the Convolve tools — same shape
     // as prim.cube above: tool.set <id> on; tool.attr <id> ...;
     // tool.doApply. The command form bundles the activation pair so
     // headless callers don't have to manage the tool lifecycle.
-    reg.commandFactories["xfrm.smooth"] = () => cast(Command)
+    reg.registerCommand("xfrm.smooth", () => cast(Command)
         new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
-                                "xfrm.smooth", regPtr.toolFactories["xfrm.smooth"]);
-    reg.commandFactories["xfrm.jitter"] = () => cast(Command)
+                                "xfrm.smooth", regPtr.toolFactory("xfrm.smooth")));
+    reg.registerCommand("xfrm.jitter", () => cast(Command)
         new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
-                                "xfrm.jitter", regPtr.toolFactories["xfrm.jitter"]);
-    reg.commandFactories["xfrm.quantize"] = () => cast(Command)
+                                "xfrm.jitter", regPtr.toolFactory("xfrm.jitter")));
+    reg.registerCommand("xfrm.quantize", () => cast(Command)
         new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
-                                "xfrm.quantize", regPtr.toolFactories["xfrm.quantize"]);
-    reg.commandFactories["mesh.linear_align"] = () => cast(Command)
-        new MeshLinearAlign(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.align"] = () => cast(Command)
-        new MeshAlign(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.radial_align"] = () => cast(Command)
-        new MeshRadialAlign(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
-        new MeshVertexEdit(&owner.activeMesh(), live.view(), live.mode());
-    reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
+                                "xfrm.quantize", regPtr.toolFactory("xfrm.quantize")));
+    reg.registerCommand("mesh.linear_align", () => cast(Command)
+        new MeshLinearAlign(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.align", () => cast(Command)
+        new MeshAlign(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.radial_align", () => cast(Command)
+        new MeshRadialAlign(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.vertex_edit", () => cast(Command)
+        new MeshVertexEdit(&owner.activeMesh(), live.view(), live.mode()));
+    reg.registerCommand("mesh.bevel_edit", () => cast(Command)
         new MeshSessionEdit(&owner.activeMesh(), live.view(), live.mode(),
-                          "mesh.bevel_edit", "Bevel");
+                          "mesh.bevel_edit", "Bevel"));
 }

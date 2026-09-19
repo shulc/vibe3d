@@ -52,13 +52,13 @@ unittest {
     rig.wireEditorApp();
     registerTools(rig.app);
     foreach (id; kCreateIds)
-        assert(id in rig.registry.toolFactories,
+        assert(rig.registry.hasTool(id),
             "6507 population: registry lacks tool " ~ id);
     foreach (id; kPairedIds)
-        assert(id in rig.registry.commandFactories,
+        assert(rig.registry.hasCommand(id),
             "6507 population: registry lacks paired command " ~ id);
     foreach (id; kToolOnly)
-        assert(id !in rig.registry.commandFactories,
+        assert(!rig.registry.hasCommand(id),
             "6507 command-negative: tool-only id became paired: " ~ id);
 }
 
@@ -69,7 +69,7 @@ unittest {
     registerTools(rig.app);
     rig.switchToB();
     foreach (id; kPairedIds) {
-        auto command = rig.registry.commandFactories[id]();
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr() is &rig.layerB.meshRef(),
             "6507 live command mesh: " ~ id ~ " retained layer A");
     }
@@ -81,8 +81,8 @@ unittest {
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
     registerTools(rig.app);
-    auto cube = cast(BoxTool) rig.registry.toolFactories["prim.cube"]();
-    auto mirror = cast(MirrorTool) rig.registry.toolFactories["mesh.mirrorTool"]();
+    auto cube = cast(BoxTool) rig.registry.toolFactory("prim.cube")();
+    auto mirror = cast(MirrorTool) rig.registry.toolFactory("mesh.mirrorTool")();
     auto cubeMesh = fieldOf!(Mesh* delegate())(cube, "meshSrc_");
     auto mirrorMesh = fieldOf!(Mesh* delegate())(mirror, "meshSrc_");
     assert(cubeMesh() is &rig.layerA.meshRef(),
@@ -104,9 +104,9 @@ unittest {
     foreach (i, id; ["prim.cube", "mesh.mirrorTool"]) {
         immutable marker = 6507 + cast(int) i;
         ToolFactory probe = () => new MarkerTool(marker);
-        rig.registry.toolFactories[id] = probe;
+        rig.registry.replaceTool(id, probe);
         auto command = cast(ToolHeadlessCommand)
-            rig.registry.commandFactories[id]();
+            rig.registry.makeCommand(id);
         auto held = fieldOf!ToolFactory(command, "factory");
         assert(held is probe,
             "6353 late lookup: " ~ id ~ " wrapper holds the registration-time "
@@ -125,7 +125,7 @@ unittest {
                 rig.session.editMode, "probe." ~ field, field);
     registerTools(rig.app);
     auto pen = cast(TopologyPenTool)
-        rig.registry.toolFactories["mesh.topoPen"]();
+        rig.registry.toolFactory("mesh.topoPen")();
     auto held = fieldOf!TopoPenFactories(pen, "factories_");
     static foreach (field; FieldNameTuple!TopoPenFactories)
         assert(__traits(getMember, held, field) !is null,

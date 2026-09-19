@@ -123,18 +123,17 @@ unittest { // U1: every id builds its intended command class
         registerViewportCommands(fixture.registry,
             LiveSessionRole(fixture.session), fixture.viewportLive(), null),
         "6010 null-manager contract must reject registration");
-    assert(fixture.registry.commandFactories.length == 0,
+    assert(fixture.registry.commandIds().length == 0,
         "6010 null-manager rejection registered a partial family");
 
     fixture.registerViewport();
-    assert(fixture.registry.commandFactories.length == 12,
+    assert(fixture.registry.commandIds().length == 12,
         format("6010 id population: expected 12 viewport ids, got %d",
-               fixture.registry.commandFactories.length));
+               fixture.registry.commandIds().length));
     size_t checked;
     foreach (id; kIds) {
-        auto factory = id in fixture.registry.commandFactories;
-        assert(factory !is null, "6010 id witness: missing " ~ id);
-        auto command = (*factory)();
+        auto command = fixture.registry.makeCommand(id);
+        assert(command !is null, "6010 id witness: missing " ~ id);
         assert(command.name() == id,
             "6010 id witness: " ~ id ~ " builds a command named "
             ~ command.name());
@@ -298,21 +297,21 @@ unittest { // U2: primary, mode, and active cell resolve after registration
     size_t modes;
     size_t views;
     foreach (id; kIds) {
-        auto command = fixture.registry.commandFactories[id]();
+        auto command = fixture.registry.makeCommand(id);
         assert(command.meshPtr is &fixture.layerB.meshRef(),
             "6010 live primary witness: " ~ id
             ~ " captured the registration-time mesh");
         ++meshes;
     }
     foreach (id; kIds) {
-        auto command = fixture.registry.commandFactories[id]();
+        auto command = fixture.registry.makeCommand(id);
         assert(command.editModeVal == EditMode.Polygons,
             "6010 live mode witness: " ~ id
             ~ " captured the registration-time mode");
         ++modes;
     }
     foreach (id; kIds) {
-        auto command = fixture.registry.commandFactories[id]();
+        auto command = fixture.registry.makeCommand(id);
         immutable isFit = id == "viewport.fit"
             || id == "viewport.fit_selected";
         immutable want = isFit ? 3 : 0;
@@ -352,7 +351,7 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
                       "RemeshModalRefs", "with (", "with("])
         assert(registrar.count(banned) == 0,
             "6010 no-EditorApp witness: viewport registrar names " ~ banned);
-    assert(registrarRaw.count(`reg.commandFactories["viewport.`) == 12,
+    assert(registrarRaw.count(`reg.registerCommand("viewport.`) == 12,
         "6010 registrar population: expected 12 viewport factory rows");
 
     const registration = squash(blankNonCode(registrationRaw));
@@ -366,12 +365,10 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
     const callAt = registration.indexOf(productionCall);
     const viewFamilyAt = registration.indexOf(
         "registerViewSettingsCommands(app.reg(), ");
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && viewFamilyAt > callAt && wrapperAt > viewFamilyAt,
+    assert(callAt >= 0 && viewFamilyAt > callAt,
         "6010 registration ordering witness: viewport registration must stay "
-        ~ "before view/settings registration and the LAST selection-type wrapper");
-    assert(registrationRaw.count(`commandFactories["viewport.`) == 0
+        ~ "before view/settings registration");
+    assert(registrationRaw.count(`registerCommand("viewport.`) == 0
         && registration.count("focusOwnerCamera") == 0
         && registration.count("scaleOwnerCamera") == 0,
         "6010 old-path witness: registration.d still builds a viewport factory");

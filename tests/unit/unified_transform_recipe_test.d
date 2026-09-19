@@ -90,7 +90,7 @@ private XfrmTransformTool build(Rig* r, string key) {
         t = cast(XfrmTransformTool)
             buildRegisteredXfrmTransformForOwnershipTest(r.app, key);
     } catch (RangeError e) {
-        if ((key in r.app.reg.toolFactories) !is null) throw e;
+        if (r.app.reg.hasTool(key)) throw e;
         assert(0, "6351 population: registry lacks " ~ key);
     }
     assert(t !is null,
@@ -106,9 +106,9 @@ unittest {
         "6351 population floor: the four unified transform ids");
     foreach (key; kKeys) {
         auto t1 = build(r, key);
-        assert((key in r.app.reg.toolFactories) !is null,
+        assert(r.app.reg.hasTool(key),
             "6351 population: registry lacks " ~ key);
-        auto t2 = r.app.reg.toolFactories[key]();
+        auto t2 = r.app.reg.toolFactory(key)();
         assert(t2 !is null && t1 !is t2,
             "6351 population: fresh instance per call " ~ key);
     }
@@ -250,7 +250,7 @@ unittest {
         writer.close();
         assert(!writer.enabled,
             "6351 explore lifecycle: close must disable the writer " ~ key);
-        auto second = cast(XfrmTransformTool) r.app.reg.toolFactories[key]();
+        auto second = cast(XfrmTransformTool) r.app.reg.toolFactory(key)();
         assert(second !is null
             && !fieldOf!bool(fieldOf!ToolHandles(second, "toolHandles"),
                 "aiExploreSilent"),

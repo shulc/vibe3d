@@ -656,7 +656,7 @@ unittest {
     // (ii) the registration passes ONE identifier, and it names no flat factory.
     string passed;
     {
-        immutable string key = `reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {`;
+        immutable string key = `reg.registerTool("mesh.topoPen", typedToolFactory!TopologyPenTool(() {`;
         immutable ptrdiff_t at = regSrc.indexOf(key);
         if (at < 0)
             bad ~= "    · the `mesh.topoPen` registration block was not found in "

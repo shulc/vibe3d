@@ -17,7 +17,7 @@
         "TopologyPenTool"
       ],
       "semantic_sha256": "8981a1cdecdd571c5ca46d96216a20722d06bc66b31d8cf3ab8899c7e17b3ec0",
-      "symbol": "toolFactories[\"mesh.topoPen\"]"
+      "symbol": "registerTool(\"mesh.topoPen\")"
     },
     {
       "aggregate": "<module>",
@@ -26,7 +26,7 @@
         "PenTool"
       ],
       "semantic_sha256": "c8ee121bd2f7339b28f8ed9700d56c25ebddfa0ce9a471cda8bf2aa3c53d7bba",
-      "symbol": "toolFactories[\"pen\"]"
+      "symbol": "registerTool(\"pen\")"
     },
     {
       "aggregate": "<module>",
@@ -35,7 +35,7 @@
         "VertexTool"
       ],
       "semantic_sha256": "a2910f38096031b347296e89a68e4011fc733d19002f6ed9a47991568da70119",
-      "symbol": "toolFactories[\"prim.vertex\"]"
+      "symbol": "registerTool(\"prim.vertex\")"
     },
     {
       "aggregate": "<module>",
@@ -43,8 +43,8 @@
       "product_types": [
         "MirrorTool"
       ],
-      "semantic_sha256": "168bac178c0a734eb0294c054ee3af8ce3da29020077295fede545838378daae",
-      "symbol": "toolFactories[\"mesh.mirrorTool\"]"
+      "semantic_sha256": "9efcc24e1d6c16b8c39ff665f72ac5557cb442525719b9689174637738e26660",
+      "symbol": "registerTool(\"mesh.mirrorTool\")"
     },
     {
       "aggregate": "<module>",
@@ -52,8 +52,8 @@
       "product_types": [
         "RadialSweepTool"
       ],
-      "semantic_sha256": "2b6e257a6bf6788685fe694f8eca235829bcef0db1940f3733c34cb30b8cfccc",
-      "symbol": "toolFactories[\"mesh.radialSweepTool\"]"
+      "semantic_sha256": "440161380f99043a1b4cff9d8ebf603e5626a6034a5e72247bd0d0e4674b7a4d",
+      "symbol": "registerTool(\"mesh.radialSweepTool\")"
     },
     {
       "aggregate": "<module>",
@@ -61,8 +61,8 @@
       "product_types": [
         "TackTool"
       ],
-      "semantic_sha256": "3250d7879789f87e9e03cbfbc1f8499e34ae46b14b5dcf881ad834ada370d6dc",
-      "symbol": "toolFactories[\"mesh.tack\"]"
+      "semantic_sha256": "11fdc0983dd8f0587e41bb4ba702789170ffbe09e38e394c4e66f945fc3d4514",
+      "symbol": "registerTool(\"mesh.tack\")"
     },
     {
       "aggregate": "<module>",
@@ -70,8 +70,8 @@
       "product_types": [
         "BridgeTool"
       ],
-      "semantic_sha256": "c7bbb040df416f491b39add785de40e0a13506d5954bbedbe831e7b082ea2a30",
-      "symbol": "toolFactories[\"mesh.bridgeTool\"]"
+      "semantic_sha256": "9b78c2c661c2900f9638c879386e393b66eab975d3ff263441a561165051b05f",
+      "symbol": "registerTool(\"mesh.bridgeTool\")"
     },
     {
       "aggregate": "<module>",
@@ -79,8 +79,8 @@
       "product_types": [
         "BoxTool"
       ],
-      "semantic_sha256": "75a1256c404849e33ca96d598419e4acebce2d2e0dee04c094a7ce06c3cfbe01",
-      "symbol": "toolFactories[\"prim.cube\"]"
+      "semantic_sha256": "7f9ec88f46ba1fdf0f7a58a6cf519d445cf28974c4476931663000f68a9f0d06",
+      "symbol": "registerTool(\"prim.cube\")"
     },
     {
       "aggregate": "<module>",
@@ -88,8 +88,8 @@
       "product_types": [
         "SphereTool"
       ],
-      "semantic_sha256": "2b09bd5fba6cd348d072594ebc2ac5166bf55c915ba49a04e9e1641fd86bb087",
-      "symbol": "toolFactories[\"prim.sphere\"]"
+      "semantic_sha256": "0df685406ee9480a3ff0c7775c1a68310ec9dcc8c179ceff6bb0a1d5eef54de6",
+      "symbol": "registerTool(\"prim.sphere\")"
     },
     {
       "aggregate": "<module>",
@@ -97,8 +97,8 @@
       "product_types": [
         "SphereTool"
       ],
-      "semantic_sha256": "af5cb431ff43587685d37a9e2603c96b680a5fac1dde8ddb9831eea26775101f",
-      "symbol": "toolFactories[\"prim.ellipsoid\"]"
+      "semantic_sha256": "57c9f6e62dac4e66a3b57dc23a7ac1284f92115b7dfc57de6f250917227bdaf5",
+      "symbol": "registerTool(\"prim.ellipsoid\")"
     },
     {
       "aggregate": "<module>",
@@ -106,8 +106,8 @@
       "product_types": [
         "CylinderTool"
       ],
-      "semantic_sha256": "37581f443933a68bc824f761ce8547dd9bb022d07a69d982b020e104420f463e",
-      "symbol": "toolFactories[\"prim.cylinder\"]"
+      "semantic_sha256": "d1baaa9a8a8252546e09b95b547cbd5db9fd25b1aaeaff04243d864891b5a3b6",
+      "symbol": "registerTool(\"prim.cylinder\")"
     },
     {
       "aggregate": "<module>",
@@ -115,8 +115,8 @@
       "product_types": [
         "TubeTool"
       ],
-      "semantic_sha256": "5be6543b456f884a5cb705272ad787241a19efbb85102fdb822c027525e0c27c",
-      "symbol": "toolFactories[\"prim.tube\"]"
+      "semantic_sha256": "f860641d25ba33bfe00f40a54fbb184405597813b3c6bad74e870d2ca0ff7fa0",
+      "symbol": "registerTool(\"prim.tube\")"
     },
     {
       "aggregate": "<module>",
@@ -124,8 +124,8 @@
       "product_types": [
         "ConeTool"
       ],
-      "semantic_sha256": "0ca8cea5748e854a5a7b021dd18dcc94800976c42880a56c0392f8e0c6b13d90",
-      "symbol": "toolFactories[\"prim.cone\"]"
+      "semantic_sha256": "9a75b2469684e81b4783efb2e1a5f2dfa5f17b8eb41f06e601af0c946f82c6d6",
+      "symbol": "registerTool(\"prim.cone\")"
     },
     {
       "aggregate": "<module>",
@@ -133,8 +133,8 @@
       "product_types": [
         "CapsuleTool"
       ],
-      "semantic_sha256": "b7053a9c51b16148ebcbaab82477e0cc1a8065f27f384e3b219fa735139336e5",
-      "symbol": "toolFactories[\"prim.capsule\"]"
+      "semantic_sha256": "9b926ea5c042f2fcfb324a3661329c296b4c806ba7cccf3cb596ee944b85d6d1",
+      "symbol": "registerTool(\"prim.capsule\")"
     },
     {
       "aggregate": "<module>",
@@ -142,8 +142,8 @@
       "product_types": [
         "TorusTool"
       ],
-      "semantic_sha256": "341e6a509b84492f73a12ceb47ed85163956d84e78795586d9199ae53711c2b1",
-      "symbol": "toolFactories[\"prim.torus\"]"
+      "semantic_sha256": "e28e2f4426b1164fbb9f53a20f361ebeb84cbe17e335d6619f5edebe4d7e000a",
+      "symbol": "registerTool(\"prim.torus\")"
     },
     {
       "aggregate": "<module>",
@@ -151,8 +151,8 @@
       "product_types": [
         "ArcTool"
       ],
-      "semantic_sha256": "5a0c48079aa2bbada89c0c82897a089da9076f8cf30e1f0d0aa5e1abd14aa212",
-      "symbol": "toolFactories[\"prim.arc\"]"
+      "semantic_sha256": "2c7e8c2eaec3d069992c89eadeea0986562c73c3a96d598dd41cb1e4fb338016",
+      "symbol": "registerTool(\"prim.arc\")"
     },
     {
       "aggregate": "<module>",
@@ -161,7 +161,7 @@
         "XfrmTransformTool"
       ],
       "semantic_sha256": "26b933ffc2520c9ad3b6e22f82cc8e0edcbbd89658df6b6a64f2b724c1f6c01b",
-      "symbol": "toolFactories[\"move\"]"
+      "symbol": "registerTool(\"move\")"
     },
     {
       "aggregate": "<module>",
@@ -170,7 +170,7 @@
         "XfrmTransformTool"
       ],
       "semantic_sha256": "24b1ce4b230128d953fe6cb0b3311c018ffc298c3d8c85c39d4c5534b30bb847",
-      "symbol": "toolFactories[\"rotate\"]"
+      "symbol": "registerTool(\"rotate\")"
     },
     {
       "aggregate": "<module>",
@@ -179,7 +179,7 @@
         "XfrmTransformTool"
       ],
       "semantic_sha256": "b3e50350ad0d6b919be8c93f8876fcf150f56d37abed1ae322afe48a5a2ef5a3",
-      "symbol": "toolFactories[\"scale\"]"
+      "symbol": "registerTool(\"scale\")"
     },
     {
       "aggregate": "<module>",
@@ -188,7 +188,7 @@
         "XfrmTransformTool"
       ],
       "semantic_sha256": "736e3bee7a08571c74c2fdc894daf6dd23336315c2bb9d23ccbbd0c569aa04f2",
-      "symbol": "toolFactories[\"xfrm.transform\"]"
+      "symbol": "registerTool(\"xfrm.transform\")"
     },
     {
       "aggregate": "<module>",
@@ -197,7 +197,7 @@
         "PushTool"
       ],
       "semantic_sha256": "f740abf072475d38b71ef31487b2a409ede3e2a9e74d2f92c501f37a8e622314",
-      "symbol": "toolFactories[\"xfrm.push\"]"
+      "symbol": "registerTool(\"xfrm.push\")"
     },
     {
       "aggregate": "<module>",
@@ -206,7 +206,7 @@
         "BendTool"
       ],
       "semantic_sha256": "5ad2aa697bd0c725229e48261e33097a4f208c560145227f511284a5d7ba3234",
-      "symbol": "toolFactories[\"xfrm.bend\"]"
+      "symbol": "registerTool(\"xfrm.bend\")"
     },
     {
       "aggregate": "<module>",
@@ -215,7 +215,7 @@
         "LinearAlignTool"
       ],
       "semantic_sha256": "bf329b398f97caac390f03cd8bed92f5402eb6a750ff2637867b5e92aae16cc5",
-      "symbol": "toolFactories[\"xfrm.linearAlignTool\"]"
+      "symbol": "registerTool(\"xfrm.linearAlignTool\")"
     },
     {
       "aggregate": "<module>",
@@ -224,7 +224,7 @@
         "RadialAlignTool"
       ],
       "semantic_sha256": "a8793b5021f4019e30d088223c75980e2f42f0aed5dc2523f9250ae3013f22e2",
-      "symbol": "toolFactories[\"xfrm.radialAlignTool\"]"
+      "symbol": "registerTool(\"xfrm.radialAlignTool\")"
     },
     {
       "aggregate": "<module>",
@@ -233,7 +233,7 @@
         "XfrmSmoothTool"
       ],
       "semantic_sha256": "9af05d48bc23d6967875189ba849170a0342ad419e5607b35d88535698ce8db7",
-      "symbol": "toolFactories[\"xfrm.smooth\"]"
+      "symbol": "registerTool(\"xfrm.smooth\")"
     },
     {
       "aggregate": "<module>",
@@ -242,7 +242,7 @@
         "XfrmJitterTool"
       ],
       "semantic_sha256": "006673744603c5c67219e514efedde2a028f53359d8b281c79a0b619021dccf4",
-      "symbol": "toolFactories[\"xfrm.jitter\"]"
+      "symbol": "registerTool(\"xfrm.jitter\")"
     },
     {
       "aggregate": "<module>",
@@ -251,7 +251,7 @@
         "EdgeSlideTool"
       ],
       "semantic_sha256": "e010619981cf00f78e8aa55b8cd42130dc8112d37a7d5dc1b0cbf0502daf44cf",
-      "symbol": "toolFactories[\"edge.slide\"]"
+      "symbol": "registerTool(\"edge.slide\")"
     },
     {
       "aggregate": "<module>",
@@ -260,7 +260,7 @@
         "XfrmQuantizeTool"
       ],
       "semantic_sha256": "dc24c7f453e77810909600488c717d0d55a1da3f66d3e97c98566e3435d46696",
-      "symbol": "toolFactories[\"xfrm.quantize\"]"
+      "symbol": "registerTool(\"xfrm.quantize\")"
     },
     {
       "aggregate": "<module>",
@@ -269,7 +269,7 @@
         "DragWeldTool"
       ],
       "semantic_sha256": "2a37917953bbda8fe594adbbb538b93a04ca6b056ea76199dae4b1711a7785e8",
-      "symbol": "toolFactories[\"mesh.dragWeld\"]"
+      "symbol": "registerTool(\"mesh.dragWeld\")"
     },
     {
       "aggregate": "<module>",
@@ -278,7 +278,7 @@
         "EdgeExtrudeTool"
       ],
       "semantic_sha256": "1b44cd02a412461c32d22c9537b3934fb2ca24c07f20f09c84202de0beb137b0",
-      "symbol": "toolFactories[\"edge.extrude\"]"
+      "symbol": "registerTool(\"edge.extrude\")"
     },
     {
       "aggregate": "<module>",
@@ -287,7 +287,7 @@
         "PolyExtrudeTool"
       ],
       "semantic_sha256": "29a4887d11a2fa4e3bedcb11afe1b35699c964fe96df64caabd9be7b923a5174",
-      "symbol": "toolFactories[\"poly.extrude\"]"
+      "symbol": "registerTool(\"poly.extrude\")"
     },
     {
       "aggregate": "<module>",
@@ -296,7 +296,7 @@
         "RadialArrayTool"
       ],
       "semantic_sha256": "945cc76c49664ebf9101ae93f822fbedae2c79a4072ef1a6f03582c565b18e7e",
-      "symbol": "toolFactories[\"mesh.radialArrayTool\"]"
+      "symbol": "registerTool(\"mesh.radialArrayTool\")"
     },
     {
       "aggregate": "<module>",
@@ -305,7 +305,7 @@
         "StrokeExtrudeTool"
       ],
       "semantic_sha256": "9ec49c1bbcf7c46cc36386d22475d1cb49f77e0d497028f828a7fa4362274f59",
-      "symbol": "toolFactories[\"tool.strokeExtrude\"]"
+      "symbol": "registerTool(\"tool.strokeExtrude\")"
     },
     {
       "aggregate": "<module>",
@@ -314,7 +314,7 @@
         "EdgeExtendTool"
       ],
       "semantic_sha256": "86eaa02f663cf899d13086f4babc4eeee2c3402740bef7c0168e6e3d4f92ddfb",
-      "symbol": "toolFactories[\"edge.extend\"]"
+      "symbol": "registerTool(\"edge.extend\")"
     },
     {
       "aggregate": "<module>",
@@ -323,7 +323,7 @@
         "PolyBevelTool"
       ],
       "semantic_sha256": "bb1bad762ef7103be93aeae6f7cf4462eec4d8218f7c00170284fe0bc21ac80a",
-      "symbol": "toolFactories[\"poly.bevel\"]"
+      "symbol": "registerTool(\"poly.bevel\")"
     },
     {
       "aggregate": "<module>",
@@ -332,7 +332,7 @@
         "PolyInsetTool"
       ],
       "semantic_sha256": "a4d4785bddc256dd99f249eec530cc6ab042a408ea13ae70c6ba9bdb64712ad7",
-      "symbol": "toolFactories[\"mesh.polyInsetTool\"]"
+      "symbol": "registerTool(\"mesh.polyInsetTool\")"
     },
     {
       "aggregate": "<module>",
@@ -341,7 +341,7 @@
         "SmoothShiftTool"
       ],
       "semantic_sha256": "081df040cb924baa29465fc070036de3b94f418327af23d210c1567b16333263",
-      "symbol": "toolFactories[\"mesh.smoothShiftTool\"]"
+      "symbol": "registerTool(\"mesh.smoothShiftTool\")"
     },
     {
       "aggregate": "<module>",
@@ -350,7 +350,7 @@
         "MagnetTool"
       ],
       "semantic_sha256": "d66522d134905f21ff6eb9f2275a35b61e024ed245f93423e72e44bb19acd6cf",
-      "symbol": "toolFactories[\"xfrm.magnet\"]"
+      "symbol": "registerTool(\"xfrm.magnet\")"
     },
     {
       "aggregate": "<module>",
@@ -359,7 +359,7 @@
         "EdgeBevelTool"
       ],
       "semantic_sha256": "317364475b7cea5d33209c003b4566c58898e6e47502348bea303d1ce07fc0de",
-      "symbol": "toolFactories[\"edge.bevel\"]"
+      "symbol": "registerTool(\"edge.bevel\")"
     },
     {
       "aggregate": "<module>",
@@ -368,7 +368,7 @@
         "VertexBevelTool"
       ],
       "semantic_sha256": "179fb25500cd13df1152608b56946372ddf347e4610d866865c294e8b4369aa6",
-      "symbol": "toolFactories[\"mesh.vertexBevel\"]"
+      "symbol": "registerTool(\"mesh.vertexBevel\")"
     },
     {
       "aggregate": "<module>",
@@ -377,7 +377,7 @@
         "VertexExtrudeTool"
       ],
       "semantic_sha256": "fdb954cb02469daee727b70197a4b5808d66b692b5b51ea3bc09d199610540fd",
-      "symbol": "toolFactories[\"mesh.vertexExtrude\"]"
+      "symbol": "registerTool(\"mesh.vertexExtrude\")"
     },
     {
       "aggregate": "<module>",
@@ -386,7 +386,7 @@
         "VertexMergeTool"
       ],
       "semantic_sha256": "e6a2f866183b93ce6641803b09e29425ac0a29484b7f66a6d425caaa082d765c",
-      "symbol": "toolFactories[\"vert.merge\"]"
+      "symbol": "registerTool(\"vert.merge\")"
     },
     {
       "aggregate": "<module>",
@@ -395,7 +395,7 @@
         "LoopSliceTool"
       ],
       "semantic_sha256": "60a8c223f73765886453c15695e8d31286d17f73d407f272adb04b9f1fc7c13f",
-      "symbol": "toolFactories[\"mesh.loopSliceTool\"]"
+      "symbol": "registerTool(\"mesh.loopSliceTool\")"
     },
     {
       "aggregate": "<module>",
@@ -404,7 +404,7 @@
         "SliceTool"
       ],
       "semantic_sha256": "b98974dcdf0a905b1ff7c3e7de360b043da9cab9b8627ae25c08b2e81b827725",
-      "symbol": "toolFactories[\"mesh.sliceTool\"]"
+      "symbol": "registerTool(\"mesh.sliceTool\")"
     },
     {
       "aggregate": "<module>",
@@ -413,7 +413,7 @@
         "EdgeSliceTool"
       ],
       "semantic_sha256": "c299976df0c1940a114aa4269d8aa204074048053aef02dc17f83484b804891e",
-      "symbol": "toolFactories[\"mesh.edgeSliceTool\"]"
+      "symbol": "registerTool(\"mesh.edgeSliceTool\")"
     },
     {
       "aggregate": "<module>",
@@ -422,7 +422,7 @@
         "ReductionTool"
       ],
       "semantic_sha256": "18e16076cc9d9ebbb64b683d077d7e0afcfd55b92439aa2ccd86b92e89866c12",
-      "symbol": "toolFactories[\"mesh.reduceTool\"]"
+      "symbol": "registerTool(\"mesh.reduceTool\")"
     },
     {
       "aggregate": "<module>",
@@ -431,7 +431,7 @@
         "CloneTool"
       ],
       "semantic_sha256": "6e9083a0b0559653144322ee53ea2fa9380242cb8e4fc7215c51899befcfd3fb",
-      "symbol": "toolFactories[\"mesh.clone\"]"
+      "symbol": "registerTool(\"mesh.clone\")"
     },
     {
       "aggregate": "<module>",
@@ -440,7 +440,7 @@
         "ArrayTool"
       ],
       "semantic_sha256": "32bed99bc2a30b0bc3871d14c4f6c8af0580da9a9b0b9f4bf2e74f9fb3e36423",
-      "symbol": "toolFactories[\"mesh.arrayTool\"]"
+      "symbol": "registerTool(\"mesh.arrayTool\")"
     },
     {
       "aggregate": "registerToolPresets",
@@ -458,8 +458,8 @@
         "SmoothShiftTool",
         "XfrmTransformTool"
       ],
-      "semantic_sha256": "a3d74ea6fab9e7ca206cb4faaf9c173d714af0e2f8d4c259b29d3c3292fe0707",
-      "symbol": "toolFactories[p.id]"
+      "semantic_sha256": "5ff3327d2abc6db4654216043f9879b09b2c17d43c0fc166544dfc67152abcfe",
+      "symbol": "registerTool(p.id)"
     }
   ],
   "hooks": [

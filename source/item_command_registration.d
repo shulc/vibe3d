@@ -40,60 +40,60 @@ public:
 /// item_command_registration_test).
 void registerItemCommands(ref Registry reg, LiveSessionRole owner,
                           LiveViewModeRole live, ItemLifecycleDoors doors) {
-    reg.commandFactories["layer.add"] = () => cast(Command)
+    reg.registerCommand("layer.add", () => cast(Command)
         new LayerAdd(&owner.activeMesh(), live.view(), live.mode,
-                     owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.duplicate"] = () => cast(Command)
+                     owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.duplicate", () => cast(Command)
         new LayerDuplicate(&owner.activeMesh(), live.view(), live.mode,
-                           owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.delete"] = () => cast(Command)
+                           owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.delete", () => cast(Command)
         new LayerDelete(&owner.activeMesh(), live.view(), live.mode,
-                        owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.reorder"] = () => cast(Command)
+                        owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.reorder", () => cast(Command)
         new LayerReorder(&owner.activeMesh(), live.view(), live.mode,
-                         owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.select"] = () => cast(Command)
+                         owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.select", () => cast(Command)
         (new LayerSelect(&owner.activeMesh(), live.view(), live.mode,
                          owner.document(), doors.onActiveLayerChanged()))
-            .setItemSelectHook(doors.promoteItemType());
-    reg.commandFactories["layer.rename"] = () => cast(Command)
+            .setItemSelectHook(doors.promoteItemType()));
+    reg.registerCommand("layer.rename", () => cast(Command)
         new LayerRename(&owner.activeMesh(), live.view(), live.mode,
-                        owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.setVisible"] = () => cast(Command)
+                        owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.setVisible", () => cast(Command)
         new LayerSetVisible(&owner.activeMesh(), live.view(), live.mode,
-                            owner.document(), doors.onActiveLayerChanged());
+                            owner.document(), doors.onActiveLayerChanged()));
     // A property edit cannot move the edit target; the hook is retained only
     // because the layer command constructors deliberately share one recipe.
-    reg.commandFactories["layer.attr"] = () => cast(Command)
+    reg.registerCommand("layer.attr", () => cast(Command)
         new LayerAttr(&owner.activeMesh(), live.view(), live.mode,
-                      owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["layer.parent"] = () => cast(Command)
+                      owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("layer.parent", () => cast(Command)
         new LayerParent(&owner.activeMesh(), live.view(), live.mode,
-                        owner.document(), doors.onActiveLayerChanged());
+                        owner.document(), doors.onActiveLayerChanged()));
 
     // Image commands mutate the same Document. ImageRemove composes
     // LayerDelete, so all four retain the active-layer hook even though an
     // image itself can never be the mesh edit target.
-    reg.commandFactories["image.load"] = () => cast(Command)
+    reg.registerCommand("image.load", () => cast(Command)
         new ImageLoad(&owner.activeMesh(), live.view(), live.mode,
-                      owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["image.replace"] = () => cast(Command)
+                      owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("image.replace", () => cast(Command)
         new ImageReplace(&owner.activeMesh(), live.view(), live.mode,
-                         owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["image.reload"] = () => cast(Command)
+                         owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("image.reload", () => cast(Command)
         new ImageReload(&owner.activeMesh(), live.view(), live.mode,
-                        owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["image.remove"] = () => cast(Command)
+                        owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("image.remove", () => cast(Command)
         new ImageRemove(&owner.activeMesh(), live.view(), live.mode,
-                        owner.document(), doors.onActiveLayerChanged());
+                        owner.document(), doors.onActiveLayerChanged()));
 
     // Task 0668 amended by 0671/6355: imagePlane.add fires the hook only when
     // the primary object changes. A single-mesh document stays on that mesh;
     // the two-mesh seat-order witness is pinned by test_item_switch_hook_effects.
-    reg.commandFactories["imagePlane.add"] = () => cast(Command)
+    reg.registerCommand("imagePlane.add", () => cast(Command)
         new ImagePlaneAdd(&owner.activeMesh(), live.view(), live.mode,
-                          owner.document(), doors.onActiveLayerChanged());
-    reg.commandFactories["imagePlane.setImage"] = () => cast(Command)
+                          owner.document(), doors.onActiveLayerChanged()));
+    reg.registerCommand("imagePlane.setImage", () => cast(Command)
         new ImagePlaneSetImage(&owner.activeMesh(), live.view(), live.mode,
-                               owner.document());
+                               owner.document()));
 }

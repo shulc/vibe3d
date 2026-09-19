@@ -75,9 +75,8 @@ private final class ProbeTool : Tool, LiveEvalClient {
 
 private void checkFactory(T)(LiveRegistrationRig rig, string id,
                              ref size_t checked) {
-    auto factory = id in rig.registry.commandFactories;
-    assert(factory !is null, "5980 missing lifecycle factory: " ~ id);
-    auto command = (*factory)();
+    auto command = rig.registry.makeCommand(id);
+    assert(command !is null, "5980 missing lifecycle factory: " ~ id);
     assert(command.name() == id,
         "5980 lifecycle factory key/name mismatch for " ~ id);
     assert(cast(T)command !is null,
@@ -104,7 +103,7 @@ private string repoFile(string relative) {
 unittest { // U1: every id builds its intended class
     auto rig = new LiveRegistrationRig;
     rig.registerLifecycle();
-    assert(rig.registry.commandFactories.length == 18,
+    assert(rig.registry.commandIds().length == 18,
         "5980 lifecycle registrar population: expected exactly 18 ids");
 
     size_t checked;
@@ -164,11 +163,11 @@ unittest { // U3: factories resolve live mesh/View/Mode at creation time
     scope(exit) g_editTargetResolver = savedResolver;
     g_editTargetResolver = () => rig.session.document.hasEditTarget();
 
-    assert(rig.registry.commandFactories.length == 18,
+    assert(rig.registry.commandIds().length == 18,
         "5980 live-context population: expected 18 factories");
     size_t beforeCount;
-    foreach (id, factory; rig.registry.commandFactories) {
-        auto command = factory();
+    foreach (id; rig.registry.commandIds()) {
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr is &rig.layerA.meshRef(),
             "5980 A mesh context mismatch for " ~ id);
         assert(command.viewRef is rig.cells[0],
@@ -183,8 +182,8 @@ unittest { // U3: factories resolve live mesh/View/Mode at creation time
     const aBefore = rig.layerA.meshRef().vertices[0];
     rig.switchToB();
     size_t afterCount;
-    foreach (id, factory; rig.registry.commandFactories) {
-        auto command = factory();
+    foreach (id; rig.registry.commandIds()) {
+        auto command = rig.registry.makeCommand(id);
         assert(command.meshPtr is &rig.layerB.meshRef(),
             "5980 live mesh resolution retained A for " ~ id);
         assert(command.viewRef is rig.cells[1],
@@ -433,7 +432,7 @@ unittest { // U8: production owns the same live inputs and wrapper order
                          "ToolHost *", "tupleof", "getMember"])
         assert(registrar.count(forbidden) == 0,
             "5980 narrow registrar regained forbidden code: " ~ forbidden);
-    assert(registrar.count("reg.commandFactories[") == 18,
+    assert(registrar.count("reg.registerCommand(") == 18,
         "5980 U8 registrar no longer contains exactly 18 factory rows");
 
     const readHits = symbolTokenHits(registrar,
@@ -455,7 +454,7 @@ unittest { // U8: production owns the same live inputs and wrapper order
     foreach (statement; statements) {
         const lambdaAt = statement.indexOf("() =>");
         const readAt = statement.indexOf("host.read()");
-        const startsFactory = statement.indexOf("reg.commandFactories[") == 0;
+        const startsFactory = statement.indexOf("reg.registerCommand(") == 0;
         if (statement.count("host.read()") != 1 || !startsFactory
                 || lambdaAt < 0 || lambdaAt > readAt)
             early ~= "\n    " ~ statement;
@@ -509,14 +508,12 @@ unittest { // U8: production owns the same live inputs and wrapper order
         ++reboundInputs;
     assert(reboundInputs == 0,
         "5980 U8 production lifecycle input was rebound in registration.d");
-    const wrapperAt = registration.indexOf(
-        "auto selTypeSrc = () => currentSelType(selTypeOrder);");
-    assert(callAt >= 0 && wrapperAt > callAt,
-        "5980 U8 lifecycle registration moved after currentType wrapping");
+    assert(callAt >= 0,
+        "5980 U8 lifecycle registrar call disappeared");
     assert(registration.count(
-            "reg.commandFactories[id] = withSelType(reg.commandFactories[id],") == 1,
-        "5980 U8 currentType factory capture changed; none of this family's "
-      ~ "18 commands reads it, so source order is the only witness");
+            "bindSelTypeAuthority(") == 1,
+        "5980 U8 construction authority bind changed; source order no longer "
+      ~ "carries selection-type attachment");
 
     const sessionAt = app.indexOf("toolHost.session = () => session;");
     const hostAt = app.indexOf(

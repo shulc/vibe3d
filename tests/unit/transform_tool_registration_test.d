@@ -72,10 +72,10 @@ unittest {
     assert(first !is null, "6506 population: first production build failed");
 
     foreach (id; kIds) {
-        auto slot = id in rig.registry.toolFactories;
+        auto slot = rig.registry.toolFactory(id);
         assert(slot !is null, "6506 population: registry lacks " ~ id);
-        auto a = (*slot)();
-        auto b = (*slot)();
+        auto a = slot();
+        auto b = slot();
         assert(a !is null && b !is null && a !is b,
             "6506 population: factory must return fresh non-null products for " ~ id);
         assert(expectedProduct(id, a),
@@ -110,8 +110,8 @@ unittest {
         "6506 mesh floor: expected cube and octahedron");
 
     auto unified = cast(XfrmTransformTool) rig.buildTransform("move");
-    auto deform = cast(PushTool) rig.registry.toolFactories["xfrm.push"]();
-    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto deform = cast(PushTool) rig.registry.toolFactory("xfrm.push")();
+    auto smoothFactory = rig.registry.toolFactory("xfrm.smooth");
     auto convolveA = cast(XfrmSmoothTool) smoothFactory();
     auto oldMesh = convolveA.preparedActivationMesh();
     rig.switchToB();
@@ -134,7 +134,7 @@ unittest {
     assert(rig.session.editMode == EditMode.Vertices,
         "6506 mode floor: rig must begin in vertex mode");
     auto unified = cast(XfrmTransformTool) rig.buildTransform("move");
-    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto smoothFactory = rig.registry.toolFactory("xfrm.smooth");
     auto before = cast(XfrmSmoothTool) smoothFactory();
     rig.switchToB();
     auto after = cast(XfrmSmoothTool) smoothFactory();
@@ -152,7 +152,7 @@ unittest {
     assert(rig.cells[0] !is rig.cells[1],
         "6506 view floor: expected distinct cells");
     rig.buildTransform("move");
-    auto smoothFactory = rig.registry.toolFactories["xfrm.smooth"];
+    auto smoothFactory = rig.registry.toolFactory("xfrm.smooth");
     auto a = cast(XfrmSmoothTool) smoothFactory();
     rig.activeCell = 1;
     auto b = cast(XfrmSmoothTool) smoothFactory();
@@ -188,7 +188,7 @@ unittest {
         if (!text.startsWith("base:")) continue;
         auto base = text["base:".length .. $].strip;
         if (kIds.canFind(base))
-            assert((base in rig.registry.toolFactories) !is null,
+            assert(rig.registry.hasTool(base),
                 "6506 preset base does not resolve: " ~ base);
     }
 }
