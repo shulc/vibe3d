@@ -262,12 +262,7 @@ unittest {
 
     auto b = parseBinding("layer.attr 0 name ?");
     const mixedAppend = substituteQuery(b, JSONValue("(mixed)x"));
-    assert(mixedAppend == `layer.attr 0 name "(mixed)x"`,
-        "6613 forms write left '(' bare: " ~ mixedAppend);
-
     const leadingHash = substituteQuery(b, JSONValue("#name"));
-    assert(leadingHash == `layer.attr 0 name "#name"`,
-        "6613 forms write emitted a token-start comment: " ~ leadingHash);
 
     immutable oldQuoteSet = `"{},:`;
     string failures;
@@ -292,6 +287,10 @@ unittest {
             exercised));
     assert(failures.length == 0,
         "6613 forms left non-bareword characters unquoted:\n" ~ failures);
+    assert(mixedAppend == `layer.attr 0 name "(mixed)x"`,
+        "6613 forms write left '(' bare: " ~ mixedAppend);
+    assert(leadingHash == `layer.attr 0 name "#name"`,
+        "6613 forms write emitted a token-start comment: " ~ leadingHash);
 
     const bare = "Aa09_./-?#";
     assert(substituteQuery(b, JSONValue(bare))
