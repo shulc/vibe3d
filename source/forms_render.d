@@ -618,14 +618,17 @@ class FormsPanel {
     {
         import core.stdc.string : strlen;
         char[256] buf;
-        // Mixed: the placeholder is seeded INTO the buffer, so the field reads
-        // as the other widgets do. Typing replaces it wholesale, which is the
-        // right write — one absolute value to every subject.
-        string cur = mixed ? kMixedPlaceholder : *rc.param.sptr;
+        // Task 6613: mixed is display state, never editable contents. A hint
+        // keeps the marker visible while the empty buffer makes the first key
+        // the whole absolute value applied to every subject.
+        string cur = mixed ? "" : *rc.param.sptr;
         size_t len = cur.length < buf.length - 1 ? cur.length : buf.length - 1;
         buf[0 .. len] = cur[0 .. len];
         buf[len] = '\0';
-        if (ImGui.InputText(label, buf[])) {
+        bool changed = mixed
+            ? ImGui.InputTextWithHint(label, kMixedPlaceholder, buf[])
+            : ImGui.InputText(label, buf[]);
+        if (changed) {
             string nv = cast(string) buf[0 .. strlen(buf.ptr)].dup;
             writeValue(row, JSONValue(nv), idispatch);
         }

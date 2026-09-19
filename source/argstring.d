@@ -15,7 +15,7 @@
  *   number     = '-'? [0-9]+ ('.' [0-9]+)?
  *   quoted     = '"' (escaped | non-quote)* '"'
  *   vec_array  = '{' value (',' value)* '}'
- *   bareword   = [a-zA-Z0-9_./-]+
+ *   bareword   = [a-zA-Z0-9_./?#-]+
  *
  * Numbers with a decimal point are stored as JSONType.float_;
  * integers as JSONType.integer.  Booleans as JSONType.true_/false_.
@@ -112,18 +112,34 @@ string serializeCommand(string commandId, Param[] params)
 
 // --- private helpers ---
 
+/// True when `c` belongs to the parser's bareword alphabet. Keep token
+/// producers on this predicate instead of duplicating the grammar (task 6613).
+bool isArgstringBarewordChar(char c)
+{
+    return isAlphaNum(c) || c == '_' || c == '.' || c == '/'
+        || c == '-' || c == '?' || c == '#';
+}
+
+/// True when `s` can be emitted as one bare token. A leading `#` starts a
+/// comment at token boundaries even though `#` is legal inside a bareword.
+bool isArgstringBareword(string s)
+{
+    if (s.length == 0 || s[0] == '#') return false;
+    foreach (c; s)
+        if (!isArgstringBarewordChar(c)) return false;
+    return true;
+}
+
+/// Quote and escape a token only when the parser cannot consume it bare.
+string quoteArgstringToken(string s)
+{
+    return isArgstringBareword(s) ? s : _quote(s);
+}
+
 /// Returns true if the string value must be quoted in an argstring.
 private bool _needsQuoting(string s)
 {
-    if (s.length == 0) return true;  // empty string must be quoted
-    foreach (c; s) {
-        // bareword grammar in parser: [a-zA-Z0-9_./-]
-        bool ok = (c >= 'a' && c <= 'z')
-               || (c >= 'A' && c <= 'Z')
-               || (c >= '0' && c <= '9')
-               || c == '_' || c == '.' || c == '/' || c == '-';
-        if (!ok) return true;
-    }
+    if (!isArgstringBareword(s)) return true;
     // A bareword starting with a digit will be parsed as a number on
     // round-trip — quote to disambiguate arbitrary string values.
     if (s[0] >= '0' && s[0] <= '9') return true;
@@ -702,9 +718,7 @@ private struct Parser
         // `falloff.remove falloff#1`). A LEADING '#' still starts a comment —
         // that is handled at token-start (after skipWS) before parseValue is
         // ever entered, so admitting '#' mid-bareword does not break comments.
-        while (!atEnd && (isAlphaNum(cur) || cur == '_' || cur == '.' ||
-                          cur == '/' || cur == '-' || cur == '?' ||
-                          cur == '#'))
+        while (!atEnd && isArgstringBarewordChar(cur))
             advance();
 
         string word = src[start .. pos].idup;

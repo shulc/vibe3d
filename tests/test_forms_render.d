@@ -32,10 +32,15 @@ import std.net.curl;
 import std.json;
 import std.math : fabs;
 import std.conv : to;
+import std.file : readText;
+import std.path : buildPath, dirName;
+import std.algorithm.searching : canFind;
 
 void main() {}
 
 alias baseUrl = testBaseUrl;
+
+private enum repoRoot = dirName(dirName(__FILE_FULL_PATH__));
 
 bool approxEqual(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
@@ -237,4 +242,36 @@ unittest {
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
+}
+
+// ---------------------------------------------------------------------------
+// 7. Task 6613: every string outside argstring's bareword alphabet is quoted
+//    by the FormsPanel write builder, then re-parses to the original value.
+//    The mixed marker is a display hint, never editable buffer contents.
+// ---------------------------------------------------------------------------
+unittest {
+    import argstring : parseArgstring;
+
+    auto b = parseBinding("layer.attr 0 name ?");
+    const mixedAppend = substituteQuery(b, JSONValue("(mixed)x"));
+    assert(mixedAppend == `layer.attr 0 name "(mixed)x"`,
+        "6613 forms write left '(' bare: " ~ mixedAppend);
+
+    immutable values = ["(mixed)x", "left[right]", "a=b", "it's",
+                        `say"hi`, `c:\tmp`];
+    foreach (value; values) {
+        const line = substituteQuery(b, JSONValue(value));
+        auto parsed = parseArgstring(line);
+        auto pos = parsed.params["_positional"].array;
+        assert(pos.length == 3 && pos[2].str == value,
+            "6613 forms/argstring round-trip changed '" ~ value
+            ~ "' via " ~ line);
+    }
+
+    const renderer = readText(buildPath(repoRoot, "source", "forms_render.d"));
+    assert(renderer.canFind(`string cur = mixed ? "" : *rc.param.sptr;`),
+        "6613 mixed text must start with an empty edit buffer");
+    assert(renderer.canFind(
+            `ImGui.InputTextWithHint(label, kMixedPlaceholder, buf[])`),
+        "6613 mixed text must show the marker as a hint, not buffer contents");
 }

@@ -774,15 +774,12 @@ string substituteQuery(const ref Binding b, JSONValue value)
 /// serializeParams() output, so forms writes stay byte-identical).
 private string quoteIfNeeded(string s)
 {
+    import argstring : quoteArgstringToken;
     if (s.length == 0) return `""`;
     // Quote a literal "?" so a written string value can never morph into the
     // query sentinel if the line is ever re-parsed by parseBinding.
     if (s == "?") return `"?"`;
-    foreach (c; s)
-        if (c == ' ' || c == '\t' || c == '"' || c == '{' || c == '}'
-            || c == ',' || c == ':')
-            return `"` ~ s ~ `"`;
-    return s;
+    return quoteArgstringToken(s);
 }
 
 /// Read the current enum / intEnum tag string from a Param (what a combo
