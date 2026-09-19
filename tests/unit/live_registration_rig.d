@@ -9,6 +9,7 @@ import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
+import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.host : ToolHost, ToolHostReadView;
 import document : Layer;
@@ -28,10 +29,12 @@ import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import seltype : SelType;
 import session_owner : Session;
 import std.json : JSONValue;
+import std.traits : FieldNameTuple;
 import step_trace : StepTrace;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
+import tools.edit.topology_pen.defs : TopoPenFactories;
 import view : View;
 
 private void noOpResetUi() {}
@@ -164,6 +167,9 @@ final class LiveRegistrationRig {
             &session.editMesh(), liveView(), session.editMode);
         app.layerXformEditFactory = () => new LayerXformEdit(
             &session.editMesh(), liveView(), session.editMode);
+        app.bevelEditFactory = () => cast(MeshSessionEdit) null;
+        static foreach (field; FieldNameTuple!TopoPenFactories)
+            __traits(getMember, app.topoPenFactories, field) = () => null;
         app.pipeGizmoHost = new PipeGizmoHost;
         app.aiExplore = new AiExplorationController(0.0f, 6506u);
         app.aiLogWriter = new AiInteractionLogWriter("");

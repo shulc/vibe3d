@@ -210,6 +210,8 @@ tests.unit.config_probe
 tests.unit.confined_publisher_census_test
 tests.unit.constraint_test
 tests.unit.coord_rounding_test
+tests.unit.create_registration_boundary_test
+tests.unit.create_tool_registration_test
 tests.unit.decl_needle
 tests.unit.deform_magnet_test
 tests.unit.delete_remove_fork_census_test
