@@ -221,8 +221,14 @@ version (PerfProbe) unittest { // P-2/P-4: timeout drops the entire reset
     assert(g_frames.stats().frameCount == 3,
         "6511 expired reset was applied on a later frame");
     bridge.holdClaimForTest(ClaimProbePoint.enqueued, false);
-    assert(waitUntil(() => atomicLoad(controlledReply.done))
-        && controlledReply.wire.canFind("HTTP/1.1 504 Gateway Timeout"));
+    // Two asserts, not one `&&`: a compound red cannot separate "the reply never
+    // completed" from "it completed without the 504 mapping", and those are
+    // different defects in different code. `:181-184` already splits the identical
+    // pair correctly — this site is the same assertion written the worse way.
+    assert(waitUntil(() => atomicLoad(controlledReply.done)),
+        "6680 controlled expired reset did not complete its HTTP reply");
+    assert(controlledReply.wire.canFind("HTTP/1.1 504 Gateway Timeout"),
+        "6680 controlled expired reset lost its 504 mapping");
     controlledClient.join();
     owner.join();
 
