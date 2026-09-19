@@ -184,6 +184,28 @@ final class LiveRegistrationRig {
         app.aiLogWriter = new AiInteractionLogWriter("");
     }
 
+    /// Wire every edit-family session factory to a distinguishable product.
+    /// A sibling swap must change the command name, not merely remain non-null.
+    void wireEditToolDeps() {
+        MeshSessionEdit delegate() probe(string field) {
+            return () => new MeshSessionEdit(
+                &session.editMesh(), liveView(), session.editMode,
+                "probe." ~ field, field);
+        }
+
+        app.bevelEditFactory = probe("bevelEditFactory");
+        app.loopSliceEditFactory = probe("loopSliceEditFactory");
+        app.reduceEditFactory = probe("reduceEditFactory");
+        app.cloneEditFactory = probe("cloneEditFactory");
+        app.arrayEditFactory = probe("arrayEditFactory");
+        app.edgeExtrudeEditFactory = probe("edgeExtrudeEditFactory");
+        app.edgeExtendEditFactory = probe("edgeExtendEditFactory");
+        app.polyExtrudeEditFactory = probe("polyExtrudeEditFactory");
+        app.radialArrayEditFactory = probe("radialArrayEditFactory");
+        app.smoothShiftEditFactory = probe("smoothShiftEditFactory");
+        app.strokeExtrudeEditFactory = probe("strokeExtrudeEditFactory");
+    }
+
     void wireMeshCommandDeps() {
         vpm = new ViewportManager(0, 0, 800, 600);
         vpm.applyLayout(LayoutPreset.Quad);
@@ -243,6 +265,20 @@ unittest {
         "5980 rig population: cell switch did not change the live View");
     assert(rig.session.editMode == EditMode.Polygons,
         "5980 rig population: geometry switch did not change the live mode");
+}
+
+unittest {
+    auto rig = new LiveRegistrationRig;
+    rig.wireEditorApp();
+    rig.wireEditToolDeps();
+    auto loop = rig.app.loopSliceEditFactory();
+    auto reduce = rig.app.reduceEditFactory();
+    assert(loop !is null && reduce !is null,
+        "6670 edit-factory rig population: probe products must exist");
+    assert(loop.name() == "probe.loopSliceEditFactory"
+        && reduce.name() == "probe.reduceEditFactory"
+        && loop.name() != reduce.name(),
+        "6670 edit-factory rig does not distinguish sibling session factories");
 }
 
 unittest { // 6509: resolved Quad snapshot must differ from the raw active cell
