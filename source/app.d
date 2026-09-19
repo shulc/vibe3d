@@ -1,3 +1,5 @@
+module app;
+
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;

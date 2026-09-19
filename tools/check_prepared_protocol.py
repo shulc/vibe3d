@@ -1475,7 +1475,7 @@ def swap_paired_factory_row(root):
     sphere = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(), "
               "deps.litShader());")
     ellipsoid = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(),\n"
-                 "            deps.litShader(), true);")
+                 "            deps.litShader(), /*ellipsoidMode=*/true);")
     if text.count(sphere) != 1 or text.count(ellipsoid) != 1:
         fail("P1.0b.0 paired row-swap mutation anchor vanished")
     marker = "new SphereTool(/*P1_PAIRED_SWAP*/);"

@@ -859,13 +859,8 @@ unittest {
         || identHits(createSrc, "deps.bevelEditFactory()").length != 15)
         problems ~= "    · NON-VACUITY: bevel-edit per-file populations "
                   ~ "must remain registration/create 9/15";
-    if (penHits.length == 1) {
-        // Keep the reason adjacent to the measured singleton.
-        immutable penWhy =
-        "`mesh.topoPen`'s one `setPenFactories` argument; the thirteen pen "
-      ~ "factories travel as this one value (task 6352)";
-        assert(penWhy.length > 0);
-    }
+    // `mesh.topoPen` has one `setPenFactories` argument; the thirteen pen
+    // factories travel as this one value (task 6352).
 
     size_t registrationOtherTotal, transformOtherTotal;
     foreach (r; kOtherRows) {

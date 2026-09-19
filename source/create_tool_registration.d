@@ -70,7 +70,9 @@ public:
 
 /// One typed registration owns both entries, so a paired id is written once.
 /// The command deliberately resolves the registry slot when it is created,
-/// preserving replacement of a tool factory after registration. Task 6353.
+/// preserving replacement of a tool factory after registration. This helper
+/// stays in this module because the prepared-writer census copies its body.
+/// Task 6353; evidence: tests/unit/headless_tool_pairing_test.d.
 private void registerHeadlessTool(T : Tool)(ref Registry reg, string id,
         T delegate() factory, LiveSessionRole owner, LiveViewModeRole live) {
     auto regPtr = &reg;
@@ -99,6 +101,11 @@ private void registerGeneratorTools(ref Registry reg, LiveSessionRole owner,
 
     // Radial Sweep — interactive revolve/lathe (task 0326), promoting the
     // pre-existing `mesh.sweep` one-shot command to a drag/handle tool.
+    // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
+    // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
+    // Extrude port, the natural claimant of the bare "sweep" name since it
+    // shares the same `revolveProfile`/`revolveProfileEx` kernel
+    // (source/mesh_ops/revolve.d — free functions since task 1903 Stage E2).
     registerHeadlessTool!RadialSweepTool(reg, "mesh.radialSweepTool", () {
         auto t = new RadialSweepTool(() => &owner.activeMesh(), deps.gpu(),
             live.modeCell(), deps.litShader());
@@ -113,6 +120,13 @@ private void registerGeneratorTools(ref Registry reg, LiveSessionRole owner,
         return t;
     }, owner, live);
 
+    // Topology Pen is not registered through registerHeadlessTool. TWO
+    // binders, and neither is optional: `setGestureBindings` carries history
+    // plus the placement gesture's per-click `MeshVertexNew`; `setPenFactories`
+    // carries the other gestures' thirteen factories as ONE named
+    // `TopoPenFactories` value built in app.d (task 6352), so no argument
+    // position can re-pair a gesture with a sibling's wire name. Member 5 of
+    // tests/unit/tool_commit_seam_census_g7_test.d requires one call of each.
     reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {
         auto t = new TopologyPenTool(() => &owner.activeMesh(), deps.gpu());
         t.setGestureBindings(deps.history(), () => new MeshVertexNew(
@@ -143,7 +157,7 @@ private void registerPrimitiveTools(ref Registry reg, LiveSessionRole owner,
     }, owner, live);
     registerHeadlessTool!SphereTool(reg, "prim.ellipsoid", () {
         auto t = new SphereTool(() => &owner.activeMesh(), deps.gpu(),
-            deps.litShader(), true);
+            deps.litShader(), /*ellipsoidMode=*/true);
         t.setGestureBindings(deps.history(), deps.bevelEditFactory());
         return t;
     }, owner, live);

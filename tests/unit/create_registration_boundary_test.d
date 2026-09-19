@@ -219,7 +219,9 @@ unittest {
     }
     auto create = closureFrom("create_tool_registration", modules);
     auto positive = closureFrom("registration", modules);
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length >= 180,
+    // Exact closure sizes make every newly reachable module in the G→H→J→K
+    // registrar chain an explicit boundary review instead of hidden slack.
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 253,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,
@@ -267,17 +269,20 @@ unittest {
         Row("live", "view", 2), Row("live", "mode", 2),
         Row("live", "modeCell", 2),
     ];
-    size_t population;
     foreach (row; rows) {
         const actual = countOccurrences(bodies,
             row.receiver ~ "." ~ row.member ~ "(");
-        population += actual;
         assert(actual == row.count, format(
             "6507 %s.%s used %d time(s), roster says %d",
             row.receiver, row.member, actual, row.count));
     }
-    assert(population == 87,
-        format("6507 registrar accessor population changed: %d/87", population));
+    const depsReceivers = countOccurrences(bodies, "deps.");
+    const ownerReceivers = countOccurrences(bodies, "owner.");
+    const liveReceivers = countOccurrences(bodies, "live.");
+    assert(depsReceivers == 63 && ownerReceivers == 18 && liveReceivers == 6,
+        format("6507 registrar receiver population changed: deps=%d/63 "
+             ~ "owner=%d/18 live=%d/6", depsReceivers, ownerReceivers,
+            liveReceivers));
     static foreach (member; [__traits(allMembers, CreateToolDeps)]) {{
         static if (member != "__ctor" && member[$ - 1] == '_')
             assert(identifierCount(bodies, member) == 0,
@@ -338,6 +343,9 @@ unittest {
     static foreach (member; [__traits(allMembers, CreateToolDeps)]) {{
         static if (member != "__ctor" && member[$ - 1] != '_') {
             ++rosterRows;
+            assert(identifierCount(ctorBody, member ~ "_") == 1,
+                "6507 storage: constructor field `" ~ member
+              ~ "_` must occur exactly once");
             assert(countOccurrences(ctorBody,
                     member ~ "_ = " ~ member ~ ";") == 1,
                 "6507 storage: the constructor does not assign `" ~ member
