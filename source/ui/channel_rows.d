@@ -295,8 +295,9 @@ Form channelsFormFor(const(Param)[] ps, string idxToken, string kindHeadingText)
 /// `ui/channels_panel.d`: it still uses `itemPropsTarget`, never
 /// `document.primary`. This builder only reads the supplied identity and the
 /// caller-owned parameter snapshot. Building a second `LayerPropsProvider`
-/// here was a write capability inside the read-model builder, and it cost one
-/// provider plus one `params()` snapshot per rebuild (task 6503).
+/// here was a write capability inside the read-model builder; removing it saves
+/// that provider allocation. A miss still takes two snapshots from the retained
+/// provider: one for the key and one for the rebuilt model (task 6503).
 ChannelsModel channelsModel(const(Document)* doc, const(Layer) item,
                             const(Param)[] ps)
 {

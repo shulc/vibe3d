@@ -273,6 +273,15 @@ version (unittest) {
         alias State = ChannelsPanelState;
         return new State(resolve);
     }
+    /// Drive the private memo seam without widening it in production.
+    bool channelsRefreshState(ChannelsPanelState state, const(Document)* doc,
+                              const(Layer) item) {
+        return state.refresh(doc, item);
+    }
+    /// Read the private coherence predicate without exposing provider details.
+    bool channelsProviderMatchesModel(ChannelsPanelState state) {
+        return state.providerMatchesModel();
+    }
     /// Exercise the private guard door without publishing it in production.
     void channelsArmTransformGuard(ChannelsPanelState state, bool toolActive,
                                    SelType current) {

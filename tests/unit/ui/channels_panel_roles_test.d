@@ -41,8 +41,9 @@ import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
     ChannelsPanelRoles, ChannelsPanelState, ChannelsReadRole,
     bindChannelsPanel, channelsArmTransformGuard, channelsBoundItem,
     channelsDrawSnapshot,
-    channelsFormProvider, channelsInteractiveWriter, channelsStateWithResolver,
-    channelsTransformGuardArmed, drawChannelsPanel,
+    channelsFormProvider, channelsInteractiveWriter,
+    channelsProviderMatchesModel, channelsRefreshState,
+    channelsStateWithResolver, channelsTransformGuardArmed, drawChannelsPanel,
     resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import ui.retained_item : ConstItem;
@@ -777,10 +778,13 @@ unittest { // I5: a payload appearing under the same item and index is a memo mi
     assert(first.modelRebuilt && !base.modelRebuilt
         && base.channelCount == 2 && base.disabledChannels == 1,
         "6358 payload floor: the payload-less Image did not memoise its base rows");
+    const providerBeforeMiss = channelsFormProvider(roles.state);
     logo.imageRef() = new ImageData();
     const grown = fresh(ui);
     assert(grown.bound && grown.title == "Logo" && grown.provider !is null,
         "6358 payload control: the Image binding was not rebuilt");
+    assert(channelsFormProvider(roles.state) is providerBeforeMiss,
+        "6503 provider reuse: a parameter-count miss replaced the binding's provider instead of rebinding it");
     assert(grown.modelRebuilt && grown.channelCount == 5,
         "6358 payload miss: new channels were served from the old rows");
     assert(grown.disabledChannels == 2,
@@ -845,6 +849,54 @@ unittest { // I6: a collapsed (hidden-tab) panel keeps only the current focus
     const shown = fresh(ui);
     assert(shown.bound && shown.title == "Next" && shown.retainsProvider,
         "6358 hidden recovery: expanding again did not rebuild the memo");
+}
+
+unittest { // provider/model negative: a valid resolver may still return the wrong member
+    auto h = new ChannelsHarness;
+    size_t resolves;
+    auto state = channelsStateWithResolver((const(Layer) id) {
+        ++resolves;
+        return h.beta;
+    });
+    auto doc = h.owner.documentPtr();
+    assert(doc.indexOf(h.alpha) < doc.layers.length
+        && doc.indexOf(h.beta) < doc.layers.length
+        && h.alpha !is h.beta,
+        "6503 provider/model negative floor: the document needs two distinct valid members");
+    assert(channelsRefreshState(state, doc, h.alpha) && resolves == 1
+        && channelsFormProvider(state) !is null
+        && channelsBoundItem(state) is h.beta,
+        "6503 provider/model negative floor: the valid resolver result was not accepted and stored");
+    // The floor above reports "accepted a valid set"; this adjacent needle
+    // reports the other half, "stored an item different from the model".
+    assert(!channelsProviderMatchesModel(state),
+        "6503 provider/model identity: the state accepted a valid identity set but stored a different member");
+}
+
+unittest { // defensive miss: a failed resolver leaves no half-bound memo
+    auto h = new ChannelsHarness;
+    bool resolveLive = true;
+    size_t resolves;
+    auto state = channelsStateWithResolver((const(Layer) id) {
+        ++resolves;
+        return resolveLive ? h.alpha : null;
+    });
+    auto doc = h.owner.documentPtr();
+    assert(channelsRefreshState(state, doc, h.alpha)
+        && channelsBoundItem(state) is h.alpha && resolves == 1,
+        "6503 defensive miss floor: the memo was not populated before resolver failure");
+
+    auto first = doc.layers[0];
+    doc.layers[0] = doc.layers[1];
+    doc.layers[1] = first;
+    resolveLive = false;
+    channelsRefreshState(state, doc, h.alpha);
+    assert(resolves == 2,
+        "6503 defensive miss floor: the index miss did not reach the null resolver result");
+    // The floor above proves the defensive arm ran; this adjacent needle proves
+    // its promised post-state, rather than merely counting its provider read.
+    assert(channelsFormProvider(state) is null,
+        "6503 defensive miss: resolver failure left a half-bound provider in the memo");
 }
 
 unittest { // B1: the provider belongs to this binding (control for B2)
@@ -992,18 +1044,18 @@ private string collapseWhitespace(string text) {
 
 private struct ChannelsStripSignalRow {
     string path;
-    size_t casts, traits, tupleofs, mixins, unions;
+    size_t casts, traits, tupleofs, mixins, unions, memcpys, memmoves;
 }
 
 private enum ChannelsStripSignalRow[] kChannelsStripSignalLedger = [
-    ChannelsStripSignalRow("source/ui/channels_panel.d", 1, 0, 0, 0, 0),
-    ChannelsStripSignalRow("source/ui/channel_rows.d", 0, 0, 0, 0, 0),
+    ChannelsStripSignalRow("source/ui/channels_panel.d", 1, 0, 0, 0, 0, 0, 0),
+    ChannelsStripSignalRow("source/ui/channel_rows.d", 0, 0, 0, 0, 0, 0, 0),
 ];
 
 private enum kChannelsStripSignalTokens =
-    ["cast", "__traits", "tupleof", "mixin", "union"];
+    ["cast", "__traits", "tupleof", "mixin", "union", "memcpy", "memmove"];
 static assert(kChannelsStripSignalTokens ==
-        ["cast", "__traits", "tupleof", "mixin", "union"],
+        ["cast", "__traits", "tupleof", "mixin", "union", "memcpy", "memmove"],
     "6503 strip signal token roster changed — every measured column must remain in the exact scan below");
 
 unittest { // M6a-d and the retired EditorApp path: production source census
@@ -1034,6 +1086,26 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         && rawStripSources.length == 2 && rawChannels.length + rawRows.length > 30_000
         && stripSourceBytes > 30_000,
         "6503 strip signal population: expected two populated production files over 30000 bytes");
+
+    // Needle: name the exact file and spelling before any structural or total
+    // pin can intercept it. New bypass spellings belong in this loop first.
+    foreach (i, row; kChannelsStripSignalLedger) {
+        const code = blankNonCode(rawStripSources[i]);
+        immutable recorded = [row.casts, row.traits, row.tupleofs, row.mixins,
+                              row.unions, row.memcpys, row.memmoves];
+        foreach (column, token; kChannelsStripSignalTokens) {
+            const actual = identifierCount(code, token);
+            assert(actual == recorded[column],
+                "6503 strip signal: " ~ row.path ~ " " ~ token ~ " = "
+                ~ actual.to!string ~ ", recorded "
+                ~ recorded[column].to!string
+                ~ " — a row may only FALL; if the spelling left, lower it "
+                ~ "in this commit; if it appeared, treat that as a finding");
+        }
+    }
+
+    // Structural checks follow the needle: they prove the exact scan still
+    // covers the intended two files and all seven recorded columns.
     auto sortedStripPaths = actualStripPaths.dup;
     sortedStripPaths.sort;
     auto expectedStripPaths = ["source/ui/channel_rows.d",
@@ -1049,36 +1121,34 @@ unittest { // M6a-d and the retired EditorApp path: production source census
             "6503 strip signal shape: " ~ path ~ " appears "
             ~ appearances.to!string ~ " times instead of once");
     }
-    size_t stripCasts, stripTraits, stripTupleofs, stripMixins, stripUnions;
+    foreach (row; kChannelsStripSignalLedger) {
+        immutable recorded = [row.casts, row.traits, row.tupleofs, row.mixins,
+                              row.unions, row.memcpys, row.memmoves];
+        assert(recorded.length == kChannelsStripSignalTokens.length,
+            "6503 strip signal token roster and recorded columns diverged");
+    }
+
+    // Pin: aggregate totals come last, after the exact file/token diagnosis.
+    size_t stripCasts, stripTraits, stripTupleofs, stripMixins, stripUnions,
+           stripMemcpys, stripMemmoves;
     foreach (row; kChannelsStripSignalLedger) {
         stripCasts += row.casts;
         stripTraits += row.traits;
         stripTupleofs += row.tupleofs;
         stripMixins += row.mixins;
         stripUnions += row.unions;
+        stripMemcpys += row.memcpys;
+        stripMemmoves += row.memmoves;
     }
     assert(stripCasts == 1 && stripTraits == 0 && stripTupleofs == 0
-        && stripMixins == 0 && stripUnions == 0,
+        && stripMixins == 0 && stripUnions == 0 && stripMemcpys == 0
+        && stripMemmoves == 0,
         "6503 strip signal totals changed: cast=" ~ stripCasts.to!string
         ~ " __traits=" ~ stripTraits.to!string ~ " tupleof="
         ~ stripTupleofs.to!string ~ " mixin=" ~ stripMixins.to!string
-        ~ " union=" ~ stripUnions.to!string);
-    foreach (i, row; kChannelsStripSignalLedger) {
-        const code = blankNonCode(rawStripSources[i]);
-        immutable recorded =
-            [row.casts, row.traits, row.tupleofs, row.mixins, row.unions];
-        assert(recorded.length == kChannelsStripSignalTokens.length,
-            "6503 strip signal token roster and recorded columns diverged");
-        foreach (column, token; kChannelsStripSignalTokens) {
-            const actual = identifierCount(code, token);
-            assert(actual == recorded[column],
-                "6503 strip signal: " ~ row.path ~ " " ~ token ~ " = "
-                ~ actual.to!string ~ ", recorded "
-                ~ recorded[column].to!string
-                ~ " — a row may only FALL; if the spelling left, lower it "
-                ~ "in this commit; if it appeared, treat that as a finding");
-        }
-    }
+        ~ " union=" ~ stripUnions.to!string
+        ~ " memcpy=" ~ stripMemcpys.to!string
+        ~ " memmove=" ~ stripMemmoves.to!string);
     foreach (forbidden; ["EditorApp", "editor_app", "ui.panels",
                          "ui.layer_list_panel", "with (", "activeMesh"])
         assert(channels.count(forbidden) == 0,
@@ -1129,6 +1199,10 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     assert(binder.count("drawChannelsPanel") == 0
         && binder.count("final class ChannelsPanelState") == 0,
         "6503 binder region: the binder swallowed state or draw code");
+    const liveResolver = bodyAt(channels,
+        "private Layer liveItem(Session* owner, const(Layer) id)");
+    assert(liveResolver.count("indexOf") == 1,
+        "6503 live resolver: identity must be resolved by document membership, not byte laundering");
     assert(binder.count("binding.") == 1
         && binder.count("&binding.dispatchUi") == 0
         && binder.count("&binding.dispatchInteractiveUi") == 1,
