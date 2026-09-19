@@ -152,7 +152,8 @@ private final class RetainedHarness {
     void drawBoth() {
         ImGui.SetNextWindowPos(ImVec2(380, 0));
         ImGui.SetNextWindowSize(ImVec2(380, 600));
-        drawLayerListPanel(layerRoles.read, layerRoles.actions, renameState);
+        drawLayerListPanel(layerRoles.read, layerRoles.actions,
+                           layerRoles.state, renameState);
         ImGui.SetNextWindowPos(ImVec2(780, 0));
         ImGui.SetNextWindowSize(ImVec2(420, 600));
         drawImageListPanel(imageRoles.read, imageRoles.actions,

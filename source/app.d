@@ -5334,6 +5334,7 @@ void main(string[] args) {
         if (!command.g_testMode || g_layerListShown) {
             import ui.layer_list_panel : drawLayerListPanel;
             drawLayerListPanel(layerListRoles.read, layerListRoles.actions,
+                               layerListRoles.state,
                                itemRenameState);
         }
 

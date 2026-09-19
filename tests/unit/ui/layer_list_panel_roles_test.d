@@ -171,11 +171,12 @@ static assert(memberTypes!ItemRow ==
     "6502 F4 fence (types): a member of ItemRow changed its TYPE or SIGNATURE — regenerate with the pragma probe, read the diff, and argue the change; do not paste the actual list over the expected one");
 
 static assert([__traits(allMembers, LayerListPanelState)] ==
-        ["props_", "gangBuf_", "__ctor", "toString", "toHash", "opCmp",
-         "opEquals", "Monitor", "factory"],
+        ["props_", "gangBuf_", "rowBuf_", "rootExpanded_", "__ctor",
+         "toString", "toHash", "opCmp", "opEquals", "Monitor", "factory"],
     "6502 F5 fence (names): the Items binding state member set changed — a capability cannot be added here without naming it");
 static assert(memberTypes!LayerListPanelState ==
         ["props_: LayerPropsProvider", "gangBuf_: Layer[]",
+         "rowBuf_: ItemRow[]", "rootExpanded_: bool",
          "__ctor: LayerListPanelState()", "toString: string()",
          "toHash: nothrow @trusted ulong()", "opCmp: int(Object o)",
          "opEquals: bool(Object o)", "Monitor: <no type>",
@@ -187,8 +188,8 @@ static assert(LayerListReadRole.tupleof.length == 2
     "6502 field roster: the Items read role must retain exactly its session and tool getter");
 static assert(LayerListActions.tupleof.length == 5,
     "6502 field roster: the Items action role must retain exactly five capabilities");
-static assert(LayerListPanelState.tupleof.length == 2,
-    "6502 field roster: the Items binding state must retain exactly provider and gang buffer");
+static assert(LayerListPanelState.tupleof.length == 4,
+    "6590 field roster: the Items binding state must retain provider, gang buffer, row buffer and root expansion");
 
 static assert(__traits(compiles, {
     LayerListPanelRoles roles = void;
@@ -321,7 +322,8 @@ private final class LayerPanelHarness {
         resetLayerListDrawSnapshot();
         return openPanel(() {
             ImGui.SetNextWindowSize(ImVec2(520, 900));
-            drawLayerListPanel(roles.read, roles.actions, renameState);
+            drawLayerListPanel(roles.read, roles.actions, roles.state,
+                               renameState);
         }, "Layers host", 1280, 1000);
     }
 }
@@ -671,9 +673,11 @@ unittest { // 6411 B-TWO: alternating bindings retain distinct provider state
         ImGui.SetNextWindowSize(ImVec2(520, 900));
         if (which == 0)
             drawLayerListPanel(first.roles.read, first.roles.actions,
+                               first.roles.state,
                                first.renameState);
         else
             drawLayerListPanel(second.roles.read, second.roles.actions,
+                               second.roles.state,
                                second.renameState);
     }, "Items alt host", 1280, 1000);
     scope (exit) ui.close();
@@ -719,9 +723,11 @@ unittest { // 6590: collapsing one binding must not collapse its peer
         ImGui.SetNextWindowSize(ImVec2(520, 900));
         if (which == 0)
             drawLayerListPanel(app.roles.read, app.roles.actions,
+                               app.roles.state,
                                app.renameState);
         else
             drawLayerListPanel(second.read, second.actions,
+                               second.state,
                                secondRenameState);
     }, "Items disclosure ownership host", 1280, 1000);
     scope (exit) ui.close();
@@ -804,7 +810,8 @@ unittest { // B-REPLACE: a collapsed replacement cannot preserve stale identity
             *app.owner.documentPtr() = next;
             replace = false;
         }
-        drawLayerListPanel(app.roles.read, app.roles.actions, app.renameState);
+        drawLayerListPanel(app.roles.read, app.roles.actions, app.roles.state,
+                           app.renameState);
     }, "Items replacement host", 1280, 1000);
     scope (exit) ui.close();
 
@@ -1069,7 +1076,7 @@ unittest { // production binder, call sites and the retired EditorApp path
     const bindAt = flatApp.indexOf(bindCall);
     const loopAt = flatApp.indexOf("while (running) {");
     enum drawCall =
-        "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, itemRenameState);";
+        "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, layerListRoles.state, itemRenameState);";
     const drawAt = flatApp.indexOf(drawCall);
     assert(commandBindingAt >= 0 && bindAt >= 0 && loopAt >= 0 && drawAt >= 0
         && commandBindingAt < bindAt && bindAt < loopAt && loopAt < drawAt
@@ -1216,8 +1223,13 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
         && identifierCount(drawBody, "layerProv") == 0
         && layer.count("static LayerPropsProvider layerProv;") == 0,
         "6502 provider fence: the Items draw body regained provider storage or access");
-    assert(identifierCount(drawBody, "static") == 3,
-        "6502 draw census: static locals changed; the removed frame-global provider may have returned");
+    assert(identifierCount(drawBody, "static") == 1
+        && layer.count("static ItemRow[] rowBuf;") == 0
+        && layer.count("static bool rootExpanded = true;") == 0,
+        "6590 draw census: binding-owned Items view state returned to function-static storage");
+    assert(identifierCount(layer, "rowBuf_") == 3
+        && identifierCount(layer, "rootExpanded_") == 5,
+        "6590 state census: rowBuf_/rootExpanded_ uses changed from 3/5");
 
     assert(identifierCount(layer, "owner_") == 7,
         "6502 read fence: owner_ is named "

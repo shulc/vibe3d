@@ -248,7 +248,7 @@ unittest { // production passes one owner and both panel writers consume it
         "5880 application ownership: ItemRenameState escaped main into process-global storage");
     const flatApp = collapseWhitespace(app);
     assert(flatApp.count(
-        "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, itemRenameState);") == 1,
+        "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, layerListRoles.state, itemRenameState);") == 1,
         "5880 Layers wiring: Layers no longer receives main's itemRenameState owner");
     assert(flatApp.count(
         "drawImageListPanel(imageListRoles.read, imageListRoles.actions, imageListRoles.state, itemRenameState);") == 1,

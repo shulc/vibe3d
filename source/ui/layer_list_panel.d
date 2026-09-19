@@ -15,7 +15,7 @@ import session_owner : Session;
 import tool : Tool;
 import ui.item_rename : ItemRenameDispatch, ItemRenameExit, ItemRenameState,
     bindItemRenameController;
-import ui.item_rows : RowRole;
+import ui.item_rows : ItemRow, RowRole;
 import ui.panel_chrome : popPanelChromeStyle, publishPanelZone,
     pushPanelChromeStyle;
 
@@ -54,6 +54,8 @@ final class LayerListPanelState {
 private:
     LayerPropsProvider props_;
     Layer[] gangBuf_;
+    ItemRow[] rowBuf_;
+    bool rootExpanded_ = true;
     this() {}
 }
 
@@ -234,6 +236,7 @@ version (unittest) {
 
 }
 void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
+                        LayerListPanelState state,
                         ref ItemRenameState itemRenameState) {
     import std.json : JSONValue;
     import std.conv : to;
@@ -244,6 +247,7 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                             kGlyphRadiusRatio, kIndentRatio;
     import io.doc_state   : currentDocPath, docDirty;
 
+    assert(state !is null, "Items panel requires its binding-owned state");
     auto rename = bindItemRenameController(itemRenameState, read.document(),
                                            actions.commandDispatch());
 
@@ -426,18 +430,16 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
         // `itemRowsInto` — see this function's header comment. Below is
         // placement and dispatch only.
         //
-        // One static buffer, refilled in place each frame (the
-        // `Document.selectedItemsInto` idiom), so a per-frame draw does not
-        // churn an array.
-        static ItemRow[] rowBuf;
-        static bool rootExpanded = true;
+        // Task 6590: both values belong to this panel binding. The row buffer
+        // is refilled in place each frame; root expansion survives only for
+        // the binding whose disclosure widget changed it.
         itemRowsInto(read.document(), currentDocPath(), docDirty(),
-                     rootExpanded, rowBuf);
+                     state.rootExpanded_, state.rowBuf_);
 
         immutable float contentW = ImGui.GetContentRegionAvail().x;
         auto dl = ImGui.GetWindowDrawList();
 
-        foreach (ri, ref r; rowBuf) {
+        foreach (ri, ref r; state.rowBuf_) {
             ImGui.PushID(cast(int) ri);
             immutable ImVec2 rowP0 = ImGui.GetCursorScreenPos();
             immutable ImVec2 rowP1 = ImVec2(rowP0.x + contentW, rowP0.y + rowH);
@@ -541,10 +543,10 @@ void drawLayerListPanel(LayerListReadRole read, LayerListActions actions,
                 immutable ImVec2 dp = ImGui.GetCursorScreenPos();
                 if (r.isRoot) {
                     if (ImGui.InvisibleButton("##disc", ImVec2(cellW, rowH)))
-                        rootExpanded = !rootExpanded;
+                        state.rootExpanded_ = !state.rootExpanded_;
                     drawDisclosure(dl,
                         ImVec2(dp.x + cellW * 0.5f, dp.y + rowH * 0.5f),
-                        gRad, rootExpanded, txtCol);
+                        gRad, state.rootExpanded_, txtCol);
                 } else {
                     ImGui.Dummy(ImVec2(cellW, rowH));
                 }

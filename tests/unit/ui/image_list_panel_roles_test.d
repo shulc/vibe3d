@@ -322,7 +322,8 @@ private final class ImagePanelHarness {
         return openPanel(() {
             ImGui.SetNextWindowPos(ImVec2(380, 0));
             ImGui.SetNextWindowSize(ImVec2(380, 480));
-            drawLayerListPanel(layerRoles.read, layerRoles.actions, renameState);
+            drawLayerListPanel(layerRoles.read, layerRoles.actions,
+                               layerRoles.state, renameState);
             ImGui.SetNextWindowPos(ImVec2(780, 0));
             ImGui.SetNextWindowSize(ImVec2(420, 480));
             drawImageListPanel(imageRoles.read, imageRoles.actions, imageRoles.state, renameState);
