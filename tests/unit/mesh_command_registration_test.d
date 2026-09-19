@@ -85,12 +85,17 @@ private final class MarkerTool : Tool {
     }
 }
 
-private LiveRegistrationRig registeredRig() {
+private LiveRegistrationRig wiredRig() {
     auto rig = new LiveRegistrationRig;
     rig.wireEditorApp();
     rig.wireMeshCommandDeps();
     foreach (id; ["xfrm.smooth", "xfrm.jitter", "xfrm.quantize"])
         rig.registry.toolFactories[id] = () => new MarkerTool(0);
+    return rig;
+}
+
+private LiveRegistrationRig registeredRig() {
+    auto rig = wiredRig();
     registerMeshCommandsForOwnershipTest(rig.app);
     return rig;
 }
@@ -119,7 +124,7 @@ unittest {
 // B2: only the three camera-plane consumers receive the follow-resolved,
 // live provider rather than the raw cell camera or a registration snapshot.
 unittest {
-    auto rig = registeredRig();
+    auto rig = wiredRig();
     rig.vpm.activeId = 0;
     rig.vpm.dragOriginId = -1;
     rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
@@ -127,6 +132,7 @@ unittest {
     const expected = rig.vpm.originSnapshot();
     assert(expected.focus.x == 37.0f && raw.focus.x != expected.focus.x,
         "6509 resolved viewport floor: raw and resolved cameras agree");
+    registerMeshCommandsForOwnershipTest(rig.app);
     foreach (id; ["mesh.screenSlice", "mesh.select", "mesh.transform"]) {
         auto command = rig.registry.commandFactories[id]();
         auto provider = fieldOf!(Viewport delegate())(
