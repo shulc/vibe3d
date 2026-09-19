@@ -1166,26 +1166,35 @@ def validate_prepared_gpu(source):
 validate_prepared_gpu(gpu_source)
 
 gpu_mutations = (
-    ("wrong owner", "token.ownerId != ownerId", "token.ownerId == ownerId"),
-    ("wrong thread", "threadIdentity != requiredThread", "threadIdentity == requiredThread"),
-    ("wrong context", "contextIdentity != requiredContext", "contextIdentity == requiredContext"),
+    ("wrong owner", "token.ownerId != ownerId", "token.ownerId == ownerId",
+        "P1.0b.4a GPU owner exact behavior drifted"),
+    ("wrong thread", "threadIdentity != requiredThread", "threadIdentity == requiredThread",
+        "P1.0b.4a GPU owner exact contract drifted"),
+    ("wrong context", "contextIdentity != requiredContext", "contextIdentity == requiredContext",
+        "P1.0b.4a GPU owner exact contract drifted"),
     ("resource reorder",
         "glDeleteVertexArrays(1, &n.faceVao); glDeleteBuffers(1, &n.faceVbo);",
-        "glDeleteBuffers(1, &n.faceVbo); glDeleteVertexArrays(1, &n.faceVao);"),
-    ("drop resource", "glDeleteBuffers(1, &n.weightColorVbo);", ""),
-    ("retain upload suppression", "gpu.suppressCageUpload = false;", ""),
-    ("retain display payload provenance", "gpu.displayPayload = DisplayPayloadProvenance.init;", ""),
-    ("double consume", "pending = false;", "pending = true;"),
-    ("throw path", "if (!pending || !validated", "assert(pending);\n        if (!pending || !validated"),
+        "glDeleteBuffers(1, &n.faceVbo); glDeleteVertexArrays(1, &n.faceVao);",
+        "P1.0b.4a GPU owner exact contract drifted"),
+    ("drop resource", "glDeleteBuffers(1, &n.weightColorVbo);", "",
+        "P1.0b.4a GPU owner exact contract drifted"),
+    ("retain upload suppression", "gpu.suppressCageUpload = false;", "",
+        "P1.0b.4a GPU owner exact contract drifted"),
+    ("retain display payload provenance", "gpu.displayPayload = DisplayPayloadProvenance.init;", "",
+        "P1.0b.4a GPU owner exact contract drifted"),
+    ("double consume", "pending = false;", "pending = true;",
+        "P1.0b.4a GPU owner exact behavior drifted"),
+    ("throw path", "if (!pending || !validated", "assert(pending);\n        if (!pending || !validated",
+        "P1.0b.4a GPU installer gained a throwable path"),
 )
-for label, old, new in gpu_mutations:
+for label, old, new, expected_error in gpu_mutations:
     mutant = gpu_source.replace(old, new, 1)
     if mutant == gpu_source:
         fail(f"P1.0b.4a {label} mutation anchor vanished")
     try:
         validate_prepared_gpu(mutant)
     except SystemExit as error:
-        if "P1.0b.4a GPU" not in str(error):
+        if str(error) != expected_error:
             fail(f"P1.0b.4a {label} mutation failed for wrong reason")
     else:
         fail(f"P1.0b.4a {label} mutation did not RED")

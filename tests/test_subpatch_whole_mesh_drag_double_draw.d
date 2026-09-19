@@ -241,6 +241,7 @@ struct PreviewState {
     bool active;
     bool pending;
     bool suppressCageUpload;
+    bool lastRefreshFannedOut;
     string displayWriter;
     string displayBasis;
     ulong displayWrites;
@@ -255,6 +256,8 @@ PreviewState previewState() {
     p.active = j["active"].type == JSONType.true_;
     p.pending = j["pending"].type == JSONType.true_;
     p.suppressCageUpload = j["suppressCageUpload"].type == JSONType.true_;
+    p.lastRefreshFannedOut =
+        j["lastRefreshFannedOut"].type == JSONType.true_;
     p.displayWriter = j["displayWriter"].str;
     p.displayBasis = j["displayBasis"].str;
     p.displayWrites = cast(ulong)j["displayWrites"].integer;
@@ -336,8 +339,18 @@ void assertBothAuthorHandovers() {
     assert(!back.displayCarriesLiveEdit,
            "6520 handover B: the cage payload retained the live edit");
 
-    auto result = runDrag("move", false, null, false,
-                          toggleOffAfter: true);
+    auto result = runDrag("move", false, [0, 1, 2, 3], false,
+        toggleOffAfter: true,
+        midDragProbe: {
+            const mid = previewState();
+            assert(mid.displayBasis == "cage"
+                    && mid.displayWriter == "selectedVertexUpload"
+                    && !mid.displayCarriesLiveEdit,
+                format("6520 handover B: the toggle-off drag did not record "
+                     ~ "a cage selected-vertex payload (basis=%s, writer=%s, "
+                     ~ "live=%s)", mid.displayBasis, mid.displayWriter,
+                       mid.displayCarriesLiveEdit));
+        });
     assert(result.dragMoved > 0.1,
            "6520 handover B: the toggle-off drag population floor failed");
     assert(result.releaseShift <= 1e-4,
@@ -384,9 +397,14 @@ void assertAuthorSurvivesRefusalMidGesture() {
                      ~ "recorded basis to %s", subMid.displayBasis));
             assert(subMid.displayCarriesLiveEdit,
                    "6520 mid-gesture: the live preview must still own the payload while the tool drags");
+            const expectedWriter = subMid.lastRefreshFannedOut
+                ? "gpuFanOut" : "positionRefresh";
+            assert(subMid.displayWriter == expectedWriter,
+                format("6520 mid-gesture: writer %s disagrees with fan-out %s",
+                       subMid.displayWriter, subMid.lastRefreshFannedOut));
             writefln("[6520] mid-drag writer = %s (fan-out proven ON: %s)",
                      subMid.displayWriter,
-                     subMid.displayWriter != "positionRefresh");
+                     subMid.lastRefreshFannedOut);
         });
 
     writefln("[6520] Position delta poly/sub = %d / %d over %d steps; "
@@ -416,6 +434,8 @@ void assertFrozenOwnership() {
     assert(surfaceSample().raw.length > 36,
            "6450 S-FROZEN: the old limit surface must remain in the VBO");
 
+    assert(frozen.displaySuperseded,
+           "6520 S-FROZEN: the stale preview did not publish supersession");
     assert(!frozen.displayCarriesLiveEdit,
            "6520 S-FROZEN: a stale preview payload must not claim the live edit");
 

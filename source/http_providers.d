@@ -1319,7 +1319,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
               ~ `"workerBuildNsTotal":%d,"workerAllocBytesTotal":%d,`
               ~ `"pendingFrames":%d,"topologiesCreated":%d,`
               ~ `"topologiesRetired":%d,"previewFaces":%d,"previewEdges":%d,`
-              ~ `"suppressCageUpload":%s,"displayWriter":"%s",`
+              ~ `"suppressCageUpload":%s,"lastRefreshFannedOut":%s,`
+              ~ `"displayWriter":"%s",`
               ~ `"displayBasis":"%s","displayWrites":%d,`
               ~ `"displaySuperseded":%s,"displayCarriesLiveEdit":%s,`
               ~ `"pastCeiling":%s,`
@@ -1341,6 +1342,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 subpatchPreview.mesh.faces.length,
                 subpatchPreview.mesh.edges.length,
                 gpu.suppressCageUpload ? "true" : "false",
+                subpatchPreview.lastRefreshFannedOut ? "true" : "false",
                 gpu.displayPayload.writer.to!string,
                 gpu.displayPayload.basis == DisplayPayloadBasis.cageIndexed
                     ? "cage"

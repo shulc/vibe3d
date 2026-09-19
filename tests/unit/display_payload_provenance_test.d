@@ -16,6 +16,8 @@ unittest // control -> delivery floor -> target; order is load-bearing
     DisplayPayloadProvenance p;
     assert(p.writes == 0,
         "6520 refusal control: provenance did not start empty");
+    assert(!DisplayPayloadProvenance.init.carriesLiveEdit(),
+        "6520 fold: an unwritten payload claimed the live edit");
     p.recordWrite(DisplayPayloadWriter.fullUpload,
                   DisplayPayloadBasis.cageIndexed);
     assert(p.writes == 1 && p.basis == DisplayPayloadBasis.cageIndexed,

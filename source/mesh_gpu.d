@@ -300,6 +300,8 @@ private void publishSuppressedCagePosition(ref const Mesh mesh) {
 
 /// Entry point that last completed a display-VBO write. It is independent of
 /// basis: fullUpload writes both cage- and preview-indexed payloads (task 6520).
+/// The writer is an observability channel consumed by the test-only preview
+/// oracle; production decisions read the basis, not the writer identity.
 enum DisplayPayloadWriter : ubyte {
     none,
     fullUpload,
@@ -320,9 +322,8 @@ enum DisplayPayloadBasis : ubyte {
 struct DisplayPayloadProvenance {
     DisplayPayloadWriter writer = DisplayPayloadWriter.none;
     DisplayPayloadBasis basis = DisplayPayloadBasis.none;
-    // Completed writer calls. Entry refusals do not advance this counter;
-    // refreshNonFacePositions still counts an internal GL-map refusal because
-    // that producer reached the end of its attempted call.
+    // Completed writes. Entry refusals and internal GL-map refusals do not
+    // advance this counter.
     ulong writes;
     bool indexSpaceSuperseded;
 
@@ -1078,8 +1079,12 @@ struct GpuMesh {
             }
         }
         glBindVertexArray(0);
+        const refreshBasis =
+            edgeOrigin.length == 0 && vertOrigin.length == 0
+                ? DisplayPayloadBasis.cageIndexed
+                : DisplayPayloadBasis.previewIndexed;
         displayPayload.recordWrite(DisplayPayloadWriter.positionRefresh,
-                                   DisplayPayloadBasis.previewIndexed);
+                                   refreshBasis);
     }
 
     /// Edge + vertex VBO position refresh — the subset of
@@ -1102,6 +1107,7 @@ struct GpuMesh {
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
+        bool wroteDisplayPayload;
         if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
             float* ep = cast(float*)glMapBufferRange(
@@ -1125,6 +1131,7 @@ struct GpuMesh {
                     seg++;
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
+                wroteDisplayPayload = true;
             }
         }
         if (vertCount > 0) {
@@ -1146,11 +1153,18 @@ struct GpuMesh {
                     seg++;
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
+                wroteDisplayPayload = true;
             }
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-        displayPayload.recordWrite(DisplayPayloadWriter.nonFacePositionRefresh,
-                                   DisplayPayloadBasis.previewIndexed);
+        if (wroteDisplayPayload) {
+            const refreshBasis =
+                edgeOrigin.length == 0 && vertOrigin.length == 0
+                    ? DisplayPayloadBasis.cageIndexed
+                    : DisplayPayloadBasis.previewIndexed;
+            displayPayload.recordWrite(
+                DisplayPayloadWriter.nonFacePositionRefresh, refreshBasis);
+        }
     }
 
     // Drag-fast path: re-upload every VBO in full, but skip the GC churn

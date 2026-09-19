@@ -49,15 +49,26 @@ unittest // task 6520: drag intent is computed once and shared by both policy do
         buildPath(repoRoot, "source", "app.d")));
     const mainBody = bodyAt(app, "void main(string[] args)");
 
-    assert(mainBody.length > 0 && mainBody.count("activeTool.isDragging()") >= 2,
-        "6520 intent: the production main body or drag-intent population vanished");
+    const regionBegin = mainBody.indexOf(
+        "const size_t ma = cast(size_t)&mesh();");
+    enforce(regionBegin >= 0,
+        "6520 intent: the display-upload region start marker vanished");
+    const regionEndRel = mainBody[cast(size_t)regionBegin .. $].indexOf(
+        "gpuUploadedPreview = wantPreview;");
+    enforce(regionEndRel >= 0,
+        "6520 intent: the display-upload region end marker vanished");
+    const uploadRegion = mainBody[cast(size_t)regionBegin ..
+        cast(size_t)regionBegin + cast(size_t)regionEndRel];
+
+    assert(uploadRegion.length > 0
+        && uploadRegion.indexOf("const bool displayUploadHeldByToolDrag =") >= 0,
+        "6520 intent: the display-upload region population vanished");
     const flushGate = lineAt(mainBody,
         "const bool displayUploadHeldByToolDrag =");
     assert(flushGate.indexOf("displayUploadsHeldByToolDrag_(") >= 0
         && flushGate.indexOf("isDragging") < 0,
         "6520 intent: the flush-site upload gate recomputed the tool-drag bool");
-    assert(mainBody.count(
-        "activeTool !is null && activeTool.isDragging()") == 2,
+    assert(uploadRegion.count("isDragging") == 0,
         "6520 intent: the tool-drag bool is computed more than once");
     assert(mainBody.indexOf("bool toolOwnsVbo") < 0,
         "6520 intent: the deleted flush-site ownership word is back");
@@ -187,6 +198,11 @@ unittest // completed writes are recorded below every entry refusal
         && positions.indexOf("displayPayload.recordWrite(")
             > positions.indexOf("faceTriStart.length != mesh.faces.length"),
         "6520 provenance: position refresh records before layout refusal");
+    assert(positions.indexOf(
+        "edgeOrigin.length == 0 && vertOrigin.length == 0") >= 0
+        && positions.indexOf("DisplayPayloadBasis.cageIndexed") >= 0
+        && positions.indexOf("DisplayPayloadBasis.previewIndexed") >= 0,
+        "6520 provenance: position refresh stopped deriving its payload basis");
 
     const selected = bodyAt(meshGpu,
         "void uploadSelectedVertices(ref const Mesh mesh,");
@@ -198,19 +214,27 @@ unittest // completed writes are recorded below every entry refusal
 
     const nonFace = bodyAt(meshGpu,
         "void refreshNonFacePositions(ref const Mesh mesh,");
-    assert(nonFace.count("displayPayload.recordWrite(") == 1,
+    assert(nonFace.count("displayPayload.recordWrite(") == 1
+        && nonFace.count("wroteDisplayPayload = true;") == 2
+        && nonFace.indexOf("if (wroteDisplayPayload)") >= 0,
         "6520 provenance: non-face refresh write-site population changed");
+    assert(nonFace.indexOf(
+        "edgeOrigin.length == 0 && vertOrigin.length == 0") >= 0
+        && nonFace.indexOf("DisplayPayloadBasis.cageIndexed") >= 0
+        && nonFace.indexOf("DisplayPayloadBasis.previewIndexed") >= 0,
+        "6520 provenance: non-face refresh stopped deriving its payload basis");
 }
 
 unittest // deleted ownership channels stay absent from executable code
 {
-    size_t files;
+    size_t files, pyFiles;
     foreach (root; ["source", "tools", "tests"]) {
         foreach (de; dirEntries(buildPath(repoRoot, root), SpanMode.depth)) {
             if (!de.isFile) continue;
             const ext = extension(de.name);
             if (ext != ".d" && ext != ".py") continue;
             ++files;
+            if (ext == ".py") ++pyFiles;
             const raw = readText(de.name);
             const code = ext == ".d" ? blankNonCode(raw) : raw;
             assert(code.indexOf("previewWritesDisplayBuffers") < 0,
@@ -219,6 +243,6 @@ unittest // deleted ownership channels stay absent from executable code
                 "6520 census: the second drag-intent word is back");
         }
     }
-    assert(files > 100,
+    assert(files > 1700 && pyFiles >= 10,
         "6520 census: executable source population vanished");
 }
