@@ -751,24 +751,27 @@ unittest { // 6590: collapsing one binding must not collapse its peer
     // one following frame observes the toggled expansion state.
     ui.frame();
     assert(layerListDrawSnapshot().rows.length == 1
-        && layerListDrawSnapshot().rows[0].index == kNoLayerIndex
-        && layerListDrawSnapshot().disclosureDrawn
-        && !layerListDrawSnapshot().disclosureExpanded,
+        && layerListDrawSnapshot().rows[0].index == kNoLayerIndex,
         "6590 disclosure floor: clicking the first root did not collapse its rows from four to one");
+    assert(layerListDrawSnapshot().disclosureDrawn
+        && !layerListDrawSnapshot().disclosureExpanded,
+        "6590 disclosure glyph: the collapsed first binding drew an expanded disclosure");
 
     which = 1;
     ui.frame();
-    assert(layerListDrawSnapshot().rows.length == 4
-        && layerListDrawSnapshot().disclosureDrawn
-        && layerListDrawSnapshot().disclosureExpanded,
+    assert(layerListDrawSnapshot().rows.length == 4,
         "6590 shared rootExpanded: collapsing the first binding also collapsed the second binding");
+    assert(layerListDrawSnapshot().disclosureDrawn
+        && layerListDrawSnapshot().disclosureExpanded,
+        "6590 disclosure glyph: the expanded second binding drew a collapsed disclosure");
 
     which = 0;
     ui.frame();
-    assert(layerListDrawSnapshot().rows.length == 1
-        && layerListDrawSnapshot().disclosureDrawn
-        && !layerListDrawSnapshot().disclosureExpanded,
+    assert(layerListDrawSnapshot().rows.length == 1,
         "6590 retained rootExpanded: returning to the first binding lost its collapsed state");
+    assert(layerListDrawSnapshot().disclosureDrawn
+        && !layerListDrawSnapshot().disclosureExpanded,
+        "6590 disclosure glyph: the returning first binding drew an expanded disclosure");
 }
 
 unittest { // B-FOCUS: one binding reuses its provider for the current item
