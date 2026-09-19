@@ -228,13 +228,10 @@ unittest {
     }
     auto meshClosure = closureFrom("mesh_command_registration", modules);
     auto positive = closureFrom("registration", modules);
-    assert(sourceFiles >= 500 && meshSeen == 1
-            && meshClosure.queue.length == 176,
-        format("6509 import scanner population: files=%d mesh=%d closure=%d/176",
-            sourceFiles, meshSeen, meshClosure.queue.length));
-    assert("editor_app" in positive.reached,
-        "6509 positive control: registration does not reach editor_app");
-    foreach (forbidden; ["editor_app", "registration", "app",
+    assert(sourceFiles >= 500 && meshSeen == 1,
+        format("6509 import scanner population: files=%d mesh=%d",
+            sourceFiles, meshSeen));
+    foreach (forbidden; ["app", "editor_app", "registration",
             "ai.exploration", "ai.interaction_log_writer", "ai.state",
             "ai3d.worker_manager", "http_server", "viewport",
             "ui.remesh_modal_state"])
@@ -242,6 +239,13 @@ unittest {
             assert(false, "6509 mesh_command_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("mesh_command_registration", forbidden,
                     meshClosure));
+    // Keep totality after the policy loop: a new forbidden edge also grows the
+    // closure, and the policy-specific failure must remain reachable first.
+    assert(meshClosure.queue.length == 176,
+        format("6509 import scanner closure=%d/176",
+            meshClosure.queue.length));
+    assert("editor_app" in positive.reached,
+        "6509 positive control: registration does not reach editor_app");
 }
 
 // L3a: compiler-owned complete member sets.
