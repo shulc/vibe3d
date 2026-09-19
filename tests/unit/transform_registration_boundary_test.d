@@ -190,9 +190,20 @@ unittest {
             assert(false, "6506 transform_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("transform_tool_registration", forbidden,
                     transform));
-    assert(transform.queue.length == 251 && positive.queue.length == 513,
+    // The positive number is 512 + one per registration-family module added
+    // since 6506 installed this census: slice 6503 (the shared const item
+    // reader) took it to 513, slice 6509 (the extracted mesh registrar) to 514.
+    // It is a POSITIVE control, so it is EXPECTED to move on a legal link —
+    // what must not move is `transform`, and that stays 251.
+    //
+    // Both of those slices bumped this literal from 512 to 513 in their own
+    // lanes, independently. Two lanes each incrementing the same counter write
+    // the SAME text, so git merges them without a conflict and the file then
+    // states 513 where the truth is 514. The gate on the REBASED sha is what
+    // catches that; a gate taken before the rebase cannot.
+    assert(transform.queue.length == 251 && positive.queue.length == 514,
         format("6506 import closure census changed: transform=%d/251 "
-            ~ "registration=%d/513", transform.queue.length,
+            ~ "registration=%d/514", transform.queue.length,
             positive.queue.length));
 }
 
