@@ -38,7 +38,7 @@ import tools.transform.xfrm_transform : XfrmTransformTool;
 import ui.discard_guard : GuardRecord;
 import ui.item_rename : ItemRenameState, bindItemRenameController;
 import ui.item_rename : ItemRenameDispatch;
-import ui.item_rows : ItemRow, RowRole;
+import ui.item_rows : ItemRow, RowRole, kNoLayerIndex;
 static import ui.item_rows;
 import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
     ItemFormOutcome, LayerListActions, LayerListPanelRoles,
@@ -653,13 +653,19 @@ unittest { // B-NONE: an unresolved form target stays distinct from layer zero
         "6502 B-NONE: an unresolved form target became layer zero");
 }
 
-unittest { // B-TWO: alternating bindings retain distinct provider identities
+unittest { // 6411 B-TWO: alternating bindings retain distinct provider state
     Form[] priorForms;
     installEnvironment(priorForms);
     scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
 
     auto first = new LayerPanelHarness;
     auto second = new LayerPanelHarness;
+    second.binding.dispatchUi("layer.select", `{"index":1,"mode":"set"}`);
+    assert(itemPropsTarget(first.roles.read.document())
+            is first.owner.document.layers[0]
+        && itemPropsTarget(second.roles.read.document())
+            is second.owner.document.layers[1],
+        "6411 B-TWO floor: the two bindings need different Alpha/Beta targets");
     int which;
     auto ui = openPanel(() {
         ImGui.SetNextWindowSize(ImVec2(520, 900));
@@ -681,14 +687,76 @@ unittest { // B-TWO: alternating bindings retain distinct provider identities
     auto secondProvider = layerFormProvider(second.roles.state);
     assert(layerListDrawSnapshot().formBound && secondProvider !is null,
         "6502 B-TWO floor: the second binding did not create its provider");
+    assert(layerFormBoundItem(first.roles.state)
+            is first.owner.document.layers[0]
+        && layerFormBoundItem(second.roles.state)
+            is second.owner.document.layers[1],
+        "6411 B-TWO: drawing Beta in the second binding rewrote the first binding's Alpha provider state");
     assert(firstProvider !is secondProvider,
-        "6502 B-TWO: two live bindings share one form provider");
+        "6411 B-TWO: two live bindings share one form provider");
     which = 0;
     ui.frame();
     assert(layerFormProvider(first.roles.state) is firstProvider
         && layerFormBoundItem(first.roles.state)
             is first.owner.document.layers[0],
         "6502 B-TWO: returning to the first binding lost its provider or document identity");
+}
+
+unittest { // 6590: collapsing one binding must not collapse its peer
+    Form[] priorForms;
+    installEnvironment(priorForms);
+    scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
+
+    auto app = new LayerPanelHarness;
+    auto second = bindLayerListPanel(app.owner, app.binding, app.forms,
+                                     () => app.activeTool);
+    ItemRenameState secondRenameState;
+    assert(app.roles.state !is second.state,
+        "6590 fixture floor: two bindings unexpectedly received one state object");
+
+    int which;
+    auto ui = openPanel(() {
+        ImGui.SetNextWindowSize(ImVec2(520, 900));
+        if (which == 0)
+            drawLayerListPanel(app.roles.read, app.roles.actions,
+                               app.renameState);
+        else
+            drawLayerListPanel(second.read, second.actions,
+                               secondRenameState);
+    }, "Items disclosure ownership host", 1280, 1000);
+    scope (exit) ui.close();
+
+    ui.frame();
+    const expanded = layerListDrawSnapshot();
+    assert(expanded.rows.length == 4
+        && expanded.rows[0].index == kNoLayerIndex,
+        "6590 disclosure floor: the first binding must start with one root and three item rows");
+    const root = expanded.rows[0];
+    immutable float cellW = root.eyeMax.x - root.eyeMin.x;
+    assert(cellW > 0 && root.roleMax.y > root.roleMin.y,
+        "6590 disclosure floor: the recorded root cells have no clickable geometry");
+    immutable ImVec2 disclosureCenter = ImVec2(
+        root.roleMax.x + cellW * 0.5f,
+        (root.roleMin.y + root.roleMax.y) * 0.5f);
+
+    ui.pressAt(disclosureCenter);
+    ui.release();
+    // InvisibleButton reports the release after this frame's rows were built;
+    // one following frame observes the toggled expansion state.
+    ui.frame();
+    assert(layerListDrawSnapshot().rows.length == 1
+        && layerListDrawSnapshot().rows[0].index == kNoLayerIndex,
+        "6590 disclosure floor: clicking the first root did not collapse its rows from four to one");
+
+    which = 1;
+    ui.frame();
+    assert(layerListDrawSnapshot().rows.length == 4,
+        "6590 shared rootExpanded: collapsing the first binding also collapsed the second binding");
+
+    which = 0;
+    ui.frame();
+    assert(layerListDrawSnapshot().rows.length == 1,
+        "6590 retained rootExpanded: returning to the first binding lost its collapsed state");
 }
 
 unittest { // B-FOCUS: one binding reuses its provider for the current item
