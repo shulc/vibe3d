@@ -140,30 +140,40 @@ unittest {
 
     immutable rawRegistration = readText(
         buildPath(repoRoot, "source", "registration.d"));
+    immutable rawMesh = readText(
+        buildPath(repoRoot, "source", "mesh_command_registration.d"));
     immutable rawCreate = readText(
         buildPath(repoRoot, "source", "create_tool_registration.d"));
     enum registrationCommentDecoy = "// new ToolHeadlessCommand(\n";
     enum structuralCommentDecoy =
         "// registerHeadlessTool! private void registerHeadlessTool( "
       ~ "new ToolHeadlessCommand(\n";
-    immutable registration = blankNonCode(
-        rawRegistration ~ registrationCommentDecoy);
+    immutable registration = blankNonCode(rawRegistration);
+    immutable mesh = blankNonCode(rawMesh ~ registrationCommentDecoy);
     immutable create = blankNonCode(rawCreate ~ structuralCommentDecoy);
     size_t registrarFiles;
     const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
     assert(registrarFiles >= 15 && familyBytes > 110_000,
         "6509 census population: the registration family shrank unexpectedly — "
       ~ "the headless pairing witness is reading truncated source");
+    assert(rawMesh.length > 20_000,
+        "6509 source population: mesh_command_registration.d is unexpectedly small");
     assert(rawCreate.length > 8_000,
         "6353 source population: create_tool_registration.d is unexpectedly small");
 
-    assert(countOccurrences(registration, "new ToolHeadlessCommand(") == 3,
-        "6353 wrapper population: expected three residual Convolve wrappers");
+    assert(countOccurrences(mesh, "new ToolHeadlessCommand(") == 3,
+        "6509 wrapper population: expected three Convolve wrappers in the mesh registrar");
+    assert(countOccurrences(registration, "new ToolHeadlessCommand(") == 0,
+        "6509 old path: registration.d retained a Convolve wrapper");
     assert(countOccurrences(registration, "registerHeadlessTool!") == 0,
         "6353 old path: paired helper calls survived in registration.d");
+    assert(countOccurrences(mesh, "registerHeadlessTool!") == 0,
+        "6509 old path: paired helper calls appeared in the mesh registrar");
     assert(countOccurrences(registration,
             "private void registerHeadlessTool(") == 0,
         "6353 old path: paired helper survived in registration.d");
+    assert(countOccurrences(mesh, "private void registerHeadlessTool(") == 0,
+        "6509 old path: paired helper appeared in the mesh registrar");
 
     assert(countOccurrences(create, "registerHeadlessTool!") == 13,
         "6353 source population: expected 13 paired helper calls");
@@ -205,7 +215,7 @@ unittest {
         "6353 family reconciliation: 4 + 9 paired calls must cover all 13");
 
     foreach (id; kPaired) {
-        foreach (raw; [rawRegistration, rawCreate]) {
+        foreach (raw; [rawRegistration, rawMesh, rawCreate]) {
             assert(countOccurrences(raw,
                     "reg.toolFactories[\"" ~ id ~ "\"] = ") == 0,
                 "6353 old channel: literal tool assignment survived for " ~ id);

@@ -105,88 +105,9 @@ import transform_tool_registration : TransformToolDeps,
     registerTransformToolCommands;
 import create_tool_registration : CreateToolDeps, registerCreateToolCommands;
 import item_command_registration : ItemLifecycleDoors, registerItemCommands;
+import mesh_command_registration : MeshCommandDeps, registerMeshCommands;
 import ai3d_command_registration : registerAi3dCommands;
-import commands.mesh.subdivide;
-import commands.mesh.subdivide_faceted;
-import commands.mesh.triple      : MeshTriple;
-import commands.mesh.quadruple   : MeshQuadruple;
-import commands.mesh.detriangulate : MeshDetriangulate;
-import commands.mesh.merge         : MeshMergeFaces;
-import commands.mesh.subpatch_toggle;
-import commands.mesh.hide;
-import commands.mesh.set_material;
-import commands.mesh.set_part;
-import commands.tool.headless : ToolHeadlessCommand;
-import commands.mesh.split_edge;
-import commands.mesh.add_point : MeshAddPoint;
-import commands.mesh.split_face  : MeshSplitFace;
-import commands.mesh.edge_join : MeshEdgeJoin;
-import commands.mesh.spin_edge;
-import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.edge_extrude : MeshEdgeExtrude;
-import commands.mesh.vertex_extrude : MeshVertexExtrude;
-import commands.mesh.vertex_bevel   : MeshVertexBevel;
-import commands.mesh.poly_inset : MeshPolygonInset;
-import commands.mesh.spikey : MeshSpikey;
-import commands.mesh.bevel : MeshBevel;
-import commands.mesh.face_extrude : MeshFaceExtrude;
-import commands.mesh.bridge : MeshBridge;
-import commands.mesh.thicken : MeshThicken;
-import commands.mesh.smooth_shift : MeshSmoothShift;
-import commands.mesh.edge_extend : MeshEdgeExtend;
-import commands.mesh.move_vertex;
-import commands.mesh.vertex_new    : MeshVertexNew;
-import commands.mesh.vertex_center : MeshCenterVertices;
-import commands.mesh.vertex_set    : MeshSetPosition;
-import commands.mesh.delete_ : MeshDelete;
-import commands.mesh.remove_ : MeshRemove;
-import commands.mesh.flip    : MeshFlip;
-import commands.mesh.duplicate_ : MeshDuplicate;
-import commands.mesh.copy_      : MeshCopy;
-import commands.mesh.paste_     : MeshPaste;
-import commands.mesh.cut_       : MeshCut;
-import commands.mesh.mirror_      : MeshMirror;
-import commands.mesh.symmetrize   : MeshSymmetrize;
-import commands.mesh.array_       : MeshArray;
-import commands.mesh.clone_       : MeshClone;
-import commands.mesh.radial_array_ : MeshRadialArray;
-import commands.mesh.sweep         : MeshSweep;
-import commands.mesh.stroke_extrude      : MeshStrokeExtrude;
-import commands.mesh.vert_merge        : MeshVertMerge;
-import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
-import commands.mesh.vert_join         : MeshVertJoin;
-import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
-import commands.mesh.screen_slice  : MeshScreenSlice;
-import commands.mesh.edge_slice    : MeshEdgeSlice;
-import commands.mesh.collapse      : MeshCollapse;
-import commands.mesh.vertex_split  : MeshVertexSplit;
-import commands.mesh.reduce        : MeshReduce;
-import commands.mesh.unify         : MeshUnify;
-import commands.mesh.cleanup       : MeshCleanup;
-import commands.mesh.fix_orientation : MeshFixOrientation;
-import commands.mesh.make_polygon  : MeshMakePolygon;
-import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
-import commands.mesh.transform;
-import commands.mesh.quantize;
-import commands.mesh.jitter;
-import commands.mesh.magnet : MeshMagnet;
-import commands.mesh.smooth;
-import commands.mesh.weightmap;
-import commands.mesh.morph;
-import commands.mesh.edge_crease;
-import commands.mesh.uv_transform;
-import commands.mesh.uv_project  : UvProject;
-import commands.mesh.uv_pack     : UvFit, UvPack;
-import commands.mesh.uv_map_util;
-import commands.mesh.uv_relax  : UvRelax;
-import commands.mesh.uv_unwrap : UvUnwrap;
-import commands.mesh.edge_slide;
-import commands.mesh.linear_align;
-import commands.mesh.polygon_align;
-import commands.mesh.radial_align;
-import commands.mesh.vertex_edit;
 import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
 import snapshot : SelectionSnapshot;
@@ -218,7 +139,6 @@ import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
     Ai3dInstallState, ai3dDefaultInstallLocation;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
@@ -639,7 +559,7 @@ void registerCommands(EditorApp app) {
         SceneLifecycleDoors(app.promoteGeometryType,
                             () { app.running = false; },
                             () => app.dropActiveTool(ToolTransition.sceneResetDrop)));
-    registerMeshCommands(app);
+    registerMeshFamily(app);
     registerHistoryCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg,
                          app.sessionOwner.editModePtr()),
@@ -695,288 +615,24 @@ void registerCommands(EditorApp app) {
     }
 }
 
-/// Mesh, polygon, vertex and UV operations — one family of the registration table (task 0722, audit
-/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
-/// which keys are written is exactly what it was; and every key in the
-/// table is written exactly once (checked before the split), so order is
-/// not load-bearing between families either. The live `EditorApp` and AI3D
-/// scopes remain; the removed remesh leaf bundle no longer has a scope.
-private void registerMeshCommands(EditorApp app) {
-    with (app) {
-    with (ai3dRefs) {
-    reg.commandFactories["mesh.subdivide"] = () => cast(Command)
-        new Subdivide(&mesh(), cameraView, editMode,
-                      () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
-    // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
-    // the ai3d drain for how the result lands); `mesh.remesh` is the
-    // undoable apply that a successful job's result is fired through.
-    reg.commandFactories["mesh.remesh.start"] = () => cast(Command)
-        new RemeshStart(&mesh(), cameraView, editMode, remeshJob);
-    reg.commandFactories["mesh.remesh"] = () => cast(Command)
-        new Remesh(&mesh(), cameraView, editMode,
-                   () => dropActiveTool(ToolTransition.meshRebuildDrop), remeshJob);
-    reg.commandFactories["mesh.remesh.open"] = () => cast(Command)
-        new RemeshOpen(&mesh(), cameraView, editMode, () {
-            remeshModalState.requestOpen();
-        });
-    reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
-        new SubdivideFaceted(&mesh(), cameraView, editMode,
-                             () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    reg.commandFactories["mesh.triple"] = () => cast(Command)
-        new MeshTriple(&mesh(), cameraView, editMode,
-                       () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    reg.commandFactories["mesh.quadruple"] = () => cast(Command)
-        new MeshQuadruple(&mesh(), cameraView, editMode,
-                          () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    reg.commandFactories["mesh.detriangulate"] = () => cast(Command)
-        new MeshDetriangulate(&mesh(), cameraView, editMode,
-                              () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    reg.commandFactories["mesh.mergeFaces"] = () => cast(Command)
-        new MeshMergeFaces(&mesh(), cameraView, editMode,
-                           () => dropActiveTool(ToolTransition.meshRebuildDrop));
-    reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
-        new SubpatchToggle(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.hide"] = () => cast(Command)
-        new MeshHide(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.hideUnselected"] = () => cast(Command)
-        new MeshHideUnselected(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.hideInvert"] = () => cast(Command)
-        new MeshHideInvert(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.unhideAll"] = () => cast(Command)
-        new MeshUnhideAll(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.setMaterial"] = () => cast(Command)
-        new MeshSetMaterial(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.setPart"] = () => cast(Command)
-        new MeshSetPart(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.split_edge"] = () => cast(Command)
-        new MeshSplitEdge(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.addPoint"] = () => cast(Command)
-        new MeshAddPoint(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.splitFace"] = () => cast(Command)
-        new MeshSplitFace(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edgeJoin"] = () => cast(Command)
-        new MeshEdgeJoin(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.spinEdge"] = () => cast(Command)
-        new MeshSpinEdge(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.addLoop"] = () => cast(Command)
-        new MeshAddLoop(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.loopSlice"] = () => cast(Command)
-        new MeshLoopSlice(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
-        new MeshEdgeExtrude(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.vertexExtrude"] = () => cast(Command)
-        new MeshVertexExtrude(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.vertexBevel"] = () => cast(Command)
-        new MeshVertexBevel(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
-        new MeshPolygonInset(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.spikey"] = () => cast(Command)
-        new MeshSpikey(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.bevel"] = () => cast(Command)
-        new MeshBevel(&mesh(), cameraView, editMode);
-    reg.commandFactories["poly.extrude"] = () => cast(Command)
-        new MeshFaceExtrude(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.bridge"] = () => cast(Command)
-        new MeshBridge(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.axisSlice"] = () => cast(Command)
-        new MeshAxisSlice(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.julienne"] = () => cast(Command)
-        new MeshJulienne(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.screenSlice"] = () {
-        auto c = new MeshScreenSlice(&mesh(), cameraView, editMode);
-        // Viewport camera single-source (0181): resolve the camera-plane cut
-        // through the follow-aware snapshot instead of the cell's raw own
-        // transform — see command.d's effectiveViewport() for the fallback
-        // hazard note.
-        c.setResolvedVpProvider(() => vpm.originSnapshot());
-        return cast(Command) c;
-    };
-    reg.commandFactories["mesh.edgeSlice"] = () => cast(Command)
-        new MeshEdgeSlice(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.thicken"] = () => cast(Command)
-        new MeshThicken(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
-        new MeshSmoothShift(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
-        new MeshEdgeExtend(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
-        new MeshMoveVertex(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.addVertex"] = () => cast(Command)
-        new MeshVertexNew(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.centerVertices"] = () => cast(Command)
-        new MeshCenterVertices(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.setPosition"] = () => cast(Command)
-        new MeshSetPosition(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.delete"] = () => cast(Command)
-        new MeshDelete(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.remove"] = () => cast(Command)
-        new MeshRemove(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.flip"] = () => cast(Command)
-        new MeshFlip(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.duplicate"] = () => cast(Command)
-        new MeshDuplicate(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.copy"] = () => cast(Command)
-        new MeshCopy(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.paste"] = () => cast(Command)
-        new MeshPaste(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.cut"] = () => cast(Command)
-        new MeshCut(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.mirror"] = () => cast(Command)
-        new MeshMirror(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.symmetrize"] = () => cast(Command)
-        new MeshSymmetrize(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.array"] = () => cast(Command)
-        new MeshArray(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.clone"] = () => cast(Command)
-        new MeshClone(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.radial_array"] = () => cast(Command)
-        new MeshRadialArray(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.sweep"] = () => cast(Command)
-        new MeshSweep(&mesh(), cameraView, editMode);
-    // One-shot, headlessly-testable path-follow extrude (task 0323 —
-    // explicit world-space path-point param; see MeshStrokeExtrude's doc
-    // comment). The interactive tool.strokeExtrude drives its own commit
-    // through the separate record-flavor MeshSessionEdit instead of
-    // this factory.
-    reg.commandFactories["mesh.strokeExtrude"] = () => cast(Command)
-        new MeshStrokeExtrude(&mesh(), cameraView, editMode);
-    // Aliases — select.delete and select.remove delegate to the
-    // same factory delegates as mesh.delete / mesh.remove respectively.
-    reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];
-    reg.commandFactories["select.remove"] = reg.commandFactories["mesh.remove"];
-    reg.commandFactories["vert.merge"] = () => cast(Command)
-        new MeshVertMerge(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.weldVertexPair"] = () => cast(Command)
-        new MeshWeldVertexPair(&mesh(), cameraView, editMode);
-    reg.commandFactories["poly.unify"] = () => cast(Command)
-        new MeshUnify(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.cleanup"] = () => cast(Command)
-        new MeshCleanup(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.fixOrientation"] = () => cast(Command)
-        new MeshFixOrientation(&mesh(), cameraView, editMode);
-    reg.commandFactories["vert.join"] = () => cast(Command)
-        new MeshVertJoin(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.collapse"] = () => cast(Command)
-        new MeshCollapse(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.vertexSplit"] = () => cast(Command)
-        new MeshVertexSplit(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.reduce"] = () => cast(Command)
-        new MeshReduce(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.makePolygon"] = () {
-        auto c = new MeshMakePolygon(&mesh(), cameraView, editMode);
-        // Task 1180: the new face is the command's PRODUCT and re-pointing at
-        // it changes the element type — route that through the geometry-type
-        // funnel (promote, no tool-drop), same hook mesh.select takes.
-        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
-        return cast(Command) c;
-    };
-    reg.commandFactories["mesh.select"] = () {
-        auto c = new MeshSelect(&mesh(), cameraView, editMode, &editMode());
-        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
-        // Viewport camera single-source (0181): see mesh.screenSlice above.
-        c.setResolvedVpProvider(() => vpm.originSnapshot());
-        return cast(Command) c;
-    };
-    reg.commandFactories["mesh.transform"] = () {
-        auto c = new MeshTransform(&mesh(), cameraView, editMode);
-        // Viewport camera single-source (0181): see mesh.screenSlice above.
-        c.setResolvedVpProvider(() => vpm.originSnapshot());
-        return cast(Command) c;
-    };
-    reg.commandFactories["mesh.quantize"] = () => cast(Command)
-        new MeshQuantize(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.jitter"] = () => cast(Command)
-        new MeshJitter(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.magnet"] = () => cast(Command)
-        new MeshMagnet(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.weightmap.create"] = () => cast(Command)
-        new WeightmapCreate(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.weightmap.remove"] = () => cast(Command)
-        new WeightmapRemove(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.weightmap.rename"] = () => cast(Command)
-        new WeightmapRename(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
-        new WeightmapSet(&mesh(), cameraView, editMode);
-    // Task 1090. The odd sibling of the four above: it writes the SESSION's
-    // current-map name, not the mesh, so it is `CmdFlags.UI` and records no
-    // undo entry. Registered here anyway — the map selection belongs to the
-    // weight-map family, not to the viewport family, because it is global
-    // state about a MESH channel and only its consumer is per-cell.
-    reg.commandFactories["mesh.weightmap.select"] = () => cast(Command)
-        new WeightmapSelect(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.create"] = () => cast(Command)
-        new MorphCreate(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.remove"] = () => cast(Command)
-        new MorphRemove(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.rename"] = () => cast(Command)
-        new MorphRename(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.select"] = () => cast(Command)
-        new MorphSelect(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.set"] = () => cast(Command)
-        new MorphSet(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.clear"] = () => cast(Command)
-        new MorphClear(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.morph.apply"] = () => cast(Command)
-        new MorphApplyCmd(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edgeCrease.set"] = () => cast(Command)
-        new EdgeCreaseSet(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edgeCrease.clear"] = () => cast(Command)
-        new EdgeCreaseClear(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.flip"] = () => cast(Command)
-        new UvFlip(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.mirror"] = () => cast(Command)
-        new UvMirror(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.rotate"] = () => cast(Command)
-        new UvRotate(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.project"] = () => cast(Command)
-        new UvProject(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.fit"] = () => cast(Command)
-        new UvFit(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.pack"] = () => cast(Command)
-        new UvPack(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.delete"] = () => cast(Command)
-        new UvDelete(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.rename"] = () => cast(Command)
-        new UvRename(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.copy"] = () => cast(Command)
-        new UvCopy(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.clear"] = () => cast(Command)
-        new UvClear(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.relax"] = () => cast(Command)
-        new UvRelax(&mesh(), cameraView, editMode);
-    reg.commandFactories["uv.unwrap"] = () => cast(Command)
-        new UvUnwrap(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
-        new MeshEdgeSlide(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.smooth"] = () => cast(Command)
-        new MeshSmooth(&mesh(), cameraView, editMode);
-    // Headless aliases for the Convolve tools — same shape
-    // as prim.cube above: tool.set <id> on; tool.attr <id> ...;
-    // tool.doApply. The command form bundles the activation pair so
-    // headless callers don't have to manage the tool lifecycle.
-    reg.commandFactories["xfrm.smooth"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "xfrm.smooth", reg.toolFactories["xfrm.smooth"]);
-    reg.commandFactories["xfrm.jitter"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "xfrm.jitter", reg.toolFactories["xfrm.jitter"]);
-    reg.commandFactories["xfrm.quantize"] = () => cast(Command)
-        new ToolHeadlessCommand(&mesh(), cameraView, editMode,
-                                "xfrm.quantize", reg.toolFactories["xfrm.quantize"]);
-    reg.commandFactories["mesh.linear_align"] = () => cast(Command)
-        new MeshLinearAlign(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.align"] = () => cast(Command)
-        new MeshAlign(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.radial_align"] = () => cast(Command)
-        new MeshRadialAlign(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
-        new MeshVertexEdit(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
-        new MeshSessionEdit(&mesh(), cameraView, editMode,
-                          "mesh.bevel_edit", "Bevel");
-    }
-    }
+/// The mesh-command registrar owns explicit live roles and five narrow
+/// capabilities; this composition root is shared by production and the
+/// unittest door. Task 6509.
+private void registerMeshFamily(EditorApp app) {
+    auto dropActiveTool = app.dropActiveTool;
+    auto viewports = app.vpm;
+    auto remeshModalState = app.remeshModalState;
+    registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
+            &viewports.originSnapshot, app.remeshJob,
+            &remeshModalState.requestOpen, app.promoteGeometryType));
+}
+
+version (unittest)
+/// Register the mesh family through the production composition root.
+void registerMeshCommandsForOwnershipTest(EditorApp app) {
+    registerMeshFamily(app);
 }
 
 /// TASK 1410 — the deliberate-defect injector, registered ONLY in the four

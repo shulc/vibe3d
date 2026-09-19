@@ -539,11 +539,14 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const rawEditor = readText(root.buildPath("source", "editor_app.d"));
     const rawPanel = readText(root.buildPath("source", "ui", "panels.d"));
     const rawRegistration = readText(root.buildPath("source", "registration.d"));
+    const rawMeshRegistration = readText(
+        root.buildPath("source", "mesh_command_registration.d"));
     const rawProviders = readText(root.buildPath("source", "http_providers.d"));
     const app = blankNonCode(rawApp);
     const editor = blankNonCode(rawEditor);
     const panel = blankNonCode(rawPanel);
     const registration = blankNonCode(rawRegistration);
+    const meshRegistration = blankNonCode(rawMeshRegistration);
     const providers = blankNonCode(rawProviders);
     const flatApp = collapseWhitespace(app);
     const flatPanel = collapseWhitespace(panel);
@@ -580,7 +583,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
         && flatApp.count("app.remeshModalState = remeshModalState;") == 1
         && app.count("drawRemeshModal(remeshModalState, remeshJob, app.meshDg);") == 1,
         "6360 app wiring: EditorApp and draw must receive main's owner once");
-    assert(registration.count("remeshModalState.requestOpen();") == 1,
+    assert(registration.count("&remeshModalState.requestOpen") == 1
+        && meshRegistration.count("deps.requestRemeshOpen()") == 1,
         "6360 registration writer: mesh.remesh.open stopped using the shared owner");
     assert(providers.count("remeshModalState.open") == 1,
         "6360 diagnostics reader: modal state is missing or duplicated");

@@ -248,15 +248,15 @@ unittest {
 // grows or a comment that lands above a block shifts every line and changes
 // nothing about how many blocks exist.
 
-/// Measured 2026-09-04 with `scanLiveWith` over the committed files:
-/// `grep -c 'with (app)'` reads 16 and 18 for the two files, but three of
-/// registration.d's and fifteen of input_router.d's are comments and doc
-/// lines — the scanner is what separates them, which is why the recorded
-/// numbers are the scanner's and not grep's.
+/// Measured 2026-09-19 with `scanLiveWith` over the committed files:
+/// `grep -c 'with (app)'` reads 6 and 18 for the two files. Three hits in
+/// each file are live blocks; the remainder are comments and doc lines. The
+/// scanner is what separates them, which is why the recorded numbers are its
+/// numbers and not grep's. The earlier prose value 16 had already drifted to
+/// 7 before task 6509 removed the mesh-family block and made it 6.
 private static immutable LedgerRow[] kWithAppCensus = [
     LedgerRow("registerEditTools", 1, "edit-tool registrations"),
     LedgerRow("registerCommands", 1, "top-level command registrations"),
-    LedgerRow("registerMeshCommands", 1, "mesh commands"),
     LedgerRow("registerSelfTestCommands", 1, "self-test commands"),
     LedgerRow("InputRouter.handleWindowEvent", 1, "window-event handler"),
     LedgerRow("InputRouter.handleMouseWheel", 1, "mouse-wheel handler"),
@@ -315,8 +315,8 @@ unittest {
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);
-    if (ledgerHits.length != 7)
-        problems ~= format("\n    with(app) population — recorded 7, scanner "
+    if (ledgerHits.length != 6)
+        problems ~= format("\n    with(app) population — recorded 6, scanner "
                          ~ "found %d", ledgerHits.length);
     if (filesScanned < 400)
         problems ~= format("\n    source population — scanned only %d file(s)",

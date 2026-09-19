@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 564
-task-citation-lines 5150
-citing-files 434
+source-files 565
+task-citation-lines 5145
+citing-files 435
 long-comment-runs 273
 files-with-long-runs 146
 
@@ -254,13 +254,14 @@ allow source/item_kinds.d 12
 allow source/item_pick.d 3
 allow source/item_xform.d 5
 allow source/json_num.d 1
-allow source/layer_params.d 19
+allow source/layer_params.d 18
 allow source/layout_reset_action.d 1
 allow source/live_registration_roles.d 1
 allow source/log.d 1
 allow source/math.d 24
 allow source/mesh.d 495
 allow source/mesh_analysis.d 4
+allow source/mesh_command_registration.d 3
 allow source/mesh_corner_maps.d 17
 allow source/mesh_dirty.d 18
 allow source/mesh_edge_slice.d 28
@@ -305,7 +306,7 @@ allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 1
 allow source/property_panel.d 3
 allow source/record_observer_hub.d 1
-allow source/registration.d 22
+allow source/registration.d 19
 allow source/registry.d 7
 allow source/remesh/region_stitch.d 2
 allow source/remesh/remesh_job.d 15
@@ -419,8 +420,8 @@ allow source/tsan_preinit.d 1
 allow source/ui/action_menu.d 1
 allow source/ui/availability.d 1
 allow source/ui/button_face.d 1
-allow source/ui/channel_rows.d 5
-allow source/ui/channels_panel.d 3
+allow source/ui/channel_rows.d 2
+allow source/ui/channels_panel.d 2
 allow source/ui/command_notice.d 1
 allow source/ui/discard_guard.d 4
 allow source/ui/image_list_panel.d 2
