@@ -162,13 +162,6 @@ private string[] bridgeIdentifiers(string codeBody)
     return result;
 }
 
-private bool hasAggregateKeyword(string declaration)
-{
-    foreach (word; ["class", "enum", "interface", "struct", "template", "union"])
-        if (tokenCount(declaration, word) != 0) return true;
-    return false;
-}
-
 /// Find named function bodies with the same code projection and brace walker
 /// used for route handlers.  Anonymous delegates are deliberately not given a
 /// name: a direct call cannot target one by source identifier.
@@ -192,8 +185,7 @@ private NamedBody[] namedFunctionBodies(string code)
             const declaration = code[declarationStart .. i];
             const name = declaratorName(declaration);
             opens ~= OpenBrace(i, name,
-                name.length != 0 && declaration.indexOf('(') >= 0
-                && !hasAggregateKeyword(declaration));
+                name.length != 0 && declaration.indexOf('(') >= 0);
             declarationStart = i + 1;
             break;
         case '}':
@@ -413,13 +405,11 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/nested", "GET", Match.exact,
               Answered.mainThread, "route_nested"),
 ];
-struct CleanValue { int historyBridge; }
 void route_fixture(HttpRequest request, HttpResponse response) {
     // historyBridge is prose, not a dependency.
     const diagnostic = "modelBridge is literal text";
     response.statusCode = request.path.length ? 200 : 500;
     response.body = diagnostic.length ? "{}" : "unreachable";
-    auto value = CleanValue();
 }
 void route_nested(HttpRequest request, HttpResponse response) {
     nested_helper(request, response);
