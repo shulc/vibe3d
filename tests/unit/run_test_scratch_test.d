@@ -87,7 +87,11 @@ private string askRunner(string cwd, string flag,
 {
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
-    if (clearTmpDir) env.remove("TMPDIR");
+    // execute() overlays this map on the inherited environment; omitting a
+    // key does not unset it in the child.  An explicit empty value is what
+    // makes scratchRoot() take its default arm when the outer gate itself was
+    // launched with TMPDIR=/var/tmp.
+    if (clearTmpDir) env["TMPDIR"] = "";
     env.remove(scratchRootTestEnv);
     foreach (k, v; extraEnv)          env[k] = v;
     // A runner spawned BY A TEST is not this host's load: without this the
@@ -243,7 +247,9 @@ unittest
 
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
-    env.remove("TMPDIR");
+    // See askRunner(): execute() would otherwise preserve the outer TMPDIR
+    // and make run_test.d scan that directory instead of this test seam.
+    env["TMPDIR"] = "";
     env[scratchRootTestEnv] = root;
     env["VIBE3D_HARNESS_LOG"] = "off";
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runnerLockPath();
