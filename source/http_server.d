@@ -5337,10 +5337,8 @@ unittest {
     server.setPlayEventsBudgetForTest(5.msecs);
     server.markProvidersWired();
     server.tickAll();
-    version (PerfProbe) {
-        FrameWorkProbe frameWorkOwner;
-        server.tickFrameCounts(frameWorkOwner);
-    }
+    FrameWorkProbe frameWorkOwner;
+    server.tickFrameCounts(frameWorkOwner);
     assert(server.ready(),
         "6740 route JSON census: readiness setup did not reach the handlers");
     auto transport = new InProcessHttpTransport(server);
@@ -5371,7 +5369,7 @@ unittest {
     immutable deadline = MonoTime.currTime + 10.seconds;
     while (!atomicLoad(replies.done) && MonoTime.currTime < deadline) {
         server.tickAll();
-        version (PerfProbe) server.tickFrameCounts(frameWorkOwner);
+        server.tickFrameCounts(frameWorkOwner);
         Thread.sleep(1.msecs);
     }
     assert(atomicLoad(replies.done),
@@ -5396,7 +5394,8 @@ unittest {
         ~ "the route loop would not close the scanner's %s/to!string hole");
 
     size_t jsonResponses;
-    size_t nonDegradedResponses;
+    size_t ownerSeededResponses;
+    size_t configurationResponses;
     string[] degradedRoutes;
     foreach (i, route; kRoutes) {
         const response = replies.responses[i];
@@ -5437,21 +5436,39 @@ unittest {
             degradedRoutes ~= format("%s %s (%s)",
                 route.method.length != 0 ? route.method : "ANY",
                 route.path, route.handler);
+        } else if (route.handler == "route_apiFramesCounts"
+                || route.handler == "route_apiFramesCountsReset") {
+            ownerSeededResponses++;
         } else {
-            nonDegradedResponses++;
+            configurationResponses++;
         }
     }
     assert(jsonResponses == 60,
         format("6740 route JSON census: measured JSON-response population "
              ~ "changed; expected 60 of 61, got %d", jsonResponses));
-    // 29 application/json bodies plus the root HTML response are live. The
-    // HTML response skips this loop, so its one-row contribution is explicit.
-    nonDegradedResponses++;
-    assert(nonDegradedResponses == 30,
-        format("6740 route JSON census: measured non-degraded response "
-             ~ "population changed; expected 30 of 61 (29 application/json "
-             ~ "plus root HTML), got %d; degraded routes: %s",
-               nonDegradedResponses, degradedRoutes.join(", ")));
+    // The two owner-seeded frame-count routes are their own population: the
+    // default and PerfProbe builds both have to reach the real owner pump.
+    assert(ownerSeededResponses == 2,
+        format("6740 route JSON census: expected both owner-seeded "
+             ~ "frame-count responses, got %d; degraded routes: %s",
+               ownerSeededResponses, degradedRoutes.join(", ")));
+
+    // Root HTML skips the JSON loop but belongs to the remaining live route
+    // population. /api/frames is immediate in the default build (+2) and
+    // owner-claimed in PerfProbe, where this census deliberately has no
+    // FrameProbe owner; keep the two configuration floors independent.
+    configurationResponses++;
+    version (PerfProbe) {
+        assert(configurationResponses == 28,
+            format("6740 route JSON census: PerfProbe non-frame-count "
+                 ~ "population changed; expected 28, got %d; degraded routes: %s",
+                   configurationResponses, degradedRoutes.join(", ")));
+    } else {
+        assert(configurationResponses == 30,
+            format("6740 route JSON census: default-build non-frame-count "
+                 ~ "population changed; expected 30, got %d; degraded routes: %s",
+                   configurationResponses, degradedRoutes.join(", ")));
+    }
 }
 
 
