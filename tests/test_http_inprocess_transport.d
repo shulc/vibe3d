@@ -26,6 +26,7 @@ private final class Rig
     {
         server = new HttpServer();
         server.setTestMode(true);
+        server.setInjectLayerHandler((JSONValue params) {});
         server.markProvidersWired();
         server.tickAll();
         transport = new InProcessHttpTransport(server);
@@ -71,12 +72,13 @@ unittest
         && rig.method == "GET" && rig.path == "/api/ping",
         "6720 C1: getJson did not traverse the in-process dispatcher");
 
-    // C2: raw POST. The handler ignores the body, so the recorder is the
-    // independent witness that the transport carried it to the seam.
-    immutable rawBody = `{"cell":"C2"}`;
-    auto raw = postRaw("/api/trace/reset", rawBody);
-    assert(raw == `{"status":"ok"}` && rig.calls == 2
-        && rig.method == "POST" && rig.path == "/api/trace/reset"
+    // C2: raw POST. The deliberately non-object JSON makes the route read the
+    // transported body and answer synchronously before its main-thread bridge.
+    immutable rawBody = `[]`;
+    auto raw = postRaw("/api/test/layer", rawBody);
+    assert(raw == `{"status":"error","message":"body must be a JSON object"}`
+        && rig.calls == 2
+        && rig.method == "POST" && rig.path == "/api/test/layer"
         && rig.body == rawBody,
         "6720 C2: postRaw did not carry method, path, and body in-process");
 
