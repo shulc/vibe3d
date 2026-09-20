@@ -155,7 +155,8 @@ unittest
     foreach (row; selected)
         assert(row.braceDepth == 1,
             format("6770 teardown declaration left main()'s shared top-level scope: " ~
-                   "expected brace depth 1, found %d for [%s] %s",
+                   "expected brace depth 1, found %d for [%s] %s; " ~
+                   "the order pin below did not run",
                 row.braceDepth, row.key, row.text));
 
     const expected = readLedger(readText(buildPath(repoRoot, ledgerPath)));
@@ -184,12 +185,13 @@ unittest // syntax capability: spaced/multiline forms, braces, and non-code deco
         scope(exit)
             SDL_Quit();
         scope(exit) { owner.destroy(); }
+        scope(exit) igSetNextWindowClass(null);
     };
     const rows = scanScopeExits(fixture);
-    assert(rows.length == 3,
-        format("6770 scope(exit) syntax fixture expected 3 CODE declarations, found %d",
+    assert(rows.length == 4,
+        format("6770 scope(exit) syntax fixture expected 4 CODE declarations, found %d",
             rows.length));
-    assert(rows.filter!(row => row.selected).array.length == 3,
+    assert(rows.filter!(row => row.selected).array.length == 4,
         "6770 teardown classifier must select every syntax-fixture declaration");
 }
 
