@@ -79,12 +79,12 @@ private enum Surface[] surfaces = [
         "tool-disarm provider not set"),
     Surface("/api/perf/reset", "/api/perf/reset", "POST",
         "route_apiPerfReset", "perfResetBridge", "setPerfResetHandler",
-        "perfResetHandler", "g_perf", "reset",
+        "perfResetHandler", "g_perf.reset", "perf_probe",
         "application/json", `{"status":"ok"}`,
         "perf-reset handler not set"),
     Surface("/api/perf", "/api/perf", "GET",
         "route_apiPerf", "perfBridge", "setPerfProvider", "perfProvider",
-        "g_perf", "toJson", "application/json",
+        "g_perf.toJson", "perf_probe", "application/json",
         `{"surface":"perf"}`, "perf provider not set"),
 ];
 
@@ -381,8 +381,8 @@ unittest { // pin: every named route queues and invokes its port on tickAll
         server.tickAll();
         const completed = waitUntil(() => atomicLoad(reply.done));
         if (completed) client.join();
-        const resetPinned = surface.path != "/api/perf/reset"
-            || atomicLoad(resetCalls) == 1;
+        const resetPinned = surface.path == "/api/perf/reset"
+            ? atomicLoad(resetCalls) == 1 : true;
         const pinned = queued && completed && reply.failure.length == 0
             && reply.response !is null && reply.response.statusCode == 200
             && reply.response.headers["Content-Type"] == surface.contentType
