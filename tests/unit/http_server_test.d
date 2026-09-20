@@ -290,12 +290,15 @@ unittest { // submitClaimed is identity after its owner pump has registered
     server.setFrameCountsBudgetForTest(5.msecs);
     server.markProvidersWired();
     server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+    auto beforeOwner = transport.request("GET", "/api/frames/counts", "");
+    assert(beforeOwner.statusCode == 504,
+        "6750 submitClaimed owner gate: an unregistered owner must time out safely");
     FrameWorkProbe probe;
     probe.beginFrame();
     probe.endFrame();
     server.tickFrameCounts(probe);
-    auto response = (new InProcessHttpTransport(server)).request(
-        "GET", "/api/frames/counts", "");
+    auto response = transport.request("GET", "/api/frames/counts", "");
     assert(response.statusCode == 200,
         "6750 submitClaimed identity: the registered owner did not answer synchronously");
     assert(response.body.startsWith(`{"frames":1,`),
