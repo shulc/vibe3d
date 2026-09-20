@@ -438,6 +438,9 @@ unittest // scanner controls: both positive directions and both lexical hazards
             `if (body_.startsWith("{")) return;`), "path") == 0,
         "6760 route-selection control: another receiver's startsWith call "
         ~ "must not be marked as path selection");
+    assert(identifierUses(
+            "path path_ _path path2 2path request.path(path)", "path") == 3,
+        "6760 identifier control: only whole path tokens must be counted");
 
     size_t contractRows;
     string[] contractOffenders;
