@@ -1,8 +1,8 @@
 module playback_controller;
 
 import core.time : MonoTime;
-import eventlog : EventPlayer, ImmediateEventSink, ParsedEventLog,
-    parseEventLog;
+import eventlog : EventLogParseResult, EventPlayer, ImmediateEventSink,
+    ParsedEventLog, parseEventLog;
 import std.format : format;
 
 /// Result of accepting one validated playback log on the main thread.
@@ -51,7 +51,13 @@ struct PlaybackController {
             parseThreadForTest_ = cast(size_t) cast(void*) Thread.getThis();
             ++parseCallsForTest_;
         }
-        auto parsed = parseEventLog(data);
+        EventLogParseResult parsed;
+        try parsed = parseEventLog(data);
+        // Catch Exception, not Throwable: an Error is a broken invariant.
+        catch (Exception) {
+            outcome.invalidLog = true;
+            return outcome;
+        }
         if (!parsed.accepted) {
             outcome.invalidLog = true;
             return outcome;

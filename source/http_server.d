@@ -1444,6 +1444,9 @@ class HttpServer {
         ulong replaced;
         string error;
     }
+    static assert([__traits(allMembers, PlayEventsResp)] ==
+            ["invalidLog", "generation", "replaced", "error"],
+        "6810 play-events bridge response composition changed");
     private MainThreadBridge!(PlayEventsReq, PlayEventsResp) playEventsBridge;
     private Duration playEventsBudget_ = 5.seconds;
 
@@ -1985,6 +1988,7 @@ class HttpServer {
                 auto outcome = playbackController.accept(req.body, req.notAfter);
                 if (outcome.invalidLog) {
                     resp.invalidLog = true;
+                    resp.error = "Failed to parse events";
                     return;
                 }
                 if (!outcome.accepted) {
@@ -2268,6 +2272,10 @@ class HttpServer {
 
         public auto replayOwnedTraceForTest() {
             return replayBridge.ownedTraceForTest();
+        }
+
+        public auto playEventsOwnedTraceForTest() {
+            return playEventsBridge.ownedTraceForTest();
         }
 
         public size_t selectionOwnedPendingForTest() {

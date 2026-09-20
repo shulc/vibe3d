@@ -145,7 +145,9 @@ unittest // source ownership: floor -> identifier needle -> structure -> pin
     requireText(offenders, accept,
         "if (MonoTime.currTime >= notAfter)", "owner.pre-parse-deadline");
     requireText(offenders, accept,
-        "auto parsed = parseEventLog(data)", "owner.parse");
+        "try parsed = parseEventLog(data)", "owner.parse");
+    requireText(offenders, accept,
+        "catch (Exception)", "owner.exception-boundary");
     requireText(offenders, accept,
         "if (!parsed.accepted)", "owner.invalid-guard");
     requireText(offenders, accept,
@@ -283,6 +285,31 @@ private HttpResponse requestAndTick(HttpServer server,
     return result.response;
 }
 
+private HttpResponse requestAndTickWithoutMainThrow(
+    HttpServer server, InProcessHttpTransport transport, string body,
+    string cell)
+{
+    auto result = new AsyncResponse();
+    auto client = requestOnForeignThread(transport, body, result);
+    scope(exit) {
+        if (client.isRunning) client.join();
+    }
+    assert(waitUntil(() => server.playEventsOwnedPendingForTest() == 1),
+        cell ~ ": request did not reach the owner queue");
+    string mainThreadThrow;
+    try server.tickAll();
+    catch (Throwable error)
+        mainThreadThrow = error.classinfo.name ~ ": " ~ error.msg;
+    assert(waitUntil(() => atomicLoad(result.done)),
+        cell ~ ": client did not receive a response after the owner tick");
+    client.join();
+    assert(mainThreadThrow.length == 0,
+        cell ~ ": main thread received throw: " ~ mainThreadThrow);
+    assert(result.failure.length == 0,
+        cell ~ ": in-process request failed: " ~ result.failure);
+    return result.response;
+}
+
 unittest // valid control plus invalid parse both execute on the owner thread
 {
     setEventPlayerClockForTest(0, 1000);
@@ -310,6 +337,10 @@ unittest // valid control plus invalid parse both execute on the owner thread
     assert(invalid.statusCode == 400
         && invalid.body == `{"status": "error", "message": "Failed to parse events"}`,
         "6810 owner-parsed invalid log changed its 400 response");
+    const invalidTrace = server.playEventsOwnedTraceForTest();
+    assert(invalidTrace.length >= 4 && invalidTrace[$ - 1].result.invalidLog
+        && invalidTrace[$ - 1].result.error == "Failed to parse events",
+        "6810 invalid bridge result lost its fail-safe error text");
     assert(server.playbackParseCallsForTest() == 2
         && server.playbackParseThreadForTest() == ownerThread,
         "6810 invalid log was not parsed exactly once on the playback owner thread");
@@ -317,4 +348,68 @@ unittest // valid control plus invalid parse both execute on the owner thread
     assert(server.playbackAcceptCallsForTest() == 1
         && status.generation == 1 && status.total == 1,
         "6810 invalid owner parse changed accepted playback state");
+}
+
+
+unittest // throwing JSON numbers become 400s without escaping the owner tick
+{
+    auto server = new HttpServer();
+    server.setTestMode(true);
+    server.markProvidersWired();
+    server.tickAll();
+    server.setPlayEventsBudgetForTest(400.msecs);
+    auto transport = new InProcessHttpTransport(server);
+
+    struct ThrowingBodyCase {
+        string label;
+        string body;
+    }
+    const inputs = [
+        ThrowingBodyCase("1e999999", `{"t":1e999999}`),
+        ThrowingBodyCase("30-digit integer",
+            `{"t":123456789012345678901234567890}`),
+    ];
+    string[] checked;
+    foreach (input; inputs) {
+        const response = requestAndTickWithoutMainThrow(
+            server, transport, input.body, "6810 throwing body " ~ input.label);
+        assert(response.statusCode == 400
+            && response.body ==
+                `{"status": "error", "message": "Failed to parse events"}`,
+            "6810 throwing body " ~ input.label
+                ~ ": client did not receive the invalid-log 400 response");
+        checked ~= input.label;
+    }
+    assert(checked == ["1e999999", "30-digit integer"],
+        "6810 throwing-body population changed: both numeric failures must run");
+}
+
+
+unittest // expired requests return 500 and never spend owner time parsing
+{
+    auto server = new HttpServer();
+    server.setTestMode(true);
+    server.markProvidersWired();
+    server.tickAll();
+    assert(server.playbackParseCallsForTest() == 0,
+        "6810 expired-invalid floor: fresh owner already parsed a log");
+    server.setPlayEventsBudgetForTest(Duration.zero);
+    auto transport = new InProcessHttpTransport(server);
+    auto result = new AsyncResponse();
+    auto client = requestOnForeignThread(transport, "not json\n", result);
+    scope(exit) {
+        if (client.isRunning) client.join();
+    }
+    assert(waitUntil(() => server.playEventsOwnedPendingForTest() == 1),
+        "6810 expired-invalid request did not reach the owner queue");
+    assert(waitUntil(() => atomicLoad(result.done)),
+        "6810 expired-invalid client did not receive its timeout response");
+    client.join();
+    assert(result.failure.length == 0 && result.response.statusCode == 500
+        && result.response.body ==
+            `{"status":"error","message":"timeout waiting for main thread"}`,
+        "6810 expired invalid log did not retain the chosen 500 busy response");
+    server.tickAll();
+    assert(server.playbackParseCallsForTest() == 0,
+        "6810 expired invalid log reached parsing before the deadline guard");
 }
