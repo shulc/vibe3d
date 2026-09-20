@@ -326,8 +326,8 @@ unittest {
         "6750 native spin pin: both command submit sites must retain the long override");
 
     auto fresh = new HttpServer();
-    assert(fresh.unwiredEndpoints().length == 39,
-        "6750 readiness pin: expected all 39 provider/handler/action slots on a fresh server");
+    assert(fresh.unwiredEndpoints().length == 48,
+        "6750 readiness pin: expected all 48 provider/handler/action slots on a fresh server");
 }
 
 unittest { // submitAndWait is identity in an in-process single-thread channel

@@ -20,6 +20,7 @@ import command_history : CommandHistory, HistoryEntry, HistoryFlags, RecordMode,
     UndoState;
 import edit_session : EditSession;
 import input_frame_state : InputFrameState;
+import input_context : inputContextJson;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
 // enum's name is needed here, not the resolver.
@@ -272,7 +273,11 @@ import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
-import property_panel : PropertyPanel;
+import property_panel : PropertyPanel, toolPropsIdsJson;
+import ui.availability : buttonAvailabilityJson;
+import ui.discard_guard : uiPolicyJson;
+import ui.pie_record : pieFrameJson;
+import ui.stat_record : statRowsJson;
 import forms_render;
 import layer_params   : LayerPropsProvider;
 import document       : Layer;
@@ -325,6 +330,30 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     // are merely reachable by name now. `optionalSlots` is threaded through
     // because two of the seven declare an exemption for the wiring check —
     // see the end of this function.
+    httpServer.setToolDisarmProvider(() {
+        import std.format : format;
+        import tool_disarm : DisarmMode, g_disarmCrossings, g_lastDisarm;
+        const mode = g_lastDisarm.mode == DisarmMode.dropOnly
+            ? "dropOnly" : "cancelAndDrop";
+        return format(
+            `{"crossings":%s,"hadTool":%s,"cancelSteps":%s,"stillArmed":%s,"mode":"%s"}`,
+            g_disarmCrossings,
+            g_lastDisarm.hadTool ? "true" : "false",
+            g_lastDisarm.cancelSteps,
+            g_lastDisarm.stillArmed ? "true" : "false",
+            mode);
+    });
+    httpServer.setUiPolicyProvider(() => uiPolicyJson());
+    httpServer.setToolpropsIdsProvider(() => toolPropsIdsJson());
+    httpServer.setButtonAvailabilityProvider(() => buttonAvailabilityJson());
+    httpServer.setInputContextProvider(
+        (bool havePoint, int x, int y, string key) =>
+            inputContextJson(havePoint, x, y, key));
+    httpServer.setStatsProvider(() => statRowsJson());
+    httpServer.setPieProvider(() => pieFrameJson());
+    httpServer.setPerfResetHandler(() => g_perf.reset());
+    httpServer.setPerfProvider(() => g_perf.toJson());
+
     wireModelProviders(httpServer, app, optionalSlots);
     wireViewportProviders(httpServer, app, ifs, optionalSlots);
     auto selectionProjection = new SelectionProjectionReadModel(() {
@@ -338,7 +367,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app,
     new HistoryHttpAdapter(app.history, app.session, app.stepTrace).wire(httpServer);
     wireMutationHandlers(httpServer, app, executor, optionalSlots);
 
-    // Every slot filled? Task 0720. This function installs 42 delegates and
+    // Every slot filled? Task 0720. This function installs 51 delegates and
     // is the only thing that installs any of them, so a domain that stops
     // being wired is a domain whose endpoints answer "provider not set" — at
     // whatever later moment somebody happens to ask. Say it here instead,

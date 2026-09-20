@@ -407,6 +407,7 @@ tests.unit.plane_dump_test
 tests.unit.playback_owner_test
 tests.unit.point_size_law_test
 tests.unit.popup_state_test
+tests.unit.portless_route_ports_test
 tests.unit.prefs_test
 tests.unit.primary_memo_delete_test
 tests.unit.primary_memo_latch_test

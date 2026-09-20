@@ -794,6 +794,23 @@ class HttpServer {
     private ToolHandlesDataProvider toolHandlesDataProvider;
     private alias ToolStateDataProvider = string delegate();
     private ToolStateDataProvider toolStateDataProvider;
+    // W14-C: these nine adapters are application-owned even when their
+    // current implementations only read a published snapshot or diagnostic
+    // probe.  HttpServer owns transport and main-thread hand-off; the module
+    // that owns each value owns the JSON construction/state access.
+    private alias PortlessJsonProvider = string delegate();
+    private PortlessJsonProvider toolDisarmProvider;
+    private PortlessJsonProvider uiPolicyProvider;
+    private PortlessJsonProvider toolpropsIdsProvider;
+    private PortlessJsonProvider buttonAvailabilityProvider;
+    private alias InputContextProvider =
+        string delegate(bool havePoint, int x, int y, string key);
+    private InputContextProvider inputContextProvider;
+    private PortlessJsonProvider statsProvider;
+    private PortlessJsonProvider pieProvider;
+    private alias PerfResetHandler = void delegate();
+    private PerfResetHandler perfResetHandler;
+    private PortlessJsonProvider perfProvider;
     // /api/layers (GET) — JSON layer list. /api/model?layer=N — a layer-aware
     // detailed provider (N=-1 → active layer).
     //
@@ -1198,6 +1215,33 @@ class HttpServer {
     private MainThreadBridge!(ToolStateReq, ToolStateResp) toolStateBridge;
     private Duration toolStateBudget_ = 5.seconds;
 
+    struct PortlessJsonReq  { }
+    struct PortlessJsonResp { string result; string error; }
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
+        toolDisarmBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
+        uiPolicyBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
+        toolpropsIdsBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
+        buttonAvailabilityBridge;
+    struct InputContextReq {
+        bool havePoint;
+        int x;
+        int y;
+        string key;
+    }
+    struct InputContextResp { string result; string error; }
+    private MainThreadBridge!(InputContextReq, InputContextResp)
+        inputContextBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp) statsBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp) pieBridge;
+    struct PerfResetReq  { }
+    struct PerfResetResp { string error; }
+    private MainThreadBridge!(PerfResetReq, PerfResetResp) perfResetBridge;
+    private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp) perfBridge;
+    private Duration portlessRouteBudget_ = 5.seconds;
+
     struct HistoryReq  { }
     struct HistoryResp { string result; string error; }
     private MainThreadBridge!(HistoryReq, HistoryResp) historyBridge;
@@ -1458,6 +1502,124 @@ class HttpServer {
                     resp.error = e.msg;
                 }
             }, "/api/tool/state");
+
+        toolDisarmBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (toolDisarmProvider is null)
+                        resp.error = "tool-disarm provider not set";
+                    else
+                        resp.result = toolDisarmProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/tool/disarm");
+
+        uiPolicyBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (uiPolicyProvider is null)
+                        resp.error = "UI-policy provider not set";
+                    else
+                        resp.result = uiPolicyProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/ui/policy");
+
+        toolpropsIdsBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (toolpropsIdsProvider is null)
+                        resp.error = "tool-props ids provider not set";
+                    else
+                        resp.result = toolpropsIdsProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/toolprops/ids");
+
+        buttonAvailabilityBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (buttonAvailabilityProvider is null)
+                        resp.error = "button-availability provider not set";
+                    else
+                        resp.result = buttonAvailabilityProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/buttons/availability");
+
+        inputContextBridge = new MainThreadBridge!(InputContextReq,
+                InputContextResp)(this,
+            (ref InputContextReq req, ref InputContextResp resp) {
+                try {
+                    if (inputContextProvider is null)
+                        resp.error = "input-context provider not set";
+                    else
+                        resp.result = inputContextProvider(
+                            req.havePoint, req.x, req.y, req.key);
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/input/context");
+
+        statsBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (statsProvider is null)
+                        resp.error = "stats provider not set";
+                    else
+                        resp.result = statsProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/stats");
+
+        pieBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (pieProvider is null)
+                        resp.error = "pie provider not set";
+                    else
+                        resp.result = pieProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/pie");
+
+        perfResetBridge = new MainThreadBridge!(PerfResetReq,
+                PerfResetResp)(this,
+            (ref PerfResetReq req, ref PerfResetResp resp) {
+                try {
+                    if (perfResetHandler is null)
+                        resp.error = "perf-reset handler not set";
+                    else
+                        perfResetHandler();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/perf/reset");
+
+        perfBridge = new MainThreadBridge!(PortlessJsonReq,
+                PortlessJsonResp)(this,
+            (ref PortlessJsonReq req, ref PortlessJsonResp resp) {
+                try {
+                    if (perfProvider is null)
+                        resp.error = "perf provider not set";
+                    else
+                        resp.result = perfProvider();
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            }, "/api/perf");
 
         historyBridge = new MainThreadBridge!(HistoryReq, HistoryResp)(this,
             (ref HistoryReq req, ref HistoryResp resp) {
@@ -1931,7 +2093,68 @@ class HttpServer {
         this.selectionDataProvider = provider;
     }
 
+    public void setToolDisarmProvider(PortlessJsonProvider provider) {
+        this.toolDisarmProvider = provider;
+    }
+
+    public void setUiPolicyProvider(PortlessJsonProvider provider) {
+        this.uiPolicyProvider = provider;
+    }
+
+    public void setToolpropsIdsProvider(PortlessJsonProvider provider) {
+        this.toolpropsIdsProvider = provider;
+    }
+
+    public void setButtonAvailabilityProvider(PortlessJsonProvider provider) {
+        this.buttonAvailabilityProvider = provider;
+    }
+
+    public void setInputContextProvider(InputContextProvider provider) {
+        this.inputContextProvider = provider;
+    }
+
+    public void setStatsProvider(PortlessJsonProvider provider) {
+        this.statsProvider = provider;
+    }
+
+    public void setPieProvider(PortlessJsonProvider provider) {
+        this.pieProvider = provider;
+    }
+
+    public void setPerfResetHandler(PerfResetHandler handler) {
+        this.perfResetHandler = handler;
+    }
+
+    public void setPerfProvider(PortlessJsonProvider provider) {
+        this.perfProvider = provider;
+    }
+
     version(unittest) {
+        public size_t portlessOwnedPendingForTest(string path) {
+            switch (path) {
+            case "/api/tool/disarm":
+                return toolDisarmBridge.ownedPendingForTest();
+            case "/api/ui/policy":
+                return uiPolicyBridge.ownedPendingForTest();
+            case "/api/toolprops/ids":
+                return toolpropsIdsBridge.ownedPendingForTest();
+            case "/api/buttons/availability":
+                return buttonAvailabilityBridge.ownedPendingForTest();
+            case "/api/input/context":
+                return inputContextBridge.ownedPendingForTest();
+            case "/api/stats":
+                return statsBridge.ownedPendingForTest();
+            case "/api/pie":
+                return pieBridge.ownedPendingForTest();
+            case "/api/perf/reset":
+                return perfResetBridge.ownedPendingForTest();
+            case "/api/perf":
+                return perfBridge.ownedPendingForTest();
+            default:
+                assert(false, "unknown W14-C route: " ~ path);
+            }
+        }
+
         public void setSelectionBridgeMaxItersForTest(int maxIters) {
             assert(maxIters >= 0);
             selectionBridgeMaxIters_ = maxIters;
@@ -3046,20 +3269,26 @@ class HttpServer {
         }
     }
 
+    private PortlessJsonResp awaitPortlessJson(
+            MainThreadBridge!(PortlessJsonReq, PortlessJsonResp) bridge) {
+        return bridge.submitOwned(
+            PortlessJsonReq.init, PortlessJsonResp.init,
+            PortlessJsonResp("", "timeout waiting for main thread"),
+            PortlessJsonResp("", "HTTP server stopping"),
+            portlessRouteBudget_).result;
+    }
+
     private void route_apiToolDisarm(HttpRequest request, HttpResponse response) {
-        import std.format : format;
-        import tool_disarm : DisarmMode, g_disarmCrossings, g_lastDisarm;
-        const mode = g_lastDisarm.mode == DisarmMode.dropOnly
-            ? "dropOnly" : "cancelAndDrop";
         response.headers["Content-Type"] = "application/json";
-        response.statusCode = 200;
-        response.body = format(
-            `{"crossings":%s,"hadTool":%s,"cancelSteps":%s,"stillArmed":%s,"mode":"%s"}`,
-            g_disarmCrossings,
-            g_lastDisarm.hadTool ? "true" : "false",
-            g_lastDisarm.cancelSteps,
-            g_lastDisarm.stillArmed ? "true" : "false",
-            mode);
+        auto result = awaitPortlessJson(toolDisarmBridge);
+        if (result.error.length == 0) {
+            response.statusCode = 200;
+            response.body = result.result;
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"tool disarm read failed\",\"message\":\"" ~
+                            jsonEsc(result.error) ~ "\"}";
+        }
     }
 
     private void route_apiUiPolicy(HttpRequest request, HttpResponse response) {
@@ -3068,17 +3297,16 @@ class HttpServer {
         // (`--test`), whether the command refused, and the notice text the
         // user would have been shown.
         //
-        // NOT marshaled: `ui/availability.d`'s shape — the main thread writes
-        // one whole record under a lock, this reads it back under the same
-        // lock. There is no live structure to walk on the wrong thread.
+        // The JSON builder is application-owned; this route only transports
+        // its main-thread snapshot through the endpoint's dedicated bridge.
         response.headers["Content-Type"] = "application/json";
-        try {
-            import ui.discard_guard : uiPolicyJson;
+        auto result = awaitPortlessJson(uiPolicyBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = uiPolicyJson();
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
-            response.body = "{\"error\":\"" ~ jsonEsc(e.msg) ~ "\"}";
+            response.body = "{\"error\":\"" ~ jsonEsc(result.error) ~ "\"}";
         }
     }
 
@@ -3087,24 +3315,18 @@ class HttpServer {
         // column drawn: one entry per section header and two per row (the
         // widget's id, and a probe of the row's id-stack seed).
         //
-        // NOT marshaled, and it does not need to be: the panel publishes a
-        // finished column under a lock in one assignment, and this reads it
-        // back under the same lock. There is no live structure to walk on
-        // the wrong thread — unlike /api/tool/handles, whose registry is
-        // rebuilt from empty mid-draw.
-        //
         // Empty `items` is the honest answer when the panel has not drawn
         // (hidden by default under --test until `ui.toolProperties show`),
         // when it is collapsed, or in a non-test run where nothing records.
         response.headers["Content-Type"] = "application/json";
-        try {
-            import property_panel : toolPropsIdsJson;
+        auto result = awaitPortlessJson(toolpropsIdsBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = toolPropsIdsJson();
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
             response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
-                           jsonEsc(e.msg) ~ "\"}";
+                           jsonEsc(result.error) ~ "\"}";
         }
     }
 
@@ -3115,23 +3337,17 @@ class HttpServer {
         // availability resolver again would prove the resolver and say
         // nothing about whether the buttons still call it.
         //
-        // NOT marshaled, on the same grounds as /api/toolprops/ids right
-        // above: the draw publishes a finished frame under a lock in one
-        // assignment (buttons AND the hasEditTarget they were drawn
-        // against), and this reads it back under the same lock. Nothing
-        // live is walked from this thread.
-        //
         // Empty `buttons` is the honest answer before the first frame and
         // in a non-`--test` run, where nothing records.
         response.headers["Content-Type"] = "application/json";
-        try {
-            import ui.availability : buttonAvailabilityJson;
+        auto result = awaitPortlessJson(buttonAvailabilityBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = buttonAvailabilityJson();
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
             response.body = "{\"error\": \"Failed to retrieve button availability\", \"message\": \"" ~
-                           jsonEsc(e.msg) ~ "\"}";
+                           jsonEsc(result.error) ~ "\"}";
         }
     }
 
@@ -3149,12 +3365,8 @@ class HttpServer {
         // expected thing did not happen. Without a readback, a test can pin
         // the effect and still be blind to the rule that produced it.
         //
-        // Served from the HTTP thread against a published mirror + the frozen
-        // binding table, exactly as /api/buttons/availability is: nothing live
-        // is walked from here.
         response.headers["Content-Type"] = "application/json";
         try {
-            import input_context : inputContextJson;
             // Sentinel-based "was it given": the query helpers take a default,
             // and (0,0) is a legitimate pixel — so a missing x/y must not be
             // mistaken for the top-left corner, which is inside the tab strip.
@@ -3162,10 +3374,21 @@ class HttpServer {
             immutable int py = parseQueryInt(request.path, "y", int.min);
             immutable bool havePoint = (px != int.min && py != int.min);
             immutable string canon = parseQueryString(request.path, "key", "");
-            response.statusCode = 200;
-            response.body = inputContextJson(havePoint,
-                                             havePoint ? px : 0,
-                                             havePoint ? py : 0, canon);
+            auto owned = inputContextBridge.submitOwned(
+                InputContextReq(havePoint, havePoint ? px : 0,
+                                havePoint ? py : 0, canon),
+                InputContextResp.init,
+                InputContextResp("", "timeout waiting for main thread"),
+                InputContextResp("", "HTTP server stopping"),
+                portlessRouteBudget_);
+            if (owned.result.error.length == 0) {
+                response.statusCode = 200;
+                response.body = owned.result.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to resolve input context\", \"message\": \"" ~
+                               jsonEsc(owned.result.error) ~ "\"}";
+            }
         } catch (Exception e) {
             response.statusCode = 500;
             response.body = "{\"error\": \"Failed to resolve input context\", \"message\": \"" ~
@@ -3181,11 +3404,6 @@ class HttpServer {
         // panel drew it — which is the failure `ui/item_rows.d`'s header
         // records this codebase already shipping once.
         //
-        // NOT marshaled, on the same grounds as /api/buttons/availability: the
-        // draw publishes a finished frame under a lock in one assignment and
-        // this reads it back under the same lock. Nothing live is walked from
-        // this thread.
-        //
         // Empty `rows` is the honest answer before the first frame, in a
         // non-`--test` run, and while the panel is closed.
         //
@@ -3196,27 +3414,27 @@ class HttpServer {
         // bytes of one glyph into three characters. JSON is UTF-8 by
         // specification; saying so is what makes the glyph survive the wire.
         response.headers["Content-Type"] = "application/json; charset=utf-8";
-        try {
-            import ui.stat_record : statRowsJson;
+        auto result = awaitPortlessJson(statsBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = statRowsJson();
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
             response.body = "{\"error\": \"Failed to retrieve stat rows\", \"message\": \"" ~
-                           jsonEsc(e.msg) ~ "\"}";
+                           jsonEsc(result.error) ~ "\"}";
         }
     }
 
     private void route_apiPie(HttpRequest request, HttpResponse response) {
         response.headers["Content-Type"] = "application/json";
-        try {
-            import ui.pie_record : pieFrameJson;
+        auto result = awaitPortlessJson(pieBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = pieFrameJson();
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
             response.body = "{\"error\": \"Failed to retrieve pie frame\", \"message\": \"" ~
-                            jsonEsc(e.msg) ~ "\"}";
+                            jsonEsc(result.error) ~ "\"}";
         }
     }
 
@@ -3256,40 +3474,34 @@ class HttpServer {
     }
 
     private void route_apiPerfReset(HttpRequest request, HttpResponse response) {
-        // Zero all perf counters before a measured run. No-op in the
-        // default build (g_perf.reset compiles away).
-        //
-        // Task 0763 — writes from the HTTP thread into state the main thread
-        // concurrently reads/bumps every frame (`g_perf`'s per-category
-        // timers). Decision, written rather than implied: tolerable. Worst
-        // case is one straddling increment surviving the reset or one fresh
-        // sample landing a moment before it — a single-sample wobble in a
-        // diagnostic counter a caller is about to overwrite with a whole
-        // measured run's worth of data anyway. Marshaling this onto the main
-        // thread would add a frame of latency to the reset every perf-lane
-        // run pays for before its FIRST measured sample — a worse trade than
-        // the wobble it would remove.
-        g_perf.reset();
-        response.statusCode = 200;
-        response.body = "{\"status\":\"ok\"}";
         response.headers["Content-Type"] = "application/json";
+        auto owned = perfResetBridge.submitOwned(
+            PerfResetReq.init, PerfResetResp.init,
+            PerfResetResp("timeout waiting for main thread"),
+            PerfResetResp("HTTP server stopping"),
+            portlessRouteBudget_);
+        if (owned.result.error.length == 0) {
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"perf probe reset failed\",\"message\":\"" ~
+                            jsonEsc(owned.result.error) ~ "\"}";
+        }
     }
 
     private void route_apiPerf(HttpRequest request, HttpResponse response) {
-        // Per-category timing + counter breakdown. Direct read of the
-        // process-wide probe from the HTTP thread — plain counters, no
-        // lock needed for this diagnostic. Returns "{}" in the default
-        // (non-PerfProbe) build. Mesh vertex/face counts are available
-        // via /api/model, so they're intentionally not duplicated here.
-        try {
+        // The application adapter retains the default-build "{}" contract;
+        // the server only transports that main-thread result.
+        response.headers["Content-Type"] = "application/json";
+        auto result = awaitPortlessJson(perfBridge);
+        if (result.error.length == 0) {
             response.statusCode = 200;
-            response.body = g_perf.toJson();
-            response.headers["Content-Type"] = "application/json";
-        } catch (Exception e) {
+            response.body = result.result;
+        } else {
             response.statusCode = 500;
             response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
-                           jsonEsc(e.msg) ~ "\"}";
-            response.headers["Content-Type"] = "application/json";
+                           jsonEsc(result.error) ~ "\"}";
         }
     }
 
@@ -5010,7 +5222,7 @@ class HttpServer {
     /**
      * Every provider/handler/action slot this server owns that nothing filled in.
      *
-     * Task 0720 (audit №4, D5). `wireHttpProviders` installs 42 delegates in
+     * Task 0720 (audit №4, D5). `wireHttpProviders` installs 51 delegates in
      * one 2872-line function; a domain that stops being wired — a whole group
      * dropped by a bad merge, a `setXxxProvider` call lost while splitting the
      * function — used to be invisible until some test asked the endpoint and
@@ -5139,16 +5351,16 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/selection",            "",     Match.exact,  Answered.mainThread, "route_apiSelection"),
     RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
     RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.mainThread, "route_apiToolState"),
-    RouteSpec("/api/tool/disarm",          "GET",  Match.exact,  Answered.httpThread, "route_apiToolDisarm"),
-    RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
-    RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.httpThread, "route_apiUiPolicy"),
-    RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
-    RouteSpec("/api/input/context",        "GET",  Match.prefix, Answered.httpThread, "route_apiInputContext"),
-    RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.httpThread, "route_apiStats"),
-    RouteSpec("/api/pie",                  "GET",  Match.exact,  Answered.httpThread, "route_apiPie"),
+    RouteSpec("/api/tool/disarm",          "GET",  Match.exact,  Answered.mainThread, "route_apiToolDisarm"),
+    RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.mainThread, "route_apiToolpropsIds"),
+    RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.mainThread, "route_apiUiPolicy"),
+    RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.mainThread, "route_apiButtonsAvailability"),
+    RouteSpec("/api/input/context",        "GET",  Match.prefix, Answered.mainThread, "route_apiInputContext"),
+    RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.mainThread, "route_apiStats"),
+    RouteSpec("/api/pie",                  "GET",  Match.exact,  Answered.mainThread, "route_apiPie"),
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
-    RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),
-    RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),
+    RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.mainThread, "route_apiPerfReset"),
+    RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.mainThread, "route_apiPerf"),
     RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.mainThread, "route_apiFramesCountsReset"),
     RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.mainThread, "route_apiFramesCounts"),
     RouteSpec("/api/frames/reset",         "POST", Match.exact,  kFramesAnswered, "route_apiFramesReset"),
@@ -5384,6 +5596,16 @@ unittest {
     auto censusMesh = makeCube();
     server.setDetailedModelDataProvider(
         () => meshToJsonDetailed(censusMesh));
+    server.setToolDisarmProvider(() => `{}`);
+    server.setUiPolicyProvider(() => `{}`);
+    server.setToolpropsIdsProvider(() => `{}`);
+    server.setButtonAvailabilityProvider(() => `{}`);
+    server.setInputContextProvider(
+        (bool havePoint, int x, int y, string key) => `{}`);
+    server.setStatsProvider(() => `{}`);
+    server.setPieProvider(() => `{}`);
+    server.setPerfResetHandler(() {});
+    server.setPerfProvider(() => `{}`);
     server.setTestMode(true);
     server.setModelBudgetForTest(100.msecs);
     server.setToolHandlesBudgetForTest(5.msecs);
