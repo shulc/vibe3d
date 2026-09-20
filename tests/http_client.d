@@ -1,5 +1,6 @@
-/// tests/http_client.d — the ONE HTTP transport every suite driver talks to
-/// its worker's `vibe3d --test` through.
+/// tests/http_client.d — the ONE HTTP client seam every suite driver uses.
+/// The default backend talks to its worker's `vibe3d --test` over a socket;
+/// an in-process host can install the second backend below.
 ///
 /// WHY IT IS THE ONLY ONE. Before task 4055 the runner rewrote the literal
 /// `localhost:8080` inside a scratch COPY of every test source, so a driver
@@ -16,6 +17,46 @@ import std.json      : JSONValue, parseJSON;
 import std.net.curl  : get, post, HTTP;
 import std.process   : environment;
 import std.stdio     : stderr;
+
+struct ClientResponse
+{
+    int statusCode;
+    string body;
+}
+
+alias InProcessClientTransport = ClientResponse delegate(
+    string method, string path, string body_);
+
+private InProcessClientTransport g_inProcessTransport;
+
+void setInProcessTransport(InProcessClientTransport transport)
+{
+    g_inProcessTransport = transport;
+}
+
+void clearInProcessTransport()
+{
+    g_inProcessTransport = null;
+}
+
+@property bool inProcessTransportInstalled()
+{
+    return g_inProcessTransport !is null;
+}
+
+private bool tryInProcess(string method, string path, string body_,
+                          bool allowErrorStatus, out string responseBody)
+{
+    if (g_inProcessTransport is null)
+        return false;
+
+    const response = g_inProcessTransport(method, path, body_);
+    if (!allowErrorStatus && response.statusCode >= 400)
+        throw new Exception("HTTP request failed with status "
+            ~ response.statusCode.to!string);
+    responseBody = response.body;
+    return true;
+}
 
 /// The variable `run_test.d` writes into every test process.
 enum string kPortEnv = "VIBE3D_TEST_PORT";
@@ -87,11 +128,17 @@ private __gshared bool g_announcedUnset;
 }
 
 JSONValue getJson(string path, string baseUrl = null) {
+    string response;
+    if (tryInProcess("GET", path, null, false, response))
+        return parseJSON(response);
     const base = baseUrl.length ? baseUrl : testBaseUrl;
     return parseJSON(cast(string)get(base ~ path));
 }
 
 string postRaw(string path, string body_, string baseUrl = null) {
+    string response;
+    if (tryInProcess("POST", path, body_, false, response))
+        return response;
     const base = baseUrl.length ? baseUrl : testBaseUrl;
     return cast(string)post(base ~ path, body_);
 }
@@ -106,6 +153,9 @@ JSONValue postJson(string path, string body_, string baseUrl = null) {
 /// rather than in that one file so the endpoint is resolved in exactly one
 /// place, like the other three.
 string postRawAllowingErrorStatus(string path, string body_, string baseUrl = null) {
+    string response;
+    if (tryInProcess("POST", path, body_, true, response))
+        return response;
     const base = baseUrl.length ? baseUrl : testBaseUrl;
     auto http = HTTP();
     http.method = HTTP.Method.post;

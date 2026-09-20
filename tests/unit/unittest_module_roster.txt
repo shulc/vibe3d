@@ -273,6 +273,7 @@ tests.unit.harness_log_isolation_census_test
 tests.unit.headless_tool_pairing_test
 tests.unit.history_http_adapter_test
 tests.unit.history_replay_boundary_test
+tests.unit.http_server_test
 tests.unit.idle_handle_pose_census_test
 tests.unit.image_cache_test
 tests.unit.image_plane_test
