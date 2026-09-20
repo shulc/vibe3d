@@ -106,7 +106,7 @@ private string askRunner(string cwd, string flag,
         env.remove("VIBE3D_PERF_RUNTEST_LOCK_PATH");
 
     auto r = execute(["rdmd", runnerPath, flag],
-                     env, Config.none, size_t.max, cwd);
+                     env, Config.newEnv, size_t.max, cwd);
     enforce(r.status == 0, format(
         "`rdmd %s %s` (cwd %s) exited %d:\n%s\n" ~
         "rdmd drives the whole HTTP suite (run_test.d's own shebang), so it " ~
@@ -255,7 +255,7 @@ unittest
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = runnerLockPath();
 
     auto r = execute(["rdmd", runnerPath, "--sweep-scratch"],
-                     env, Config.none, size_t.max, repoRoot);
+                     env, Config.newEnv, size_t.max, repoRoot);
     assert(r.status == 0, "--sweep-scratch failed:\n" ~ r.output);
     assert(r.output.canFind(orphan), format(
         "--sweep-scratch did not report the injected orphan %s:\n%s",

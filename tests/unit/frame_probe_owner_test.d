@@ -409,8 +409,12 @@ unittest { // C-1: production wiring owns exactly these two routes
     immutable ownerTick = bodyAt(source,
         "public void tickFrames(ref FrameProbe probe)");
     assert(ownerTick.canFind("framesBridge.tickClaimed("));
-    assert(raw.canFind("version (PerfProbe) private enum Answered kFramesAnswered = Answered.mainThread;")
-        && raw.canFind("else                private enum Answered kFramesAnswered = Answered.httpThread;"));
+    assert(raw.canFind("version (PerfProbe) {")
+        && raw.canFind("private enum Answered kFramesAnswered = Answered.mainThread;")
+        && raw.canFind("else {")
+        && raw.canFind("private enum Answered kFramesAnswered = Answered.httpThread;")
+        && raw.canFind("6730 PerfProbe frame routes must answer on the main thread")
+        && raw.canFind("6730 default frame routes must answer on the HTTP thread"));
     assert(raw.canFind("private Duration framesBudget_ = 5.seconds;"),
         "6511 FrameProbe routes must retain the owner-approved five-second deadline");
     assert(raw.canFind(`RouteSpec("/api/frames/reset",         "POST", Match.exact,  kFramesAnswered`)
