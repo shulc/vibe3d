@@ -22,8 +22,6 @@ import core.atomic;
 import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
 
-// For event player functionality
-import bindbc.sdl;
 import eventlog;
 import playback_controller : PlaybackController, encodePlaybackStatus;
 import argstring : parseArgstring, ParsedLine;
