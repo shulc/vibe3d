@@ -4930,8 +4930,18 @@ enum Answered : ubyte {
     mainThread,  // marshaled through a MainThreadBridge
 }
 
-version (PerfProbe) private enum Answered kFramesAnswered = Answered.mainThread;
-else                private enum Answered kFramesAnswered = Answered.httpThread;
+version (PerfProbe)
+{
+    private enum Answered kFramesAnswered = Answered.mainThread;
+    static assert(kFramesAnswered == Answered.mainThread,
+        "6730 PerfProbe frame routes must answer on the main thread");
+}
+else
+{
+    private enum Answered kFramesAnswered = Answered.httpThread;
+    static assert(kFramesAnswered == Answered.httpThread,
+        "6730 default frame routes must answer on the HTTP thread");
+}
 
 struct RouteSpec {
     string   path;

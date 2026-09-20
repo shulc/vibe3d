@@ -3,8 +3,12 @@
 // GET and POST handlers with opposite thread ownership, so a path-keyed scan
 // collapses the one pair that proves the distinction.  The population and
 // both sides of the biconditional are exact: a handler without a *Bridge is
-// httpThread, and a handler with one is not.  The two kFramesAnswered builds
-// also pin the same raw handler bytes through one shared digest.
+// httpThread, and a handler with one is not.  The literal columns are 24
+// httpThread / 35 mainThread / 2 kFramesAnswered; resolving the last column
+// gives default 26 httpThread / 35 mainThread and PerfProbe 24 / 37.  Bridge
+// reachability follows local named calls to a fixed point, rather than reading
+// only the route handler's own text.  Both builds pin the same raw frame-handler
+// bytes through one shared digest.
 module tests.unit.answered_bridge_census_test;
 
 import std.algorithm : endsWith, sort;
@@ -13,9 +17,9 @@ import std.digest.sha : sha256Of, toHexString;
 import std.file      : readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.string    : count, indexOf, split, splitLines, strip;
+import std.string    : count, indexOf, strip;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, declaratorName;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum string kServerPath = buildPath(repoRoot, "source", "http_server.d");
@@ -28,6 +32,12 @@ private struct RouteRow
     string handler;
     string body;
     string[] bridges;
+}
+
+private struct NamedBody
+{
+    string name;
+    string code;
 }
 
 private bool isIdent(char c)
@@ -149,10 +159,129 @@ private string[] bridgeIdentifiers(string codeBody)
     return result;
 }
 
+private bool hasAggregateKeyword(string declaration)
+{
+    foreach (word; ["class", "enum", "interface", "struct", "template", "union"])
+        if (tokenCount(declaration, word) != 0) return true;
+    return false;
+}
+
+/// Find named function bodies with the same code projection and brace walker
+/// used for route handlers.  Anonymous delegates are deliberately not given a
+/// name: a direct call cannot target one by source identifier.
+private NamedBody[] namedFunctionBodies(string code)
+{
+    struct OpenBrace
+    {
+        size_t at;
+        string name;
+        bool isFunction;
+    }
+
+    NamedBody[] result;
+    OpenBrace[] opens;
+    size_t declarationStart;
+    foreach (i, c; code)
+    {
+        switch (c)
+        {
+        case '{':
+            const declaration = code[declarationStart .. i];
+            const name = declaratorName(declaration);
+            opens ~= OpenBrace(i, name,
+                name.length != 0 && declaration.indexOf('(') >= 0
+                && !hasAggregateKeyword(declaration));
+            declarationStart = i + 1;
+            break;
+        case '}':
+            assert(opens.length != 0,
+                "6730 named-body scan found an unmatched closing brace");
+            const open = opens[$ - 1];
+            opens = opens[0 .. $ - 1];
+            if (open.isFunction)
+                result ~= NamedBody(open.name,
+                    code[open.at .. i + 1].idup);
+            declarationStart = i + 1;
+            break;
+        case ';':
+            declarationStart = i + 1;
+            break;
+        default:
+            break;
+        }
+    }
+    assert(opens.length == 0,
+        "6730 named-body scan found an unterminated brace-owning region");
+    return result;
+}
+
+private string[] calledLocalNames(string codeBody, ref string[][string] bodies)
+{
+    bool[string] seen;
+    size_t i;
+    while (i < codeBody.length)
+    {
+        if (!isIdent(codeBody[i]) || (codeBody[i] >= '0' && codeBody[i] <= '9'))
+        {
+            ++i;
+            continue;
+        }
+        const start = i++;
+        while (i < codeBody.length && isIdent(codeBody[i])) ++i;
+        const word = codeBody[start .. i];
+        size_t next = i;
+        while (next < codeBody.length
+            && (codeBody[next] == ' ' || codeBody[next] == '\t'
+                || codeBody[next] == '\r' || codeBody[next] == '\n'))
+            ++next;
+        if (next < codeBody.length && codeBody[next] == '('
+            && word in bodies)
+            seen[word.idup] = true;
+    }
+    auto result = seen.keys;
+    result.sort;
+    return result;
+}
+
+private string[][string] namedFunctionBodyMap(string code)
+{
+    string[][string] bodies;
+    foreach (body; namedFunctionBodies(code))
+        bodies[body.name] ~= body.code;
+    return bodies;
+}
+
+private string[] reachableBridgeIdentifiers(string root,
+                                             ref string[][string] bodies)
+{
+    assert(root in bodies, "6730 route handler has no named body: " ~ root);
+
+    bool[string] visited;
+    string[] pending = [root];
+    bool[string] bridges;
+    while (pending.length != 0)
+    {
+        const name = pending[$ - 1];
+        pending.length -= 1;
+        if (name in visited) continue;
+        visited[name] = true;
+        foreach (body; bodies[name])
+        {
+            foreach (bridge; bridgeIdentifiers(body)) bridges[bridge] = true;
+            foreach (callee; calledLocalNames(body, bodies))
+                if (callee !in visited) pending ~= callee;
+        }
+    }
+    auto result = bridges.keys;
+    result.sort;
+    return result;
+}
+
 private RouteRow[] scanRoutes(string raw)
 {
     const code = blankNonCode(raw);
     const commentsBlanked = blankComments(raw);
+    auto bodies = namedFunctionBodyMap(code);
     enum tableMarker = "private enum RouteSpec[] kRoutes = [";
     const tableAt = code.indexOf(tableMarker);
     assert(tableAt >= 0, "6730 census cannot find the kRoutes declaration");
@@ -213,7 +342,10 @@ private RouteRow[] scanRoutes(string raw)
         const close = matchingClose(code, cast(size_t) open, '{', '}');
         assert(close < code.length, "6730 handler body is unterminated: " ~ row.handler);
         row.body = raw[cast(size_t) open .. close + 1].idup;
-        row.bridges = bridgeIdentifiers(code[cast(size_t) open .. close + 1]);
+        assert(row.body.length >= 100, format(
+            "6730 handler body span is too short: %s covers %d bytes, expected at least 100",
+            row.handler, row.body.length));
+        row.bridges = reachableBridgeIdentifiers(row.handler, bodies);
     }
     return routes;
 }
@@ -221,19 +353,6 @@ private RouteRow[] scanRoutes(string raw)
 private string routeLabel(ref const RouteRow row)
 {
     return row.method ~ " " ~ row.path ~ " (" ~ row.handler ~ ")";
-}
-
-private string[] frameAnswerDefinitions(string raw)
-{
-    string[] result;
-    foreach (line; blankNonCode(raw).splitLines)
-    {
-        const normalized = line.strip.split.join(" ");
-        if (normalized.indexOf("enum Answered kFramesAnswered =") >= 0)
-            result ~= normalized.idup;
-    }
-    result.sort;
-    return result;
 }
 
 private string frameBodyBytes(const RouteRow[] routes)
@@ -254,7 +373,7 @@ private string frameBodyBytes(const RouteRow[] routes)
     return result.data;
 }
 
-private void assertFrameBodyBytes(string buildName)
+private void assertFrameBodyBytes()
 {
     const raw = readText(kServerPath);
     const routes = scanRoutes(raw);
@@ -264,11 +383,11 @@ private void assertFrameBodyBytes(string buildName)
     enum expectedSha256 =
         "BCCDF6A5AC179CFCA0083BFCADCEB573C6EA779C154BE45BEB8E6B617460BC94";
     assert(bytes.length == expectedBytes, format(
-        "6730 %s kFramesAnswered handler bytes changed: expected %d, found %d",
-        buildName, expectedBytes, bytes.length));
+        "6730 kFramesAnswered handler bytes changed: expected %d, found %d",
+        expectedBytes, bytes.length));
     assert(digest == expectedSha256, format(
-        "6730 %s kFramesAnswered handler bytes changed: expected sha256 %s, found %s",
-        buildName, expectedSha256, digest));
+        "6730 kFramesAnswered handler bytes changed: expected sha256 %s, found %s",
+        expectedSha256, digest));
 }
 
 unittest // scanner control: whole lower-case identifier, code only
@@ -280,6 +399,37 @@ unittest // scanner control: whole lower-case identifier, code only
         historyBridgeSuffix;`);
     assert(bridgeIdentifiers(probe) == ["historyBridge"],
         "6730 *Bridge token classifier accepted a comment, literal, type, or suffix");
+}
+
+unittest // fixture: route-table comments and non-code bridge names stay blank
+{
+    enum fixture = q"FIXTURE
+private enum RouteSpec[] kRoutes = [
+    RouteSpec(/* comment, with comma */ "/fixture", "GET", Match.exact,
+              Answered.httpThread, "route_fixture"),
+    RouteSpec("/nested", "GET", Match.exact,
+              Answered.mainThread, "route_nested"),
+];
+void route_fixture(HttpRequest request, HttpResponse response) {
+    // historyBridge is prose, not a dependency.
+    const diagnostic = "modelBridge is literal text";
+    response.statusCode = request.path.length ? 200 : 500;
+    response.body = diagnostic.length ? "{}" : "unreachable";
+}
+void route_nested(HttpRequest request, HttpResponse response) {
+    nested_helper(request, response);
+    response.statusCode = response.body.length ? 200 : 500;
+    response.body ~= (request.path.length ? "" : "unreachable padding for span");
+}
+void nested_helper(HttpRequest request, HttpResponse response) {
+    historyBridge.submitAndWait();
+}
+FIXTURE";
+    const routes = scanRoutes(fixture);
+    assert(routes.length == 2 && routes[0].bridges.length == 0,
+        "6730 code projection treated a route-table comment, comment bridge, or literal bridge as code");
+    assert(routes[1].bridges == ["historyBridge"],
+        "6730 local-call closure did not reach a bridge named only by a helper body");
 }
 
 unittest
@@ -309,8 +459,14 @@ unittest
     string[] nonHttpThreadWithoutBridge;
     size_t portless;
     size_t bridged;
+    size_t httpThread;
+    size_t mainThread;
+    size_t framesAnswered;
     foreach (ref const row; routes)
     {
+        if (row.answered == "Answered.httpThread") ++httpThread;
+        else if (row.answered == "Answered.mainThread") ++mainThread;
+        else if (row.answered == "kFramesAnswered") ++framesAnswered;
         const isHttpThread = row.answered == "Answered.httpThread";
         const hasBridge = row.bridges.length != 0;
         if (hasBridge) ++bridged;
@@ -339,43 +495,32 @@ unittest
         "6730 portless route population changed: expected 24, found %d", portless));
     assert(bridged == 37, format(
         "6730 bridged route population changed: expected 37, found %d", bridged));
+    assert(httpThread == 24, format(
+        "6730 Answered.httpThread column changed: expected 24, found %d", httpThread));
+    assert(mainThread == 35, format(
+        "6730 Answered.mainThread column changed: expected 35, found %d", mainThread));
+    assert(framesAnswered == 2, format(
+        "6730 kFramesAnswered column changed: expected 2, found %d", framesAnswered));
 
-    // Reproduce the rejected key.  Last-row-wins path keying overwrites the
-    // POST /api/camera body with the portless GET body, yielding the measured
-    // wrong 25/36/false instead of the handler-keyed 24/37/true above.
+    // Reproduce the rejected key without depending on the two /api/camera
+    // rows' order.  OR-folding by path still collapses 61 handlers to 60 paths
+    // and yields the wrong 23/37 partition instead of 24/37 above.
     bool[string] pathHasBridge;
-    foreach (ref const row; routes) pathHasBridge[row.path] = row.bridges.length != 0;
+    foreach (ref const row; routes) pathHasBridge[row.path] |= row.bridges.length != 0;
     size_t pathPortless;
     size_t pathBridged;
-    bool pathPortlessAllHttp = true;
-    foreach (ref const row; routes)
+    foreach (hasBridge; pathHasBridge)
     {
-        if (!pathHasBridge[row.path])
-        {
-            ++pathPortless;
-            pathPortlessAllHttp = pathPortlessAllHttp
-                && row.answered == "Answered.httpThread";
-        }
+        if (!hasBridge) ++pathPortless;
         else ++pathBridged;
     }
-    assert(pathPortless == 25 && pathBridged == 36 && !pathPortlessAllHttp,
+    assert(pathPortless == 23 && pathBridged == 37,
         format("6730 path-key control stopped discriminating: "
-             ~ "expected 25/36/false, found %d/%d/%s",
-               pathPortless, pathBridged, pathPortlessAllHttp));
-
-    const frameDefs = frameAnswerDefinitions(raw);
-    assert(frameDefs == [
-        "else private enum Answered kFramesAnswered = Answered.httpThread;",
-        "version (PerfProbe) private enum Answered kFramesAnswered = Answered.mainThread;",
-    ], "6730 kFramesAnswered must map default=>httpThread and PerfProbe=>mainThread: "
-       ~ frameDefs.join(" | "));
+             ~ "expected 23/37 over 60 paths, found %d/%d",
+               pathPortless, pathBridged));
 }
 
-version (PerfProbe) unittest
+unittest
 {
-    assertFrameBodyBytes("PerfProbe");
-}
-else unittest
-{
-    assertFrameBodyBytes("default");
+    assertFrameBodyBytes();
 }
