@@ -43,7 +43,7 @@ import std.exception : enforce;
 import std.file      : dirEntries, SpanMode, exists, readText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
-import std.string    : indexOf, splitLines, startsWith, stripLeft;
+import std.string    : indexOf, split, splitLines, startsWith, stripLeft;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -233,4 +233,112 @@ unittest
             "kAllowedLiterals names \"%s\" in %s, and it is no longer there. "
           ~ "A stale exemption is a standing hole: delete the row.",
             row[1], row[0]));
+}
+
+// Task 6760 makes the transport-neutrality requirement executable. This is
+// half A only: a composition census cannot prove that a route ANSWERS through
+// identical marshaling; the in-process route walk in http_server.d is the
+// behavioural half, with all 61 bodies and a >= 30 non-degraded-response floor.
+// Two apparent duplications are sanctioned controls, not implementation copies:
+// tools/sanitizer/lane.d :: kSweepRoutes independently recounts all 61 routes,
+// while /api/changes, /api/cache/rebuilds and /api/gc/commands are task 1906
+// contracts that must remain Answered.httpThread.
+unittest
+{
+    const serverPath = buildPath(repoRoot, "source", "http_server.d");
+    const raw = readText(serverPath);
+
+    enum transportMarker = "final class InProcessHttpTransport";
+    const transportAt = raw.indexOf(transportMarker);
+    assert(transportAt >= 0,
+        "6760 transport composition census: InProcessHttpTransport disappeared");
+    const transportOpenRel = raw[cast(size_t) transportAt .. $].indexOf('{');
+    assert(transportOpenRel >= 0,
+        "6760 transport composition census: InProcessHttpTransport has no body");
+    const transportOpen = cast(size_t) transportAt
+        + cast(size_t) transportOpenRel;
+    size_t transportEnd = raw.length;
+    size_t transportDepth;
+    foreach (i; transportOpen .. raw.length)
+    {
+        if (raw[i] == '{') ++transportDepth;
+        else if (raw[i] == '}' && --transportDepth == 0)
+        {
+            transportEnd = i + 1;
+            break;
+        }
+    }
+    assert(transportEnd < raw.length,
+        "6760 transport composition census: InProcessHttpTransport body is unbalanced");
+    const transportRaw = raw[transportOpen .. transportEnd];
+    assert(transportRaw.length >= 300,
+        "6760 transport composition census: transport-body domain fell below "
+        ~ "300 bytes; an empty/truncated body makes both absence checks vacuous");
+
+    enum routesMarker = "private enum RouteSpec[] kRoutes = [";
+    const routesAt = raw.indexOf(routesMarker);
+    assert(routesAt >= 0,
+        "6760 transport composition census: kRoutes disappeared");
+    const routesEndRel = raw[cast(size_t) routesAt .. $].indexOf("];\n");
+    assert(routesEndRel >= 0,
+        "6760 transport composition census: kRoutes has no closing delimiter");
+    const routesText = raw[cast(size_t) routesAt
+        .. cast(size_t) routesAt + cast(size_t) routesEndRel];
+
+    string[] routeLiterals;
+    string[] handlerNames;
+    foreach (line; routesText.splitLines)
+    {
+        const stripped = line.stripLeft;
+        if (!stripped.startsWith("RouteSpec(")) continue;
+        const fields = stripped.split('"');
+        assert(fields.length == 7,
+            "6760 transport composition census: a kRoutes row no longer has "
+            ~ "the path/method/handler literal shape: " ~ stripped);
+        routeLiterals ~= fields[1];
+        handlerNames ~= fields[5];
+    }
+
+    // Independent population floors for the two narrowed domains. These are
+    // measured route ROWS, not distinct paths (/api/camera has GET and POST).
+    assert(routeLiterals.length == 61,
+        "6760 transport composition census: route-literal domain must contain "
+        ~ "all 61 kRoutes rows, found " ~ format("%d", routeLiterals.length));
+    assert(handlerNames.length == 61,
+        "6760 transport composition census: handler-name domain must contain "
+        ~ "all 61 kRoutes rows, found " ~ format("%d", handlerNames.length));
+
+    string[] literalOffenders;
+    string[] handlerOffenders;
+    size_t rootRouteRows;
+    foreach (i, path; routeLiterals)
+    {
+        // Non-root paths cannot occur in D code except as text. Root is
+        // matched as a complete ordinary/backtick literal so HTTP/1.1 is not
+        // mistaken for route-specific transport knowledge.
+        if (path == "/") ++rootRouteRows;
+        const found = path == "/"
+            ? (transportRaw.indexOf(`"/"`) >= 0
+                || transportRaw.indexOf("`/`") >= 0)
+            : transportRaw.indexOf(path) >= 0;
+        if (found) literalOffenders ~= path;
+        if (transportRaw.indexOf(handlerNames[i]) >= 0)
+            handlerOffenders ~= handlerNames[i];
+    }
+    assert(rootRouteRows == 1,
+        "6760 transport composition census: root-literal special-case domain "
+        ~ "must contain exactly 1 kRoutes row");
+    sort(literalOffenders);
+    sort(handlerOffenders);
+
+    assert(literalOffenders.length == 0, format(
+        "6760 transport composition census: concrete route handling leaked "
+      ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
+      ~ "may construct a request and call HttpServer.handleRequest; route "
+      ~ "selection stays in the server dispatcher.", literalOffenders));
+    assert(handlerOffenders.length == 0, format(
+        "6760 transport composition census: handler name(s) leaked into "
+      ~ "InProcessHttpTransport: %s. The transport must not select or invoke "
+      ~ "a route handler; HttpServer.handleRequest owns dispatch.",
+        handlerOffenders));
 }
