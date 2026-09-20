@@ -417,6 +417,32 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(!carriesHttpThreadRationale("Answered.httpThread without a reason"),
         "6760 contract-rationale control: a disposition without its "
         ~ "unsynchronised-source reason must not satisfy the pin");
+    assert(!carriesHttpThreadRationale("unsynchronised but no disposition"),
+        "6760 contract-rationale control: an unsynchronised-source comment "
+        ~ "without Answered.httpThread must not satisfy the pin");
+
+    enum rationaleSource = q"FIXTURE
+private void route_fixture() {
+    // Answered.httpThread because the diagnostic is unsynchronised.
+}
+FIXTURE";
+    const rationaleProjection = projectSource(rationaleSource);
+    assert(carriesHttpThreadRationale(sourceBody(rationaleSource,
+            rationaleProjection.code, "private void route_fixture()")),
+        "6760 source-body control: the complete named handler body must carry "
+        ~ "its source rationale");
+    assert(sourceBody(rationaleSource, rationaleProjection.code,
+            "private void missing()" ).length == 0,
+        "6760 source-body control: a missing handler marker must not borrow a body");
+    assert(sourceBody("short", rationaleProjection.code,
+            "private void route_fixture()" ).length == 0,
+        "6760 source-body control: unequal lexical projections must be rejected");
+    assert(sourceBody("private void unfinished()", "private void unfinished()",
+            "private void unfinished()" ).length == 0,
+        "6760 source-body control: a marker without a body must be rejected");
+    assert(sourceBody("private void unfinished() {",
+            "private void unfinished() {", "private void unfinished()" ).length == 0,
+        "6760 source-body control: an unbalanced handler body must be rejected");
 
     enum bracesInLiteral = q"FIXTURE
 final class InProcessHttpTransport {
