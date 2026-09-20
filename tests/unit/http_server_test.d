@@ -114,6 +114,8 @@ unittest {
     req.body = `{"kind":"empty"}`;
 
     auto resp = dispatch(transport, req);
+    assert(!srv.singleThreadedChannelForTest(),
+        "6750 channel depth release: the caller retained its marker after request return");
     assert(resp.statusCode == 403,
         "blocker 1: /api/test/layer must 403 outside --test mode, exactly "
         ~ "like /api/changes and /api/play-events (got "
