@@ -11,9 +11,12 @@
 // bytes through one shared digest.
 module tests.unit.answered_bridge_census_test;
 
+import core.exception : AssertError;
+
 import std.algorithm : endsWith, sort;
 import std.array     : appender, join;
 import std.digest.sha : sha256Of, toHexString;
+import std.exception : assertThrown;
 import std.file      : readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
@@ -234,6 +237,30 @@ private string[] calledLocalNames(string codeBody, ref string[][string] bodies)
             && (codeBody[next] == ' ' || codeBody[next] == '\t'
                 || codeBody[next] == '\r' || codeBody[next] == '\n'))
             ++next;
+        if (next < codeBody.length && codeBody[next] == '!')
+        {
+            ++next;
+            while (next < codeBody.length
+                && (codeBody[next] == ' ' || codeBody[next] == '\t'
+                    || codeBody[next] == '\r' || codeBody[next] == '\n'))
+                ++next;
+            if (next < codeBody.length && codeBody[next] == '(')
+            {
+                const close = matchingClose(codeBody, next, '(', ')');
+                if (close == codeBody.length) continue;
+                next = close + 1;
+            }
+            else
+            {
+                while (next < codeBody.length
+                    && (isIdent(codeBody[next]) || codeBody[next] == '.'))
+                    ++next;
+            }
+            while (next < codeBody.length
+                && (codeBody[next] == ' ' || codeBody[next] == '\t'
+                    || codeBody[next] == '\r' || codeBody[next] == '\n'))
+                ++next;
+        }
         if (next < codeBody.length && codeBody[next] == '('
             && word in bodies)
             seen[word.idup] = true;
@@ -430,6 +457,19 @@ FIXTURE";
         "6730 code projection treated a route-table comment, comment bridge, or literal bridge as code");
     assert(routes[1].bridges == ["historyBridge"],
         "6730 local-call closure did not reach a bridge named only by a helper body");
+}
+
+unittest // fixture: the handler-body area has an independent non-vacuity floor
+{
+    enum fixture = q"FIXTURE
+private enum RouteSpec[] kRoutes = [
+    RouteSpec("/short", "GET", Match.exact,
+              Answered.httpThread, "route_short"),
+];
+void route_short(HttpRequest request, HttpResponse response) {}
+FIXTURE";
+    assertThrown!AssertError(scanRoutes(fixture),
+        "6730 handler-body span floor accepted an empty scanned area");
 }
 
 unittest
