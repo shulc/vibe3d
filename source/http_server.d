@@ -5170,7 +5170,7 @@ unittest {
     import core.thread : Thread;
     import core.time : MonoTime, msecs, seconds;
     import std.format : format;
-    import std.json : parseJSON;
+    import std.json : JSONType, parseJSON;
     import std.string : startsWith, toLower;
 
     import mesh : makeCube;
@@ -5267,6 +5267,22 @@ unittest {
                  ~ "application/json: %s\nbody: %s",
                    route.method.length != 0 ? route.method : "ANY",
                    route.path, route.handler, problem, response.body));
+
+        if (route.handler == "route_apiModel") {
+            const model = parseJSON(response.body);
+            const vertexCount = "vertexCount" in model.object;
+            const vertices = "vertices" in model.object;
+            assert(response.statusCode == 200
+                && vertexCount !is null
+                && vertexCount.type == JSONType.integer
+                && vertexCount.integer == 8
+                && vertices !is null
+                && vertices.type == JSONType.array
+                && vertices.array.length == 8,
+                "6740 route JSON census: the live /api/model body did not "
+                ~ "come from the one-cube detailed mesh emitter: "
+                ~ response.body);
+        }
 
         const lowerBody = response.body.toLower();
         immutable degraded = response.statusCode >= 400
