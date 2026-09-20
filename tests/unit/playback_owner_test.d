@@ -500,7 +500,7 @@ unittest { // U8: stopping detaches a queued load before acceptance
 private string bodyAt(string source, string marker) {
     immutable start = source.indexOf(marker);
     assert(start >= 0, "5960 production marker missing: " ~ marker);
-    immutable next = source.indexOf("\n    private void route_", start + marker.length);
+    immutable next = source.indexOf("\n    private void ", start + marker.length);
     immutable publicNext = source.indexOf("\n    public ", start + marker.length);
     size_t finish = source.length;
     if (next >= 0) finish = cast(size_t)next;
@@ -515,12 +515,17 @@ unittest { // W1: production routes and wiring use only the owned controller pat
     immutable source = readText(buildPath(root, "source", "http_server.d"));
     const postRoute = bodyAt(source,
         "private void route_apiPlayEvents(HttpRequest request, HttpResponse response)");
+    const postBody = bodyAt(source,
+        "private void servePlayEvents(HttpRequest request, HttpResponse response)");
     const statusRoute = bodyAt(source,
         "private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response)");
-    assert(postRoute.canFind("playEventsBridge.submitOwned")
+    assert(postRoute.canFind("servePlayEvents(request, response)")
+        && postBody.canFind("playEventsBridge.submitOwned")
         && !postRoute.canFind("eventPlayer.begin(")
-        && !postRoute.canFind("playbackController.accept("),
-        "W1 POST route bypassed owned playback acceptance");
+        && !postBody.canFind("eventPlayer.begin(")
+        && !postRoute.canFind("playbackController.accept(")
+        && !postBody.canFind("playbackController.accept("),
+        "W1 POST wrapper/body bypassed owned playback acceptance");
     assert(statusRoute.canFind("playEventsStatusBridge.submitOwned")
         && !statusRoute.canFind("playbackController.status(")
         && !statusRoute.canFind("eventPlayer."),

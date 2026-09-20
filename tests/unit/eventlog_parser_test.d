@@ -130,16 +130,19 @@ unittest // W1 production wiring: WHEN the route handles a test-mode POST
     const source = blankNonCode(readText(
         buildPath(repoRoot, "source", "http_server.d")));
     const route = bodyAt(source, "private void route_apiPlayEvents(");
-    const parseAt = route.indexOf("parseEventLog(request.body)");
-    const rejectAt = route.indexOf("if (!parsed.accepted())");
-    const submitAt = route.indexOf("playEventsBridge.submitOwned(");
+    const body = bodyAt(source, "private void servePlayEvents(");
+    const parseAt = body.indexOf("parseEventLog(request.body)");
+    const rejectAt = body.indexOf("if (!parsed.accepted())");
+    const submitAt = body.indexOf("playEventsBridge.submitOwned(");
 
-    assert(route.count("parseEventLog(request.body)") == 1
-        && route.count("playEventsBridge.submitOwned(") == 1,
-        "W1 population floor: play-events route must have one parser call and one owned submit");
-    assert(route.indexOf("eventPlayer.") < 0
-        && route.indexOf("playbackController.accept(") < 0,
-        "W1 production route bypassed owned playback acceptance");
+    assert(route.count("servePlayEvents(request, response)") == 1,
+        "W1 wrapper floor: play-events route must call its body exactly once");
+    assert(body.count("parseEventLog(request.body)") == 1
+        && body.count("playEventsBridge.submitOwned(") == 1,
+        "W1 population floor: play-events body must have one parser call and one owned submit");
+    assert((route ~ body).indexOf("eventPlayer.") < 0
+        && (route ~ body).indexOf("playbackController.accept(") < 0,
+        "W1 production wrapper/body bypassed owned playback acceptance");
     assert(parseAt >= 0 && rejectAt > parseAt && submitAt > rejectAt,
-        "W1 play-events route must parse and reject before its owned submit");
+        "W1 play-events body must parse and reject before its owned submit");
 }

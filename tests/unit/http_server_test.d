@@ -327,7 +327,7 @@ unittest {
 
     auto fresh = new HttpServer();
     assert(fresh.unwiredEndpoints().length == 39,
-        "6750 readiness pin: expected all 39 provider/handler slots on a fresh server");
+        "6750 readiness pin: expected all 39 provider/handler/action slots on a fresh server");
 }
 
 unittest { // submitAndWait is identity in an in-process single-thread channel

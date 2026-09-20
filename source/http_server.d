@@ -943,7 +943,7 @@ class HttpServer {
     private CameraSetHandler cameraSetHandler;
     // Configuration is copied into each request at the dispatch boundary.
     // Route authorization below reads only that snapshot, never this shared
-    // server state directly (task 6790).
+    // server state directly.
     private HttpRequestContext requestContext_;
 
     // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
@@ -1286,7 +1286,7 @@ class HttpServer {
     // This is a synchronous state-changing action, not a read provider. The
     // in-process transport runs it inline only on the recorded tickAll thread,
     // so the web channel never waits for a later host frame. Evidence:
-    // tests.unit.test_mode_request_gate_test (task 6790).
+    // tests.unit.test_mode_request_gate_test.
     private alias SubpatchHoldAction = string delegate(long ms, long ceilingMs);
     private SubpatchHoldAction subpatchHoldAction;
     struct SubpHoldReq  { long ms; long ceilingMs; }
@@ -4299,9 +4299,8 @@ class HttpServer {
 
     // Keep test-mode authorization in the transport owner. The play-events
     // body is an extraction boundary for the parser/owner slice, while this
-    // request-context decision must stay with HttpServer (task 6790).
-    private void route_apiPlayEvents(HttpRequest request,
-                                     HttpResponse response) {
+    // request-context decision must stay with HttpServer.
+    private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
         if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"play-events is only available in --test mode"}`;
@@ -5002,7 +5001,7 @@ class HttpServer {
     }
 
     /**
-     * Every provider/handler slot this server owns that nothing has filled in.
+     * Every provider/handler/action slot this server owns that nothing filled in.
      *
      * Task 0720 (audit №4, D5). `wireHttpProviders` installs 42 delegates in
      * one 2872-line function; a domain that stops being wired — a whole group
@@ -5030,7 +5029,8 @@ class HttpServer {
         foreach (i, ref slot; this.tupleof) {
             enum n = __traits(identifier, HttpServer.tupleof[i]);
             static if ((n.length > 8 && n[$ - 8 .. $] == "Provider")
-                    || (n.length > 7 && n[$ - 7 .. $] == "Handler")) {
+                    || (n.length > 7 && n[$ - 7 .. $] == "Handler")
+                    || (n.length > 6 && n[$ - 6 .. $] == "Action")) {
                 if (slot is null) missing ~= n;
             }
         }
@@ -5281,7 +5281,7 @@ static assert(routeHandlerProblem() is null, routeHandlerProblem());
 
 
 /// Immutable-for-one-dispatch authorization inputs. HttpServer snapshots its
-/// configured values into every request before route selection (task 6790).
+/// configured values into every request before route selection.
 struct HttpRequestContext {
     bool testMode;
 }
