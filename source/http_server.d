@@ -431,6 +431,12 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
             return atomicLoad(claimedWaitsWhileStoppingForTest_);
         }
 
+        void withClaimedServiceReadyForTest(scope void delegate() action) {
+            synchronized (this) claimedServiceReady = true;
+            scope(exit) synchronized (this) claimedServiceReady = false;
+            action();
+        }
+
         private void claimProbe(ClaimProbePoint point, OwnedCall call) {
             final switch (point) {
             case ClaimProbePoint.enqueued:
@@ -511,22 +517,17 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                                   nextIdentity(), nextIdentity());
         if (inSingleThreadedChannel() && owner_.calledFromTickThread()) {
             bool directReady;
-            bool stopping;
             synchronized (this) {
                 traceOwned(BridgeResultKind.submitted, call,
                            call.serviceResultIdentity, Resp.init);
-                stopping = atomicLoad(ownedStopping);
                 directReady = claimedServiceReady;
             }
-            if (stopping)
-                return syntheticOwnedResult(call, Resp.init,
-                                            BridgeResultKind.stopping);
             if (!directReady)
                 return syntheticOwnedResult(call, Resp.init,
                                             BridgeResultKind.ownerUnavailable);
             try {
                 service(call.request, call.result);
-            } catch (Throwable) {
+            } catch (Exception) {
                 synchronized (this) {
                     traceOwned(BridgeResultKind.failed, call,
                                call.serviceResultIdentity, call.result);
@@ -538,16 +539,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 failed.kind = BridgeResultKind.failed;
                 return failed;
             }
-            synchronized (this) {
-                traceOwned(BridgeResultKind.completed, call,
-                           call.serviceResultIdentity, call.result);
-            }
-            OwnedResult result;
-            result.result = call.result;
-            result.requestIdentity = call.requestIdentity;
-            result.resultIdentity = call.serviceResultIdentity;
-            result.kind = BridgeResultKind.completed;
-            return result;
+            assert(0, "claimed bridge owner fence returned");
         }
         bool queued = false;
         synchronized (this) {
@@ -606,6 +598,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
 
     void tickClaimed(scope void delegate(ref Req, ref Resp) nothrow service) {
         synchronized (this) claimedServiceReady = true;
+        scope(exit) synchronized (this) claimedServiceReady = false;
         OwnedCall[] batch;
         synchronized (this) {
             batch = claimPending;
@@ -1218,6 +1211,7 @@ class HttpServer {
     struct PathReq  { float t; }
     struct PathResp { string result; string error; }
     private MainThreadBridge!(PathReq, PathResp) pathBridge;
+    private int pathBridgeMaxIters_ = 2500;
 
     // POST /api/snap and POST /api/constrain — one bridge each, own epoch pair
     // (MUST NOT share pipeEval's or each other's, same rule as pathBridge).
@@ -1933,6 +1927,11 @@ class HttpServer {
             selectionBridgeMaxIters_ = maxIters;
         }
 
+        public void setPathBridgeMaxItersForTest(int maxIters) {
+            assert(maxIters >= 0);
+            pathBridgeMaxIters_ = maxIters;
+        }
+
         public void setModelBudgetForTest(Duration budget) {
             assert(budget >= Duration.zero);
             modelBudget_ = budget;
@@ -1952,8 +1951,23 @@ class HttpServer {
             return frameCountsBridge;
         }
 
+        public size_t frameCountsClaimPendingForTest() {
+            return frameCountsBridge.claimPendingForTest();
+        }
+
         public auto modelBridgeForTest() {
             return modelBridge;
+        }
+
+        public bool pathPendingForTest() {
+            return pathBridge.legacyPendingForTest();
+        }
+
+        public HttpResponse handleRequestForTest(string method, string path,
+                                                 string body_ = "") {
+            auto request = new HttpRequest(method, path, "HTTP/1.1");
+            request.body = body_;
+            return handleRequest(request);
         }
 
         public bool singleThreadedChannelForTest() const nothrow {
@@ -2502,6 +2516,8 @@ class HttpServer {
         if (serverThread !is null && serverThread.isRunning) {
             serverThread.join();
         }
+
+        atomicStore(tickThreadIdentity_, 0);
 
         logInfo("http", "HTTP server stopped");
     }
@@ -3754,7 +3770,7 @@ class HttpServer {
             pathBridge.req.t      = t;
             pathBridge.resp.result = "";
             pathBridge.resp.error  = "";
-            if (!pathBridge.submitAndWait())
+            if (!pathBridge.submitAndWait(pathBridgeMaxIters_))
                 pathBridge.resp.error = "timeout waiting for main thread";
             if (pathBridge.resp.error.length == 0) {
                 response.statusCode = 200;
@@ -5458,10 +5474,12 @@ unittest {
     // FrameProbe owner; keep the two configuration floors independent.
     configurationResponses++;
     version (PerfProbe) {
-        assert(configurationResponses == 28,
+        enum expectedConfigurationResponses = 28;
+        assert(configurationResponses == expectedConfigurationResponses,
             format("6740 route JSON census: PerfProbe non-frame-count "
-                 ~ "population changed; expected 28, got %d; degraded routes: %s",
-                   configurationResponses, degradedRoutes.join(", ")));
+                 ~ "population changed; expected %d, got %d; degraded routes: %s",
+                   expectedConfigurationResponses, configurationResponses,
+                   degradedRoutes.join(", ")));
     } else {
         assert(configurationResponses == 30,
             format("6740 route JSON census: default-build non-frame-count "

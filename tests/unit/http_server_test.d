@@ -4,7 +4,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : BridgeResultKind, HttpRequest, HttpResponse, HttpServer,
-    InProcessHttpTransport;
+    InProcessHttpTransport, MainThreadBridge;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel, TcpSocket;
@@ -368,6 +368,58 @@ unittest { // submitAndWait is identity in an in-process single-thread channel
         "6750 submitAndWait transport parity: /api/path bodies differ between socket and in-process transports");
 }
 
+unittest { // a foreign in-process submitAndWait uses the queue
+    shared int calls;
+    auto server = new HttpServer();
+    server.setPathQueryProvider((float) {
+        atomicStore(calls, atomicLoad(calls) + 1);
+        return `{"surface":"queued-submitAndWait"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+    auto queued = new AsyncResponse();
+    auto client = requestInProcess(transport, "POST", "/api/path",
+                                   `{"t":0.25}`, queued);
+    assert(waitUntil(() => server.pathPendingForTest()
+                           || atomicLoad(queued.done)),
+        "6750 foreign submitAndWait queue: request neither queued nor completed");
+    assert(server.pathPendingForTest() && !atomicLoad(queued.done)
+        && atomicLoad(calls) == 0,
+        "6750 foreign submitAndWait queue: a non-tick thread serviced /api/path inline");
+    server.tickAll();
+    assert(waitUntil(() => atomicLoad(queued.done)),
+        "6750 foreign submitAndWait queue: tickAll did not complete /api/path");
+    client.join();
+    assert(queued.failure.length == 0
+        && queued.response.statusCode == 200
+        && queued.response.body == `{"surface":"queued-submitAndWait"}`
+        && atomicLoad(calls) == 1,
+        "6750 foreign submitAndWait queue: queued /api/path response changed: "
+        ~ queued.failure);
+}
+
+unittest { // direct dispatch on the tick thread still needs the channel marker
+    int calls;
+    auto server = new HttpServer();
+    server.setPathBridgeMaxItersForTest(0);
+    server.setPathQueryProvider((float) {
+        calls++;
+        return `{"surface":"unexpected-inline"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto response = server.handleRequestForTest(
+        "POST", "/api/path", `{"t":0.25}`);
+    assert(server.pathPendingForTest() && calls == 0
+        && response.statusCode == 500
+        && response.body.canFind("timeout waiting for main thread"),
+        "6750 submitAndWait channel gate: direct tick-thread dispatch bypassed the queue without a transport marker");
+    server.tickAll();
+    assert(calls == 1,
+        "6750 submitAndWait channel gate: queued direct dispatch was not serviceable");
+}
+
 unittest { // submitOwned is identity in an in-process single-thread channel
     int calls;
     auto server = new HttpServer();
@@ -404,6 +456,65 @@ unittest { // submitOwned is identity in an in-process single-thread channel
         "6750 submitOwned stopping: the inline branch lost its stopping result");
 }
 
+unittest { // direct submitOwned dispatch also needs the channel marker
+    int calls;
+    auto server = new HttpServer();
+    server.setModelBudgetForTest(Duration.zero);
+    server.setDetailedModelDataProvider(() {
+        calls++;
+        return `{"surface":"unexpected-inline"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto response = server.handleRequestForTest("GET", "/api/model");
+    assert(server.modelOwnedPendingForTest() == 1 && calls == 0
+        && response.statusCode == 500
+        && response.body.canFind("timeout waiting for main thread"),
+        "6750 submitOwned channel gate: direct tick-thread dispatch bypassed the queue without a transport marker");
+    server.tickAll();
+    assert(calls == 1,
+        "6750 submitOwned channel gate: queued direct dispatch was not serviceable");
+}
+
+unittest { // a claimed bridge must not swallow Error
+    auto server = new HttpServer();
+    auto claimed = new MainThreadBridge!(int, int)(server,
+        (ref int, ref int) { throw new Error("6750 claimed Error sentinel"); });
+    server.setPathQueryProvider((float) {
+        claimed.withClaimedServiceReadyForTest({
+            cast(void) claimed.submitClaimed(0, 1.seconds);
+        });
+        return `{"surface":"unreachable"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    Throwable escaped;
+    try {
+        cast(void) (new InProcessHttpTransport(server)).request(
+            "POST", "/api/path", `{"t":0.25}`);
+    } catch (Throwable error) {
+        escaped = error;
+    }
+    assert(escaped !is null && escaped.msg == "6750 claimed Error sentinel",
+        "6750 claimed Error boundary: submitClaimed swallowed an Error as a bridge result");
+}
+
+unittest { // direct submitClaimed dispatch also needs the channel marker
+    import perf_probe : FrameWorkProbe;
+
+    auto server = new HttpServer();
+    server.setFrameCountsBudgetForTest(Duration.zero);
+    server.markProvidersWired();
+    server.tickAll();
+    auto response = server.handleRequestForTest("GET", "/api/frames/counts");
+    assert(server.frameCountsClaimPendingForTest() == 1
+        && response.statusCode == 504
+        && response.body == `{"error":"timeout waiting for main thread"}`,
+        "6750 submitClaimed channel gate: direct tick-thread dispatch bypassed the queue without a transport marker");
+    FrameWorkProbe probe;
+    server.tickFrameCounts(probe);
+}
+
 unittest { // submitClaimed distinguishes owner absence and preserves the frame fence
     import perf_probe : FrameWorkProbe;
 
@@ -412,6 +523,11 @@ unittest { // submitClaimed distinguishes owner absence and preserves the frame 
     server.markProvidersWired();
     server.tickAll();
     auto transport = new InProcessHttpTransport(server);
+    auto beforeOwnerReset = transport.request(
+        "POST", "/api/frames/counts/reset", "");
+    assert(beforeOwnerReset.statusCode == 503
+        && beforeOwnerReset.body == `{"error":"frame-count owner unavailable"}`,
+        "6750 frame-count reset owner gate: an unregistered owner must return 503");
     auto beforeOwner = transport.request("GET", "/api/frames/counts", "");
     assert(beforeOwner.statusCode == 503
         && beforeOwner.body == `{"error":"frame-count owner unavailable"}`,
@@ -442,9 +558,9 @@ unittest { // submitClaimed distinguishes owner absence and preserves the frame 
     assert(escaped is null,
         "6750 claimed owner catch: the owner fence escaped the bridge result mapping: "
         ~ (escaped is null ? "" : escaped.msg));
-    assert(response.statusCode == 500
-        && response.body == `{"error":"frame-count owner failed"}`,
-        "6750 claimed owner fence: an in-process request between frame boundaries bypassed the owner tick");
+    assert(response.statusCode == 503
+        && response.body == `{"error":"frame-count owner unavailable"}`,
+        "6750 claimed owner scope: readiness survived tickFrameCounts return");
     assert(probe.totals().seq == 1,
         "6750 claimed owner fence: an inline request changed the retained owner probe");
 
@@ -463,15 +579,23 @@ version (PerfProbe) unittest { // FrameProbe has the same owner-frame fence
     auto server = new HttpServer();
     server.markProvidersWired();
     server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+    auto beforeOwnerReset = transport.request("POST", "/api/frames/reset", "");
+    assert(beforeOwnerReset.statusCode == 503
+        && beforeOwnerReset.body == `{"error":"frame probe owner unavailable"}`,
+        "6750 frame-probe reset owner gate: an unregistered owner must return 503");
+    auto beforeOwnerRead = transport.request("GET", "/api/frames", "");
+    assert(beforeOwnerRead.statusCode == 503
+        && beforeOwnerRead.body == `{"error":"frame probe owner unavailable"}`,
+        "6750 frame-probe read owner gate: an unregistered owner must return 503");
     FrameProbe probe;
     probe.beginFrame();
     probe.endFrame();
     server.tickFrames(probe);
-    auto response = (new InProcessHttpTransport(server)).request(
-        "GET", "/api/frames", "");
-    assert(response.statusCode == 500
-        && response.body == `{"error":"frame probe owner failed"}`,
-        "6750 frame-probe owner fence: an in-process request between frame boundaries bypassed the owner tick");
+    auto response = transport.request("GET", "/api/frames", "");
+    assert(response.statusCode == 503
+        && response.body == `{"error":"frame probe owner unavailable"}`,
+        "6750 frame-probe owner scope: readiness survived tickFrames return");
     assert(probe.stats().frameCount == 1,
         "6750 frame-probe owner fence: an inline request changed the retained owner probe");
 }
@@ -500,6 +624,8 @@ unittest { // foreign in-process callers queue; TLS depth never leaks between re
     assert(first.statusCode == 200 && first.body == `{"call":1}`
         && atomicLoad(firstSawChannel),
         "6750 channel depth control: the tick-thread request did not enter the in-process marker");
+    assert(!server.singleThreadedChannelForTest(),
+        "6750 channel depth release: the tick thread retained its marker after request return");
 
     auto queued = new AsyncResponse();
     auto client = requestInProcess(transport, "GET", "/api/model", "", queued);
@@ -520,4 +646,62 @@ unittest { // foreign in-process callers queue; TLS depth never leaks between re
         ~ queued.failure);
     assert(!atomicLoad(queuedSawChannel),
         "6750 channel depth isolation: the tick thread observed a prior or foreign request marker");
+}
+
+unittest { // tick identity is stable until stop and republished after restart
+    shared int calls;
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.setModelBudgetForTest(5.msecs);
+    server.setDetailedModelDataProvider(() {
+        atomicStore(calls, atomicLoad(calls) + 1);
+        return `{"surface":"restart-owner"}`;
+    });
+    server.markProvidersWired();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+    assert(waitUntil(() => server.running),
+        "6750 tick identity lifecycle: first server start did not finish");
+
+    auto firstOwner = new Thread({ server.tickAll(); });
+    firstOwner.start();
+    firstOwner.join();
+
+    auto stolen = new AsyncResponse();
+    auto contender = new Thread({
+        server.tickAll();
+        try stolen.response = (new InProcessHttpTransport(server)).request(
+            "GET", "/api/model", "");
+        catch (Throwable error) stolen.failure = error.msg;
+        atomicStore(stolen.done, true);
+    });
+    contender.start();
+    assert(waitUntil(() => atomicLoad(stolen.done)),
+        "6750 tick identity lifecycle: contender request did not finish");
+    contender.join();
+    assert(stolen.failure.length == 0 && stolen.response.statusCode == 500
+        && atomicLoad(calls) == 0,
+        "6750 tick identity stability: a later tickAll stole the live owner's inline identity");
+
+    server.stop();
+    server.start();
+    assert(waitUntil(() => server.running),
+        "6750 tick identity lifecycle: restarted server did not finish");
+    auto restarted = new AsyncResponse();
+    auto replacement = new Thread({
+        server.tickAll();
+        try restarted.response = (new InProcessHttpTransport(server)).request(
+            "GET", "/api/model", "");
+        catch (Throwable error) restarted.failure = error.msg;
+        atomicStore(restarted.done, true);
+    });
+    replacement.start();
+    assert(waitUntil(() => atomicLoad(restarted.done)),
+        "6750 tick identity lifecycle: restarted owner request did not finish");
+    replacement.join();
+    assert(restarted.failure.length == 0
+        && restarted.response.statusCode == 200
+        && restarted.response.body == `{"surface":"restart-owner"}`
+        && atomicLoad(calls) == 1,
+        "6750 tick identity restart: stop retained the dead owner's identity");
 }

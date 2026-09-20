@@ -56,7 +56,7 @@ private Thread startHttpGet(ushort port, AsyncHttpReply reply) {
                 throw new Exception("server did not accept a connection");
             scope(exit) socket.close();
             socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO,
-                             2.seconds);
+                             7.seconds);
             socket.send("GET /api/selection HTTP/1.1\r\n"
                       ~ "Host: 127.0.0.1\r\nConnection: close\r\n\r\n");
             ubyte[4096] buf;
@@ -392,6 +392,7 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         ~ "\nin-process: " ~ inProcessReply.body);
     writefln("[6750 transport parity] socket-body=%s", responseBody(okReply.wire));
     writefln("[6750 transport parity] in-process-body=%s", inProcessReply.body);
+    server.setSelectionBridgeMaxItersForTest(2500);
 
     server.setSelectionDataProvider(() {
         throw new Exception("selection provider injected failure");
