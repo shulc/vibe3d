@@ -1,15 +1,21 @@
 module playback_controller;
 
 import core.time : MonoTime;
-import eventlog : EventPlayer, ParsedEventLog;
+import eventlog : EventPlayer, ImmediateEventSink, ParsedEventLog,
+    parseEventLog;
 import std.format : format;
 
 /// Result of accepting one validated playback log on the main thread.
 struct PlaybackAcceptOutcome {
     bool accepted;
+    bool invalidLog;
     ulong generation;
     ulong replaced;
 }
+
+static assert([__traits(allMembers, PlaybackAcceptOutcome)]
+        == ["accepted", "invalidLog", "generation", "replaced"],
+    "6810 playback accept outcome composition changed");
 
 /// One coherent snapshot of the player state, including its identity.
 struct PlaybackStatus {
@@ -20,19 +26,41 @@ struct PlaybackStatus {
     ulong generation;
 }
 
-/// Main-thread owner for the HTTP playback player (task 5960 D2). Parsing may
-/// happen on the HTTP thread, but accepting, ticking and observing a log all
-/// pass through this controller. The focused ownership and phase evidence is
-/// in tests/unit/playback_owner_test.d.
+/// Main-thread owner for the HTTP playback player (tasks 5960 D2 and 6810).
+/// Parsing, accepting, ticking and observing a log all pass through this
+/// controller; the transport carries only the owned raw body. Evidence:
+/// tests/unit/playback_parse_owner_test.d and playback_owner_test.d.
 struct PlaybackController {
-    EventPlayer eventPlayer;
+    private EventPlayer eventPlayer_;
     private ulong generation_;
     version(unittest) {
+        private size_t parseThreadForTest_;
+        private size_t parseCallsForTest_;
         private size_t acceptThreadForTest_;
         private size_t acceptCallsForTest_;
     }
 
-    PlaybackAcceptOutcome accept(ParsedEventLog log, MonoTime notAfter)
+    PlaybackAcceptOutcome accept(string data, MonoTime notAfter)
+    {
+        PlaybackAcceptOutcome outcome;
+        if (MonoTime.currTime >= notAfter)
+            return outcome;
+
+        version(unittest) {
+            import core.thread : Thread;
+            parseThreadForTest_ = cast(size_t) cast(void*) Thread.getThis();
+            ++parseCallsForTest_;
+        }
+        auto parsed = parseEventLog(data);
+        if (!parsed.accepted) {
+            outcome.invalidLog = true;
+            return outcome;
+        }
+        return acceptParsed(parsed.log, notAfter);
+    }
+
+    private PlaybackAcceptOutcome acceptParsed(ParsedEventLog log,
+                                                 MonoTime notAfter)
     in (log.entries.length > 0)
     {
         PlaybackAcceptOutcome outcome;
@@ -45,36 +73,43 @@ struct PlaybackController {
             acceptThreadForTest_ = cast(size_t) cast(void*) Thread.getThis();
             ++acceptCallsForTest_;
         }
-        outcome.replaced = eventPlayer.active ? generation_ : 0;
+        outcome.replaced = eventPlayer_.active ? generation_ : 0;
         outcome.generation = ++generation_;
-        eventPlayer.begin(log);
+        eventPlayer_.begin(log);
         return outcome;
     }
 
     bool tick() {
-        return eventPlayer.tick();
+        return eventPlayer_.tick();
     }
 
     void setFastForward(bool enabled) {
-        eventPlayer.fastForward = enabled;
+        eventPlayer_.fastForward = enabled;
     }
 
-    int mouseX() const { return eventPlayer.mouseX; }
-    int mouseY() const { return eventPlayer.mouseY; }
-    bool mouseDown() const { return eventPlayer.mouseDown; }
+    void setImmediateSink(ImmediateEventSink sink) {
+        eventPlayer_.setImmediateSink(sink);
+    }
+
+    int mouseX() const { return eventPlayer_.mouseX; }
+    int mouseY() const { return eventPlayer_.mouseY; }
+    bool mouseDown() const { return eventPlayer_.mouseDown; }
+    auto recordedViewport() const { return eventPlayer_.recordedViewport; }
 
     PlaybackStatus status() const {
         PlaybackStatus result;
-        result.finished = !eventPlayer.active;
-        result.total = eventPlayer.entries.length;
+        result.finished = !eventPlayer_.active;
+        result.total = eventPlayer_.entries.length;
         result.remaining = result.finished
-            ? 0 : result.total - eventPlayer.idx;
-        result.immediateMotions = eventPlayer.immediateMotionDeliveries();
+            ? 0 : result.total - eventPlayer_.idx;
+        result.immediateMotions = eventPlayer_.immediateMotionDeliveries();
         result.generation = generation_;
         return result;
     }
 
     version(unittest) {
+        size_t parseThreadForTest() const { return parseThreadForTest_; }
+        size_t parseCallsForTest() const { return parseCallsForTest_; }
         size_t acceptThreadForTest() const { return acceptThreadForTest_; }
         size_t acceptCallsForTest() const { return acceptCallsForTest_; }
     }

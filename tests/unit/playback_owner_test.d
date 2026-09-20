@@ -9,11 +9,8 @@ import eventlog : clearEventPlayerControlsForTest,
     eventPlayerModifierForTest, setEventPlayerClockForTest,
     setEventPlayerCounterForTest, setEventPlayerModifierForTest;
 import http_server : HttpServer;
-import std.algorithm : canFind;
 import std.conv : to;
-import std.file : readText;
 import std.json : JSONType, JSONValue, parseJSON;
-import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
 import std.string : count, indexOf, startsWith;
@@ -379,11 +376,8 @@ unittest { // U6: invalid and empty bodies leave active A untouched
 
     foreach (rejected; ["not json\n", "",
             `{"t":0,"type":"VIEWPORT","vpX":0,"vpY":0,"vpW":1,"vpH":1}`]) {
-        auto reply = new Reply();
-        auto client = startRequest(port, "POST", "/api/play-events", rejected, reply);
-        assert(waitUntil(() => atomicLoad(reply.done)),
-            "U6 rejected request waited for a main tick");
-        client.join();
+        auto reply = requestAndTick(
+            server, port, "POST", "/api/play-events", rejected);
         jsonReply(reply, "HTTP/1.1 400 Bad Request", "U6 rejected");
     }
     auto after = server.playbackStatusForTest();
@@ -495,51 +489,4 @@ unittest { // U8: stopping detaches a queued load before acceptance
     auto state = server.playbackStatusForTest();
     assert(state.generation == 0 && state.total == 0,
         "U8 stopped request was accepted after shutdown");
-}
-
-private string bodyAt(string source, string marker) {
-    immutable start = source.indexOf(marker);
-    assert(start >= 0, "5960 production marker missing: " ~ marker);
-    immutable next = source.indexOf("\n    private void ", start + marker.length);
-    immutable publicNext = source.indexOf("\n    public ", start + marker.length);
-    size_t finish = source.length;
-    if (next >= 0) finish = cast(size_t)next;
-    if (publicNext >= 0 && cast(size_t)publicNext < finish)
-        finish = cast(size_t)publicNext;
-    return source[start .. finish];
-}
-
-unittest { // W1: production routes and wiring use only the owned controller path
-    immutable here = dirName(__FILE_FULL_PATH__);
-    immutable root = buildPath(here, "..", "..");
-    immutable source = readText(buildPath(root, "source", "http_server.d"));
-    const postRoute = bodyAt(source,
-        "private void route_apiPlayEvents(HttpRequest request, HttpResponse response)");
-    const postBody = bodyAt(source,
-        "private void servePlayEvents(HttpRequest request, HttpResponse response)");
-    const statusRoute = bodyAt(source,
-        "private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response)");
-    assert(postRoute.canFind("servePlayEvents(request, response)")
-        && postBody.canFind("playEventsBridge.submitOwned")
-        && !postRoute.canFind("eventPlayer.begin(")
-        && !postBody.canFind("eventPlayer.begin(")
-        && !postRoute.canFind("playbackController.accept(")
-        && !postBody.canFind("playbackController.accept("),
-        "W1 POST wrapper/body bypassed owned playback acceptance");
-    assert(statusRoute.canFind("playEventsStatusBridge.submitOwned")
-        && !statusRoute.canFind("playbackController.status(")
-        && !statusRoute.canFind("eventPlayer."),
-        "W1 status route read the controller/player off-thread");
-    assert(source.canFind(
-        `RouteSpec("/api/play-events",          "POST", Match.exact,  Answered.mainThread`)
-        && source.canFind(
-        `RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.mainThread`),
-        "W1 playback route-table ownership changed");
-    assert(source.canFind("playbackController.accept(req.log, req.notAfter)")
-        && source.canFind("encodePlaybackStatus(playbackController.status())"),
-        "W1 bridge services do not call the production controller");
-    assert(source.count("playbackController.accept(") == 1
-        && source.count("playbackController.status()") == 2
-        && source.count("playbackController.tick()") == 1,
-        "W1 controller accept/status/tick gained a production bypass");
 }

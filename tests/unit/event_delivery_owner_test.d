@@ -46,6 +46,8 @@ unittest // ownership and both explicit producer handoffs
         buildPath(repoRoot, "source", "eventlog.d")));
     const http = blankNonCode(readText(
         buildPath(repoRoot, "source", "http_server.d")));
+    const playback = blankNonCode(readText(
+        buildPath(repoRoot, "source", "playback_controller.d")));
     const app = blankNonCode(readText(
         buildPath(repoRoot, "source", "app.d")));
 
@@ -62,8 +64,11 @@ unittest // ownership and both explicit producer handoffs
         "5170 ownership witness: callers without a sink lost SDL queue fallback");
 
     const setter = bodyAt(http, "void setEventPlayerSink(");
-    assert(setter.indexOf("eventPlayer.setImmediateSink(sink)") >= 0,
-        "5170 HTTP sink door no longer delegates to the server-owned player");
+    const controllerSetter = bodyAt(playback, "void setImmediateSink(");
+    assert(setter.indexOf("playbackController.setImmediateSink(sink)") >= 0
+        && controllerSetter.indexOf("eventPlayer_.setImmediateSink(sink)") >= 0,
+        "5170 HTTP sink door no longer delegates through the playback owner "
+        ~ "to its server-owned player");
 
     const mainBody = bodyAt(app, "void main(string[] args)");
     assert(mainBody.count("evPlay.setImmediateSink(replaySink)") == 1

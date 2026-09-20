@@ -2,15 +2,6 @@ module tests.unit.eventlog_parser_test;
 
 import bindbc.sdl : KMOD_ALT, SDL_Event, SDL_KEYDOWN, SDL_MOUSEMOTION;
 import eventlog : EventPlayer, parseEventLog;
-import std.algorithm : count;
-import std.exception : enforce;
-import std.file      : readText;
-import std.path      : buildPath, dirName;
-import std.string    : indexOf;
-
-import tests.unit.census_symbols : blankNonCode;
-
-private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private EventPlayer seededPlayer()
 {
@@ -105,44 +96,4 @@ unittest // P4 valid: WHEN parsing completes, return owned events plus metadata
         && parsed.log.entries[0].event.motion.y == 203,
         "P4 parser result borrowed the caller's body instead of owning the event");
     assertPlayerUntouched(player, "P4 valid");
-}
-
-private string bodyAt(string code, string marker)
-{
-    const at = code.indexOf(marker);
-    enforce(at >= 0, "missing source marker `" ~ marker ~ "`");
-    size_t i = cast(size_t)at;
-    while (i < code.length && code[i] != '{') ++i;
-    enforce(i < code.length, "no body after source marker `" ~ marker ~ "`");
-    const begin = i;
-    size_t depth;
-    for (; i < code.length; ++i) {
-        if (code[i] == '{') ++depth;
-        else if (code[i] == '}' && --depth == 0)
-            return code[begin .. i + 1];
-    }
-    enforce(false, "unterminated body after source marker `" ~ marker ~ "`");
-    return null;
-}
-
-unittest // W1 production wiring: WHEN the route handles a test-mode POST
-{
-    const source = blankNonCode(readText(
-        buildPath(repoRoot, "source", "http_server.d")));
-    const route = bodyAt(source, "private void route_apiPlayEvents(");
-    const body = bodyAt(source, "private void servePlayEvents(");
-    const parseAt = body.indexOf("parseEventLog(request.body)");
-    const rejectAt = body.indexOf("if (!parsed.accepted())");
-    const submitAt = body.indexOf("playEventsBridge.submitOwned(");
-
-    assert(route.count("servePlayEvents(request, response)") == 1,
-        "W1 wrapper floor: play-events route must call its body exactly once");
-    assert(body.count("parseEventLog(request.body)") == 1
-        && body.count("playEventsBridge.submitOwned(") == 1,
-        "W1 population floor: play-events body must have one parser call and one owned submit");
-    assert((route ~ body).indexOf("eventPlayer.") < 0
-        && (route ~ body).indexOf("playbackController.accept(") < 0,
-        "W1 production wrapper/body bypassed owned playback acceptance");
-    assert(parseAt >= 0 && rejectAt > parseAt && submitAt > rejectAt,
-        "W1 play-events body must parse and reject before its owned submit");
 }

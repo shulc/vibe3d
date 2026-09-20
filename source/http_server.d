@@ -22,7 +22,7 @@ import core.atomic;
 import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
 
-import eventlog;
+import eventlog : ImmediateEventSink;
 import playback_controller : PlaybackController, encodePlaybackStatus;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
@@ -1433,10 +1433,13 @@ class HttpServer {
     private Duration toolHandlesBudget_ = 5.seconds;
 
     struct PlayEventsReq {
-        ParsedEventLog log;
+        string body;
         MonoTime notAfter;
     }
+    static assert([__traits(allMembers, PlayEventsReq)] == ["body", "notAfter"],
+        "6810 play-events bridge request composition changed");
     struct PlayEventsResp {
+        bool invalidLog;
         ulong generation;
         ulong replaced;
         string error;
@@ -1979,7 +1982,11 @@ class HttpServer {
         // tickEventPlayer before tickAll: an accepted log first ticks next frame.
         playEventsBridge = new MainThreadBridge!(PlayEventsReq, PlayEventsResp)(this,
             (ref PlayEventsReq req, ref PlayEventsResp resp) {
-                auto outcome = playbackController.accept(req.log, req.notAfter);
+                auto outcome = playbackController.accept(req.body, req.notAfter);
+                if (outcome.invalidLog) {
+                    resp.invalidLog = true;
+                    return;
+                }
                 if (!outcome.accepted) {
                     resp.error = "timeout waiting for main thread";
                     return;
@@ -2368,7 +2375,15 @@ class HttpServer {
         }
 
         public auto playbackViewportForTest() const {
-            return playbackController.eventPlayer.recordedViewport;
+            return playbackController.recordedViewport();
+        }
+
+        public size_t playbackParseThreadForTest() const {
+            return playbackController.parseThreadForTest();
+        }
+
+        public size_t playbackParseCallsForTest() const {
+            return playbackController.parseCallsForTest();
         }
 
         public size_t playbackAcceptThreadForTest() const {
@@ -5031,42 +5046,36 @@ class HttpServer {
     }
 
     private void servePlayEvents(HttpRequest request, HttpResponse response) {
-        // Task 5960 D2: parsing and rejection stay on the HTTP thread; one
-        // validated immutable log is accepted through its owned main-thread
-        // service. See tests/unit/playback_owner_test.d.
-        auto parsed = parseEventLog(request.body);
-        if (!parsed.accepted()) {
+        // Leave 50 ms inside the owned wait budget so a call still in the
+        // queue at its service deadline is refused without changing
+        // MainThreadBridge's shared claim protocol. The owner parses the raw
+        // body before accepting it (task 6810); the full budget still governs
+        // the waiter. Evidence: tests/unit/playback_parse_owner_test.d.
+        enum Duration deadlineGuard = 50.msecs;
+        immutable acceptWindow = playEventsBudget_ > deadlineGuard
+            ? playEventsBudget_ - deadlineGuard : Duration.zero;
+        PlayEventsReq bridgeRequest;
+        bridgeRequest.body = request.body;
+        bridgeRequest.notAfter = MonoTime.currTime + acceptWindow;
+        auto owned = playEventsBridge.submitOwned(
+            bridgeRequest,
+            PlayEventsResp(false, 0, 0, ""),
+            PlayEventsResp(false, 0, 0, "timeout waiting for main thread"),
+            PlayEventsResp(false, 0, 0, "HTTP server stopping"),
+            playEventsBudget_);
+        if (owned.result.invalidLog) {
             response.statusCode = 400;
             response.body = `{"status": "error", "message": "Failed to parse events"}`;
+        } else if (owned.result.error.length == 0) {
+            import std.format : format;
+            response.statusCode = 200;
+            response.body = format(
+                `{"status":"success","message":"Events loaded successfully","generation":%d,"replaced":%d}`,
+                owned.result.generation, owned.result.replaced);
         } else {
-            // Leave 50 ms inside the owned wait budget so a call still in
-            // the queue at its service deadline is refused without changing
-            // MainThreadBridge's shared claim protocol. A service preempted
-            // after this guard retains the narrow window recorded in the
-            // task-5960 design; the full budget still governs the waiter.
-            enum Duration deadlineGuard = 50.msecs;
-            immutable acceptWindow = playEventsBudget_ > deadlineGuard
-                ? playEventsBudget_ - deadlineGuard : Duration.zero;
-            PlayEventsReq bridgeRequest;
-            bridgeRequest.log = parsed.log;
-            bridgeRequest.notAfter = MonoTime.currTime + acceptWindow;
-            auto owned = playEventsBridge.submitOwned(
-                bridgeRequest,
-                PlayEventsResp(0, 0, ""),
-                PlayEventsResp(0, 0, "timeout waiting for main thread"),
-                PlayEventsResp(0, 0, "HTTP server stopping"),
-                playEventsBudget_);
-            if (owned.result.error.length == 0) {
-                import std.format : format;
-                response.statusCode = 200;
-                response.body = format(
-                    `{"status":"success","message":"Events loaded successfully","generation":%d,"replaced":%d}`,
-                    owned.result.generation, owned.result.replaced);
-            } else {
-                response.statusCode = 500;
-                response.body = `{"status":"error","message":"`
-                              ~ jsonEsc(owned.result.error) ~ `"}`;
-            }
+            response.statusCode = 500;
+            response.body = `{"status":"error","message":"`
+                          ~ jsonEsc(owned.result.error) ~ `"}`;
         }
         response.headers["Content-Type"] = "application/json";
     }
@@ -5165,7 +5174,7 @@ class HttpServer {
      * player's ordinary SDL-queue fallback remains active.
      */
     public void setEventPlayerSink(ImmediateEventSink sink) {
-        playbackController.eventPlayer.setImmediateSink(sink);
+        playbackController.setImmediateSink(sink);
     }
 
     /**
