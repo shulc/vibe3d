@@ -1,7 +1,7 @@
-// Task 6790: test-only route authorization is a property of one dispatched
-// request. The population is derived from syntax — every production `if`
-// condition containing the whole identifier `testMode` — rather than from a
-// copied route list. That form has exactly nine members on the task baseline.
+// Task 6790: test-only route authorization reads the per-dispatch snapshot of
+// one server-owned value. The population is derived from syntax — every
+// production `if` condition containing the whole identifier `testMode` —
+// rather than from a copied route list. The task baseline has nine members.
 module tests.unit.test_mode_request_census_test;
 
 import http_server : HttpRequestContext;
