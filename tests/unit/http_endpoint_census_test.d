@@ -35,7 +35,7 @@
 // MUTATION: add any `tests/*.d` file containing the text `localhost:8080`, or
 // give one of them its own `getJson`/`postJson`/`postRaw` definition again, and
 // the matching assert below names that file.
-module http_endpoint_census_test;
+module tests.unit.http_endpoint_census_test;
 
 import std.algorithm : sort;
 import std.ascii     : isDigit, isWhite;
@@ -44,6 +44,8 @@ import std.file      : dirEntries, SpanMode, exists, readText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf, split, splitLines, startsWith, stripLeft;
+
+import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -76,6 +78,47 @@ private static immutable string[] kRetTypes = [
 ];
 private static immutable string[] kAttribs = ["private ", "public ", "static "];
 private static immutable string[] kSharedFns = ["getJson", "postJson", "postRaw"];
+
+private static immutable string[] kRootRouteSpellings = [`"/"`, "`/`"];
+private static immutable string[] kRouteSelectionTerms = ["path ==", "startsWith("];
+private static immutable string[] kContractHttpThreadRoutes = [
+    "/api/changes", "/api/cache/rebuilds", "/api/gc/commands",
+];
+
+/// Blank comments while retaining string-literal bytes. Both lexer views keep
+/// byte offsets stable; only comment bytes differ between them.
+private string blankComments(string raw)
+{
+    const codeOnly = blankNonCode(raw);
+    const withComments = blankNonCode(raw, true);
+    assert(codeOnly.length == raw.length && withComments.length == raw.length,
+        "6760 scanner control: lexer projections changed source byte length");
+    auto result = raw.dup;
+    foreach (i; 0 .. result.length)
+        if (codeOnly[i] != withComments[i] && result[i] != '\n')
+            result[i] = ' ';
+    return result.idup;
+}
+
+private size_t matchingClose(string code, size_t open, char opening, char closing)
+{
+    if (open >= code.length || code[open] != opening) return code.length;
+    size_t depth;
+    foreach (i; open .. code.length)
+    {
+        if (code[i] == opening) ++depth;
+        else if (code[i] == closing && --depth == 0) return i;
+    }
+    return code.length;
+}
+
+private string[] presentTerms(string source, const string[] terms)
+{
+    string[] found;
+    foreach (term; terms)
+        if (source.indexOf(term) >= 0) found ~= term;
+    return found;
+}
 
 /// Every `host:port` literal in `txt`, as it is spelled.
 private string[] hostPortLiterals(string txt)
@@ -236,57 +279,112 @@ unittest
 }
 
 // Task 6760 makes the transport-neutrality requirement executable. This is
-// half A only: a composition census cannot prove that a route ANSWERS through
-// identical marshaling; the in-process route walk in http_server.d is the
-// behavioural half, with all 61 bodies and a >= 30 non-degraded-response floor.
+// half A only: a composition census cannot prove how a route ANSWERS; the
+// in-process route walk in http_server.d is the behavioural half, traversing
+// all 61 bodies through the common dispatcher with a >= 30 non-degraded-
+// response floor.
 // Two apparent duplications are sanctioned controls, not implementation copies:
 // tools/sanitizer/lane.d :: kSweepRoutes independently recounts all 61 routes,
 // while /api/changes, /api/cache/rebuilds and /api/gc/commands are task 1906
 // contracts that must remain Answered.httpThread.
+unittest // scanner controls: both positive directions and both lexical hazards
+{
+    assert(presentTerms(`if (path == "/") return;`, kRootRouteSpellings)
+            == [`"/"`],
+        `6760 root-literal control: a body containing "/" must be marked`);
+    assert(presentTerms("if (path == `/`) return;", kRootRouteSpellings)
+            == ["`/`"],
+        "6760 root-literal control: a body containing `/` must be marked");
+    assert(presentTerms(`auto version_ = "HTTP/1.1";`, kRootRouteSpellings).length == 0,
+        "6760 root-literal control: a body containing only HTTP/1.1 must not be marked");
+
+    assert(presentTerms(blankNonCode(
+            `if (path == kPingRoute) return;`), kRouteSelectionTerms)
+            == ["path =="],
+        "6760 route-selection control: path == a route constant must be marked");
+    assert(presentTerms(blankNonCode(
+            `if (path == "/api/" ~ "ping") return;`), kRouteSelectionTerms)
+            == ["path =="],
+        "6760 route-selection control: path == a concatenated route must be marked");
+    assert(presentTerms(blankNonCode(
+            `if (path.startsWith("/api/pin")) return;`), kRouteSelectionTerms)
+            == ["startsWith("],
+        "6760 route-selection control: a route-prefix test must be marked");
+
+    enum bracesInLiteral = q"FIXTURE
+final class InProcessHttpTransport {
+    string response = "}}";
+    void request(string path) {
+        if (path == "/api/ping") return;
+    }
+}
+FIXTURE";
+    const bracesCode = blankNonCode(bracesInLiteral);
+    const bracesOpen = cast(size_t) bracesCode.indexOf('{');
+    const bracesClose = matchingClose(bracesCode, bracesOpen, '{', '}');
+    assert(bracesClose < bracesCode.length
+            && blankComments(bracesInLiteral)[bracesOpen .. bracesClose + 1]
+                .indexOf("/api/ping") >= 0,
+        "6760 scanner control: two extra } bytes inside a string must not "
+        ~ "truncate the transport before a leaked /api/ping route");
+
+    enum routeInComment = q"FIXTURE
+final class InProcessHttpTransport {
+    // A comment mentions "/api/ping" but selects no route.
+    void request(string path) {}
+}
+FIXTURE";
+    const commentCode = blankNonCode(routeInComment);
+    const commentOpen = cast(size_t) commentCode.indexOf('{');
+    const commentClose = matchingClose(commentCode, commentOpen, '{', '}');
+    assert(commentClose < commentCode.length
+            && blankComments(routeInComment)[commentOpen .. commentClose + 1]
+                .indexOf("/api/ping") < 0,
+        "6760 scanner control: a route literal in a comment must not be "
+        ~ "reported as transport knowledge");
+}
+
 unittest
 {
     const serverPath = buildPath(repoRoot, "source", "http_server.d");
     const raw = readText(serverPath);
+    const code = blankNonCode(raw);
+    const commentsBlanked = blankComments(raw);
 
     enum transportMarker = "final class InProcessHttpTransport";
-    const transportAt = raw.indexOf(transportMarker);
+    const transportAt = code.indexOf(transportMarker);
     assert(transportAt >= 0,
         "6760 transport composition census: InProcessHttpTransport disappeared");
-    const transportOpenRel = raw[cast(size_t) transportAt .. $].indexOf('{');
+    const transportOpenRel = code[cast(size_t) transportAt .. $].indexOf('{');
     assert(transportOpenRel >= 0,
         "6760 transport composition census: InProcessHttpTransport has no body");
     const transportOpen = cast(size_t) transportAt
         + cast(size_t) transportOpenRel;
-    size_t transportEnd = raw.length;
-    size_t transportDepth;
-    foreach (i; transportOpen .. raw.length)
-    {
-        if (raw[i] == '{') ++transportDepth;
-        else if (raw[i] == '}' && --transportDepth == 0)
-        {
-            transportEnd = i + 1;
-            break;
-        }
-    }
-    assert(transportEnd < raw.length,
+    const transportClose = matchingClose(code, transportOpen, '{', '}');
+    assert(transportClose < code.length,
         "6760 transport composition census: InProcessHttpTransport body is unbalanced");
-    const transportRaw = raw[transportOpen .. transportEnd];
-    assert(transportRaw.length >= 300,
+    const transportCode = code[transportOpen .. transportClose + 1];
+    const transportLiterals = commentsBlanked[transportOpen .. transportClose + 1];
+    assert(transportCode.length >= 300,
         "6760 transport composition census: transport-body domain fell below "
-        ~ "300 bytes; an empty/truncated body makes both absence checks vacuous");
+        ~ "300 bytes; below this floor are the route-selection, route-literal "
+        ~ "and handler-name absence checks, so none would be reached on an "
+        ~ "empty/truncated body");
 
     enum routesMarker = "private enum RouteSpec[] kRoutes = [";
-    const routesAt = raw.indexOf(routesMarker);
+    const routesAt = code.indexOf(routesMarker);
     assert(routesAt >= 0,
         "6760 transport composition census: kRoutes disappeared");
-    const routesEndRel = raw[cast(size_t) routesAt .. $].indexOf("];\n");
+    const routesEndRel = code[cast(size_t) routesAt .. $].indexOf("];\n");
     assert(routesEndRel >= 0,
         "6760 transport composition census: kRoutes has no closing delimiter");
-    const routesText = raw[cast(size_t) routesAt
+    const routesText = commentsBlanked[cast(size_t) routesAt
         .. cast(size_t) routesAt + cast(size_t) routesEndRel];
 
     string[] routeLiterals;
     string[] handlerNames;
+    string[] contractDispositionOffenders;
+    size_t contractRouteRows;
     foreach (line; routesText.splitLines)
     {
         const stripped = line.stripLeft;
@@ -297,19 +395,41 @@ unittest
             ~ "the path/method/handler literal shape: " ~ stripped);
         routeLiterals ~= fields[1];
         handlerNames ~= fields[5];
+        foreach (contractPath; kContractHttpThreadRoutes)
+            if (fields[1] == contractPath)
+            {
+                ++contractRouteRows;
+                if (fields[4].indexOf("Answered.httpThread") < 0)
+                    contractDispositionOffenders ~= contractPath;
+            }
     }
 
     // Independent population floors for the two narrowed domains. These are
     // measured route ROWS, not distinct paths (/api/camera has GET and POST).
     assert(routeLiterals.length == 61,
         "6760 transport composition census: route-literal domain must contain "
-        ~ "all 61 kRoutes rows, found " ~ format("%d", routeLiterals.length));
+        ~ "all 61 kRoutes rows, found " ~ format("%d", routeLiterals.length)
+        ~ ". The exact population check runs before the leakage diagnostics "
+        ~ "below: an added route that also leaks reports here as found 62, "
+        ~ "not at the leakage assert");
     assert(handlerNames.length == 61,
         "6760 transport composition census: handler-name domain must contain "
-        ~ "all 61 kRoutes rows, found " ~ format("%d", handlerNames.length));
+        ~ "all 61 kRoutes rows, found " ~ format("%d", handlerNames.length)
+        ~ ". Below this floor are the contract-disposition and handler-leak "
+        ~ "checks, so neither runs over a changed handler population");
+    assert(contractRouteRows == 3,
+        "6760 transport composition census: the source table must retain the "
+        ~ "three task-1906 diagnostic-route dispositions");
+    assert(contractDispositionOffenders.length == 0, format(
+        "6760 transport composition census: task-1906 diagnostic route(s) "
+      ~ "must remain Answered.httpThread in the source table: %s. Their "
+      ~ "unsynchronised scalar-diagnostic rationale is recorded at the route "
+      ~ "handlers; moving one behind a bridge requires resolving that contract.",
+        contractDispositionOffenders));
 
     string[] literalOffenders;
     string[] handlerOffenders;
+    const selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
     size_t rootRouteRows;
     foreach (i, path; routeLiterals)
     {
@@ -318,11 +438,10 @@ unittest
         // mistaken for route-specific transport knowledge.
         if (path == "/") ++rootRouteRows;
         const found = path == "/"
-            ? (transportRaw.indexOf(`"/"`) >= 0
-                || transportRaw.indexOf("`/`") >= 0)
-            : transportRaw.indexOf(path) >= 0;
+            ? presentTerms(transportLiterals, kRootRouteSpellings).length != 0
+            : transportLiterals.indexOf(path) >= 0;
         if (found) literalOffenders ~= path;
-        if (transportRaw.indexOf(handlerNames[i]) >= 0)
+        if (transportCode.indexOf(handlerNames[i]) >= 0)
             handlerOffenders ~= handlerNames[i];
     }
     assert(rootRouteRows == 1,
@@ -331,6 +450,12 @@ unittest
     sort(literalOffenders);
     sort(handlerOffenders);
 
+    assert(selectionOffenders.length == 0, format(
+        "6760 transport composition census: route-selection operation(s) "
+      ~ "leaked into InProcessHttpTransport: %s. Literal extraction cannot "
+      ~ "see a route moved to a constant or assembled from fragments; path "
+      ~ "equality and prefix selection stay in HttpServer.handleRequest.",
+        selectionOffenders));
     assert(literalOffenders.length == 0, format(
         "6760 transport composition census: concrete route handling leaked "
       ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
