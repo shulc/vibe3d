@@ -5301,9 +5301,11 @@ unittest {
     server.setPlayEventsBudgetForTest(5.msecs);
     server.markProvidersWired();
     server.tickAll();
-    FrameWorkProbe frameWorkOwner;
-    server.frameCountsOwner_ = &frameWorkOwner;
-    server.frameCountsBridge.claimedServiceReady = true;
+    version (PerfProbe) {
+        FrameWorkProbe frameWorkOwner;
+        server.frameCountsOwner_ = &frameWorkOwner;
+        server.frameCountsBridge.claimedServiceReady = true;
+    }
     assert(server.ready(),
         "6740 route JSON census: readiness setup did not reach the handlers");
     auto transport = new InProcessHttpTransport(server);
