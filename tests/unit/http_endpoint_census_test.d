@@ -113,6 +113,7 @@ private SourceProjection projectSource(string raw)
 
 private size_t matchingClose(string code, size_t open, char opening, char closing)
 {
+    if (code[open] != opening) return code.length;
     size_t depth;
     foreach (i; open .. code.length)
     {
@@ -343,6 +344,8 @@ unittest
 // contracts that must remain Answered.httpThread.
 unittest // scanner controls: both positive directions and both lexical hazards
 {
+    assert(matchingClose("[{}]", 0, '{', '}') == 4,
+        "6760 brace control: matchingClose must reject a non-opener start");
     assert(presentTerms(`if (path == "/") return;`, kRootRouteSpellings)
             == [`"/"`],
         `6760 root-literal control: a body containing "/" must be marked`);
@@ -428,6 +431,10 @@ unittest
     const projection = projectSource(raw);
     const code = projection.code;
     const commentsBlanked = projection.literals;
+    assert(code.indexOf(`"HTTP/1.1"`) < 0
+            && commentsBlanked.indexOf(`"HTTP/1.1"`) >= 0,
+        "6760 projection control: the real source code view must blank string "
+        ~ "literals while the literal-preserving view retains HTTP/1.1");
 
     enum transportMarker = "final class InProcessHttpTransport";
     const transportAt = code.indexOf(transportMarker);
