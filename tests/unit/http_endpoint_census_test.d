@@ -441,6 +441,9 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(identifierUses(
             "path path_ _path path2 2path request.path(path)", "path") == 3,
         "6760 identifier control: only whole path tokens must be counted");
+    assert(identifierUses("", "") == 0
+            && identifierUses("", "path") == 0,
+        "6760 identifier control: empty and too-short domains must count zero");
 
     size_t contractRows;
     string[] contractOffenders;
