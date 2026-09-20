@@ -49,10 +49,20 @@ private final class Rig
 
 unittest
 {
+    bool nullRejected;
+    try
+        cast(void) new InProcessHttpTransport(null);
+    catch (Exception)
+        nullRejected = true;
+    assert(nullRejected,
+        "6720 C0: constructing the in-process transport without a server succeeded");
+
     assert(!inProcessTransportInstalled,
         "6720 setup: a prior cell leaked the process-wide transport");
     auto rig = new Rig();
     rig.install();
+    assert(inProcessTransportInstalled,
+        "6720 setup: installing the in-process backend had no effect");
     scope (exit) clearInProcessTransport();
 
     // C1: JSON GET.
