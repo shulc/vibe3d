@@ -402,6 +402,8 @@ unittest // fixture: route-table comments and non-code bridge names stay blank
 private enum RouteSpec[] kRoutes = [
     RouteSpec(/* comment, with comma */ "/fixture", "GET", Match.exact,
               Answered.httpThread, "route_fixture"),
+    RouteSpec("/aggregate", "GET", Match.exact,
+              Answered.httpThread, "route_aggregate"),
     RouteSpec("/nested", "GET", Match.exact,
               Answered.mainThread, "route_nested"),
 ];
@@ -411,7 +413,11 @@ void route_fixture(HttpRequest request, HttpResponse response) {
     const diagnostic = "modelBridge is literal text";
     response.statusCode = request.path.length ? 200 : 500;
     response.body = diagnostic.length ? "{}" : "unreachable";
+}
+void route_aggregate(HttpRequest request, HttpResponse response) {
     auto value = CleanValue();
+    response.statusCode = request.path.length ? 200 : 500;
+    response.body = request.method.length ? "set" : "clear aggregate padding";
 }
 void route_nested(HttpRequest request, HttpResponse response) {
     nested_helper(request, response);
@@ -423,9 +429,11 @@ void nested_helper(HttpRequest request, HttpResponse response) {
 }
 FIXTURE";
     const routes = scanRoutes(fixture);
-    assert(routes.length == 2 && routes[0].bridges.length == 0,
+    assert(routes.length == 3 && routes[0].bridges.length == 0,
         "6730 code projection treated a route-table comment, comment bridge, or literal bridge as code");
-    assert(routes[1].bridges == ["historyBridge"],
+    assert(routes[1].bridges.length == 0,
+        "6730 function-body classifier followed a called aggregate body");
+    assert(routes[2].bridges == ["historyBridge"],
         "6730 local-call closure did not reach a bridge named only by a helper body");
 }
 
