@@ -134,7 +134,10 @@ private struct CompositionFindings
 {
     string[] literalOffenders;
     string[] handlerOffenders;
+    string[] selectionOffenders;
     size_t rootRouteRows;
+    size_t codeBytes;
+    size_t literalBytes;
 }
 
 private CompositionFindings compositionFindings(
@@ -142,6 +145,9 @@ private CompositionFindings compositionFindings(
         const string[] routeLiterals, const string[] handlerNames)
 {
     CompositionFindings result;
+    result.codeBytes = transportCode.length;
+    result.literalBytes = transportLiterals.length;
+    result.selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
     foreach (path; routeLiterals)
     {
         if (path == "/") ++result.rootRouteRows;
@@ -347,13 +353,15 @@ unittest // scanner controls: both positive directions and both lexical hazards
         "6760 root-literal control: a body containing only HTTP/1.1 must not be marked");
 
     const compositionControl = compositionFindings(
-        `route_apiPing(request, response);`,
+        `if (path == kPingRoute) route_apiPing(request, response);`,
         `auto root = "/"; auto ping = "/api/ping";`,
         ["/", "/api/ping"], ["route_root", "route_apiPing"]);
     assert(compositionControl.rootRouteRows == 1
             && compositionControl.literalOffenders == ["/", "/api/ping"]
-            && compositionControl.handlerOffenders == ["route_apiPing"],
-        "6760 composition control: root, non-root and handler leaks must all be marked");
+            && compositionControl.handlerOffenders == ["route_apiPing"]
+            && compositionControl.selectionOffenders == ["path =="],
+        "6760 composition control: root, non-root, handler and route-selection "
+        ~ "leaks must all be marked");
 
     assert(presentTerms(blankNonCode(
             `if (path == kPingRoute) return;`), kRouteSelectionTerms)
@@ -492,21 +500,24 @@ unittest
       ~ "handlers; moving one behind a bridge requires resolving that contract.",
         contractDispositionOffenders));
 
-    const selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
     auto findings = compositionFindings(transportCode, transportLiterals,
         routeLiterals, handlerNames);
+    assert(findings.codeBytes == transportCode.length
+            && findings.literalBytes == transportLiterals.length,
+        "6760 transport composition census: the absence classifier did not "
+        ~ "scan the complete extracted transport body");
     assert(findings.rootRouteRows == 1,
         "6760 transport composition census: root-literal special-case domain "
         ~ "must contain exactly 1 kRoutes row");
     sort(findings.literalOffenders);
     sort(findings.handlerOffenders);
 
-    assert(selectionOffenders.length == 0, format(
+    assert(findings.selectionOffenders.length == 0, format(
         "6760 transport composition census: route-selection operation(s) "
       ~ "leaked into InProcessHttpTransport: %s. Literal extraction cannot "
       ~ "see a route moved to a constant or assembled from fragments; path "
       ~ "equality and prefix selection stay in HttpServer.handleRequest.",
-        selectionOffenders));
+        findings.selectionOffenders));
     assert(findings.literalOffenders.length == 0, format(
         "6760 transport composition census: concrete route handling leaked "
       ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
