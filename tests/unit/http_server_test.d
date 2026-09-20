@@ -218,3 +218,87 @@ unittest {
         ~ " reported — an unreported give-up is invisible to the caller,"
         ~ " whose connect() succeeded and whose request never returns");
 }
+
+// Task 6750 pins the native timeout contract beside the new single-threaded
+// branch. These are three independent claims: the ordinary default, the
+// command override, and both call sites that opt into the override.
+unittest {
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : count;
+
+    immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    immutable source = readText(buildPath(root, "source", "http_server.d"));
+    assert(source.count("bool submitAndWait(int maxIters = 2500) {") == 1,
+        "6750 native spin pin: submitAndWait must retain its 2500-iteration default");
+    assert(source.count("enum int kCommandBridgeMaxIters = 60_000;") == 1,
+        "6750 native spin pin: the command bridge must retain its 60_000-iteration override");
+    assert(source.count("commandBridge.submitAndWait(kCommandBridgeMaxIters)") == 2,
+        "6750 native spin pin: both command submit sites must retain the long override");
+
+    auto fresh = new HttpServer();
+    assert(fresh.unwiredEndpoints().length == 39,
+        "6750 readiness pin: expected all 39 provider/handler slots on a fresh server");
+}
+
+unittest { // submitAndWait is identity in an in-process single-thread channel
+    int calls;
+    auto server = new HttpServer();
+    server.setPathQueryProvider((float t) {
+        calls++;
+        return t > 0.24f && t < 0.26f
+            ? `{"surface":"submitAndWait"}` : `{"surface":"wrong-t"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto response = (new InProcessHttpTransport(server)).request(
+        "POST", "/api/path", `{"t":0.25}`);
+    assert(calls == 1,
+        "6750 submitAndWait identity: the provider did not run exactly once");
+    assert(response.statusCode == 200
+        && response.body == `{"surface":"submitAndWait"}`,
+        "6750 submitAndWait identity: the single-threaded route did not return its provider bytes");
+}
+
+unittest { // submitOwned is identity in an in-process single-thread channel
+    import core.time : msecs;
+
+    int calls;
+    auto server = new HttpServer();
+    server.setModelBudgetForTest(5.msecs);
+    server.setDetailedModelDataProvider(() {
+        calls++;
+        return `{"surface":"submitOwned"}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto response = (new InProcessHttpTransport(server)).request(
+        "GET", "/api/model", "");
+    assert(calls == 1,
+        "6750 submitOwned identity: the provider did not run exactly once");
+    assert(response.statusCode == 200
+        && response.body == `{"surface":"submitOwned"}`,
+        "6750 submitOwned identity: the single-threaded route did not return its owned bytes");
+}
+
+unittest { // submitClaimed is identity after its owner pump has registered
+    import core.time : msecs;
+    import perf_probe : FrameWorkProbe;
+    import std.string : startsWith;
+
+    auto server = new HttpServer();
+    server.setFrameCountsBudgetForTest(5.msecs);
+    server.markProvidersWired();
+    server.tickAll();
+    FrameWorkProbe probe;
+    probe.beginFrame();
+    probe.endFrame();
+    server.tickFrameCounts(probe);
+    auto response = (new InProcessHttpTransport(server)).request(
+        "GET", "/api/frames/counts", "");
+    assert(response.statusCode == 200,
+        "6750 submitClaimed identity: the registered owner did not answer synchronously");
+    assert(response.body.startsWith(`{"frames":1,`),
+        "6750 submitClaimed identity: the route did not serialize the owner snapshot: "
+        ~ response.body);
+}

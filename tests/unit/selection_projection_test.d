@@ -6,7 +6,7 @@ import core.thread : Thread;
 import core.time : msecs, seconds;
 import document : Document, Layer, beginPreparedLayerRead;
 import editmode : EditMode;
-import http_server : HttpServer;
+import http_server : HttpServer, InProcessHttpTransport;
 import mesh : makeCube, subdivideCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
@@ -380,6 +380,19 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         "0950 item F synthetic prepared-read witness: the deliberately open "
         ~ "scope must expose enlisted-shadow vertex 6, not live-layer vertex 1");
 
+    server.setSelectionBridgeMaxItersForTest(2);
+    auto inProcessReply = (new InProcessHttpTransport(server)).request(
+        "GET", "/api/selection", "");
+    assert(inProcessReply.statusCode == 200,
+        "6750 transport parity: in-process /api/selection did not return 200: "
+        ~ inProcessReply.body);
+    assert(inProcessReply.body == responseBody(okReply.wire),
+        "6750 transport parity: /api/selection bodies differ between socket "
+        ~ "and in-process transports\nsocket: " ~ responseBody(okReply.wire)
+        ~ "\nin-process: " ~ inProcessReply.body);
+    writefln("[6750 transport parity] socket-body=%s", responseBody(okReply.wire));
+    writefln("[6750 transport parity] in-process-body=%s", inProcessReply.body);
+
     server.setSelectionDataProvider(() {
         throw new Exception("selection provider injected failure");
         return "";
@@ -400,7 +413,6 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         atomicOp!"+="(timedOutProviderCalls, 1);
         return `{}`;
     });
-    server.setSelectionBridgeMaxItersForTest(2);
     auto timeoutReply = new AsyncHttpReply();
     auto timeoutClient = startHttpGet(port, timeoutReply);
     timeoutClient.join(); // deliberately no tick: exercise the bridge timeout contract

@@ -66,12 +66,23 @@ enum BridgeResultKind : ubyte {
 enum OwnedClaim : ubyte { pending, claimed, completed, failed, expired, stopping }
 enum ClaimProbePoint : ubyte { enqueued, extracted, claimed, pendingWait, claimedWait }
 
+// An in-process browser channel has no second thread that can spin here while
+// a frame drains the bridge. The transport scopes this TLS marker around one
+// synchronous dispatch; native socket threads never set it, so the legacy
+// atomic/condition paths below retain their existing contract.
+private size_t singleThreadedChannelDepth;
+
+private bool inSingleThreadedChannel() nothrow {
+    return singleThreadedChannelDepth != 0;
+}
+
 final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     private shared long submitted = 0;
     private shared long completed = 0;
     Req  req = Req.init;
     Resp resp = Resp.init;
     private void delegate(ref Req, ref Resp) service;
+    private bool claimedServiceReady;
 
     private final class OwnedCall {
         Req request = Req.init;
@@ -154,6 +165,10 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     /// tick() drains it, or maxIters*2ms elapses. Returns false on timeout —
     /// the CALLER decides what timeout body to emit (see file header).
     bool submitAndWait(int maxIters = 2500) {
+        if (inSingleThreadedChannel()) {
+            service(req, resp);
+            return true;
+        }
         immutable long my = atomicOp!"+="(submitted, 1);
         int iters = 0;
         while (atomicLoad(completed) < my) {
@@ -193,6 +208,28 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         auto call = new OwnedCall(request, initialResult,
                                   submittedAt + budget,
                                   requestIdentity, nextIdentity());
+        if (inSingleThreadedChannel()) {
+            bool stopping;
+            synchronized (this) {
+                traceOwned(BridgeResultKind.submitted, call,
+                           call.serviceResultIdentity, initialResult);
+                stopping = atomicLoad(ownedStopping);
+            }
+            if (stopping)
+                return syntheticOwnedResult(call, stoppingResult,
+                                            BridgeResultKind.stopping);
+            service(call.request, call.result);
+            synchronized (this) {
+                traceOwned(BridgeResultKind.completed, call,
+                           call.serviceResultIdentity, call.result);
+            }
+            OwnedResult result;
+            result.result = call.result;
+            result.requestIdentity = call.requestIdentity;
+            result.resultIdentity = call.serviceResultIdentity;
+            result.kind = BridgeResultKind.completed;
+            return result;
+        }
         bool queued = false;
         synchronized (this) {
             traceOwned(BridgeResultKind.submitted, call,
@@ -249,6 +286,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         synchronized (this) {
             ownedPending = null;
             claimPending = null;
+            claimedServiceReady = false;
         }
     }
 
@@ -466,6 +504,46 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     OwnedResult submitClaimed(Req request, Duration budget) {
         auto call = new OwnedCall(request, Resp.init, MonoTime.currTime + budget,
                                   nextIdentity(), nextIdentity());
+        if (inSingleThreadedChannel()) {
+            bool directReady;
+            bool stopping;
+            synchronized (this) {
+                traceOwned(BridgeResultKind.submitted, call,
+                           call.serviceResultIdentity, Resp.init);
+                stopping = atomicLoad(ownedStopping);
+                directReady = claimedServiceReady;
+            }
+            if (stopping)
+                return syntheticOwnedResult(call, Resp.init,
+                                            BridgeResultKind.stopping);
+            if (!directReady)
+                return syntheticOwnedResult(call, Resp.init,
+                                            BridgeResultKind.timedOut);
+            try {
+                service(call.request, call.result);
+            } catch (Throwable) {
+                synchronized (this) {
+                    traceOwned(BridgeResultKind.failed, call,
+                               call.serviceResultIdentity, call.result);
+                }
+                OwnedResult failed;
+                failed.result = call.result;
+                failed.requestIdentity = call.requestIdentity;
+                failed.resultIdentity = call.serviceResultIdentity;
+                failed.kind = BridgeResultKind.failed;
+                return failed;
+            }
+            synchronized (this) {
+                traceOwned(BridgeResultKind.completed, call,
+                           call.serviceResultIdentity, call.result);
+            }
+            OwnedResult result;
+            result.result = call.result;
+            result.requestIdentity = call.requestIdentity;
+            result.resultIdentity = call.serviceResultIdentity;
+            result.kind = BridgeResultKind.completed;
+            return result;
+        }
         bool queued = false;
         synchronized (this) {
             traceOwned(BridgeResultKind.submitted, call,
@@ -522,6 +600,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     }
 
     void tickClaimed(scope void delegate(ref Req, ref Resp) nothrow service) {
+        synchronized (this) claimedServiceReady = true;
         OwnedCall[] batch;
         synchronized (this) {
             batch = claimPending;
@@ -1318,12 +1397,14 @@ class HttpServer {
     struct FrameCountsReq { FrameCountsOp op; }
     struct FrameCountsResp { FrameWorkSnapshot snapshot; }
     private MainThreadBridge!(FrameCountsReq, FrameCountsResp) frameCountsBridge;
+    private FrameWorkProbe* frameCountsOwner_;
     private Duration frameCountsBudget_ = 5.seconds;
 
     enum FramesOp : ubyte { read, reset }
     struct FramesReq { FramesOp op; }
     struct FramesResp { FrameProbeSnapshot snapshot; }
     private MainThreadBridge!(FramesReq, FramesResp) framesBridge;
+    private FrameProbe* framesOwner_;
     private Duration framesBudget_ = 5.seconds;
 
     public this(ushort port = 8080) {
@@ -1754,12 +1835,12 @@ class HttpServer {
         frameCountsBridge = new MainThreadBridge!(FrameCountsReq,
                 FrameCountsResp)(this,
             (ref FrameCountsReq req, ref FrameCountsResp resp) {
-                assert(0, "frame-count bridge is served only by its owner tick");
+                serviceFrameCounts(req, resp);
             }, "/api/frames/counts");
 
         framesBridge = new MainThreadBridge!(FramesReq, FramesResp)(this,
             (ref FramesReq req, ref FramesResp resp) {
-                assert(0, "frame probe bridge is served only by its owner tick");
+                serviceFrames(req, resp);
             }, "/api/frames");
     }
 
@@ -4750,34 +4831,45 @@ class HttpServer {
 
     /// Serve the two frame-count operations at the owner-thread frame boundary.
     public void tickFrameCounts(ref FrameWorkProbe probe) {
-        FrameWorkProbe* owner = &probe;
+        frameCountsOwner_ = &probe;
         frameCountsBridge.tickClaimed((ref FrameCountsReq req,
                                        ref FrameCountsResp resp) nothrow {
-            final switch (req.op) {
-            case FrameCountsOp.read:
-                resp.snapshot = owner.snapshot();
-                break;
-            case FrameCountsOp.reset:
-                owner.reset();
-                break;
-            }
+            serviceFrameCounts(req, resp);
         });
     }
 
     /// Serve FrameProbe reads and resets at the owner-thread frame boundary.
     public void tickFrames(ref FrameProbe probe) {
-        FrameProbe* owner = &probe;
+        framesOwner_ = &probe;
         framesBridge.tickClaimed((ref FramesReq req,
                                   ref FramesResp resp) nothrow {
-            final switch (req.op) {
-            case FramesOp.read:
-                resp.snapshot = owner.snapshot();
-                break;
-            case FramesOp.reset:
-                owner.reset();
-                break;
-            }
+            serviceFrames(req, resp);
         });
+    }
+
+    private void serviceFrameCounts(ref FrameCountsReq req,
+                                    ref FrameCountsResp resp) nothrow {
+        assert(frameCountsOwner_ !is null);
+        final switch (req.op) {
+        case FrameCountsOp.read:
+            resp.snapshot = frameCountsOwner_.snapshot();
+            break;
+        case FrameCountsOp.reset:
+            frameCountsOwner_.reset();
+            break;
+        }
+    }
+
+    private void serviceFrames(ref FramesReq req, ref FramesResp resp) nothrow {
+        assert(framesOwner_ !is null);
+        final switch (req.op) {
+        case FramesOp.read:
+            resp.snapshot = framesOwner_.snapshot();
+            break;
+        case FramesOp.reset:
+            framesOwner_.reset();
+            break;
+        }
     }
 
     /**
@@ -5162,6 +5254,8 @@ final class InProcessHttpTransport
     {
         auto request = new HttpRequest(method, path, "HTTP/1.1");
         request.body = body_;
+        singleThreadedChannelDepth++;
+        scope(exit) singleThreadedChannelDepth--;
         return server_.handleRequest(request);
     }
 }
