@@ -84,6 +84,9 @@ private static immutable string[] kRouteSelectionTerms = ["path ==", "startsWith
 private static immutable string[] kContractHttpThreadRoutes = [
     "/api/changes", "/api/cache/rebuilds", "/api/gc/commands",
 ];
+private static immutable string[] kContractHttpThreadHandlers = [
+    "route_apiChanges", "route_apiCacheRebuilds", "route_apiGcCommands",
+];
 
 /// Blank comments while retaining string-literal bytes. Both lexer views keep
 /// byte offsets stable; only comment bytes differ between them.
@@ -109,6 +112,25 @@ private struct SourceProjection
 private SourceProjection projectSource(string raw)
 {
     return SourceProjection(blankNonCode(raw), blankComments(raw));
+}
+
+private string sourceBody(string raw, string code, string marker)
+{
+    if (raw.length != code.length) return null;
+    const markerAt = code.indexOf(marker);
+    if (markerAt < 0) return null;
+    const openRel = code[cast(size_t) markerAt .. $].indexOf('{');
+    if (openRel < 0) return null;
+    const open = cast(size_t) markerAt + cast(size_t) openRel;
+    const close = matchingClose(code, open, '{', '}');
+    if (close == code.length) return null;
+    return raw[open .. close + 1];
+}
+
+private bool carriesHttpThreadRationale(string body)
+{
+    return body.indexOf("Answered.httpThread") >= 0
+        && body.indexOf("unsynchron") >= 0;
 }
 
 private size_t matchingClose(string code, size_t open, char opening, char closing)
@@ -388,6 +410,13 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(contractRows == 2 && contractOffenders == ["/api/gc/commands"],
         "6760 contract-disposition control: a valid diagnostic row must pass "
         ~ "and a bridged diagnostic row must be marked");
+    assert(carriesHttpThreadRationale(
+            "Answered.httpThread because these counters are unsynchronised"),
+        "6760 contract-rationale control: both the disposition and its "
+        ~ "unsynchronised-source reason must be recognised");
+    assert(!carriesHttpThreadRationale("Answered.httpThread without a reason"),
+        "6760 contract-rationale control: a disposition without its "
+        ~ "unsynchronised-source reason must not satisfy the pin");
 
     enum bracesInLiteral = q"FIXTURE
 final class InProcessHttpTransport {
@@ -435,6 +464,21 @@ unittest
             && commentsBlanked.indexOf(`"HTTP/1.1"`) >= 0,
         "6760 projection control: the real source code view must blank string "
         ~ "literals while the literal-preserving view retains HTTP/1.1");
+
+    string[] contractRationaleOffenders;
+    foreach (i, path; kContractHttpThreadRoutes)
+    {
+        const body = sourceBody(raw, code,
+            "private void " ~ kContractHttpThreadHandlers[i] ~ "(");
+        if (!carriesHttpThreadRationale(body))
+            contractRationaleOffenders ~= path;
+    }
+    assert(contractRationaleOffenders.length == 0, format(
+        "6760 transport composition census: task-1906 diagnostic route "
+      ~ "handler(s) must retain their Answered.httpThread + unsynchronised "
+      ~ "source rationale: %s. The test-side source pin keeps the reason for "
+      ~ "the table disposition visible where each route is implemented.",
+        contractRationaleOffenders));
 
     enum transportMarker = "final class InProcessHttpTransport";
     const transportAt = code.indexOf(transportMarker);
