@@ -7,6 +7,7 @@ import std.conv;
 import std.algorithm;
 import std.array;
 import std.datetime;
+import std.exception : enforce;
 import std.json;
 import core.thread;
 import core.sync.condition : Condition;
@@ -58,6 +59,7 @@ interface IMainThreadBridge {
 enum BridgeResultKind : ubyte {
     submitted,
     timedOut,
+    ownerUnavailable,
     completed,
     stopping,
     failed,
@@ -68,8 +70,9 @@ enum ClaimProbePoint : ubyte { enqueued, extracted, claimed, pendingWait, claime
 
 // An in-process browser channel has no second thread that can spin here while
 // a frame drains the bridge. The transport scopes this TLS marker around one
-// synchronous dispatch; native socket threads never set it, so the legacy
-// atomic/condition paths below retain their existing contract.
+// synchronous dispatch. Inline service still requires the server's recorded
+// tickAll thread: an in-process caller on any other thread must take the same
+// queue as a socket request. Evidence: tests.unit.http_server_test.
 private size_t singleThreadedChannelDepth;
 
 private bool inSingleThreadedChannel() nothrow {
@@ -77,6 +80,7 @@ private bool inSingleThreadedChannel() nothrow {
 }
 
 final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
+    private HttpServer owner_;
     private shared long submitted = 0;
     private shared long completed = 0;
     Req  req = Req.init;
@@ -146,6 +150,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
 
     this(HttpServer owner, void delegate(ref Req, ref Resp) service,
          string ownedRoute = "") {
+        owner_ = owner;
         this.service = service;
         this.ownedRoute = ownedRoute;
         ownedWaitMutex = new Mutex;
@@ -165,7 +170,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     /// tick() drains it, or maxIters*2ms elapses. Returns false on timeout —
     /// the CALLER decides what timeout body to emit (see file header).
     bool submitAndWait(int maxIters = 2500) {
-        if (inSingleThreadedChannel()) {
+        if (inSingleThreadedChannel() && owner_.calledFromTickThread()) {
             service(req, resp);
             return true;
         }
@@ -208,7 +213,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         auto call = new OwnedCall(request, initialResult,
                                   submittedAt + budget,
                                   requestIdentity, nextIdentity());
-        if (inSingleThreadedChannel()) {
+        if (inSingleThreadedChannel() && owner_.calledFromTickThread()) {
             bool stopping;
             synchronized (this) {
                 traceOwned(BridgeResultKind.submitted, call,
@@ -504,7 +509,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     OwnedResult submitClaimed(Req request, Duration budget) {
         auto call = new OwnedCall(request, Resp.init, MonoTime.currTime + budget,
                                   nextIdentity(), nextIdentity());
-        if (inSingleThreadedChannel()) {
+        if (inSingleThreadedChannel() && owner_.calledFromTickThread()) {
             bool directReady;
             bool stopping;
             synchronized (this) {
@@ -518,7 +523,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                                             BridgeResultKind.stopping);
             if (!directReady)
                 return syntheticOwnedResult(call, Resp.init,
-                                            BridgeResultKind.timedOut);
+                                            BridgeResultKind.ownerUnavailable);
             try {
                 service(call.request, call.result);
             } catch (Throwable) {
@@ -736,6 +741,10 @@ class HttpServer {
     // has drained the bridges at least once.
     private shared bool providersWired;
     private shared bool mainLoopTicked;
+    // Written once by the first tickAll call and read atomically by bridge
+    // submitters. The Thread object address is the identity; names and indices
+    // are deliberately not part of the channel contract (task 6750 review).
+    private shared size_t tickThreadIdentity_;
 
     private ushort port;
     private Thread serverThread;
@@ -1397,14 +1406,12 @@ class HttpServer {
     struct FrameCountsReq { FrameCountsOp op; }
     struct FrameCountsResp { FrameWorkSnapshot snapshot; }
     private MainThreadBridge!(FrameCountsReq, FrameCountsResp) frameCountsBridge;
-    private FrameWorkProbe* frameCountsOwner_;
     private Duration frameCountsBudget_ = 5.seconds;
 
     enum FramesOp : ubyte { read, reset }
     struct FramesReq { FramesOp op; }
     struct FramesResp { FrameProbeSnapshot snapshot; }
     private MainThreadBridge!(FramesReq, FramesResp) framesBridge;
-    private FrameProbe* framesOwner_;
     private Duration framesBudget_ = 5.seconds;
 
     public this(ushort port = 8080) {
@@ -1835,12 +1842,14 @@ class HttpServer {
         frameCountsBridge = new MainThreadBridge!(FrameCountsReq,
                 FrameCountsResp)(this,
             (ref FrameCountsReq req, ref FrameCountsResp resp) {
-                serviceFrameCounts(req, resp);
+                enforce(false,
+                    "frame-count bridge is served only by its owner tick");
             }, "/api/frames/counts");
 
         framesBridge = new MainThreadBridge!(FramesReq, FramesResp)(this,
             (ref FramesReq req, ref FramesResp resp) {
-                serviceFrames(req, resp);
+                enforce(false,
+                    "frame probe bridge is served only by its owner tick");
             }, "/api/frames");
     }
 
@@ -1942,6 +1951,14 @@ class HttpServer {
 
         public auto frameCountsBridgeForTest() {
             return frameCountsBridge;
+        }
+
+        public auto modelBridgeForTest() {
+            return modelBridge;
+        }
+
+        public bool singleThreadedChannelForTest() const nothrow {
+            return inSingleThreadedChannel();
         }
 
         public void setFramesBudgetForTest(Duration budget) {
@@ -3246,6 +3263,10 @@ class HttpServer {
             response.statusCode = 200;
             response.body = "{\"status\":\"ok\"}";
             break;
+        case BridgeResultKind.ownerUnavailable:
+            response.statusCode = 503;
+            response.body = "{\"error\":\"frame-count owner unavailable\"}";
+            break;
         case BridgeResultKind.timedOut:
             response.statusCode = 504;
             response.body = "{\"error\":\"timeout waiting for main thread\"}";
@@ -3301,6 +3322,10 @@ class HttpServer {
                            jsonEsc(e.msg) ~ "\"}";
           }
           break;
+        case BridgeResultKind.ownerUnavailable:
+            response.statusCode = 503;
+            response.body = "{\"error\":\"frame-count owner unavailable\"}";
+            break;
         case BridgeResultKind.timedOut:
             response.statusCode = 504;
             response.body = "{\"error\":\"timeout waiting for main thread\"}";
@@ -3328,6 +3353,10 @@ class HttpServer {
             case BridgeResultKind.completed:
                 response.statusCode = 200;
                 response.body = "{\"status\":\"ok\"}";
+                break;
+            case BridgeResultKind.ownerUnavailable:
+                response.statusCode = 503;
+                response.body = "{\"error\":\"frame probe owner unavailable\"}";
                 break;
             case BridgeResultKind.timedOut:
                 response.statusCode = 504;
@@ -3360,6 +3389,10 @@ class HttpServer {
             case BridgeResultKind.completed:
                 response.statusCode = 200;
                 response.body = owned.result.snapshot.toJson();
+                break;
+            case BridgeResultKind.ownerUnavailable:
+                response.statusCode = 503;
+                response.body = "{\"error\":\"frame probe owner unavailable\"}";
                 break;
             case BridgeResultKind.timedOut:
                 response.statusCode = 504;
@@ -4689,10 +4722,10 @@ class HttpServer {
                 ReplayReq bridgeRequest = ReplayReq.init;
                 bridgeRequest.index = cast(size_t) idx;
                 // Compatibility is the state of the legacy carrier's LAST
-                // ASSIGNMENTS. HTTP is its only writer in the serial accept
-                // loop; replay writes neither flag and its service reads only
-                // this request-owned copy, never a mutable borrow or a second
-                // independently maintained latch (task 5820).
+                // ASSIGNMENTS. The command route is its only writer through
+                // either transport; replay writes neither flag and its service
+                // reads only this request-owned copy, never a mutable borrow or
+                // a second independently maintained latch (task 5820).
                 bridgeRequest.interactive = commandBridge.req.interactive;
                 bridgeRequest.uiOrigin = commandBridge.req.uiOrigin;
                 ReplayResp initialResult = ReplayResp.init;
@@ -4831,45 +4864,34 @@ class HttpServer {
 
     /// Serve the two frame-count operations at the owner-thread frame boundary.
     public void tickFrameCounts(ref FrameWorkProbe probe) {
-        frameCountsOwner_ = &probe;
+        FrameWorkProbe* owner = &probe;
         frameCountsBridge.tickClaimed((ref FrameCountsReq req,
                                        ref FrameCountsResp resp) nothrow {
-            serviceFrameCounts(req, resp);
+            final switch (req.op) {
+            case FrameCountsOp.read:
+                resp.snapshot = owner.snapshot();
+                break;
+            case FrameCountsOp.reset:
+                owner.reset();
+                break;
+            }
         });
     }
 
     /// Serve FrameProbe reads and resets at the owner-thread frame boundary.
     public void tickFrames(ref FrameProbe probe) {
-        framesOwner_ = &probe;
+        FrameProbe* owner = &probe;
         framesBridge.tickClaimed((ref FramesReq req,
                                   ref FramesResp resp) nothrow {
-            serviceFrames(req, resp);
+            final switch (req.op) {
+            case FramesOp.read:
+                resp.snapshot = owner.snapshot();
+                break;
+            case FramesOp.reset:
+                owner.reset();
+                break;
+            }
         });
-    }
-
-    private void serviceFrameCounts(ref FrameCountsReq req,
-                                    ref FrameCountsResp resp) nothrow {
-        assert(frameCountsOwner_ !is null);
-        final switch (req.op) {
-        case FrameCountsOp.read:
-            resp.snapshot = frameCountsOwner_.snapshot();
-            break;
-        case FrameCountsOp.reset:
-            frameCountsOwner_.reset();
-            break;
-        }
-    }
-
-    private void serviceFrames(ref FramesReq req, ref FramesResp resp) nothrow {
-        assert(framesOwner_ !is null);
-        final switch (req.op) {
-        case FramesOp.read:
-            resp.snapshot = framesOwner_.snapshot();
-            break;
-        case FramesOp.reset:
-            framesOwner_.reset();
-            break;
-        }
     }
 
     /**
@@ -4892,6 +4914,11 @@ class HttpServer {
      * a silent 5s production timeout.
      */
     public void tickAll() {
+        immutable identity = cast(size_t) cast(void*) Thread.getThis();
+        synchronized (this) {
+            if (atomicLoad(tickThreadIdentity_) == 0)
+                atomicStore(tickThreadIdentity_, identity);
+        }
         foreach (b; bridges) b.tick();
         // Second half of the readiness predicate (task 1740). Set AFTER the
         // drain, not before: the claim being published is "a bridged request
@@ -4899,6 +4926,15 @@ class HttpServer {
         // this loop has actually run. The plain load first keeps the steady
         // state at one relaxed read per frame.
         if (!atomicLoad(mainLoopTicked)) atomicStore(mainLoopTicked, true);
+    }
+
+    private bool calledFromTickThread() nothrow {
+        try {
+            immutable identity = cast(size_t) cast(void*) Thread.getThis();
+            return identity != 0 && atomicLoad(tickThreadIdentity_) == identity;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -5303,8 +5339,7 @@ unittest {
     server.tickAll();
     version (PerfProbe) {
         FrameWorkProbe frameWorkOwner;
-        server.frameCountsOwner_ = &frameWorkOwner;
-        server.frameCountsBridge.claimedServiceReady = true;
+        server.tickFrameCounts(frameWorkOwner);
     }
     assert(server.ready(),
         "6740 route JSON census: readiness setup did not reach the handlers");
@@ -5336,6 +5371,7 @@ unittest {
     immutable deadline = MonoTime.currTime + 10.seconds;
     while (!atomicLoad(replies.done) && MonoTime.currTime < deadline) {
         server.tickAll();
+        version (PerfProbe) server.tickFrameCounts(frameWorkOwner);
         Thread.sleep(1.msecs);
     }
     assert(atomicLoad(replies.done),

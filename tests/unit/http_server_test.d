@@ -1,10 +1,97 @@
 module tests.unit.http_server_test;
 
-import http_server : HttpRequest, HttpResponse, HttpServer,
+import core.atomic : atomicLoad, atomicStore;
+import core.thread : Thread;
+import core.time : Duration, MonoTime, msecs, seconds;
+import http_server : BridgeResultKind, HttpRequest, HttpResponse, HttpServer,
     InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel, TcpSocket;
+import std.string : indexOf;
+
+private final class AsyncResponse {
+    shared bool done;
+    HttpResponse response;
+    string wire;
+    string failure;
+}
+
+private bool waitUntil(bool delegate() predicate,
+                       Duration budget = 2.seconds) {
+    immutable deadline = MonoTime.currTime + budget;
+    while (!predicate()) {
+        if (MonoTime.currTime >= deadline) return false;
+        Thread.sleep(1.msecs);
+    }
+    return true;
+}
+
+private ushort freePort() {
+    auto socket = new TcpSocket();
+    scope(exit) socket.close();
+    socket.bind(new InternetAddress("127.0.0.1", cast(ushort) 0));
+    return (cast(InternetAddress) socket.localAddress).port;
+}
+
+private Thread requestInProcess(InProcessHttpTransport transport,
+                                string method, string path, string body_,
+                                AsyncResponse reply) {
+    auto thread = new Thread({
+        try reply.response = transport.request(method, path, body_);
+        catch (Throwable error) reply.failure = error.msg;
+        atomicStore(reply.done, true);
+    });
+    thread.isDaemon = true;
+    thread.start();
+    return thread;
+}
+
+private Thread requestSocket(ushort port, string method, string path,
+                             string body_, AsyncResponse reply) {
+    auto thread = new Thread({
+        try {
+            Socket socket;
+            foreach (_; 0 .. 200) {
+                try {
+                    socket = new TcpSocket();
+                    socket.connect(new InternetAddress("127.0.0.1", port));
+                    break;
+                } catch (Exception) {
+                    if (socket !is null) socket.close();
+                    socket = null;
+                    Thread.sleep(5.msecs);
+                }
+            }
+            if (socket is null) throw new Exception("server did not accept connection");
+            scope(exit) socket.close();
+            socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO,
+                             5.seconds);
+            socket.send(method ~ " " ~ path ~ " HTTP/1.1\r\n"
+                      ~ "Host: 127.0.0.1\r\nContent-Length: "
+                      ~ to!string(body_.length) ~ "\r\n"
+                      ~ "Connection: close\r\n\r\n" ~ body_);
+            ubyte[4096] buffer;
+            for (;;) {
+                auto n = socket.receive(buffer[]);
+                if (n <= 0) break;
+                reply.wire ~= cast(string) buffer[0 .. n].idup;
+            }
+        } catch (Exception error) {
+            reply.failure = error.msg;
+        }
+        atomicStore(reply.done, true);
+    });
+    thread.isDaemon = true;
+    thread.start();
+    return thread;
+}
+
+private string responseBody(string wire) {
+    immutable split = wire.indexOf("\r\n\r\n");
+    assert(split >= 0, "6750 HTTP response has no body boundary: " ~ wire);
+    return wire[split + 4 .. $];
+}
 
 private HttpResponse dispatch(InProcessHttpTransport transport, HttpRequest request)
 {
@@ -243,7 +330,8 @@ unittest {
 
 unittest { // submitAndWait is identity in an in-process single-thread channel
     int calls;
-    auto server = new HttpServer();
+    immutable port = freePort();
+    auto server = new HttpServer(port);
     server.setPathQueryProvider((float t) {
         calls++;
         return t > 0.24f && t < 0.26f
@@ -251,18 +339,36 @@ unittest { // submitAndWait is identity in an in-process single-thread channel
     });
     server.markProvidersWired();
     server.tickAll();
+    server.start();
+    scope(exit) if (server.running) server.stop();
+    assert(waitUntil(() => server.running),
+        "6750 submitAndWait parity: socket server did not start");
+
+    auto socketReply = new AsyncResponse();
+    auto socketClient = requestSocket(port, "POST", "/api/path",
+                                      `{"t":0.25}`, socketReply);
+    assert(waitUntil(() {
+        server.tickAll();
+        return atomicLoad(socketReply.done);
+    }), "6750 submitAndWait parity: socket request needed tickAll but did not finish");
+    socketClient.join();
+    assert(socketReply.failure.length == 0
+        && socketReply.wire.canFind("HTTP/1.1 200 OK"),
+        "6750 submitAndWait parity: socket request failed: "
+        ~ socketReply.failure ~ socketReply.wire);
+
     auto response = (new InProcessHttpTransport(server)).request(
         "POST", "/api/path", `{"t":0.25}`);
-    assert(calls == 1,
-        "6750 submitAndWait identity: the provider did not run exactly once");
+    assert(calls == 2,
+        "6750 submitAndWait parity: the socket and in-process providers did not run once each");
     assert(response.statusCode == 200
         && response.body == `{"surface":"submitAndWait"}`,
         "6750 submitAndWait identity: the single-threaded route did not return its provider bytes");
+    assert(response.body == responseBody(socketReply.wire),
+        "6750 submitAndWait transport parity: /api/path bodies differ between socket and in-process transports");
 }
 
 unittest { // submitOwned is identity in an in-process single-thread channel
-    import core.time : msecs;
-
     int calls;
     auto server = new HttpServer();
     server.setModelBudgetForTest(5.msecs);
@@ -279,12 +385,27 @@ unittest { // submitOwned is identity in an in-process single-thread channel
     assert(response.statusCode == 200
         && response.body == `{"surface":"submitOwned"}`,
         "6750 submitOwned identity: the single-threaded route did not return its owned bytes");
+    auto trace = server.modelOwnedTraceForTest();
+    assert(trace.length == 2
+        && trace[0].kind == BridgeResultKind.submitted
+        && trace[1].kind == BridgeResultKind.completed,
+        "6750 submitOwned trace: inline completion was not recorded");
+
+    server.modelBridgeForTest().notifyStopping();
+    auto stopped = (new InProcessHttpTransport(server)).request(
+        "GET", "/api/model", "");
+    assert(calls == 1,
+        "6750 submitOwned stopping: inline service ran after stopping");
+    trace = server.modelOwnedTraceForTest();
+    assert(stopped.statusCode == 500
+        && trace.length == 4
+        && trace[2].kind == BridgeResultKind.submitted
+        && trace[3].kind == BridgeResultKind.stopping,
+        "6750 submitOwned stopping: the inline branch lost its stopping result");
 }
 
-unittest { // submitClaimed is identity after its owner pump has registered
-    import core.time : msecs;
+unittest { // submitClaimed distinguishes owner absence and preserves the frame fence
     import perf_probe : FrameWorkProbe;
-    import std.string : startsWith;
 
     auto server = new HttpServer();
     server.setFrameCountsBudgetForTest(5.msecs);
@@ -292,16 +413,83 @@ unittest { // submitClaimed is identity after its owner pump has registered
     server.tickAll();
     auto transport = new InProcessHttpTransport(server);
     auto beforeOwner = transport.request("GET", "/api/frames/counts", "");
-    assert(beforeOwner.statusCode == 504,
-        "6750 submitClaimed owner gate: an unregistered owner must time out safely");
+    assert(beforeOwner.statusCode == 503
+        && beforeOwner.body == `{"error":"frame-count owner unavailable"}`,
+        "6750 submitClaimed owner gate: an unregistered owner must report its own kind and body");
+
+    auto timedOut = new AsyncResponse();
+    auto timeoutClient = requestInProcess(transport, "GET",
+                                          "/api/frames/counts", "", timedOut);
+    assert(waitUntil(() => atomicLoad(timedOut.done)),
+        "6750 submitClaimed timeout control did not finish");
+    timeoutClient.join();
+    assert(timedOut.failure.length == 0
+        && timedOut.response.statusCode == 504
+        && timedOut.response.body == `{"error":"timeout waiting for main thread"}`,
+        "6750 submitClaimed timeout control: a real unserviced deadline was not distinct from owner absence");
+
     FrameWorkProbe probe;
     probe.beginFrame();
     probe.endFrame();
     server.tickFrameCounts(probe);
     auto response = transport.request("GET", "/api/frames/counts", "");
-    assert(response.statusCode == 200,
-        "6750 submitClaimed identity: the registered owner did not answer synchronously");
-    assert(response.body.startsWith(`{"frames":1,`),
-        "6750 submitClaimed identity: the route did not serialize the owner snapshot: "
-        ~ response.body);
+    assert(response.statusCode == 500
+        && response.body == `{"error":"frame-count owner failed"}`,
+        "6750 claimed owner fence: an in-process request between frame boundaries bypassed the owner tick");
+    assert(probe.totals().seq == 1,
+        "6750 claimed owner fence: an inline request changed the retained owner probe");
+
+    auto bridge = server.frameCountsBridgeForTest();
+    bridge.notifyStopping();
+    bridge.notifyStarted();
+    auto afterRestart = transport.request("GET", "/api/frames/counts", "");
+    assert(afterRestart.statusCode == 503
+        && afterRestart.body == `{"error":"frame-count owner unavailable"}`,
+        "6750 claimed lifecycle: restart retained owner readiness without a new owner tick");
+}
+
+unittest { // foreign in-process callers queue; TLS depth never leaks between requests or threads
+    shared int calls;
+    shared bool firstSawChannel;
+    shared bool queuedSawChannel;
+    auto server = new HttpServer();
+    server.setDetailedModelDataProvider(() {
+        immutable call = atomicLoad(calls) + 1;
+        atomicStore(calls, call);
+        if (call == 1)
+            atomicStore(firstSawChannel,
+                        server.singleThreadedChannelForTest());
+        else if (call == 2)
+            atomicStore(queuedSawChannel,
+                        server.singleThreadedChannelForTest());
+        return call == 1 ? `{"call":1}` : `{"call":2}`;
+    });
+    server.markProvidersWired();
+    server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+
+    auto first = transport.request("GET", "/api/model", "");
+    assert(first.statusCode == 200 && first.body == `{"call":1}`
+        && atomicLoad(firstSawChannel),
+        "6750 channel depth control: the tick-thread request did not enter the in-process marker");
+
+    auto queued = new AsyncResponse();
+    auto client = requestInProcess(transport, "GET", "/api/model", "", queued);
+    assert(waitUntil(() => server.modelOwnedPendingForTest() == 1
+                           || atomicLoad(queued.done)),
+        "6750 foreign in-process queue: request neither queued nor completed");
+    assert(server.modelOwnedPendingForTest() == 1
+        && !atomicLoad(queued.done),
+        "6750 foreign in-process queue: a non-tick thread serviced the bridge inline");
+    server.tickAll();
+    assert(waitUntil(() => atomicLoad(queued.done)),
+        "6750 foreign in-process queue: tickAll did not complete the queued request");
+    client.join();
+    assert(queued.failure.length == 0
+        && queued.response.statusCode == 200
+        && queued.response.body == `{"call":2}`,
+        "6750 foreign in-process queue: queued response bytes changed: "
+        ~ queued.failure);
+    assert(!atomicLoad(queuedSawChannel),
+        "6750 channel depth isolation: the tick thread observed a prior or foreign request marker");
 }
