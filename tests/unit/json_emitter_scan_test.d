@@ -28,7 +28,7 @@
 // inside the literals, so it discards only comments.
 //
 // WHAT IT DOES NOT SEE, stated so nobody mistakes it for the whole contract:
-// a body assembled in a file outside the scanned four (a new endpoint in a new
+// a body assembled in a file outside the scanned six (a new endpoint in a new
 // module is invisible to this gate — an acknowledged hole, recorded in the
 // task card, not closed here because widening to all of source/ would need a
 // negative control over the whole tree); a specifier built at run time from
