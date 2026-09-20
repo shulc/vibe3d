@@ -6,8 +6,7 @@ module test_http_inprocess_transport;
 import http_client : ClientResponse, clearInProcessTransport, getJson,
     inProcessTransportInstalled, postJson, postRaw,
     postRawAllowingErrorStatus, setInProcessTransport;
-import http_inprocess_transport : InProcessHttpTransport;
-import http_server : HttpServer;
+import http_server : HttpServer, InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.json : JSONValue;
 
@@ -59,7 +58,7 @@ unittest
         "6720 C0: constructing the in-process transport without a server succeeded");
 
     assert(!inProcessTransportInstalled,
-        "6720 setup: a prior cell leaked the process-wide transport");
+        "6720 setup: a prior cell leaked the test-thread transport");
     auto rig = new Rig();
     rig.install();
     assert(inProcessTransportInstalled,
@@ -113,7 +112,23 @@ unittest
     assert(rawRejected400 && rig.calls == 6,
         "6720 C6: postRaw accepted an in-process HTTP 400");
 
+    // C7: unlike every earlier success response, this 2xx body differs from
+    // the live worker's answer and therefore identifies the selected channel.
+    auto channel = postRawAllowingErrorStatus(
+        "/api/test/layer", `{"kind":"empty"}`);
+    assert(channel == `{"status":"error","message":"inject-layer handler not set"}`,
+        "C7: the answer did not come from the in-process rig: " ~ channel);
+
     clearInProcessTransport();
     assert(!inProcessTransportInstalled,
         "6720 teardown: clearing the in-process backend left it installed");
+
+    // C8: a cleared thread-local backend must take the socket fallback and
+    // must not touch the rig that remains alive in this process.
+    immutable callsBeforeFallback = rig.calls;
+    JSONValue socketPing = getJson("/api/ping");
+    assert(socketPing["status"].str == "ok"
+        && rig.calls == callsBeforeFallback,
+        "6720 C8: null transport did not fall back to the socket without "
+        ~ "touching the in-process rig");
 }

@@ -27,6 +27,8 @@ struct ClientResponse
 alias InProcessClientTransport = ClientResponse delegate(
     string method, string path, string body_);
 
+/// Intentionally thread-local: a suite driver installs and consumes this
+/// backend on its own test thread. Other threads retain the socket fallback.
 private InProcessClientTransport g_inProcessTransport;
 
 void setInProcessTransport(InProcessClientTransport transport)

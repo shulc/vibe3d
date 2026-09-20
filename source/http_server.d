@@ -2710,7 +2710,7 @@ class HttpServer {
      * The chain this used to be is now generated from `kRoutes` — same order,
      * same first-match-wins semantics, one registration point. See the table.
      */
-    public HttpResponse handleRequest(HttpRequest request) {
+    private HttpResponse handleRequest(HttpRequest request) {
         HttpResponse response = new HttpResponse();
 
         // Task 1740 — the readiness gate. Scoped to `/api/*` deliberately:
@@ -5156,6 +5156,28 @@ class HttpResponse {
         this.headers["Server"] = "Vibe3D-HTTP-Server/1.0";
         this.headers["Connection"] = "close";
         this.body = "";
+    }
+}
+
+/// Task 6720: socket/thread-free request delivery for callers that share the
+/// server process. Keeping this adapter in the server module preserves the
+/// dispatcher's module-private boundary.
+final class InProcessHttpTransport
+{
+    private HttpServer server_;
+
+    this(HttpServer server)
+    {
+        if (server is null)
+            throw new Exception("an in-process HTTP transport needs a server");
+        server_ = server;
+    }
+
+    HttpResponse request(string method, string path, string body_)
+    {
+        auto request = new HttpRequest(method, path, "HTTP/1.1");
+        request.body = body_;
+        return server_.handleRequest(request);
     }
 }
 

@@ -1,7 +1,7 @@
 module tests.unit.http_server_test;
 
-import http_inprocess_transport : InProcessHttpTransport;
-import http_server : HttpRequest, HttpResponse, HttpServer;
+import http_server : HttpRequest, HttpResponse, HttpServer,
+    InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel, TcpSocket;
@@ -137,6 +137,7 @@ unittest {
 
 // Task 0652: a silent accepted peer cannot park the serial accept loop forever;
 // the next complete request is answered and abandoning the silent peer is loud.
+// The oracle is the received status line and body, never connect() succeeding.
 unittest {
     import core.time    : msecs, seconds;
     import core.thread  : Thread;
