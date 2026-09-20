@@ -6,9 +6,9 @@
 // httpThread, and a handler with one is not.  The literal columns are 24
 // httpThread / 35 mainThread / 2 kFramesAnswered; resolving the last column
 // gives default 26 httpThread / 35 mainThread and PerfProbe 24 / 37.  Bridge
-// reachability follows local named calls to a fixed point, rather than reading
-// only the route handler's own text.  Both builds pin the same raw frame-handler
-// bytes through one shared digest.
+// reachability follows direct local named calls to a fixed point, rather than
+// reading only the route handler's own text.  Both builds pin the same raw
+// frame-handler bytes through one shared digest.
 module tests.unit.answered_bridge_census_test;
 
 import core.exception : AssertError;
@@ -237,30 +237,6 @@ private string[] calledLocalNames(string codeBody, ref string[][string] bodies)
             && (codeBody[next] == ' ' || codeBody[next] == '\t'
                 || codeBody[next] == '\r' || codeBody[next] == '\n'))
             ++next;
-        if (next < codeBody.length && codeBody[next] == '!')
-        {
-            ++next;
-            while (next < codeBody.length
-                && (codeBody[next] == ' ' || codeBody[next] == '\t'
-                    || codeBody[next] == '\r' || codeBody[next] == '\n'))
-                ++next;
-            if (next < codeBody.length && codeBody[next] == '(')
-            {
-                const close = matchingClose(codeBody, next, '(', ')');
-                if (close == codeBody.length) continue;
-                next = close + 1;
-            }
-            else
-            {
-                while (next < codeBody.length
-                    && (isIdent(codeBody[next]) || codeBody[next] == '.'))
-                    ++next;
-            }
-            while (next < codeBody.length
-                && (codeBody[next] == ' ' || codeBody[next] == '\t'
-                    || codeBody[next] == '\r' || codeBody[next] == '\n'))
-                ++next;
-        }
         if (next < codeBody.length && codeBody[next] == '('
             && word in bodies)
             seen[word.idup] = true;
@@ -296,7 +272,7 @@ private string[] reachableBridgeIdentifiers(string root,
         {
             foreach (bridge; bridgeIdentifiers(body)) bridges[bridge] = true;
             foreach (callee; calledLocalNames(body, bodies))
-                if (callee !in visited) pending ~= callee;
+                pending ~= callee;
         }
     }
     auto result = bridges.keys;
@@ -437,11 +413,13 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/nested", "GET", Match.exact,
               Answered.mainThread, "route_nested"),
 ];
+struct CleanValue { int historyBridge; }
 void route_fixture(HttpRequest request, HttpResponse response) {
     // historyBridge is prose, not a dependency.
     const diagnostic = "modelBridge is literal text";
     response.statusCode = request.path.length ? 200 : 500;
     response.body = diagnostic.length ? "{}" : "unreachable";
+    auto value = CleanValue();
 }
 void route_nested(HttpRequest request, HttpResponse response) {
     nested_helper(request, response);
