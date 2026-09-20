@@ -9,6 +9,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 
 import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
 import std.algorithm : canFind;
+import std.array : join;
 import std.file : readText;
 import std.format : format;
 import std.path : buildPath, dirName;
@@ -32,51 +33,59 @@ private struct Surface {
     string dependencyB;
     string contentType;
     string expectedBody;
+    string missingProviderError;
 }
 
 static assert([__traits(allMembers, Surface)] == [
     "path", "requestPath", "method", "handler", "bridge", "setter",
-    "provider", "dependencyA", "dependencyB", "contentType", "expectedBody"],
+    "provider", "dependencyA", "dependencyB", "contentType", "expectedBody",
+    "missingProviderError"],
     "6780 evidence-surface member set changed");
 
 private enum Surface[] surfaces = [
     Surface("/api/ui/policy", "/api/ui/policy", "GET",
         "route_apiUiPolicy", "uiPolicyBridge", "setUiPolicyProvider",
         "uiPolicyProvider", "uiPolicyJson", "ui.discard_guard",
-        "application/json", `{"surface":"ui-policy"}`),
+        "application/json", `{"surface":"ui-policy"}`,
+        "UI-policy provider not set"),
     Surface("/api/toolprops/ids", "/api/toolprops/ids", "GET",
         "route_apiToolpropsIds", "toolpropsIdsBridge", "setToolpropsIdsProvider",
         "toolpropsIdsProvider", "toolPropsIdsJson", "property_panel",
-        "application/json", `{"surface":"toolprops-ids"}`),
+        "application/json", `{"surface":"toolprops-ids"}`,
+        "tool-props ids provider not set"),
     Surface("/api/buttons/availability", "/api/buttons/availability", "GET",
         "route_apiButtonsAvailability", "buttonAvailabilityBridge",
         "setButtonAvailabilityProvider", "buttonAvailabilityProvider",
         "buttonAvailabilityJson", "ui.availability",
-        "application/json", `{"surface":"button-availability"}`),
+        "application/json", `{"surface":"button-availability"}`,
+        "button-availability provider not set"),
     Surface("/api/input/context", "/api/input/context?x=17&y=23&key=probe", "GET",
         "route_apiInputContext", "inputContextBridge", "setInputContextProvider",
         "inputContextProvider", "inputContextJson", "input_context",
-        "application/json", `{"surface":"input-context"}`),
+        "application/json", `{"surface":"input-context"}`,
+        "input-context provider not set"),
     Surface("/api/stats", "/api/stats", "GET",
         "route_apiStats", "statsBridge", "setStatsProvider", "statsProvider",
         "statRowsJson", "ui.stat_record", "application/json; charset=utf-8",
-        `{"surface":"stats"}`),
+        `{"surface":"stats"}`, "stats provider not set"),
     Surface("/api/pie", "/api/pie", "GET",
         "route_apiPie", "pieBridge", "setPieProvider", "pieProvider",
         "pieFrameJson", "ui.pie_record", "application/json",
-        `{"surface":"pie"}`),
+        `{"surface":"pie"}`, "pie provider not set"),
     Surface("/api/tool/disarm", "/api/tool/disarm", "GET",
         "route_apiToolDisarm", "toolDisarmBridge", "setToolDisarmProvider",
         "toolDisarmProvider", "g_disarmCrossings", "g_lastDisarm",
-        "application/json", `{"surface":"tool-disarm"}`),
+        "application/json", `{"surface":"tool-disarm"}`,
+        "tool-disarm provider not set"),
     Surface("/api/perf/reset", "/api/perf/reset", "POST",
         "route_apiPerfReset", "perfResetBridge", "setPerfResetHandler",
-        "perfResetHandler", "g_perf", "g_perf.reset",
-        "application/json", `{"status":"ok"}`),
+        "perfResetHandler", "g_perf", "reset",
+        "application/json", `{"status":"ok"}`,
+        "perf-reset handler not set"),
     Surface("/api/perf", "/api/perf", "GET",
         "route_apiPerf", "perfBridge", "setPerfProvider", "perfProvider",
-        "g_perf", "g_perf.toJson", "application/json",
-        `{"surface":"perf"}`),
+        "g_perf", "toJson", "application/json",
+        `{"surface":"perf"}`, "perf provider not set"),
 ];
 
 private size_t matchingClose(string code, size_t open,
@@ -135,6 +144,16 @@ private string bridgeConstruction(string ctor, ref const Surface surface) {
     return result;
 }
 
+private string setterCall(string wiring, ref const Surface surface) {
+    const startNeedle = "httpServer." ~ surface.setter ~ "(";
+    if (wiring.count(startNeedle) != 1) return null;
+    const begin = wiring.indexOf(startNeedle);
+    const open = wiring.indexOf('(', cast(size_t) begin);
+    if (open < 0) return null;
+    const end = matchingClose(wiring, cast(size_t) open, '(', ')') + 1;
+    return wiring[cast(size_t) begin .. end];
+}
+
 unittest { // floor: the nine-row population and both scanned regions exist
     const server = readText(serverPath);
     const providers = readText(providersPath);
@@ -180,11 +199,14 @@ unittest { // structure: route -> own bridge -> own port -> production dependenc
         const handler = functionBody(server,
             "private void " ~ surface.handler ~ "(");
         const construction = bridgeConstruction(ctor, surface);
+        const wiringCount = wiring.count(
+            "httpServer." ~ surface.setter ~ "(");
+        const call = setterCall(wiring, surface);
         const mapped = row.canFind("Answered.mainThread")
             && handler.count(surface.bridge) == 1
             && construction.canFind(surface.provider)
-            && wiring.count("httpServer." ~ surface.setter ~ "(") == 1
-            && wiring.canFind(surface.dependencyA)
+            && wiringCount == 1
+            && call.canFind(surface.dependencyA)
             && providers.canFind(surface.dependencyB)
             && server.count("public void " ~ surface.setter ~ "(") == 1;
         assert(mapped, format(
@@ -192,8 +214,8 @@ unittest { // structure: route -> own bridge -> own port -> production dependenc
           ~ "service-port=%s wiring-count=%d dependency=%s setter-count=%d",
             surface.handler, row.canFind("Answered.mainThread"),
             handler.count(surface.bridge), construction.canFind(surface.provider),
-            wiring.count("httpServer." ~ surface.setter ~ "("),
-            wiring.canFind(surface.dependencyA)
+            wiringCount,
+            call.canFind(surface.dependencyA)
                 && providers.canFind(surface.dependencyB),
             server.count("public void " ~ surface.setter ~ "(")));
     }
@@ -217,6 +239,81 @@ private bool waitUntil(bool delegate() predicate,
 
 private size_t threadIdentity() nothrow {
     return cast(size_t) cast(void*) Thread.getThis();
+}
+
+unittest { // pin: each absent application port yields its own 500 diagnosis
+    const serverSource = readText(serverPath);
+    const regionBegin = serverSource.indexOf(
+        "private PortlessJsonResp awaitPortlessJson(");
+    assert(regionBegin >= 0,
+        "6780 missing-provider source region has no beginning");
+    const regionEnd = serverSource.indexOf(
+        "private void route_apiFramesCountsReset", cast(size_t) regionBegin);
+    assert(regionEnd > regionBegin,
+        "6780 missing-provider source region has no end");
+    const errorRegion = serverSource[
+        cast(size_t) regionBegin .. cast(size_t) regionEnd];
+
+    string[] violations;
+    if (serverSource.count(
+            "private Duration portlessRouteBudget_ = 5.seconds;") != 1)
+        violations ~= "<portless-budget>";
+    if (errorRegion.count("portlessRouteBudget_") != 3)
+        violations ~= "<budget-consumers>";
+    const timeoutPinned = errorRegion.count(
+            `PortlessJsonResp("", "timeout waiting for main thread")`) == 1
+        && errorRegion.count(
+            `InputContextResp("", "timeout waiting for main thread")`) == 1
+        && errorRegion.count(
+            `PerfResetResp("timeout waiting for main thread")`) == 1;
+    if (!timeoutPinned)
+        violations ~= "<timeout-synthetic>";
+    const stoppingPinned = errorRegion.count(
+            `PortlessJsonResp("", "HTTP server stopping")`) == 1
+        && errorRegion.count(
+            `InputContextResp("", "HTTP server stopping")`) == 1
+        && errorRegion.count(`PerfResetResp("HTTP server stopping")`) == 1;
+    if (!stoppingPinned)
+        violations ~= "<stopping-synthetic>";
+
+    auto server = new HttpServer();
+    server.markProvidersWired();
+    server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+
+    foreach (ref const surface; surfaces) {
+        auto reply = new AsyncReply();
+        auto client = new Thread({
+            try reply.response = transport.request(
+                surface.method, surface.requestPath, "");
+            catch (Throwable error) reply.failure = error.msg;
+            atomicStore(reply.done, true);
+        });
+        client.isDaemon = true;
+        client.start();
+        const observed = waitUntil(
+            () => server.portlessOwnedPendingForTest(surface.path) == 1
+               || atomicLoad(reply.done));
+        const queued = observed
+            && server.portlessOwnedPendingForTest(surface.path) == 1
+            && !atomicLoad(reply.done);
+        server.tickAll();
+        const completed = waitUntil(() => atomicLoad(reply.done));
+        if (completed) client.join();
+        const pinned = queued && completed && reply.failure.length == 0
+            && reply.response !is null && reply.response.statusCode == 500
+            && reply.response.headers["Content-Type"] == surface.contentType
+            && reply.response.body.canFind(surface.missingProviderError);
+        if (!pinned) violations ~= format(
+            "%s(queued=%s completed=%s failure=%s status=%d type=%s body=%s)",
+            surface.path, queued, completed, reply.failure,
+            reply.response is null ? -1 : reply.response.statusCode,
+            reply.response is null ? "<none>"
+                : reply.response.headers.get("Content-Type", "<none>"),
+            reply.response is null ? "<none>" : reply.response.body);
+    }
+    assert(violations.length == 0,
+        "6780 missing-provider violations: " ~ violations.join("; "));
 }
 
 unittest { // pin: every named route queues and invokes its port on tickAll
@@ -284,7 +381,8 @@ unittest { // pin: every named route queues and invokes its port on tickAll
         server.tickAll();
         const completed = waitUntil(() => atomicLoad(reply.done));
         if (completed) client.join();
-        const resetPinned = i != 7 || atomicLoad(resetCalls) == 1;
+        const resetPinned = surface.path != "/api/perf/reset"
+            || atomicLoad(resetCalls) == 1;
         const pinned = queued && completed && reply.failure.length == 0
             && reply.response !is null && reply.response.statusCode == 200
             && reply.response.headers["Content-Type"] == surface.contentType

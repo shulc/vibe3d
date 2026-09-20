@@ -3474,6 +3474,8 @@ class HttpServer {
     }
 
     private void route_apiPerfReset(HttpRequest request, HttpResponse response) {
+        // The bridge adds one frame of latency before the perf lane's first
+        // measured sample.
         response.headers["Content-Type"] = "application/json";
         auto owned = perfResetBridge.submitOwned(
             PerfResetReq.init, PerfResetResp.init,
