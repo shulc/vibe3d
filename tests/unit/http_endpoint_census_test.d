@@ -38,7 +38,7 @@
 module tests.unit.http_endpoint_census_test;
 
 import std.algorithm : sort;
-import std.ascii     : isDigit, isWhite;
+import std.ascii     : isAlphaNum, isDigit, isWhite;
 import std.exception : enforce;
 import std.file      : dirEntries, SpanMode, exists, readText;
 import std.format    : format;
@@ -80,7 +80,6 @@ private static immutable string[] kAttribs = ["private ", "public ", "static "];
 private static immutable string[] kSharedFns = ["getJson", "postJson", "postRaw"];
 
 private static immutable string[] kRootRouteSpellings = [`"/"`, "`/`"];
-private static immutable string[] kRouteSelectionTerms = ["path ==", "startsWith("];
 private static immutable string[] kContractHttpThreadRoutes = [
     "/api/changes", "/api/cache/rebuilds", "/api/gc/commands",
 ];
@@ -130,16 +129,20 @@ private string sourceBody(string raw, string code, string marker)
 
 private bool carriesHttpThreadRationale(string body)
 {
+    // This is deliberately a loud prose pin: both terms live in handler
+    // comments, not executable behaviour. Rephrasing "unsynchronised" as
+    // "not synchronised" will redden the census so the disposition rationale
+    // is reviewed rather than silently lost.
     return body.indexOf("Answered.httpThread") >= 0
         && body.indexOf("unsynchron") >= 0;
 }
 
 private void classifyContractRationale(string path, string body,
-        ref size_t rationaleRows, ref string[] offenders)
+        ref size_t bodyRows, ref string[] offenders)
 {
-    if (carriesHttpThreadRationale(body))
-        ++rationaleRows;
-    else
+    if (body.length)
+        ++bodyRows;
+    if (!carriesHttpThreadRationale(body))
         offenders ~= path;
 }
 
@@ -163,11 +166,26 @@ private string[] presentTerms(string source, const string[] terms)
     return found;
 }
 
+private size_t identifierUses(string source, string identifier)
+{
+    if (identifier.length == 0 || identifier.length > source.length) return 0;
+    size_t uses;
+    foreach (i; 0 .. source.length - identifier.length + 1)
+        if (source[i .. i + identifier.length] == identifier
+                && (i == 0 || !(source[i - 1] == '_'
+                    || source[i - 1].isAlphaNum))
+                && (i + identifier.length == source.length
+                    || !(source[i + identifier.length] == '_'
+                        || source[i + identifier.length].isAlphaNum)))
+            ++uses;
+    return uses;
+}
+
 private struct CompositionFindings
 {
     string[] literalOffenders;
     string[] handlerOffenders;
-    string[] selectionOffenders;
+    size_t pathUses;
     size_t rootRouteRows;
     size_t codeBytes;
     size_t literalBytes;
@@ -180,7 +198,7 @@ private CompositionFindings compositionFindings(
     CompositionFindings result;
     result.codeBytes = transportCode.length;
     result.literalBytes = transportLiterals.length;
-    result.selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
+    result.pathUses = identifierUses(transportCode, "path");
     foreach (path; routeLiterals)
     {
         if (path == "/") ++result.rootRouteRows;
@@ -368,8 +386,10 @@ unittest
 // Task 6760 makes the transport-neutrality requirement executable. This is
 // half A only: a composition census cannot prove how a route ANSWERS; the
 // in-process route walk in http_server.d is the behavioural half, traversing
-// all 61 bodies through the common dispatcher with a >= 30 non-degraded-
-// response floor.
+// all 61 bodies through the common dispatcher and pinning exactly 30
+// non-degraded responses on this revision. W14-B (task 6750) is splitting that
+// total into the default and PerfProbe populations; recheck this comment when
+// 6750 merges.
 // Two apparent duplications are sanctioned controls, not implementation copies:
 // tools/sanitizer/lane.d :: kSweepRoutes independently recounts all 61 routes,
 // while /api/changes, /api/cache/rebuilds and /api/gc/commands are task 1906
@@ -394,22 +414,30 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(compositionControl.rootRouteRows == 1
             && compositionControl.literalOffenders == ["/", "/api/ping"]
             && compositionControl.handlerOffenders == ["route_apiPing"]
-            && compositionControl.selectionOffenders == ["path =="],
+            && compositionControl.pathUses == 1,
         "6760 composition control: root, non-root, handler and route-selection "
         ~ "leaks must all be marked");
 
-    assert(presentTerms(blankNonCode(
-            `if (path == kPingRoute) return;`), kRouteSelectionTerms)
-            == ["path =="],
+    const nonRootOnlyControl = compositionFindings(
+        ``, `auto ping = "/api/ping";`, ["/", "/api/ping"], []);
+    assert(nonRootOnlyControl.rootRouteRows == 1
+            && nonRootOnlyControl.literalOffenders == ["/api/ping"],
+        "6760 literal-selection control: root and non-root spellings must be "
+        ~ "classified independently");
+
+    assert(identifierUses(blankNonCode(
+            `if (path == kPingRoute) return;`), "path") == 1,
         "6760 route-selection control: path == a route constant must be marked");
-    assert(presentTerms(blankNonCode(
-            `if (path == "/api/" ~ "ping") return;`), kRouteSelectionTerms)
-            == ["path =="],
+    assert(identifierUses(blankNonCode(
+            `if (path == "/api/" ~ "ping") return;`), "path") == 1,
         "6760 route-selection control: path == a concatenated route must be marked");
-    assert(presentTerms(blankNonCode(
-            `if (path.startsWith("/api/pin")) return;`), kRouteSelectionTerms)
-            == ["startsWith("],
+    assert(identifierUses(blankNonCode(
+            `if (path.startsWith("/api/pin")) return;`), "path") == 1,
         "6760 route-selection control: a route-prefix test must be marked");
+    assert(identifierUses(blankNonCode(
+            `if (body_.startsWith("{")) return;`), "path") == 0,
+        "6760 route-selection control: another receiver's startsWith call "
+        ~ "must not be marked as path selection");
 
     size_t contractRows;
     string[] contractOffenders;
@@ -430,15 +458,15 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(!carriesHttpThreadRationale("unsynchronised but no disposition"),
         "6760 contract-rationale control: an unsynchronised-source comment "
         ~ "without Answered.httpThread must not satisfy the pin");
-    size_t rationaleRows;
+    size_t rationaleBodyRows;
     string[] rationaleOffenders;
     classifyContractRationale("/valid", "Answered.httpThread, unsynchronised",
-        rationaleRows, rationaleOffenders);
+        rationaleBodyRows, rationaleOffenders);
     classifyContractRationale("/invalid", "Answered.httpThread without reason",
-        rationaleRows, rationaleOffenders);
-    assert(rationaleRows == 1 && rationaleOffenders == ["/invalid"],
-        "6760 contract-rationale control: a valid handler must be counted and "
-        ~ "an invalid handler must be named");
+        rationaleBodyRows, rationaleOffenders);
+    assert(rationaleBodyRows == 2 && rationaleOffenders == ["/invalid"],
+        "6760 contract-rationale control: both handler bodies must be counted "
+        ~ "while the invalid handler is named");
 
     enum rationaleSource = q"FIXTURE
 private void route_fixture() {
@@ -510,18 +538,19 @@ unittest
         "6760 projection control: the real source code view must blank string "
         ~ "literals while the literal-preserving view retains HTTP/1.1");
 
-    size_t contractRationaleRows;
+    size_t contractRationaleBodyRows;
     string[] contractRationaleOffenders;
     foreach (i, path; kContractHttpThreadRoutes)
     {
         const body = sourceBody(raw, code,
             "private void " ~ kContractHttpThreadHandlers[i] ~ "(");
-        classifyContractRationale(path, body, contractRationaleRows,
+        classifyContractRationale(path, body, contractRationaleBodyRows,
             contractRationaleOffenders);
     }
-    assert(contractRationaleRows == 3,
+    assert(contractRationaleBodyRows == 3,
         "6760 transport composition census: all three task-1906 diagnostic "
-        ~ "route handlers must carry a source rationale for their disposition");
+        ~ "handler bodies must remain discoverable before their rationales "
+        ~ "are classified");
     assert(contractRationaleOffenders.length == 0, format(
         "6760 transport composition census: task-1906 diagnostic route "
       ~ "handler(s) must retain their Answered.httpThread + unsynchronised "
@@ -612,12 +641,12 @@ unittest
     sort(findings.literalOffenders);
     sort(findings.handlerOffenders);
 
-    assert(findings.selectionOffenders.length == 0, format(
-        "6760 transport composition census: route-selection operation(s) "
-      ~ "leaked into InProcessHttpTransport: %s. Literal extraction cannot "
-      ~ "see a route moved to a constant or assembled from fragments; path "
-      ~ "equality and prefix selection stay in HttpServer.handleRequest.",
-        findings.selectionOffenders));
+    assert(findings.pathUses == 2, format(
+        "6760 transport composition census: the path identifier must occur "
+      ~ "exactly twice in InProcessHttpTransport (request parameter plus "
+      ~ "HttpRequest construction), found %d. Any additional use can select "
+      ~ "a route regardless of punctuation or API spelling; dispatch stays "
+      ~ "in HttpServer.handleRequest.", findings.pathUses));
     assert(findings.literalOffenders.length == 0, format(
         "6760 transport composition census: concrete route handling leaked "
       ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
