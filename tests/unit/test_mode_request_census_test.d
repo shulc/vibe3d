@@ -109,17 +109,20 @@ unittest // lexer and whole-token controls precede the production floor
         char quote = '"';
         if (enabled && !request.context.testMode) {}
         if (!request.context.other_testMode) {}
+        unittest { if (!request.context.testMode) {} }
     };
     auto scan = scanTestModeIfs(sample);
     assert(scan.problem.length == 0 && scan.conditions.length == 2,
-        "6790 scanner control: comments, literals, character literals or "
-        ~ "identifier boundaries changed the two-condition result");
+        "6790 scanner control: comments, literals, character literals, "
+        ~ "unittest bodies or identifier boundaries changed the "
+        ~ "two-condition result");
 }
 
 unittest // production floor -> request needle -> structural path
 {
     immutable path = buildPath(repoRoot, "source", "http_server.d");
     immutable raw = readText(path);
+    immutable code = blankUnittestBodies(blankNonCode(raw));
     auto scan = scanTestModeIfs(raw);
 
     assert(scan.problem.length == 0,
@@ -141,6 +144,18 @@ unittest // production floor -> request needle -> structural path
         "6790 testMode request needle: every discovered condition must read "
         ~ "the request context exactly once; offenders:\n"
         ~ wrongPaths.join("\n"));
+
+    immutable playRoute = functionBody(
+        code, "private void route_apiPlayEvents(");
+    immutable playBody = functionBody(
+        code, "private void servePlayEvents(");
+    assert(playRoute.length != 0 && playBody.length != 0,
+        "6790 play-events location area floor: transport wrapper or "
+        ~ "extractable body was not found");
+    assert(namesIdent(playRoute, "testMode")
+        && !namesIdent(playBody, "testMode"),
+        "6790 play-events authorization moved out of the transport wrapper "
+        ~ "into the body W14-E extracts");
 
     auto added = scanTestModeIfs(raw
         ~ "\nvoid task6790Probe(HttpRequest request) { "
@@ -177,7 +192,6 @@ unittest // the route and service null gates are independent surfaces
         "6790 subpatch-hold action role regressed to the retired handler name");
 }
 
-// The request authorization carrier is deliberately one field. Keep this pin
-// textually after the population, request needle and structural assertions.
+// Compiler fence: the dispatch carrier remains exactly one field.
 static assert([__traits(allMembers, HttpRequestContext)] == ["testMode"],
     "6790 HttpRequestContext composition changed");

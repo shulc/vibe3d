@@ -7,7 +7,8 @@ module tests.unit.test_mode_request_gate_test;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
+import http_server : HttpRequestContext, HttpResponse, HttpServer,
+    InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.format : format;
@@ -239,6 +240,48 @@ unittest // nine independently reachable gates, two transports each
         failures ~= checkGateCase(fixture, gate);
     assert(failures.length == 0,
         "6790 request test-mode gate matrix failed:\n" ~ failures.join("\n"));
+}
+
+unittest // dispatch always replaces a carried context with server state
+{
+    auto fixture = new GateFixture(false);
+
+    fixture.server.setTestMode(false);
+    auto carriedTrue = fixture.server.handleRequestWithContextForTest(
+        "GET", "/api/changes", HttpRequestContext(true));
+    assert(carriedTrue.statusCode == 403,
+        "6790 dispatch snapshot must replace carried testMode=true with "
+        ~ "server testMode=false (got "
+        ~ carriedTrue.statusCode.to!string ~ ")");
+
+    fixture.server.setTestMode(true);
+    auto carriedFalse = fixture.server.handleRequestWithContextForTest(
+        "GET", "/api/changes", HttpRequestContext(false));
+    assert(carriedFalse.statusCode == 200,
+        "6790 dispatch snapshot must replace carried testMode=false with "
+        ~ "server testMode=true (got "
+        ~ carriedFalse.statusCode.to!string ~ ")");
+}
+
+unittest // the non-test arms of both conjunctions remain reachable
+{
+    auto fixture = new GateFixture(false);
+
+    auto ordinaryProbe = fixture.inProcess.request(
+        "GET", "/api/viewport/probe", "");
+    assert(ordinaryProbe.statusCode == 500
+        && ordinaryProbe.body.canFind("viewport-probe provider not set"),
+        "6790 target!=frame outside test mode must bypass only the frame "
+        ~ "gate (got " ~ ordinaryProbe.statusCode.to!string ~ "; "
+        ~ ordinaryProbe.body ~ ")");
+
+    auto ordinaryCommand = fixture.inProcess.request(
+        "POST", "/api/command", `{"id":"task6790.probe","params":{}}`);
+    assert(ordinaryCommand.statusCode == 200
+        && ordinaryCommand.body == `{"status":"ok"}`,
+        "6790 wantUi=false outside test mode must bypass only the UI-origin "
+        ~ "gate (got " ~ ordinaryCommand.statusCode.to!string ~ "; "
+        ~ ordinaryCommand.body ~ ")");
 }
 
 unittest // route null gate has its own observable verdict

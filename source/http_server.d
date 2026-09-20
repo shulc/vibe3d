@@ -941,10 +941,10 @@ class HttpServer {
     // reference engine's before replaying a drag through /api/play-events.
     private alias CameraSetHandler = void delegate(JSONValue params);
     private CameraSetHandler cameraSetHandler;
-    // Configuration is copied into each request at the dispatch boundary.
-    // Route authorization below reads only that snapshot, never this shared
-    // server state directly.
-    private HttpRequestContext requestContext_;
+    // Server-owned authorization configuration; all requests share this value.
+    // Each dispatch snapshots it into HttpRequest.context, so concurrent
+    // requests cannot carry different configured values.
+    private HttpRequestContext serverContext_;
 
     // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
     // Reads back the live face VBO contents on the GL/main thread. Used by
@@ -1285,7 +1285,7 @@ class HttpServer {
 
     // This is a synchronous state-changing action, not a read provider. The
     // in-process transport runs it inline only on the recorded tickAll thread,
-    // so the web channel never waits for a later host frame. Evidence:
+    // so that channel never waits for a later host frame. Evidence:
     // tests.unit.test_mode_request_gate_test.
     private alias SubpatchHoldAction = string delegate(long ms, long ceilingMs);
     private SubpatchHoldAction subpatchHoldAction;
@@ -1984,6 +1984,13 @@ class HttpServer {
             return handleRequest(request);
         }
 
+        public HttpResponse handleRequestWithContextForTest(
+                string method, string path, HttpRequestContext carried) {
+            auto request = new HttpRequest(method, path, "HTTP/1.1");
+            request.context = carried;
+            return handleRequest(request);
+        }
+
         public bool singleThreadedChannelForTest() const nothrow {
             return inSingleThreadedChannel();
         }
@@ -2333,7 +2340,7 @@ class HttpServer {
     }
 
     public void setTestMode(bool enabled) {
-        requestContext_.testMode = enabled;
+        serverContext_.testMode = enabled;
     }
 
     /// Enable fast-forward replay on the HTTP-driven event player (--perf
@@ -2815,7 +2822,7 @@ class HttpServer {
      * same first-match-wins semantics, one registration point. See the table.
      */
     private HttpResponse handleRequest(HttpRequest request) {
-        request.context = requestContext_;
+        request.context = serverContext_;
         HttpResponse response = new HttpResponse();
 
         // Task 1740 — the readiness gate. Scoped to `/api/*` deliberately:
@@ -5280,8 +5287,9 @@ private string routeHandlerProblem() {
 static assert(routeHandlerProblem() is null, routeHandlerProblem());
 
 
-/// Immutable-for-one-dispatch authorization inputs. HttpServer snapshots its
-/// configured values into every request before route selection.
+/// Per-dispatch snapshot of server-owned authorization inputs. Dispatch
+/// overwrites it from HttpServer; it is not independently configurable per
+/// request.
 struct HttpRequestContext {
     bool testMode;
 }
