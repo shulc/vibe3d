@@ -405,11 +405,13 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/nested", "GET", Match.exact,
               Answered.mainThread, "route_nested"),
 ];
+struct CleanValue { int historyBridge; }
 void route_fixture(HttpRequest request, HttpResponse response) {
     // historyBridge is prose, not a dependency.
     const diagnostic = "modelBridge is literal text";
     response.statusCode = request.path.length ? 200 : 500;
     response.body = diagnostic.length ? "{}" : "unreachable";
+    auto value = CleanValue();
 }
 void route_nested(HttpRequest request, HttpResponse response) {
     nested_helper(request, response);
