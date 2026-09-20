@@ -87,6 +87,7 @@ private static immutable string[] kContractHttpThreadRoutes = [
 private static immutable string[] kContractHttpThreadHandlers = [
     "route_apiChanges", "route_apiCacheRebuilds", "route_apiGcCommands",
 ];
+static assert(kContractHttpThreadRoutes.length == kContractHttpThreadHandlers.length);
 
 /// Blank comments while retaining string-literal bytes. Both lexer views keep
 /// byte offsets stable; only comment bytes differ between them.
@@ -131,6 +132,15 @@ private bool carriesHttpThreadRationale(string body)
 {
     return body.indexOf("Answered.httpThread") >= 0
         && body.indexOf("unsynchron") >= 0;
+}
+
+private void classifyContractRationale(string path, string body,
+        ref size_t rationaleRows, ref string[] offenders)
+{
+    if (carriesHttpThreadRationale(body))
+        ++rationaleRows;
+    else
+        offenders ~= path;
 }
 
 private size_t matchingClose(string code, size_t open, char opening, char closing)
@@ -420,6 +430,15 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(!carriesHttpThreadRationale("unsynchronised but no disposition"),
         "6760 contract-rationale control: an unsynchronised-source comment "
         ~ "without Answered.httpThread must not satisfy the pin");
+    size_t rationaleRows;
+    string[] rationaleOffenders;
+    classifyContractRationale("/valid", "Answered.httpThread, unsynchronised",
+        rationaleRows, rationaleOffenders);
+    classifyContractRationale("/invalid", "Answered.httpThread without reason",
+        rationaleRows, rationaleOffenders);
+    assert(rationaleRows == 1 && rationaleOffenders == ["/invalid"],
+        "6760 contract-rationale control: a valid handler must be counted and "
+        ~ "an invalid handler must be named");
 
     enum rationaleSource = q"FIXTURE
 private void route_fixture() {
@@ -491,14 +510,18 @@ unittest
         "6760 projection control: the real source code view must blank string "
         ~ "literals while the literal-preserving view retains HTTP/1.1");
 
+    size_t contractRationaleRows;
     string[] contractRationaleOffenders;
     foreach (i, path; kContractHttpThreadRoutes)
     {
         const body = sourceBody(raw, code,
             "private void " ~ kContractHttpThreadHandlers[i] ~ "(");
-        if (!carriesHttpThreadRationale(body))
-            contractRationaleOffenders ~= path;
+        classifyContractRationale(path, body, contractRationaleRows,
+            contractRationaleOffenders);
     }
+    assert(contractRationaleRows == 3,
+        "6760 transport composition census: all three task-1906 diagnostic "
+        ~ "route handlers must carry a source rationale for their disposition");
     assert(contractRationaleOffenders.length == 0, format(
         "6760 transport composition census: task-1906 diagnostic route "
       ~ "handler(s) must retain their Answered.httpThread + unsynchronised "
