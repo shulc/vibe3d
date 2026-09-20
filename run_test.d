@@ -582,9 +582,14 @@ void releaseRunLock() {
 // stdout goes to a file in most invocations. Across 2 970 reconstructed runs
 // the lock wait was legible in about 200. This runner knows both exactly.
 //
-// WHERE, and why not tempDir(): /tmp on this host is a 32 GiB tmpfs (task
-// 2080), so a log there would cost RAM and vanish at reboot -- the two things a
-// longitudinal record must not do. It is host-wide for the same reason the LOCK
+// WHERE, and why not tempDir(): /tmp on this host is an 8 GiB tmpfs, so a log
+// there would cost RAM and vanish at reboot -- the two things a longitudinal
+// record must not do. The number was "32 GiB (task 2080)" until 2026-09-20 and
+// was wrong by four times: `df -h /tmp` reads `tmpfs 8.0G`. The size is quoted
+// at all only to say that this is RAM, and the RAM cost is what the argument
+// rests on -- so read `free`'s `shared` column, which IS this mount, and note
+// that the OOM killer reads `free` rather than `available` (card 6685). It is
+// host-wide for the same reason the LOCK
 // is host-wide: every worktree shares one slot, so a per-checkout log would
 // hide precisely the contention it exists to show.
 //
