@@ -741,9 +741,8 @@ class HttpServer {
     // has drained the bridges at least once.
     private shared bool providersWired;
     private shared bool mainLoopTicked;
-    // Written once by the first tickAll call and read atomically by bridge
-    // submitters. The Thread object address is the identity; names and indices
-    // are deliberately not part of the channel contract (task 6750 review).
+    // First tickAll publishes the Thread object address once; bridge submitters
+    // read it atomically. Names and indices are outside this contract.
     private shared size_t tickThreadIdentity_;
 
     private ushort port;

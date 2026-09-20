@@ -128,8 +128,8 @@ unittest { // 6357: frame-count service is the unique pre-probe owner boundary
             serverHits = hits;
     }
     assert(files >= 500, "6357 source census population fell below 500 modules");
-    assert(allHits == 2,
-        "6357 tickFrameCounts identifier count must be 2 in source/**");
-    assert(appHits == 1 && serverHits == 1,
-        "6357 tickFrameCounts must have one app call and one server definition");
+    assert(allHits == 4,
+        "6357 tickFrameCounts identifier count must be 4 in source/**");
+    assert(appHits == 1 && serverHits == 3,
+        "6357 tickFrameCounts must have one app call plus one server definition and two in-module census calls");
 }

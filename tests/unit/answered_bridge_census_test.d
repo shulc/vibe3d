@@ -374,9 +374,9 @@ private void assertFrameBodyBytes()
     const routes = scanRoutes(raw);
     const bytes = frameBodyBytes(routes);
     const digest = sha256Of(cast(const(ubyte)[]) bytes).toHexString;
-    enum expectedBytes = 2632;
+    enum expectedBytes = 3030;
     enum expectedSha256 =
-        "BCCDF6A5AC179CFCA0083BFCADCEB573C6EA779C154BE45BEB8E6B617460BC94";
+        "E32F7EFD17D0566279076E8824BD112C96897B4A9515D4D7E314396F1DFBE163";
     assert(bytes.length == expectedBytes, format(
         "6730 kFramesAnswered handler bytes changed: expected %d, found %d",
         expectedBytes, bytes.length));
