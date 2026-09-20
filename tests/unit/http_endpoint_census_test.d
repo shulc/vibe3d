@@ -95,14 +95,24 @@ private string blankComments(string raw)
         "6760 scanner control: lexer projections changed source byte length");
     auto result = raw.dup;
     foreach (i; 0 .. result.length)
-        if (codeOnly[i] != withComments[i] && result[i] != '\n')
+        if (codeOnly[i] != withComments[i])
             result[i] = ' ';
     return result.idup;
 }
 
+private struct SourceProjection
+{
+    string code;
+    string literals;
+}
+
+private SourceProjection projectSource(string raw)
+{
+    return SourceProjection(blankNonCode(raw), blankComments(raw));
+}
+
 private size_t matchingClose(string code, size_t open, char opening, char closing)
 {
-    if (open >= code.length || code[open] != opening) return code.length;
     size_t depth;
     foreach (i; open .. code.length)
     {
@@ -319,11 +329,12 @@ final class InProcessHttpTransport {
     }
 }
 FIXTURE";
-    const bracesCode = blankNonCode(bracesInLiteral);
+    const bracesProjection = projectSource(bracesInLiteral);
+    const bracesCode = bracesProjection.code;
     const bracesOpen = cast(size_t) bracesCode.indexOf('{');
     const bracesClose = matchingClose(bracesCode, bracesOpen, '{', '}');
     assert(bracesClose < bracesCode.length
-            && blankComments(bracesInLiteral)[bracesOpen .. bracesClose + 1]
+            && bracesProjection.literals[bracesOpen .. bracesClose + 1]
                 .indexOf("/api/ping") >= 0,
         "6760 scanner control: two extra } bytes inside a string must not "
         ~ "truncate the transport before a leaked /api/ping route");
@@ -334,11 +345,12 @@ final class InProcessHttpTransport {
     void request(string path) {}
 }
 FIXTURE";
-    const commentCode = blankNonCode(routeInComment);
+    const commentProjection = projectSource(routeInComment);
+    const commentCode = commentProjection.code;
     const commentOpen = cast(size_t) commentCode.indexOf('{');
     const commentClose = matchingClose(commentCode, commentOpen, '{', '}');
     assert(commentClose < commentCode.length
-            && blankComments(routeInComment)[commentOpen .. commentClose + 1]
+            && commentProjection.literals[commentOpen .. commentClose + 1]
                 .indexOf("/api/ping") < 0,
         "6760 scanner control: a route literal in a comment must not be "
         ~ "reported as transport knowledge");
@@ -348,8 +360,9 @@ unittest
 {
     const serverPath = buildPath(repoRoot, "source", "http_server.d");
     const raw = readText(serverPath);
-    const code = blankNonCode(raw);
-    const commentsBlanked = blankComments(raw);
+    const projection = projectSource(raw);
+    const code = projection.code;
+    const commentsBlanked = projection.literals;
 
     enum transportMarker = "final class InProcessHttpTransport";
     const transportAt = code.indexOf(transportMarker);
@@ -431,7 +444,7 @@ unittest
     string[] handlerOffenders;
     const selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
     size_t rootRouteRows;
-    foreach (i, path; routeLiterals)
+    foreach (path; routeLiterals)
     {
         // Non-root paths cannot occur in D code except as text. Root is
         // matched as a complete ordinary/backtick literal so HTTP/1.1 is not
@@ -441,9 +454,10 @@ unittest
             ? presentTerms(transportLiterals, kRootRouteSpellings).length != 0
             : transportLiterals.indexOf(path) >= 0;
         if (found) literalOffenders ~= path;
-        if (transportCode.indexOf(handlerNames[i]) >= 0)
-            handlerOffenders ~= handlerNames[i];
     }
+    foreach (handler; handlerNames)
+        if (transportCode.indexOf(handler) >= 0)
+            handlerOffenders ~= handler;
     assert(rootRouteRows == 1,
         "6760 transport composition census: root-literal special-case domain "
         ~ "must contain exactly 1 kRoutes row");
