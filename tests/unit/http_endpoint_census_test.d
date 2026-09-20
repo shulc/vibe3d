@@ -130,6 +130,44 @@ private string[] presentTerms(string source, const string[] terms)
     return found;
 }
 
+private struct CompositionFindings
+{
+    string[] literalOffenders;
+    string[] handlerOffenders;
+    size_t rootRouteRows;
+}
+
+private CompositionFindings compositionFindings(
+        string transportCode, string transportLiterals,
+        const string[] routeLiterals, const string[] handlerNames)
+{
+    CompositionFindings result;
+    foreach (path; routeLiterals)
+    {
+        if (path == "/") ++result.rootRouteRows;
+        const spellings = path == "/" ? kRootRouteSpellings : [path];
+        if (presentTerms(transportLiterals, spellings).length != 0)
+            result.literalOffenders ~= path;
+    }
+    foreach (handler; handlerNames)
+        if (presentTerms(transportCode, [handler]).length != 0)
+            result.handlerOffenders ~= handler;
+    return result;
+}
+
+private void classifyContractDisposition(
+        string path, string routeFields,
+        ref size_t contractRouteRows, ref string[] offenders)
+{
+    foreach (contractPath; kContractHttpThreadRoutes)
+        if (path == contractPath)
+        {
+            ++contractRouteRows;
+            if (routeFields.indexOf("Answered.httpThread") < 0)
+                offenders ~= contractPath;
+        }
+}
+
 /// Every `host:port` literal in `txt`, as it is spelled.
 private string[] hostPortLiterals(string txt)
 {
@@ -308,6 +346,15 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(presentTerms(`auto version_ = "HTTP/1.1";`, kRootRouteSpellings).length == 0,
         "6760 root-literal control: a body containing only HTTP/1.1 must not be marked");
 
+    const compositionControl = compositionFindings(
+        `route_apiPing(request, response);`,
+        `auto root = "/"; auto ping = "/api/ping";`,
+        ["/", "/api/ping"], ["route_root", "route_apiPing"]);
+    assert(compositionControl.rootRouteRows == 1
+            && compositionControl.literalOffenders == ["/", "/api/ping"]
+            && compositionControl.handlerOffenders == ["route_apiPing"],
+        "6760 composition control: root, non-root and handler leaks must all be marked");
+
     assert(presentTerms(blankNonCode(
             `if (path == kPingRoute) return;`), kRouteSelectionTerms)
             == ["path =="],
@@ -320,6 +367,16 @@ unittest // scanner controls: both positive directions and both lexical hazards
             `if (path.startsWith("/api/pin")) return;`), kRouteSelectionTerms)
             == ["startsWith("],
         "6760 route-selection control: a route-prefix test must be marked");
+
+    size_t contractRows;
+    string[] contractOffenders;
+    classifyContractDisposition("/api/changes",
+        "Match.exact, Answered.httpThread", contractRows, contractOffenders);
+    classifyContractDisposition("/api/gc/commands",
+        "Match.exact, Answered.mainThread", contractRows, contractOffenders);
+    assert(contractRows == 2 && contractOffenders == ["/api/gc/commands"],
+        "6760 contract-disposition control: a valid diagnostic row must pass "
+        ~ "and a bridged diagnostic row must be marked");
 
     enum bracesInLiteral = q"FIXTURE
 final class InProcessHttpTransport {
@@ -408,13 +465,8 @@ unittest
             ~ "the path/method/handler literal shape: " ~ stripped);
         routeLiterals ~= fields[1];
         handlerNames ~= fields[5];
-        foreach (contractPath; kContractHttpThreadRoutes)
-            if (fields[1] == contractPath)
-            {
-                ++contractRouteRows;
-                if (fields[4].indexOf("Answered.httpThread") < 0)
-                    contractDispositionOffenders ~= contractPath;
-            }
+        classifyContractDisposition(fields[1], fields[4], contractRouteRows,
+            contractDispositionOffenders);
     }
 
     // Independent population floors for the two narrowed domains. These are
@@ -440,29 +492,14 @@ unittest
       ~ "handlers; moving one behind a bridge requires resolving that contract.",
         contractDispositionOffenders));
 
-    string[] literalOffenders;
-    string[] handlerOffenders;
     const selectionOffenders = presentTerms(transportCode, kRouteSelectionTerms);
-    size_t rootRouteRows;
-    foreach (path; routeLiterals)
-    {
-        // Non-root paths cannot occur in D code except as text. Root is
-        // matched as a complete ordinary/backtick literal so HTTP/1.1 is not
-        // mistaken for route-specific transport knowledge.
-        if (path == "/") ++rootRouteRows;
-        const found = path == "/"
-            ? presentTerms(transportLiterals, kRootRouteSpellings).length != 0
-            : transportLiterals.indexOf(path) >= 0;
-        if (found) literalOffenders ~= path;
-    }
-    foreach (handler; handlerNames)
-        if (transportCode.indexOf(handler) >= 0)
-            handlerOffenders ~= handler;
-    assert(rootRouteRows == 1,
+    auto findings = compositionFindings(transportCode, transportLiterals,
+        routeLiterals, handlerNames);
+    assert(findings.rootRouteRows == 1,
         "6760 transport composition census: root-literal special-case domain "
         ~ "must contain exactly 1 kRoutes row");
-    sort(literalOffenders);
-    sort(handlerOffenders);
+    sort(findings.literalOffenders);
+    sort(findings.handlerOffenders);
 
     assert(selectionOffenders.length == 0, format(
         "6760 transport composition census: route-selection operation(s) "
@@ -470,14 +507,14 @@ unittest
       ~ "see a route moved to a constant or assembled from fragments; path "
       ~ "equality and prefix selection stay in HttpServer.handleRequest.",
         selectionOffenders));
-    assert(literalOffenders.length == 0, format(
+    assert(findings.literalOffenders.length == 0, format(
         "6760 transport composition census: concrete route handling leaked "
       ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
       ~ "may construct a request and call HttpServer.handleRequest; route "
-      ~ "selection stays in the server dispatcher.", literalOffenders));
-    assert(handlerOffenders.length == 0, format(
+      ~ "selection stays in the server dispatcher.", findings.literalOffenders));
+    assert(findings.handlerOffenders.length == 0, format(
         "6760 transport composition census: handler name(s) leaked into "
       ~ "InProcessHttpTransport: %s. The transport must not select or invoke "
       ~ "a route handler; HttpServer.handleRequest owns dispatch.",
-        handlerOffenders));
+        findings.handlerOffenders));
 }
