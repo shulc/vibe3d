@@ -8,6 +8,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
+import std.algorithm : canFind;
 import std.conv : to;
 import std.format : format;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel,
@@ -168,20 +169,31 @@ private struct GateCase
     string method;
     string path;
     string body;
+    int admittedStatus;
+    string admittedBodyNeedle;
 }
 
 private immutable GateCase[] kGateCases = [
-    GateCase("mesh-planes", "GET", "/api/mesh/planes", ""),
-    GateCase("cache-rebuilds", "GET", "/api/cache/rebuilds", ""),
-    GateCase("gc-commands", "GET", "/api/gc/commands", ""),
-    GateCase("changes", "GET", "/api/changes", ""),
+    GateCase("mesh-planes", "GET", "/api/mesh/planes", "", 500,
+             "mesh-planes provider not set"),
+    GateCase("cache-rebuilds", "GET", "/api/cache/rebuilds", "", 200,
+             `"snapGridBuilds":`),
+    GateCase("gc-commands", "GET", "/api/gc/commands", "", 200,
+             `"commands":`),
+    GateCase("changes", "GET", "/api/changes", "", 200,
+             `"flushCount":`),
     GateCase("viewport-frame", "GET",
-             "/api/viewport/probe?target=frame", ""),
-    GateCase("subpatch-hold", "POST", "/api/subpatch/hold", `{}`),
-    GateCase("test-layer", "POST", "/api/test/layer", `{}`),
+             "/api/viewport/probe?target=frame", "", 500,
+             "viewport-probe provider not set"),
+    GateCase("subpatch-hold", "POST", "/api/subpatch/hold", `{}`, 500,
+             "subpatch-hold action not installed"),
+    GateCase("test-layer", "POST", "/api/test/layer", `{}`, 200,
+             "inject-layer handler not set"),
     GateCase("command-ui", "POST", "/api/command?origin=ui",
-             `{"id":"task6790.probe","params":{}}`),
-    GateCase("play-events", "POST", "/api/play-events", `{}`),
+             `{"id":"task6790.probe","params":{}}`, 200,
+             `"status":"ok"`),
+    GateCase("play-events", "POST", "/api/play-events", `{}`, 400,
+             "Failed to parse events"),
 ];
 
 private string[] checkGateCase(GateFixture fixture, GateCase gate)
@@ -204,10 +216,12 @@ private string[] checkGateCase(GateFixture fixture, GateCase gate)
             fixture.server.setTestMode(true);
             immutable admitted = fixture.request(
                 transport, gate.method, gate.path, gate.body);
-            assert(admitted.status != 403,
-                format("6790 %s/%s true-mode control: expected a non-403 "
-                     ~ "downstream verdict, found %d; %s",
+            assert(admitted.status == gate.admittedStatus
+                && admitted.body.canFind(gate.admittedBodyNeedle),
+                format("6790 %s/%s true-mode control: expected downstream "
+                     ~ "status %d with `%s`, found %d; %s",
                        gate.name, transportName,
+                       gate.admittedStatus, gate.admittedBodyNeedle,
                        admitted.status, admitted.body));
         } catch (Throwable error) {
             failures ~= error.msg;

@@ -159,11 +159,14 @@ unittest // the route and service null gates are independent surfaces
 {
     immutable raw = readText(buildPath(repoRoot, "source", "http_server.d"));
     immutable code = blankUnittestBodies(blankNonCode(raw));
+    immutable providers = blankUnittestBodies(blankNonCode(readText(
+        buildPath(repoRoot, "source", "http_providers.d"))));
     immutable service = functionBody(code, "private void serviceSubpatchHold(");
     immutable route = functionBody(code, "private void route_apiSubpatchHold(");
 
-    assert(service.length != 0 && route.length != 0,
-        "6790 subpatch-hold area floor: service or route body was not found");
+    assert(service.length != 0 && route.length != 0 && providers.length != 0,
+        "6790 subpatch-hold area floor: service, route or provider wiring "
+        ~ "source was not found");
     assert(service.count("if (subpatchHoldAction is null)") == 1,
         "6790 subpatch-hold service null gate changed");
     assert(route.count("if (subpatchHoldAction is null)") == 1,
@@ -171,6 +174,9 @@ unittest // the route and service null gates are independent surfaces
     assert(code.count("&serviceSubpatchHold") == 1,
         "6790 subpatch-hold structural pin: bridge must bind the named "
         ~ "service method exactly once");
+    assert(providers.count("httpServer.setSubpatchHoldAction(") == 1,
+        "6790 subpatch-hold production wiring pin: provider composition must "
+        ~ "install the action exactly once");
     assert(code.count("subpatchHoldHandler") == 0
         && code.count("SubpatchHoldHandler") == 0,
         "6790 subpatch-hold action role regressed to the retired handler name");
