@@ -451,6 +451,8 @@ tests.unit.subpatch_hash_seed_census_test
 tests.unit.subpatch_key_fold_test
 tests.unit.subpatch_level_policy_test
 tests.unit.subpatch_osd_test
+tests.unit.test_mode_request_census_test
+tests.unit.test_mode_request_gate_test
 tests.unit.test_rs_relocate_commit_order
 tests.unit.tool_activation_ownership_test
 tests.unit.tool_commit_seam_census_g1_test

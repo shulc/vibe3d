@@ -941,7 +941,10 @@ class HttpServer {
     // reference engine's before replaying a drag through /api/play-events.
     private alias CameraSetHandler = void delegate(JSONValue params);
     private CameraSetHandler cameraSetHandler;
-    private bool testMode = false;
+    // Configuration is copied into each request at the dispatch boundary.
+    // Route authorization below reads only that snapshot, never this shared
+    // server state directly (task 6790).
+    private HttpRequestContext requestContext_;
 
     // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
     // Reads back the live face VBO contents on the GL/main thread. Used by
@@ -1280,8 +1283,12 @@ class HttpServer {
     struct SubpStateResp { string result; string error; }
     private MainThreadBridge!(SubpStateReq, SubpStateResp) subpatchStateBridge;
 
-    private alias SubpatchHoldHandler = string delegate(long ms, long ceilingMs);
-    private SubpatchHoldHandler subpatchHoldHandler;
+    // This is a synchronous state-changing action, not a read provider. The
+    // in-process transport runs it inline only on the recorded tickAll thread,
+    // so the web channel never waits for a later host frame. Evidence:
+    // tests.unit.test_mode_request_gate_test (task 6790).
+    private alias SubpatchHoldAction = string delegate(long ms, long ceilingMs);
+    private SubpatchHoldAction subpatchHoldAction;
     struct SubpHoldReq  { long ms; long ceilingMs; }
     struct SubpHoldResp { string result; string error; }
     private MainThreadBridge!(SubpHoldReq, SubpHoldResp) subpatchHoldBridge;
@@ -1642,19 +1649,8 @@ class HttpServer {
                 }
             });
 
-        subpatchHoldBridge = new MainThreadBridge!(SubpHoldReq, SubpHoldResp)(this,
-            (ref SubpHoldReq req, ref SubpHoldResp resp) {
-                if (subpatchHoldHandler is null) {
-                    resp.error = "subpatch-hold handler not set";
-                } else {
-                    try {
-                        resp.result = subpatchHoldHandler(req.ms, req.ceilingMs);
-                        resp.error  = "";
-                    } catch (Exception e) {
-                        resp.error = e.msg;
-                    }
-                }
-            });
+        subpatchHoldBridge = new MainThreadBridge!(SubpHoldReq, SubpHoldResp)(
+            this, &serviceSubpatchHold);
 
         pickBridge = new MainThreadBridge!(PickReq, PickResp)(this,
             (ref PickReq req, ref PickResp resp) {
@@ -1903,6 +1899,20 @@ class HttpServer {
         }
     }
 
+    private void serviceSubpatchHold(ref SubpHoldReq req,
+                                     ref SubpHoldResp resp) {
+        if (subpatchHoldAction is null) {
+            resp.error = "subpatch-hold action unavailable during service";
+        } else {
+            try {
+                resp.result = subpatchHoldAction(req.ms, req.ceilingMs);
+                resp.error  = "";
+            } catch (Exception e) {
+                resp.error = e.msg;
+            }
+        }
+    }
+
     /**
      * Set the detailed model data provider callback
      */
@@ -1961,6 +1971,10 @@ class HttpServer {
 
         public bool pathPendingForTest() {
             return pathBridge.legacyPendingForTest();
+        }
+
+        public bool subpatchHoldPendingForTest() {
+            return subpatchHoldBridge.legacyPendingForTest();
         }
 
         public HttpResponse handleRequestForTest(string method, string path,
@@ -2269,8 +2283,8 @@ class HttpServer {
         this.subpatchStateProvider = provider;
     }
 
-    public void setSubpatchHoldHandler(SubpatchHoldHandler handler) {
-        this.subpatchHoldHandler = handler;
+    public void setSubpatchHoldAction(SubpatchHoldAction action) {
+        this.subpatchHoldAction = action;
     }
 
     public void setPickProvider(PickProvider provider) {
@@ -2318,7 +2332,9 @@ class HttpServer {
         this.imagePlaneProvider = provider;
     }
 
-    public void setTestMode(bool enabled) { testMode = enabled; }
+    public void setTestMode(bool enabled) {
+        requestContext_.testMode = enabled;
+    }
 
     /// Enable fast-forward replay on the HTTP-driven event player (--perf
     /// mode). EventPlayer.begin() preserves this flag across /api/play-events
@@ -2799,6 +2815,7 @@ class HttpServer {
      * same first-match-wins semantics, one registration point. See the table.
      */
     private HttpResponse handleRequest(HttpRequest request) {
+        request.context = requestContext_;
         HttpResponse response = new HttpResponse();
 
         // Task 1740 — the readiness gate. Scoped to `/api/*` deliberately:
@@ -3435,7 +3452,7 @@ class HttpServer {
         // exactly as /api/changes is: this is a test-automation surface whose
         // whole purpose is to freeze a fixture, and it walks the live mesh.
         response.headers["Content-Type"] = "application/json";
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"mesh/planes is only available in --test mode"}`;
             return;
@@ -3487,7 +3504,7 @@ class HttpServer {
         // twins of the first two rows are `perf_probe.Cat.snapGridBuild` and
         // `Cat.symPairingRebuild`, which is what the perf harness reads.
         response.headers["Content-Type"] = "application/json";
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"cache/rebuilds is only available in --test mode"}`;
             return;
@@ -3533,7 +3550,7 @@ class HttpServer {
         // `Answered.httpThread` and unsynchronised on the same diagnostic
         // contract as `/api/perf`: plain scalars, single main-thread writer.
         response.headers["Content-Type"] = "application/json";
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"gc/commands is only available in --test mode"}`;
             return;
@@ -3592,7 +3609,7 @@ class HttpServer {
         // one copy of the whole struct up front (cheap — every field here is
         // a scalar), then serialise from the copy.
         response.headers["Content-Type"] = "application/json";
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"changes is only available in --test mode"}`;
         } else {
@@ -4070,7 +4087,7 @@ class HttpServer {
             response.headers["Content-Type"] = "application/json";
             return;
         }
-        if (target == "frame" && !testMode) {
+        if (target == "frame" && !request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"target=frame is only available in --test mode"}`;
             response.headers["Content-Type"] = "application/json";
@@ -4136,14 +4153,14 @@ class HttpServer {
         // the only way a test can hold the async window open long enough to
         // observe it — a real 4-second build needs a cage the suite has no
         // business carrying.
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"subpatch hold is --test only"}`;
             return;
         }
-        if (subpatchHoldHandler is null) {
+        if (subpatchHoldAction is null) {
             response.statusCode = 500;
-            response.body = `{"error":"subpatch-hold handler not set"}`;
+            response.body = `{"error":"subpatch-hold action not installed"}`;
             return;
         }
         long ms = 0, ceilingMs = 0;
@@ -4280,6 +4297,20 @@ class HttpServer {
         }
     }
 
+    // Keep test-mode authorization in the transport owner. The play-events
+    // body is an extraction boundary for the parser/owner slice, while this
+    // request-context decision must stay with HttpServer (task 6790).
+    private void route_apiPlayEvents(HttpRequest request,
+                                     HttpResponse response) {
+        if (!request.context.testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"play-events is only available in --test mode"}`;
+            response.headers["Content-Type"] = "application/json";
+            return;
+        }
+        servePlayEvents(request, response);
+    }
+
     private void route_apiTestLayer(HttpRequest request, HttpResponse response) {
         // Test-only layer injection (task 0615 Stage 6/7) — see the
         // `injectLayerHandler` field doc comment above for the full
@@ -4290,7 +4321,7 @@ class HttpServer {
         // (http_providers.d), and even `--http-port` without `--test`
         // turns the listener on without turning test mode on (app.d).
         // Gated here exactly like its siblings: 403 outside `--test`.
-        if (!testMode) {
+        if (!request.context.testMode) {
             response.statusCode = 403;
             response.body = `{"error":"test/layer is only available in --test mode"}`;
             response.headers["Content-Type"] = "application/json";
@@ -4372,7 +4403,7 @@ class HttpServer {
                 // /api/script.
                 immutable bool wantUi =
                     (parseQueryString(request.path, "origin", "") == "ui");
-                if (wantUi && !testMode) {
+                if (wantUi && !request.context.testMode) {
                     response.statusCode = 403;
                     response.body =
                         `{"status":"error","message":"origin=ui is only available in --test mode"}`;
@@ -4775,51 +4806,45 @@ class HttpServer {
         }
     }
 
-    private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
+    private void servePlayEvents(HttpRequest request, HttpResponse response) {
         // Task 5960 D2: parsing and rejection stay on the HTTP thread; one
         // validated immutable log is accepted through its owned main-thread
         // service. See tests/unit/playback_owner_test.d.
-        if (!testMode) {
-            response.statusCode = 403;
-            response.body = `{"error":"play-events is only available in --test mode"}`;
-            response.headers["Content-Type"] = "application/json";
+        auto parsed = parseEventLog(request.body);
+        if (!parsed.accepted()) {
+            response.statusCode = 400;
+            response.body = `{"status": "error", "message": "Failed to parse events"}`;
         } else {
-            auto parsed = parseEventLog(request.body);
-            if (!parsed.accepted()) {
-                response.statusCode = 400;
-                response.body = `{"status": "error", "message": "Failed to parse events"}`;
+            // Leave 50 ms inside the owned wait budget so a call still in
+            // the queue at its service deadline is refused without changing
+            // MainThreadBridge's shared claim protocol. A service preempted
+            // after this guard retains the narrow window recorded in the
+            // task-5960 design; the full budget still governs the waiter.
+            enum Duration deadlineGuard = 50.msecs;
+            immutable acceptWindow = playEventsBudget_ > deadlineGuard
+                ? playEventsBudget_ - deadlineGuard : Duration.zero;
+            PlayEventsReq bridgeRequest;
+            bridgeRequest.log = parsed.log;
+            bridgeRequest.notAfter = MonoTime.currTime + acceptWindow;
+            auto owned = playEventsBridge.submitOwned(
+                bridgeRequest,
+                PlayEventsResp(0, 0, ""),
+                PlayEventsResp(0, 0, "timeout waiting for main thread"),
+                PlayEventsResp(0, 0, "HTTP server stopping"),
+                playEventsBudget_);
+            if (owned.result.error.length == 0) {
+                import std.format : format;
+                response.statusCode = 200;
+                response.body = format(
+                    `{"status":"success","message":"Events loaded successfully","generation":%d,"replaced":%d}`,
+                    owned.result.generation, owned.result.replaced);
             } else {
-                // Leave 50 ms inside the owned wait budget so a call still in
-                // the queue at its service deadline is refused without changing
-                // MainThreadBridge's shared claim protocol. A service preempted
-                // after this guard retains the narrow window recorded in the
-                // task-5960 design; the full budget still governs the waiter.
-                enum Duration deadlineGuard = 50.msecs;
-                immutable acceptWindow = playEventsBudget_ > deadlineGuard
-                    ? playEventsBudget_ - deadlineGuard : Duration.zero;
-                PlayEventsReq bridgeRequest;
-                bridgeRequest.log = parsed.log;
-                bridgeRequest.notAfter = MonoTime.currTime + acceptWindow;
-                auto owned = playEventsBridge.submitOwned(
-                    bridgeRequest,
-                    PlayEventsResp(0, 0, ""),
-                    PlayEventsResp(0, 0, "timeout waiting for main thread"),
-                    PlayEventsResp(0, 0, "HTTP server stopping"),
-                    playEventsBudget_);
-                if (owned.result.error.length == 0) {
-                    import std.format : format;
-                    response.statusCode = 200;
-                    response.body = format(
-                        `{"status":"success","message":"Events loaded successfully","generation":%d,"replaced":%d}`,
-                        owned.result.generation, owned.result.replaced);
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"status":"error","message":"`
-                                  ~ jsonEsc(owned.result.error) ~ `"}`;
-                }
+                response.statusCode = 500;
+                response.body = `{"status":"error","message":"`
+                              ~ jsonEsc(owned.result.error) ~ `"}`;
             }
-            response.headers["Content-Type"] = "application/json";
         }
+        response.headers["Content-Type"] = "application/json";
     }
 
 
@@ -5255,6 +5280,12 @@ private string routeHandlerProblem() {
 static assert(routeHandlerProblem() is null, routeHandlerProblem());
 
 
+/// Immutable-for-one-dispatch authorization inputs. HttpServer snapshots its
+/// configured values into every request before route selection (task 6790).
+struct HttpRequestContext {
+    bool testMode;
+}
+
 /**
  * Simple HTTP request representation
  */
@@ -5264,6 +5295,7 @@ class HttpRequest {
     public string httpVersion;
     public string[string] headers;
     public string body;
+    public HttpRequestContext context;
 
     public this(string method, string path, string httpVersion) {
         this.method = method;

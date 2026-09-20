@@ -1366,7 +1366,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // `ceilingMs` configures the input barrier's own ceiling; without
         // that knob the ceiling would be a branch no test could ever see
         // taken.
-        httpServer.setSubpatchHoldHandler((long ms, long ceilingMs) {
+        httpServer.setSubpatchHoldAction((long ms, long ceilingMs) {
             import std.format : format;
             // Clamped at BOTH ends even though the route is `--test` only:
             // an unbounded `ceilingMs` would turn the input barrier back into
@@ -2497,8 +2497,9 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
         // remains scaffolding, but no longer writes the document outside the
         // command/undo model.
         //
-        // Blocker fix (review round 2): the ROUTE is gated on `testMode` in
-        // http_server.d (mirroring /api/changes / /api/play-events), which
+        // Blocker fix (review round 2): the ROUTE is gated on the request's
+        // `testMode` context in http_server.d (mirroring /api/changes /
+        // /api/play-events), which
         // is the load-bearing fix — but the handler itself is also only
         // INSTALLED under `--test` here, belt-and-suspenders, so a release
         // build never even wires a delegate capable of splicing an
