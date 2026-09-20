@@ -153,6 +153,7 @@ tests.unit.ai3d.job_controller_test
 tests.unit.ai3d.scene_validator_test
 tests.unit.ai3d.stage_artifact_test
 tests.unit.ai3d.worker_manager_test
+tests.unit.answered_bridge_census_test
 tests.unit.app_with_app_scan_test
 tests.unit.backdrop_display_slot_law_test
 tests.unit.backdrop_size_law_test
