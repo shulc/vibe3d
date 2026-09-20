@@ -409,12 +409,16 @@ unittest { // direct dispatch on the tick thread still needs the channel marker
     });
     server.markProvidersWired();
     server.tickAll();
+    immutable started = MonoTime.currTime;
     auto response = server.handleRequestForTest(
         "POST", "/api/path", `{"t":0.25}`);
+    immutable elapsed = MonoTime.currTime - started;
     assert(server.pathPendingForTest() && calls == 0
         && response.statusCode == 500
         && response.body.canFind("timeout waiting for main thread"),
         "6750 submitAndWait channel gate: direct tick-thread dispatch bypassed the queue without a transport marker");
+    assert(elapsed < 1.seconds,
+        "6750 submitAndWait channel gate: the direct-dispatch test override did not bound the queued wait");
     server.tickAll();
     assert(calls == 1,
         "6750 submitAndWait channel gate: queued direct dispatch was not serviceable");

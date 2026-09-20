@@ -3,7 +3,7 @@ module tests.unit.selection_projection_test;
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.memory : GC;
 import core.thread : Thread;
-import core.time : msecs, seconds;
+import core.time : MonoTime, msecs, seconds;
 import document : Document, Layer, beginPreparedLayerRead;
 import editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
@@ -415,8 +415,10 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         return `{}`;
     });
     auto timeoutReply = new AsyncHttpReply();
+    immutable timeoutStarted = MonoTime.currTime;
     auto timeoutClient = startHttpGet(port, timeoutReply);
     timeoutClient.join(); // deliberately no tick: exercise the bridge timeout contract
+    immutable timeoutElapsed = MonoTime.currTime - timeoutStarted;
     assert(timeoutReply.failure.length == 0,
         "0950 item F: timeout HTTP client failed: " ~ timeoutReply.failure);
     assert(timeoutReply.wire.canFind("HTTP/1.1 500 Internal Server Error")
@@ -426,4 +428,6 @@ unittest { // genuine HTTP selection service runs on tick thread and sees prepar
         ~ timeoutReply.wire);
     assert(atomicLoad(timedOutProviderCalls) == 0,
         "0950 item F timeout: provider ran even though no tick serviced the request");
+    assert(timeoutElapsed >= 4.seconds,
+        "6750 selection timeout budget: the late unserviced request did not retain the restored 2500-iteration spin");
 }
