@@ -5182,6 +5182,105 @@ final class InProcessHttpTransport
     }
 }
 
+// Task 6740: the float-emitter source scan cannot see `%s` or `to!string`
+// carrying a non-finite number. Exercise the production route table through
+// the reusable dispatcher and let the JSON parser be the independent wire
+// oracle. This stays in-module because kRoutes is the private population whose
+// identity the test must consume; copying the table into tests would build a
+// second collaborator and let production wiring drift green.
+unittest {
+    import core.atomic : atomicLoad, atomicStore;
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs, seconds;
+    import std.array : appender;
+    import std.format : format;
+    import std.json : parseJSON;
+    import std.string : startsWith;
+
+    final class RouteReplies {
+        shared bool done;
+        HttpResponse[] responses;
+        size_t traversed;
+        string failure;
+    }
+
+    auto server = new HttpServer();
+    server.setTestMode(true);
+    server.setModelBudgetForTest(5.msecs);
+    server.setToolHandlesBudgetForTest(5.msecs);
+    server.setFrameCountsBudgetForTest(5.msecs);
+    server.setFramesBudgetForTest(5.msecs);
+    server.setReplayBudgetForTest(5.msecs);
+    server.setUndoStatusBudgetForTest(5.msecs);
+    server.setToolStateBudgetForTest(5.msecs);
+    server.setPlayEventsBudgetForTest(5.msecs);
+    server.markProvidersWired();
+    server.tickAll();
+    auto transport = new InProcessHttpTransport(server);
+    auto replies = new RouteReplies();
+    replies.responses.length = kRoutes.length;
+
+    auto client = new Thread({
+        try {
+            foreach (i, route; kRoutes) {
+                immutable method = route.method.length != 0 ? route.method : "GET";
+                immutable body_ = method == "POST" ? `{}` : "";
+                replies.responses[i] = transport.request(method, route.path, body_);
+                replies.traversed = i + 1;
+            }
+        } catch (Throwable e) {
+            replies.failure = e.msg;
+        }
+        atomicStore(replies.done, true);
+    });
+    client.start();
+    scope (exit) {
+        if (client.isRunning) {
+            server.stop();
+            client.join();
+        }
+    }
+
+    immutable deadline = MonoTime.currTime + 10.seconds;
+    while (!atomicLoad(replies.done) && MonoTime.currTime < deadline) {
+        server.tickAll();
+        Thread.sleep(1.msecs);
+    }
+    assert(atomicLoad(replies.done),
+        "6740 route JSON census: the in-process route walk did not finish");
+    client.join();
+    assert(replies.failure.length == 0,
+        "6740 route JSON census: route walk threw: " ~ replies.failure);
+    assert(replies.traversed == 61,
+        format("6740 route JSON census: expected to traverse all 61 kRoutes "
+             ~ "rows, traversed %d", replies.traversed));
+
+    size_t jsonResponses;
+    auto parseProblems = appender!string();
+    foreach (i, route; kRoutes) {
+        const response = replies.responses[i];
+        assert(response !is null,
+            "6740 route JSON census: no response for " ~ route.handler);
+        const contentType = "Content-Type" in response.headers;
+        if (contentType is null || !(*contentType).startsWith("application/json"))
+            continue;
+        jsonResponses++;
+        try {
+            cast(void) parseJSON(response.body);
+        } catch (Exception e) {
+            parseProblems ~= format("\n  %s %s (%s): %s\n    body: %s",
+                route.method.length != 0 ? route.method : "ANY",
+                route.path, route.handler, e.msg, response.body);
+        }
+    }
+    assert(parseProblems.data.length == 0,
+        "6740 route JSON census: an application/json response is not JSON:"
+        ~ parseProblems.data);
+    assert(jsonResponses == 60,
+        format("6740 route JSON census: measured JSON-response population "
+             ~ "changed; expected 60 of 61, got %d", jsonResponses));
+}
+
 
 // ---------------------------------------------------------------------------
 // The STATUS LINE, task 1740 tail.

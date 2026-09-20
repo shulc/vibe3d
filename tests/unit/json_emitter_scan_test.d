@@ -32,9 +32,11 @@
 // module is invisible to this gate — an acknowledged hole, recorded in the
 // task card, not closed here because widening to all of source/ would need a
 // negative control over the whole tree); a specifier built at run time from
-// pieces; and `source/eventlog.d` / `source/ai/debug_trace.d`, which do print
-// floats into JSON-shaped literals but whose output is a log file, not an
-// endpoint body.
+// pieces; a non-finite float sent through `%s` or `to!string` (neither spelling
+// contains a float specifier for this scanner to find); and `source/eventlog.d`
+// / `source/ai/debug_trace.d`, which do print floats into JSON-shaped literals
+// but whose output is a log file, not an endpoint body. Task 6740 closes the
+// `%s` / `to!string` hole separately by parsing every JSON route response.
 module tests.unit.json_emitter_scan_test;
 
 import std.algorithm : canFind;
@@ -384,7 +386,7 @@ private static immutable LedgerRow[] kExemptionLedger = [
 ];
 
 unittest {
-    size_t   filesScanned;
+    string[] filesRead;
     size_t   totalSpecsSeen;
     string[] violations;
     LedgerHit[] exemptionHits;
@@ -398,7 +400,7 @@ unittest {
           ~ "is worse than being absent");
         const src = readText(p);
         const symbols = enclosingSymbols(blankNonCode(src));
-        filesScanned++;
+        filesRead ~= rel;
 
         if (rel == kScanned[0]) {
             foreach (i, l; src.splitLines)
@@ -419,17 +421,21 @@ unittest {
         }
     }
 
-    // --- non-vacuity: an empty walk must FAIL, not report a clean tree -----
-    // The 6 is a LITERAL and not `kScanned.length`. Measured: written as
-    // `filesScanned == kScanned.length` this assertion is self-consistent —
-    // emptying `kScanned` leaves it green, so it detects nothing. Only
-    // `totalSpecsSeen > 0` caught mutation M7, and one witness for a
-    // non-vacuity check is one too few. (Task 4062 raised it from 4 to 5:
-    // `source/command_args.d` joined the list when `scalarArgToString` moved
-    // there with its exemption marker.)
-    assert(filesScanned == 6,
-        format("the gate must read all six body-assembling files, it read %d",
-               filesScanned));
+    // --- scope identity: names, not only a count ---------------------------
+    // This is deliberately independent of kScanned. Comparing a counter with
+    // kScanned.length lets one listed file silently replace another; the
+    // contract is that these exact six source paths were read (task 6740).
+    immutable expectedFiles = [
+        "source/json_num.d",
+        "source/http_json.d",
+        "source/http_providers.d",
+        "source/http_server.d",
+        "source/view.d",
+        "source/command_args.d",
+    ];
+    assert(filesRead == expectedFiles,
+        format("the JSON emitter gate must read exactly %s, it read %s",
+               expectedFiles, filesRead));
     assert(totalSpecsSeen > 0,
         "the scan saw no float specifier anywhere in six files that are full "
       ~ "of them — the reader, the masker or the matcher has stopped working, "
