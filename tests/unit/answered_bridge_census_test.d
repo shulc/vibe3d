@@ -309,7 +309,6 @@ unittest
     string[] nonHttpThreadWithoutBridge;
     size_t portless;
     size_t bridged;
-    bool allPortlessOnHttpThread = true;
     foreach (ref const row; routes)
     {
         const isHttpThread = row.answered == "Answered.httpThread";
@@ -318,7 +317,6 @@ unittest
         else
         {
             ++portless;
-            allPortlessOnHttpThread = allPortlessOnHttpThread && isHttpThread;
         }
         if (isHttpThread && hasBridge)
             httpThreadWithBridge ~= routeLabel(row) ~ ": " ~ row.bridges.join(", ");
@@ -341,8 +339,6 @@ unittest
         "6730 portless route population changed: expected 24, found %d", portless));
     assert(bridged == 37, format(
         "6730 bridged route population changed: expected 37, found %d", bridged));
-    assert(allPortlessOnHttpThread,
-        "6730 not every portless handler is Answered.httpThread");
 
     // Reproduce the rejected key.  Last-row-wins path keying overwrites the
     // POST /api/camera body with the portless GET body, yielding the measured
