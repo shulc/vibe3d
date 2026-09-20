@@ -448,6 +448,25 @@ unittest { // submitClaimed distinguishes owner absence and preserves the frame 
         "6750 claimed lifecycle: restart retained owner readiness without a new owner tick");
 }
 
+version (PerfProbe) unittest { // FrameProbe has the same owner-frame fence
+    import perf_probe : FrameProbe;
+
+    auto server = new HttpServer();
+    server.markProvidersWired();
+    server.tickAll();
+    FrameProbe probe;
+    probe.beginFrame();
+    probe.endFrame();
+    server.tickFrames(probe);
+    auto response = (new InProcessHttpTransport(server)).request(
+        "GET", "/api/frames", "");
+    assert(response.statusCode == 500
+        && response.body == `{"error":"frame probe owner failed"}`,
+        "6750 frame-probe owner fence: an in-process request between frame boundaries bypassed the owner tick");
+    assert(probe.stats().frameCount == 1,
+        "6750 frame-probe owner fence: an inline request changed the retained owner probe");
+}
+
 unittest { // foreign in-process callers queue; TLS depth never leaks between requests or threads
     shared int calls;
     shared bool firstSawChannel;
