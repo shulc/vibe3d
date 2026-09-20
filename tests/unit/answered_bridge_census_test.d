@@ -439,6 +439,10 @@ FIXTURE";
 
 unittest // fixture: the handler-body area has an independent non-vacuity floor
 {
+    assertThrown!AssertError(namedFunctionBodies("}"),
+        "6730 named-body scanner accepted an unmatched closing brace");
+    assertThrown!AssertError(namedFunctionBodies("{"),
+        "6730 named-body scanner accepted an unterminated brace-owning area");
     enum fixture = q"FIXTURE
 private enum RouteSpec[] kRoutes = [
     RouteSpec("/short", "GET", Match.exact,
