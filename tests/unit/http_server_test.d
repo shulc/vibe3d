@@ -432,7 +432,16 @@ unittest { // submitClaimed distinguishes owner absence and preserves the frame 
     probe.beginFrame();
     probe.endFrame();
     server.tickFrameCounts(probe);
-    auto response = transport.request("GET", "/api/frames/counts", "");
+    HttpResponse response;
+    Throwable escaped;
+    try {
+        response = transport.request("GET", "/api/frames/counts", "");
+    } catch (Throwable error) {
+        escaped = error;
+    }
+    assert(escaped is null,
+        "6750 claimed owner catch: the owner fence escaped the bridge result mapping: "
+        ~ (escaped is null ? "" : escaped.msg));
     assert(response.statusCode == 500
         && response.body == `{"error":"frame-count owner failed"}`,
         "6750 claimed owner fence: an in-process request between frame boundaries bypassed the owner tick");
