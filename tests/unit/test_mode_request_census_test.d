@@ -15,11 +15,6 @@ import tests.unit.census_symbols : balancedSpan, blankNonCode,
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-// The request authorization carrier is deliberately one field. Adding a
-// second shared decision requires an explicit review of every request snapshot.
-static assert([__traits(allMembers, HttpRequestContext)] == ["testMode"],
-    "6790 HttpRequestContext composition changed");
-
 private bool namesIdent(string text, string ident)
 {
     if (ident.length == 0 || ident.length > text.length) return false;
@@ -181,3 +176,8 @@ unittest // the route and service null gates are independent surfaces
         && code.count("SubpatchHoldHandler") == 0,
         "6790 subpatch-hold action role regressed to the retired handler name");
 }
+
+// The request authorization carrier is deliberately one field. Keep this pin
+// textually after the population, request needle and structural assertions.
+static assert([__traits(allMembers, HttpRequestContext)] == ["testMode"],
+    "6790 HttpRequestContext composition changed");
