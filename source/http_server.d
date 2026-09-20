@@ -5192,7 +5192,6 @@ unittest {
     import core.atomic : atomicLoad, atomicStore;
     import core.thread : Thread;
     import core.time : MonoTime, msecs, seconds;
-    import std.array : appender;
     import std.format : format;
     import std.json : parseJSON;
     import std.string : startsWith;
@@ -5216,6 +5215,8 @@ unittest {
     server.setPlayEventsBudgetForTest(5.msecs);
     server.markProvidersWired();
     server.tickAll();
+    assert(server.ready(),
+        "6740 route JSON census: readiness setup did not reach the handlers");
     auto transport = new InProcessHttpTransport(server);
     auto replies = new RouteReplies();
     replies.responses.length = kRoutes.length;
@@ -5255,8 +5256,19 @@ unittest {
         format("6740 route JSON census: expected to traverse all 61 kRoutes "
              ~ "rows, traversed %d", replies.traversed));
 
+    string parseProblem(string body_) {
+        try {
+            cast(void) parseJSON(body_);
+            return null;
+        } catch (Exception e) {
+            return e.msg;
+        }
+    }
+    assert(parseProblem(`{"value":inf}`).length != 0,
+        "6740 route JSON census: parseJSON accepted a non-finite bare token; "
+        ~ "the route loop would not close the scanner's %s/to!string hole");
+
     size_t jsonResponses;
-    auto parseProblems = appender!string();
     foreach (i, route; kRoutes) {
         const response = replies.responses[i];
         assert(response !is null,
@@ -5265,17 +5277,13 @@ unittest {
         if (contentType is null || !(*contentType).startsWith("application/json"))
             continue;
         jsonResponses++;
-        try {
-            cast(void) parseJSON(response.body);
-        } catch (Exception e) {
-            parseProblems ~= format("\n  %s %s (%s): %s\n    body: %s",
-                route.method.length != 0 ? route.method : "ANY",
-                route.path, route.handler, e.msg, response.body);
-        }
+        const problem = parseProblem(response.body);
+        assert(problem.length == 0,
+            format("6740 route JSON census: %s %s (%s) returned invalid "
+                 ~ "application/json: %s\nbody: %s",
+                   route.method.length != 0 ? route.method : "ANY",
+                   route.path, route.handler, problem, response.body));
     }
-    assert(parseProblems.data.length == 0,
-        "6740 route JSON census: an application/json response is not JSON:"
-        ~ parseProblems.data);
     assert(jsonResponses == 60,
         format("6740 route JSON census: measured JSON-response population "
              ~ "changed; expected 60 of 61, got %d", jsonResponses));
