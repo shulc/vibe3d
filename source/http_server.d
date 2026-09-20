@@ -4946,6 +4946,9 @@ class HttpServer {
     private bool calledFromTickThread() nothrow {
         try {
             immutable identity = cast(size_t) cast(void*) Thread.getThis();
+            // Thread.getThis() is zero on a thread not attached to druntime.
+            // Before the first tick and after stop the stored owner is also zero;
+            // this term avoids relying on raw threads being unreachable here.
             return identity != 0 && atomicLoad(tickThreadIdentity_) == identity;
         } catch (Throwable) {
             return false;
