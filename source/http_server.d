@@ -5302,9 +5302,7 @@ unittest {
     server.markProvidersWired();
     server.tickAll();
     FrameWorkProbe frameWorkOwner;
-    FrameProbe frameOwner;
     server.tickFrameCounts(frameWorkOwner);
-    server.tickFrames(frameOwner);
     assert(server.ready(),
         "6740 route JSON census: readiness setup did not reach the handlers");
     auto transport = new InProcessHttpTransport(server);
