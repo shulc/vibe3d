@@ -2523,6 +2523,7 @@ class HttpServer {
         try {
             import std.format : format;
             logWarn("http", format(
+                // json-num-exempt: formats elapsed time for a log, not a JSON body
                 "closed connection from %s after %.1fs WITHOUT a response: peer %s",
                 peer, (MonoTime.currTime - startedAt).total!"msecs" / 1000.0, why));
         } catch (Exception) {}

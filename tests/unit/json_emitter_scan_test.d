@@ -21,7 +21,7 @@
 //
 // WHAT THIS SCANNER SEES, EXACTLY. A `%`-specifier ending in f/g/e (with the
 // usual flags/width/precision) that occurs INSIDE a string literal, in one of
-// the four scanned files. Comments are removed first; string literals are
+// the six scanned files. Comments are removed first; string literals are
 // KEPT. That polarity is the exact INVERSE of tests/unit/
 // mark_view_field_guard_test.d, from which the lexer shape is taken: that
 // guard's subject is code, so it discards literals; this guard's subject lives
@@ -149,8 +149,10 @@ private size_t floatSpecLength(string code, size_t i) {
     immutable char conv = code[j];
     if (conv != 'f' && conv != 'F' && conv != 'g' && conv != 'G'
         && conv != 'e' && conv != 'E') return 0;
-    // `%foo` in prose is not a conversion.
-    if (j + 1 < code.length && isAlphaNum(code[j + 1])) return 0;
+    // A bare `%foo` in prose is not a conversion. Once flags, width or
+    // precision intervene, however, a following letter can be the unit after
+    // a real conversion (`%.1fs`), as in HttpServer.reportAbandoned.
+    if (j == i + 1 && j + 1 < code.length && isAlphaNum(code[j + 1])) return 0;
     return j + 1 - i;
 }
 
@@ -287,6 +289,8 @@ unittest { // category 4: non-float conversions are not this guard's business
            "a bare percent in prose");
     assert(findings(`auto s = "%format is a word";`).length == 0,
            "`%f` followed by more letters is not a conversion");
+    assert(findings(`auto s = format("%.1fs", seconds);`).length == 1,
+           "a unit suffix after a precision-bearing conversion stays visible");
 }
 
 unittest { // category 5: an already-converted site is the CORRECT shape
@@ -359,6 +363,7 @@ private immutable string[] kScanned = [
     "source/json_num.d",
     "source/http_json.d",
     "source/http_providers.d",
+    "source/http_server.d",
     "source/view.d",
     // TASK 4062 — `scalarArgToString` moved from http_providers.d to
     // command_args.d with the argument-binding law, and its
@@ -372,6 +377,8 @@ private immutable string[] kScanned = [
 private static immutable LedgerRow[] kExemptionLedger = [
     LedgerRow("scalarArgToString|exempt", 1,
         "builds an argstring, not a JSON body"),
+    LedgerRow("HttpServer.reportAbandoned|exempt", 1,
+        "formats elapsed time for a log, not a JSON body"),
     LedgerRow("wireToolpipeProviders.setToolPipeEvalProvider|exempt", 1,
         "clamped to the [0,1] weight contract above, task 1550 decision 4.1"),
 ];
@@ -413,18 +420,18 @@ unittest {
     }
 
     // --- non-vacuity: an empty walk must FAIL, not report a clean tree -----
-    // The 5 is a LITERAL and not `kScanned.length`. Measured: written as
+    // The 6 is a LITERAL and not `kScanned.length`. Measured: written as
     // `filesScanned == kScanned.length` this assertion is self-consistent —
     // emptying `kScanned` leaves it green, so it detects nothing. Only
     // `totalSpecsSeen > 0` caught mutation M7, and one witness for a
     // non-vacuity check is one too few. (Task 4062 raised it from 4 to 5:
     // `source/command_args.d` joined the list when `scalarArgToString` moved
     // there with its exemption marker.)
-    assert(filesScanned == 5,
-        format("the gate must read all five body-assembling files, it read %d",
+    assert(filesScanned == 6,
+        format("the gate must read all six body-assembling files, it read %d",
                filesScanned));
     assert(totalSpecsSeen > 0,
-        "the scan saw no float specifier anywhere in four files that are full "
+        "the scan saw no float specifier anywhere in six files that are full "
       ~ "of them — the reader, the masker or the matcher has stopped working, "
       ~ "and a gate that is clean over an empty input is not a gate");
 
@@ -452,12 +459,12 @@ unittest {
                canaryLine, kExemptMarker, violations.length,
                violations.join("\n  ")));
 
-    // --- (c) exemptions: frozen at 2, keyed by DECLARING SYMBOL ------------
+    // --- (c) exemptions: frozen at 3, keyed by DECLARING SYMBOL ------------
     // The diagnostic still carries file + line, but a pure declaration move
     // does not turn into a policy change (task 4170).
     string exemptionProblems = reconcile(kExemptionLedger, exemptionHits);
-    if (exemptionHits.length != 2)
-        exemptionProblems ~= format("\n    exemption population — recorded 2, "
+    if (exemptionHits.length != 3)
+        exemptionProblems ~= format("\n    exemption population — recorded 3, "
                                   ~ "scanner found %d", exemptionHits.length);
     assert(exemptionProblems.length == 0,
         format("the exemption ledger changed. A new `%s` marker is a "
