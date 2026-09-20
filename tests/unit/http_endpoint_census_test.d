@@ -441,6 +441,9 @@ unittest // scanner controls: both positive directions and both lexical hazards
     assert(identifierUses(
             "path path_ _path path2 2path request.path(path)", "path") == 3,
         "6760 identifier control: only whole path tokens must be counted");
+    assert(identifierUses("request.path", "path") == 1,
+        "6760 identifier control: a whole path token ending at the final byte "
+        ~ "must be counted");
     assert(identifierUses("", "") == 0
             && identifierUses("", "path") == 0,
         "6760 identifier control: empty and too-short domains must count zero");
@@ -653,6 +656,13 @@ unittest
       ~ "HttpRequest construction), found %d. Any additional use can select "
       ~ "a route regardless of punctuation or API spelling; dispatch stays "
       ~ "in HttpServer.handleRequest.", findings.pathUses));
+    const routeSelectionTerms = presentTerms(transportCode,
+        ["==", "!=", "switch", "__traits"]);
+    assert(routeSelectionTerms.length == 0, format(
+        "6760 transport composition census: route-selection syntax must not "
+      ~ "occur in InProcessHttpTransport; found %s. The path-token pin alone "
+      ~ "cannot see an alias parameter or another method's parameter.",
+        routeSelectionTerms));
     assert(findings.literalOffenders.length == 0, format(
         "6760 transport composition census: concrete route handling leaked "
       ~ "into InProcessHttpTransport via route literal(s): %s. The transport "
