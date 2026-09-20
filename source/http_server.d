@@ -5304,7 +5304,8 @@ unittest {
     FrameWorkProbe frameWorkOwner;
     server.frameCountsOwner_ = &frameWorkOwner;
     server.frameCountsBridge.tickClaimed(
-        (ref FrameCountsReq req, ref FrameCountsResp resp) nothrow {
+        (ref HttpServer.FrameCountsReq req,
+         ref HttpServer.FrameCountsResp resp) nothrow {
             server.serviceFrameCounts(req, resp);
         });
     assert(server.ready(),
