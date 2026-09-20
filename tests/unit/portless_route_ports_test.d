@@ -144,6 +144,16 @@ private string bridgeConstruction(string ctor, ref const Surface surface) {
     return result;
 }
 
+private string rawBridgeConstruction(string server, ref const Surface surface) {
+    const startNeedle = surface.bridge ~ " = new MainThreadBridge";
+    if (server.count(startNeedle) != 1) return null;
+    const begin = server.indexOf(startNeedle);
+    const open = server.indexOf("(this,", cast(size_t) begin);
+    if (open < 0) return null;
+    const end = matchingClose(server, cast(size_t) open, '(', ')') + 1;
+    return server[cast(size_t) begin .. end];
+}
+
 private string setterCall(string wiring, ref const Surface surface) {
     const startNeedle = "httpServer." ~ surface.setter ~ "(";
     if (wiring.count(startNeedle) != 1) return null;
@@ -199,21 +209,25 @@ unittest { // structure: route -> own bridge -> own port -> production dependenc
         const handler = functionBody(server,
             "private void " ~ surface.handler ~ "(");
         const construction = bridgeConstruction(ctor, surface);
+        const rawConstruction = rawBridgeConstruction(server, surface);
         const wiringCount = wiring.count(
             "httpServer." ~ surface.setter ~ "(");
         const call = setterCall(wiring, surface);
         const mapped = row.canFind("Answered.mainThread")
             && handler.count(surface.bridge) == 1
             && construction.canFind(surface.provider)
+            && rawConstruction.canFind(`"` ~ surface.path ~ `"`)
             && wiringCount == 1
             && call.canFind(surface.dependencyA)
             && providers.canFind(surface.dependencyB)
             && server.count("public void " ~ surface.setter ~ "(") == 1;
         assert(mapped, format(
             "6780 structural map failed for %s: answered=%s bridge-count=%d "
-          ~ "service-port=%s wiring-count=%d dependency=%s setter-count=%d",
+          ~ "service-port=%s owned-route=%s wiring-count=%d dependency=%s "
+          ~ "setter-count=%d",
             surface.handler, row.canFind("Answered.mainThread"),
             handler.count(surface.bridge), construction.canFind(surface.provider),
+            rawConstruction.canFind(`"` ~ surface.path ~ `"`),
             wiringCount,
             call.canFind(surface.dependencyA)
                 && providers.canFind(surface.dependencyB),

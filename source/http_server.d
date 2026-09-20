@@ -1217,6 +1217,9 @@ class HttpServer {
 
     struct PortlessJsonReq  { }
     struct PortlessJsonResp { string result; string error; }
+    static assert([__traits(allMembers, PortlessJsonResp)] ==
+        ["result", "error"],
+        "6780 portless JSON response channel order changed");
     private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
         toolDisarmBridge;
     private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp)
@@ -1232,6 +1235,9 @@ class HttpServer {
         string key;
     }
     struct InputContextResp { string result; string error; }
+    static assert([__traits(allMembers, InputContextResp)] ==
+        ["result", "error"],
+        "6780 input-context response channel order changed");
     private MainThreadBridge!(InputContextReq, InputContextResp)
         inputContextBridge;
     private MainThreadBridge!(PortlessJsonReq, PortlessJsonResp) statsBridge;
