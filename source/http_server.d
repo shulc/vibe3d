@@ -17,7 +17,7 @@ import mesh : Mesh, Surface;
 // re-export: http_providers.d reaches `meshToJsonDetailed` through this module
 // and did so before the split.
 public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
-    PlaneDumpMeta;
+    PlaneDumpMeta, versionJson;
 import core.atomic;
 import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
@@ -28,32 +28,7 @@ import eventlog;
 import playback_controller : PlaybackController, encodePlaybackStatus;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
-import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
-                     appAboutLines;
-
-// ---------------------------------------------------------------------------
-// versionJson — the GET /api/version payload (task 0641).
-//
-// All compile-time constants, so this is safe to build on the HTTP thread
-// without the main-thread bridge every state-reading endpoint needs.
-//
-// `lines` carries `appAboutLines` verbatim rather than re-deriving the block
-// from the scalar fields: it is the array the About window draws and the
-// array `--version` prints, and shipping it unchanged is what lets a test
-// assert that all three surfaces read one source. Re-formatting it here would
-// have created the second literal the whole task is about.
-// ---------------------------------------------------------------------------
-string versionJson() {
-    JSONValue j;
-    j["version"]  = JSONValue(appVersion);
-    j["build"]    = JSONValue(appBuildConfig);
-    j["platform"] = JSONValue(appPlatform);
-    j["built"]    = JSONValue(appBuildDate);
-    JSONValue[] lines;
-    foreach (line; appAboutLines) lines ~= JSONValue(line);
-    j["lines"] = JSONValue(lines);
-    return j.toString();
-}
+import app_version : appVersion;
 
 // ============================================================================
 // Generic HTTP-thread <-> main-thread request/response bridge (task 0183 C3).

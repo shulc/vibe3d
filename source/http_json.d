@@ -20,10 +20,36 @@ module http_json;
 import std.datetime : Clock;
 import std.json;
 
+import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
+    appAboutLines;
 import json_num : jsonNum;
 import mesh : Mesh, Surface, MeshMap, MapDomain, MapKind;
 import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon;
+
+// ---------------------------------------------------------------------------
+// versionJson — the GET /api/version payload (task 0641).
+//
+// All compile-time constants, so this is safe to build on the HTTP thread
+// without the main-thread bridge every state-reading endpoint needs.
+//
+// `lines` carries `appAboutLines` verbatim rather than re-deriving the block
+// from the scalar fields: it is the array the About window draws and the
+// array `--version` prints, and shipping it unchanged is what lets a test
+// assert that all three surfaces read one source. Re-formatting it here would
+// have created the second literal the whole task is about.
+// ---------------------------------------------------------------------------
+string versionJson() {
+    JSONValue j;
+    j["version"]  = JSONValue(appVersion);
+    j["build"]    = JSONValue(appBuildConfig);
+    j["platform"] = JSONValue(appPlatform);
+    j["built"]    = JSONValue(appBuildDate);
+    JSONValue[] lines;
+    foreach (line; appAboutLines) lines ~= JSONValue(line);
+    j["lines"] = JSONValue(lines);
+    return j.toString();
+}
 
 // ---------------------------------------------------------------------------
 // jsonEsc — escape `s` for embedding BETWEEN the quotes of a JSON string

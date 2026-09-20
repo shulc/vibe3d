@@ -228,9 +228,9 @@ allow source/handles/shapes.d 37
 allow source/history_macro_registration.d 1
 allow source/hover_state.d 1
 allow source/http_command_adapter.d 2
-allow source/http_json.d 7
+allow source/http_json.d 8
 allow source/http_providers.d 68
-allow source/http_server.d 119
+allow source/http_server.d 118
 allow source/image_cache.d 3
 allow source/image_data.d 7
 allow source/image_plane.d 3
