@@ -1,6 +1,6 @@
 // The shared suite client has two backends. These cells select by API shape:
 // one for each of its four public request functions, plus the exact 400 edge
-// that distinguishes the ordinary throwing surface from the error-body one.
+// on each ordinary throwing function, distinguished from the error-body one.
 module test_http_inprocess_transport;
 
 import http_client : ClientResponse, clearInProcessTransport, getJson,
@@ -50,12 +50,12 @@ private final class Rig
 
 unittest
 {
-    bool nullRejected;
+    string nullError;
     try
         cast(void) new InProcessHttpTransport(null);
-    catch (Exception)
-        nullRejected = true;
-    assert(nullRejected,
+    catch (Exception e)
+        nullError = e.msg;
+    assert(nullError == "an in-process HTTP transport needs a server",
         "6720 C0: constructing the in-process transport without a server succeeded");
 
     assert(!inProcessTransportInstalled,
@@ -103,6 +103,15 @@ unittest
         rejected400 = e.msg.canFind("status 400");
     assert(rejected400 && rig.calls == 5,
         "6720 C5: ordinary client surface accepted an in-process HTTP 400");
+
+    // C6: raw POST has the same ordinary error policy as JSON GET.
+    bool rawRejected400;
+    try
+        cast(void) postRaw("/api/play-events", "not an event log");
+    catch (Exception e)
+        rawRejected400 = e.msg.canFind("status 400");
+    assert(rawRejected400 && rig.calls == 6,
+        "6720 C6: postRaw accepted an in-process HTTP 400");
 
     clearInProcessTransport();
     assert(!inProcessTransportInstalled,
