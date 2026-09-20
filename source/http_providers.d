@@ -34,6 +34,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
+import http_json : meshPlanesJson, meshToJsonDetailed, PlaneDumpMeta;
 import json_num : jsonNum;
 import log : logInfo, logWarn, logError;
 import prefs;

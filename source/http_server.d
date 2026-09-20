@@ -13,10 +13,9 @@ import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 
 import mesh : Mesh, Surface;
-// The JSON bodies and the escaper that assembles them (task 0720, D5). Public
-// re-export: http_providers.d reaches `meshToJsonDetailed` through this module
-// and did so before the split.
-public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
+// The JSON bodies and the escaper that assembles them (task 0720, D5).
+// Ordinary import: this module is their consumer, not their public facade.
+import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta, versionJson;
 import core.atomic;
 import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
@@ -5160,16 +5159,21 @@ final class InProcessHttpTransport
 // Task 6740: the float-emitter source scan cannot see `%s` or `to!string`
 // carrying a non-finite number. Exercise the production route table through
 // the reusable dispatcher and let the JSON parser be the independent wire
-// oracle. This stays in-module because kRoutes is the private population whose
-// identity the test must consume; copying the table into tests would build a
-// second collaborator and let production wiring drift green.
+// oracle. The census wires a real detailed-model provider so `/api/model`
+// executes `meshToJsonDetailed`; its measured non-degraded-response floor
+// keeps provider/handler errors and 4xx/5xx bodies from satisfying the claim.
+// This stays in-module because kRoutes is the private population whose identity
+// the test must consume; copying the table into tests would build a second
+// collaborator and let production wiring drift green.
 unittest {
     import core.atomic : atomicLoad, atomicStore;
     import core.thread : Thread;
     import core.time : MonoTime, msecs, seconds;
     import std.format : format;
     import std.json : parseJSON;
-    import std.string : startsWith;
+    import std.string : startsWith, toLower;
+
+    import mesh : makeCube;
 
     final class RouteReplies {
         shared bool done;
@@ -5179,8 +5183,11 @@ unittest {
     }
 
     auto server = new HttpServer();
+    auto censusMesh = makeCube();
+    server.setDetailedModelDataProvider(
+        () => meshToJsonDetailed(censusMesh));
     server.setTestMode(true);
-    server.setModelBudgetForTest(5.msecs);
+    server.setModelBudgetForTest(100.msecs);
     server.setToolHandlesBudgetForTest(5.msecs);
     server.setFrameCountsBudgetForTest(5.msecs);
     server.setFramesBudgetForTest(5.msecs);
@@ -5244,6 +5251,8 @@ unittest {
         ~ "the route loop would not close the scanner's %s/to!string hole");
 
     size_t jsonResponses;
+    size_t nonDegradedResponses;
+    string[] degradedRoutes;
     foreach (i, route; kRoutes) {
         const response = replies.responses[i];
         assert(response !is null,
@@ -5258,10 +5267,30 @@ unittest {
                  ~ "application/json: %s\nbody: %s",
                    route.method.length != 0 ? route.method : "ANY",
                    route.path, route.handler, problem, response.body));
+
+        const lowerBody = response.body.toLower();
+        immutable degraded = response.statusCode >= 400
+            || lowerBody.canFind("provider not set")
+            || lowerBody.canFind("handler not set");
+        if (degraded) {
+            degradedRoutes ~= format("%s %s (%s)",
+                route.method.length != 0 ? route.method : "ANY",
+                route.path, route.handler);
+        } else {
+            nonDegradedResponses++;
+        }
     }
     assert(jsonResponses == 60,
         format("6740 route JSON census: measured JSON-response population "
              ~ "changed; expected 60 of 61, got %d", jsonResponses));
+    // 29 application/json bodies plus the root HTML response are live. The
+    // HTML response skips this loop, so its one-row contribution is explicit.
+    nonDegradedResponses++;
+    assert(nonDegradedResponses == 30,
+        format("6740 route JSON census: measured non-degraded response "
+             ~ "population changed; expected 30 of 61 (29 application/json "
+             ~ "plus root HTML), got %d; degraded routes: %s",
+               nonDegradedResponses, degradedRoutes.join(", ")));
 }
 
 

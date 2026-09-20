@@ -19,10 +19,10 @@
 // to make its endpoint's data non-finite. There is nothing to assert at run
 // time; the property lives in the source.
 //
-// WHAT THIS SCANNER SEES, EXACTLY. A `%`-specifier ending in f/g/e (with the
-// usual flags/width/precision) that occurs INSIDE a string literal, in one of
-// the six scanned files. Comments are removed first; string literals are
-// KEPT. That polarity is the exact INVERSE of tests/unit/
+// WHAT THIS SCANNER SEES, EXACTLY. A `%`-specifier ending in f/g/e after only
+// the flags `-+ #`, a numeric width and an optional numeric precision, inside
+// a string literal in one of the six scanned files. Comments are removed
+// first; string literals are KEPT. That polarity is the exact INVERSE of tests/unit/
 // mark_view_field_guard_test.d, from which the lexer shape is taken: that
 // guard's subject is code, so it discards literals; this guard's subject lives
 // inside the literals, so it discards only comments.
@@ -32,11 +32,14 @@
 // module is invisible to this gate — an acknowledged hole, recorded in the
 // task card, not closed here because widening to all of source/ would need a
 // negative control over the whole tree); a specifier built at run time from
-// pieces; a non-finite float sent through `%s` or `to!string` (neither spelling
-// contains a float specifier for this scanner to find); and `source/eventlog.d`
-// / `source/ai/debug_trace.d`, which do print floats into JSON-shaped literals
-// but whose output is a log file, not an endpoint body. Task 6740 closes the
-// `%s` / `to!string` hole separately by parsing every JSON route response.
+// pieces; the bare-conversion-plus-suffix form `%fs`; dynamic width/precision
+// `%*f` / `%.*f`; comma or space flags such as `%,3f` / `% f`; hexadecimal
+// `%a` / `%A`; or a non-finite float sent through `%s` or `to!string`. Finally,
+// `source/eventlog.d` / `source/ai/debug_trace.d` do print floats into
+// JSON-shaped literals, but their output is a log file, not an endpoint body.
+// Task 6740 separately parses all JSON route responses and currently closes
+// the `%s` / `to!string` hole for the wired detailed `/api/model` emitter; its
+// live-response floor names the remaining provider/handler-degraded routes.
 module tests.unit.json_emitter_scan_test;
 
 import std.algorithm : canFind;
