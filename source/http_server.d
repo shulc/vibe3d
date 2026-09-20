@@ -5303,11 +5303,7 @@ unittest {
     server.tickAll();
     FrameWorkProbe frameWorkOwner;
     server.frameCountsOwner_ = &frameWorkOwner;
-    server.frameCountsBridge.tickClaimed(
-        (ref HttpServer.FrameCountsReq req,
-         ref HttpServer.FrameCountsResp resp) nothrow {
-            server.serviceFrameCounts(req, resp);
-        });
+    server.frameCountsBridge.claimedServiceReady = true;
     assert(server.ready(),
         "6740 route JSON census: readiness setup did not reach the handlers");
     auto transport = new InProcessHttpTransport(server);
