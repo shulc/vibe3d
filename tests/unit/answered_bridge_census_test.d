@@ -271,6 +271,17 @@ private void assertFrameBodyBytes(string buildName)
         buildName, expectedSha256, digest));
 }
 
+unittest // scanner control: whole lower-case identifier, code only
+{
+    const probe = blankNonCode(`historyBridge;
+        // modelBridge;
+        "layersBridge";
+        MainThreadBridge;
+        historyBridgeSuffix;`);
+    assert(bridgeIdentifiers(probe) == ["historyBridge"],
+        "6730 *Bridge token classifier accepted a comment, literal, type, or suffix");
+}
+
 unittest
 {
     const raw = readText(kServerPath);
