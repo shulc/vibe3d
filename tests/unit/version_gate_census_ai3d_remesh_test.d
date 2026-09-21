@@ -23,6 +23,18 @@ private bool isGatedTarget(string moduleName)
 
 unittest
 {
+    foreach (moduleName; [
+            "ai3d.job_controller", "commands.ai3d.import_result",
+            "ai3d_command_registration", "remesh.remesh_job",
+            "commands.mesh.remesh", "ui.remesh_modal_state",
+        ])
+        assert(isGatedTarget(moduleName), moduleName);
+    foreach (moduleName; ["ai.model_adapter", "commands.mesh.bevel", "ui.panels"])
+        assert(!isGatedTarget(moduleName), moduleName);
+}
+
+unittest
+{
     const depsPath = buildPath(tempDir(),
         format("vibe3d-w15-d-web-deps-%d.txt", thisProcessID()));
     const describeErrorPath = buildPath(tempDir(),
