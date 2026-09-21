@@ -27,8 +27,7 @@ module frame_stall;
 /// assert it, by wall clock as well as by predicate, because "`inert()`
 /// returns true" and "`waitAtSeam()` does nothing" are two different claims.
 
-import core.thread : Thread;
-import core.time   : dur;
+import core.time   : MonoTime, dur;
 import std.process : environment;
 
 /// Hard ceiling on a stall, in milliseconds.
@@ -96,7 +95,13 @@ struct FrameStall {
     void waitAtSeam() {
         if (!pending_) return;
         pending_ = false;
-        Thread.sleep(dur!"msecs"(pauseMs_));
+
+        // Task 6890: this diagnostic must remain usable in the single-threaded
+        // web build without pulling core.thread into its closure. It blocks the
+        // frame for the same bounded interval as before; only an explicitly
+        // armed diagnostic pays for the active wait.
+        immutable deadline = MonoTime.currTime + dur!"msecs"(pauseMs_);
+        while (MonoTime.currTime < deadline) {}
     }
 }
 

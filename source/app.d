@@ -56,7 +56,7 @@ import gizmo;
 import view;
 import shader;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
-                    markMainLoopThread;
+                    currentThreadId, markMainLoopThread;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
@@ -3598,7 +3598,6 @@ void main(string[] args) {
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
 
-        import core.thread : Thread;
         import prepared_tool_transition : prepareArm, commitPreparedArm;
         import registry : PreparedPipeAttrs;
         PreparedPipeAttrs pipeAttrs;
@@ -3610,7 +3609,7 @@ void main(string[] args) {
         SubjectPacket poseSubject;
         VectorStack pose;
         ifs.buildToolVts(poseSubject, pose);
-        const threadIdentity = cast(ulong)cast(void*)Thread.getThis();
+        const threadIdentity = cast(ulong)currentThreadId();
         const contextIdentity = cast(ulong)SDL_GL_GetCurrentContext();
         auto prepared = prepareArm(factory, id, activeTool, history,
             recordObserverHub, document.primary, g_pipeCtx.pipeline, pipeAttrs,
