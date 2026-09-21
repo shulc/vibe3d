@@ -38,7 +38,7 @@ import io.file_dialog_browser : BrowserPickOutcome, BrowserPickResult,
                                 browserPickOpenPath = pickOpenPath,
                                 browserPickSavePath = pickSavePath;
 
-version (WebAssembly) {
+version (web) {
 } else {
     import nfde;
 }
@@ -94,7 +94,7 @@ version (unittest) {
     }
 }
 
-version (WebAssembly) {
+version (web) {
 } else {
 private FilterItem[] toItems(FilterSpec[] fs, ref string[] keepAlive) {
     FilterItem[] items;
@@ -131,7 +131,7 @@ private PickResult classify(Result r, string path) {
 
 /// Open-file chooser. `--test` short-circuits to `unavailable`.
 PickResult pickOpenPath(FilterSpec[] fs, string startDir = null) {
-    version (WebAssembly) {
+    version (web) {
         return classifyBrowser(browserPickOpenPath(fs, startDir));
     } else {
         version (unittest) {
@@ -150,7 +150,7 @@ PickResult pickOpenPath(FilterSpec[] fs, string startDir = null) {
 
 /// Save-file chooser. `--test` short-circuits to `unavailable`.
 PickResult pickSavePath(FilterSpec[] fs, string defaultName, string startDir = null) {
-    version (WebAssembly) {
+    version (web) {
         return classifyBrowser(browserPickSavePath(fs, defaultName, startDir));
     } else {
         version (unittest) {

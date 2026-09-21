@@ -734,7 +734,7 @@ void markMainLoopThread() nothrow {
 /// thread id; the single-threaded WebAssembly build has no competing identity
 /// and uses the existing zero sentinel.
 size_t currentThreadId() nothrow {
-    version (WebAssembly) {
+    version (web) {
         return 0;
     } else {
         import std.process : thisThreadID;
