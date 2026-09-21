@@ -402,8 +402,11 @@ string storePathForItem(const(ImageData) img, string docPath) {
         && slot.storeAnchor == docPath)
         return slot.storeText;
 
-    import gl_thread_guard : glThreadGuard;
-    glThreadGuard("imageRowText");
+    version (web) {
+    } else {
+        import gl_thread_guard : glThreadGuard;
+        glThreadGuard("imageRowText");
+    }
 
     const text = storePathFor(img.storedPath, docPath);
     slot.storeText   = text;
@@ -437,8 +440,11 @@ string dimensionsTextFor(const(ImageData) img) {
         && slot.dimsMissing == img.missing)
         return slot.dimsText;
 
-    import gl_thread_guard : glThreadGuard;
-    glThreadGuard("imageRowText");
+    version (web) {
+    } else {
+        import gl_thread_guard : glThreadGuard;
+        glThreadGuard("imageRowText");
+    }
 
     const text = dimensionsText(img.width, img.height, img.missing);
     slot.dimsText    = text;
@@ -569,8 +575,11 @@ string elidedPathText(const(ImageData) img, string pathText, size_t maxChars) {
         && slot.elideSource == pathText)
         return slot.elideText;
 
-    import gl_thread_guard : glThreadGuard;
-    glThreadGuard("imageRowText");
+    version (web) {
+    } else {
+        import gl_thread_guard : glThreadGuard;
+        glThreadGuard("imageRowText");
+    }
 
     const text = elideEnd(pathText, maxChars);
     slot.elideText   = text;

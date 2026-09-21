@@ -3,7 +3,10 @@ module handles.gl_util;
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
-import gl_thread_guard : glThreadGuard;
+version (web) {
+} else {
+    import gl_thread_guard : glThreadGuard;
+}
 import shader : seedSharedFragUniforms;
 import math;
 
@@ -128,7 +131,10 @@ package GLuint buildVao3f(float[] data, out GLuint vbo) {
     // Tool builds its gizmo banks in its own ctor, so does every Tool — which
     // is why "call a registry factory off the main thread" and "call GL off
     // the main thread" are the same act. See gl_thread_guard.d.
-    glThreadGuard("buildVao3f");
+    version (web) {
+    } else {
+        glThreadGuard("buildVao3f");
+    }
     version(unittest) {
         vbo = 0;
         return 0;

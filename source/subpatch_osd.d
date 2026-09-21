@@ -2212,8 +2212,11 @@ struct OsdAccel {
     void installGl(ref PreviewBuildResult res, ref Mesh pmesh,
                     ref const SubpatchTrace ptrace)
     {
-        import gl_thread_guard : glThreadGuard;
-        glThreadGuard("OsdAccel.installGl");
+        version (web) {
+        } else {
+            import gl_thread_guard : glThreadGuard;
+            glThreadGuard("OsdAccel.installGl");
+        }
         import bindbc.opengl;
 
         immutable int nv         = res.numCageVerts;

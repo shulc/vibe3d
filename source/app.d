@@ -17,7 +17,10 @@ import guarded_action_controller : GuardedActionController,
 import ui.guard_modal_state : GuardModalState;
 import ui.remesh_modal_state : RemeshModalState;
 import layout_reset_action : LayoutResetAction, seedDefaultLayoutIfMissing;
-import gl_thread_guard : markMainThread;
+version (web) {
+} else {
+    import gl_thread_guard : markMainThread;
+}
 import log : logInfo, logWarn;
 import prefs;
 import sdl_error : sdlError;
@@ -847,7 +850,10 @@ void main(string[] args) {
     // thread owns the GL context, so the two constructor funnels can name a
     // violator instead of faulting in a driver dispatch slot (task 0579's
     // death, task 0584's sweep). Inert until this line runs.
-    markMainThread();
+    version (web) {
+    } else {
+        markMainThread();
+    }
 
     // Release-binary fallback (R2 of doc/render_distribution_plan.md):
     // augment the dynamic-loader search path with <exeDir>/lib BEFORE

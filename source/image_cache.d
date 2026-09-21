@@ -374,8 +374,11 @@ struct ImagePixelCache {
             return nextFakeTex_++;
         } else {
             import bindbc.opengl;
-            import gl_thread_guard : glThreadGuard;
-            glThreadGuard("imageCache.upload");
+            version (web) {
+            } else {
+                import gl_thread_guard : glThreadGuard;
+                glThreadGuard("imageCache.upload");
+            }
 
             uint tex = 0;
             glGenTextures(1, &tex);

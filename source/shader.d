@@ -8,7 +8,10 @@ import view;
 import math;
 import mesh : Surface, MarkView;
 import mesh_gpu : GpuMesh;
-import gl_thread_guard : glThreadGuard;
+version (web) {
+} else {
+    import gl_thread_guard : glThreadGuard;
+}
 import display_state : DrawPlan, kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 // ---------------------------------------------------------------------------
@@ -375,7 +378,10 @@ GLuint compileShader(GLenum type, string src) {
     // Funnel 2 of 2. The lowest point of every program build — `createProgram`,
     // `createProgramWithGeom` and gpu_select's own builder all route through
     // here — so guarding it covers every `*Shader` ctor. See gl_thread_guard.d.
-    glThreadGuard("compileShader");
+    version (web) {
+    } else {
+        glThreadGuard("compileShader");
+    }
     GLuint shader = glCreateShader(type);
     const(char)* p = src.toStringz();
     glShaderSource(shader, 1, &p, null);
