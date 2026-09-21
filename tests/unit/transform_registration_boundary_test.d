@@ -195,6 +195,8 @@ unittest {
     // reader) took it to 513, slice 6509 (the extracted mesh registrar) to 514,
     // and slice 6670 (the extracted edit registrar) to 515. It later shrank
     // to 511 when four route-only imports left http_server for an app adapter.
+    // Later legal links brought it to 512, and the browser file-dialog backend
+    // added by W15-N brings it to 513.
     // It is a POSITIVE control, so it is EXPECTED to move on a legal link —
     // what must not move is `transform`, and that stays 251.
     //
@@ -203,9 +205,9 @@ unittest {
     // the SAME text, so git merges them without a conflict and the file then
     // states 513 where the truth is 514. The gate on the REBASED sha is what
     // catches that; a gate taken before the rebase cannot.
-    assert(transform.queue.length == 251 && positive.queue.length == 512,
+    assert(transform.queue.length == 251 && positive.queue.length == 513,
         format("6506 import closure census changed: transform=%d/251 "
-            ~ "registration=%d/512", transform.queue.length,
+            ~ "registration=%d/513", transform.queue.length,
             positive.queue.length));
 }
 
