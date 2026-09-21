@@ -1396,6 +1396,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // taken.
         httpServer.setSubpatchHoldAction((long ms, long ceilingMs) {
             import std.format : format;
+            if (!subpatchPreview.supportsReceptionHold)
+                throw new Exception(
+                    "subpatch hold unavailable in the synchronous web backend");
             // Clamped at BOTH ends even though the route is `--test` only:
             // an unbounded `ceilingMs` would turn the input barrier back into
             // the thing it exists not to be, and a typo is a likelier source

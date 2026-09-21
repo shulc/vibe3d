@@ -1821,17 +1821,12 @@ void main(string[] args) {
     SubpatchPreview subpatchPreview;
     int             subpatchDepth = 3;
 
-    // Task 1500 — the preview build runs on this thread, not on the frame
-    // loop. The editor is the ONLY user of the async path: module unittests
-    // and the IPR preview (source/render/render_mvp.d) keep the synchronous
-    // one, because they read `preview.mesh` on the line after the call and
-    // have no frame loop to run a receiver in. This is arranged for every
-    // editor run INCLUDING --test, so the async window is what the tests and
-    // the perf lane actually measure.
-    {
-        import subpatch_worker : SubpatchWorker;
-        subpatchPreview.enableAsync(new SubpatchWorker());
-    }
+    // Task 1500 / W15-C — every editor run, INCLUDING --test, installs the
+    // build-selected backend. Native keeps the worker-thread window measured
+    // by the suite and perf lane; web runs the same CPU build synchronously.
+    // Module unittests and the IPR preview install no backend because they
+    // read `preview.mesh` immediately and have no frame receiver.
+    subpatchPreview.enableBuildBackend();
     scope(exit) {
         // Ordered before the GL teardown scope(exit)s declared above (they
         // run in reverse): nothing may free a handle the builder is reading.
@@ -5819,13 +5814,13 @@ void main(string[] args) {
         //
         // POSITION IN THE FRAME IS LOAD-BEARING, and it is here rather than
         // at the top of the events phase for a reason that is measurable
-        // rather than stylistic — see `SubpatchPreview.pumpAsyncBuild`'s
+        // rather than stylistic — see `SubpatchPreview.pumpBuildResult`'s
         // header. The single preview upload is the block immediately below;
         // receiving any earlier leaves picks running against a live preview
         // trace while the VBOs still hold the cage. M-INV asserts the
         // one-sided invariant at the two consumers.
         bool previewInstalledThisFrame =
-            subpatchPreview.pumpAsyncBuild(mesh, subpatchDepth);
+            subpatchPreview.pumpBuildResult(mesh, subpatchDepth);
         if (previewInstalledThisFrame) {
             // The preview's TOPOLOGY is new, so the position-only scatter
             // path below must not be taken. Without this a rebuild that

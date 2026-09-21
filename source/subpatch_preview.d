@@ -23,7 +23,11 @@ import mesh;
 import math;
 import mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
 import subpatch_osd;
-import subpatch_worker;
+version (web) {
+    import subpatch_worker_web;
+} else {
+    import subpatch_worker;
+}
 
 ulong computeReusablePreviewKey(ref const Mesh source, int d) {
     ulong h = 0x243F6A8885A308D3UL;
@@ -236,16 +240,15 @@ struct SubpatchPreview {
     //      preview `trace` against cage VBOs. M-INV asserts the one-sided
     //      invariant at the two CONSUMERS.
     //
-    // OFF BY DEFAULT. `asyncEnabled` is set by the editor's main loop only.
+    // OFF BY DEFAULT. `backendEnabled` is set by the editor's main loop only.
     // The module unittests and the IPR preview (source/render/render_mvp.d)
-    // keep the synchronous path — they call `rebuildIfStale` and read
+    // keep the direct path — they call `rebuildIfStale` and read
     // `preview.mesh` on the next line, and there is no frame loop under them
-    // to run a receiver. This is not the "in test mode, wait synchronously"
-    // trap the task warns about: the editor, INCLUDING under --test, is
-    // always async, which is what makes M-ASYNC and the perf lane's
-    // `subpatchWorkerBuildNs > 0` able to see the window at all.
+    // to run a receiver. Every native editor, INCLUDING under --test, selects
+    // the threaded backend, which is what makes M-ASYNC and the perf lane's
+    // `subpatchWorkerBuildNs > 0` able to see the window at all. Web selects
+    // the synchronous backend because its runtime deliberately has no threads.
 
-    import subpatch_worker : SubpatchWorker;
     import subpatch_osd    : CageSnapshot, PreviewBuildResult, takeCageSnapshot;
 
     /// Ceiling on how long recorded input may be held. Taken from
@@ -262,7 +265,7 @@ struct SubpatchPreview {
     enum long kJoinWaitMs = 20_000;
 
     SubpatchWorker worker;
-    bool  asyncEnabled;
+    bool  backendEnabled;
 
     /// A build is dispatched and has not been received. This is the ONE bit
     /// the barrier, the indicator and the observation route all read.
@@ -316,12 +319,17 @@ struct SubpatchPreview {
     private CageSnapshot[2] snapPool;
     private size_t          snapBack;
 
-    /// Turn the async path on and give this preview its builder. Called once,
-    /// by the editor's main loop.
-    void enableAsync(SubpatchWorker w) {
-        worker       = w;
-        asyncEnabled = w !is null;
+    /// Install the backend selected for this build. Native builds get the
+    /// threaded mailbox; web builds get its synchronous one-slot twin.
+    void enableBuildBackend() {
+        worker = new SubpatchWorker();
+        backendEnabled = true;
         osdAccel.joinInFlightHook = &this.joinInFlight;
+    }
+
+    @property bool supportsReceptionHold() const {
+        return backendEnabled && worker !is null
+            && worker.supportsReceptionHold;
     }
 
     /// Is recorded input held this frame? Consulted at exactly two sites —
@@ -441,7 +449,34 @@ struct SubpatchPreview {
     /// it changes the preview's index space. The change bus already treats it
     /// as a preview trigger (`MeshEditScope.Marks` in app.d's
     /// `kSubpatchTriggers`).
+    private ulong computeStencilKeyWeb(ref const Mesh source, int d) const
+    {
+        import core.internal.hash : hashOf;
+        ulong h = hashOf(cast(size_t)&source);
+        h = foldSubpatchKeyMember(h, source.topologyVersion);
+        h = foldSubpatchKeyMember(h, d);
+        h = foldSubpatchKeyMember(h, source.vertices.length);
+        h = foldSubpatchKeyMember(h, source.faces.length);
+        h = foldSubpatchKeyMember(h, source.edges.length);
+        foreach (m; source.faceMarks)
+            h = foldSubpatchKeyMember(h,
+                cast(uint)(m & (Mesh.Marks.Subpatch | Mesh.Marks.Hide)));
+        auto cw = source.creaseWeightMap();
+        if (cw !is null) h = foldSubpatchKeyMember(h, cw.data);
+        else             h = foldSubpatchKeyMember(h, 0xC1EA5E00u);
+        return h == 0 ? 1 : h;
+    }
+
     private ulong computeStencilKey(ref const Mesh source, int d) const {
+        version (web)
+        {
+            // LDC's 32-bit druntime has no seeded scalar hashOf overload.
+            // The project fold hashes each member independently and keeps the
+            // ordered 64-bit state without narrowing it to wasm size_t.
+            return computeStencilKeyWeb(source, d);
+        }
+        else
+        {
         import core.internal.hash : hashOf;
         ulong h = hashOf(cast(size_t)&source);
         h = hashOf(source.topologyVersion, h);
@@ -457,6 +492,7 @@ struct SubpatchPreview {
         if (cw !is null) h = hashOf(cw.data, h);
         else             h = hashOf(0xC1EA5E00u, h);
         return h == 0 ? 1 : h;
+        }
     }
 
     /// Dispatch one build. Precondition: no build in flight.
@@ -512,8 +548,8 @@ struct SubpatchPreview {
     /// then force a FULL preview upload (a version-silent rebuild changes
     /// neither `mutationVersion` nor the preview-on/off state, so neither of
     /// the upload block's existing triggers would fire).
-    bool pumpAsyncBuild(ref const Mesh source, int d) {
-        if (!asyncEnabled || worker is null) return false;
+    bool pumpBuildResult(ref const Mesh source, int d) {
+        if (!backendEnabled || worker is null) return false;
         if (!buildPending) return false;
         ++pendingFrames;
         if (receptionHeld()) return false;
@@ -786,8 +822,8 @@ struct SubpatchPreview {
         }
         // Task 1500. The synchronous build is still what the module
         // unittests and the IPR preview take; the editor dispatches instead.
-        if (asyncEnabled && worker !is null) {
-            requestAsyncBuild(source, d);
+        if (backendEnabled && worker !is null) {
+            requestBackendBuild(source, d);
             return;
         }
         rebuild(source, d);
@@ -801,7 +837,7 @@ struct SubpatchPreview {
     /// preview `trace` selecting for however long the deferral lasted. The
     /// expensive direction — build a preview — is the one that goes to the
     /// worker.
-    private void requestAsyncBuild(ref const Mesh source, int d) {
+    private void requestBackendBuild(ref const Mesh source, int d) {
         if (d <= 0 || !source.hasAnySubpatch()) {
             // TAB-OFF DOES NOT JOIN, and that is the case that matters:
             // un-Tabbing flips the subpatch MASK, so it lands on the

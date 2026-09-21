@@ -198,15 +198,17 @@ unittest {
     // Later legal links brought it to 512, and the browser file-dialog backend
     // added by W15-N brings it to 513.
     // It is a POSITIVE control, so it is EXPECTED to move on a legal link —
-    // what must not move is `transform`, and that stays 251.
+    // what must not move without review is `transform`; W15-C adds the
+    // build-selected subpatch backend to every mesh-bearing closure, taking
+    // both this closure and the broad control up by one.
     //
     // Both of those slices bumped this literal from 512 to 513 in their own
     // lanes, independently. Two lanes each incrementing the same counter write
     // the SAME text, so git merges them without a conflict and the file then
     // states 513 where the truth is 514. The gate on the REBASED sha is what
     // catches that; a gate taken before the rebase cannot.
-    assert(transform.queue.length == 251 && positive.queue.length == 513,
-        format("6506 import closure census changed: transform=%d/251 "
+    assert(transform.queue.length == 252 && positive.queue.length == 513,
+        format("6506 import closure census changed: transform=%d/252 "
             ~ "registration=%d/513", transform.queue.length,
             positive.queue.length));
 }

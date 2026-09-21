@@ -221,7 +221,7 @@ unittest {
     auto positive = closureFrom("registration", modules);
     // Exact closure sizes make every newly reachable module in the G→H→J→K
     // registrar chain an explicit boundary review instead of hidden slack.
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 253,
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 254,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

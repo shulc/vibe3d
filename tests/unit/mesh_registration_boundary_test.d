@@ -245,8 +245,8 @@ unittest {
                     meshClosure));
     // Keep totality after the policy loop: a new forbidden edge also grows the
     // closure, and the policy-specific failure must remain reachable first.
-    assert(meshClosure.queue.length == 176,
-        format("6509 import scanner closure=%d/176",
+    assert(meshClosure.queue.length == 177,
+        format("6509 import scanner closure=%d/177",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");

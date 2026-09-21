@@ -112,6 +112,10 @@ final class SubpatchWorker {
         synchronized (mtx_) return resultReady_;
     }
 
+    @property bool supportsReceptionHold() const pure nothrow @nogc {
+        return true;
+    }
+
     /// MAIN THREAD. Bounded join: wait until the builder is idle. Returns
     /// false on TIMEOUT, and the caller must then treat the build as
     /// ABANDONED — see `SubpatchPreview.joinInFlight` for why the deliberate
