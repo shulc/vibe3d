@@ -313,19 +313,22 @@ void registerCommands(EditorApp app) {
 private void registerMeshFamily(EditorApp app) {
     auto dropActiveTool = app.dropActiveTool;
     auto viewports = app.vpm;
+    auto meshRebuildDropDoor =
+        () => dropActiveTool(ToolTransition.meshRebuildDrop);
+    auto promoteGeometryType = app.promoteGeometryType;
     version (web) {
-        registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
-            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-            MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
-                &viewports.originSnapshot, app.promoteGeometryType));
-    } else {
-        auto remeshModalState = app.remeshModalState;
-        registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
-            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-            MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
-                &viewports.originSnapshot, app.remeshJob,
-                &remeshModalState.requestOpen, app.promoteGeometryType));
-    }
+    } else
+    auto remeshModalState = app.remeshModalState;
+    version (web)
+    auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor,
+        &viewports.originSnapshot, null, null, promoteGeometryType);
+    else
+    auto meshCommandDeps = MeshCommandDeps(meshRebuildDropDoor,
+        &viewports.originSnapshot, app.remeshJob,
+        &remeshModalState.requestOpen, promoteGeometryType);
+    registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+        meshCommandDeps);
 }
 
 version (unittest)

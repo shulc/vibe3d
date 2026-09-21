@@ -1222,8 +1222,6 @@ void main(string[] args) {
         }
     }
 
-    version (web) {
-    } else {
     // AI3D async job controller (task 0381, doc/ai3d_ui_plan.md). Owns the
     // dedicated worker thread(s) that run std.net.curl transfers
     // (ai3d.stage_artifact); constructed with NO Document/Mesh/GpuMesh/View/
@@ -1244,7 +1242,11 @@ void main(string[] args) {
     // transport (crash). The abrupt exit skips both: no cross-thread frees
     // (the worker owns and frees its own HTTP handle), no GC/module dtor
     // pass, no hang.
+    version (web) {
+    } else
     auto ai3dController = new Ai3dJobController();
+    version (web) {
+    } else
     scope(exit) {
         ai3dController.stop();
         if (!ai3dController.join(Ai3dClientJoinTimeoutMs)) {
@@ -1269,7 +1271,11 @@ void main(string[] args) {
     // isolated subprocess, non-blocking per-frame poll" shape as
     // remeshJob below). Shutdown kills only a worker/install step THIS
     // manager spawned — never a foreign process on the configured port.
+    version (web) {
+    } else
     auto ai3dWorkerManager = new Ai3dWorkerManager();
+    version (web) {
+    } else
     scope(exit) ai3dWorkerManager.shutdown();
 
     // Quad-remesh job (source/remesh/remesh_job.d) — a crash-isolated
@@ -1278,9 +1284,12 @@ void main(string[] args) {
     // geogram backend can abort() on bad input, and only process isolation
     // survives that). Cancel any in-flight subprocess at shutdown so vibe3d
     // never leaves an orphaned helper running.
+    version (web) {
+    } else
     auto remeshJob = new RemeshJob();
+    version (web) {
+    } else
     scope(exit) remeshJob.cancel();
-    }
 
     EventLogger evLog;
     version (ReleaseBuild) {

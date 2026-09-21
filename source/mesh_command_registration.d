@@ -94,6 +94,11 @@ version (web) {
     import commands.mesh.remesh : Remesh, RemeshOpen, RemeshStart;
 }
 
+version (web)
+    private alias RemeshJobRef = void*;
+else
+    private alias RemeshJobRef = RemeshJob;
+
 struct MeshCommandDeps {
 private:
     void delegate() meshRebuildDrop_;
@@ -108,39 +113,27 @@ private:
 public:
     @disable this();
 
-    version (web) {
-        this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
-                void delegate(EditMode) promoteGeometryType) {
-            assert(meshRebuildDrop !is null,
-                "6509 mesh registration requires a rebuild drop door");
-            assert(originSnapshot !is null,
-                "6509 mesh registration requires a resolved viewport provider");
-            assert(promoteGeometryType !is null,
-                "6509 mesh registration requires the geometry promote door");
-            meshRebuildDrop_ = meshRebuildDrop;
-            originSnapshot_ = originSnapshot;
-            promoteGeometryType_ = promoteGeometryType;
-        }
-    } else {
-        this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
-                RemeshJob remeshJob, void delegate() requestRemeshOpen,
-                void delegate(EditMode) promoteGeometryType) {
+    this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
+            RemeshJobRef remeshJob, void delegate() requestRemeshOpen,
+            void delegate(EditMode) promoteGeometryType) {
         assert(meshRebuildDrop !is null,
             "6509 mesh registration requires a rebuild drop door");
         assert(originSnapshot !is null,
             "6509 mesh registration requires a resolved viewport provider");
-        assert(remeshJob !is null,
-            "6509 mesh registration requires the remesh job");
-        assert(requestRemeshOpen !is null,
-            "6509 mesh registration requires the remesh open door");
         assert(promoteGeometryType !is null,
             "6509 mesh registration requires the geometry promote door");
+        version (web) {
+        } else {
+            assert(remeshJob !is null,
+                "6509 mesh registration requires the remesh job");
+            assert(requestRemeshOpen !is null,
+                "6509 mesh registration requires the remesh open door");
+            remeshJob_ = remeshJob;
+            requestRemeshOpen_ = requestRemeshOpen;
+        }
         meshRebuildDrop_ = meshRebuildDrop;
         originSnapshot_ = originSnapshot;
-        remeshJob_ = remeshJob;
-        requestRemeshOpen_ = requestRemeshOpen;
         promoteGeometryType_ = promoteGeometryType;
-        }
     }
 
     void delegate() meshRebuildDrop() nothrow @nogc {
