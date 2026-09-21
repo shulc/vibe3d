@@ -61,9 +61,15 @@ unittest { // browser backend refuses before FileSave can manufacture a path
     assert(browserOpen.outcome == PickOutcome.unavailable &&
            browserOpen.path is null,
         "browser open backend must stay pathless and unavailable");
+    assert(browserOpen.refusalReason() ==
+           "no path given: browser file access requires a user gesture",
+        "browser open reason drifted: '" ~ browserOpen.refusalReason() ~ "'");
     assert(browserSave.outcome == PickOutcome.unavailable &&
            browserSave.path is null,
         "browser save backend must stay pathless and unavailable");
+    assert(browserSave.refusalReason() ==
+           "no path given: browser file access requires a user gesture",
+        "browser save reason drifted: '" ~ browserSave.refusalReason() ~ "'");
 }
 
 // ---------------------------------------------------------------------------

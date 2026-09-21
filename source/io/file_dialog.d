@@ -180,4 +180,9 @@ unittest {
                .refusalReason().canFind("no portal"));
     // A `failed` with no message must still say something.
     assert(PickResult(PickOutcome.failed).refusalReason().length > 0);
+    auto browserFailure = classifyBrowser(
+        BrowserPickResult(BrowserPickOutcome.failed, "permission denied"));
+    assert(browserFailure.outcome == PickOutcome.failed);
+    assert(browserFailure.refusalReason() ==
+        "the file chooser failed: permission denied");
 }
