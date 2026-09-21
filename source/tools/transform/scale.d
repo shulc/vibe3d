@@ -1,7 +1,6 @@
 module tools.transform.scale;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
 import sdl.stdinc : SDL_FALSE, SDL_TRUE, SDL_bool;

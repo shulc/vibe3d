@@ -13,7 +13,6 @@ import document : Layer;
 import snap_render : SnapOverlayOwner;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 
-import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
 

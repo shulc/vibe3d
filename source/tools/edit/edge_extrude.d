@@ -18,7 +18,6 @@ import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 import mesh : detachedPreparedMesh;
 
-import bindbc.opengl;
 import bindbc.sdl;
 import operator : VectorStack;
 

@@ -1,7 +1,6 @@
 module tools.edit.tack;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import bindbc.sdl;
 import std.math : atan2, abs, PI;
 import std.json : JSONValue;

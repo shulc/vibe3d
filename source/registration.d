@@ -26,7 +26,6 @@ version (web) {
 }
 
 import bindbc.sdl;
-import bindbc.opengl;
 import std.string : toStringz;
 import std.stdio : writeln, writefln, File, stderr;
 import std.math : tan, sin, cos, sqrt, PI, abs;

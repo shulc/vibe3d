@@ -1,7 +1,6 @@
 module tool;
 
 import bindbc.sdl;
-import bindbc.opengl;
 
 import math;
 import shader;

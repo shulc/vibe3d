@@ -1,7 +1,6 @@
 module tools.create.arc;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
 

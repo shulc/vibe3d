@@ -58,7 +58,6 @@ import display_state : DrawPlan;
 // 0418 for the full comparison.
 // ---------------------------------------------------------------------------
 
-import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
 

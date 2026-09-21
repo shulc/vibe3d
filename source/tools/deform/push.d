@@ -1,7 +1,6 @@
 module tools.deform.push;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import operator : VectorStack;
 
 import tools.transform.transform;

@@ -1,7 +1,6 @@
 module tools.transform.rotate;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
 

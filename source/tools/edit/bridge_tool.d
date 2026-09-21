@@ -1,7 +1,6 @@
 module tools.edit.bridge_tool;
 import display_state : DrawPlan;
 
-import bindbc.opengl;
 import bindbc.sdl;
 
 import operator : VectorStack;

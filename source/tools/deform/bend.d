@@ -2,7 +2,6 @@ module tools.deform.bend;
 import display_state : DrawPlan;
 
 import document : primaryModelSpace;
-import bindbc.opengl;
 import operator : VectorStack;
 
 import tools.transform.transform;
