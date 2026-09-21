@@ -21,14 +21,14 @@
 //
 // WHAT THIS SCANNER SEES, EXACTLY. A `%`-specifier ending in f/g/e after only
 // the flags `-+ #`, a numeric width and an optional numeric precision, inside
-// a string literal in one of the six scanned files. Comments are removed
+// a string literal in one of the seven scanned files. Comments are removed
 // first; string literals are KEPT. That polarity is the exact INVERSE of tests/unit/
 // mark_view_field_guard_test.d, from which the lexer shape is taken: that
 // guard's subject is code, so it discards literals; this guard's subject lives
 // inside the literals, so it discards only comments.
 //
 // WHAT IT DOES NOT SEE, stated so nobody mistakes it for the whole contract:
-// a body assembled in a file outside the scanned six (a new endpoint in a new
+// a body assembled in a file outside the scanned seven (a new endpoint in a new
 // module is invisible to this gate — an acknowledged hole, recorded in the
 // task card, not closed here because widening to all of source/ would need a
 // negative control over the whole tree); a specifier built at run time from
@@ -369,6 +369,7 @@ private immutable string[] kScanned = [
     "source/http_json.d",
     "source/http_providers.d",
     "source/http_server.d",
+    "source/http_transport.d",
     "source/view.d",
     // TASK 4062 — `scalarArgToString` moved from http_providers.d to
     // command_args.d with the argument-binding law, and its
@@ -382,7 +383,7 @@ private immutable string[] kScanned = [
 private static immutable LedgerRow[] kExemptionLedger = [
     LedgerRow("scalarArgToString|exempt", 1,
         "builds an argstring, not a JSON body"),
-    LedgerRow("HttpServer.reportAbandoned|exempt", 1,
+    LedgerRow("HttpServerTransport.reportAbandoned|exempt", 1,
         "formats elapsed time for a log, not a JSON body"),
     LedgerRow("wireToolpipeProviders.setToolPipeEvalProvider|exempt", 1,
         "clamped to the [0,1] weight contract above, task 1550 decision 4.1"),
@@ -427,12 +428,13 @@ unittest {
     // --- scope identity: names, not only a count ---------------------------
     // This is deliberately independent of kScanned. Comparing a counter with
     // kScanned.length lets one listed file silently replace another; the
-    // contract is that these exact six source paths were read (task 6740).
+    // contract is that these exact seven source paths were read (task 6740).
     immutable expectedFiles = [
         "source/json_num.d",
         "source/http_json.d",
         "source/http_providers.d",
         "source/http_server.d",
+        "source/http_transport.d",
         "source/view.d",
         "source/command_args.d",
     ];
@@ -440,7 +442,7 @@ unittest {
         format("the JSON emitter gate must read exactly %s, it read %s",
                expectedFiles, filesRead));
     assert(totalSpecsSeen > 0,
-        "the scan saw no float specifier anywhere in six files that are full "
+        "the scan saw no float specifier anywhere in seven files that are full "
       ~ "of them — the reader, the masker or the matcher has stopped working, "
       ~ "and a gate that is clean over an empty input is not a gate");
 

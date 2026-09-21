@@ -913,10 +913,10 @@ unittest {
 
 unittest {
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable rawSource = readText(
-        buildPath(root, "source", "http_server.d"));
-    immutable source = blankNonCode(rawSource);
-    immutable handle = bodyAt(source,
+    immutable rawTransport = readText(
+        buildPath(root, "source", "http_transport.d"));
+    immutable transport = blankNonCode(rawTransport);
+    immutable handle = bodyAt(transport,
         "private void handleClient(Socket client)");
     assert(handle.count("sendHttpResponse(") == 1,
         "6310 production wiring: handleClient must route its one response "
@@ -927,11 +927,11 @@ unittest {
         ~ "deadline to the retry helper");
     assert(handle.canFind("if (sent != responseStr.length)"),
         "6310 failure wiring: incomplete responses must retain the loud warning");
-    assert(rawSource.canFind("took only %d of %d response bytes"),
+    assert(rawTransport.canFind("took only %d of %d response bytes"),
         "6310 failure wiring: incomplete-response diagnostic text vanished");
     assert(!handle.canFind("client.send(responseStr)"),
         "6310 production wiring: the old one-shot response send returned");
-    assert(source.canFind("Duration clientWriteDeadline = 15.seconds;"),
+    assert(transport.canFind("Duration clientWriteDeadline = 15.seconds;"),
         "6310 send deadline: production whole-response budget changed");
 }
 

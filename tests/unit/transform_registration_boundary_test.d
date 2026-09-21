@@ -203,9 +203,9 @@ unittest {
     // the SAME text, so git merges them without a conflict and the file then
     // states 513 where the truth is 514. The gate on the REBASED sha is what
     // catches that; a gate taken before the rebase cannot.
-    assert(transform.queue.length == 251 && positive.queue.length == 511,
+    assert(transform.queue.length == 251 && positive.queue.length == 512,
         format("6506 import closure census changed: transform=%d/251 "
-            ~ "registration=%d/511", transform.queue.length,
+            ~ "registration=%d/512", transform.queue.length,
             positive.queue.length));
 }
 
