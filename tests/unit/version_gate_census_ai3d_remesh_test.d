@@ -118,4 +118,6 @@ SH";
     const editorApp = readText(buildPath(repoRoot, "source", "editor_app.d"));
     assert(editorApp.indexOf("version (web) {\n    enum bool kGenerateAiAvailable = false;\n}") >= 0,
         "W15-D web builds must keep the AI generation action unavailable");
+    assert(editorApp.indexOf("version (web) {\n} else {\nstruct Ai3dModalState") >= 0,
+        "W15-D web builds must compile out the native AI modal state");
 }
