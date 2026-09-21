@@ -1,5 +1,30 @@
 module http_transport;
 
+version (web)
+{
+    // Task 6920: the browser keeps the router's compile-time shape but owns no
+    // socket, worker thread, or wait primitive; the web-closure census pins it.
+    void httpTransportSleep(Duration)(Duration) {}
+
+    size_t httpTransportThreadIdentity() nothrow
+    {
+        // The browser target has one execution thread, so one non-zero identity
+        // marks both the tick and in-process request sides as that same thread.
+        return 1;
+    }
+
+    mixin template HttpServerTransport()
+    {
+        private shared bool isRunning;
+        private ushort port;
+
+        public void start() {}
+        public void stop() {}
+    }
+}
+else
+{
+
 /// Sleep used by the HTTP bridge's native wait loops. Keeping the thread
 /// primitive here leaves request routing dependent only on a duration value.
 void httpTransportSleep(Duration)(Duration delay)
@@ -368,4 +393,5 @@ mixin template HttpServerTransport()
             client.close();
         }
     }
+}
 }

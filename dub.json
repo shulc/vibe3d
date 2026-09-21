@@ -306,6 +306,14 @@
 		{
 			"name": "web",
 			"versions": ["web"],
+			"excludedSourceFiles": [
+				"source/ai3d/job_controller.d",
+				"source/ai3d/stage_artifact.d",
+				"source/ai3d/worker_manager.d",
+				"source/ai3d_command_registration.d",
+				"source/commands/ai3d/generate.d",
+				"source/commands/ai3d/generate_test_hooks.d"
+			],
 			"_comment": "The browser build's SEAM KEY, declared so it is DERIVED and not hand-passed. Measured 2026-09-21: `web` is predefined by no compiler and appeared in no dub version list, so every `version (web)` site across the wave-15 seams took the NATIVE arm on a wasm target. One slice's own wasm control went green only because its harness passed -d-version=web itself, which witnesses the flag rather than the build. `WebAssembly` IS compiler-predefined on a wasm triple, so sites on it fire on ANY wasm target -- a superset of this one. The two are different predicates: a fact about the target versus a decision about the build.",
 			"_comment-deps": "No d-onnxruntime here: the AI3D family is version-gated out of this build, so the dependency would be pulled for code that is not compiled."
 		}

@@ -5597,7 +5597,10 @@ private string parseQueryString(string path, string key, string def) {
 // schedule; what IS pinnable is the classification the retry hangs off, and
 // in particular that it is not confused with the idle timeout.
 // ---------------------------------------------------------------------------
-version (Posix)
+version (web)
+{
+}
+else version (Posix)
 unittest {
     import core.stdc.errno : errno, EINTR, EAGAIN;
 
