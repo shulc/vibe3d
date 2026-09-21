@@ -404,6 +404,23 @@ private string surfaceCodecProblem() {
 
 static assert(surfaceCodecProblem() is null, surfaceCodecProblem());
 
+// Task 6930: morph indices stay in their signed wire domain until both bounds
+// are proved; only then may the reader narrow one to the platform index width.
+private bool morphVertexIndexInBounds(long vertexIndex, size_t vertexCount)
+        pure nothrow @safe
+{
+    return vertexIndex >= 0 && vertexIndex < cast(long) vertexCount;
+}
+
+unittest
+{
+    assert(morphVertexIndexInBounds(1, 2), "the last valid morph index is accepted");
+    assert(!morphVertexIndexInBounds(-1, 2), "a negative morph index is rejected");
+    assert(!morphVertexIndexInBounds(2, 2), "the vertex-count boundary is rejected");
+    assert(!morphVertexIndexInBounds((1L << 32) + 1, 2),
+        "a 64-bit wire index must be rejected before platform-width narrowing");
+}
+
 // Task 0762 — reproduce the loss the decision above is about, so it stays a
 // measured fact rather than a claim in a comment. A populated
 // `compiledFromTreeId` does NOT survive a `meshToJson`/`meshFromJson`
@@ -2328,7 +2345,7 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
         size_t skipped = 0;
         foreach (k, vidx; sv.verts) {
-            if (vidx < 0 || cast(size_t) vidx >= mesh.vertices.length) {
+            if (!morphVertexIndexInBounds(vidx, mesh.vertices.length)) {
                 ++skipped;
                 continue;
             }

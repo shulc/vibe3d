@@ -482,8 +482,9 @@ alias igSetNextWindowClass = setNextWindowClass;
 // These assertions describe the known prefix used by our field writes. The
 // constructor-backed unit bracket checks the offsets against the linked
 // library; the oversized zeroed call buffer below also tolerates appended C
-// fields and therefore does not assume the C struct is exactly 40 bytes.
-static assert(ImGuiWindowClassMirror.sizeof == 40);
+// fields and therefore does not assume one fixed C size: the mirror is 36
+// bytes on wasm32 and 40 bytes on x86_64.
+static assert(ImGuiWindowClassMirror.sizeof == 32 + (void*).sizeof);
 static assert(ImGuiWindowClassMirror.ParentViewportId.offsetof == 4);
 static assert(ImGuiWindowClassMirror.DockNodeFlagsOverrideSet.offsetof == 24);
 static assert(ImGuiWindowClassMirror.DockingAllowUnclassed.offsetof == 29);

@@ -1997,7 +1997,7 @@ private uint[] bandReorderByConnectivity(const(uint[])[] polys, const(uint)[] se
         long cur = start;
         while (cur >= 0) {
             order ~= cast(uint)cur;
-            if (cast(uint)cur < seen.length) seen[cur] = true;
+            if (cast(uint)cur < seen.length) seen[cast(size_t)cur] = true;
             seenCount++;
             cur = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
         }
@@ -2046,7 +2046,7 @@ private uint[][] bandChains(const(uint[])[] polys, const(uint)[] order,
             long nxt = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
             if (nxt < 0) break;
             fwd ~= cast(uint)nxt;
-            if (cast(uint)nxt < seen.length) seen[nxt] = true;
+            if (cast(uint)nxt < seen.length) seen[cast(size_t)nxt] = true;
             cur = nxt;
         }
 
@@ -2058,7 +2058,7 @@ private uint[][] bandChains(const(uint[])[] polys, const(uint)[] order,
             long nxt = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
             if (nxt < 0) break;
             bwd ~= cast(uint)nxt;
-            if (cast(uint)nxt < seen.length) seen[nxt] = true;
+            if (cast(uint)nxt < seen.length) seen[cast(size_t)nxt] = true;
             cur = nxt;
         }
         uint[] chain = bwd.dup;

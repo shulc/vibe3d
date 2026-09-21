@@ -576,6 +576,7 @@ tests.unit.viewport_scheme_test
 tests.unit.viewport_test
 tests.unit.vmap_policy_law_test
 tests.unit.web_seam_key_census_test
+tests.unit.web_width32_compile_test
 tests.unit.weightmap_color_test
 tests.unit.window_metrics_test
 tests.unit.wrapper_shift_apply_inheritance_test

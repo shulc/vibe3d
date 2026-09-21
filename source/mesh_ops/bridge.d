@@ -512,7 +512,7 @@ private size_t bridgeFanRows(ref MeshEditBatch ed, const(uint)[] longC,
     // r(i) = ceil(i*M/N - 0.5) = ceilDivHalfDown(2*i*M - N, 2*N), i = 0..N.
     long[] r = new long[](N + 1);
     foreach (i; 0 .. N + 1)
-        r[i] = ceilDivHalfDown(2 * i * M - N, 2 * N);
+        r[cast(size_t)i] = ceilDivHalfDown(2 * i * M - N, 2 * N);
 
     auto edgeFaces = ed.buildEdgeFaces();  // pre-existing snapshot — subpatch source ONLY, untouched
     auto liveEdgeFaces = edgeFaces.dup;    // grows with THIS fan's own faces — winding source
@@ -525,9 +525,10 @@ private size_t bridgeFanRows(ref MeshEditBatch ed, const(uint)[] longC,
 
     size_t added = 0;
     foreach (i; 0 .. N) {
-        uint a0 = cast(uint)longC[i], a1 = cast(uint)longC[i + 1];
-        size_t ri  = cast(size_t)r[i];
-        size_t ri1 = cast(size_t)r[i + 1];
+        uint a0 = cast(uint)longC[cast(size_t)i],
+             a1 = cast(uint)longC[cast(size_t)(i + 1)];
+        size_t ri  = cast(size_t)r[cast(size_t)i];
+        size_t ri1 = cast(size_t)r[cast(size_t)(i + 1)];
         bool sub;
         uint[] idx;
         if (ri1 > ri) {

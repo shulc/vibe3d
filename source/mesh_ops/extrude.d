@@ -4055,7 +4055,7 @@ unittest { // extendEdgesByMask: cube interior edge — identity, offset, rotate
         uint n7 = (n6 == 8) ? 9 : 8;
         long bf = findFaceByVerts_(m, [6u, n6, n7, 7u]);
         assert(bf >= 0, "bridge face [6,n6,n7,7] exists");
-        assert(tupleMatchesWound_(m.faces[bf], [6u, n6, n7, 7u]),
+        assert(tupleMatchesWound_(m.faces[cast(size_t)bf], [6u, n6, n7, 7u]),
                "bridge winding [6,8,9,7]");
     }
     // ---- offset=(0,0.3,0) → new verts (±0.4, 0.7, 0.4) ----
@@ -4215,9 +4215,9 @@ unittest { // extendEdgesByMask: chain2 weld (two top edges sharing corner (0.5,
     //   -Z edge {6,2}: srcA=2 srcB=corner → [2, free2, weld, corner]
     long bX = findFaceByVerts_(m, [cr, cast(uint)welded, cast(uint)f7, 7u]);
     long bZ = findFaceByVerts_(m, [2u, cast(uint)f2, cast(uint)welded, cr]);
-    assert(bX >= 0 && tupleMatchesWound_(m.faces[bX], [cr, cast(uint)welded, cast(uint)f7, 7u]),
+    assert(bX >= 0 && tupleMatchesWound_(m.faces[cast(size_t)bX], [cr, cast(uint)welded, cast(uint)f7, 7u]),
            "chain2 -X bridge winding [corner,weld,free7,7]");
-    assert(bZ >= 0 && tupleMatchesWound_(m.faces[bZ], [2u, cast(uint)f2, cast(uint)welded, cr]),
+    assert(bZ >= 0 && tupleMatchesWound_(m.faces[cast(size_t)bZ], [2u, cast(uint)f2, cast(uint)welded, cr]),
            "chain2 -Z bridge winding [2,free2,weld,corner]");
 }
 
@@ -4263,11 +4263,11 @@ unittest { // extendEdgesByMask: star3 weld (three cube edges meeting at corner 
     long bX = findFaceByVerts_(m, [cr, cast(uint)weld, cast(uint)f7, nX]);
     long bZ = findFaceByVerts_(m, [nZ, cast(uint)f2, cast(uint)weld, cr]);
     long bY = findFaceByVerts_(m, [cr, cast(uint)weld, cast(uint)f5, nY]);
-    assert(bX >= 0 && tupleMatchesWound_(m.faces[bX], [cr, cast(uint)weld, cast(uint)f7, nX]),
+    assert(bX >= 0 && tupleMatchesWound_(m.faces[cast(size_t)bX], [cr, cast(uint)weld, cast(uint)f7, nX]),
            "star3 -X bridge winding [corner,weld,free7,7]");
-    assert(bZ >= 0 && tupleMatchesWound_(m.faces[bZ], [nZ, cast(uint)f2, cast(uint)weld, cr]),
+    assert(bZ >= 0 && tupleMatchesWound_(m.faces[cast(size_t)bZ], [nZ, cast(uint)f2, cast(uint)weld, cr]),
            "star3 -Z bridge winding [2,free2,weld,corner]");
-    assert(bY >= 0 && tupleMatchesWound_(m.faces[bY], [cr, cast(uint)weld, cast(uint)f5, nY]),
+    assert(bY >= 0 && tupleMatchesWound_(m.faces[cast(size_t)bY], [cr, cast(uint)weld, cast(uint)f5, nY]),
            "star3 -Y bridge winding [corner,weld,free5,5]");
 }
 
@@ -4621,7 +4621,7 @@ version (unittest) {
             uint inA = ringPlusX(k - 1), outA = ringPlusX(k);
             uint outB = ringMinusX(k), inB = ringMinusX(k - 1);
             long bf = findFaceByVerts_(m, [inA, outA, outB, inB]);
-            if (bf < 0 || !tupleMatchesWound_(m.faces[bf], [inA, outA, outB, inB]))
+            if (bf < 0 || !tupleMatchesWound_(m.faces[cast(size_t)bf], [inA, outA, outB, inB]))
                 return false;
         }
         return true;
@@ -4756,8 +4756,8 @@ unittest { // extendEdgesByMask seg3 — outermost ring selected on exit
     foreach (i; 0 .. m.edges.length)
         if (m.edgeMarks[i] & Mesh.Marks.Select) { ++sel; selIdx = cast(long)i; }
     assert(sel == 1, "seg3: exactly the outermost ridge edge selected");
-    auto va = m.vertices[m.edges[selIdx][0]];
-    auto vb = m.vertices[m.edges[selIdx][1]];
+    auto va = m.vertices[m.edges[cast(size_t)selIdx][0]];
+    auto vb = m.vertices[m.edges[cast(size_t)selIdx][1]];
     bool isOuter = (near_(va, Vec3(0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(-0.4f, 0.7f, 0.4f))) ||
                    (near_(va, Vec3(-0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(0.4f, 0.7f, 0.4f)));
     assert(isOuter, "seg3: selected edge is the OUTERMOST ring (Y=0.7)");
