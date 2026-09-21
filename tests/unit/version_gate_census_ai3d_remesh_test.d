@@ -45,13 +45,24 @@ unittest
         if (exists(describeErrorPath)) remove(describeErrorPath);
     }
 
+    // THE KEY IS DERIVED, NOT HAND-PASSED, and that distinction is the whole point of this
+    // census. An earlier form took flags from `--config=tests` and then added `-version=web`
+    // itself. That witnesses the FLAG and not the BUILD: measured 2026-09-21, `web` is
+    // predefined by no compiler and was in no dub version list, so every `version (web)` site
+    // in the wave took the NATIVE arm on a real wasm target while a census that supplied the
+    // key by hand stayed green. Reading the key out of `--config=web` makes this assert fail
+    // if the configuration is ever dropped from dub.json -- which is the failure that the
+    // hand-passed form could not see.
     enum compileWebGraph = q"SH
 set -o pipefail
 cd "$1"
-flags=$(dub describe --config=tests \
+flags=$(dub describe --config=web \
     --data=import-paths,string-import-paths,versions,debug-versions \
     2>"$2") || { cat "$2"; exit 1; }
-dmd -deps="$3" -o- -c -version=web $flags $(find source -name '*.d' -print)
+case " $flags " in *" -version=web "*) ;; *)
+  echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
+esac
+dmd -deps="$3" -o- -c $flags $(find source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileWebGraph, "w15-d-web-deps",
                          repoRoot, describeErrorPath, depsPath],
@@ -132,4 +143,16 @@ SH";
         "W15-D web builds must keep the AI generation action unavailable");
     assert(editorApp.indexOf("version (web) {\n} else {\nstruct Ai3dModalState") >= 0,
         "W15-D web builds must compile out the native AI modal state");
+
+    const meshRegistration = readText(buildPath(repoRoot, "source",
+        "mesh_command_registration.d"));
+    enum webMeshDepsChecks =
+        "assert(meshRebuildDrop !is null,\n"
+      ~ "                \"6509 mesh registration requires a rebuild drop door\");\n"
+      ~ "            assert(originSnapshot !is null,\n"
+      ~ "                \"6509 mesh registration requires a resolved viewport provider\");\n"
+      ~ "            assert(promoteGeometryType !is null,\n"
+      ~ "                \"6509 mesh registration requires the geometry promote door\");";
+    assert(meshRegistration.indexOf(webMeshDepsChecks) >= 0,
+        "W15-D2 web mesh registration must retain all three dependency checks");
 }
