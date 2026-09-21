@@ -730,15 +730,15 @@ void markMainLoopThread() nothrow {
     g_mainLoopThreadId = currentThreadId();
 }
 
-/// A stable per-thread identity. The `Thread` object's address is unique
-/// and constant for the life of the thread on every platform we ship, and
-/// reading it is a TLS load — no allocation, no syscall.
+/// A stable per-thread identity. Native targets expose a process-unique OS
+/// thread id; the single-threaded WebAssembly build has no competing identity
+/// and uses the existing zero sentinel.
 size_t currentThreadId() nothrow {
-    import core.thread.osthread : Thread;
-    try {
-        return cast(size_t) cast(void*) Thread.getThis();
-    } catch (Throwable) {
+    version (WebAssembly) {
         return 0;
+    } else {
+        import std.process : thisThreadID;
+        return cast(size_t) thisThreadID;
     }
 }
 
