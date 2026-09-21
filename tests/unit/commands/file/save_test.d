@@ -25,7 +25,8 @@ unittest { // browser backend refuses before FileSave can manufacture a path
     import command : g_testMode;
     import document : Document;
     import io.doc_state : clearCurrentDoc;
-    import io.file_dialog : selectBrowserBackendForTest;
+    import io.file_dialog : PickOutcome, pickOpenPath, pickSavePath,
+                            selectBrowserBackendForTest;
     import mesh : makeCube;
 
     const priorTestMode = g_testMode;
@@ -40,6 +41,8 @@ unittest { // browser backend refuses before FileSave can manufacture a path
     g_testMode = true;
     selectBrowserBackendForTest(true);
 
+    const browserOpen = pickOpenPath([]);
+    const browserSave = pickSavePath([], "Untitled.v3d");
     auto doc = Document.bootstrap(makeCube());
     auto v = new View(0, 0, 800, 600);
     auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
@@ -55,6 +58,12 @@ unittest { // browser backend refuses before FileSave can manufacture a path
         "browser FileSave must refuse while its backend cannot produce chosen");
     assert(reason == "no path given: browser file access requires a user gesture",
         "browser unavailable reason drifted: '" ~ reason ~ "'");
+    assert(browserOpen.outcome == PickOutcome.unavailable &&
+           browserOpen.path is null,
+        "browser open backend must stay pathless and unavailable");
+    assert(browserSave.outcome == PickOutcome.unavailable &&
+           browserSave.path is null,
+        "browser save backend must stay pathless and unavailable");
 }
 
 // ---------------------------------------------------------------------------
