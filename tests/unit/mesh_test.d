@@ -52,12 +52,63 @@ import change_bus : SelDomain;
 // above; they came across with the 0706 move of mesh.d's unittest blocks and
 // each track-1 stage sheds its own line.)
 import std.algorithm.sorting : sort;
+import std.array : split;
+import std.file : readText;
 import std.math : cos, sin, PI;
 import std.format : format;
+import tests.unit.census_symbols : blankNonCode;
 import tests.unit.fixtures : makeTaggedGrid, findEdge;
+import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
+import tsan_annotate : forceSerialLoopRunnerForTest, parallelRunnerCalls,
+                       resetLoopRunnerProbe, serialRunnerCalls;
 import mesh;
 import mesh_ops.cut;
 import mesh_ops.poly_bevel;
+
+unittest // buildLoops: native parallel and browser serial runners are byte-identical
+{
+    enum gridSize = 65;
+    enum expectedFaces = 4_225;
+    enum expectedVertices = 4_356;
+    enum expectedRunnerCalls = 4;
+
+    auto parallelMesh = makeGridPlane(gridSize);
+    assert(parallelMesh.faces.length == expectedFaces
+            && parallelMesh.vertices.length == expectedVertices,
+        format("6950 parity stand changed: expected %d faces/%d vertices, got %d/%d",
+               expectedFaces, expectedVertices, parallelMesh.faces.length,
+               parallelMesh.vertices.length));
+
+    forceSerialLoopRunnerForTest(false);
+    scope (exit) forceSerialLoopRunnerForTest(false);
+    resetLoopRunnerProbe();
+    parallelMesh.buildLoops();
+    assert(parallelRunnerCalls() == expectedRunnerCalls
+            && serialRunnerCalls() == 0,
+        format("6950 native buildLoops must take all %d parallel runner calls; "
+             ~ "got parallel=%d serial=%d",
+               expectedRunnerCalls, parallelRunnerCalls(), serialRunnerCalls()));
+
+    forceSerialLoopRunnerForTest(true);
+    auto serialMesh = makeGridPlane(gridSize);
+    resetLoopRunnerProbe();
+    serialMesh.buildLoops();
+    assert(serialRunnerCalls() == expectedRunnerCalls
+            && parallelRunnerCalls() == 0,
+        format("6950 serial buildLoops must take all %d serial runner calls; "
+             ~ "got serial=%d parallel=%d",
+               expectedRunnerCalls, serialRunnerCalls(), parallelRunnerCalls()));
+
+    const diffs = meshPlaneDiffs(parallelMesh, serialMesh);
+    assert(diffs.length == 0,
+        format("6950 buildLoops parallel/serial mesh planes differ: %s", diffs));
+
+    const runnerSource = blankNonCode(readText("source/tsan_annotate.d"));
+    const nativeParallelLoops = runnerSource.split("parallel(iota(count))").length - 1;
+    assert(nativeParallelLoops == 2,
+        format("6950 native runner must keep both parallel(iota(count)) arms; got %d",
+               nativeParallelLoops));
+}
 
 // Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,
 // `bevelFacesByMask`, `spikeFacesByMask`) are free functions over

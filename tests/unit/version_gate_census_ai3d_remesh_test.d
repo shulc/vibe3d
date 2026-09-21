@@ -3,6 +3,7 @@ module tests.unit.version_gate_census_ai3d_remesh_test;
 import tests.unit.census_symbols : isIdentChar;
 
 import std.algorithm : sort, startsWith;
+import std.array : join;
 import std.file : exists, readText, remove, tempDir, write;
 import std.format : format;
 import std.json : parseJSON;
@@ -26,6 +27,38 @@ private bool reaches(ref string[][string] graph, string root, string target)
         if (auto next = current in graph) queue ~= *next;
     }
     return false;
+}
+
+private string[] reachabilityPath(ref string[][string] graph,
+                                  string root, string target)
+{
+    bool[string] seen;
+    string[string] parent;
+    string[] queue = [root];
+    size_t head;
+    seen[root] = true;
+    while (head < queue.length)
+    {
+        const current = queue[head++];
+        if (current == target)
+        {
+            string[] path;
+            for (auto node = target; ; node = parent[node])
+            {
+                path = [node] ~ path;
+                if (node == root) return path;
+            }
+        }
+        if (auto next = current in graph)
+            foreach (candidate; *next)
+            {
+                if (candidate in seen) continue;
+                seen[candidate] = true;
+                parent[candidate] = current;
+                queue ~= candidate;
+            }
+    }
+    return null;
 }
 
 private struct DependencyGraph
@@ -279,12 +312,15 @@ SH";
 
     // This is the one expansion point for W16-P/W16-DEP as further native-only
     // facilities are removed from the browser target.
-    enum forbiddenWebModules = ["std.socket"];
+    enum forbiddenWebModules = ["std.socket", "std.parallelism"];
     string[] reachableForbidden;
+    string[] forbiddenPaths;
     foreach (forbidden; forbiddenWebModules)
-        if (reaches(webGraph.edges, "app", forbidden)) reachableForbidden ~= forbidden;
-    assert(reachableForbidden.length == 0,
-        format("W16-A web app closure reaches forbidden modules: %s", reachableForbidden));
+        if (reaches(webGraph.edges, "app", forbidden))
+        {
+            reachableForbidden ~= forbidden;
+            forbiddenPaths ~= reachabilityPath(webGraph.edges, "app", forbidden).join(" > ");
+        }
 
     string[] webThreadEdges;
     foreach (moduleName; appClosure.byKey)
@@ -292,6 +328,10 @@ SH";
             if (target.startsWith("core.thread"))
                 webThreadEdges ~= moduleName ~ ">" ~ target;
     webThreadEdges.sort;
+    assert(reachableForbidden.length == 0,
+        format("W16-A web app closure reaches forbidden modules: %s; paths: %s; "
+             ~ "project core.thread* edges: %s",
+               reachableForbidden, forbiddenPaths, webThreadEdges));
     assert(webThreadEdges.length == 0,
         format("W16-A web app closure has project modules with direct core.thread* edges: %s",
                webThreadEdges));
@@ -323,8 +363,18 @@ module w16_a_web_inproc_probe;
 import http_server : HttpServer, InProcessHttpTransport;
 import std.format : format;
 import std.stdio : writefln;
+import tsan_annotate : parallelForWithCompletion;
 void main()
 {
+    bool[] visited = new bool[](4097);
+    void markVisited(size_t idx) { visited[idx] = true; }
+    parallelForWithCompletion!markVisited(visited.length);
+    size_t visitCount;
+    foreach (wasVisited; visited) if (wasVisited) ++visitCount;
+    assert(visited.length > 4096 && visitCount == 4097,
+        format("W16-P web-config loop runner index coverage changed: expected "
+             ~ "4097 visited indices above the mesh threshold, got %d", visitCount));
+
     int calls;
     auto server = new HttpServer(0);
     server.setPathQueryProvider((float t) {
