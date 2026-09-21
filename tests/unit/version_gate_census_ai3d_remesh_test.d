@@ -144,15 +144,32 @@ SH";
     assert(editorApp.indexOf("version (web) {\n} else {\nstruct Ai3dModalState") >= 0,
         "W15-D web builds must compile out the native AI modal state");
 
+    // The three ARM-INDEPENDENT checks, and they are pinned OUTSIDE any version block on
+    // purpose. The earlier form of this assert matched the same three asserts at the web
+    // constructor's own indentation, which pinned them for ONE arm only; when the two
+    // constructors collapsed into one behind a build-keyed alias, that exact text stopped
+    // existing and the assert went red for a reason that was not a defect. Deleting it was
+    // the wrong repair -- a removed check leaves no trace in a green gate -- so it is
+    // re-pinned at the stronger property: these three run on EVERY arm, and only the two
+    // remesh checks are gated.
     const meshRegistration = readText(buildPath(repoRoot, "source",
         "mesh_command_registration.d"));
-    enum webMeshDepsChecks =
-        "assert(meshRebuildDrop !is null,\n"
-      ~ "                \"6509 mesh registration requires a rebuild drop door\");\n"
-      ~ "            assert(originSnapshot !is null,\n"
-      ~ "                \"6509 mesh registration requires a resolved viewport provider\");\n"
-      ~ "            assert(promoteGeometryType !is null,\n"
-      ~ "                \"6509 mesh registration requires the geometry promote door\");";
-    assert(meshRegistration.indexOf(webMeshDepsChecks) >= 0,
-        "W15-D2 web mesh registration must retain all three dependency checks");
+    enum sharedMeshDepsChecks =
+        "        assert(meshRebuildDrop !is null,\n"
+      ~ "            \"6509 mesh registration requires a rebuild drop door\");\n"
+      ~ "        assert(originSnapshot !is null,\n"
+      ~ "            \"6509 mesh registration requires a resolved viewport provider\");\n"
+      ~ "        assert(promoteGeometryType !is null,\n"
+      ~ "            \"6509 mesh registration requires the geometry promote door\");\n"
+      ~ "        version (web) {";
+    assert(meshRegistration.indexOf(sharedMeshDepsChecks) >= 0,
+        "W15-D2 the three arm-independent mesh dependency checks must stay OUTSIDE the "
+      ~ "version block: they run on web and native alike, and the gate begins after them");
+    enum gatedRemeshChecks =
+        "            assert(remeshJob !is null,\n"
+      ~ "                \"6509 mesh registration requires the remesh job\");\n"
+      ~ "            assert(requestRemeshOpen !is null,\n"
+      ~ "                \"6509 mesh registration requires the remesh open door\");";
+    assert(meshRegistration.indexOf(gatedRemeshChecks) >= 0,
+        "W15-D2 the two remesh dependency checks must stay INSIDE the native arm");
 }
