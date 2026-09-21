@@ -3,8 +3,6 @@ module commands.file.save;
 import std.path : extension;
 import std.uni  : toLower;
 
-import nfde;
-
 import command;
 import mesh;
 import view;

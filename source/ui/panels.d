@@ -52,7 +52,6 @@ import imgui_flag_boundary : beginItemContextMenu, beginPanelContextMenu,
     inputTextSubmitOnEnter;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
-import nfde;
 import eventlog;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;

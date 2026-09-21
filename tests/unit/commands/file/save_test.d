@@ -21,6 +21,42 @@ import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import commands.file.save;
 
+unittest { // browser backend refuses before FileSave can manufacture a path
+    import command : g_testMode;
+    import document : Document;
+    import io.doc_state : clearCurrentDoc;
+    import io.file_dialog : selectBrowserBackendForTest;
+    import mesh : makeCube;
+
+    const priorTestMode = g_testMode;
+    scope(exit) {
+        selectBrowserBackendForTest(false);
+        g_testMode = priorTestMode;
+        clearCurrentDoc();
+    }
+
+    // Keep the native fallback harmless: if the test selector is broken, the
+    // `--test` branch refuses with DIFFERENT text instead of opening a dialog.
+    g_testMode = true;
+    selectBrowserBackendForTest(true);
+
+    auto doc = Document.bootstrap(makeCube());
+    auto v = new View(0, 0, 800, 600);
+    auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    const applied = save.apply();
+    const reason = save.refusalReason();
+
+    // Restore process-global state before either deliberately mutable assert.
+    selectBrowserBackendForTest(false);
+    g_testMode = priorTestMode;
+    clearCurrentDoc();
+
+    assert(!applied,
+        "browser FileSave must refuse while its backend cannot produce chosen");
+    assert(reason == "no path given: browser file access requires a user gesture",
+        "browser unavailable reason drifted: '" ~ reason ~ "'");
+}
+
 // ---------------------------------------------------------------------------
 // The dirty-flag gate, at the two ends of the change task 0616 Ph6 made.
 //

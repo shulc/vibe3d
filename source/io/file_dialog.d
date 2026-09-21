@@ -23,13 +23,25 @@ module io.file_dialog;
 // `FilterItem` split — four copies of the same ten lines before this — comes
 // with it.
 //
-// `--test` IS CHECKED FIRST and never touches nfde, which preserves the
-// property the whole harness depends on: a headless run cannot open a native
-// dialog nobody can click.
+// `--test` IS CHECKED FIRST on the native branch and never touches nfde, which
+// preserves the property the whole harness depends on: a headless run cannot
+// open a native dialog nobody can click.
+//
+// Task 6870 adds the WebAssembly branch behind this same contract. It cannot
+// produce `chosen` until document addressing exists; its result type admits
+// only `unavailable` and `failed`, and the consumer witness is the existing
+// `FileSave.apply()` path exercised from its unit-test module.
 // ---------------------------------------------------------------------------
 
-import nfde;
 import io.formats : FilterSpec;
+import io.file_dialog_browser : BrowserPickOutcome, BrowserPickResult,
+                                browserPickOpenPath = pickOpenPath,
+                                browserPickSavePath = pickSavePath;
+
+version (WebAssembly) {
+} else {
+    import nfde;
+}
 
 /// What the chooser did. The distinction the callers must keep is
 /// `cancelled` vs everything else: only `cancelled` is silent.
@@ -43,7 +55,7 @@ enum PickOutcome {
 struct PickResult {
     PickOutcome outcome;
     string      path;   /// set iff `outcome == chosen`
-    string      error;  /// the backend's sentence, iff `outcome == failed`
+    string      error;  /// backend detail for `unavailable` / `failed`
 
     /// The refusal sentence a command should report for this outcome, and ""
     /// for a cancel. Handing the caller ONE function keeps the two decisions —
@@ -54,7 +66,8 @@ struct PickResult {
             case PickOutcome.chosen:      return "";
             case PickOutcome.cancelled:   return "";
             case PickOutcome.unavailable:
-                return "no path given: the file dialog is suppressed in --test";
+                return error.length ? error
+                    : "no path given: the file dialog is suppressed in --test";
             case PickOutcome.failed:
                 return "the file chooser failed: " ~ (error.length ? error
                                                                    : "unknown error");
@@ -62,6 +75,27 @@ struct PickResult {
     }
 }
 
+private PickResult classifyBrowser(BrowserPickResult r) {
+    final switch (r.outcome) {
+        case BrowserPickOutcome.unavailable:
+            return PickResult(PickOutcome.unavailable, null, r.detail);
+        case BrowserPickOutcome.failed:
+            return PickResult(PickOutcome.failed, null, r.detail);
+    }
+}
+
+version (unittest) {
+    private bool g_browserBackendForTest;
+
+    /// Test-only selection of the production browser adapter. Keeping the
+    /// switch here lets a real command consumer distinguish its outcomes.
+    void selectBrowserBackendForTest(bool enabled) {
+        g_browserBackendForTest = enabled;
+    }
+}
+
+version (WebAssembly) {
+} else {
 private FilterItem[] toItems(FilterSpec[] fs, ref string[] keepAlive) {
     FilterItem[] items;
     version (Windows) {
@@ -93,27 +127,44 @@ private PickResult classify(Result r, string path) {
             return PickResult(PickOutcome.failed, null, e);
     }
 }
+}
 
 /// Open-file chooser. `--test` short-circuits to `unavailable`.
 PickResult pickOpenPath(FilterSpec[] fs, string startDir = null) {
-    import command : g_testMode;
-    if (g_testMode) return PickResult(PickOutcome.unavailable);
-    string[] keep;
-    auto items = toItems(fs, keep);
-    string path;
-    auto r = openDialog(path, items, startDir);
-    return classify(r, path);
+    version (WebAssembly) {
+        return classifyBrowser(browserPickOpenPath(fs, startDir));
+    } else {
+        version (unittest) {
+            if (g_browserBackendForTest)
+                return classifyBrowser(browserPickOpenPath(fs, startDir));
+        }
+        import command : g_testMode;
+        if (g_testMode) return PickResult(PickOutcome.unavailable);
+        string[] keep;
+        auto items = toItems(fs, keep);
+        string path;
+        auto r = openDialog(path, items, startDir);
+        return classify(r, path);
+    }
 }
 
 /// Save-file chooser. `--test` short-circuits to `unavailable`.
 PickResult pickSavePath(FilterSpec[] fs, string defaultName, string startDir = null) {
-    import command : g_testMode;
-    if (g_testMode) return PickResult(PickOutcome.unavailable);
-    string[] keep;
-    auto items = toItems(fs, keep);
-    string path;
-    auto r = saveDialog(path, items, defaultName, startDir);
-    return classify(r, path);
+    version (WebAssembly) {
+        return classifyBrowser(browserPickSavePath(fs, defaultName, startDir));
+    } else {
+        version (unittest) {
+            if (g_browserBackendForTest)
+                return classifyBrowser(browserPickSavePath(fs, defaultName, startDir));
+        }
+        import command : g_testMode;
+        if (g_testMode) return PickResult(PickOutcome.unavailable);
+        string[] keep;
+        auto items = toItems(fs, keep);
+        string path;
+        auto r = saveDialog(path, items, defaultName, startDir);
+        return classify(r, path);
+    }
 }
 
 unittest {

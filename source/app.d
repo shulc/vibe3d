@@ -31,7 +31,6 @@ import imgui_impl_sdl2;
 import imgui_event_gate : clearImGuiInputKeysForAutomation, feedImGui,
     keyBelongsToEditor;
 import imgui_impl_opengl3;
-import nfde;
 
 import app_version      : appAboutLines;
 import math;

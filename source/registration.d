@@ -35,7 +35,6 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
-import nfde;
 import math;
 import mesh;
 import eventlog;

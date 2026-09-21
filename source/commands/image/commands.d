@@ -70,8 +70,6 @@ module commands.image.commands;
 
 import std.path : baseName, stripExtension;
 
-import nfde;
-
 import command;
 import mesh;
 import view;

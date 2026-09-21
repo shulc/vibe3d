@@ -25,8 +25,6 @@ import std.file  : getSize;
 import std.path  : extension;
 import std.uni   : toLower;
 
-import nfde;
-
 import command;
 import mesh;
 import view;
