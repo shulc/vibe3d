@@ -196,8 +196,11 @@ class FileLoad : Command {
             ImportedScene sc;
             if (ext == ".lwo")
                 ok = sceneFromLwo(path, sc);
-            else
+            else {
                 ok = importViaAssimp(path, sc);   // OBJ / glTF / FBX via assimp
+                if (!ok && !isAssimpAvailable())
+                    refusal_ = path ~ " — assimp import is unavailable in this build";
+            }
             if (!ok) return false;
 
             // One call dominates both interchange landing paths. Parsing has

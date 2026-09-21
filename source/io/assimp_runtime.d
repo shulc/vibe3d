@@ -15,6 +15,25 @@
 /// See doc/asset_io_plan.md, Phase 0.
 module io.assimp_runtime;
 
+version (web)
+{
+    import log : logWarn;
+
+    /// Web builds have no assimp dependency. Preserve the runtime-loader API
+    /// for composition roots while reporting the unavailable capability.
+    bool isAssimpAvailable() nothrow @nogc { return false; }
+
+    void initAssimp() nothrow
+    {
+        try logWarn("io", "assimp import/export is unavailable in the web build");
+        catch (Exception) {}
+    }
+
+    void shutdownAssimp() nothrow {}
+}
+else
+{
+
 import std.file   : thisExePath;
 import std.path   : dirName, buildPath;
 import std.format : format;
@@ -125,3 +144,4 @@ private void report(string origin, string path) nothrow {
             logInfo("io", format("libassimp %s.%s.%s loaded (%s)", v, mi, p, origin));
     } catch (Exception) {}
 }
+} // version (web) else

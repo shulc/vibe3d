@@ -14,8 +14,7 @@
 		"SDL_2020",
 		"GL_33",
 		"IMGUI_OPENGL3",
-		"IMGUI_SDL2",
-		"BindAssimp_Static"
+		"IMGUI_SDL2"
 	],
 	"license": "MIT",
 	"name": "vibe3d",
@@ -63,9 +62,6 @@
 			"repository": "git+https://github.com/shulc/D-BVH.git"
 		},
 		"bindbc-sdl": "~>1.5.2",
-		"nfde": {
-			"path": "third_party/nfde"
-		},
 		"d-stb-image": {
 			"version": "a66f6917718ea128076a2c5660e37f362a785144",
 			"repository": "git+https://github.com/shulc/D-StbImage.git"
@@ -78,10 +74,6 @@
 		"d-opensubdiv": {
 			"version": "e74bb683d869d31ddcb279b2f05bfaebd53065ee",
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
-		},
-		"bindbc-assimp6": {
-			"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
-			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 		},
 		"lwo2-writer": {
 			"version": "8610ff21122e6f91aeb19e76dbfc5b3e0ce82108",
@@ -96,7 +88,7 @@
 	"_comment-instrumented-buildtypes": "TASK 1410 -- the four instrumented buildTypes (check, check-unit, check-release, sanitize) exist so crashes are found by the nightly lane instead of by a user. THE SHIPPED RELEASE DOES NOT READ ANY OF THEM: release is `--build=release`, dub's own built-in buildType, and none of these names appear in it. That is a checkable property, not a promise -- .github/workflows/sanitizer.yaml's preflight runs `dub describe --build=release --compiler=$LDC --config=modeling` and fails if `--fsanitize` or SanitizerSelfTest shows up in targets[].buildSettings.dflags/versions, plus a `strings` check on the release binary for `selftest.fault`. Passing --compiler is not optional there: `dub describe --build=release` with no --compiler defaults to DMD and DROPS every dflags-ldc entry, so the release-untouched mutation would pass vacuously. All four are LDC-ONLY (dmd implements neither --fsanitize nor --checkaction). Use the ABSOLUTE ldc2 path ($HOME/.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2, the same one tools/perf/run.d hardcodes): `--compiler=ldc2` resolves to /usr/bin/ldc2 = LDC 1.40 on this host, which CANNOT build vibe3d at all (it rejects `ref` locals in six pre-existing files), so a lane using the short name would fail on an unrelated compile error and read as `the instrumented build is broken`.",
 	"_comment-instrumented-targetname": "THE BINARY NAME IS A REAL HAZARD AND `targetName` DOES NOT SOLVE IT -- measured, do not re-attempt. dub.json declares no root targetName, so EVERY buildType writes ./vibe3d, and the nightly perf lane (perf.yaml) runs `run.d frames --no-build` against exactly that path in a workspace deliberately kept unclean (`clean: false`); an instrumented binary left there is read, silently, by the next 03:30 gating run. tools/perf/run.d already carries this trap in its own words (its `NOTE: ./vibe3d is now the perf buildType binary` warnings). The obvious fix -- a per-buildType `targetName` -- was tried here and is INERT: on dub 1.41, `dub describe --build=check` reports `targetName: vibe3d` with the field set, and `dub build --build=check` writes ./vibe3d anyway. The fields were therefore removed rather than left in place looking effective. The working mechanism is explicit and lives in tools/sanitizer/lane.d: `lane.d build <buildType>` builds, immediately renames ./vibe3d to ./vibe3d-<buildType>, and FAILS if ./vibe3d still exists afterwards; `lane.d stage <buildType>` copies it back to ./vibe3d (which run_test.d hardcodes, run_test.d:792) and writes the build stamp; `lane.d teardown` deletes ./vibe3d and fails if it cannot. The workflow's teardown step is `if: always()`.",
 	"_comment-instrumented-no-ubsan": "THERE IS NO UBSan HERE, AND THAT IS NOT AN OVERSIGHT. Measured on the shipped LDC 1.42.0 tarball: --fsanitize= accepts address, thread, memory, leak, fuzzer and REJECTS undefined, integer, bounds, float-cast-overflow (`Error: Unrecognized -fsanitize value 'undefined'`). The shipped ldc2 carries no UBSan runtime, so the cheapest phase of the original plan has no mechanism at all. The only route to it is rebuilding the runtime with `ldc-build-runtime` (shipped in the same tarball) -- a separate task, deliberately not attempted here. The one UB finding that motivated UBSan (params.d's float->int cast) is covered instead by a BEHAVIOURAL test that needs no sanitizer at all: tests/test_param_cast_overflow.d.",
-	"_comment-assimp-static": "assimp is static-linked via subConfigurations.bindbc-assimp6=static. ALL build+link config (per-platform preBuildCommands that build the minimal OBJ/glTF/FBX libassimp, lflags by explicit archive path, and stdc++/m) now lives in the bindbc-assimp6 `static` configuration — a clean clone auto-builds it, no manual prerequisite. The base BindAssimp_Static version below is for vibe3d's own source/io/* guards.",
+	"_comment-assimp-static": "assimp is static-linked via subConfigurations.bindbc-assimp6=static. ALL build+link config (per-platform preBuildCommands that build the minimal OBJ/glTF/FBX libassimp, lflags by explicit archive path, stdc++/m, and the BindAssimp_Static version used by vibe3d's source/io/* guards) comes from that package configuration — a clean clone auto-builds it, no manual prerequisite.",
 	"buildTypes": {
 		"profile-fp": {
 			"_comment": "Profiling build: forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`. DMD uses `-gs`; LDC uses `--frame-pointer=all` (its `-gs` equivalent) — kept separate so the buildType works under either compiler.",
@@ -236,6 +228,13 @@
 				"WithAI"
 			],
 			"dependencies": {
+				"nfde": {
+					"path": "third_party/nfde"
+				},
+				"bindbc-assimp6": {
+					"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+					"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+				},
 				"d-onnxruntime": {
 					"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
 					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
@@ -245,6 +244,15 @@
 		},
 		{
 			"name": "modeling-noai",
+			"dependencies": {
+				"nfde": {
+					"path": "third_party/nfde"
+				},
+				"bindbc-assimp6": {
+					"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+					"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+				}
+			},
 			"_comment": "AI-less modeling build (Windows 7 target). Same as `modeling` but WithAI is undefined and d-onnxruntime is NOT pulled in, so source/ai/onnx_backend.d compiles to an empty module and the statusline AI button renders as a disabled placeholder. The pure-D AI heuristics still compile but are unreachable (master switch stays off). Rationale: onnxruntime.dll statically imports api-ms-win-core-path-l1-1-0.dll (Windows 8+) — omitting it is the prerequisite for a binary that can load on Windows 7. CI's Win7 zip pairs this config with app-local UCRT + VC++ runtime DLLs."
 		},
 		{
@@ -254,6 +262,13 @@
 				"WithAI"
 			],
 			"dependencies": {
+				"nfde": {
+					"path": "third_party/nfde"
+				},
+				"bindbc-assimp6": {
+					"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+					"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+				},
 				"bindbc-rpr": {
 					"version": "d1a0a786c307207df3d50db809490c7030bd5927",
 					"repository": "git+https://github.com/shulc/D-RadeonProRender.git"
@@ -275,6 +290,13 @@
 				"WithAI"
 			],
 			"dependencies": {
+				"nfde": {
+					"path": "third_party/nfde"
+				},
+				"bindbc-assimp6": {
+					"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+					"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+				},
 				"d-onnxruntime": {
 					"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
 					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
@@ -306,6 +328,16 @@
 		{
 			"name": "web",
 			"versions": ["web"],
+			"libs-wasm": [
+				"dbvh_c",
+				"osdc",
+				"osdCPU",
+				"osdGPU"
+			],
+			"lflags-wasm": [
+				"-L$PACKAGE_DIR/.build/web-deps/lib",
+				"$PACKAGE_DIR/.build/web-deps/lib/libcimgui_docking.a"
+			],
 			"excludedSourceFiles": [
 				"source/ai3d/job_controller.d",
 				"source/ai3d/stage_artifact.d",
@@ -315,7 +347,7 @@
 				"source/commands/ai3d/generate_test_hooks.d"
 			],
 			"_comment": "The browser build's SEAM KEY, declared so it is DERIVED and not hand-passed. Measured 2026-09-21: `web` is predefined by no compiler and appeared in no dub version list, so every `version (web)` site across the wave-15 seams took the NATIVE arm on a wasm target. One slice's own wasm control went green only because its harness passed -d-version=web itself, which witnesses the flag rather than the build. `WebAssembly` IS compiler-predefined on a wasm triple, so sites on it fire on ANY wasm target -- a superset of this one. The two are different predicates: a fact about the target versus a decision about the build.",
-			"_comment-deps": "No d-onnxruntime here: the AI3D family is version-gated out of this build, so the dependency would be pulled for code that is not compiled."
+			"_comment-deps": "No d-onnxruntime, nfde, or bindbc-assimp6 here: those families are version-gated out of this build, so the dependencies would be pulled for code that is not compiled. The wasm-only link settings name archives built by tools/build_web_native_deps.sh; the platform suffix keeps a native dub build --config=web on its existing native dependency set. d-stb-image already contributes stb_image_c on posix/wasm, so putting this web directory first makes that name resolve to the Emscripten archive."
 		}
 	]
 }

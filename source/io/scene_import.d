@@ -57,6 +57,24 @@ module io.scene_import;
 // + aiGetMaterialString, diffuse via AI_MATKEY_COLOR_DIFFUSE + aiGetMaterialColor.
 // The same global table is placed on every part; flattenToMesh dedups by name.
 
+version (web)
+{
+    import io.scene_ir : ImportedScene;
+    import log : logWarn;
+
+    /// The browser target deliberately carries no assimp package. Keep the
+    /// command-facing API available so direct file-command calls refuse
+    /// cleanly instead of turning this native-only dependency into a web edge.
+    bool importViaAssimp(string path, ref ImportedScene scene)
+    {
+        try logWarn("io", "assimp import is unavailable in the web build: " ~ path);
+        catch (Exception) {}
+        return false;
+    }
+}
+else
+{
+
 import std.string : toStringz, fromStringz;
 import std.conv   : to;
 import std.math   : abs;
@@ -550,3 +568,4 @@ unittest {
         assert(isClose(uv[i], w, 1e-6f, 1e-6f),
                "corner UV must survive the weld in phase, not shifted by half a corner");
 }
+} // version (web) else

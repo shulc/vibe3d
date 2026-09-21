@@ -34,9 +34,9 @@ struct FormatInfo {
     string     assimpExportId; // assimp exporter id ("obj"/"gltf2"/"glb2"); "" otherwise
 }
 
-/// The registry. Order is the order the formats appear in dialogs and
-/// menus. FBX now exports too (binary "fbx"); see io.scene_export for the
-/// unit-scale handling that keeps our export->import round-trip in meters.
+/// The registry. Order is the order the formats appear in dialogs and menus.
+/// Availability is a runtime capability: menus and file choosers filter assimp
+/// rows through `isAssimpAvailable()`, while direct commands refuse explicitly.
 immutable FormatInfo[] formats = [
     FormatInfo(".v3d",  "vibe3d Document",   FormatKind.native,    true,  true,  ""),
     FormatInfo(".lwo",  "LightWave Object",  FormatKind.lwoNative, true,  true,  ""),

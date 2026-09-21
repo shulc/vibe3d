@@ -140,9 +140,14 @@ unittest
 {
     auto manifest = parseJSON(readText(buildPath(repoRoot, "dub.json")));
     string[] excluded;
+    string[] redundantAssimpVersionConfigs;
     size_t webConfigurations;
     foreach (configuration; manifest["configurations"].array)
     {
+        if (auto versions = "versions" in configuration.object)
+            foreach (version_; (*versions).array)
+                if (version_.str == "BindAssimp_Static")
+                    redundantAssimpVersionConfigs ~= configuration["name"].str.idup;
         if (configuration["name"].str != "web") continue;
         ++webConfigurations;
         if (auto paths = "excludedSourceFiles" in configuration.object)
@@ -165,6 +170,50 @@ unittest
     assert(excluded == expectedClassB,
         format("W16-A web excludedSourceFiles must equal class B: expected %s, got %s",
                expectedClassB, excluded));
+    assert(redundantAssimpVersionConfigs.length == 0,
+        format("W16-DEP BindAssimp_Static must come from bindbc-assimp6:static, "
+             ~ "not redundant root-configuration copies: %s",
+               redundantAssimpVersionConfigs));
+
+    foreach (config; ["web", "modeling"])
+    {
+        const described = execute(["bash", "-c",
+                "exec dub describe --config=\"$1\" 2>/dev/null",
+                "w16-dep-package-census", config],
+                null, Config.none, size_t.max, repoRoot);
+        assert(described.status == 0,
+            format("W16-DEP dub describe --config=%s failed (status %d):\n%s",
+                   config, described.status, described.output));
+        auto description = parseJSON(described.output);
+        string[] activeNativeOnly;
+        foreach (package_; description["packages"].array)
+        {
+            const name = package_["name"].str;
+            if (package_["active"].boolean
+                    && (name == "nfde" || name == "bindbc-assimp6"))
+                activeNativeOnly ~= name.idup;
+        }
+        activeNativeOnly.sort;
+        if (config == "web")
+            assert(activeNativeOnly.length == 0,
+                format("W16-DEP web active package fence failed: %s",
+                       activeNativeOnly));
+        else
+        {
+            assert(activeNativeOnly == ["bindbc-assimp6", "nfde"],
+                format("W16-DEP modeling positive control expected "
+                     ~ "[\"bindbc-assimp6\", \"nfde\"], got %s",
+                       activeNativeOnly));
+            bool hasAssimpStaticVersion;
+            foreach (version_; description["targets"].array[0]
+                                              ["buildSettings"]["versions"].array)
+                if (version_.str == "BindAssimp_Static")
+                    hasAssimpStaticVersion = true;
+            assert(hasAssimpStaticVersion,
+                "W16-DEP modeling must inherit BindAssimp_Static from "
+              ~ "bindbc-assimp6:static");
+        }
+    }
 
     const webDepsPath = buildPath(tempDir(),
         format("vibe3d-w16-a-web-deps-%d.txt", thisProcessID()));
@@ -219,7 +268,9 @@ SH";
                              repoRoot, describeErrorPath, depsPath, config],
                             null, Config.none, size_t.max, repoRoot);
         assert(run.status == 0,
-            format("W16-A %s dependency graph did not compile (status %d):\n%s",
+            format("W16-A %s dependency graph did not compile (status %d). "
+                 ~ "After W16-DEP removes native-only packages from web, this "
+                 ~ "usually means an unguarded bindbc.assimp or nfde import:\n%s",
                    config, run.status, run.output));
         assert(exists(depsPath),
             format("W16-A dmd -deps produced no %s dependency file", config));
@@ -312,7 +363,12 @@ SH";
 
     // This is the one expansion point for W16-P/W16-DEP as further native-only
     // facilities are removed from the browser target.
-    enum forbiddenWebModules = ["std.socket", "std.parallelism"];
+    enum forbiddenWebModules = [
+        "bindbc.assimp",
+        "nfde",
+        "std.parallelism",
+        "std.socket",
+    ];
     string[] reachableForbidden;
     string[] forbiddenPaths;
     foreach (forbidden; forbiddenWebModules)
@@ -360,11 +416,23 @@ SH";
 
     enum webProbeSource = q"PROBE
 module w16_a_web_inproc_probe;
+import commands.file.load : FileLoad;
+import commands.file.save : FileSave;
+import document : Document;
+import editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
+import io.assimp_runtime : initAssimp, isAssimpAvailable, shutdownAssimp;
+import io.scene_export : exportDocumentViaAssimp, exportViaAssimp;
+import io.scene_import : importViaAssimp;
+import io.scene_ir : ImportedScene;
+import mesh : makeCube, Mesh;
+import std.file : exists, remove;
 import std.format : format;
 import std.stdio : writefln;
 import tsan_annotate : parallelForWithCompletion;
-void main()
+import ui.action_menu : popupActionNeedsAssimp;
+import view : View;
+void main(string[] args)
 {
     bool[] visited = new bool[](4097);
     void markVisited(size_t idx) { visited[idx] = true; }
@@ -391,6 +459,55 @@ void main()
         format("W16-A web in-process transport expected status=200 calls=1, "
              ~ "got status=%d calls=%d body=%s",
                response.statusCode, calls, response.body));
+
+    initAssimp();
+    assert(!isAssimpAvailable(),
+        "W16-DEP web runtime must report assimp unavailable");
+    ImportedScene scene;
+    Mesh mesh;
+    auto document = Document.bootstrap(makeCube());
+    assert(!importViaAssimp("probe.obj", scene),
+        "W16-DEP web assimp import stub must refuse");
+    assert(!exportViaAssimp(mesh, "probe.obj", "obj"),
+        "W16-DEP web mesh export stub must refuse");
+    assert(!exportDocumentViaAssimp(document, "probe.obj", "obj"),
+        "W16-DEP web document export stub must refuse");
+
+    assert(args.length == 2, "W16-DEP web probe needs one output path");
+    const path = args[1];
+    if (exists(path)) remove(path);
+    scope (exit) if (exists(path)) remove(path);
+    auto view = new View(0, 0, 800, 600);
+    auto save = new FileSave(document.activeMesh(), view, EditMode.Vertices,
+                             &document);
+    save.setPath(path);
+    const saveApplied = save.apply();
+    assert(!saveApplied && !exists(path),
+        "W16-DEP web FileSave(.obj) must refuse without creating a file");
+
+    size_t decoderBlocked;
+    foreach (id; ["file.export.obj", "file.import.gltf"])
+    {
+        const blocked = popupActionNeedsAssimp(id) && !isAssimpAvailable();
+        assert(blocked,
+            format("W16-DEP web action must be disabled without assimp: %s", id));
+        decoderBlocked += blocked;
+    }
+
+    auto load = new FileLoad(document.activeMesh(), view, EditMode.Vertices,
+                             &document);
+    load.setPath(path);
+    const loadApplied = load.apply();
+    assert(!loadApplied,
+        "W16-DEP web FileLoad(.obj) must refuse without assimp");
+    assert(load.refusalReason() ==
+            path ~ " — assimp import is unavailable in this build",
+        format("W16-DEP web FileLoad(.obj) refusal drifted: %s",
+               load.refusalReason()));
+    shutdownAssimp();
+    writefln("W16-DEP web assimp surface: saveApplied=%s fileExists=%s "
+             ~ "decoderBlocked=%d loadApplied=%s",
+             saveApplied, exists(path), decoderBlocked, loadApplied);
 }
 PROBE";
     write(webProbePath, webProbeSource);
@@ -422,7 +539,7 @@ dmd -i -debug \
   @"$out/libs.txt" @"$out/lflags.txt" \
   $(tr '\n' ' ' < "$out/objs.txt") \
   -of="$out/probe" "$2"
-"$out/probe"
+"$out/probe" "$out/blocked.obj"
 SH";
     const webProbe = execute(["bash", "-c", runWebProbe, "w16-a-web-probe",
                               repoRoot, webProbePath],
@@ -434,6 +551,11 @@ SH";
             `W16-A web in-process transport: status=200 calls=1 body={"surface":"inline"}`)
             >= 0,
         format("W16-A web in-process transport probe lost its exact success witness:\n%s",
+               webProbe.output));
+    assert(webProbe.output.indexOf(
+            "W16-DEP web assimp surface: saveApplied=false fileExists=false "
+          ~ "decoderBlocked=2 loadApplied=false") >= 0,
+        format("W16-DEP web assimp surface lost its exact success witness:\n%s",
                webProbe.output));
 
     const editorApp = readText(buildPath(repoRoot, "source", "editor_app.d"));

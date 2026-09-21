@@ -50,6 +50,34 @@ module io.scene_export;
 // Once `exportViaAssimp` returns, the locals go out of scope and the GC is
 // free to reclaim everything.
 
+version (web)
+{
+    import document : Document;
+    import log : logWarn;
+    import mesh : Mesh;
+
+    /// The browser target deliberately carries no assimp package. These
+    /// command-facing stubs preserve the file-command seam and give direct
+    /// callers an explicit refusal even though the web registry hides the
+    /// formats.
+    bool exportViaAssimp(ref const Mesh mesh, string path, string formatId)
+    {
+        try logWarn("io", "assimp export is unavailable in the web build: " ~ path);
+        catch (Exception) {}
+        return false;
+    }
+
+    bool exportDocumentViaAssimp(ref const Document document, string path,
+                                 string formatId)
+    {
+        try logWarn("io", "assimp export is unavailable in the web build: " ~ path);
+        catch (Exception) {}
+        return false;
+    }
+}
+else
+{
+
 import std.string : toStringz, fromStringz;
 import std.array  : appender;
 import std.format : format;
@@ -802,3 +830,4 @@ private void setAiString(ref aiString s, string v) {
     s.data[0 .. n] = v[0 .. n];
     s.data[n] = '\0';
 }
+} // version (web) else
