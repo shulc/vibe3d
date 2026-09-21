@@ -1,5 +1,8 @@
 module remesh.remesh_job;
 
+version (web) {
+} else {
+
 // ---------------------------------------------------------------------------
 // RemeshJob — a crash-isolated, per-frame-polled quad-remesh job.
 //
@@ -1365,6 +1368,8 @@ unittest {
            "stitched mesh's boundary-edge set must equal the original mesh's");
 
     job.clear();
+}
+
 }
 
 version (Posix)

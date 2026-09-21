@@ -1,5 +1,8 @@
 module ui.remesh_modal_state;
 
+version (web) {
+} else {
+
 import remesh.remesh_job : MAX_REMESH_TARGET_QUADS,
     MIN_REMESH_TARGET_QUADS;
 
@@ -65,4 +68,6 @@ final class RemeshModalState {
         if (sharpEdge < 0.0f) sharpEdge = 0.0f;
         if (sharpEdge > 180.0f) sharpEdge = 180.0f;
     }
+}
+
 }

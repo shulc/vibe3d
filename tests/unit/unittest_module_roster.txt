@@ -567,6 +567,7 @@ tests.unit.uv_transform_test
 tests.unit.uv_unwrap_test
 tests.unit.uv_weight_delta_test
 tests.unit.uv_weld_test
+tests.unit.version_gate_census_ai3d_remesh_test
 tests.unit.version_poll_census_test
 tests.unit.vertex_extrude_apex_law_test
 tests.unit.view_test

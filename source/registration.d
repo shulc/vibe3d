@@ -19,7 +19,11 @@ import tool_activation_ownership : ToolTransition;
 // not called anywhere yet. `dub build` glob-compiles source/ regardless of
 // import reachability (CLAUDE.md build note), so this file's own imports
 // are already gated by the compiler even before app.d references it.
-import editor_app : EditorApp, Ai3dModalState, Ai3dModalRefs, MeshDg, ViewDg;
+import editor_app : EditorApp, MeshDg, ViewDg;
+version (web) {
+} else {
+    import editor_app : Ai3dModalState, Ai3dModalRefs;
+}
 
 import bindbc.sdl;
 import bindbc.opengl;
@@ -85,7 +89,10 @@ import edit_tool_registration : EditSessionFactories, EditToolDeps,
     registerEditToolCommands;
 import item_command_registration : ItemLifecycleDoors, registerItemCommands;
 import mesh_command_registration : MeshCommandDeps, registerMeshCommands;
-import ai3d_command_registration : registerAi3dCommands;
+version (web) {
+} else {
+    import ai3d_command_registration : registerAi3dCommands;
+}
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
@@ -110,14 +117,17 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
-import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
-import ai3d.scene_validator      : Ai3dMaxTotalFaces;
-import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation;
-import remesh.remesh_job         : RemeshJob, RemeshParams,
-    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+version (web) {
+} else {
+    import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation;
+    import remesh.remesh_job         : RemeshJob, RemeshParams,
+        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+}
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
@@ -231,20 +241,23 @@ void registerCommands(EditorApp app) {
     registerItemCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         ItemLifecycleDoors(app.onActiveLayerChanged, app.promoteItemType));
-    registerAi3dCommands(app.reg(), LiveSessionRole(app.sessionOwner),
-        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-        app.onActiveLayerChanged, app.ai3dController,
-        (string path) {
-            import std.string : fromStringz;
-            app.ai3dRefs.ai3dPickedImagePath  = path;
-            app.ai3dRefs.ai3dModal            = Ai3dModalState.init;
-            app.ai3dRefs.ai3dModalOpen        = true;
-            app.ai3dRefs.ai3dModalPendingOpen = true;
-            const workerUrl = cast(string)
-                fromStringz(app.ai3dRefs.ai3dWorkerUrlBuf.ptr).dup;
-            app.ai3dController.probeHealth(
-                workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
-        });
+    version (web) {
+    } else {
+        registerAi3dCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+            app.onActiveLayerChanged, app.ai3dController,
+            (string path) {
+                import std.string : fromStringz;
+                app.ai3dRefs.ai3dPickedImagePath  = path;
+                app.ai3dRefs.ai3dModal            = Ai3dModalState.init;
+                app.ai3dRefs.ai3dModalOpen        = true;
+                app.ai3dRefs.ai3dModalPendingOpen = true;
+                const workerUrl = cast(string)
+                    fromStringz(app.ai3dRefs.ai3dWorkerUrlBuf.ptr).dup;
+                app.ai3dController.probeHealth(
+                    workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
+            });
+    }
     registerPipeStageCommands(app.reg(), LiveSessionRole(app.sessionOwner),
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         app.toolHostView);
@@ -300,12 +313,19 @@ void registerCommands(EditorApp app) {
 private void registerMeshFamily(EditorApp app) {
     auto dropActiveTool = app.dropActiveTool;
     auto viewports = app.vpm;
-    auto remeshModalState = app.remeshModalState;
-    registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
-        LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
-        MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
-            &viewports.originSnapshot, app.remeshJob,
-            &remeshModalState.requestOpen, app.promoteGeometryType));
+    version (web) {
+        registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+            MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
+                &viewports.originSnapshot, app.promoteGeometryType));
+    } else {
+        auto remeshModalState = app.remeshModalState;
+        registerMeshCommands(app.reg(), LiveSessionRole(app.sessionOwner),
+            LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
+            MeshCommandDeps(() => dropActiveTool(ToolTransition.meshRebuildDrop),
+                &viewports.originSnapshot, app.remeshJob,
+                &remeshModalState.requestOpen, app.promoteGeometryType));
+    }
 }
 
 version (unittest)

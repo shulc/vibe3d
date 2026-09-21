@@ -267,24 +267,30 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
-import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
-import ai3d.scene_validator      : Ai3dMaxTotalFaces;
-import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
-import core.time : MonoTime;  // phase-B drawAi3dModal: MonoTime.currTime health-poll throttle
-import commands.ai3d.import_result : Ai3dImportResult;
-import remesh.remesh_job         : RemeshJob, RemeshParams,
-    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+version (web) {
+} else {
+    import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
+    import core.time : MonoTime;
+    import commands.ai3d.import_result : Ai3dImportResult;
+    import remesh.remesh_job         : RemeshJob, RemeshParams,
+        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+}
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider, itemPropsTarget;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 import ui.guard_modal_state : GuardModalState;
-import ui.remesh_modal_state : RemeshModalState;
+version (web) {
+} else {
+    import ui.remesh_modal_state : RemeshModalState;
+}
 import ui.viewport_props_role : ViewportCommandDispatch,
     ViewportPropertiesReadRole;
 import layout_reset_action : LayoutResetAction;
@@ -1359,6 +1365,8 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
 // its visible drawing remains an ImGui adapter around HistoryPanelController.
 // =========================================================================
 
+version (web) {
+} else {
 void drawAi3dModal(EditorApp app) {
     with (app) {
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
@@ -1699,6 +1707,7 @@ void drawRemeshModal(RemeshModalState state, RemeshJob remeshJob, MeshDg current
             }
         }
     }
+}
 }
 
 version (unittest) {

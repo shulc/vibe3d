@@ -5,7 +5,10 @@ import editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import math : Viewport;
 import registry : Registry;
-import remesh.remesh_job : RemeshJob;
+version (web) {
+} else {
+    import remesh.remesh_job : RemeshJob;
+}
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -86,22 +89,42 @@ import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
-import commands.mesh.remesh : Remesh, RemeshOpen, RemeshStart;
+version (web) {
+} else {
+    import commands.mesh.remesh : Remesh, RemeshOpen, RemeshStart;
+}
 
 struct MeshCommandDeps {
 private:
     void delegate() meshRebuildDrop_;
     Viewport delegate() originSnapshot_;
-    RemeshJob remeshJob_;
-    void delegate() requestRemeshOpen_;
+    version (web) {
+    } else {
+        RemeshJob remeshJob_;
+        void delegate() requestRemeshOpen_;
+    }
     void delegate(EditMode) promoteGeometryType_;
 
 public:
     @disable this();
 
-    this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
-            RemeshJob remeshJob, void delegate() requestRemeshOpen,
-            void delegate(EditMode) promoteGeometryType) {
+    version (web) {
+        this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
+                void delegate(EditMode) promoteGeometryType) {
+            assert(meshRebuildDrop !is null,
+                "6509 mesh registration requires a rebuild drop door");
+            assert(originSnapshot !is null,
+                "6509 mesh registration requires a resolved viewport provider");
+            assert(promoteGeometryType !is null,
+                "6509 mesh registration requires the geometry promote door");
+            meshRebuildDrop_ = meshRebuildDrop;
+            originSnapshot_ = originSnapshot;
+            promoteGeometryType_ = promoteGeometryType;
+        }
+    } else {
+        this(void delegate() meshRebuildDrop, Viewport delegate() originSnapshot,
+                RemeshJob remeshJob, void delegate() requestRemeshOpen,
+                void delegate(EditMode) promoteGeometryType) {
         assert(meshRebuildDrop !is null,
             "6509 mesh registration requires a rebuild drop door");
         assert(originSnapshot !is null,
@@ -117,6 +140,7 @@ public:
         remeshJob_ = remeshJob;
         requestRemeshOpen_ = requestRemeshOpen;
         promoteGeometryType_ = promoteGeometryType;
+        }
     }
 
     void delegate() meshRebuildDrop() nothrow @nogc {
@@ -127,12 +151,15 @@ public:
         return originSnapshot_;
     }
 
-    RemeshJob remeshJob() nothrow @nogc {
-        return remeshJob_;
-    }
+    version (web) {
+    } else {
+        RemeshJob remeshJob() nothrow @nogc {
+            return remeshJob_;
+        }
 
-    void delegate() requestRemeshOpen() nothrow @nogc {
-        return requestRemeshOpen_;
+        void delegate() requestRemeshOpen() nothrow @nogc {
+            return requestRemeshOpen_;
+        }
     }
 
     void delegate(EditMode) promoteGeometryType() nothrow @nogc {
@@ -151,17 +178,20 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
     reg.registerCommand("mesh.subdivide", () => cast(Command)
         new Subdivide(&owner.activeMesh(), live.view(), live.mode(),
                       deps.meshRebuildDrop()));
-    // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
-    // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
-    // the ai3d drain for how the result lands); `mesh.remesh` is the
-    // undoable apply that a successful job's result is fired through.
-    reg.registerCommand("mesh.remesh.start", () => cast(Command)
-        new RemeshStart(&owner.activeMesh(), live.view(), live.mode(), deps.remeshJob()));
-    reg.registerCommand("mesh.remesh", () => cast(Command)
-        new Remesh(&owner.activeMesh(), live.view(), live.mode(),
-                   deps.meshRebuildDrop(), deps.remeshJob()));
-    reg.registerCommand("mesh.remesh.open", () => cast(Command)
-        new RemeshOpen(&owner.activeMesh(), live.view(), live.mode(), deps.requestRemeshOpen()));
+    version (web) {
+    } else {
+        // Quad Remesh (source/remesh/remesh_job.d): `mesh.remesh.start` kicks off
+        // the async subprocess (HTTP/menu-triggerable — see remeshJob.poll() near
+        // the ai3d drain for how the result lands); `mesh.remesh` is the
+        // undoable apply that a successful job's result is fired through.
+        reg.registerCommand("mesh.remesh.start", () => cast(Command)
+            new RemeshStart(&owner.activeMesh(), live.view(), live.mode(), deps.remeshJob()));
+        reg.registerCommand("mesh.remesh", () => cast(Command)
+            new Remesh(&owner.activeMesh(), live.view(), live.mode(),
+                       deps.meshRebuildDrop(), deps.remeshJob()));
+        reg.registerCommand("mesh.remesh.open", () => cast(Command)
+            new RemeshOpen(&owner.activeMesh(), live.view(), live.mode(), deps.requestRemeshOpen()));
+    }
     reg.registerCommand("mesh.subdivide_faceted", () => cast(Command)
         new SubdivideFaceted(&owner.activeMesh(), live.view(), live.mode(),
                              deps.meshRebuildDrop()));

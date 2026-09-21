@@ -15,7 +15,10 @@ import tool_activation_ownership : ToolTransition, ActivationDoor,
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
-import ui.remesh_modal_state : RemeshModalState;
+version (web) {
+} else {
+    import ui.remesh_modal_state : RemeshModalState;
+}
 import layout_reset_action : LayoutResetAction, seedDefaultLayoutIfMissing;
 version (web) {
 } else {
@@ -235,16 +238,19 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     aiModelAdapterMinConfidence;
 version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
-import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
-import ai3d.scene_validator      : Ai3dMaxTotalFaces;
-import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
-import commands.ai3d.import_result : Ai3dImportResult;
-import remesh.remesh_job         : RemeshJob, RemeshParams,
-    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh : Remesh, RemeshStart;
+version (web) {
+} else {
+    import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
+    import commands.ai3d.import_result : Ai3dImportResult;
+    import remesh.remesh_job         : RemeshJob, RemeshParams,
+        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+    import commands.mesh.remesh : Remesh, RemeshStart;
+}
 import property_panel : PropertyPanel;
 import forms_render;
 import document       : Layer;
@@ -1216,6 +1222,8 @@ void main(string[] args) {
         }
     }
 
+    version (web) {
+    } else {
     // AI3D async job controller (task 0381, doc/ai3d_ui_plan.md). Owns the
     // dedicated worker thread(s) that run std.net.curl transfers
     // (ai3d.stage_artifact); constructed with NO Document/Mesh/GpuMesh/View/
@@ -1272,6 +1280,7 @@ void main(string[] args) {
     // never leaves an orphaned helper running.
     auto remeshJob = new RemeshJob();
     scope(exit) remeshJob.cancel();
+    }
 
     EventLogger evLog;
     version (ReleaseBuild) {
@@ -3055,6 +3064,8 @@ void main(string[] args) {
     // gets a dialog — no further app.d changes needed for new commands.
     auto argsDialog    = new ArgsDialog();
 
+    version (web) {
+    } else {
     // AI3D (task 0381) modal snapshot — written ONLY by onAi3dEvent (below,
     // near runCommand) from drained immutable Ai3dEvent copies. The Phase 3
     // modal reads this to render health/progress/error without ever
@@ -3070,6 +3081,7 @@ void main(string[] args) {
     // other ai3d.* factories); drawn once per frame beside drawTabPanel().
     bool   ai3dModalOpen;
     bool   ai3dModalPendingOpen;
+    }
     // Unsaved-changes quit confirmation (task 0434). Same pendingOpen→OpenPopup
     // convention as the AI3D / Remesh modals. quitAfterSave defers the exit
     // decision until the frame's Save has flushed (a cancelled Save dialog
@@ -3083,6 +3095,8 @@ void main(string[] args) {
     // GuardModalState above. The pending command and its settle state remain
     // application-owned by GuardedActionController (task 5640).
     string lastWindowTitle;
+    version (web) {
+    } else {
     string ai3dPickedImagePath;
     char[256] ai3dWorkerUrlBuf;
     ai3dWorkerUrlBuf[] = 0;
@@ -3113,6 +3127,7 @@ void main(string[] args) {
     // parameters and result text across registration, drawing, polling and
     // diagnostics (task 6360; ui/remesh_modal_state.d).
     auto remeshModalState = new RemeshModalState();
+    }
 
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
@@ -3498,32 +3513,35 @@ void main(string[] args) {
     app.runningPtr          = &running;
     app.historyPanelState = historyPanelState;
 
-    app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
-    app.ai3dRefs.ai3dModalOpenPtr        = &ai3dModalOpen;
-    app.ai3dRefs.ai3dModalPendingOpenPtr = &ai3dModalPendingOpen;
-    app.ai3dRefs.ai3dPickedImagePathPtr  = &ai3dPickedImagePath;
-    app.ai3dRefs.ai3dWorkerUrlBufPtr     = &ai3dWorkerUrlBuf;
+    version (web) {
+    } else {
+        app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
+        app.ai3dRefs.ai3dModalOpenPtr        = &ai3dModalOpen;
+        app.ai3dRefs.ai3dModalPendingOpenPtr = &ai3dModalPendingOpen;
+        app.ai3dRefs.ai3dPickedImagePathPtr  = &ai3dPickedImagePath;
+        app.ai3dRefs.ai3dWorkerUrlBufPtr     = &ai3dWorkerUrlBuf;
 
-    // Phase-B pointer wiring for drawAi3dModal.
-    // HistoryPanelState, GuardModalState and RemeshModalState own the other
-    // panel storage;
-    // ai3dWorkerManager is assigned exactly once (~1179).
-    app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
-    app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
-    app.ai3dWorkerNextHealthProbePtr  = &ai3dWorkerNextHealthProbe;
-    app.ai3dInstallConfirmOpenPtr        = &ai3dInstallConfirmOpen;
-    app.ai3dInstallConfirmPendingOpenPtr = &ai3dInstallConfirmPendingOpen;
-    app.ai3dMaxFacesPtr               = &ai3dMaxFaces;
-    app.ai3dWorkerManager             = ai3dWorkerManager;
+        // Phase-B pointer wiring for drawAi3dModal.
+        // HistoryPanelState, GuardModalState and RemeshModalState own the other
+        // panel storage;
+        // ai3dWorkerManager is assigned exactly once (~1179).
+        app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
+        app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
+        app.ai3dWorkerNextHealthProbePtr  = &ai3dWorkerNextHealthProbe;
+        app.ai3dInstallConfirmOpenPtr        = &ai3dInstallConfirmOpen;
+        app.ai3dInstallConfirmPendingOpenPtr = &ai3dInstallConfirmPendingOpen;
+        app.ai3dMaxFacesPtr               = &ai3dMaxFaces;
+        app.ai3dWorkerManager             = ai3dWorkerManager;
+        app.remeshModalState              = remeshModalState;
+        app.ai3dController                = ai3dController;
+        app.remeshJob                     = remeshJob;
+    }
     app.guardModalState               = guardModalState;
-    app.remeshModalState              = remeshModalState;
     app.history         = history;
     app.vpm             = vpm;
     app.litShader       = litShader;
     app.pipeGizmoHost   = pipeGizmoHost;
     app.macroRecorder   = macroRecorder;
-    app.ai3dController  = ai3dController;
-    app.remeshJob       = remeshJob;
     app.aiState         = aiState;
     version (WithAI) static if (kCopilotEnabled) app.copilotPanel = copilotPanel;
     app.aiExplore       = aiExplore;
@@ -4110,6 +4128,8 @@ void main(string[] args) {
         commandBinding.invokeUiCommand(cmd, RecordMode.Record, "");
     }
 
+    version (web) {
+    } else {
     // AI3D (task 0381) main-thread drain handler — the ONLY place the
     // controller's events touch app state. Reads immutable Ai3dEvent copies
     // (drained lock-free, ai3d.event_queue) and updates the modal snapshot;
@@ -4253,6 +4273,7 @@ void main(string[] args) {
                 remeshJob.clear();
                 break;
         }
+    }
     }
 
     // Intercept commands that surface an args dialog (the popup that
@@ -4743,8 +4764,12 @@ void main(string[] args) {
     import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle;
     import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
         pushPopupStyle, popPopupStyle,
-        drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
+        drawQuitGuardModal,
         drawCommandHistoryPanel;
+    version (web) {
+    } else {
+        import ui.panels : drawAi3dModal, drawRemeshModal;
+    }
     // Task 0669 — the per-frame button-availability record (see ui/availability.d).
     import ui.availability : beginButtonAvailabilityFrame,
                              endButtonAvailabilityFrame;
@@ -4878,6 +4903,8 @@ void main(string[] args) {
             // the HTTP path.
             preToolTickStall.waitAtSeam();
 
+            version (web) {
+            } else {
             // AI3D async controller drain (task 0381 Phase 2). Deliberately
             // OUTSIDE the `httpServer.running` guard above — the controller
             // (and the Phase 3 modal that drives it) must work in a normal
@@ -4900,6 +4927,7 @@ void main(string[] args) {
             // be able to complete a remesh job. tickRemeshJob() never
             // blocks (a single non-blocking tryWait() on the subprocess).
             tickRemeshJob();
+            }
 
             // ---- Events ----
             while (SDL_PollEvent(&event)) {
@@ -5289,6 +5317,8 @@ void main(string[] args) {
         drawSidePanel(app, actionMenuRoles);
         drawTabPanel(app);
 
+        version (web) {
+        } else {
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
         // Moved VERBATIM to ui/panels.d's drawAi3dModal (app.d decomp,
         // phase B; same `with (app)` seam as the 0419 panels).
@@ -5298,6 +5328,7 @@ void main(string[] args) {
         // The panel receives only its persistent state, subprocess owner and
         // live mesh provider; result application remains in tickRemeshJob().
         drawRemeshModal(remeshModalState, remeshJob, app.meshDg);
+        }
 
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
         // The panel receives only its stable handshake state, the window gate

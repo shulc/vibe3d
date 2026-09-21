@@ -24,7 +24,10 @@ import http_server;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome;
 import ui.guard_modal_state : GuardModalState;
-import ui.remesh_modal_state : RemeshModalState;
+version (web) {
+} else {
+    import ui.remesh_modal_state : RemeshModalState;
+}
 import ui.history_panel : HistoryPanelState;
 import log : logInfo, logWarn, logError;
 import prefs;
@@ -250,17 +253,20 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
-import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
-import ai3d.scene_validator      : Ai3dMaxTotalFaces;
-import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation;
-import core.time : MonoTime;  // phase-B panel ctx fields (ai3dWorker*Deadline/Probe)
-import commands.ai3d.import_result : Ai3dImportResult;
-import remesh.remesh_job         : RemeshJob, RemeshParams,
-    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+version (web) {
+} else {
+    import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation;
+    import core.time : MonoTime;
+    import commands.ai3d.import_result : Ai3dImportResult;
+    import remesh.remesh_job         : RemeshJob, RemeshParams,
+        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+}
 import forms_render;
 import layer_params   : LayerPropsProvider;
 import document       : Layer;
@@ -304,6 +310,8 @@ version (WithAI) {
 // (the opponent's Span-B sweep didn't need to catch this -- it surfaced
 // during the writer's own type-availability check while building the ctx).
 // ---------------------------------------------------------------------------
+version (web) {
+} else {
 struct Ai3dModalState {
     bool   healthChecked;
     bool   healthOk;
@@ -318,6 +326,7 @@ struct Ai3dModalState {
     double progress = 0;
     string errorCode;
     string errorMessage;
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +377,9 @@ struct Layout {
 // AI entry-point availability (compile-time gates for two UI affordances) --
 // see app.d's original doc comment (preserved in the task doc's Log) for the
 // full rationale; verbatim version-gating, only the enclosing module moved.
-version (OSX) {
+version (web) {
+    enum bool kGenerateAiAvailable = false;
+} else version (OSX) {
     enum bool kGenerateAiAvailable = false;
 } else version (WithAI) {
     enum bool kGenerateAiAvailable = true;
@@ -584,6 +595,8 @@ alias ViewDg         = ref View delegate();
 // (the ai3d health-update callback, the modal-render code, etc, all still
 // reference the flat main()-locals directly).
 // ---------------------------------------------------------------------------
+version (web) {
+} else {
 struct Ai3dModalRefs {
     Ai3dModalState* ai3dModalPtr;
     @property ref Ai3dModalState ai3dModal() { return *ai3dModalPtr; }
@@ -595,6 +608,7 @@ struct Ai3dModalRefs {
     @property ref string ai3dPickedImagePath() { return *ai3dPickedImagePathPtr; }
     char[256]* ai3dWorkerUrlBufPtr;
     @property ref char[256] ai3dWorkerUrlBuf() { return *ai3dWorkerUrlBufPtr; }
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +717,10 @@ struct EditorApp {
     ToolHostReadView toolHostView;
 
     // ---- remaining pointer-backed modal cluster (see above) ----
-    Ai3dModalRefs ai3dRefs;
+    version (web) {
+    } else {
+        Ai3dModalRefs ai3dRefs;
+    }
 
     // ---- (в) by-value: class-ref/delegate locals assigned EXACTLY ONCE
     //      in main() (grep-verified `\bX\s*=[^=]` == 1 for every name below;
@@ -715,8 +732,11 @@ struct EditorApp {
     LitShader          litShader;
     PipeGizmoHost      pipeGizmoHost;
     MacroRecorder      macroRecorder;
-    Ai3dJobController  ai3dController;
-    RemeshJob          remeshJob;
+    version (web) {
+    } else {
+        Ai3dJobController  ai3dController;
+        RemeshJob          remeshJob;
+    }
     EditorAiState      aiState;
     version (WithAI) CopilotPanel copilotPanel;
     AiExplorationController aiExplore;
@@ -892,25 +912,28 @@ struct EditorApp {
     //      main-loop panel body reads these bare under `with (app)`, so
     //      EditorApp re-exposes the leaves at its own top level. (No new
     //      storage -- these forward to the same pointers the ctx block wires.) ----
-    @property ref Ai3dModalState ai3dModal() { return ai3dRefs.ai3dModal; }
-    @property ref bool ai3dModalOpen() { return ai3dRefs.ai3dModalOpen; }
-    @property ref bool ai3dModalPendingOpen() { return ai3dRefs.ai3dModalPendingOpen; }
-    @property ref string ai3dPickedImagePath() { return ai3dRefs.ai3dPickedImagePath; }
-    @property ref char[256] ai3dWorkerUrlBuf() { return ai3dRefs.ai3dWorkerUrlBuf; }
-    // ---- AI3D Generate modal ----
-    bool* ai3dWorkerStartingPtr;
-    @property ref bool ai3dWorkerStarting() { return *ai3dWorkerStartingPtr; }
-    MonoTime* ai3dWorkerStartDeadlinePtr;
-    @property ref MonoTime ai3dWorkerStartDeadline() { return *ai3dWorkerStartDeadlinePtr; }
-    MonoTime* ai3dWorkerNextHealthProbePtr;
-    @property ref MonoTime ai3dWorkerNextHealthProbe() { return *ai3dWorkerNextHealthProbePtr; }
-    bool* ai3dInstallConfirmOpenPtr;
-    @property ref bool ai3dInstallConfirmOpen() { return *ai3dInstallConfirmOpenPtr; }
-    bool* ai3dInstallConfirmPendingOpenPtr;
-    @property ref bool ai3dInstallConfirmPendingOpen() { return *ai3dInstallConfirmPendingOpenPtr; }
-    int* ai3dMaxFacesPtr;
-    @property ref int ai3dMaxFaces() { return *ai3dMaxFacesPtr; }
-    Ai3dWorkerManager ai3dWorkerManager;
+    version (web) {
+    } else {
+        @property ref Ai3dModalState ai3dModal() { return ai3dRefs.ai3dModal; }
+        @property ref bool ai3dModalOpen() { return ai3dRefs.ai3dModalOpen; }
+        @property ref bool ai3dModalPendingOpen() { return ai3dRefs.ai3dModalPendingOpen; }
+        @property ref string ai3dPickedImagePath() { return ai3dRefs.ai3dPickedImagePath; }
+        @property ref char[256] ai3dWorkerUrlBuf() { return ai3dRefs.ai3dWorkerUrlBuf; }
+        // ---- AI3D Generate modal ----
+        bool* ai3dWorkerStartingPtr;
+        @property ref bool ai3dWorkerStarting() { return *ai3dWorkerStartingPtr; }
+        MonoTime* ai3dWorkerStartDeadlinePtr;
+        @property ref MonoTime ai3dWorkerStartDeadline() { return *ai3dWorkerStartDeadlinePtr; }
+        MonoTime* ai3dWorkerNextHealthProbePtr;
+        @property ref MonoTime ai3dWorkerNextHealthProbe() { return *ai3dWorkerNextHealthProbePtr; }
+        bool* ai3dInstallConfirmOpenPtr;
+        @property ref bool ai3dInstallConfirmOpen() { return *ai3dInstallConfirmOpenPtr; }
+        bool* ai3dInstallConfirmPendingOpenPtr;
+        @property ref bool ai3dInstallConfirmPendingOpen() { return *ai3dInstallConfirmPendingOpenPtr; }
+        int* ai3dMaxFacesPtr;
+        @property ref int ai3dMaxFaces() { return *ai3dMaxFacesPtr; }
+        Ai3dWorkerManager ai3dWorkerManager;
+    }
 
     // ---- quit guard + command-failure notice ----
     // Stable class reference shared with the panel and HTTP diagnostic. The
@@ -920,7 +943,10 @@ struct EditorApp {
     // Stable class reference shared by the registrar, renderer, async result
     // continuation and HTTP diagnostic. Its eight mutable fields live in the
     // state owner rather than in main()-frame pointer slots.
-    RemeshModalState remeshModalState;
+    version (web) {
+    } else {
+        RemeshModalState remeshModalState;
+    }
 
     bool delegate(bool) navHistory;
 }

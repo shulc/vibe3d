@@ -262,16 +262,19 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
 import args_dialog    : ArgsDialog;
-import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
-import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
-import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
-import ai3d.scene_validator      : Ai3dMaxTotalFaces;
-import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation;
-import commands.ai3d.import_result : Ai3dImportResult;
-import remesh.remesh_job         : RemeshJob, RemeshParams,
-    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+version (web) {
+} else {
+    import ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation;
+    import commands.ai3d.import_result : Ai3dImportResult;
+    import remesh.remesh_job         : RemeshJob, RemeshParams,
+        MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+    import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+}
 import property_panel : PropertyPanel, toolPropsIdsJson;
 import ui.availability : buttonAvailabilityJson;
 import ui.discard_guard : uiPolicyJson;
@@ -1110,9 +1113,12 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     if (nModal++ > 0) ib.put(",");
                     ib.put(JSONValue(id).toString());
                 }
-                modal("ai3d.generate",  ai3dModalOpen);
-                modal("ai3d.install",   ai3dInstallConfirmOpen);
-                modal("mesh.remesh",    remeshModalState.open);
+                version (web) {
+                } else {
+                    modal("ai3d.generate",  ai3dModalOpen);
+                    modal("ai3d.install",   ai3dInstallConfirmOpen);
+                    modal("mesh.remesh",    remeshModalState.open);
+                }
                 modal("discard.confirm",
                       guardModalState.discardConfirmOpen);
                 modal("command.notice", guardModalState.noticeOpen);
