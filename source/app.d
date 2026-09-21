@@ -271,18 +271,6 @@ version (OSX) {
 }
 
 
-// Read depth buffer at window position (px, py),
-// accounting for HiDPI framebuffer scale.
-float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
-    int fbX = cast(int)(px * fbW / winW);
-    int fbY = fbH - 1 - cast(int)(py * fbH / winH);  // OpenGL Y is bottom-up
-    if (fbX < 0 || fbX >= fbW || fbY < 0 || fbY >= fbH) return 1.0f;
-    float depth;
-    glReadPixels(fbX, fbY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-    return depth;
-}
-
-
 // ---------------------------------------------------------------------------
 // Enums shared across tools and main
 // ---------------------------------------------------------------------------
@@ -1469,10 +1457,6 @@ void main(string[] args) {
     // int's address directly -- which is also the end of step 1a's one
     // wart, the `&fbW()` spelling that existed only because `&fbW` would
     // have taken the FORWARDER's address instead of the field's.
-    //
-    // Not to be confused with `readDepth`'s `fbW`/`fbH` PARAMETERS at the
-    // top of this module: same names, a different variable, and they are
-    // deliberately untouched.
     SDL_GL_GetDrawableSize(window, &ifs.fbW, &ifs.fbH);
 
     // --perf disables vsync so the benchmark isn't capped at the display
