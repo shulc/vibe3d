@@ -8,6 +8,47 @@ import std.math : tan;
 import std.conv;
 import std.json : JSONValue, JSONType;
 
+version (web) {
+    private alias EmscriptenMainLoopArg = extern(C) void function(void*);
+    version (Emscripten) {
+        private extern(C) void emscripten_set_main_loop_arg(
+            EmscriptenMainLoopArg callback, void* arg, int fps,
+            int simulateInfiniteLoop);
+        private extern(C) void emscripten_cancel_main_loop();
+    } else {
+        version (WebAssembly)
+            static assert(0, "native main-loop stub on wasm");
+
+        // Native --config=web is also a runtime gate. Model Emscripten's
+        // recurring callback until the application cancels it.
+        private bool g_nativeMainLoopCancelled;
+        private void emscripten_set_main_loop_arg(
+            EmscriptenMainLoopArg callback, void* arg, int, int)
+        {
+            g_nativeMainLoopCancelled = false;
+            while (!g_nativeMainLoopCancelled) callback(arg);
+        }
+        private void emscripten_cancel_main_loop()
+        {
+            g_nativeMainLoopCancelled = true;
+        }
+    }
+
+    // Emscripten retains only the opaque callback argument in JavaScript-owned
+    // memory, which the D GC does not scan. Keep the delegate itself in a D root.
+    private __gshared void delegate() g_webMainLoopFrame;
+
+    private extern(C) void webMainLoopTrampoline(void*) {
+        try {
+            g_webMainLoopFrame();
+        } catch (Throwable error) {
+            stderr.writefln("Unhandled exception in browser frame: %s", error);
+            emscripten_cancel_main_loop();
+            g_webMainLoopFrame = null;
+        }
+    }
+}
+
 // HTTP server module
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
@@ -840,6 +881,15 @@ private bool liveKeyEventWindowFocused(SDL_Window* window)
 }
 
 void main(string[] args) {
+    version (web) {
+        import std.algorithm : map;
+        import std.array : array;
+
+        // _d_run_main2 owns the incoming strings on its stack. The browser
+        // loop outlives that frame, so keep every retained CLI slice on the GC heap.
+        args = args.map!(argument => argument.idup).array;
+    }
+
     // FIRST, before any subsystem can build a shader or a handle: record which
     // thread owns the GL context, so the two constructor funnels can name a
     // violator instead of faulting in a driver dispatch slot (task 0579's
@@ -1169,13 +1219,15 @@ void main(string[] args) {
         import core.sys.posix.unistd : _exit;
         _exit(0);
     }
-    scope(exit) SDL_Quit();
+    version (web) {
+    } else scope(exit) SDL_Quit();
 
     // Load libassimp for OBJ/glTF/FBX (and LWO-via-assimp) interchange I/O.
     // Dynamic dlopen — a missing library is non-fatal: native .v3d and the
     // pure-D LWO writer still work. See doc/asset_io_plan.md Phase 0.
     initAssimp();
-    scope(exit) shutdownAssimp();
+    version (web) {
+    } else scope(exit) shutdownAssimp();
 
     // Initialize HTTP server.
     //
@@ -1205,7 +1257,8 @@ void main(string[] args) {
         httpServer.start();
         logInfo("http", "HTTP server starting on port " ~ httpPort.to!string);
     }
-    scope(exit) {
+    version (web) {
+    } else scope(exit) {
         if (httpServer !is null && httpServer.running) {
             httpServer.stop();
         }
@@ -1280,7 +1333,8 @@ void main(string[] args) {
     } else
     scope(exit) remeshJob.cancel();
 
-    EventLogger evLog;
+    version (web) static EventLogger evLog;
+    else EventLogger evLog;
     version (ReleaseBuild) {
         if (testMode && !playbackMode) {
             evLog.open("events.log");
@@ -1290,10 +1344,13 @@ void main(string[] args) {
             evLog.open("events.log");
         }
     }
-    scope(exit) evLog.close();
+    version (web) {
+    } else scope(exit) evLog.close();
 
-    EventLogger recLog;   // F1/F2 recording for MCP tests
-    scope(exit) recLog.close();
+    version (web) static EventLogger recLog;
+    else EventLogger recLog;   // F1/F2 recording for MCP tests
+    version (web) {
+    } else scope(exit) recLog.close();
 
     EventPlayer evPlay;
     if (playbackMode && !evPlay.open(playbackFile)) return;
@@ -1350,7 +1407,13 @@ void main(string[] args) {
     // calls through `ifs` before then.
     auto ifs = new InputFrameState();
 
-    int winW = cliWinW, winH = cliWinH;
+    version (web) {
+        static int winW, winH;
+        winW = cliWinW;
+        winH = cliWinH;
+    } else {
+        int winW = cliWinW, winH = cliWinH;
+    }
     // Persisted window size (when prefs is active and the user didn't pass an
     // explicit --window/--viewport) takes precedence and is used as EXACT
     // physical pixels: the stored value is already post-uiScale (it was
@@ -1389,7 +1452,8 @@ void main(string[] args) {
         SDL_WINDOW_OPENGL | visFlag | SDL_WINDOW_RESIZABLE
     );
     if (!window) { writefln("SDL_CreateWindow: %s", sdlError()); return; }
-    scope(exit) SDL_DestroyWindow(window);
+    version (web) {
+    } else scope(exit) SDL_DestroyWindow(window);
     // Persist preferences at clean shutdown. Registered AFTER the
     // SDL_DestroyWindow guard so LIFO runs this FIRST — the window is still
     // alive, so SDL_GetWindowSize returns the live size. Crash paths skip
@@ -1430,7 +1494,10 @@ void main(string[] args) {
     // change (viewport layout, window size, recent files, tool defaults). The
     // form below registers one unconditional guard in main()'s scope that runs
     // at return and re-checks prefsActive then.
-    scope(exit) if (prefsActive) persistPrefsOnExit();
+    // Browser shutdown does not persist preferences in the MVP: registering
+    // this guard would run it while set_main_loop unwinds before frame one.
+    version (web) {
+    } else scope(exit) if (prefsActive) persistPrefsOnExit();
     setWindowIcon(window);
 
     version (OSX) {
@@ -1444,7 +1511,8 @@ void main(string[] args) {
 
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
     if (!ctx) { writefln("SDL_GL_CreateContext: %s", sdlError()); return; }
-    scope(exit) SDL_GL_DeleteContext(ctx);
+    version (web) {
+    } else scope(exit) SDL_GL_DeleteContext(ctx);
 
     if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }
     writefln("OpenGL: %s", glGetString(GL_VERSION));
@@ -1652,7 +1720,8 @@ void main(string[] args) {
     }
     ImGui_ImplSDL2_Init(window);
     ImGui_ImplOpenGL3_Init("#version 330 core");
-    scope(exit) {
+    version (web) {
+    } else scope(exit) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplSDL2_Shutdown();
         ImGui.DestroyContext();
@@ -1669,14 +1738,16 @@ void main(string[] args) {
     // supply it). Same uniform contract, so `initThickLineProgram`'s
     // `seedSharedFragUniforms` still covers it.
     GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, thickLineFragSrc);
-    scope(exit) glDeleteProgram(thickLineProgram);
+    version (web) {
+    } else scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, ifs.fbW, ifs.fbH);
 
     // Translucent-fill program (flat u_color at u_alpha) — backs
     // handler.drawWorldQuad, used by the Slice tool's cut-plane overlay. No
     // screen-size dependency, so it needs no per-resize re-init.
     GLuint fillProgram = createProgram(vertexShaderSrc, fillFragSrc);
-    scope(exit) glDeleteProgram(fillProgram);
+    version (web) {
+    } else scope(exit) glDeleteProgram(fillProgram);
     initFillProgram(fillProgram);
 
     // Reference-image plane program (task 0612) — the first `sampler2D` in the
@@ -1685,7 +1756,8 @@ void main(string[] args) {
     // `seedSharedFragUniforms`: it is not built from `fragmentShaderSrc`, and
     // every uniform it has is written on every draw.
     GLuint imagePlaneProgram = createProgram(imagePlaneVertSrc, imagePlaneFragSrc);
-    scope(exit) glDeleteProgram(imagePlaneProgram);
+    version (web) {
+    } else scope(exit) glDeleteProgram(imagePlaneProgram);
     initImagePlaneProgram(imagePlaneProgram);
 
     CheckerShader checkerShader = new CheckerShader();
@@ -1705,7 +1777,8 @@ void main(string[] args) {
     registerMorphTargetLifecycle(sessionOwner);
     // Unconditional main-body teardown is sufficient: there is one Session,
     // and the consumer is a module function rather than a bound delegate.
-    scope(exit) sessionOwner.teardownActiveLayerPreRefresh();
+    version (web) {
+    } else scope(exit) sessionOwner.teardownActiveLayerPreRefresh();
     @property ref Document document() nothrow @nogc {
         return sessionOwner.document;
     }
@@ -1821,7 +1894,8 @@ void main(string[] args) {
     // when mesh.mutationVersion or depth changes. Depth is user-adjustable;
     // 3 is the default. Consumed by rendering and picking in
     // subsequent steps.
-    SubpatchPreview subpatchPreview;
+    version (web) static SubpatchPreview subpatchPreview;
+    else SubpatchPreview subpatchPreview;
     int             subpatchDepth = 3;
 
     // Task 1500 / W15-C — every editor run, INCLUDING --test, installs the
@@ -1830,7 +1904,8 @@ void main(string[] args) {
     // Module unittests and the IPR preview install no backend because they
     // read `preview.mesh` immediately and have no frame receiver.
     subpatchPreview.enableBuildBackend();
-    scope(exit) {
+    version (web) {
+    } else scope(exit) {
         // Ordered before the GL teardown scope(exit)s declared above (they
         // run in reverse): nothing may free a handle the builder is reading.
         if (subpatchPreview.worker !is null) {
@@ -1861,7 +1936,8 @@ void main(string[] args) {
     // `mutationVersion` never carried, and the epoch moves on exactly the
     // class this upload cares about.
     MeshDirtyKey gpuUploadedKey_;
-    bool  gpuUploadedPreview;
+    version (web) static bool gpuUploadedPreview;
+    else bool gpuUploadedPreview;
     // TASK 1730 — the window in which the VBOs hold a limit surface whose
     // index space no longer matches the cage.
     //
@@ -1910,7 +1986,8 @@ void main(string[] args) {
     // cache's stamp against another's, and neither side is a live mesh read.
     ulong gpuUploadedPreviewTopVersion = ulong.max;
 
-    Layout layout;
+    version (web) static Layout layout;
+    else Layout layout;
     layout.resize(winW, winH);
 
     // The editor uses a fixed fovY=45° everywhere (see source/view.d).
@@ -2180,9 +2257,11 @@ void main(string[] args) {
     // it sat callerless (task 0833 found this and added the coverage the
     // deletion has since taken with it).
 
-    GpuMesh gpu;
+    version (web) static GpuMesh gpu;
+    else GpuMesh gpu;
     gpu.init();
-    scope(exit) gpu.destroy();
+    version (web) {
+    } else scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
     // Mid-batch display pull-guard (campaign 0407 §D4-в, phase 2).
@@ -2248,7 +2327,8 @@ void main(string[] args) {
     // `new GpuSelectBuffer(); .init()` pair; vpm.shutdown() replaces
     // `scope(exit) gpuSelect.destroy()`.
     vpm.initGpu();
-    scope(exit) vpm.shutdown();
+    version (web) {
+    } else scope(exit) vpm.shutdown();
 
     // One-shot validation that the OSD GL evaluator works on this
     // host's GL driver. Production paths still drive subpatch through
@@ -2267,11 +2347,17 @@ void main(string[] args) {
     }
 
     // Grid: lines on XZ plane + axis lines
-    GLuint gridVao, gridVbo;
-    int    gridOnlyVertCount; // vertex count of plain grid lines (before axes)
+    version (web) static GLuint gridVao, gridVbo;
+    else GLuint gridVao, gridVbo;
+    version (web) static int gridOnlyVertCount;
+    else int gridOnlyVertCount; // vertex count of plain grid lines (before axes)
     glGenVertexArrays(1, &gridVao);
     glGenBuffers(1, &gridVbo);
-    scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
+    version (web) {
+    } else scope(exit) {
+        glDeleteVertexArrays(1, &gridVao);
+        glDeleteBuffers(1, &gridVbo);
+    }
     {
         // Built as a UNIT lattice and scaled by the grid step at draw time
         // (task 0570), so this buffer is uploaded once and never touched
@@ -2334,7 +2420,8 @@ void main(string[] args) {
     // Task 5700: Session owns the document, the recent type ordering and its
     // derived EditMode. The accessors above preserve existing call syntax but
     // carry no storage; all three addresses now come from the one heap owner.
-    int activePanelIdx = 0;
+    version (web) static int activePanelIdx = 0;
+    else int activePanelIdx = 0;
 
     // RMB path trail
     // Task 0781 step 2c: `rmbDragging` relocated to InputRouter alongside
@@ -2374,10 +2461,16 @@ void main(string[] args) {
     // gl_util.d beside the sizes it feeds is also what lets a plain unittest
     // walk the ladder without standing up the app.
 
-    Tool   activeTool   = null;
-    string activeToolId = "";
+    version (web) {
+        static Tool activeTool = null;
+        static string activeToolId = "";
+    } else {
+        Tool activeTool = null;
+        string activeToolId = "";
+    }
 
-    scope(exit) {
+    version (web) {
+    } else scope(exit) {
         if (activeTool) {
             // TASK 4053 — `ToolTransition.shutdownDrop`. This is the ONE drop
             // that cannot call `dropActiveTool`: the verb is a nested function
@@ -2530,7 +2623,8 @@ void main(string[] args) {
     // shutdown — the context is still current at that point (this also fixes
     // the ef43dd9 standalone-gizmo leak).
     auto pipeGizmoHost = new PipeGizmoHost();
-    scope(exit) pipeGizmoHost.destroyGL();
+    version (web) {
+    } else scope(exit) pipeGizmoHost.destroyGL();
 
     // EditSession — the single driver of the Tool session protocol (task
     // 0428). DECLARED here so the nested dropActiveTool below can reference it
@@ -3202,7 +3296,8 @@ void main(string[] args) {
     // Disabled-path is fully inert (no file, append is a no-op).
     auto aiLogWriter = AiInteractionLogWriter.fromEnv(aiLogCliPath);
     immutable aiLogSource = defaultLiveSource();
-    scope(exit) aiLogWriter.close();
+    version (web) {
+    } else scope(exit) aiLogWriter.close();
 
     // ε-exploration controller (task 0033).  Reads VIBE3D_AI_EXPLORE + _SEED.
     // When disabled (ε=0 / flag absent), enabled()==false and EVERY exploration
@@ -3464,14 +3559,16 @@ void main(string[] args) {
     // Main-loop flag — declared up here so command factories
     // (file.quit in particular) can capture it before the actual
     // loop runs below.
-    bool running = true;
+    version (web) static bool running = true;
+    else bool running = true;
     // Task 1521: the 0434 `quitRequested` latch is GONE. `SDL_QUIT` now builds
     // a `file.quit` command (with `fromWindowClose`) and runs it through
     // `runUiCommand`, so the window [X] and Ctrl+Q are literally one path —
     // which is what makes "remove the guard call from runUiCommand" redden all
     // three guarded routes instead of two.
 
-    Registry reg;
+    version (web) static Registry reg;
+    else Registry reg;
 
     // -------------------------------------------------------------------------
     // EditorApp ctx assembly (task 0415, campaign 0407 §B.V1 step 1) -- every
@@ -3585,7 +3682,8 @@ void main(string[] args) {
     // ToolHost — delegate bridge for tool.* commands
     // -------------------------------------------------------------------------
 
-    ToolHost toolHost;
+    version (web) static ToolHost toolHost;
+    else ToolHost toolHost;
     toolHost.getActiveTool   = () => activeTool;
     toolHost.getActiveToolId = () => activeToolId;
     // TASK 4053 — the ARM half of the single door. `why` is the transition,
@@ -3824,8 +3922,15 @@ void main(string[] args) {
         }
     }
 
-    Panel[]       panels            = loadButtons("config/buttons.yaml");
-    Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
+    version (web) {
+        static Panel[] panels;
+        static Group[] statusLineGroups;
+        panels = loadButtons("config/buttons.yaml");
+        statusLineGroups = loadStatusLine("config/statusline.yaml");
+    } else {
+        Panel[] panels = loadButtons("config/buttons.yaml");
+        Group[] statusLineGroups = loadStatusLine("config/statusline.yaml");
+    }
     // Pie menus (task 1800). Same button schema, third surface — so they join
     // the id-validation pass below rather than getting a check of their own.
     {
@@ -3857,7 +3962,12 @@ void main(string[] args) {
     } else {
         enum shortcutsPath = "config/shortcuts.yaml";
     }
-    ShortcutTable shortcuts         = loadShortcuts(shortcutsPath);
+    version (web) {
+        static ShortcutTable shortcuts;
+        shortcuts = loadShortcuts(shortcutsPath);
+    } else {
+        ShortcutTable shortcuts = loadShortcuts(shortcutsPath);
+    }
     // Freeze the resolved input map for `/api/input/context` (task 1810). The
     // table never changes after load, and `resolveBinding` is pure, so the
     // HTTP thread can answer "which binding would win" without touching
@@ -4075,7 +4185,8 @@ void main(string[] args) {
 
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
-    SDL_Event event;
+    version (web) static SDL_Event event;
+    else SDL_Event event;
 
     // -------------------------------------------------------------------------
     // Nested helpers — closures over main's locals
@@ -4614,7 +4725,8 @@ void main(string[] args) {
     // forwarder straight into `ifs.viewportWindowHovered`.
     ifs.app = app;
     auto frameRunner = new FrameRunner(ifs);
-    scope(exit) frameRunner.shutdown();
+    version (web) {
+    } else scope(exit) frameRunner.shutdown();
     // Task 0781 step 1c -- the pick family's ENGINE SWITCH, still read here
     // and not in the cluster, because the environment read is a main()
     // responsibility: read once at startup, runtime changes need a relaunch.
@@ -4813,7 +4925,7 @@ void main(string[] args) {
     evPlay.setImmediateSink(replaySink);
     httpServer.setEventPlayerSink(replaySink);
 
-    while (running) {
+    void frame() {
         // Tasks 6357/6511: serve both frame probes on their owner thread after
         // the prior close and before either new probe opens. The general bridge
         // drain later in the frame must not serve either claimed queue.
@@ -7596,5 +7708,22 @@ void main(string[] args) {
         const presentMode = resolveFramePresentMode(
             testMode, perfMode, visibleTest);
         frameRunner.finishFrame(window, ifs.fbW, ifs.fbH, presentMode);
+
+        version (web) {
+            if (!running) {
+                emscripten_cancel_main_loop();
+                g_webMainLoopFrame = null;
+            }
+        }
+    }
+
+    version (web) {
+        // Emscripten 6.0.9 does not restore the stack pointer after simulated
+        // unwind, which hides dangling main/argv pointers. W16-R resets it
+        // before tick one, so this path must remain correct without that accident.
+        g_webMainLoopFrame = &frame;
+        emscripten_set_main_loop_arg(&webMainLoopTrampoline, null, 0, 1);
+    } else {
+        while (running) frame();
     }
 }

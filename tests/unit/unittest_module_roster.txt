@@ -308,6 +308,7 @@ tests.unit.l8_extrude_delta_test
 tests.unit.l9_loop_slice_delta_test
 tests.unit.layer_params_test
 tests.unit.live_registration_rig
+tests.unit.main_loop_unwind_census_test
 tests.unit.map_delta_census_test
 tests.unit.map_value_delta_test
 tests.unit.mark_view_field_guard_test
