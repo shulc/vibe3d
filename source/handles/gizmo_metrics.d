@@ -373,8 +373,8 @@ enum float GIZMO_CUBE_HEAD_HALF_OF_LEN = 0.03f;
 //
 // WHAT THESE REPLACED, AND WHY THE NUMBERS LOOK SMALLER THAN THEY ARE. The old
 // literals were 5.0 (move shaft), 6.0 (rotate arc), 4.0 (view ring), 1.5
-// (plane ring). They were NOT 5 / 6 / 4 / 1.5 pixels: the geometry shader's
-// clip-to-screen conversion was off by exactly 2 (see `thickLineGeomSrc`), so
+// (plane ring). They were NOT 5 / 6 / 4 / 1.5 pixels: the old extrusion's
+// clip-to-screen conversion was off by exactly 2 (see `thickLineVertexSrc`), so
 // they rendered 2.5 / 3.0 / 2.0 / 0.75 px. Measured through
 // /api/viewport/probe, on the ink itself, before anything here changed.
 //

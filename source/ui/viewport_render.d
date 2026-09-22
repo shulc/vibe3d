@@ -280,7 +280,7 @@ public:
     glViewport(0, 0, v.fbo.w, v.fbo.h);
     // Per-cell thick-line screen size. g_thickLine.screenW/H is now a
     // per-cell scratch: each cell sets its own FBO size here before its
-    // overlay gizmos draw, so the geometry-shader line extrusion is
+    // overlay gizmos draw, so the vertex-expanded line extrusion is
     // always correct for the current cell (not the full window).
     setThickLineScreenSize(v.fbo.w, v.fbo.h);
 

@@ -625,8 +625,8 @@ public:
         // it now matches it by construction rather than by two hand-copied
         // literals that agreed until one of them was corrected.
         immutable Vec3 color = schemeColor(SchemeColor.handleActive);
-        // WINDOW PIXELS. Halved from 1.5f with task 0600's geometry-shader unit
-        // fix (see shader.thickLineGeomSrc); renders the same 0.75 px it did.
+        // WINDOW PIXELS. Halved from 1.5f with task 0600's extrusion-unit fix
+        // (see shader.thickLineVertexSrc); renders the same 0.75 px it did.
         immutable float lineWidth = 0.75f;
 
         import math : identityMatrix;

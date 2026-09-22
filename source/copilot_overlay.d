@@ -46,8 +46,8 @@ import ai.analysis : Finding;
 /// amber reads well against the default grey viewport background; the
 /// owner eyeballs the final look live (headless cannot verify appearance).
 enum Vec3  COPILOT_GHOST_COLOR = Vec3(1.0f, 0.65f, 0.05f);
-// WINDOW PIXELS. Halved from 2.5f with task 0600's geometry-shader unit fix
-// (see shader.thickLineGeomSrc) — the old value rendered 1.25 px, and so does
+// WINDOW PIXELS. Halved from 2.5f with task 0600's extrusion-unit fix
+// (see shader.thickLineVertexSrc) — the old value rendered 1.25 px, and so does
 // this one. The ghost overlay's look is unchanged.
 enum float COPILOT_GHOST_WIDTH = 1.25f;
 

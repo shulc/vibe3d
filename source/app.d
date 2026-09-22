@@ -1750,14 +1750,14 @@ void main(string[] args) {
     LitShader litShader = new LitShader();
 
     // `thickLineFragSrc`, not `fragmentShaderSrc`: the line path antialiases
-    // analytically and needs the geometry stage's coverage varying, which the
-    // regular fragment source cannot declare (it has no geometry stage to
-    // supply it). Same uniform contract, so `initThickLineProgram`'s
-    // `seedSharedFragUniforms` still covers it.
-    GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, thickLineFragSrc);
+    // analytically and needs the instanced vertex stage's coverage varying,
+    // which the regular fragment source cannot declare. Same uniform contract,
+    // so `initThickLineProgram`'s `seedSharedFragUniforms` still covers it.
+    GLuint thickLineProgram = createProgram(thickLineVertexSrc, thickLineFragSrc);
     version (web) {
     } else scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, ifs.fbW, ifs.fbH);
+    scope(exit) shutdownThickLineProgram();
 
     // Translucent-fill program (flat u_color at u_alpha) — backs
     // handler.drawWorldQuad, used by the Slice tool's cut-plane overlay. No

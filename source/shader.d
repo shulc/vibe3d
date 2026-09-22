@@ -47,8 +47,8 @@ immutable string fragmentShaderSrc = q{
 // `u_dim = 0` renders black, `u_alpha = 0` renders nothing.
 //
 // "That source" is now TWO sources sharing one CONTRACT: `fragmentShaderSrc`
-// and `thickLineFragSrc` (which had to split off to consume the geometry
-// stage's coverage varying — see its own comment). They declare the same
+// and `thickLineFragSrc` (which consumes the vertex-expanded line's coverage
+// varying — see its own comment). They declare the same
 // uniform names with the same meanings, and `seedSharedFragUniforms` resolves
 // by name, so the obligation below still reaches both. A new entry here is
 // still a single edit; a new uniform in only ONE of the two sources is the
@@ -303,7 +303,7 @@ private immutable string litFragSrc = q{
 //
 // `u_alpha` IS THIS PROGRAM'S OWN, AND IT IS NOT ON THE SHARED CONTRACT
 // (task 1862). `kSharedFragNeutrals` / `seedSharedFragUniforms` describe the
-// programs built from `fragmentShaderSrc` and its geometry-stage twin
+// programs built from `fragmentShaderSrc` and its thick-line counterpart
 // `thickLineFragSrc`; the helper resolves BY NAME, over programs whose
 // builders call it. `CheckerShader` is built from `checkerFragSrc`, so adding
 // a uniform on either side does NOT enlist the other.
@@ -376,8 +376,8 @@ private immutable string gridFragSrc = q{
 
 GLuint compileShader(GLenum type, string src) {
     // Funnel 2 of 2. The lowest point of every program build — `createProgram`,
-    // `createProgramWithGeom` and gpu_select's own builder all route through
-    // here — so guarding it covers every `*Shader` ctor. See gl_thread_guard.d.
+    // and gpu_select's own builder both route through here — so guarding it
+    // covers every `*Shader` ctor. See gl_thread_guard.d.
     version (web) {
     } else {
         glThreadGuard("compileShader");
@@ -418,8 +418,10 @@ GLuint createProgram(string vertSrc = vertexShaderSrc,
     return prog;
 }
 
-// Geometry shader that expands GL_LINES into screen-aligned quads
-// to produce thick lines on macOS Core Profile (where glLineWidth > 1 is unsupported).
+// Vertex shader that expands instanced line segments into screen-aligned quads.
+// The draw funnel supplies both endpoints as per-instance attributes and emits
+// four vertices per instance, so the same body works on desktop GL 3.3 and
+// WebGL2 / ES 3.0 without a geometry stage.
 //
 // UNITS — `u_lineWidth` is the stroke width in WINDOW PIXELS.
 //
@@ -438,20 +440,20 @@ GLuint createProgram(string vertSrc = vertexShaderSrc,
 // it thresholds is in pixels too. Both were quietly reading a doubled number.
 // Every call site was rescaled with this change so that no line's RENDERED
 // width moved except the transform gizmo's, which is the point of the task.
-immutable string thickLineGeomSrc = q{
-    #version 330 core
-    layout(lines) in;
-    layout(triangle_strip, max_vertices = 4) out;
+private enum string thickLineVertexBody = q{
+    layout(location = 0) in vec3 a_p0;
+    layout(location = 1) in vec3 a_p1;
+    uniform mat4 u_model;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
     uniform float u_lineWidth;   // stroke width, WINDOW PIXELS
     uniform vec2  u_screenSize;  // framebuffer size in pixels
 
     // Signed perpendicular distance from the line's centreline, WINDOW PIXELS.
-    // `noperspective` is load-bearing, not decoration: the quad's two ends can
-    // sit at very different depths, and the default perspective-correct
-    // interpolation would make this vary non-linearly ACROSS THE SCREEN — the
-    // antialiasing fringe would widen at the far end and pinch at the near one.
-    // Screen-space coverage needs a screen-linear varying.
-    noperspective out float vEdgeDist;
+    // ES 3.0 has no `noperspective`, so emit d*w and let the fragment stage
+    // multiply the perspective-correct interpolation by gl_FragCoord.w. That
+    // restores screen-linear d and preserves the smoothing law below.
+    out highp float vEdgeDist;
 
     // The coverage ramp needs somewhere to live: a stroke edge is soft for half
     // a pixel on each side, and a fragment outside the quad is never shaded at
@@ -461,8 +463,8 @@ immutable string thickLineGeomSrc = q{
     const float kAaPadPx = 1.0;
 
     void main() {
-        vec4 p0 = gl_in[0].gl_Position;
-        vec4 p1 = gl_in[1].gl_Position;
+        vec4 p0 = u_proj * u_view * u_model * vec4(a_p0, 1.0);
+        vec4 p1 = u_proj * u_view * u_model * vec4(a_p1, 1.0);
         // Clip -> WINDOW PIXELS. NDC spans [-1,1] over `u_screenSize` pixels,
         // so the scale is HALF the framebuffer size, not the whole of it.
         vec2 halfScreen = u_screenSize * 0.5;
@@ -470,27 +472,41 @@ immutable string thickLineGeomSrc = q{
         vec2 s1 = p1.xy / p1.w * halfScreen;
         vec2 dir = s1 - s0;
         float len = length(dir);
-        if (len < 0.001) return;
+        if (len < 0.001) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            vEdgeDist = 0.0;
+            return;
+        }
         // Perpendicular in window pixels, half-width plus the fringe's room.
         float halfE = u_lineWidth * 0.5 + kAaPadPx;
         vec2 perp = vec2(-dir.y, dir.x) / len * halfE;
         // Back to clip-space offsets (un-divide by w).
         vec2 off0 = perp / halfScreen * p0.w;
         vec2 off1 = perp / halfScreen * p1.w;
-        gl_Position = vec4(p0.xy + off0, p0.zw); vEdgeDist =  halfE; EmitVertex();
-        gl_Position = vec4(p0.xy - off0, p0.zw); vEdgeDist = -halfE; EmitVertex();
-        gl_Position = vec4(p1.xy + off1, p1.zw); vEdgeDist =  halfE; EmitVertex();
-        gl_Position = vec4(p1.xy - off1, p1.zw); vEdgeDist = -halfE; EmitVertex();
-        EndPrimitive();
+        bool atEnd = gl_VertexID >= 2;
+        bool positive = (gl_VertexID & 1) == 0;
+        vec4 p = atEnd ? p1 : p0;
+        vec2 off = atEnd ? off1 : off0;
+        float edgeDist = positive ? halfE : -halfE;
+        gl_Position = vec4(p.xy + (positive ? off : -off), p.zw);
+        vEdgeDist = edgeDist * gl_Position.w;
     }
 };
+
+version (web) {
+    immutable string thickLineVertexSrc =
+        "#version 300 es\nprecision highp float;\n" ~ thickLineVertexBody;
+} else {
+    immutable string thickLineVertexSrc =
+        "#version 330 core\n" ~ thickLineVertexBody;
+}
 
 // The thick-line program's OWN fragment stage — ANALYTIC line antialiasing.
 //
 // WHY THIS IS NOT `fragmentShaderSrc`. It cannot be: it consumes a varying
-// (`vEdgeDist`) that only the geometry stage above produces, and a fragment
-// input with no matching upstream output is a link error. The regular program
-// has no geometry stage, so the two sources had to split.
+// (`vEdgeDist`) that only the instanced vertex stage above produces, and a
+// fragment input with no matching upstream output is a link error. The regular
+// program does not produce it, so the two sources stay split.
 //
 // WHAT IT KEEPS. The uniform CONTRACT is deliberately identical — `u_color`,
 // `u_dim`, `u_alpha`, same names, same meanings — so `seedSharedFragUniforms`
@@ -503,9 +519,9 @@ immutable string thickLineGeomSrc = q{
 // THE COVERAGE FUNCTION, and why this shape. The reference antialiases lines
 // the fixed-function way — `GL_LINE_SMOOTH`, where the driver multiplies the
 // fragment's alpha by its pixel coverage and an ordinary SRC_ALPHA blend turns
-// that into a soft edge. We cannot use it: our "line" is already a geometry-
-// shader quad (Core Profile has no `glLineWidth > 1`), so there is no GL line
-// for the driver to smooth. The port is therefore analytic — carry the
+// that into a soft edge. We cannot use it: our "line" is already a vertex-
+// expanded quad (Core Profile has no portable `glLineWidth > 1`), so there is
+// no GL line for the driver to smooth. The port is therefore analytic — carry the
 // perpendicular distance, convert it to coverage here, multiply it into alpha.
 // Same coverage-to-alpha result, different route.
 //
@@ -536,7 +552,7 @@ immutable string thickLineGeomSrc = q{
 //
 // `u_smooth = 0` is a HARD edge in the strict sense: coverage is 1 inside the
 // stroke's own half-width and 0 outside it, with no intermediate value possible
-// at any pixel. The geometry stage still pads the quad by `kAaPadPx`, and those
+// at any pixel. The vertex stage still pads the quad by `kAaPadPx`, and those
 // padding fragments are exactly the ones this zeroes — the padding costs a
 // little rasterised area and changes nothing that reaches the framebuffer.
 //
@@ -551,18 +567,17 @@ immutable string thickLineGeomSrc = q{
 // and they are deliberately NOT switched here: neither has been measured on our
 // own pixels, and this task's evidence covers the disc alone. The mechanism is
 // what makes them a one-line change when someone measures them.
-immutable string thickLineFragSrc = q{
-    #version 330 core
+private enum string thickLineFragmentBody = q{
     uniform vec3  u_color;
     uniform float u_dim;        // brightness multiplier; 1.0 = neutral
     uniform float u_alpha;      // fragment opacity; 1.0 = opaque
-    uniform float u_lineWidth;  // stroke width, WINDOW PIXELS (shared with the geometry stage)
+    uniform float u_lineWidth;  // stroke width, WINDOW PIXELS (shared with the vertex stage)
     uniform float u_smooth;     // 1 = analytic coverage AA, 0 = hard-edged; 1.0 = neutral
-    noperspective in float vEdgeDist;
+    in highp float vEdgeDist;
     out vec4 fragColor;
     void main() {
         float halfW = u_lineWidth * 0.5;
-        float d     = abs(vEdgeDist);
+        float d     = abs(vEdgeDist * gl_FragCoord.w);
         float cov   = (u_smooth > 0.5)
                     ? 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, d)
                     : (d <= halfW ? 1.0 : 0.0);
@@ -570,27 +585,12 @@ immutable string thickLineFragSrc = q{
     }
 };
 
-GLuint createProgramWithGeom(string vertSrc, string geomSrc, string fragSrc) {
-    GLuint vert = compileShader(GL_VERTEX_SHADER,   vertSrc);
-    GLuint geom = compileShader(GL_GEOMETRY_SHADER, geomSrc);
-    GLuint frag = compileShader(GL_FRAGMENT_SHADER, fragSrc);
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, geom);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-    GLint ok;
-    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char[512] log;
-        glGetProgramInfoLog(prog, 512, null, log.ptr);
-        import std.conv : to;
-        throw new Exception("Link error: " ~ log[].to!string);
-    }
-    glDeleteShader(vert);
-    glDeleteShader(geom);
-    glDeleteShader(frag);
-    return prog;
+version (web) {
+    immutable string thickLineFragSrc =
+        "#version 300 es\nprecision highp float;\n" ~ thickLineFragmentBody;
+} else {
+    immutable string thickLineFragSrc =
+        "#version 330 core\n" ~ thickLineFragmentBody;
 }
 
 class Shader {

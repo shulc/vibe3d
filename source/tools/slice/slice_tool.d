@@ -1873,8 +1873,8 @@ public:
             // Rotate ring (task 0287) — placeholder geometry; re-positioned each
             // frame below when axis_ == Custom.
             rotRing_     = new FullCircleHandler(Vec3(0, 0, 0), Vec3(0, 0, 1), 1.0f, RING_COLOR);
-            // WINDOW PIXELS — halved from 2.5f with task 0600's geometry-shader
-            // unit fix (see shader.thickLineGeomSrc). Renders the same 1.25 px.
+            // WINDOW PIXELS — halved from 2.5f with task 0600's extrusion-unit
+            // fix (see shader.thickLineVertexSrc). Renders the same 1.25 px.
             rotRing_.lineWidth = 1.25f;
             toolHandles_ = new ToolHandles();
         }
@@ -1957,7 +1957,7 @@ public:
         glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
         glDisable(GL_DEPTH_TEST);
         // 1.25f is WINDOW PIXELS — halved from 2.5f with task 0600's
-        // geometry-shader unit fix (see shader.thickLineGeomSrc). Same ink.
+        // extrusion-unit fix (see shader.thickLineVertexSrc). Same ink.
         drawWorldSegment(start_, end_, vp, LINE_COLOR, 1.25f, shader.program);
         glEnable(GL_DEPTH_TEST);
 

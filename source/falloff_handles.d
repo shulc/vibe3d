@@ -76,8 +76,8 @@ class FalloffEndpointHandle {
         // Axis-less, so the scheme's `handle` colour.
         centerBox = new BoxHandler(Vec3(0,0,0), schemeColor(SchemeColor.handle));
         // Slimmer arrow shafts — secondary control, not the main tool.
-        // WINDOW PIXELS. Halved from 2.5f with task 0600's geometry-shader unit
-        // fix (see shader.thickLineGeomSrc): the old number rendered 1.25 px,
+        // WINDOW PIXELS. Halved from 2.5f with task 0600's extrusion-unit fix
+        // (see shader.thickLineVertexSrc): the old number rendered 1.25 px,
         // and this one renders the same 1.25 px. Nothing about these handles
         // has been measured against the reference, so their look is held still.
         arrowX.lineWidth = 1.25f;

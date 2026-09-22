@@ -999,7 +999,7 @@ public:
         // line, since it isn't baked yet.
         if (havePending)
             // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
-            // geometry-shader unit fix (see shader.thickLineGeomSrc). Same ink.
+            // extrusion-unit fix (see shader.thickLineVertexSrc). Same ink.
             drawWorldSegment(os.pos(positions[$ - 1]), os.pos(pendingPos), vp,
                              CHORD_COLOR, 1.0f, shader.program);
 

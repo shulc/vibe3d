@@ -202,8 +202,8 @@ class ShaftedArrow : Handler {
     Vec3  start;
     Vec3  end;
     Vec3  color;
-    // WINDOW PIXELS. Was 5.0f, which rendered 2.5 px — the geometry shader's
-    // clip-to-screen conversion was off by 2 (see shader.thickLineGeomSrc).
+    // WINDOW PIXELS. Was 5.0f, which rendered 2.5 px — the old extrusion's
+    // clip-to-screen conversion was off by 2 (see shader.thickLineVertexSrc).
     // Task 0600 made the unit honest, so this literal was halved to keep every
     // arrow that does NOT set its own width rendering at exactly the width it
     // always did. The transform gizmo's arms set theirs explicitly.
@@ -627,7 +627,7 @@ class SemicircleHandler : Handler {
     Vec3  normal;   // axis perpendicular to the plane of the arc
     float radius;
     Vec3  color;
-    // WINDOW PIXELS; halved with the geometry shader's unit fix so an arc that
+    // WINDOW PIXELS; halved with the extrusion-unit fix so an arc that
     // sets no width of its own renders exactly as it did (task 0600).
     float lineWidth  = 2.5f;
     float alpha      = 1.0f;  /// fragment opacity; the rotate bank sets 0.95
@@ -729,7 +729,7 @@ class FullCircleHandler : Handler {
     Vec3  normal;   // axis perpendicular to the circle plane (camera forward)
     float radius;
     Vec3  color;
-    // WINDOW PIXELS; halved with the geometry shader's unit fix (task 0600) so
+    // WINDOW PIXELS; halved with the extrusion-unit fix (task 0600) so
     // the one external user that leaves it alone renders unchanged.
     float lineWidth = 1.5f;
     float alpha     = 1.0f;  /// fragment opacity; the rotate bank sets its own
@@ -1461,7 +1461,7 @@ class CircleHandler : Handler {
     float radius    = 1.0f;
     Vec3  color;        // outline
     Vec3  fillColor;    // disc fill
-    // WINDOW PIXELS; halved with the geometry shader's unit fix (task 0600).
+    // WINDOW PIXELS; halved with the extrusion-unit fix (task 0600).
     float lineWidth = 0.75f;
     /// The plane handle is TWO parts with two DIFFERENT opacities — a nearly
     /// solid ring around a barely-there disc. One alpha for both would erase

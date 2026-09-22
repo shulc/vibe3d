@@ -17,6 +17,7 @@ import math;
 
 private struct ThickLineState {
     GLuint prog;
+    GLuint vao;
     GLint  locModel, locView, locProj, locColor, locWidth, locScreen, locAlpha;
     GLint  locSmooth;
     float  screenW, screenH;
@@ -80,9 +81,9 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.screenW   = cast(float)screenW;
     g_thickLine.screenH   = cast(float)screenH;
 
-    // The thick-line program reuses the basic `fragmentShaderSrc`, whose
-    // fragment colour is `vec4(u_color * u_dim, u_alpha)`. A GLSL uniform
-    // defaults to 0, and 0 is the destructive value for BOTH of those: an
+    // The thick-line fragment source keeps the basic source's colour-uniform
+    // contract. A GLSL uniform defaults to 0, and 0 is the destructive value
+    // for BOTH of these: an
     // unset `u_dim` renders every gizmo shaft / rotate ring / scale axis
     // BLACK, and an unset `u_alpha` writes them into the cell's FBO with zero
     // coverage — which the ImGui composite of that colour texture then blends
@@ -110,6 +111,14 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
         glUniform1f(g_thickLine.locSmooth, 1.0f);
         glUseProgram(cast(GLuint)prevProg);
     }
+}
+
+/// Release the thick-line draw funnel's context-owned scratch object.
+/// Must run while the GL context that created it is still current.
+void shutdownThickLineProgram() {
+    if (g_thickLine.vao != 0)
+        glDeleteVertexArrays(1, &g_thickLine.vao);
+    g_thickLine = ThickLineState.init;
 }
 
 /// Update the cached screen dimensions used by drawThickLines for the current
@@ -474,8 +483,8 @@ void endHandleFill(GLint locAlpha, int token) {
     if (locAlpha >= 0) glUniform1f(locAlpha, 1.0f);
 }
 
-// Draw VAO with GL_LINES/GL_LINE_STRIP using the thick-line program,
-// then restore the caller's program.
+// Draw a caller VAO's GL_LINES/GL_LINE_STRIP/GL_LINE_LOOP as instanced quads,
+// then restore the caller's program, VAO and GL_ARRAY_BUFFER.
 //
 // Blending is enabled UNCONDITIONALLY here, even at `alpha == 1`, because the
 // analytic antialiasing works through the alpha channel: the fragment stage
@@ -501,6 +510,42 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
                              float alpha = 1.0f,
                              bool smooth = true)
 {
+    GLint previousArrayBuffer;
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previousArrayBuffer);
+
+    glBindVertexArray(vao);
+    GLint sourceBuffer, attribSize, attribType, sourceStride;
+    void* sourceOffset;
+    glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &sourceBuffer);
+    glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_SIZE, &attribSize);
+    glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_TYPE, &attribType);
+    glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &sourceStride);
+    glGetVertexAttribPointerv(0, GL_VERTEX_ATTRIB_ARRAY_POINTER, &sourceOffset);
+    assert(attribSize == 3, "thick-line position attribute must have size 3");
+    assert(attribType == GL_FLOAT, "thick-line position attribute must be GL_FLOAT");
+    if (sourceStride == 0)
+        sourceStride = cast(GLint)(attribSize * float.sizeof);
+
+    if (g_thickLine.vao == 0)
+        glGenVertexArrays(1, &g_thickLine.vao);
+    glBindVertexArray(g_thickLine.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, cast(GLuint)sourceBuffer);
+
+    immutable size_t baseOffset = cast(size_t)sourceOffset;
+    immutable int vertexStep = mode == GL_LINES ? 2 : 1;
+    immutable int segmentCount = mode == GL_LINES
+        ? vertCount / 2
+        : (vertCount > 1 ? vertCount - 1 : 0);
+    glVertexAttribPointer(0, attribSize, cast(GLenum)attribType, GL_FALSE,
+                          sourceStride * vertexStep, cast(void*)baseOffset);
+    glVertexAttribPointer(1, attribSize, cast(GLenum)attribType, GL_FALSE,
+                          sourceStride * vertexStep,
+                          cast(void*)(baseOffset + sourceStride));
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribDivisor(0, 1);
+    glVertexAttribDivisor(1, 1);
+
     glUseProgram(g_thickLine.prog);
     glUniformMatrix4fv(g_thickLine.locModel, 1, GL_FALSE, model.ptr);
     glUniformMatrix4fv(g_thickLine.locView,  1, GL_FALSE, vp.view.ptr);
@@ -513,11 +558,20 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
         glUniform1f(g_thickLine.locSmooth, smooth ? 1.0f : 0.0f);
 
     immutable bool hadBlend = beginHandleBlend();
-    glBindVertexArray(vao);
-    glDrawArrays(mode, 0, vertCount);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, segmentCount);
+    if (mode == GL_LINE_LOOP && vertCount > 1) {
+        glVertexAttribPointer(0, attribSize, cast(GLenum)attribType, GL_FALSE,
+                              sourceStride,
+                              cast(void*)(baseOffset + (vertCount - 1) * sourceStride));
+        glVertexAttribPointer(1, attribSize, cast(GLenum)attribType, GL_FALSE,
+                              sourceStride, cast(void*)baseOffset);
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+    }
     g_fc.draw(DrawPass.handles, vertCount);
     endHandleBlend(hadBlend);
 
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, cast(GLuint)previousArrayBuffer);
     glUseProgram(restoreProgram);
 }
 

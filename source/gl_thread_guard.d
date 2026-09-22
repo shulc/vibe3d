@@ -14,8 +14,8 @@
 // SCOPE — THE TWO CONSTRUCTOR FUNNELS, AND DELIBERATELY NOTHING ELSE.
 // The 0584 sweep's finding was that the whole crash class funnels into exactly
 // two places: `handles.gl_util.buildVao3f` (every Handler shape's geometry) and
-// `shader.compileShader` (every program, including `createProgram`,
-// `createProgramWithGeom` and gpu_select's own). Guarding those two covers
+// `shader.compileShader` (every program, including `createProgram` and
+// gpu_select's own). Guarding those two covers
 // every tool, every gizmo and every shader, because construction is where the
 // allocation happens.
 //

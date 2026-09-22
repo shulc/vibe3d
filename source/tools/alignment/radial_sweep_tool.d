@@ -976,7 +976,7 @@ public:
 
         glDisable(GL_DEPTH_TEST);
         // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
-        // geometry-shader unit fix (see shader.thickLineGeomSrc); unchanged ink.
+        // extrusion-unit fix (see shader.thickLineVertexSrc); unchanged ink.
         drawThickLinesExt(axisLineVao, 2, GL_LINES, identityMatrix, vp, axisColor, 1.0f, restoreProgram);
         glEnable(GL_DEPTH_TEST);
     }
