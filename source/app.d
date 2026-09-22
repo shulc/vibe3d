@@ -1736,7 +1736,10 @@ void main(string[] args) {
         ImGui.PushStyleColor(ImGuiCol.TabDimmedSelectedOverline, tabOverlineDim);
     }
     ImGui_ImplSDL2_Init(window);
-    ImGui_ImplOpenGL3_Init("#version 330 core");
+    version (web)
+        ImGui_ImplOpenGL3_Init("#version 300 es");
+    else
+        ImGui_ImplOpenGL3_Init("#version 330 core");
     version (web) {
     } else scope(exit) {
         ImGui_ImplOpenGL3_Shutdown();

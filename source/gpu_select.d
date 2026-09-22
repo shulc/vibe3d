@@ -78,10 +78,20 @@ enum SelectMode {
     Face,
 }
 
+version (web) {
+    private enum selectShaderPreamble =
+        "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+} else {
+    private enum selectShaderPreamble = "#version 330 core\n";
+}
+
+private string withSelectShaderPreamble(string body) pure @safe {
+    return selectShaderPreamble ~ body;
+}
+
 // ---- Vertex pass --------------------------------------------------------
 // gl_VertexID + 1 is the ID. GL_POINTS rasterises one pixel per point.
-private immutable string vertVertSrc = q{
-    #version 330 core
+private immutable string vertVertSrc = withSelectShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_view;
     uniform mat4 u_proj;
@@ -90,13 +100,12 @@ private immutable string vertVertSrc = q{
         vID = uint(gl_VertexID) + 1u;
         gl_Position = u_proj * u_view * vec4(aPos, 1.0);
     }
-};
+});
 
 // ---- Edge pass ----------------------------------------------------------
 // GL_LINES: each pair of consecutive verts is one segment, gl_VertexID/2
 // is the segment index.
-private immutable string edgeVertSrc = q{
-    #version 330 core
+private immutable string edgeVertSrc = withSelectShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_view;
     uniform mat4 u_proj;
@@ -105,13 +114,12 @@ private immutable string edgeVertSrc = q{
         vID = uint(gl_VertexID / 2) + 1u;
         gl_Position = u_proj * u_view * vec4(aPos, 1.0);
     }
-};
+});
 
 // ---- Face pass ----------------------------------------------------------
 // Per-vertex face-index attribute (gpu.faceIdVbo). Same value across all
 // triangle-fan vertices of a face → rasterised polygon fills with one ID.
-private immutable string faceVertSrc = q{
-    #version 330 core
+private immutable string faceVertSrc = withSelectShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in uint aFaceId;
     uniform mat4 u_view;
@@ -121,36 +129,45 @@ private immutable string faceVertSrc = q{
         vID = aFaceId + 1u;
         gl_Position = u_proj * u_view * vec4(aPos, 1.0);
     }
-};
+});
 
 // Depth-only face pass for vertex / edge passes: fills depth, writes 0
 // into colour so picking inside a face surface returns nothing.
-private immutable string depthVertSrc = q{
-    #version 330 core
+private immutable string depthVertSrc = withSelectShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_view;
     uniform mat4 u_proj;
     void main() {
         gl_Position = u_proj * u_view * vec4(aPos, 1.0);
     }
-};
+});
 
-private immutable string commonFragSrc = q{
-    #version 330 core
+private immutable string commonFragSrc = withSelectShaderPreamble(q{
     flat in uint vID;
     out uint fragID;
     void main() {
         fragID = vID;
     }
-};
+});
 
-private immutable string zeroFragSrc = q{
-    #version 330 core
+private immutable string zeroFragSrc = withSelectShaderPreamble(q{
     out uint fragID;
     void main() {
         fragID = 0u;
     }
-};
+});
+
+string gpuSelectShaderSourceForValidation(string name) pure @safe {
+    switch (name) {
+    case "vertVertSrc": return vertVertSrc;
+    case "edgeVertSrc": return edgeVertSrc;
+    case "faceVertSrc": return faceVertSrc;
+    case "depthVertSrc": return depthVertSrc;
+    case "commonFragSrc": return commonFragSrc;
+    case "zeroFragSrc": return zeroFragSrc;
+    default: assert(false, "unknown GPU-select shader source: " ~ name);
+    }
+}
 
 class GpuSelectBuffer {
 private:

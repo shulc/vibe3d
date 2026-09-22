@@ -18,8 +18,18 @@ import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 // Shaders
 // ---------------------------------------------------------------------------
 
-immutable string vertexShaderSrc = q{
-    #version 330 core
+version (web) {
+    private enum shaderPreamble =
+        "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+} else {
+    private enum shaderPreamble = "#version 330 core\n";
+}
+
+private string withShaderPreamble(string body) pure @safe {
+    return shaderPreamble ~ body;
+}
+
+immutable string vertexShaderSrc = withShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_model;
     uniform mat4 u_view;
@@ -27,10 +37,9 @@ immutable string vertexShaderSrc = q{
     void main() {
         gl_Position = u_proj * u_view * u_model * vec4(aPos, 1.0);
     }
-};
+});
 
-immutable string fragmentShaderSrc = q{
-    #version 330 core
+immutable string fragmentShaderSrc = withShaderPreamble(q{
     uniform vec3  u_color;
     uniform float u_dim;        // brightness multiplier; 1.0 = neutral (layers Stage 5)
     uniform float u_alpha;      // fragment opacity; 1.0 = opaque (task 0559)
@@ -38,7 +47,7 @@ immutable string fragmentShaderSrc = q{
     void main() {
         fragColor = vec4(u_color * u_dim, u_alpha);
     }
-};
+});
 
 // Every uniform of `fragmentShaderSrc` that is NOT written on the draw path,
 // paired with the value that means "do nothing". A program built from that
@@ -103,15 +112,14 @@ void seedSharedFragUniforms(GLuint prog) {
 // added exactly such a uniform to it, and the stale claim is part of why the
 // gap survived: it read as a standing guarantee that the shared program had
 // nothing to seed. See `kSharedFragNeutrals` above for what it actually owes.
-immutable string fillFragSrc = q{
-    #version 330 core
+immutable string fillFragSrc = withShaderPreamble(q{
     uniform vec3  u_color;
     uniform float u_alpha;
     out vec4 fragColor;
     void main() {
         fragColor = vec4(u_color, u_alpha);
     }
-};
+});
 
 // ---------------------------------------------------------------------------
 // Reference-image plane (task 0612) — THE FIRST `sampler2D` IN THIS CODEBASE.
@@ -133,8 +141,7 @@ immutable string fillFragSrc = q{
 // Corners arrive in WORLD space, exactly like `drawWorldQuad`'s — the
 // placement law has already applied the item transform, so there is no model
 // matrix here and no second place for a transform to be applied twice.
-immutable string imagePlaneVertSrc = q{
-    #version 330 core
+immutable string imagePlaneVertSrc = withShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aUV;
     uniform mat4 u_view;
@@ -144,7 +151,7 @@ immutable string imagePlaneVertSrc = q{
         vUV = aUV;
         gl_Position = u_proj * u_view * vec4(aPos, 1.0);
     }
-};
+});
 
 // The three look channels, applied in a FIXED order: invert, then contrast,
 // then brightness.
@@ -159,8 +166,7 @@ immutable string imagePlaneVertSrc = q{
 // written is `1 - u_transparency`. Naming it the other way round in the
 // shader would put a silent negation between the channel and its only
 // consumer.
-immutable string imagePlaneFragSrc = q{
-    #version 330 core
+immutable string imagePlaneFragSrc = withShaderPreamble(q{
     in  vec2 vUV;
     out vec4 fragColor;
     uniform sampler2D u_tex;
@@ -175,7 +181,7 @@ immutable string imagePlaneFragSrc = q{
         c = c + vec3(u_brightness);
         fragColor = vec4(clamp(c, 0.0, 1.0), 1.0 - u_transparency);
     }
-};
+});
 
 // Lit shaders — Blinn-Phong with flat per-face normals.
 //
@@ -188,8 +194,7 @@ immutable string imagePlaneFragSrc = q{
 // with no surfaces seed slot 0 to a neutral grey so the look pre-MG3
 // is preserved.
 enum LIT_MAX_MATS = 64;
-private immutable string litVertSrc = q{
-    #version 330 core
+private immutable string litVertSrc = withShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
     layout(location = 2) in uint aMatId;
@@ -221,10 +226,9 @@ private immutable string litVertSrc = q{
         vWeightColor  = aWeightColor;
         gl_Position   = u_proj * u_view * worldPos;
     }
-};
+});
 
-private immutable string litFragSrc = q{
-    #version 330 core
+private immutable string litFragSrc = withShaderPreamble(q{
     in       vec3 vNormal;
     in       vec3 vWorldPos;
     flat in  uint vMatId;
@@ -295,7 +299,7 @@ private immutable string litFragSrc = q{
         }
         fragColor = vec4(col * u_dim, 1.0);
     }
-};
+});
 
 // Checkerboard overlay shader — every other screen pixel is discarded,
 // the rest are filled with u_color at u_alpha.  Used to highlight selected
@@ -320,8 +324,7 @@ private immutable string litFragSrc = q{
 // `kOccludedSelectionAlpha` — see `OccludedPass` in `mesh_gpu.d`. Without a
 // per-draw alpha that second pass would paint at full strength, which is the
 // pre-1862 rendering it exists to replace.
-private immutable string checkerFragSrc = q{
-    #version 330 core
+private immutable string checkerFragSrc = withShaderPreamble(q{
     uniform vec3  u_color;
     uniform float u_alpha;
     out vec4 fragColor;
@@ -329,11 +332,10 @@ private immutable string checkerFragSrc = q{
         if ((int(gl_FragCoord.x)/2 + int(gl_FragCoord.y)) % 2 == 0 || int(gl_FragCoord.x) % 2 == 0) discard;
         fragColor = vec4(u_color, u_alpha);
     }
-};
+});
 
 // Grid shaders — vertex passes world pos, fragment computes fade alpha.
-private immutable string gridVertSrc = q{
-    #version 330 core
+private immutable string gridVertSrc = withShaderPreamble(q{
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_model;
     uniform mat4 u_view;
@@ -343,10 +345,9 @@ private immutable string gridVertSrc = q{
         vWorldPos   = (u_model * vec4(aPos, 1.0)).xyz;
         gl_Position = u_proj * u_view * vec4(vWorldPos, 1.0);
     }
-};
+});
 
-private immutable string gridFragSrc = q{
-    #version 330 core
+private immutable string gridFragSrc = withShaderPreamble(q{
     uniform vec3  u_color;
     uniform float u_maxDist;     // world-space fade radius
     uniform vec2  u_screenSize;  // 3D viewport size in fb pixels
@@ -368,7 +369,7 @@ private immutable string gridFragSrc = q{
 
         fragColor = vec4(u_color, distAlpha * edgeAlpha);
     }
-};
+});
 
 // ---------------------------------------------------------------------------
 // Shader helpers
@@ -495,7 +496,7 @@ private enum string thickLineVertexBody = q{
 
 version (web) {
     immutable string thickLineVertexSrc =
-        "#version 300 es\nprecision highp float;\n" ~ thickLineVertexBody;
+        withShaderPreamble(thickLineVertexBody);
 } else {
     immutable string thickLineVertexSrc =
         "#version 330 core\n" ~ thickLineVertexBody;
@@ -587,10 +588,31 @@ private enum string thickLineFragmentBody = q{
 
 version (web) {
     immutable string thickLineFragSrc =
-        "#version 300 es\nprecision highp float;\n" ~ thickLineFragmentBody;
+        withShaderPreamble(thickLineFragmentBody);
 } else {
     immutable string thickLineFragSrc =
         "#version 330 core\n" ~ thickLineFragmentBody;
+}
+
+// Compile-time inspection seam for the permanent WebGL2 validator.  It
+// returns the actual constants consumed by the program builders; the browser
+// gate therefore cannot accidentally validate a second, test-owned rewrite.
+string shaderSourceForValidation(string name) pure @safe {
+    switch (name) {
+    case "vertexShaderSrc": return vertexShaderSrc;
+    case "fragmentShaderSrc": return fragmentShaderSrc;
+    case "fillFragSrc": return fillFragSrc;
+    case "imagePlaneVertSrc": return imagePlaneVertSrc;
+    case "imagePlaneFragSrc": return imagePlaneFragSrc;
+    case "litVertSrc": return litVertSrc;
+    case "litFragSrc": return litFragSrc;
+    case "checkerFragSrc": return checkerFragSrc;
+    case "gridVertSrc": return gridVertSrc;
+    case "gridFragSrc": return gridFragSrc;
+    case "thickLineVertexSrc": return thickLineVertexSrc;
+    case "thickLineFragSrc": return thickLineFragSrc;
+    default: assert(false, "unknown shader source: " ~ name);
+    }
 }
 
 class Shader {
