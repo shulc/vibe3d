@@ -1761,13 +1761,14 @@ struct GpuMesh {
     /// this, hovering on the subdivided surface highlighted the wrong
     /// preview vert because the cage index from picking was being
     /// used as a raw glDrawArrays offset.
-    void drawVertices(GLint locColor, int hovered, MarkView selected,
+    void drawVertices(GLint locColor, GLint locPointSize,
+                      int hovered, MarkView selected,
                       OccludedPass occ = OccludedPass.init) {
         glBindVertexArray(vertVao);
 
         // All vertices — small dots in the WIREFRAME colour, with depth test.
         // One scheme row serves both; see `SchemeColor.wireframe`.
-        glPointSize(pointSizePx(kBasePointSize, false));
+        glUniform1f(locPointSize, pointSizePx(kBasePointSize, false));
         immutable Vec3 wireCol = schemeColor(SchemeColor.wireframe);
         glUniform3f(locColor, wireCol.x, wireCol.y, wireCol.z);
         dcArrays(DrawPass.verts, GL_POINTS, 0, vertCount);
@@ -1833,7 +1834,7 @@ struct GpuMesh {
         // the `OccludedPass` header for the law. The point SIZE is set inside,
         // so both passes draw the same dot.
         void emitHighlights() {
-            glPointSize(pointSizePx(kBasePointSize, true));
+            glUniform1f(locPointSize, pointSizePx(kBasePointSize, true));
             glUniform3f(locColor, selCol.x, selCol.y, selCol.z);
             if (selected.anySet()) {
                 int runStart = -1;
@@ -1860,7 +1861,7 @@ struct GpuMesh {
                 // (the reference's rollover pass asks for the selected size
                 // explicitly), and a law that holds only because of the order
                 // of two statements stops holding when they are reordered.
-                glPointSize(pointSizePx(kBasePointSize, true));
+                glUniform1f(locPointSize, pointSizePx(kBasePointSize, true));
                 glUniform3f(locColor, preCol.x, preCol.y, preCol.z);
                 int runStart = -1;
                 for (int i = 0; i <= vertCount; i++) {
@@ -1888,6 +1889,7 @@ struct GpuMesh {
         endHighlightPasses(occ, ranOccluded);
 
         glPointSize(1.0f);
+        glUniform1f(locPointSize, 1.0f);
         glBindVertexArray(0);
     }
 }

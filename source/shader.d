@@ -34,8 +34,10 @@ immutable string vertexShaderSrc = withShaderPreamble(q{
     uniform mat4 u_model;
     uniform mat4 u_view;
     uniform mat4 u_proj;
+    uniform float u_pointSize;
     void main() {
         gl_Position = u_proj * u_view * u_model * vec4(aPos, 1.0);
+        gl_PointSize = u_pointSize;
     }
 });
 
@@ -623,6 +625,7 @@ class Shader {
     GLint locColor;
     GLint locDim;
     GLint locAlpha;
+    GLint locPointSize;
 
     this() {
         program  = createProgram();
@@ -632,6 +635,7 @@ class Shader {
         locColor  = glGetUniformLocation(program, "u_color");
         locDim    = glGetUniformLocation(program, "u_dim");
         locAlpha  = glGetUniformLocation(program, "u_alpha");
+        locPointSize = glGetUniformLocation(program, "u_pointSize");
         // Seed the shared source's neutral uniforms ONCE, here, and not only
         // in useProgram(). GL initialises an unset uniform to 0, and this
         // program is also driven by a handful of call sites that bind it with

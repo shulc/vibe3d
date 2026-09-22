@@ -1058,11 +1058,12 @@ public:
     // absent, and it is the visible half of "kept but not drawn".
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex,
+        gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
                          mesh.selectedVertexView(), occluded);
     } else if (showVertHover && hoveredVertex >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex, MarkView.init, occluded);
+        gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
+                         MarkView.init, occluded);
     }
 
     // ---- Active tool / falloff gizmo draws ----

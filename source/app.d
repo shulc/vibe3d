@@ -1552,6 +1552,10 @@ void main(string[] args) {
     // display and the loop doesn't busy-spin; hidden --test stays vsync-off.
     SDL_GL_SetSwapInterval((perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
+    // Desktop GL requires this capability before a vertex shader's
+    // gl_PointSize output controls point rasterisation. WebGL2 / ES uses the
+    // shader output directly and does not expose GL_PROGRAM_POINT_SIZE.
+    version (web) {} else glEnable(GL_PROGRAM_POINT_SIZE);
     glViewport(0, 0, ifs.fbW, ifs.fbH);
 
     // ImGui
