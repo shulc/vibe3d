@@ -82,6 +82,21 @@ unittest
         assert(cast(void*) __traits(getMember, bindbc.opengl, name) !is null,
             "W16-LD closure slot stayed null: " ~ name);
     }
+
+    static foreach (name; ["glGetVertexAttribiv", "glGetVertexAttribPointerv",
+                           "glVertexAttribDivisor", "glDrawArraysInstanced"])
+    {
+        {
+            enum missingName = name ~ "\0";
+            clearSlots();
+            gMissingSymbol = missingName.ptr;
+            const thickLineMissing = loadWebOpenGL(
+                cast(WebGlProcLookup) &fakeLookup);
+            assert(thickLineMissing == name,
+                format("W16-B12 required GL slot was not rejected: expected "
+                     ~ "%s, got %s", name, thickLineMissing));
+        }
+    }
 }
 
 private struct DependencyGraph
@@ -265,10 +280,10 @@ unittest
     assert(appRaw.canFind(emscriptenContextBlock),
         "W16-LD Emscripten context must request OpenGL ES 3.0");
 
-    assert(requiredWebGlSymbols.length == 79
+    assert(requiredWebGlSymbols.length == 83
             && optionalDesktopGlSymbols ==
                ["glGetBufferSubData", "glPointSize", "glTexBuffer"]
-            && webClosureGlSymbols.length == 82,
+            && webClosureGlSymbols.length == 86,
         format("W16-LD GL threshold population changed: required=%d optional=%s "
              ~ "total=%d", requiredWebGlSymbols.length,
                optionalDesktopGlSymbols, webClosureGlSymbols.length));
