@@ -16,7 +16,10 @@
 // partial one cannot. Derivation: doc/measurements/w15/phase0_findings.md 14.25 and 14.26.
 //
 // This census is a POPULATION check with a floor, not a spelling check: a floor first, so it
-// cannot pass over an empty scan, then the exclusive count.
+// cannot pass over an empty scan, then the exclusive count. One target guard is deliberately
+// different: `version (WebAssembly)` immediately followed by a failing `static assert` rejects
+// a wasm build that missed the configured browser key. It grants no capability and is counted
+// exactly, so another capability gate cannot hide beside it.
 module tests.unit.web_seam_key_census_test;
 
 import std.algorithm : canFind, filter, map, sum;
@@ -43,8 +46,10 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
     const root = repoRoot();
     auto webRe  = regex(`version\s*\(\s*web\s*\)`);
     auto wasmRe = regex(`version\s*\(\s*WebAssembly\s*\)`);
+    auto wasmGuardRe = regex(
+        `version\s*\(\s*WebAssembly\s*\)\s*static\s+assert\s*\(`);
 
-    size_t files, webSites, wasmSites;
+    size_t files, webSites, wasmSites, wasmGuardSites;
     string[] offenders;
     foreach (entry; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
     {
@@ -52,9 +57,11 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
         const text = readText(entry.name);
         const w = text.matchAll(webRe).array.length;
         const a = text.matchAll(wasmRe).array.length;
+        const g = text.matchAll(wasmGuardRe).array.length;
         webSites += w;
         wasmSites += a;
-        if (a) offenders ~= entry.name;
+        wasmGuardSites += g;
+        if (a != g) offenders ~= entry.name;
     }
 
     // FLOOR FIRST. Without it "no WebAssembly sites" is also true of a scan that read nothing,
@@ -66,13 +73,17 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
         "6910 web seam key census: the browser key has nearly vanished from source/; either "
       ~ "the seams were removed or this scan is looking in the wrong place");
 
-    // THE PROPERTY. One key, and the compiler-predefined alternative nowhere.
-    assert(wasmSites == 0,
-        "6910 web seam key census: source/ carries `version (WebAssembly)` again, which is a "
-      ~ "DIFFERENT predicate from `version (web)`: the compiler predefines it on any wasm "
-      ~ "triple while `web` comes only from a build configuration. Mixing them makes a build "
-      ~ "without that configuration HALF-gated, which is worse than a clean refusal because a "
-      ~ "partial failure reads as an unrelated compile error. Offenders: " ~ offenders.idup.to!string);
+    // THE PROPERTY. `WebAssembly` may reject a target that missed `web`, but may not grant a
+    // capability. Pin both halves so a vanished guard and a second capability key are red.
+    assert(wasmGuardSites == 1,
+        "6910 web seam key census: expected exactly one `version (WebAssembly)` target guard "
+      ~ "immediately followed by `static assert`, found " ~ wasmGuardSites.to!string);
+    assert(wasmSites == wasmGuardSites,
+        "6910 web seam key census: source/ carries `version (WebAssembly)` as a capability "
+      ~ "gate instead of the one failing target guard. The compiler predefines it on any wasm "
+      ~ "triple while `web` comes only from a build configuration, so mixing the capability "
+      ~ "keys makes a build without that configuration HALF-gated. Offenders: "
+      ~ offenders.idup.to!string);
 }
 
 private import std.conv : to;

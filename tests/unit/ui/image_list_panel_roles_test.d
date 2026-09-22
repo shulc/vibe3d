@@ -779,11 +779,14 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         "6040 production wiring: Images must bind sessionOwner+commandBinding and draw with main's itemRenameState");
     const cbAt = app.indexOf("commandBinding = new ApplicationCommandBinding(");
     const bindAt = app.indexOf("bindImageListPanel(sessionOwner");
-    const loopAt = app.indexOf("while (running) {");
-    const drawAt = app.indexOf("drawImageListPanel(imageListRoles.read");
+    enum frameMarker = "void frame() {";
+    assert(app.count(frameMarker) == 1,
+        "6040 production frame anchor must occur exactly once");
+    const frameAt = app.indexOf(frameMarker);
+    const frameBody = bodyAt(app, frameMarker);
+    const drawAt = frameBody.indexOf("drawImageListPanel(imageListRoles.read");
     assert(app.count("commandBinding = new ApplicationCommandBinding(") == 1
-        && app.count("while (running) {") == 1
-        && cbAt >= 0 && cbAt < bindAt && bindAt < loopAt && loopAt < drawAt,
+        && cbAt >= 0 && cbAt < bindAt && bindAt < frameAt && drawAt >= 0,
         "6040 production placement: bind after the one commandBinding assignment and before the frame loop; draw inside it");
     enum uiClosure = "uiCommandDelegate = (string id, string paramsJson) {\n"
         ~ "        commandBinding.dispatchUi(id, paramsJson);\n    };";

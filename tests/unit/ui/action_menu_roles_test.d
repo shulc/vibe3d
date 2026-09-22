@@ -845,12 +845,16 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         "uiCommandDelegate = (string id, string paramsJson) {");
     const bindAt = app.indexOf("auto actionMenuRoles = bindActionMenu(");
     const routerAssignAt = app.indexOf("router.fireAction =");
-    const loopAtApp = app.indexOf("while (running) {");
-    const sideDrawAt = app.indexOf("drawSidePanel(app, actionMenuRoles);");
-    const statusDrawAt = app.indexOf("drawStatusBar(app, actionMenuRoles);");
+    enum frameMarker = "void frame() {";
+    assert(app.count(frameMarker) == 1,
+        "6560 app frame anchor must occur exactly once");
+    const frameAt = app.indexOf(frameMarker);
+    const frameBody = bodyAt(app, frameMarker);
+    const sideDrawAt = frameBody.indexOf("drawSidePanel(app, actionMenuRoles);");
+    const statusDrawAt = frameBody.indexOf("drawStatusBar(app, actionMenuRoles);");
     assert(uiDelegateAt >= 0 && uiDelegateAt < bindAt
-        && bindAt < routerAssignAt && routerAssignAt < loopAtApp
-        && loopAtApp < sideDrawAt && sideDrawAt < statusDrawAt,
+        && bindAt < routerAssignAt && routerAssignAt < frameAt
+        && sideDrawAt >= 0 && sideDrawAt < statusDrawAt,
         "6560 app wiring order: bind and router assignment must precede the frame consumers");
     assert(panels.count("tryOpenArgsDialog") == 0,
         "6560 args policy: panels.d regained a second args-dialog door");

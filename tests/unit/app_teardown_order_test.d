@@ -101,7 +101,20 @@ private ScopeExit[] scanScopeExits(string source)
                 else if (c == '}') --declarationDepth;
             }
             const end = spanEnd(lines, lineNo);
-            const statement = normalise(lines[lineNo .. end + 1].join("\n"));
+            auto statement = normalise(lines[lineNo .. end + 1].join("\n"));
+            if (normalise(hit.pre) == "} else")
+            {
+                size_t previous = lineNo;
+                while (previous > 0 && lines[previous - 1].strip.length == 0)
+                    --previous;
+                assert(previous > 0
+                    && normalise(lines[previous - 1].strip) == "version (web) {",
+                    format("6770 scope(exit) at code line %d has an unrecognised `} else` owner",
+                        lineNo + 1));
+                statement = "version (web) { } else "
+                    ~ normalise(lines[lineNo][hit.pre.length .. $]
+                        ~ "\n" ~ lines[lineNo + 1 .. end + 1].join("\n"));
+            }
             rows ~= ScopeExit(stableKey(statement), statement,
                 !matchFirst(statement, teardownSymbolRe).empty,
                 declarationDepth);
@@ -152,6 +165,12 @@ unittest
         format("6770 teardown-rule population changed: expected 16, found %d; " ~
                "the rule is GL/SDL/ImGui/shutdownIPR/destroyGL/.destroy()/.shutdown()",
             selected.length));
+    const webGuarded = selected.filter!(row =>
+        row.text.startsWith("version (web) { } else ")).array;
+    assert(webGuarded.length == 14,
+        format("6770 web-gated teardown population changed: expected 14, found %d; " ~
+               "desktop LIFO order and web omission are both part of this ledger",
+            webGuarded.length));
     foreach (row; selected)
         assert(row.braceDepth == 1,
             format("6770 teardown declaration left main()'s shared top-level scope: " ~

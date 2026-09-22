@@ -607,9 +607,10 @@ unittest {
 /// confined-publisher and mesh-planes censuses, instead of three copies of the
 /// same arithmetic.
 private static immutable LedgerRow[] kRemainder = [
-    LedgerRow("main", 2,
+    LedgerRow("main.frame", 2,
         "the frame flush block: the missedPublishers shadow check, and the "
-      ~ "cage/preview upload fast path (row 3). Both are in `main` itself"),
+      ~ "cage/preview upload fast path (row 3). Both moved unchanged with the "
+      ~ "desktop loop body into nested `frame` (task 6970)"),
     LedgerRow("BvhPick.pickFace", 1,
         "row 6 — keys on the VBO content it rasterises from"),
     LedgerRow("GpuSelectBuffer.ensureSlot", 1,

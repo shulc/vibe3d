@@ -1327,11 +1327,15 @@ unittest {
         const commandBindingAt = flatApp.indexOf(
             "commandBinding = new ApplicationCommandBinding(");
         const bindAt = flatApp.indexOf(bindCall);
-        const loopAt = flatApp.indexOf("while (running) {");
-        const drawAt = flatApp.indexOf(drawCall);
-        assert(commandBindingAt >= 0 && bindAt >= 0 && loopAt >= 0
+        enum frameMarker = "void frame() {";
+        assert(flatApp.count(frameMarker) == 1,
+            "6060 C11 frame anchor must occur exactly once");
+        const frameAt = flatApp.indexOf(frameMarker);
+        const frameBody = bodyAt(flatApp, frameMarker);
+        const drawAt = frameBody.indexOf(drawCall);
+        assert(commandBindingAt >= 0 && bindAt >= 0 && frameAt >= 0
             && drawAt >= 0 && commandBindingAt < bindAt
-            && bindAt < loopAt && loopAt < drawAt,
+            && bindAt < frameAt,
             "6060 C11 placement: binder/draw no longer bracket the frame loop");
 
         enum guardedDraw =

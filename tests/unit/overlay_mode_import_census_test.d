@@ -307,7 +307,8 @@ unittest // K1-K9: whole-tree census
            format("owner-last overlay loops: %d", ownerLastLoops));
     const hits = symbolTokenHits(app, "source/app.d", "resolveOverlayMode(");
     const findings = reconcile([
-        LedgerRow("main.overlayDrawOrder", 1, "the owner-last N-cell loop")
+        LedgerRow("main.frame.overlayDrawOrder", 1,
+            "the owner-last N-cell loop moved unchanged into frame (task 6970)")
     ], hits);
     assert(findings.length == 0, findings);
 

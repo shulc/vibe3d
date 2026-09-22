@@ -29,6 +29,23 @@ private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");
 private enum int KEY_DOWN_ARROW = 516;
 
+private string bodyAt(string code, string marker) {
+    const at = code.indexOf(marker);
+    assert(at >= 0, "5850 census missing source marker " ~ marker);
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "5850 census found no body after " ~ marker);
+    const begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "5850 census found unterminated body after " ~ marker);
+    return null;
+}
+
 private ImVec2 center(ImVec2 lo, ImVec2 hi) {
     assert(hi.x > lo.x && hi.y > lo.y,
         "viewport properties widget did not publish a clickable rectangle");
@@ -292,10 +309,13 @@ unittest { // production wiring for the collaborators built above
         ~ "        commandBinding.dispatchUi(id, paramsJson);\n    };") == 1,
         "5850 production dispatch witness: panel dispatch no longer reaches the application command binding");
 
-    const reloadAt = app.indexOf("layoutResetAction.reloadBeforeFrame();");
-    const loopAt = app.indexOf("while (running) {");
-    const newFrameAt = app.indexOf("ImGui.NewFrame();", reloadAt);
-    assert(loopAt >= 0 && loopAt < reloadAt && reloadAt < newFrameAt
+    enum frameMarker = "void frame() {";
+    assert(app.count(frameMarker) == 1,
+        "5850 production frame anchor must occur exactly once");
+    const frameBody = bodyAt(app, frameMarker);
+    const reloadAt = frameBody.indexOf("layoutResetAction.reloadBeforeFrame();");
+    const newFrameAt = frameBody.indexOf("ImGui.NewFrame();", reloadAt);
+    assert(reloadAt >= 0 && reloadAt < newFrameAt
         && app.count("layoutResetAction.reloadBeforeFrame();") == 1,
         "5850 production reload witness: reset ini is not consumed once inside the frame loop before NewFrame");
     assert(app.count(

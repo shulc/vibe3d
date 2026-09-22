@@ -3,19 +3,19 @@
 # Refresh (the generator reads source/app.d, so this output path is safe):
 #     rdmd -version=TeardownOrderLedgerTool -I. tests/unit/app_teardown_order_test.d > tests/unit/app_teardown_order_ledger.txt
 # Then read the diff and review the reverse-execution consequence.
-scope 51613f1523970087 scope(exit) SDL_Quit();
+scope ce8003c65d02f4c9 version (web) { } else scope(exit) SDL_Quit();
 scope 2425692b34a8678e scope(exit) ai3dWorkerManager.shutdown();
-scope ab091ce0ff4c3f8c scope(exit) SDL_DestroyWindow(window);
-scope d635a715a8aabd11 scope(exit) SDL_GL_DeleteContext(ctx);
-scope 6102ee2341ebb76f scope(exit) { ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui.DestroyContext(); }
+scope 972926aa4e2eefb6 version (web) { } else scope(exit) SDL_DestroyWindow(window);
+scope b237f6b9b8b0440f version (web) { } else scope(exit) SDL_GL_DeleteContext(ctx);
+scope 5b02d9237d8315c1 version (web) { } else scope(exit) { ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui.DestroyContext(); }
 scope 3dc9d413b494ddbe version (WithRender) scope(exit) shutdownIPR();
-scope 2872d899693fac55 scope(exit) glDeleteProgram(thickLineProgram);
-scope 5ce89499d340035f scope(exit) glDeleteProgram(fillProgram);
-scope 0262cc8e1ba12ef3 scope(exit) glDeleteProgram(imagePlaneProgram);
-scope 4dd3b5c9c09a1059 scope(exit) { if (subpatchPreview.worker !is null) { subpatchPreview.joinInFlight(); subpatchPreview.worker.shutdown(); } }
-scope 7dd1d1a386288652 scope(exit) gpu.destroy();
-scope a0bca2a831495f49 scope(exit) vpm.shutdown();
-scope 08ccdeac42502b20 scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
-scope 06ee8fee1d8bf931 scope(exit) { if (activeTool) { assert(activationDoorFor(ToolTransition.shutdownDrop) == ActivationDoor.legacyDeactivate, ~ ); activeTool.deactivate(); activeTool.destroy(); } }
-scope 67004b2d1b504701 scope(exit) pipeGizmoHost.destroyGL();
-scope 0eee145ef1562d4b scope(exit) frameRunner.shutdown();
+scope 35f5b681d37482cb version (web) { } else scope(exit) glDeleteProgram(thickLineProgram);
+scope f6a5c96d493f2fd1 version (web) { } else scope(exit) glDeleteProgram(fillProgram);
+scope 33ad5f3263d30ce1 version (web) { } else scope(exit) glDeleteProgram(imagePlaneProgram);
+scope 47280d97d3a5a79b version (web) { } else scope(exit) { if (subpatchPreview.worker !is null) { subpatchPreview.joinInFlight(); subpatchPreview.worker.shutdown(); } }
+scope 56320549341d4fd4 version (web) { } else scope(exit) gpu.destroy();
+scope 7135e4ebff6a890b version (web) { } else scope(exit) vpm.shutdown();
+scope f526839261bb69aa version (web) { } else scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
+scope 5262d178ff1299db version (web) { } else scope(exit) { if (activeTool) { assert(activationDoorFor(ToolTransition.shutdownDrop) == ActivationDoor.legacyDeactivate, ~ ); activeTool.deactivate(); activeTool.destroy(); } }
+scope 6c5ca675ada5e6c7 version (web) { } else scope(exit) pipeGizmoHost.destroyGL();
+scope 7b1bb04fe19361d9 version (web) { } else scope(exit) frameRunner.shutdown();

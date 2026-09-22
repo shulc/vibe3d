@@ -3,10 +3,27 @@ module tests.unit.frame_probe_window_wiring_test;
 
 import std.file : readText;
 import std.path : buildPath, dirName;
-import std.string : count, indexOf, lastIndexOf, strip;
+import std.string : count, indexOf, strip;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+
+private string bodyAt(string code, string marker) {
+    const at = code.indexOf(marker);
+    assert(at >= 0, "6357 census missing source marker " ~ marker);
+    size_t i = cast(size_t)at;
+    while (i < code.length && code[i] != '{') ++i;
+    assert(i < code.length, "6357 census found no body after " ~ marker);
+    const begin = i;
+    size_t depth;
+    for (; i < code.length; ++i) {
+        if (code[i] == '{') ++depth;
+        else if (code[i] == '}' && --depth == 0)
+            return code[begin .. i + 1];
+    }
+    assert(false, "6357 census found unterminated body after " ~ marker);
+    return null;
+}
 
 unittest {
     const app = readText(buildPath(repoRoot, "source", "app.d"));
@@ -96,17 +113,20 @@ unittest { // 6357: frame-count service is the unique pre-probe owner boundary
     enum timing = "g_frames.beginFrame();";
     enum allocation = "g_fc.beginFrame();";
     enum drain = "httpServer.tickAll();";
+    enum frameMarker = "void frame() {";
     assert(app.count(service) == 1,
         "6357 owner boundary requires exactly one frame-count call in app.d");
-    immutable timingAt = app.indexOf(timing);
-    immutable serviceAt = app.indexOf(service);
-    immutable allocationAt = app.indexOf(allocation);
-    immutable drainAt = app.indexOf(drain);
-    immutable loopAt = app.lastIndexOf("while (running) {", timingAt);
-    assert(loopAt >= 0 && serviceAt > loopAt && timingAt > serviceAt
+    assert(app.count(frameMarker) == 1,
+        "6357 frame anchor must occur exactly once");
+    immutable frame = bodyAt(app, frameMarker);
+    immutable timingAt = frame.indexOf(timing);
+    immutable serviceAt = frame.indexOf(service);
+    immutable allocationAt = frame.indexOf(allocation);
+    immutable drainAt = frame.indexOf(drain);
+    assert(serviceAt >= 0 && timingAt > serviceAt
         && allocationAt > timingAt && drainAt > allocationAt,
         "6357 frame-count owner service must precede both probe begins and the general drain");
-    auto prefix = app[loopAt + "while (running) {".length .. timingAt]
+    auto prefix = frame[1 .. timingAt]
         .replaceAll(regex(`\s+`), " ").strip;
     assert(prefix == "if (httpServer.running) httpServer.tickFrameCounts(g_fc); "
         ~ "if (httpServer.running) httpServer.tickFrames(g_frames);",

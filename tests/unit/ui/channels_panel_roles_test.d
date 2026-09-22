@@ -1300,14 +1300,18 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     const commandBindingAt = flatApp.indexOf(
         "commandBinding = new ApplicationCommandBinding(");
     const bindAt = flatApp.indexOf(bindCall);
-    const loopAt = flatApp.indexOf("while (running) {");
-    const guardAt = flatApp.indexOf(
+    enum frameMarker = "void frame() {";
+    assert(flatApp.count(frameMarker) == 1,
+        "6050 production frame anchor must occur exactly once");
+    const frameAt = flatApp.indexOf(frameMarker);
+    const frameBody = bodyAt(flatApp, frameMarker);
+    const guardAt = frameBody.indexOf(
         "if (!command.g_testMode || g_channelsShown) {");
-    const drawAt = flatApp.indexOf(drawCall);
-    assert(commandBindingAt >= 0 && bindAt >= 0 && loopAt >= 0
+    const drawAt = frameBody.indexOf(drawCall);
+    assert(commandBindingAt >= 0 && bindAt >= 0 && frameAt >= 0
         && guardAt >= 0 && drawAt >= 0
-        && commandBindingAt < bindAt && bindAt < loopAt
-        && loopAt < guardAt && guardAt < drawAt,
+        && commandBindingAt < bindAt && bindAt < frameAt
+        && guardAt < drawAt,
         "6050 production placement: bind/draw no longer bracket the frame loop guard");
 
     enum uiClosure =

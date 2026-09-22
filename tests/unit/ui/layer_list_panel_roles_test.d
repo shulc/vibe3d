@@ -1107,12 +1107,16 @@ unittest { // production binder, call sites and the retired EditorApp path
     const commandBindingAt = flatApp.indexOf(
         "commandBinding = new ApplicationCommandBinding(");
     const bindAt = flatApp.indexOf(bindCall);
-    const loopAt = flatApp.indexOf("while (running) {");
+    enum frameMarker = "void frame() {";
+    assert(flatApp.count(frameMarker) == 1,
+        "6030 production frame anchor must occur exactly once");
+    const frameAt = flatApp.indexOf(frameMarker);
+    const frameBody = bodyAt(flatApp, frameMarker);
     enum drawCall =
         "drawLayerListPanel(layerListRoles.read, layerListRoles.actions, layerListRoles.state, itemRenameState);";
-    const drawAt = flatApp.indexOf(drawCall);
-    assert(commandBindingAt >= 0 && bindAt >= 0 && loopAt >= 0 && drawAt >= 0
-        && commandBindingAt < bindAt && bindAt < loopAt && loopAt < drawAt
+    const drawAt = frameBody.indexOf(drawCall);
+    assert(commandBindingAt >= 0 && bindAt >= 0 && frameAt >= 0 && drawAt >= 0
+        && commandBindingAt < bindAt && bindAt < frameAt
         && flatApp.count(drawCall) == 1,
         "6030 production placement: binder/draw no longer bracket the frame loop");
     assert(app.count("toolHost.getActiveTool   = () => activeTool;") == 1,
