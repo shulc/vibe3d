@@ -296,6 +296,40 @@ import ui.viewport_props_role : ViewportCommandDispatch,
 import layout_reset_action : LayoutResetAction;
 import guarded_action_controller : GuardedActionController;
 
+version (web) {
+    /// Receipt authored by the production panel drawers for the browser gate.
+    /// A separate probe window would only prove that ImGui can draw a stand-in.
+    struct WebPanelProbeSnapshot {
+        bool sideDrawn;
+        bool tabDrawn;
+        bool statusDrawn;
+        bool targetDrawn;
+        bool targetHovered;
+        bool targetActive;
+        bool targetClicked;
+        int targetIndex;
+        ImVec2 targetMin;
+        ImVec2 targetMax;
+        string targetTitle;
+    }
+
+    private __gshared WebPanelProbeSnapshot g_webPanelProbe;
+
+    void beginWebPanelProbeFrame() {
+        const hovered = g_webPanelProbe.targetHovered;
+        const active = g_webPanelProbe.targetActive;
+        const clicked = g_webPanelProbe.targetClicked;
+        g_webPanelProbe = WebPanelProbeSnapshot();
+        g_webPanelProbe.targetHovered = hovered;
+        g_webPanelProbe.targetActive = active;
+        g_webPanelProbe.targetClicked = clicked;
+    }
+
+    WebPanelProbeSnapshot webPanelProbeSnapshot() {
+        return g_webPanelProbe;
+    }
+}
+
 version (WithAI) import commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
 version (WithAI) {
     import commands.copilot.analyze        : CopilotAnalyzeCommand;
@@ -516,6 +550,7 @@ void drawTabPanel(EditorApp app) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Tab bar", null, tabFlags))
     {
+        version (web) g_webPanelProbe.tabDrawn = true;
         publishPanelZone("tabPanel");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();
@@ -523,8 +558,20 @@ void drawTabPanel(EditorApp app) {
         enum float btnW = 90.0f;
         foreach (i, ref p; panels) {
             bool on = (cast(int)i == activePanelIdx);
-            if (renderStyledButton(p.title, "", on, /*isCommand=*/true,
-                                   ImVec2(btnW, 0)))
+            const clicked = renderStyledButton(p.title, "", on,
+                                                /*isCommand=*/true,
+                                                ImVec2(btnW, 0));
+            version (web) if (i == 0) {
+                g_webPanelProbe.targetDrawn = true;
+                g_webPanelProbe.targetIndex = 0;
+                g_webPanelProbe.targetMin = ImGui.GetItemRectMin();
+                g_webPanelProbe.targetMax = ImGui.GetItemRectMax();
+                g_webPanelProbe.targetTitle = p.title;
+                if (ImGui.IsItemHovered()) g_webPanelProbe.targetHovered = true;
+                if (ImGui.IsItemActive()) g_webPanelProbe.targetActive = true;
+                if (clicked) g_webPanelProbe.targetClicked = true;
+            }
+            if (clicked)
                 activePanelIdx = cast(int)i;
             if (i + 1 < panels.length)
                 ImGui.SameLine();
@@ -955,6 +1002,7 @@ void drawSidePanel(EditorApp app, ActionMenuRoles menu) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
     {
+        version (web) g_webPanelProbe.sideDrawn = true;
         publishPanelZone("sidePanel");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();
@@ -1019,8 +1067,9 @@ void drawSidePanel(EditorApp app, ActionMenuRoles menu) {
             bool effDisabled = unavailable.disabled;
             recordDrawnButton("side", label, action.kind, action.id,
                               effDisabled, unavailWhy);
-            if (renderStyledButton(label, sc, on, isCommand,
-                                   ImVec2(-1, 0), effDisabled)) {
+            const clicked = renderStyledButton(label, sc, on, isCommand,
+                                                ImVec2(-1, 0), effDisabled);
+            if (clicked) {
                 if (action.kind == ActionKind.popup)
                     ImGui.OpenPopup(popupWidgetId(btn.label, variant));
                 else
@@ -1133,6 +1182,7 @@ void drawStatusBar(EditorApp app, ActionMenuRoles menu) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Status line", null, statusFlags))
     {
+        version (web) g_webPanelProbe.statusDrawn = true;
         publishPanelZone("statusBar");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();

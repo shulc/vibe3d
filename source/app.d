@@ -73,6 +73,10 @@ import sdl_error : sdlError;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+version (web) {
+    extern(C) nothrow @nogc bool igIsMouseClicked_Bool(ImGuiMouseButton button, bool repeat);
+    extern(C) nothrow @nogc bool igIsMouseReleased_Nil(ImGuiMouseButton button);
+}
 version (web) extern(C) nothrow @nogc ImVec2 igGetMousePos();
 import imgui_impl_sdl2;
 import imgui_event_gate : clearImGuiInputKeysForAutomation, feedImGui,
@@ -4985,6 +4989,8 @@ void main(string[] args) {
         pushPopupStyle, popPopupStyle,
         drawQuitGuardModal,
         drawCommandHistoryPanel;
+    version (web) import ui.panels : beginWebPanelProbeFrame,
+        webPanelProbeSnapshot;
     version (web) {
     } else {
         import ui.panels : drawAi3dModal, drawRemeshModal;
@@ -5169,7 +5175,10 @@ void main(string[] args) {
                 // dispatch, both of which bypass this queue. SDL_QUIT and
                 // SDL_WINDOWEVENT stay routed so the window can still be
                 // closed (X button / SIGINT).
-                if (testMode &&
+                bool suppressTestInput = testMode;
+                version (web) if (webFirstFrameProbe)
+                    suppressTestInput = false;
+                if (suppressTestInput &&
                     (event.type == SDL_KEYDOWN
                   || event.type == SDL_KEYUP
                   || event.type == SDL_TEXTINPUT
@@ -5184,6 +5193,12 @@ void main(string[] args) {
                 immutable bool eventAccepted = router.processEvent(
                     &event, eventWindowFocused);
                 version (web) {
+                    if (webFirstFrameProbe
+                        && (event.type == SDL_MOUSEBUTTONDOWN
+                         || event.type == SDL_MOUSEBUTTONUP))
+                        writefln("WEB-PANELS-INPUT type=%d mouse=%d,%d accepted=%s",
+                            event.type, event.button.x, event.button.y,
+                            eventAccepted);
                     if (webFirstFrameProbe && eventAccepted
                         && event.type == SDL_MOUSEMOTION
                         && event.motion.x == 321 && event.motion.y == 234) {
@@ -5281,6 +5296,10 @@ void main(string[] args) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui.NewFrame();
+        version (web) static bool webPanelReadyReported;
+        version (web) static bool webPanelPressedReported;
+        version (web) static bool webPanelReleasedReported;
+        version (web) beginWebPanelProbeFrame();
         version (web) {
             // feedImGui queues the SDL payload; NewFrame is the production
             // consumer that commits it to ImGuiIO. Observe it on a later frame
@@ -5598,6 +5617,30 @@ void main(string[] args) {
         frameRunner.tickParameterEvaluation(session);
         drawSidePanel(app, actionMenuRoles);
         drawTabPanel(app);
+        version (web) if (webFirstFrameProbe && webPanelReadyReported) {
+            const panelProbe = webPanelProbeSnapshot();
+            const ImVec2 mouse = igGetMousePos();
+            const overTarget = mouse.x >= panelProbe.targetMin.x
+                && mouse.x < panelProbe.targetMax.x
+                && mouse.y >= panelProbe.targetMin.y
+                && mouse.y < panelProbe.targetMax.y;
+            if (!webPanelPressedReported && overTarget
+                && (panelProbe.targetActive
+                    || igIsMouseClicked_Bool(ImGuiMouseButton.Left, false))) {
+                writefln("WEB-PANELS-PRESSED source=imgui-button phase=downstream-clicked content=%s targetIndex=%d frame=%d",
+                    panelProbe.targetTitle, panelProbe.targetIndex,
+                    webProbeFrameOrdinal);
+                webPanelPressedReported = true;
+            }
+            if (webPanelPressedReported && !webPanelReleasedReported
+                && overTarget && (panelProbe.targetClicked
+                    || igIsMouseReleased_Nil(ImGuiMouseButton.Left))) {
+                writefln("WEB-PANELS-RELEASED source=imgui-button phase=downstream-released content=%s targetIndex=%d frame=%d",
+                    panelProbe.targetTitle, panelProbe.targetIndex,
+                    webProbeFrameOrdinal);
+                webPanelReleasedReported = true;
+            }
+        }
 
         version (web) {
         } else {
@@ -5770,6 +5813,22 @@ void main(string[] args) {
         // history read role, application actions, and the concrete X offset.
         drawCommandHistoryPanel(historyPanelState, historyPanelRead,
                                 historyPanelActions, layout.sideW + 10);
+
+        version (web) {
+            const panelProbe = webPanelProbeSnapshot();
+            if (webFirstFrameProbe && !webPanelReadyReported
+                && panelProbe.sideDrawn && panelProbe.tabDrawn
+                && panelProbe.statusDrawn && panelProbe.targetDrawn) {
+                const int x = cast(int)((panelProbe.targetMin.x + panelProbe.targetMax.x) * 0.5f);
+                const int y = cast(int)((panelProbe.targetMin.y + panelProbe.targetMax.y) * 0.5f);
+                writefln("WEB-PANELS-READY backends=sdl2,opengl3 dockspace=drawn panels=side,tab,status content=%s targetIndex=%d rect=%d,%d,%d,%d click=%d,%d",
+                    panelProbe.targetTitle, panelProbe.targetIndex,
+                    cast(int)panelProbe.targetMin.x, cast(int)panelProbe.targetMin.y,
+                    cast(int)panelProbe.targetMax.x, cast(int)panelProbe.targetMax.y,
+                    x, y);
+                webPanelReadyReported = true;
+            }
+        }
 
         // ---- Close the zone frame (task 1810) ------------------------------
         // HERE, and not next to `endButtonAvailabilityFrame` above, which is

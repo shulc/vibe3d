@@ -71,6 +71,11 @@ try {
   let inputSent = false;
   let inputAckAt = 0;
   let windowInputSent = false;
+  let panelPressSent = false;
+  let panelReleaseSent = false;
+  let panelMoveSentAt = 0;
+  let panelCssPoint;
+  let panelReadyAt = 0;
   while (Date.now() - started < deadlineMs) {
     const result = await send('Runtime.evaluate', {
       expression: "document.querySelector('#report')?.textContent || ''",
@@ -124,10 +129,56 @@ try {
     if (inputAckAt && Date.now() - inputAckAt > 1500
         && !/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report))
       throw new Error(`downstream ImGui receipt missing after SDL/router ACK:\n${report}`);
-    if (/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report)) break;
+    const panel = report.match(/^OUT WEB-PANELS-READY .* click=(\d+),(\d+)$/m);
+    if (panel && !panelReadyAt) panelReadyAt = Date.now();
+    if (panel && inputAckAt && !panelMoveSentAt) {
+      const logicalX = Number(panel[1]);
+      const logicalY = Number(panel[2]);
+      const metrics = await send('Runtime.evaluate', {
+        expression: `(() => { const c = document.querySelector('canvas'); const r = c.getBoundingClientRect(); return {left:r.left,top:r.top,width:r.width,height:r.height,pixelWidth:c.width,pixelHeight:c.height}; })()`,
+        returnByValue: true
+      });
+      const m = metrics.result.value;
+      const x = m.left + logicalX * m.width / m.pixelWidth;
+      const y = m.top + logicalY * m.height / m.pixelHeight;
+      panelCssPoint = { x, y };
+      await send('Runtime.evaluate', { expression: `document.querySelector('canvas').focus()` });
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x, y, buttons: 0, pointerType: 'mouse'
+      });
+      panelMoveSentAt = Date.now();
+    }
+    // Give SDL/ImGui one production frame to consume the move before the
+    // press; coalescing both CDP events can otherwise hide the active frame.
+    if (panelMoveSentAt && !panelPressSent && Date.now() - panelMoveSentAt >= 150) {
+      const { x, y } = panelCssPoint;
+      await send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x, y, button: 'left', clickCount: 1
+      });
+      panelPressSent = true;
+    }
+    if (panelPressSent && !panelReleaseSent
+        && /^OUT WEB-PANELS-PRESSED source=imgui-button phase=downstream-clicked /m.test(report)) {
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: panelCssPoint.x, y: panelCssPoint.y,
+        button: 'left', clickCount: 1
+      });
+      panelReleaseSent = true;
+    }
+    if (panelReadyAt && Date.now() - panelReadyAt > 5000
+        && !/^OUT WEB-PANELS-PRESSED /m.test(report))
+      throw new Error(`production panel did not acknowledge press:\n${report}`);
+    if (panelReleaseSent && Date.now() - panelReadyAt > 7000
+        && !/^OUT WEB-PANELS-RELEASED /m.test(report))
+      throw new Error(`production panel did not acknowledge release:\n${report}`);
+    if (/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report)
+        && /^OUT WEB-PANELS-RELEASED /m.test(report)) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (!/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report))
+  if (!/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report)
+      || !/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report)
+      || !/^OUT WEB-PANELS-PRESSED /m.test(report)
+      || !/^OUT WEB-PANELS-RELEASED /m.test(report))
     throw new Error(`browser receipt deadline after ${deadlineMs}ms:\n${report}`);
 
   const dom = await send('Runtime.evaluate', {

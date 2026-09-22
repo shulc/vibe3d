@@ -11,6 +11,10 @@ artifact_root="$repo_root/.build/web-artifacts"
 for artifact in vibe3d.js vibe3d.wasm vibe3d.data; do
     [[ -s "$artifact_root/$artifact" ]] || { echo "missing artifact: $artifact_root/$artifact" >&2; exit 2; }
 done
+grep -Eq '^[[:space:]]*4294901760;$' "$artifact_root/vibe3d.js" || {
+    echo "web artifact does not expose the wasm32 4GiB-minus-one-page growth ceiling" >&2
+    exit 2
+}
 
 scratch=$(mktemp -d "${TMPDIR:-/var/tmp}/vibe3d-web-runner.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
@@ -22,14 +26,16 @@ for mode in normal spreset; do
         python3 "$repo_root/tools/spreset.py" "$artifact_root/vibe3d.js" "$js"
     fi
     python3 - "$artifact_root" "$js" "$scratch/$mode.html" "$mode" <<'PY'
-import base64, pathlib, sys
+import base64, pathlib, re, sys
 root, js_path, output = map(pathlib.Path, sys.argv[1:4])
 mode = sys.argv[4]
 wasm = base64.b64encode((root / "vibe3d.wasm").read_bytes()).decode()
 data = base64.b64encode((root / "vibe3d.data").read_bytes()).decode()
-js = js_path.read_text().replace(
-    "var fetched = Module['getPreloadedPackage'] && Module['getPreloadedPackage'](REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE);",
-    "var fetched = window.__vibeData;")
+js, replacements = re.subn(
+    r'''var fetched = Module\[['"]getPreloadedPackage['"]\] && Module\[['"]getPreloadedPackage['"]\]\(REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE\);''',
+    "var fetched = window.__vibeData;", js_path.read_text())
+if replacements != 1:
+    raise SystemExit(f"expected exactly one preload hook replacement, got {replacements}")
 token = f"w16-r-{mode}-argv"
 html = f'''<!doctype html><meta charset="utf-8"><style>html,body{{margin:0;overflow:hidden}}canvas{{display:block;width:800px;height:600px}}#report{{display:none}}</style>
 <canvas id="canvas" width="1280" height="720"></canvas><pre id="report">BOOT mode={mode}</pre>
@@ -42,10 +48,11 @@ const append = (kind, value) => {{
 }};
 var Module = {{
   canvas,
-  arguments: ['--web-first-frame-probe', '--web-probe-argument', '{token}', '--no-http', '--window', '800x600'],
+  arguments: ['--web-first-frame-probe', '--web-probe-argument', '{token}', '--test', '--visible', '--no-http', '--window', '800x600'],
   wasmBinary: Uint8Array.from(atob('{wasm}'), c => c.charCodeAt(0)),
   print: x => append('OUT', x),
   printErr: x => append('ERR', x),
+  preRun: [() => {{ ENV.VIBE3D_TEST_VIEWPORT_WINDOWS = '1'; }}],
   onRuntimeInitialized: () => report.textContent += '\\nRUNTIME-READY'
 }};
 window.__vibeData = Uint8Array.from(atob('{data}'), c => c.charCodeAt(0)).buffer;
@@ -66,11 +73,17 @@ PY
     live=$(grep -Eo "OUT WEB-RUNNER-LIVE args=w16-r-$mode-argv input=mouse-motion source=imgui-io generation=new-frame mouse=321,234 context=live frame=[0-9]+ inputFrame=[0-9]+" "$scratch/$mode.dom" | head -1 || true)
     window=$(grep -Eo 'OUT WEB-WINDOW-READY window=800x600 framebuffer=800x600 dpiRc=0 dpi=[0-9.]+ icon=page-owned' "$scratch/$mode.dom" | head -1 || true)
     window_input=$(grep -Eo 'OUT WEB-WINDOW-INPUT source=router-consumers generation=production keyboard=down\+up text=imgui buttons=down\+up wheel=handler resize=layout focus=owned window=640x480 framebuffer=640x480 layout=490x424' "$scratch/$mode.dom" | head -1 || true)
+    panels=$(grep -Eo 'OUT WEB-PANELS-READY backends=sdl2,opengl3 dockspace=drawn panels=side,tab,status content=Basic targetIndex=0 rect=[0-9,]+ click=[0-9,]+' "$scratch/$mode.dom" | head -1 || true)
+    pressed=$(grep -Eo 'OUT WEB-PANELS-PRESSED source=imgui-button phase=downstream-clicked content=Basic targetIndex=0 frame=[0-9]+' "$scratch/$mode.dom" | head -1 || true)
+    released=$(grep -Eo 'OUT WEB-PANELS-RELEASED source=imgui-button phase=downstream-released content=Basic targetIndex=0 frame=[0-9]+' "$scratch/$mode.dom" | head -1 || true)
     [[ -n $receipt ]] || { echo "$mode: first-frame receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $ack ]] || { echo "$mode: routed input acknowledgement missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $live ]] || { echo "$mode: argv/input/live-context receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $window ]] || { echo "$mode: initial window/DPI/framebuffer receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $window_input ]] || { echo "$mode: browser window/input receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
+    [[ -n $panels ]] || { echo "$mode: production panel receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
+    [[ -n $pressed ]] || { echo "$mode: production panel pressed receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
+    [[ -n $released ]] || { echo "$mode: production panel released receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     python3 - "$ack" "$live" <<'PY'
 import re, sys
 ack, live = sys.argv[1:]
@@ -82,5 +95,7 @@ if reported_input != input_frame or live_frame <= input_frame:
 PY
     viewport=${receipt##*viewport=}
     python3 "$repo_root/tools/check_web_frame_pixels.py" "$scratch/$mode.png" "$viewport"
-    echo "WEB-RUNNER mode=$mode build=O2 runtime=ready frame=1 argv=intact closure=invoked stack=reset-safe input=mouse-motion window-input=complete context=live"
+    panel_rect=$(sed -E 's/.* rect=([0-9,]+) click=.*/\1/' <<<"$panels")
+    python3 "$repo_root/tools/check_web_panel_pixels.py" "$scratch/$mode.png" "$panel_rect"
+    echo "WEB-RUNNER mode=$mode build=O2 runtime=ready frame=1 argv=intact closure=invoked stack=reset-safe input=mouse-motion window-input=complete context=live panels=visible,interactive"
 done
