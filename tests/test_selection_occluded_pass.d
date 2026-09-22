@@ -124,6 +124,7 @@ import std.math    : round, abs;
 import std.algorithm : count;
 import std.file : readText;
 import std.path : buildPath, dirName;
+import std.string : indexOf, splitLines, strip, startsWith;
 import core.thread : Thread;
 import core.time   : msecs;
 
@@ -144,6 +145,16 @@ private string withoutWhitespace(string source) {
     return result;
 }
 
+// The seam below is deliberately documented between its calls. Remove only
+// whole-line comments so the exact executable sequence remains comparable.
+private string withoutLineComments(string source) {
+    string result;
+    foreach (line; source.splitLines) {
+        if (!line.strip.startsWith("//")) result ~= line;
+    }
+    return result;
+}
+
 // W16-C's production call-site census. This lives in the same focused
 // executable as the pixel witness so a narrow run proves both the wiring and
 // its raster result. It does not rebuild an equivalent shader of its own.
@@ -153,7 +164,6 @@ unittest {
     const app = readText(buildPath(repoRoot, "source", "app.d"));
     const viewport = readText(buildPath(repoRoot, "source", "ui",
                                         "viewport_render.d"));
-    const compactMeshGpu = meshGpu.withoutWhitespace;
     const compactApp = app.withoutWhitespace;
     assert(meshGpu.count("glUniform1f(locPointSize, pointSizePx(") == 3,
         "W16-C requires exactly three pointSizePx uniform writes");
@@ -161,6 +171,8 @@ unittest {
         "W16-C pointSizePx must not use fixed-function point sizing");
     assert(meshGpu.count("glPointSize(1.0f)") == 1,
         "W16-C separate fixed-function 1px cleanup moved");
+    assert(meshGpu.count("glUniform1f(locPointSize, 1.0f)") == 1,
+        "W16-C shader point-size cleanup must have exactly one production site");
     assert(shaderCode.count("gl_PointSize = u_pointSize;") == 1,
         "W16-C shared vertex shader must assign its point-size uniform once");
     assert(shaderCode.count(`glGetUniformLocation(program, "u_pointSize")`) == 1,
@@ -173,13 +185,27 @@ unittest {
         ~ "compiled out of the web arm");
     assert(app.count("glEnable(GL_PROGRAM_POINT_SIZE)") == 1,
         "W16-C requires exactly one desktop program-point-size enable");
-    assert(compactMeshGpu.count(
+    const drawVerticesAt = meshGpu.indexOf("void drawVertices(");
+    const endPassesAt = meshGpu.indexOf(
+        "endHighlightPasses(occ, ranOccluded);", drawVerticesAt);
+    const webGuardAt = meshGpu.indexOf("version (web)", endPassesAt);
+    const desktopResetAt = meshGpu.indexOf("glPointSize(1.0f);", webGuardAt);
+    const shaderResetAt = meshGpu.indexOf(
+        "glUniform1f(locPointSize, 1.0f);", desktopResetAt);
+    const releaseAt = meshGpu.indexOf("glBindVertexArray(0);", shaderResetAt);
+    const resetSlice = releaseAt >= 0
+        ? meshGpu[endPassesAt .. releaseAt + "glBindVertexArray(0);".length]
+        : "";
+    assert(drawVerticesAt >= 0 && endPassesAt > drawVerticesAt
+        && webGuardAt > endPassesAt && desktopResetAt > webGuardAt
+        && shaderResetAt > desktopResetAt && releaseAt > shaderResetAt
+        && resetSlice.withoutLineComments.withoutWhitespace ==
             "endHighlightPasses(occ,ranOccluded);"
-            ~ "glPointSize(1.0f);"
+            ~ "version(web){}elseglPointSize(1.0f);"
             ~ "glUniform1f(locPointSize,1.0f);"
-            ~ "glBindVertexArray(0);") == 1,
-        "W16-C drawVertices must reset fixed-function and shader point size "
-        ~ "after both highlight passes and before releasing the VAO");
+            ~ "glBindVertexArray(0);",
+        "W16-C/W16-L drawVertices must compile out desktop glPointSize on web, "
+        ~ "then reset shader point size before releasing the VAO");
 }
 
 // ---------------------------------------------------------------------------

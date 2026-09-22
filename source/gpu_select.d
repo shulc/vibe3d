@@ -408,13 +408,14 @@ public:
         int rh = y1 - y0 + 1;
         if (rw <= 0 || rh <= 0) return false;
 
-        uint[] buf = new uint[](rw * rh);
+        uint[] buf = new uint[](rw * rh * 4);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glReadBuffer(GL_COLOR_ATTACHMENT0);
-        glReadPixels(x0, y0, rw, rh, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
+        readIdPixels(x0, y0, rw, rh, buf);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        foreach (px; buf) {
+        for (size_t i = 0; i < buf.length; i += 4) {
+            const px = buf[i];
             if (px != 0) return true;
         }
         return false;
@@ -465,13 +466,14 @@ public:
         }
         bool[] visible = new bool[](maxId);
 
-        uint[] buf = new uint[](fboW * fboH);
+        uint[] buf = new uint[](fboW * fboH * 4);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glReadBuffer(GL_COLOR_ATTACHMENT0);
-        glReadPixels(0, 0, fboW, fboH, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
+        readIdPixels(0, 0, fboW, fboH, buf);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        foreach (px; buf) {
+        for (size_t i = 0; i < buf.length; i += 4) {
+            const px = buf[i];
             if (px == 0) continue;
             immutable uint id = px - 1;
             if (id < maxId) visible[id] = true;
@@ -692,10 +694,10 @@ private:
         int rh = y1 - y0 + 1;
         if (rw <= 0 || rh <= 0) return -1;
 
-        uint[] buf = new uint[](rw * rh);
+        uint[] buf = new uint[](rw * rh * 4);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glReadBuffer(GL_COLOR_ATTACHMENT0);
-        glReadPixels(x0, y0, rw, rh, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
+        readIdPixels(x0, y0, rw, rh, buf);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // The (2r+1)² readback window includes corner pixels with
@@ -709,7 +711,7 @@ private:
         int  bestDist = r + 1;
         uint bestId   = 0;
         foreach (j; 0 .. rh) foreach (i; 0 .. rw) {
-            uint id = buf[j * rw + i];
+            uint id = buf[(j * rw + i) * 4];
             if (id == 0) continue;
             int px = x0 + i;
             int py = y0 + j;
@@ -719,6 +721,17 @@ private:
         }
         if (bestId == 0) return -1;
         return cast(int)(bestId - 1);
+    }
+
+    /// Read the R32UI attachment through WebGL2's required integer readback
+    /// pair.  Desktop GL also accepts this pair.  Although the attachment has
+    /// one component, RGBA_INTEGER writes four uints per pixel; callers read
+    /// the red lane and size their buffers accordingly.  Keeping the GL call
+    /// here makes it impossible for one of the three picker paths to drift
+    /// back to the implementation-dependent RED_INTEGER pair.
+    void readIdPixels(int x, int y, int w, int h, uint[] rgba) {
+        assert(rgba.length == cast(size_t)w * cast(size_t)h * 4);
+        glReadPixels(x, y, w, h, GL_RGBA_INTEGER, GL_UNSIGNED_INT, rgba.ptr);
     }
 
     void ensureSize(int w, int h) {
