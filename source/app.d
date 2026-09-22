@@ -78,6 +78,7 @@ version (web) {
     extern(C) nothrow @nogc bool igIsMouseReleased_Nil(ImGuiMouseButton button);
 }
 version (web) extern(C) nothrow @nogc ImVec2 igGetMousePos();
+version (web) extern(C) nothrow @nogc bool igIsKeyDown_Nil(ImGuiKey key);
 import imgui_impl_sdl2;
 import imgui_event_gate : clearImGuiInputKeysForAutomation, feedImGui,
     keyBelongsToEditor;
@@ -5065,6 +5066,8 @@ void main(string[] args) {
         version (web) static bool webProbeFirstFrameReported;
         version (web) static uint webLastWindowInputMask;
         version (web) static bool webWindowInputReported;
+        version (web) static bool webProbeInputReported;
+        version (web) static ulong webProbeDelayedInputFrame;
         version (web) ++webProbeFrameOrdinal;
         version (web) {
             import handles.gl_util : beginWebThickLineReceipt;
@@ -5225,6 +5228,22 @@ void main(string[] args) {
                             webWindowInputReported = true;
                         }
                     }
+                    if (webFirstFrameProbe && webProbeInputReported
+                        && eventAccepted && event.type == SDL_KEYDOWN
+                        && event.key.keysym.sym == SDLK_a) {
+                        writefln("WEB-EDITOR-DELAYED-KEY-ROUTED source=sdl generation=input-router frame=%d key=a",
+                            webProbeFrameOrdinal);
+                    }
+                    if (webFirstFrameProbe && webProbeInputReported
+                        && eventAccepted && event.type == SDL_MOUSEMOTION
+                        && event.motion.x == 654 && event.motion.y == 345) {
+                        webProbeDelayedInputFrame = webProbeFrameOrdinal;
+                        webProbeMouseX = event.motion.x;
+                        webProbeMouseY = event.motion.y;
+                        writefln("WEB-EDITOR-DELAYED-INPUT source=sdl generation=router frame=%d mouse=%d,%d",
+                            webProbeDelayedInputFrame, webProbeMouseX,
+                            webProbeMouseY);
+                    }
                 }
                 if (!eventAccepted) {
                     running = false;
@@ -5304,8 +5323,12 @@ void main(string[] args) {
             // feedImGui queues the SDL payload; NewFrame is the production
             // consumer that commits it to ImGuiIO. Observe it on a later frame
             // so the terminal receipt cannot merely echo the router payload.
-            static bool webProbeInputReported;
+            static bool webProbeDelayedInputReported;
             const ImVec2 consumedMouse = igGetMousePos();
+            // cimgui 1.92.8's generated ImGuiKey_A value.  The D binding
+            // currently exposes only the subset used by ordinary UI code.
+            enum ImGuiKey webProbeKeyA = cast(ImGuiKey)546;
+            const bool consumedDelayedKey = igIsKeyDown_Nil(webProbeKeyA);
             if (webFirstFrameProbe && webProbeFirstFrameReported
                 && webProbeInputFrame > 0
                 && webProbeFrameOrdinal > webProbeInputFrame
@@ -5319,6 +5342,19 @@ void main(string[] args) {
                     liveContext is null ? "lost" : "live",
                     webProbeFrameOrdinal, webProbeInputFrame);
                 webProbeInputReported = true;
+            }
+            if (webFirstFrameProbe && webProbeInputReported
+                && webProbeDelayedInputFrame > 0
+                && webProbeFrameOrdinal > webProbeDelayedInputFrame
+                && !webProbeDelayedInputReported
+                && consumedDelayedKey
+                && cast(int)consumedMouse.x == webProbeMouseX
+                && cast(int)consumedMouse.y == webProbeMouseY) {
+                writefln("WEB-EDITOR-DELAYED-LIVE input=mouse+key source=imgui-io generation=new-frame mouse=%d,%d context=%s frame=%d inputFrame=%d",
+                    cast(int)consumedMouse.x, cast(int)consumedMouse.y,
+                    SDL_GL_GetCurrentContext() is null ? "lost" : "live",
+                    webProbeFrameOrdinal, webProbeDelayedInputFrame);
+                webProbeDelayedInputReported = true;
             }
         }
 
