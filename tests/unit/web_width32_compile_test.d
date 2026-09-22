@@ -128,9 +128,10 @@ SH";
             closurePaths ~= *path;
         }
     }
-    // Measured on 8e32c5ee from the web dependency graph. This is the population floor:
+    // Measured on the current W16 LD+B12 stack at
+    // b777bc26e50e45da10f70889fed2d1ada5891237. This is the population floor:
     // successful dmd over fewer (or zero) files must not masquerade as a clean width pass.
-    enum expectedWebModules = 525;
+    enum expectedWebModules = 526;
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));
