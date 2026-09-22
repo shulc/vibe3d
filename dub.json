@@ -328,6 +328,9 @@
 		{
 			"name": "web",
 			"versions": ["web"],
+			"subConfigurations": {
+				"bindbc-sdl": "static"
+			},
 			"libs-wasm": [
 				"dbvh_c",
 				"osdc",
@@ -336,7 +339,11 @@
 			],
 			"lflags-wasm": [
 				"-L$PACKAGE_DIR/.build/web-deps/lib",
-				"$PACKAGE_DIR/.build/web-deps/lib/libcimgui_docking.a"
+				"$PACKAGE_DIR/.build/web-deps/lib/libcimgui_docking.a",
+				"-sUSE_SDL=2",
+				"-sMIN_WEBGL_VERSION=2",
+				"-sMAX_WEBGL_VERSION=2",
+				"-sFULL_ES3"
 			],
 			"excludedSourceFiles": [
 				"source/ai3d/job_controller.d",

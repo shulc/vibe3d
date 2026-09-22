@@ -9,6 +9,8 @@ import std.conv;
 import std.json : JSONValue, JSONType;
 
 version (web) {
+    import web_gl_loader : loadWebOpenGL;
+
     private alias EmscriptenMainLoopArg = extern(C) void function(void*);
     version (Emscripten) {
         private extern(C) void emscripten_set_main_loop_arg(
@@ -1171,7 +1173,8 @@ void main(string[] args) {
 
     // Prefer the SDL2 bundled in the .app (self-contained release); fall back
     // to the system/dev SDL2 otherwise. See bundledSDL2Path() for the why.
-    version (OSX) {
+    version (web) {
+    } else version (OSX) {
         import std.string : toStringz;
         const sdlBundled = bundledSDL2Path();
         const sdlResult  = sdlBundled !is null ? loadSDL(sdlBundled.toStringz) : loadSDL();
@@ -1360,8 +1363,15 @@ void main(string[] args) {
     if (perfMode) evPlay.fastForward = true;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    version (Emscripten) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    } else {
+        // Native --config=web is the live loader witness until the later
+        // shader slices replace desktop GLSL; keep that witness on Core 3.3.
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    }
     // SDL's default depth size is 16 bits. Linux drivers tend to hand back a
     // 24-bit depth buffer anyway, but on Windows the pixel-format chooser
     // honours the 16-bit request literally — and with drawFaces' worth of
@@ -1514,7 +1524,14 @@ void main(string[] args) {
     version (web) {
     } else scope(exit) SDL_GL_DeleteContext(ctx);
 
-    if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }
+    version (web) {
+        if (auto missing = loadWebOpenGL()) {
+            writefln("Failed to load WebGL2 / OpenGL ES 3 function: %s", missing);
+            return;
+        }
+    } else {
+        if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }
+    }
     writefln("OpenGL: %s", glGetString(GL_VERSION));
 
     // Framebuffer size (may differ on HiDPI / Retina). Task 0781 step 1a

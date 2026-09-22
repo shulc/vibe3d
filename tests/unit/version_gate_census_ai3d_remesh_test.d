@@ -532,7 +532,7 @@ sed -i 's|^|-version=|' "$out/versions.txt"
 sed -i 's|^|-L-l|' "$out/libs.txt"
 sed -i 's|^|-L|' "$out/lflags.txt"
 sed -i 's|^|-J=|' "$out/string-import-paths.txt"
-dmd -i -debug \
+dmd -i=-bindbc.sdl -i=-sdl -i -debug \
   @"$out/import-paths.txt" -I=. @"$out/versions.txt" \
   @"$out/dflags.txt" @"$out/string-import-paths.txt" \
   $(tr '\n' ' ' < "$out/linker-files.txt") \
