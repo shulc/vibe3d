@@ -27,11 +27,13 @@ unittest
         "W16-R input receipt must follow the production router");
     assert(app.count("SDL_GL_GetCurrentContext()") >= 2,
         "W16-R live receipt must query the current production GL context");
-    assert(app.count("consumedMouse.x == webProbeMouseX") == 1
+    // Two downstream ImGui owners are intentional: W16-R's startup receipt
+    // and task 7080's delayed liveness receipt.  Both sit after NewFrame.
+    assert(app.count("consumedMouse.x == webProbeMouseX") == 2
         && app.indexOf("consumedMouse.x == webProbeMouseX") > app.indexOf("ImGui.NewFrame();"),
         "W16-R terminal receipt must read ImGui's consumed input after NewFrame");
-    assert(app.count("source=imgui-io generation=new-frame") == 1,
-        "W16-R live browser receipt must name its downstream consumer");
+    assert(app.count("source=imgui-io generation=new-frame") == 2,
+        "both startup and delayed live receipts must name their downstream consumer");
 
     assert(runner.count("for mode in normal spreset") == 1,
         "W16-R must run normal and stack-reset modes exactly once");

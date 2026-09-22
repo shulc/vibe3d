@@ -577,6 +577,7 @@ tests.unit.viewport_scheme_test
 tests.unit.viewport_test
 tests.unit.vmap_policy_law_test
 tests.unit.web_browser_runner_test
+tests.unit.web_editor_page_test
 tests.unit.web_gl_loader_test
 tests.unit.web_seam_key_census_test
 tests.unit.web_width32_compile_test
