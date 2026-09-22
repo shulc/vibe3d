@@ -124,10 +124,10 @@ try {
     if (inputAckAt && Date.now() - inputAckAt > 1500
         && !/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report))
       throw new Error(`downstream ImGui receipt missing after SDL/router ACK:\n${report}`);
-    if (/^OUT WEB-WINDOW-INPUT .* resize=seen /m.test(report)) break;
+    if (/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report)) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (!/^OUT WEB-WINDOW-INPUT .* resize=seen /m.test(report))
+  if (!/^OUT WEB-WINDOW-INPUT .* resize=layout /m.test(report))
     throw new Error(`browser receipt deadline after ${deadlineMs}ms:\n${report}`);
 
   const dom = await send('Runtime.evaluate', {

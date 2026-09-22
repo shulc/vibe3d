@@ -11,6 +11,7 @@ private string repoFile(string path)
 unittest
 {
     const app = repoFile("source/app.d");
+    const router = repoFile("source/input_router.d");
     const runner = repoFile("tools/test_web_browser_runner.sh");
     const reset = repoFile("tools/spreset.py");
 
@@ -68,9 +69,31 @@ unittest
         && runner.count("WEB-WINDOW-INPUT") == 1
         && runner.indexOf("window=640x480 framebuffer=640x480") >= 0,
         "W16-E runner must pin logical and drawable resize results");
-    assert(app.count("WEB-WINDOW-INPUT source=sdl generation=router") == 1
-        && app.count("completeWindowInputMask") == 2,
-        "W16-E receipt must follow the production SDL/router seam");
+    assert(app.count("WEB-WINDOW-INPUT source=router-consumers generation=production") == 1
+        && app.count("router.webConsumedInputMask") == 4
+        && app.count("router.winW, router.winH") == 1
+        && app.count("router.fbW, router.fbH,\n"
+                     ~ "                                layout.vpW, layout.vpH") == 1,
+        "W16-E terminal receipt must read router-owned resize state");
+    assert(router.count("webConsumedInputMask |= webKeyDownBit") == 1
+        && router.count("webConsumedInputMask |= webKeyUpBit") == 1
+        && router.count("webConsumedInputMask |= webTextBit") == 1
+        && router.count("webConsumedInputMask |= webButtonDownBit") == 1
+        && router.count("webConsumedInputMask |= webButtonUpBit") == 1
+        && router.count("webConsumedInputMask |= webWheelBit") == 1
+        && router.count("webConsumedInputMask |= webResizeBit") == 1,
+        "W16-E each browser family needs one production-owned consumer witness");
+    assert(router.count("case SDL_KEYDOWN:         handleKeyDown(ev.key);") == 1
+        && router.count("case SDL_KEYUP:           handleKeyUp(ev.key);") == 1
+        && router.count("handleMouseButtonDown(ev.button);") == 1
+        && router.count("handleMouseButtonUp(ev.button);") == 1
+        && router.count("case SDL_MOUSEWHEEL:      handleMouseWheel(ev.wheel);") == 1
+        && router.count("immutable bool imguiAccepted = feedImGui(ev);") == 1
+        && router.count("case SDL_WINDOWEVENT:     handleWindowEvent(ev.window);") == 1,
+        "W16-E dispatch census must redden if a production consumer is bypassed");
+    assert(router.count("applyWindowMetrics(layout, vpm, winW, winH);") == 1
+        && runner.indexOf("layout=490x424") >= 0,
+        "W16-E resize must reach layout and pin its downstream dimensions");
     assert(app.indexOf("version (web) return;") >= 0
         && app.indexOf("version (web) return;") < app.indexOf("SDL_SetWindowIcon(window, surf)"),
         "W16-E web icon path must remain page-owned and skip SDL's no-op hook");

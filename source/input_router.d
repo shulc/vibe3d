@@ -150,6 +150,21 @@ import buttonset            : Action;
 /// already are. Grows towards the other five handlers only once their
 /// shared-surface question (see module doc comment) has an owner's answer.
 struct InputRouter {
+    version (web) {
+        // W16-E browser witness.  These bits are written by the production
+        // consumers below, never by main()'s SDL loop, so removing a dispatch
+        // arm (or rejecting text before the ImGui backend) makes the live
+        // receipt incomplete instead of merely echoing event.type.
+        enum uint webKeyDownBit     = 1u << 0;
+        enum uint webKeyUpBit       = 1u << 1;
+        enum uint webTextBit        = 1u << 2;
+        enum uint webButtonDownBit  = 1u << 3;
+        enum uint webButtonUpBit    = 1u << 4;
+        enum uint webWheelBit       = 1u << 5;
+        enum uint webResizeBit      = 1u << 6;
+        enum uint webCompleteMask   = (1u << 7) - 1;
+        uint webConsumedInputMask;
+    }
     EditorApp app;
     void delegate(ref Action) fireAction;
 
@@ -419,6 +434,7 @@ struct InputRouter {
                 // Keep replay-time pixel remapping calibrated to the new layout.
                 setReplayCurrentViewport(layout.vpX, layout.vpY,
                                          layout.vpW, layout.vpH, kFovY);
+                version (web) webConsumedInputMask |= webResizeBit;
             }
         }
     }
@@ -433,6 +449,7 @@ struct InputRouter {
     // mutation that no-ops this handler's body is caught by value, not by
     // inference.
     void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
+        version (web) webConsumedInputMask |= webWheelBit;
         with (app) {
             if (wheel.y == 0) return;
             // Coupled zoom (task 0217): a wheel zoom over a default follower
@@ -480,6 +497,7 @@ struct InputRouter {
     // assertion each one reddened with.
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
+        version (web) webConsumedInputMask |= webKeyDownBit;
         with (app) {
             // Keyboard priority (task 5911; escape_ladder_test EL-b): pie grab,
             // focused text field, popup gate, armed tool (no Esc consumer), YAML
@@ -727,6 +745,7 @@ struct InputRouter {
     // inferred -- and `ifs.buildToolVts` is the same explicit-binding rule
     // stated at the block comment above, for the same reason.
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
+        version (web) webConsumedInputMask |= webKeyUpBit;
         SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
         if (app.activeTool && app.activeTool.onKeyUp(kev, vts)) return;
     }
@@ -1899,7 +1918,9 @@ struct InputRouter {
         // not a focus move. The rule, and why it has no `WantTextInput`
         // carve-out, are in `source/imgui_event_gate.d`; do not re-inline this
         // call, a unittest scans `source/` for a second caller.
-        feedImGui(ev);
+        immutable bool imguiAccepted = feedImGui(ev);
+        version (web) if (ev.type == SDL_TEXTINPUT && imguiAccepted)
+            webConsumedInputMask |= webTextBit;
         if (pieConsumedKeyUp) return true;
 
         // Route through viewportInputAllowed() so mouse events over the docked
@@ -1993,8 +2014,14 @@ struct InputRouter {
             // Task 0709 — the release side of the pair above. Absent until
             // this task, which is what made `Tool.onKeyUp` unreachable.
             case SDL_KEYUP:           handleKeyUp(ev.key);        break;
-            case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button); break;
-            case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);   break;
+            case SDL_MOUSEBUTTONDOWN:
+                handleMouseButtonDown(ev.button);
+                version (web) webConsumedInputMask |= webButtonDownBit;
+                break;
+            case SDL_MOUSEBUTTONUP:
+                handleMouseButtonUp(ev.button);
+                version (web) webConsumedInputMask |= webButtonUpBit;
+                break;
             case SDL_MOUSEWHEEL:      handleMouseWheel(ev.wheel);   break;
             case SDL_MOUSEMOTION:     handleMouseMotion(ev.motion); break;
             default: break;

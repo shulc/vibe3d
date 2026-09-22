@@ -65,7 +65,7 @@ PY
     ack=$(grep -Eo 'OUT WEB-RUNNER-INPUT-ACK source=sdl generation=router frame=[0-9]+ mouse=321,234' "$scratch/$mode.dom" | head -1 || true)
     live=$(grep -Eo "OUT WEB-RUNNER-LIVE args=w16-r-$mode-argv input=mouse-motion source=imgui-io generation=new-frame mouse=321,234 context=live frame=[0-9]+ inputFrame=[0-9]+" "$scratch/$mode.dom" | head -1 || true)
     window=$(grep -Eo 'OUT WEB-WINDOW-READY window=800x600 framebuffer=800x600 dpiRc=0 dpi=[0-9.]+ icon=page-owned' "$scratch/$mode.dom" | head -1 || true)
-    window_input=$(grep -Eo 'OUT WEB-WINDOW-INPUT source=sdl generation=router keyboard=down\+up text=input buttons=down\+up wheel=seen resize=seen focus=owned window=640x480 framebuffer=640x480' "$scratch/$mode.dom" | head -1 || true)
+    window_input=$(grep -Eo 'OUT WEB-WINDOW-INPUT source=router-consumers generation=production keyboard=down\+up text=imgui buttons=down\+up wheel=handler resize=layout focus=owned window=640x480 framebuffer=640x480 layout=490x424' "$scratch/$mode.dom" | head -1 || true)
     [[ -n $receipt ]] || { echo "$mode: first-frame receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $ack ]] || { echo "$mode: routed input acknowledgement missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $live ]] || { echo "$mode: argv/input/live-context receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }

@@ -5057,7 +5057,7 @@ void main(string[] args) {
         version (web) static int webProbeMouseX = -1;
         version (web) static int webProbeMouseY = -1;
         version (web) static bool webProbeFirstFrameReported;
-        version (web) static uint webWindowInputMask;
+        version (web) static uint webLastWindowInputMask;
         version (web) static bool webWindowInputReported;
         version (web) ++webProbeFrameOrdinal;
         version (web) {
@@ -5195,34 +5195,18 @@ void main(string[] args) {
                             webProbeMouseY);
                     }
                     if (webFirstFrameProbe && eventAccepted) {
-                        immutable uint priorWindowInputMask = webWindowInputMask;
-                        switch (event.type) {
-                            case SDL_KEYDOWN:         webWindowInputMask |= 1u << 0; break;
-                            case SDL_KEYUP:           webWindowInputMask |= 1u << 1; break;
-                            case SDL_TEXTINPUT:       webWindowInputMask |= 1u << 2; break;
-                            case SDL_MOUSEBUTTONDOWN: webWindowInputMask |= 1u << 3; break;
-                            case SDL_MOUSEBUTTONUP:   webWindowInputMask |= 1u << 4; break;
-                            case SDL_MOUSEWHEEL:      webWindowInputMask |= 1u << 5; break;
-                            case SDL_WINDOWEVENT:
-                                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
-                                    webWindowInputMask |= 1u << 6;
-                                break;
-                            default: break;
-                        }
-                        if (webWindowInputMask != priorWindowInputMask)
+                        if (router.webConsumedInputMask != webLastWindowInputMask) {
                             writefln("WEB-WINDOW-INPUT-STEP event=%d mask=0x%x",
-                                event.type, webWindowInputMask);
-                        enum uint completeWindowInputMask = (1u << 7) - 1;
+                                event.type, router.webConsumedInputMask);
+                            webLastWindowInputMask = router.webConsumedInputMask;
+                        }
                         if (!webWindowInputReported
-                            && webWindowInputMask == completeWindowInputMask) {
-                            int measuredWinW, measuredWinH;
-                            int measuredFbW, measuredFbH;
-                            SDL_GetWindowSize(window, &measuredWinW, &measuredWinH);
-                            SDL_GL_GetDrawableSize(window, &measuredFbW, &measuredFbH);
-                            writefln("WEB-WINDOW-INPUT source=sdl generation=router keyboard=down+up text=input buttons=down+up wheel=seen resize=seen focus=%s window=%dx%d framebuffer=%dx%d",
+                            && router.webConsumedInputMask == router.webCompleteMask) {
+                            writefln("WEB-WINDOW-INPUT source=router-consumers generation=production keyboard=down+up text=imgui buttons=down+up wheel=handler resize=layout focus=%s window=%dx%d framebuffer=%dx%d layout=%dx%d",
                                 SDL_GetKeyboardFocus() == window ? "owned" : "lost",
-                                measuredWinW, measuredWinH,
-                                measuredFbW, measuredFbH);
+                                router.winW, router.winH,
+                                router.fbW, router.fbH,
+                                layout.vpW, layout.vpH);
                             webWindowInputReported = true;
                         }
                     }
