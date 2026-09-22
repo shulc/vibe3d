@@ -238,6 +238,8 @@ unittest
         "-Xcc=-sMIN_WEBGL_VERSION=2",
         "-Xcc=-sMAX_WEBGL_VERSION=2",
         "-Xcc=-sFULL_ES3",
+        "-Xcc=-sALLOW_MEMORY_GROWTH=1",
+        "-Xcc=-sMAXIMUM_MEMORY=4GB",
         "-Xcc=-sINCOMING_MODULE_JS_API=arguments,canvas,wasmBinary,print,printErr,onRuntimeInitialized",
         "-Xcc=--preload-file=$PACKAGE_DIR/config@/config",
     ];

@@ -61,8 +61,10 @@ unittest
     // it must not replace that downstream test with a self-authored event.
     assert(cdp.indexOf("W16-E deliberately starts after W16-R") >= 0
         && cdp.count("Input.dispatchKeyEvent") == 2
-        && cdp.count("type: 'mousePressed'") == 1
-        && cdp.count("type: 'mouseReleased'") == 1
+        // W16-E owns the 10,10 window-family pair; W16-F adds one pair at
+        // the measured production panel rect and waits between its halves.
+        && cdp.count("type: 'mousePressed'") == 2
+        && cdp.count("type: 'mouseReleased'") == 2
         && cdp.count("type: 'mouseWheel'") == 1,
         "W16-E browser input families escaped the native CDP lane");
     assert(runner.count("WEB-WINDOW-READY") == 1
