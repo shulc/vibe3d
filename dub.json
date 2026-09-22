@@ -337,13 +337,23 @@
 				"osdCPU",
 				"osdGPU"
 			],
+			"dflags-wasm": [
+				"-gcc=$PACKAGE_DIR/tools/emcc_web_driver.sh",
+				"-defaultlib=phobos2-ldc,druntime-ldc",
+				"-Xcc=-sDEFAULT_TO_CXX=1",
+				"-Xcc=-sUSE_SDL=2",
+				"-Xcc=-sMIN_WEBGL_VERSION=2",
+				"-Xcc=-sMAX_WEBGL_VERSION=2",
+				"-Xcc=-sFULL_ES3",
+				"-Xcc=-sINCOMING_MODULE_JS_API=arguments,canvas,wasmBinary,print,printErr,onRuntimeInitialized",
+				"-Xcc=--preload-file=$PACKAGE_DIR/config@/config"
+			],
 			"lflags-wasm": [
 				"-L$PACKAGE_DIR/.build/web-deps/lib",
+				"-L$PACKAGE_DIR/.build/web-runtime/lib",
 				"$PACKAGE_DIR/.build/web-deps/lib/libcimgui_docking.a",
-				"-sUSE_SDL=2",
-				"-sMIN_WEBGL_VERSION=2",
-				"-sMAX_WEBGL_VERSION=2",
-				"-sFULL_ES3"
+				"$PACKAGE_DIR/.build/web-runtime/lib/libphobos2-ldc.a",
+				"$PACKAGE_DIR/.build/web-runtime/lib/libdruntime-ldc.a"
 			],
 			"excludedSourceFiles": [
 				"source/ai3d/job_controller.d",

@@ -29,7 +29,7 @@ fi
 source "$emsdk_root/emsdk_env.sh" >/dev/null
 export PATH="/usr/bin:$PATH"
 
-for tool in dub emcmake cmake ninja emar python3; do
+for tool in dub git emcmake cmake ninja emar python3; do
     if ! command -v "$tool" >/dev/null; then
         echo "required tool not found after emsdk setup: $tool" >&2
         exit 2
@@ -60,6 +60,13 @@ osd_src=$(package_path d-opensubdiv)
 bvh_src=$(package_path d-bvh)
 stb_src=$(package_path d-stb-image)
 
+# Dub clones git dependencies without populating their submodules. Do this in
+# the build-local DUB_HOME selected by build_web.sh; never repair the shared
+# native package cache as a side effect of a browser build.
+for package_root in "$imgui_src" "$osd_src" "$bvh_src" "$stb_src"; do
+    git -C "$package_root" submodule update --init --recursive
+done
+
 for required in \
     "$imgui_src/extern/cimgui/cimgui.cpp" \
     "$osd_src/extern/OpenSubdiv/CMakeLists.txt" \
@@ -81,6 +88,11 @@ cmake -E copy "$imgui_src/CMakeLists.txt" "$source_root/d_imgui/CMakeLists.txt"
 cmake -E copy_directory "$imgui_src/cmake" "$source_root/d_imgui/cmake"
 cmake -E copy_directory "$imgui_src/extern" "$source_root/d_imgui/extern"
 cmake -E copy_directory "$imgui_src/source" "$source_root/d_imgui/source"
+
+# WebAssembly validates indirect-call signatures. Refuse upstream drift instead
+# of applying a broad sed that can silently patch zero or several functions.
+python3 "$repo_root/tools/patch_imgui_font_atlas_abi.py" \
+    "$source_root/d_imgui/source/imgui_vibe3d.cpp"
 
 emcmake cmake -S "$source_root/d_imgui" -B "$build_root/d_imgui" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
