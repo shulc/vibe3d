@@ -26,7 +26,8 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 /// false in headless contexts (`dub test`, future CLI tools) so
 /// OsdAccel.buildPreview doesn't try to call GL functions without a
 /// context and segfault.
-__gshared bool g_osdGpuEnabled = false;
+version (web) enum bool g_osdGpuEnabled = false;
+else __gshared bool g_osdGpuEnabled = false;
 
 version (unittest)
     __gshared size_t g_osdWholeShortEdgeLookupBuilds;

@@ -2353,7 +2353,8 @@ void main(string[] args) {
     // see doc/osd_gpu_evaluator_phase3.md); this log line gives us a
     // canary that the Phase 2 plumbing is sound before we depend on
     // it.
-    {
+    version (web) {
+    } else {
         import subpatch_osd : runGlEvaluatorSmokeTest, g_osdGpuEnabled;
         immutable float delta = runGlEvaluatorSmokeTest();
         // Sub-mm match against CPU eval → the GPU stencil kernel

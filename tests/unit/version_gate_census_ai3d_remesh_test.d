@@ -2,7 +2,7 @@ module tests.unit.version_gate_census_ai3d_remesh_test;
 
 import tests.unit.census_symbols : isIdentChar;
 
-import std.algorithm : sort, startsWith;
+import std.algorithm : count, sort, startsWith;
 import std.array : join;
 import std.file : exists, readText, remove, tempDir, write;
 import std.format : format;
@@ -134,6 +134,35 @@ unittest
         assert(isGatedTarget(moduleName), moduleName);
     foreach (moduleName; ["ai.model_adapter", "commands.mesh.bevel", "ui.panels"])
         assert(!isGatedTarget(moduleName), moduleName);
+}
+
+// W16-OSD production-wiring census.  The web build must make the GPU
+// evaluator gate immutable, while the native build retains the one smoke-test
+// writer which enables it only after comparing GPU and CPU results.  The
+// dependency-graph compile later in this module is the semantic witness: if
+// the app.d version gate is removed, the web arm attempts to assign this enum
+// and compilation fails.
+unittest
+{
+    const osd = readText(buildPath(repoRoot, "source", "subpatch_osd.d"));
+    const app = readText(buildPath(repoRoot, "source", "app.d"));
+
+    enum webGate = "version (web) enum bool g_osdGpuEnabled = false;\n"
+                 ~ "else __gshared bool g_osdGpuEnabled = false;";
+    assert(osd.count(webGate) == 1,
+        format("W16-OSD evaluator gate roster changed: expected one web enum/native "
+             ~ "mutable declaration, got %d", osd.count(webGate)));
+    assert(osd.count("g_osdGpuEnabled ? osdc_gl_create(osd) : null") == 1,
+        "W16-OSD production evaluator selection must have exactly one gate reader");
+
+    enum nativeSmoke =
+        "    version (web) {\n"
+      ~ "    } else {\n"
+      ~ "        import subpatch_osd : runGlEvaluatorSmokeTest, g_osdGpuEnabled;";
+    assert(app.count(nativeSmoke) == 1,
+        "W16-OSD app wiring must compile the GL evaluator smoke writer only on native");
+    assert(app.count("g_osdGpuEnabled = true;") == 1,
+        "W16-OSD native smoke must remain the sole GPU evaluator gate writer");
 }
 
 unittest
