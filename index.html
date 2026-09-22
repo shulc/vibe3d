@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vibe3D Web Editor</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #202124; }
+    #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+    #status { position: fixed; inset: 12px auto auto 12px; padding: 6px 9px;
+      color: #ddd; background: #171717cc; font: 12px/1.4 system-ui, sans-serif;
+      border-radius: 4px; pointer-events: none; }
+    #status.ready { display: none; }
+    #status.error { color: #ffb4ab; max-width: min(720px, calc(100vw - 42px));
+      white-space: pre-wrap; pointer-events: auto; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="status">Loading Vibe3D…</div>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const status = document.getElementById('status');
+    const query = new URLSearchParams(location.search);
+    const probe = query.get('probe');
+    const args = ['--no-http'];
+    if (probe) args.push('--web-first-frame-probe', '--web-probe-argument', probe);
+    const fail = value => {
+      status.className = 'error';
+      status.textContent = `Vibe3D stopped:\n${value}`;
+    };
+    window.addEventListener('error', event => fail(event.error?.stack || event.message));
+    window.addEventListener('unhandledrejection', event => fail(event.reason?.stack || event.reason));
+    const noisyWebGlQueries = new Set([
+      'glGetVertexAttrib*v on client-side array: not supported, bad data returned',
+      'glGetVertexAttribPointer on client-side array: not supported, bad data returned'
+    ]);
+    var Module = {
+      canvas,
+      arguments: args,
+      print: value => console.log(value),
+      // Emscripten emits these WebGL compatibility diagnostics every frame.
+      // A review-only page appended them to a hidden DOM text node forever;
+      // that O(n²) rewrite was itself enough to make the tab unresponsive.
+      printErr: value => {
+        if (!noisyWebGlQueries.has(value)) console.error(value);
+        if (/^(Aborted|Unhandled exception)/.test(value)) fail(value);
+      },
+      onRuntimeInitialized: () => {
+        status.className = 'ready';
+        canvas.focus({preventScroll: true});
+        window.__vibeEditorReady = true;
+      }
+    };
+  </script>
+  <script src="vibe3d.js"></script>
+</body>
+</html>

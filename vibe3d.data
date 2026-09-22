@@ -1,0 +1,2114 @@
+panels:
+  - title: Basic
+    items:
+      - title: File
+        buttons:
+          - { label: New,        action: { kind: command, id: file.new  } }
+          - { label: "Open…",    action: { kind: command, id: file.open } }
+          - { label: Save,       action: { kind: command, id: file.save } }
+          - { label: "Save As…", action: { kind: command, id: file.saveAs } }
+          - { label: "Reset Layout", action: { kind: command, id: layout.reset } }
+          - label: "Import ›"
+            action:
+              kind: popup
+              items:
+                - { label: "LWO…",   action: { kind: command, id: "file.import.lwo"  } }
+                - { label: "OBJ…",   action: { kind: command, id: "file.import.obj"  } }
+                - { label: "glTF…",  action: { kind: command, id: "file.import.gltf" } }
+                - { label: "FBX…",   action: { kind: command, id: "file.import.fbx"  } }
+          - label: "Export ›"
+            action:
+              kind: popup
+              items:
+                - { label: "LWO…",   action: { kind: command, id: "file.export.lwo"  } }
+                - { label: "OBJ…",   action: { kind: command, id: "file.export.obj"  } }
+                - { label: "glTF…",  action: { kind: command, id: "file.export.gltf" } }
+                - { label: "FBX…",   action: { kind: command, id: "file.export.fbx"  } }
+          - { label: "Generate 3D…", action: { kind: command, id: "ai3d.generate.open" } }
+          # Version / build configuration / platform — the facts a bug report
+          # needs. Same block `vibe3d --version` prints (task 0641).
+          - { label: "About…", action: { kind: script, lines: ["ui.about show"] } }
+          - { label: Quit, action: { kind: command, id: file.quit } }
+      - title: History
+        buttons:
+          - { label: Redo,    action: { kind: command, id: history.redo } }
+          - { label: Undo,    action: { kind: command, id: history.undo } }
+          - { label: History, action: { kind: command, id: history.show } }
+      - title: Transform
+        buttons:
+          - { label: Move,      action: { kind: tool, id: move } }
+          - { label: Rotate,    action: { kind: tool, id: rotate } }
+          - { label: Scale,     action: { kind: tool, id: scale } }
+          - { label: Transform, action: { kind: tool, id: xfrm.transform } }
+      - title: Create
+        buttons:
+          - label: Box
+            action: { kind: tool, id: prim.cube }
+            ctrl:
+              label: "Unit Box"
+              action:
+                kind: script
+                lines:
+                  - "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:1 segmentsZ:1 radius:0"
+          - label: Sphere
+            action: { kind: tool, id: prim.sphere }
+            ctrl:
+              label: "Unit Sphere"
+              action:
+                kind: script
+                lines:
+                  - "prim.sphere method:globe cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:24 axis:1"
+          - label: Ellipsoid
+            action: { kind: tool, id: prim.ellipsoid }
+            ctrl:
+              label: "Unit Ellipsoid"
+              action:
+                kind: script
+                lines:
+                  - "prim.ellipsoid cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:1.0 sizeZ:0.5 sides:24 segments:24 axis:1"
+          - label: Cylinder
+            action: { kind: tool, id: prim.cylinder }
+            ctrl:
+              label: "Unit Cylinder"
+              action:
+                kind: script
+                lines:
+                  - "prim.cylinder cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
+          - label: Tube
+            action: { kind: tool, id: prim.tube }
+            ctrl:
+              label: "Unit Tube"
+              action:
+                kind: script
+                lines:
+                  - "prim.tube cenX:0 cenY:0 cenZ:0 outerRadius:0.5 innerRadius:0.25 height:1 segments:24 axis:1 cap:true"
+          - label: Cone
+            action: { kind: tool, id: prim.cone }
+            ctrl:
+              label: "Unit Cone"
+              action:
+                kind: script
+                lines:
+                  - "prim.cone cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
+          - label: Capsule
+            action: { kind: tool, id: prim.capsule }
+            ctrl:
+              label: "Unit Capsule"
+              action:
+                kind: script
+                lines:
+                  - "prim.capsule cenX:0 cenY:0 cenZ:0 sizeX:0.25 sizeY:0.5 sizeZ:0.25 sides:24 segments:1 endsegments:6 endsize:1.0 axis:1"
+          - label: Torus
+            action: { kind: tool, id: prim.torus }
+            ctrl:
+              label: "Unit Torus"
+              action:
+                kind: script
+                lines:
+                  - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
+          - label: Arc
+            action: { kind: tool, id: prim.arc }
+            ctrl:
+              label: "Unit Arc"
+              action:
+                kind: script
+                lines:
+                  - "prim.arc cenX:0 cenY:0 cenZ:0 radius:0.5 startAngle:0 endAngle:180 segments:24 axis:1"
+          - label: Pen
+            action: { kind: tool, id: pen }
+            ctrl:
+              label: "Topology Pen"
+              action: { kind: tool, id: mesh.topoPen }
+          - label: Vertex
+            action: { kind: tool, id: prim.vertex }
+  # Deform palette
+  - title: Deform
+    items:
+      - title: Move
+        buttons:
+          - { label: "Element Move",
+              action: { kind: tool, id: xfrm.elementMove } }
+          - { label: "Flex",
+              action: { kind: tool, id: xfrm.flex } }
+          - { label: "Soft Drag",
+              action: { kind: tool, id: xfrm.softDrag } }
+          - { label: "Soft Move",
+              action: { kind: tool, id: xfrm.softMove } }
+          - { label: "Soft Transform",
+              action: { kind: tool, id: xfrm.softTransform } }
+          - { label: "Shear",
+              action: { kind: tool, id: xfrm.shear } }
+          - { label: "Smooth",
+              action: { kind: tool, id: xfrm.smooth } }
+          - { label: "Jitter",
+              action: { kind: tool, id: xfrm.jitter } }
+          - { label: "Quantize",
+              action: { kind: tool, id: xfrm.quantize } }
+      - title: Rotate
+        buttons:
+          - { label: "Soft Rotate",
+              action: { kind: tool, id: xfrm.softRotate } }
+          - { label: "Twist",
+              action: { kind: tool, id: xfrm.twist } }
+          - { label: "Bend",
+              action: { kind: tool, id: xfrm.bend } }
+          - { label: "Vortex",
+              action: { kind: tool, id: xfrm.vortex } }
+          - { label: "Swirl",
+              action: { kind: tool, id: xfrm.swirl } }
+      - title: Scale
+        buttons:
+          - { label: "Soft Scale",
+              action: { kind: tool, id: xfrm.softScale } }
+          - { label: "Uniform Scale",
+              action: { kind: tool, id: xfrm.scaleUniform } }
+          - { label: "Push",
+              action: { kind: tool, id: xfrm.push } }
+          - { label: "Sculpt", disable: true,
+              action: { kind: tool, id: xfrm.sculpt } }
+          - { label: "Taper",
+              action: { kind: tool, id: xfrm.taper } }
+          - { label: "Bulge",
+              action: { kind: tool, id: xfrm.bulge } }
+          - { label: "Flare",
+              action: { kind: tool, id: xfrm.flare } }
+      - title: Align
+        buttons:
+          - { label: "Radial Align",
+              action: { kind: tool, id: xfrm.radialAlignTool } }
+          - { label: "Linear Align",
+              action: { kind: tool, id: xfrm.linearAlignTool } }
+  # Duplicate palette
+  - title: Duplicate
+    items:
+      - title: Commands
+        buttons:
+          - { label: Duplicate,
+              action: { kind: command, id: mesh.duplicate } }
+          - { label: Mirror,
+              action: { kind: command, id: mesh.mirror } }
+          - { label: "Mirror Tool",
+              action: { kind: tool, id: mesh.mirrorTool } }
+          - { label: Array,
+              action: { kind: tool, id: mesh.arrayTool } }
+          - { label: "Radial Array",
+              action: { kind: command, id: mesh.radial_array } }
+          - { label: "Radial Array Tool",
+              action: { kind: tool, id: mesh.radialArrayTool } }
+          - { label: "Radial Sweep",
+              action: { kind: command, id: mesh.sweep } }
+          - { label: "Radial Sweep Tool",
+              action: { kind: tool, id: mesh.radialSweepTool } }
+          - { label: "Duplicate Layer",
+              action: { kind: command, id: layer.duplicate } }
+  - title: Mesh Edit
+    items:
+      - title: Slice
+        buttons:
+          - { label: "Loop Slice",   action: { kind: tool, id: mesh.loopSliceTool } }
+          - { label: "Slice",        action: { kind: tool, id: mesh.sliceTool } }
+          - { label: Julienne,       action: { kind: command, id: mesh.julienne } }
+          - { label: "Axis Slice",   action: { kind: command, id: mesh.axisSlice } }
+          - { label: "Screen Slice", action: { kind: command, id: mesh.screenSlice } }
+          - { label: "Edge Slice",   action: { kind: tool, id: mesh.edgeSliceTool } }
+      - title: Commands
+        buttons:
+          - { label: Subdivide,  action: { kind: command, id: mesh.subdivide } }
+          - { label: Faceted,    action: { kind: command, id: mesh.subdivide_faceted } }
+          - { label: Subpatch,   action: { kind: command, id: mesh.subpatch_toggle } }
+          - { label: "Edge Crease", action: { kind: command, id: mesh.edgeCrease.set } }
+          - { label: "New Morph Map…", action: { kind: command, id: mesh.morph.create } }
+          - { label: "Apply Morph…",   action: { kind: command, id: mesh.morph.apply } }
+          - { label: "Clean Up", action: { kind: command, id: mesh.cleanup } }
+          - { label: "Fix Orientation", action: { kind: command, id: mesh.fixOrientation } }
+          - { label: "Remesh (Quad)…", action: { kind: command, id: "mesh.remesh.open" } }
+      - title: Clipboard
+        buttons:
+          - { label: Cut,   action: { kind: command, id: mesh.cut } }
+          - { label: Copy,  action: { kind: command, id: mesh.copy } }
+          - { label: Paste, action: { kind: command, id: mesh.paste } }
+  - title: Vertex
+    items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,   action: { kind: tool, id: mesh.vertexBevel } }
+          - { label: Extrude, action: { kind: tool, id: mesh.vertexExtrude } }
+      - title: Commands
+        buttons:
+          - { label: Join,         action: { kind: command, id: vert.join } }
+          - { label: Merge,        action: { kind: tool, id: vert.merge } }
+          - { label: "Add Vertex", action: { kind: command, id: mesh.addVertex } }
+          - { label: Center,       action: { kind: command, id: mesh.centerVertices } }
+          - { label: "Set Position", action: { kind: command, id: mesh.setPosition } }
+          - { label: Collapse,     action: { kind: command, id: mesh.collapse } }
+          - { label: Split,        action: { kind: command, id: mesh.vertexSplit } }
+  - title: Edge
+    items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,      action: { kind: tool,    id: edge.bevel } }
+          - { label: Slide,      action: { kind: tool,    id: edge.slide } }
+          - { label: "Add Loop", action: { kind: command, id: mesh.addLoop } }
+          - { label: "Add Point", action: { kind: command, id: mesh.addPoint } }
+      - title: Commands
+        buttons:
+          - { label: Extrude, action: { kind: tool,    id: edge.extrude } }
+          - { label: Extend,  action: { kind: tool,    id: edge.extend } }
+          - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
+          - { label: "Bridge Tool", action: { kind: tool, id: mesh.bridgeTool } }
+          - { label: Spin,    action: { kind: command, id: mesh.spinEdge } }
+          - { label: Join,    action: { kind: command, id: mesh.edgeJoin } }
+          - { label: Split,   action: { kind: command, id: mesh.split_edge } }
+  - title: Polygon
+    items:
+      - title: Tools
+        buttons:
+          - { label: Bevel,          action: { kind: tool,    id: poly.bevel } }
+          - { label: "Smooth Shift", action: { kind: tool,    id: mesh.smoothShiftTool } }
+          - { label: Thicken,        action: { kind: tool,    id: mesh.thickenTool } }
+          - { label: Spikey,         action: { kind: command, id: mesh.spikey } }
+          - { label: Inset,          action: { kind: tool,    id: mesh.polyInsetTool } }
+          - { label: Reduce,         action: { kind: command, id: mesh.reduce } }
+          - { label: "Stroke Extrude", action: { kind: tool,  id: tool.strokeExtrude } }
+      - title: Commands
+        buttons:
+          - { label: Bridge,         action: { kind: command, id: mesh.bridge } }
+          - { label: "Bridge Tool",  action: { kind: tool,    id: mesh.bridgeTool } }
+          - { label: "Make Polygon", action: { kind: command, id: mesh.makePolygon } }
+          - { label: Split,          action: { kind: command, id: mesh.splitFace } }
+          - { label: Triple,         action: { kind: command, id: mesh.triple } }
+          - { label: Quadruple,      action: { kind: command, id: mesh.quadruple } }
+          - { label: Flip,           action: { kind: command, id: mesh.flip } }
+          - { label: "Set Part",     action: { kind: command, id: mesh.setPart } }
+          - { label: "Set Material", action: { kind: command, id: mesh.setMaterial } }
+      - title: Reduce
+        buttons:
+          - { label: Merge,          action: { kind: command, id: mesh.mergeFaces } }
+          - { label: Unify,          action: { kind: command, id: poly.unify } }
+          - { label: Detriangulate,  action: { kind: command, id: mesh.detriangulate } }
+  - title: Selection
+    items:
+      - title: Grow / Shrink
+        buttons:
+          - { label: Expand,   action: { kind: command, id: select.expand } }
+          - { label: Contract, action: { kind: command, id: select.contract } }
+          - { label: More,     action: { kind: command, id: select.more } }
+          - { label: Less,     action: { kind: command, id: select.less } }
+      - title: Topology
+        buttons:
+          - { label: Loop,    action: { kind: command, id: select.loop } }
+          - { label: Ring,    action: { kind: command, id: select.ring } }
+          - { label: Connect, action: { kind: command, id: select.connect } }
+          - { label: Between, action: { kind: command, id: select.between } }
+          - { label: Invert, action: { kind: command, id: select.invert } }
+      - title: Fill
+        buttons:
+          - { label: "Fill Holes",       action: { kind: command, id: select.fill.holes } }
+          - { label: "Fill Inside Loop", action: { kind: command, id: select.fill.insideLoop } }
+      # Selection sets (task 1060) — named, typed, per-mesh groups the user
+      # can re-select later. Every command opens the auto-generated args
+      # dialog (non-empty params()), so this is the whole UI surface.
+      - title: Sets
+        buttons:
+          - { label: "New Set…",    action: { kind: command, id: select.set.store } }
+          - { label: "Apply Set…",  action: { kind: command, id: select.set.apply } }
+          - { label: "Edit Set…",   action: { kind: command, id: select.set.edit } }
+          - { label: "Rename Set…", action: { kind: command, id: select.set.rename } }
+          - { label: "Delete Set…", action: { kind: command, id: select.set.delete } }
+      # Visibility (task 0613). Hiding is a SELECTION-scoped operation — what
+      # it hides is decided by the current selection and the current geometry
+      # type — so the group lives on this tab next to Grow / Shrink and
+      # Topology rather than on a Mesh tab. "Unhide All" is deliberately last
+      # and deliberately not conditional on anything: it is the only way back
+      # out of an isolate that emptied the viewport.
+      - title: Visibility
+        buttons:
+          - { label: Hide,          action: { kind: command, id: mesh.hide } }
+          - { label: Isolate,       action: { kind: command, id: mesh.hideUnselected } }
+          - { label: "Invert Hidden", action: { kind: command, id: mesh.hideInvert } }
+          - { label: "Unhide All",  action: { kind: command, id: mesh.unhideAll } }
+  - title: UV
+    items:
+      - title: Create
+        buttons:
+          - { label: Project, action: { kind: command, id: uv.project } }
+          - { label: Relax,   action: { kind: command, id: uv.relax } }
+          - { label: Fit,     action: { kind: command, id: uv.fit } }
+      - title: Modify
+        buttons:
+          - { label: Flip,   action: { kind: command, id: uv.flip } }
+          - { label: Rotate, action: { kind: command, id: uv.rotate } }
+          - { label: Mirror, action: { kind: command, id: uv.mirror } }
+          - { label: Pack,   action: { kind: command, id: uv.pack } }
+      - title: Maps
+        buttons:
+          - { label: Delete, action: { kind: command, id: uv.delete } }
+          - { label: Rename, action: { kind: command, id: uv.rename } }
+          - { label: Copy,   action: { kind: command, id: uv.copy } }
+          - { label: Clear,  action: { kind: command, id: uv.clear } }
+  - title: Viewport
+    items:
+      - { label: Fit,          action: { kind: command, id: viewport.fit } }
+      - { label: Fit Selected, action: { kind: command, id: viewport.fit_selected } }
+# Tool Properties form for the Action Center pipe stage.
+#
+# Stage-bound adopter (same mechanism as config/forms/falloff.yaml). The single
+# row binds to the stage command line `tool.pipe.attr actionCenter mode ?`:
+# reading queries ActionCenterStage.params() (the `mode` enum Param), writing
+# executes it with `?` substituted by the chosen wire tag. Loaded at startup by
+# source/forms.d (loadForms) and strict-validated against
+# ActionCenterStage.knownAttrs() via validateForms — a misspelt attr fails loud
+# at boot.
+#
+# The dropdown choices (Automatic / Selection / … / (none)) and the current
+# selection both fall out of the enum Param's IntEnumEntry list returned by
+# ActionCenterStage.params() — the form does NOT enumerate modes itself. This
+# replaces the old one-shot `choice:` row in transform.yaml, which rendered a
+# combo whose preview never reflected the active mode.
+#
+# whenStage binds this form to the "actionCenter" pipe stage: the Tool
+# Properties per-stage loop resolves it via formByStage("actionCenter"), NOT by
+# active tool and NOT by form id. The stage section appears under whichever
+# tool's properties when the actionCenter stage is enabled.
+#
+# This granular mode write is LOOSE: it releases only this stage's preset
+# claim, locks nothing and promotes no sibling, so the armed preset's other
+# stages still leave with the tool and this value is reset by the next drop or
+# arm. A mode that must survive is picked through the `actr.<mode>` presets,
+# which lock. Task 5911; fixture tool_drop_pipe_stages.json L1-L3.
+
+forms:
+  - id: toolprops.actioncenter
+    label: Action Center
+    whenStage: actionCenter
+    showLabel: false
+    rows:
+      - { control: "tool.pipe.attr actionCenter mode ?", label: "Mode" }
+# Tool Properties form for the Array tool (mesh.arrayTool, task 0355).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/loopslice.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms), auto-discovered from
+# config/forms/*.yaml (source/app.d), and strict-validated against ArrayTool's
+# params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# Layout mirrors the captured reference panel's two collapsible sections
+# ("Array Generator" + "Clone Effector" — see task 0355's capture notes):
+# Count/Offset/Jitter/Scale/Rotate/Between under Array Generator,
+# Replace Source/Invert Polygons/Merge Vertices/Distance/Source/Mesh Item
+# under Clone Effector. Distance is auto-greyed by
+# the renderer via ArrayTool.paramEnabled() (forms_render.d wraps a disabled
+# param in ImGui.BeginDisabled) unless Merge Vertices is on; Mesh Item is
+# greyed unless Source is Specific Mesh.
+
+forms:
+  - id: array.main
+    label: Array
+    showLabel: false
+    whenTool:
+      - mesh.arrayTool
+    category: toolprops/main
+    ordinal: 150.60
+    rows:
+      # ---- Array Generator ----
+      - group: "Array Generator"
+        style: block
+        rows:
+          - { control: "tool.attr mesh.arrayTool numX ?", label: "Count X" }
+          - { control: "tool.attr mesh.arrayTool numY ?", label: "Count Y" }
+          - { control: "tool.attr mesh.arrayTool numZ ?", label: "Count Z" }
+          - { control: "tool.attr mesh.arrayTool offX ?", label: "Offset X" }
+          - { control: "tool.attr mesh.arrayTool offY ?", label: "Offset Y" }
+          - { control: "tool.attr mesh.arrayTool offZ ?", label: "Offset Z" }
+          - { control: "tool.attr mesh.arrayTool jitX ?", label: "Jitter X" }
+          - { control: "tool.attr mesh.arrayTool jitY ?", label: "Jitter Y" }
+          - { control: "tool.attr mesh.arrayTool jitZ ?", label: "Jitter Z" }
+          - { control: "tool.attr mesh.arrayTool sclX ?", label: "Scale X" }
+          - { control: "tool.attr mesh.arrayTool sclY ?", label: "Scale Y" }
+          - { control: "tool.attr mesh.arrayTool sclZ ?", label: "Scale Z" }
+          - { control: "tool.attr mesh.arrayTool angP ?", label: "Rotate X" }
+          - { control: "tool.attr mesh.arrayTool angH ?", label: "Rotate Y" }
+          - { control: "tool.attr mesh.arrayTool angB ?", label: "Rotate Z" }
+          - { control: "tool.attr mesh.arrayTool between ?", label: Between }
+
+      # ---- Clone Effector ----
+      - group: "Clone Effector"
+        style: block
+        rows:
+          - { control: "tool.attr mesh.arrayTool replace ?", label: "Replace Source" }
+          - { control: "tool.attr mesh.arrayTool flip ?",    label: "Invert Polygons" }
+          - { control: "tool.attr mesh.arrayTool merge ?",   label: "Merge Vertices" }
+          - { control: "tool.attr mesh.arrayTool dist ?",    label: Distance }
+          - { control: "tool.attr mesh.arrayTool source ?",  label: Source }
+          - { control: "tool.attr mesh.arrayTool item ?",    label: "Mesh Item" }
+# Tool Properties form for the Box primitive (prim.cube).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/transform.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms) and strict-validated against
+# the box tool's params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set. `axis` is
+# intentionally omitted — it is auto-picked from the workplane normal at
+# construction time and hidden from the panel.
+#
+# Layout: Position / Size / Segments as inline X·Y·Z clusters, then a Radius
+# block for the rounded-edge controls (corner radius, its subdivision count,
+# and the sharp-ring toggle).
+
+forms:
+  - id: box.shape
+    label: Box
+    showLabel: false
+    whenTool:
+      - prim.cube
+    category: toolprops/main
+    ordinal: 150.40
+    rows:
+      - group: Position
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube cenX ?", label: X }
+          - { control: "tool.attr prim.cube cenY ?", label: Y }
+          - { control: "tool.attr prim.cube cenZ ?", label: Z }
+      - group: Size
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube sizeX ?", label: X }
+          - { control: "tool.attr prim.cube sizeY ?", label: Y }
+          - { control: "tool.attr prim.cube sizeZ ?", label: Z }
+      - group: Segments
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube segmentsX ?", label: X }
+          - { control: "tool.attr prim.cube segmentsY ?", label: Y }
+          - { control: "tool.attr prim.cube segmentsZ ?", label: Z }
+      - group: Radius
+        style: block
+        rows:
+          - { control: "tool.attr prim.cube radius ?",    label: Radius }
+          - { control: "tool.attr prim.cube segmentsR ?", label: Segments }
+          - { control: "tool.attr prim.cube sharp ?",     label: Sharp }
+# Tool Properties form for the falloff pipe stage.
+#
+# Second config-driven adopter (see doc/forms_engine_plan.md Phase 6). Every
+# value row binds to a stage command line carrying exactly one `?` placeholder
+# (tool.pipe.attr falloff <attr> ?): reading queries the stage, writing executes
+# it with `?` substituted. Loaded at startup by source/forms.d (loadForms) and
+# strict-validated against FalloffStage.knownAttrs() (the authoritative static
+# attr union) via validateForms — a misspelt attr fails loud at boot.
+#
+# Dynamic rows: FalloffStage.params() is FILTERED by the active falloff type
+# (Linear exposes start/end, Radial/Cylinder expose center/size, Element exposes
+# mode/dist/connect, ...). The forms resolver hides any row whose attr is absent
+# from the live params() this frame, so switching the falloff type changes which
+# rows are visible with NO inline conditionals in this file — the rows are
+# simply the UNION of every type's attrs, and visibility falls out of the
+# per-type params() filtering. That value-driven row hiding is the point of this
+# form: the same union of rows serves all types.
+#
+# Note: type and shape are NOT in params() (they are driven by the status-bar
+# Falloff pulldown / the stage's own drawProperties popup), so they are
+# intentionally not bound here — the form configures the CONFIG of whichever
+# type is active, never the type selection itself.
+
+forms:
+  - id: toolprops.falloff
+    label: Falloff
+    # whenStage binds this form to the "falloff" pipe stage: the Tool Properties
+    # per-stage loop resolves it via formByStage("falloff"), NOT by active tool
+    # and NOT by form id (ids are the sub/ref form-reference namespace, distinct
+    # from stage ids). Keep the id as-is.
+    whenStage: falloff
+    showLabel: false
+    # Row order follows the reference Linear Falloff panel: endpoints, fit
+    # actions, shape, then the universal Mix Mode last. Per-type control rows
+    # (center/size/axis, screen, lasso, element) are interleaved where they
+    # belong but stay hidden for types that don't expose them (the params()
+    # filter), so each type shows only its relevant subset in this order.
+    rows:
+      # ---- Linear: start/end line endpoints (Vec3) ----
+      - { control: "tool.pipe.attr falloff start ?", label: Start }
+      - { control: "tool.pipe.attr falloff end ?",   label: End }
+
+      # ---- Auto Size: per-axis fit-to-selection (Linear-only action).
+      #      Gated on `start` (exposed only by the Linear type's params()), so
+      #      the strip is hidden for every other falloff type — Screen (soft
+      #      drag), Radial, etc. show no inert no-op buttons. Horizontal
+      #      equal-width button strip. ----
+      - group: "Auto Size"
+        style: buttons
+        whenAttr: start
+        rows:
+          - { cmd: "falloff.autosize x", label: X }
+          - { cmd: "falloff.autosize y", label: Y }
+          - { cmd: "falloff.autosize z", label: Z }
+
+      # ---- Radial / Cylinder: fit centre and per-axis radii to the layer. ----
+      - { cmd: "falloff.autosize", label: "Auto Size", whenAttr: center }
+
+      # ---- Reverse: swap start/end (Linear-only action; gated on `start`). ----
+      - { cmd: "falloff.reverse", label: Reverse, whenAttr: start }
+
+      # ---- Radial / Cylinder: ellipsoid centre + per-axis radii (Vec3) ----
+      - { control: "tool.pipe.attr falloff center ?", label: Center }
+      - { control: "tool.pipe.attr falloff size ?",   label: Size }
+      # ---- Cylinder only: axis direction (Vec3) ----
+      - { control: "tool.pipe.attr falloff axis ?",   label: Axis }
+
+      # ---- Shape preset + custom-shape tangents (In/Out only when Custom) ----
+      - { control: "tool.pipe.attr falloff shape ?", label: "Shape Preset" }
+      - { control: "tool.pipe.attr falloff in ?",  label: In,  style: slider }
+      - { control: "tool.pipe.attr falloff out ?", label: Out, style: slider }
+
+      # ---- Screen: window-space centre + radius + transparency ----
+      - group: Screen
+        style: inline
+        rows:
+          - { control: "tool.pipe.attr falloff screenCx ?",   label: Cx }
+          - { control: "tool.pipe.attr falloff screenCy ?",   label: Cy }
+          - { control: "tool.pipe.attr falloff screenSize ?", label: Size }
+      - { control: "tool.pipe.attr falloff transparent ?", label: Transparent,
+          booleanStyle: checkbox }
+
+      # ---- Lasso: shape style + soft border (pixels) ----
+      - { control: "tool.pipe.attr falloff lassoStyle ?", label: "Lasso Style" }
+      - { control: "tool.pipe.attr falloff softBorder ?", label: "Soft Border" }
+
+      # ---- Element: pick mode + connectivity gate ----
+      - { control: "tool.pipe.attr falloff mode ?",    label: "Element Mode" }
+      - { control: "tool.pipe.attr falloff connect ?", label: Connect }
+
+      # ---- Element Range (dist) and Selection Steps (steps) are distinct
+      #      per-type attrs; each row resolves only when its attr is present in
+      #      the active params() list (the resolver hides absent-attr rows).
+      #      Omit the label so the live Param.label is used. ----
+      - { control: "tool.pipe.attr falloff dist ?" }
+      - { control: "tool.pipe.attr falloff steps ?" }
+
+      # ---- Vertex Map: named Point dim-1 weight map picker ----
+      - { control: "tool.pipe.attr falloff map ?", label: "Weight Map" }
+
+      # ---- Mix Mode: multi-falloff combine op (present for every active type;
+      #      unused for a single / first contributor, but the dropdown stays
+      #      visible so a stacked falloff can pick its combine). Last, per the
+      #      reference panel. ----
+      - { control: "tool.pipe.attr falloff mix ?", label: "Mix Mode" }
+# Tool Properties form for the Jitter deform tool (xfrm.jitter).
+#
+# Same mechanism as config/forms/smooth.yaml: each value control binds to a
+# `tool.attr xfrm.jitter <attr> ?` line — reading queries the tool's params(),
+# writing dispatches the command with `?` filled in. A matching tool form fully
+# replaces the legacy schema panel (the propertyPanel.draw fallback only runs
+# when NO form matches the active tool), so this carries the full visible set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX). Per-axis Enable/Range are paired
+# so each axis reads top-to-bottom; a per-axis Range greys out (provider
+# paramEnabled) when its Enable is off.
+
+forms:
+  - id: jitter.deform
+    label: Jitter
+    showLabel: false
+    whenTool:
+      - xfrm.jitter
+    category: toolprops/main
+    ordinal: 150.51
+    rows:
+      - { control: "tool.attr xfrm.jitter enableX ?", label: "Enable X" }
+      - { control: "tool.attr xfrm.jitter rangeX ?",  label: "Range X" }
+      - { control: "tool.attr xfrm.jitter enableY ?", label: "Enable Y" }
+      - { control: "tool.attr xfrm.jitter rangeY ?",  label: "Range Y" }
+      - { control: "tool.attr xfrm.jitter enableZ ?", label: "Enable Z" }
+      - { control: "tool.attr xfrm.jitter rangeZ ?",  label: "Range Z" }
+      - { control: "tool.attr xfrm.jitter seed ?",    label: Seed }
+# Layer (item) Properties form — shared item properties + a per-kind section.
+#
+# COMPOSED, not flat: the rows are the UNION over every item kind. The shared
+# rows (`name`, the four transform clusters) bind for every kind that has them;
+# a per-kind section binds channels only one kind exposes and is hidden for the
+# rest. See the "Per-kind section" block near the bottom for how the hiding
+# works and why it needs no per-kind form file.
+#
+# Config-driven properties for the item-selection FOCUS — NOT the primary. The
+# two coincide on an all-mesh document, but `primary` is by invariant a mesh, so
+# a form bound to it could never reach a non-mesh item's channels at all
+# (`layer_params.itemPropsTarget`). Rendered by the Layers panel
+# (source/ui/panels.d) via FormsPanel. Each value control binds to a
+# `layer.attr <index> <attr> ?` line carrying exactly one `?` placeholder:
+# reading queries the layer's LayerPropsProvider param, writing executes the
+# command with `?` substituted.
+#
+# ---------------------------------------------------------------------------
+# Lookup + rebind
+# ---------------------------------------------------------------------------
+# This form is NOT selected by an active tool or a pipe stage — it has no
+# `whenTool` / `whenStage` filter. app.d looks it up directly by its explicit
+# `id: layer.props` (forms.formById) for the fixed Layers-panel context.
+#
+# The `<index>` token in every control line is a LITERAL PLACEHOLDER (0). There
+# is no angle-bracket template substitution in the YAML; at draw time app.d
+# passes the live active-layer index to FormsPanel.draw, and
+# forms.rebindBindingTarget overwrites positionals[0] with that index so the
+# write names the bound layer. The placeholder value is irrelevant — it is
+# always overwritten.
+#
+# ---------------------------------------------------------------------------
+# What these rows drive
+# ---------------------------------------------------------------------------
+# Editing a field dispatches `layer.attr <index> <attr> <value>`, a UI-undoable
+# (coalescing) command that writes the value through the layer's
+# LayerPropsProvider param pointer. The per-layer transform is applied
+# RENDER-ONLY: the layer's mesh is drawn through its composed item matrix, but
+# its vertices never move (editing/picking/snap/gizmo stay in the layer's local
+# frame), so a transform write triggers NO mesh GPU re-upload — only the
+# per-frame model matrix differs.
+#
+# The bound attr names match LayerPropsProvider.params() exactly: the per-
+# component transform scalars (pos/rot/scl/pivot .x/.y/.z) bind as editable
+# Float rows (the same widget transform.yaml's TX/TY/TZ use — the forms `vec3`
+# widget is a read-only stub, so a Vec3 is exposed as three Float components),
+# plus `name` as a text row. `name` thus rides the SAME generic forms/undo/
+# serialize path as the transform components (the "one declaration" proof);
+# `layer.rename` remains as the explicit rename path.
+#
+# `visible` is deliberately LEFT OUT of this form's writable rows: the layer-
+# visibility toggle has an invariant side-effect (hiding the primary promotes
+# another selected+visible layer to primary) and is owned by the dedicated
+# `layer.setVisible` command, NOT the generic `layer.attr` param path. The
+# Layers panel's per-row "V" checkbox already dispatches `layer.setVisible`.
+# This is the single principled exception to "every layer property rides the
+# generic param path" — `visible` carries a promotion hook the generic write
+# would bypass. (The provider still EXPOSES `visible` as a readable Bool param;
+# only the generic write is excluded.)
+
+forms:
+  - id: layer.props
+    label: Layer
+    showLabel: false
+    category: layerprops/main
+    ordinal: 100.0
+    rows:
+      - { control: "layer.attr 0 name ?", label: Name }
+      - { divider: true }
+      - group: Position
+        style: inline
+        rows:
+          - { control: "layer.attr 0 pos.x ?", label: X }
+          - { control: "layer.attr 0 pos.y ?", label: Y }
+          - { control: "layer.attr 0 pos.z ?", label: Z }
+      - group: Rotate
+        style: inline
+        rows:
+          - { control: "layer.attr 0 rot.x ?", label: X }
+          - { control: "layer.attr 0 rot.y ?", label: Y }
+          - { control: "layer.attr 0 rot.z ?", label: Z }
+      - group: Scale
+        style: inline
+        rows:
+          - { control: "layer.attr 0 scl.x ?", label: X }
+          - { control: "layer.attr 0 scl.y ?", label: Y }
+          - { control: "layer.attr 0 scl.z ?", label: Z }
+      - group: Pivot
+        style: inline
+        rows:
+          - { control: "layer.attr 0 pivot.x ?", label: X }
+          - { control: "layer.attr 0 pivot.y ?", label: Y }
+          - { control: "layer.attr 0 pivot.z ?", label: Z }
+
+      # ---------------------------------------------------------------------
+      # Per-kind section: an image plane's authored channels.
+      # ---------------------------------------------------------------------
+      # Everything above this line is the SHARED half of the form — `name` plus
+      # the item transform — bound for every kind that has them. This is the
+      # per-kind half, and it is why the form is one file rather than one file
+      # per kind: `LayerPropsProvider.params()` already returns the shared
+      # bundle PLUS the focused item's per-kind bundle, so a row bound to a
+      # channel only one kind exposes resolves for that kind and is hidden for
+      # every other. The composition happens in the provider's snapshot; the
+      # YAML is the union of the rows, exactly as config/forms/falloff.yaml is
+      # the union of every falloff type's rows.
+      #
+      # Two gating mechanisms are at work and they are not the same one:
+      #
+      #   * A `control` row self-hides when its own bound attr is absent from
+      #     the live snapshot (forms.planRows -> resolveControl found=false).
+      #     That covers all ten rows below with no annotation.
+      #   * A row carrying NO value bind of its own — the section heading —
+      #     has nothing to self-hide on, so it rides an explicit `whenAttr`
+      #     gate naming a channel only a plane exposes. Without it the heading
+      #     would caption an empty region on every mesh layer.
+      #
+      # NOT wrapped in a `group:`. A group here would gate the whole section
+      # with one `whenAttr` (that works — falloff.yaml gates its "Auto Size"
+      # group exactly so), but `drawGroup` renders the COMPACT VECTOR-CLUSTER
+      # layout: the group title is printed once on the first member's row and
+      # each member's own label is right-aligned into the narrow fixed column
+      # just before the value field. That is built for X / Y / Z. A label as
+      # wide as "Show in Perspective" overruns the column, is clamped to x=0,
+      # and the value field is then drawn on top of its tail. Groups here are
+      # a vector-cluster layout, not a collapsible section — so the section is
+      # a heading plus flat rows, which is what the `name` row above already
+      # uses and what falloff.yaml uses for its per-type rows.
+      #
+      # No `label:` overrides below: the visible text is the Param's own label
+      # (layer_params.d), so the channel is named in exactly one place.
+      #
+      # No divider row precedes the heading — `drawGroup` already emits a
+      # trailing Separator after the Pivot cluster, and a second one abutting
+      # it renders as a doubled rule.
+      - { label: Image Plane, whenAttr: projection }
+      - { control: "layer.attr 0 projection ?" }
+      - { control: "layer.attr 0 showInPerspective ?" }
+      - { control: "layer.attr 0 pixelSize ?" }
+      - { control: "layer.attr 0 keepAspect ?" }
+      # The three look scalars declare both a min and a max (layer_params.d),
+      # so `style: slider` resolves to a bounded slider rather than an unbounded
+      # drag — the range is the meaningful part of these channels.
+      - { control: "layer.attr 0 brightness ?",   style: slider }
+      - { control: "layer.attr 0 contrast ?",     style: slider }
+      - { control: "layer.attr 0 transparency ?", style: slider }
+      - { control: "layer.attr 0 invert ?" }
+      - { control: "layer.attr 0 flipHorizontal ?" }
+      - { control: "layer.attr 0 smooth ?" }
+# Tool Properties form for the Loop Slice tool (mesh.loopSliceTool).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/transform.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms), auto-discovered from
+# config/forms/*.yaml (source/app.d), and strict-validated against the Loop
+# Slice tool's params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set.
+#
+# Every attr below is one of mesh.loopSliceTool.params() (grep params() in
+# source/tools/loop_slice_tool.d for the authoritative names/types). The rows
+# marked with a profile/curvature dependency are auto-greyed by the renderer
+# via the tool's paramEnabled() (forms_render.d wraps a disabled param in
+# ImGui.BeginDisabled) — no inline gating is needed here:
+#   * tension  enabled only while Preserve Curvature is on
+#   * Inset (depth), Reverse Direction, Reverse Inset, Keep Aspect enabled only
+#     while a non-flat Profile is chosen (and Inset also greys under Keep Aspect)
+#
+# Layout mirrors the reference Loop Slice panel: the main slice controls first
+# (Count / Position / Edit / Mode), then labelled sub-boxes for Split, Topology,
+# Preserve Curvature, and Profile.
+
+forms:
+  - id: loopslice.main
+    label: Loop Slice
+    showLabel: false
+    whenTool:
+      - mesh.loopSliceTool
+    category: toolprops/main
+    ordinal: 150.50
+    rows:
+      # ---- Main slice controls ----
+      - { control: "tool.attr mesh.loopSliceTool count ?",    label: Count }
+      - { control: "tool.attr mesh.loopSliceTool position ?", label: Position }
+      - { control: "tool.attr mesh.loopSliceTool edit ?",     label: Edit }
+      - { control: "tool.attr mesh.loopSliceTool mode ?",     label: Mode }
+
+      # ---- Split: split into separate sections, optionally capped, with a gap ----
+      - group: Split
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool split ?", label: Split }
+          - { control: "tool.attr mesh.loopSliceTool caps ?",  label: "Cap Sections" }
+          - { control: "tool.attr mesh.loopSliceTool gap ?",   label: Gap }
+
+      # ---- Topology: which polygons the cut touches + how it keeps quads ----
+      - group: Topology
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool select ?", label: "Slice Selected" }
+          - { control: "tool.attr mesh.loopSliceTool quad ?",   label: "Keep Quads" }
+          - { control: "tool.attr mesh.loopSliceTool ngon ?",   label: "Slice N-gon" }
+
+      # ---- Curvature: bulge the cut along the surface curvature ----
+      - group: Curvature
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool curvature ?", label: "Preserve Curvature" }
+          - { control: "tool.attr mesh.loopSliceTool tension ?",   label: Tension }
+
+      # ---- Profile: 1D profile cutter + its inset / mirror modifiers ----
+      - group: Profile
+        style: block
+        rows:
+          - { control: "tool.attr mesh.loopSliceTool profile ?",  label: Profile }
+          - { control: "tool.attr mesh.loopSliceTool depth ?",    label: Inset }
+          - { control: "tool.attr mesh.loopSliceTool reversex ?", label: "Reverse Direction" }
+          - { control: "tool.attr mesh.loopSliceTool reversey ?", label: "Reverse Inset" }
+          - { control: "tool.attr mesh.loopSliceTool aspect ?",   label: "Keep Aspect" }
+# Tool Properties form for the Quantize deform tool (xfrm.quantize).
+#
+# Same mechanism as config/forms/smooth.yaml: each value control binds to a
+# `tool.attr xfrm.quantize <attr> ?` line — reading queries the tool's params(),
+# writing dispatches the command with `?` filled in. A matching tool form fully
+# replaces the legacy schema panel (the propertyPanel.draw fallback only runs
+# when NO form matches the active tool), so this carries the full visible set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX).
+
+forms:
+  - id: quantize.deform
+    label: Quantize
+    showLabel: false
+    whenTool:
+      - xfrm.quantize
+    category: toolprops/main
+    ordinal: 150.52
+    rows:
+      - { control: "tool.attr xfrm.quantize X ?", label: "Step X" }
+      - { control: "tool.attr xfrm.quantize Y ?", label: "Step Y" }
+      - { control: "tool.attr xfrm.quantize Z ?", label: "Step Z" }
+# Tool Properties form for the Slice tool (mesh.sliceTool).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/loopslice.yaml
+# and config/forms/transform.yaml): each value control binds to a command line
+# carrying exactly one `?` — reading queries the tool's params(), writing
+# executes the command with `?` filled in. Loaded at startup by source/forms.d
+# (loadForms), auto-discovered from config/forms/*.yaml (source/app.d), and
+# strict-validated against the Slice tool's params() (validateForms) — a
+# misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set.
+#
+# Every attr below is one of mesh.sliceTool.params() (grep params() in
+# source/tools/slice_tool.d for the authoritative names/types). The rows with a
+# dependency are auto-greyed by the renderer via the tool's paramEnabled()
+# (forms_render.d wraps a disabled param in ImGui.BeginDisabled) — no inline
+# gating is needed here:
+#   * Cap Sections / Gap / Offset Side enabled only while Split is on
+#   * Angle (snapAngle) enabled only while Angle Snap is on
+#   * Vector X/Y/Z enabled only while Axis = Custom
+#
+# Layout mirrors the reference Slice panel: the Start / End line-endpoint gangs,
+# Fast Slice, the Angle-Snap pair, a labelled Split sub-box, Infinite, then the
+# Axis selector plus its Custom-vector gang.
+
+forms:
+  - id: slice.main
+    label: Slice
+    showLabel: false
+    whenTool:
+      - mesh.sliceTool
+    category: toolprops/main
+    ordinal: 150.55
+    rows:
+      # ---- Start / End: the two endpoints of the slice line (world space) ----
+      - group: Start
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool startX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool startY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool startZ ?", label: Z }
+
+      - group: End
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool endX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool endY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool endZ ?", label: Z }
+
+      # ---- Fast Slice: defer the cut to mouse release on dense meshes ----
+      - { control: "tool.attr mesh.sliceTool fast ?", label: "Fast Slice" }
+
+      # ---- Angle snapping: snap the line to a multiple of Angle ----
+      - { control: "tool.attr mesh.sliceTool snap ?",      label: "Angle Snap" }
+      - { control: "tool.attr mesh.sliceTool snapAngle ?", label: Angle }
+
+      # ---- Split: separate the surface into two sections, optionally capped ----
+      - group: Split
+        style: block
+        rows:
+          - { control: "tool.attr mesh.sliceTool split ?",   label: Split }
+          - { control: "tool.attr mesh.sliceTool caps ?",    label: "Cap Sections" }
+          - { control: "tool.attr mesh.sliceTool gap ?",     label: Gap }
+          - { control: "tool.attr mesh.sliceTool gapSide ?", label: "Offset Side" }
+
+      # ---- Infinite: extend the line so the plane cuts the whole mesh ----
+      - { control: "tool.attr mesh.sliceTool infinite ?", label: Infinite }
+
+      # ---- Axis + Custom vector: the plane's out-of-line direction ----
+      - { control: "tool.attr mesh.sliceTool axis ?", label: Axis }
+
+      - group: Vector
+        style: inline
+        rows:
+          - { control: "tool.attr mesh.sliceTool vectorX ?", label: X }
+          - { control: "tool.attr mesh.sliceTool vectorY ?", label: Y }
+          - { control: "tool.attr mesh.sliceTool vectorZ ?", label: Z }
+# Tool Properties form for the Smooth deform tool (xfrm.smooth).
+#
+# Same mechanism as config/forms/transform.yaml / box.yaml: each value control
+# binds to a `tool.attr xfrm.smooth <attr> ?` line — reading queries the tool's
+# params(), writing dispatches the command with `?` filled in. A matching tool
+# form fully replaces the legacy schema panel (the propertyPanel.draw fallback
+# only runs when NO form matches the active tool), so this carries the full
+# visible parameter set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX). Bool params render as native
+# checkboxes. Row order follows the reference Smooth tool; `sharpAngle` greys out
+# (provider paramEnabled) unless `lockSharp` is on.
+
+forms:
+  - id: smooth.deform
+    label: Smooth
+    showLabel: false
+    whenTool:
+      - xfrm.smooth
+    category: toolprops/main
+    ordinal: 150.50
+    rows:
+      - { control: "tool.attr xfrm.smooth strn ?",       label: Strength }
+      - { control: "tool.attr xfrm.smooth iter ?",       label: Iterations }
+      - { control: "tool.attr xfrm.smooth lockBound ?",  label: "Lock Boundary" }
+      - { control: "tool.attr xfrm.smooth lockCorner ?", label: "Lock Corner" }
+      - { control: "tool.attr xfrm.smooth preserve ?",   label: "Preserve Volume" }
+      - { control: "tool.attr xfrm.smooth lockSharp ?",  label: "Lock Sharp Edges" }
+      - { control: "tool.attr xfrm.smooth sharpAngle ?", label: "Sharp Angle" }
+# Tool Properties form for the Topology Pen tool (mesh.topoPen).
+#
+# Same mechanism as config/forms/loopslice.yaml / smooth.yaml: the one value
+# control binds to a `tool.attr mesh.topoPen <attr> ?` line — reading queries
+# the tool's params(), writing dispatches the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms), auto-discovered from
+# config/forms/*.yaml (source/app.d), and strict-validated against the
+# Topology Pen tool's params() (validateForms) — a misspelt attr fails loud
+# at boot. A matching tool form fully replaces the legacy schema panel (the
+# propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the tool's full visible parameter set.
+#
+# `middle`, `mode`, `loop`, `slide`, `smoothStrength`, `showVertex` and
+# `showEdge` are the attrs in mesh.topoPen.params() (grep params() in
+# source/tools/edit/topology_pen/tool.d for the authoritative name/type list — a
+# mismatch here fails loud at boot, `validateForms`). That same `params()`
+# comment carries the THREE-BUCKET audit of every reference attribute this form
+# deliberately does not carry, with the owning task id for each one; add a row
+# here only for an attribute whose behavior AND bounds are both measured.
+#
+# `middle` — the Add Loop "Split at the Middle" option (reference parity,
+# doc/tasks/work/0480-topopen-addloop-middle.md). It forces the Add Loop
+# gesture's cut to exactly 0.5 of EVERY crossed edge instead of the
+# click-derived ratio — one uniform scalar for the whole ring, never a
+# per-edge recomputation. Default OFF, sticky across gestures. Affects the
+# Add Loop gesture only; Split is a vertex-to-vertex chord split and has no
+# fraction knob.
+#
+# `mode` — the Mode dropdown (task 0477 continuation + task 0483,
+# doc/tasks/work/0483-topopen-mode-set.md). Carries the reference tool's own eight
+# values in its own order — Move (default) / Duplicate / Remove / Split /
+# Add Loop / Point / Fill / Smoothing — and decides what an UNMODIFIED LMB
+# press does; every modifier chord keeps resolving to its own gesture
+# regardless. An IntEnum Param — this row renders as a dropdown, with
+# choices/labels sourced from the Param's own `IntEnumEntry` table (like
+# `actioncenter.yaml`); the form does not enumerate modes itself.
+#
+# `loop` / `slide` — the reference's own "Edge Loop" / "Edge Slide"
+# checkboxes, both default OFF. `loop` promotes Move / Duplicate / Smoothing
+# to their loop variants (the RMB-chord gestures); the other five modes have
+# no loop variant here and ignore it. `slide` restricts a Move-family press
+# to the neighbouring edge rails — the same gesture Ctrl+LMB runs — and
+# applies to Move and Point only. Routing table: `onPlainLmbDown`.
+#
+# `keepVertex` — the reference's own "Keep Vertices" checkbox, default OFF
+# (measured in both directions, doc/tasks/work/0494-topopen-remove-loop-keepvertex.md).
+# It gates ORPHAN RETENTION on the Remove mode's edge path: off, a dissolve
+# that eats a vertex's whole polygon fan deletes that vertex and re-stitches
+# the survivors around it; on, the vertex stays as a corner of the merged
+# polygon. Affects the Remove mode's EDGE path only — that is the only path the
+# flag was varied on, and the reference reads it on no other.
+#
+# `innerSnap` — the reference's own "Inner Snap" checkbox, default OFF
+# (measured, doc/tasks/work/0496-topopen-snap-precedence-thresholds.md). It
+# selects WHICH existing elements the pen's snap target may resolve to: with it
+# off only border geometry (an edge with at most one polygon, or a vertex
+# touching one) is a candidate; with it on the mesh interior is snappable too.
+# It is NOT a radius knob — the snap radius is the same either way.
+#
+# `backFace` — the ORIENTATION half of the same admission policy `innerSnap`
+# is the topology half of, default OFF (measured,
+# doc/tasks/work/0538-pen-backface-attr.md). Off, a candidate whose own normal
+# points away from the viewer cannot be the pen's snap target; on, the
+# orientation test is skipped entirely and either side is a target. It is a
+# CANDIDATE filter and not a depth test — it says nothing about what is hidden
+# behind other geometry — and it belongs to the pen rather than to the shared
+# snapping service, which is exactly what the measurement pins.
+#
+# `range` / `quadOnly` — the two FILL-mode attributes (reference parity,
+# doc/tasks/work/0488-topopen-fill-candidate-rule.md). `range` multiplies the
+# hover radius to give the candidate GATHER radius in screen pixels; it never
+# enters the ranking, so above a mesh's own threshold more reach changes
+# nothing and below it the press refuses. `quadOnly` is the count gate: on
+# (the default), the search accepts exactly four candidates; off, exactly four
+# OR exactly three, and the three-path runs no shape test at all. Bounds are
+# the MEASURED ones — `range` min 0.0 with no upper bound, `quadOnly` a plain
+# boolean — from the same measured clamp table every other numeric row here
+# traces to; they are not guessed and not "sane-looking". Affect the Fill mode
+# only; every other gesture ignores both.
+#
+# One clause of these two is deliberately NOT carried: the reference REFUSES a
+# write to either outside Fill mode (an error, not an ignore) and greys the row
+# out. This form has no value-conditional row-disable mechanism — the same gap
+# `smoothStrength` sits in today — so both rows stay always-visible and
+# always-writable until that mechanism lands.
+#
+# `smoothStrength` — the Smooth gesture's relaxation strength (reference
+# parity, doc/tasks/work/0478-topopen-smooth-kernel.md). Scales the per-iteration
+# relaxation force as `F = smoothStrength / 20`; the default 1.0 matches the
+# reference. Affects the Smooth gesture only; every other mode ignores it.
+#
+# `showVertex` / `showEdge` — the two display toggles, both default ON
+# (measured). They hide the pen's own hover-indicator vertex marker / edge line
+# and NOTHING else — not the viewport's own vertex/edge display, which is a
+# global view setting here. That narrow scope is a vibe3d decision: the
+# attributes were measured to be booleans, to default ON and to affect drawing
+# only, but WHICH overlay elements they hide in the reference was not measured.
+# Display-only in the strict sense — a hidden marker still grabs the same
+# element on a press.
+#
+# NOT here, on purpose: an iteration/pass-count row. The reference exposes an
+# iteration-count attribute for its Smooth gesture, but that attribute and its
+# gesture counter are the same storage, and its press handler overwrites it
+# with 1 at the start of every Smooth press — so setting it cannot affect the
+# gesture that follows. The count comes from the drag alone
+# (`smoothPassesForDragDx`, source/tools/edit/topology_pen/tool.d). Adding a row
+# here would CREATE a divergence, not close one — same resolution as the
+# reference's boundary/corner lock attributes, which are equally absent.
+# `innerSnap` is the counter-example that shows the rule is about EVIDENCE and
+# not about caution: its behaviour is measured, so it gets a row.
+
+forms:
+  - id: topopen.main
+    label: Topology Pen
+    showLabel: false
+    whenTool:
+      - mesh.topoPen
+    category: toolprops/main
+    ordinal: 150.50
+    rows:
+      - { control: "tool.attr mesh.topoPen mode ?",           label: Mode }
+      - { control: "tool.attr mesh.topoPen loop ?",           label: "Edge Loop" }
+      - { control: "tool.attr mesh.topoPen slide ?",          label: "Edge Slide" }
+      - { control: "tool.attr mesh.topoPen innerSnap ?",      label: "Inner Snap" }
+      - { control: "tool.attr mesh.topoPen backFace ?",       label: Backface }
+      - { control: "tool.attr mesh.topoPen keepVertex ?",     label: "Keep Vertices" }
+      - { control: "tool.attr mesh.topoPen middle ?",         label: "Split at the Middle" }
+      - { control: "tool.attr mesh.topoPen range ?",          label: Range }
+      - { control: "tool.attr mesh.topoPen quadOnly ?",       label: "Quads Only" }
+      - { control: "tool.attr mesh.topoPen smoothStrength ?", label: Strength }
+      - { control: "tool.attr mesh.topoPen showVertex ?",     label: "Show Vertex" }
+      - { control: "tool.attr mesh.topoPen showEdge ?",       label: "Show Edge" }
+# Tool Properties forms for the transform tool family.
+#
+# Config-driven Tool Properties: each value control binds to a command line
+# carrying exactly one `?` placeholder — reading queries the command, writing
+# executes it with `?` substituted. Loaded at startup by source/forms.d
+# (loadForms) and strict-validated against the live tool / stage / command
+# universe (validateForms) — a misspelt attr or unknown command id fails loud
+# at boot.
+#
+# ---------------------------------------------------------------------------
+# whenTool coverage (reviewer finding, 2026-06-07)
+# ---------------------------------------------------------------------------
+# XfrmTransformTool is the ONE engine behind MANY activation ids. The factory
+# id that `tool.set <id>` records as activeToolId — which is what
+# formsForTool(activeToolId) matches — is NOT always "xfrm.transform":
+#
+#   * Toolbar Move/Rotate/Scale activate `move` / `rotate` / `scale`
+#     (config/buttons.yaml; factories in source/app.d).
+#   * Toolbar Transform activates `xfrm.transform`.
+#   * Every preset in config/tool_presets.yaml whose `base:` is one of
+#     move / rotate / scale / xfrm.transform registers its OWN factory id
+#     (source/tool_presets.d: reg.registerTool(p.id, ...)); activating the preset
+#     records the PRESET id as activeToolId (e.g. TransformMove, xfrm.flex,
+#     xfrm.softMove, ...). All of these construct an XfrmTransformTool.
+#
+# A single scalar `whenTool: xfrm.transform` therefore left the readable panel
+# unrendered for every other id (toolbar Move/Rotate/Scale, the deform presets,
+# etc.), and the unreadable legacy sliders showed instead.
+#
+# The panel is split into THREE per-bank forms (Position / Rotate / Scale), each
+# matching exactly the activation ids whose T / R / S flag is ENABLED. A tool
+# that enables multiple banks (xfrm.transform, Transform, xfrm.flex) matches
+# multiple forms and shows multiple groups; a single-bank tool (move, rotate,
+# scale and the bank-specific presets) shows only its one group. This is the
+# row-filtering mechanism: XfrmTransformTool.params() always exposes ALL of
+# TX..SZ (a flag-disabled bank's attr must still accept a no-op `tool.attr`
+# write — see tests/test_element_move_trs.d), so we CANNOT hide a bank by
+# filtering params(); we hide it by scoping which form (hence which group) each
+# id selects.
+#
+# Bank/flag mapping per id (T -> Position, R -> Rotate, S -> Scale):
+#   move            T          xfrm.softDrag   T (base move)
+#   rotate          R          xfrm.softMove   T (base move)
+#   scale           S          xfrm.shear      T (base move)
+#   xfrm.transform  T+R+S      xfrm.softRotate R (base rotate)
+#   Transform       T+R+S      xfrm.twist      R (base rotate)
+#   xfrm.flex       T+R+S      xfrm.swirl      R (base rotate)
+#   TransformMove   T          xfrm.vortex     R (base rotate)
+#   TransformRotate R          xfrm.softScale  S (base scale)
+#   TransformScale  S          xfrm.taper      S (base scale)
+#   xfrm.elementMove T         xfrm.bulge      S (base scale)
+#   ElementMove     T          move.element    T (base move)
+#
+# Excluded deliberately: xfrm.flare (base xfrm.push, NOT XfrmTransformTool — it
+# is a PushTool and has no TX..SZ params); xfrm.push / xfrm.bend / xfrm.smooth /
+# xfrm.jitter / xfrm.quantize (their own tool classes, own params, own forms or
+# legacy panels). Listing an id here that did NOT expose the bound attr would
+# fail validateForms at boot — the coverage is verified, not guessed.
+#
+# The bound tool id in each control line stays `xfrm.transform` (the canonical
+# family tool, which validateForms resolves against). At WRITE time FormsPanel
+# rewrites it to the live activeToolId (forms_render.d, Namespace.tool rebind),
+# so a write under `move` dispatches `tool.attr move TX <v>` and ToolAttrCommand's
+# active-id guard passes. The READ path reads the live typed pointer straight
+# from the active provider's params() snapshot and never checks the tool id.
+#
+# The T/R/S bank-enable checkboxes were removed — bank switching is owned by the
+# left toolbar presets (move / rotate / scale / Transform). Action Center is no
+# longer a one-shot choice row here; it renders as a stage-bound section
+# (config/forms/actioncenter.yaml, whenStage: actionCenter) via the Tool
+# Properties per-stage loop, the same way Falloff does.
+
+forms:
+  # ---- Position value group (TX/TY/TZ) — every T-enabled id ----
+  - id: transform.position
+    label: Transform
+    showLabel: false
+    whenTool:
+      - move
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformMove
+      - xfrm.elementMove
+      - ElementMove
+      - move.element
+      - xfrm.softDrag
+      - xfrm.softMove
+      - xfrm.shear
+    category: toolprops/main
+    ordinal: 150.45
+    rows:
+      - group: Position
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform TX ?", label: X }
+          - { control: "tool.attr xfrm.transform TY ?", label: Y }
+          - { control: "tool.attr xfrm.transform TZ ?", label: Z }
+
+  # ---- Rotate value group (RX/RY/RZ, degrees) — every R-enabled id ----
+  - id: transform.rotate
+    showLabel: false
+    whenTool:
+      - rotate
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformRotate
+      - xfrm.softRotate
+      - xfrm.twist
+      - xfrm.swirl
+      - xfrm.vortex
+    category: toolprops/main
+    ordinal: 150.46
+    rows:
+      - group: Rotate
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform RX ?", label: X }
+          - { control: "tool.attr xfrm.transform RY ?", label: Y }
+          - { control: "tool.attr xfrm.transform RZ ?", label: Z }
+
+  # ---- Scale value group (SX/SY/SZ, factors) — every S-enabled id ----
+  - id: transform.scale
+    showLabel: false
+    whenTool:
+      - scale
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformScale
+      - xfrm.softScale
+      - xfrm.taper
+      - xfrm.bulge
+    category: toolprops/main
+    ordinal: 150.47
+    rows:
+      - group: Scale
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform SX ?", label: X }
+          - { control: "tool.attr xfrm.transform SY ?", label: Y }
+          - { control: "tool.attr xfrm.transform SZ ?", label: Z }
+      # Task 0332 — Negative Scale: relaxes the scale-factor clamp (both the
+      # app-code clamp and the ImGui slider v_min floor, source/tools/scale.d
+      # + source/tools/xfrm_transform.d) so a scale drag/panel edit can cross
+      # zero into a mirrored (negative) factor. Off by default.
+      - { control: "tool.attr xfrm.transform negScale ?", label: "Negative Scale",
+          booleanStyle: checkbox }
+
+  # ---- Task 0332 — Slip UVs: OFF (default) matches vibe3d's current
+  # transform behavior (UVs untouched by any transform apply path) with no
+  # extra code. ON is captured (per-face/per-corner planar reprojection) but
+  # DEFERRED — see source/tools/xfrm_transform.d field doc comment and
+  # doc/tasks/backlog/0383-slipuv-on-planar-reproject.md; the checkbox is a
+  # stored no-op until that follow-up lands. Applies regardless of which
+  # T/R/S bank is enabled, so whenTool is the union of every id that builds
+  # an XfrmTransformTool (mirrors the per-bank whenTool lists above).
+  - id: transform.options
+    showLabel: false
+    whenTool:
+      - move
+      - rotate
+      - scale
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformMove
+      - TransformRotate
+      - TransformScale
+      - xfrm.elementMove
+      - ElementMove
+      - move.element
+      - xfrm.softDrag
+      - xfrm.softMove
+      - xfrm.shear
+      - xfrm.softRotate
+      - xfrm.twist
+      - xfrm.swirl
+      - xfrm.vortex
+      - xfrm.softScale
+      - xfrm.taper
+      - xfrm.bulge
+    category: toolprops/main
+    ordinal: 150.48
+    rows:
+      - { control: "tool.attr xfrm.transform slipUV ?", label: "Slip UVs",
+          booleanStyle: checkbox }
+# Pie (radial) menus.
+#
+# One menu = an id, a title and an ORDERED list of at most 8 items. The index
+# in `items:` IS the compass direction: item 0 sits at twelve o'clock and the
+# rest follow clockwise (item 1 = NE, 2 = E, 3 = SE, 4 = S, 5 = SW, 6 = W,
+# 7 = NW. Fewer items leave the later compass slots empty; they do not re-space.
+# Reorder the list and you move the boxes. The title is metadata, not drawn.
+#
+# An item is a BUTTON — exactly the schema config/buttons.yaml and
+# config/statusline.yaml use (`label` + `action` + optional `checked` /
+# `disable`), parsed by the same loader. `action: { kind: popup }` is the one
+# kind a pie refuses: a wedge is aimed at, not opened.
+#
+# Bind a menu to a chord in config/shortcuts.yaml:
+#     commands:
+#       ui.pie: "Ctrl+Space viewport"
+# — the text after the key spec is the menu id below.
+
+menus:
+  # Camera views. Item order matches the reference's own viewport pie: the
+  # four axis views land on their own compass point (Top north, Right east,
+  # Bottom south, Left west) and the remaining four fill the diagonals.
+  # ref: ctrl-space
+  - id: viewport
+    title: Viewport
+    items:
+      - { label: Top,         action: { kind: script, lines: ["viewport.view Top"] } }          # N
+      - { label: Perspective, action: { kind: script, lines: ["viewport.view Perspective"] } }  # NE
+      - { label: Right,       action: { kind: script, lines: ["viewport.view Right"] } }        # E
+      - { label: Front,       action: { kind: script, lines: ["viewport.view Front"] } }        # SE
+      - { label: Bottom,      action: { kind: script, lines: ["viewport.view Bottom"] } }       # S
+      - { label: Back,        action: { kind: script, lines: ["viewport.view Back"] } }         # SW
+      - { label: Left,        action: { kind: script, lines: ["viewport.view Left"] } }         # W
+      # NW is RESERVED AND EMPTY, on purpose.
+      #
+      # The reference offers its camera view here (measured live, 2026-08-24).
+      # We have no camera item to project from — `viewport.view Camera` sets a
+      # label and nothing else: same projection kind and same orientation as
+      # Perspective, so the wedge would silently duplicate its own neighbour.
+      #
+      # The slot is held rather than dropped because the index IS the compass
+      # direction: with seven wedges the circle divides by 51.4°, Bottom lands
+      # on 205.7° instead of due south and Left on 308.6° instead of due west,
+      # so the axis views stop being opposite each other. Eight slots keep
+      # Top=N, Right=E, Bottom=S, Left=W exact.
+      #
+      # When camera items land, this becomes one line.
+      - { empty: true }                                                                         # NW
+
+  # Item / layer operations. Bound to the SAME chord as the menu above, scoped
+  # to the Items panel — see the `bindings:` block in config/shortcuts.yaml.
+  # Four items occupy the first four fixed slots: N, NE, E and SE.
+  - id: layers
+    title: Items
+    items:
+      - { label: "Add",       action: { kind: command, id: layer.add } }        # N
+      - { label: "Duplicate", action: { kind: command, id: layer.duplicate } }  # NE
+      - { label: "Delete",    action: { kind: command, id: layer.delete } }     # E
+      - { label: "Rename…",   action: { kind: command, id: layer.rename } }     # SE
+tools:
+  move:               W
+  rotate:             E
+  scale:              R
+  xfrm.transform:     Y
+  xfrm.elementMove:   T            # ref: t
+  mesh.mirrorTool:    "Shift+V"    # ref: shift-v (*.mirror)
+  mesh.loopSliceTool: "Alt+C"      # ref: alt-c
+  mesh.sliceTool:     "Shift+C"    # ref: shift-c
+  edge.bevel:         B            # ref: b (*.bevel)
+  poly.bevel:         "Shift+B"    # ref: shift-b
+  poly.extrude:       "Shift+X"    # ref: shift-x (*.extrude)
+  edge.extend:        Z            # ref: z
+  prim.cube: ""
+
+commands:
+  select.expand:         "Shift+Up"
+  select.contract:       "Shift+Down"
+  select.more:           Up
+  select.less:           Down
+  select.loop:           L
+  select.ring:           "Alt+L"
+  select.invert:         "["
+  select.connect:        "]"
+  select.between:        "Shift+G"
+  viewport.fit:          A
+  viewport.fit_selected: "Shift+A"
+  mesh.subdivide:        "D ccsds"          # ref: d ccsds — applies immediately
+  mesh.subdivide_faceted: "Shift+D"         # ref: shift-d (faceted)
+  mesh.triple:           "Shift+T"          # ref: shift-t
+  mesh.flip:             F                  # ref: f
+  mesh.spinEdge:         V                  # ref: v
+  mesh.setMaterial:      M                  # ref: m
+  mesh.copy:             "Ctrl+C"           # ref: ctrl-c
+  mesh.paste:            "Ctrl+V"           # ref: ctrl-v
+  mesh.cut:              "Ctrl+X"           # ref: ctrl-x
+  tool.reset:            "Ctrl+D"           # ref: ctrl-d
+  tool.release:          Q
+  history.undo:          "Ctrl+Z"
+  history.redo:          "Ctrl+Shift+Z"
+  mesh.delete:           Delete
+  mesh.remove:           Backspace
+  snap.toggle:           X
+  mesh.hide:             H                  # ref: h
+  mesh.hideUnselected:   "Shift+H"          # ref: shift-h
+  mesh.hideInvert:       "Ctrl+H"           # ref: ctrl-h
+  mesh.unhideAll:        U                  # ref: u
+  file.new:              "Ctrl+N"
+  file.open:             "Ctrl+O"
+  file.save:             "Ctrl+S"
+  file.saveAs:           "Ctrl+Shift+S"
+  file.quit:             "Ctrl+Q"
+
+editmodes:
+  vertices: "1"
+  edges:    "2"
+  polygons: "3"
+  # Items is the FIFTH key, not the fourth. The reference binds top-row
+  # 1..7 to its seven selection types in a fixed order, and 4 belongs to
+  # the material-tag type, which we do not have (see the task card). Taking
+  # 4 now would mean renumbering the day that type lands, so 4 stays free.
+  items:    "5"       # ref: 5
+
+# ---------------------------------------------------------------------------
+# Scoped bindings.
+#
+# The three sections above bind a chord GLOBALLY — they are rows here with
+# every slot left wildcard, and they keep working untouched. A row below may
+# additionally require:
+#
+#   zone:     where the cursor is — one of the names in source/input_zones.d
+#             (viewport3d, sidePanel, tabPanel, statusBar, layerList,
+#             toolProps, history). An unknown name is a load error, because a
+#             binding scoped to a zone nobody publishes never fires and never
+#             says so.
+#   mode:     the current selection type — vertex | edge | polygon | item
+#   whenTool: the armed tool id; a trailing `*` matches a family (`sculpt.*`)
+#
+# The MOST SPECIFIC matching row wins, and specificity is a weight, not a
+# count: zone(4) > whenTool(2) > mode(1). Distinct powers of two mean two rows
+# can only tie if they fill the very same slots — so "equally specific along
+# different axes" cannot happen. Two rows identical in chord AND slots are a
+# load error rather than a silent first-wins.
+#
+# Exactly one of `command:` / `tool:` / `editmode:` per row. `command:` takes
+# the whole argstring, like the baked form above.
+# ---------------------------------------------------------------------------
+bindings:
+  # Pie (radial) menu — the same chord means a different menu depending on
+  # what the cursor is over.  ref: ctrl-space
+  - { key: "Ctrl+Space",                    command: "ui.pie viewport" }
+  - { key: "Ctrl+Space", zone: layerList,   command: "ui.pie layers" }
+tools:
+  move:               W
+  rotate:             E
+  scale:              R
+  xfrm.transform:     Y
+  xfrm.elementMove:   T            # ref: t
+  mesh.mirrorTool:    "Shift+V"    # ref: shift-v (*.mirror)
+  mesh.loopSliceTool: "Alt+C"      # ref: alt-c
+  mesh.sliceTool:     "Shift+C"    # ref: shift-c
+  edge.bevel:         B            # ref: b (*.bevel)
+  poly.bevel:         "Shift+B"    # ref: shift-b
+  poly.extrude:       "Shift+X"    # ref: shift-x (*.extrude)
+  edge.extend:        Z            # ref: z
+  prim.cube: ""
+
+commands:
+  select.expand:         "Shift+Up"
+  select.contract:       "Shift+Down"
+  select.more:           Up
+  select.less:           Down
+  select.loop:           L
+  select.ring:           "Alt+L"
+  select.invert:         "["
+  select.connect:        "]"
+  select.between:        "Shift+G"
+  viewport.fit:          A
+  viewport.fit_selected: "Shift+A"
+  mesh.subdivide:        "D ccsds"          # ref: d ccsds — applies immediately
+  mesh.subdivide_faceted: "Shift+D"         # ref: shift-d (faceted)
+  mesh.triple:           "Shift+T"          # ref: shift-t
+  mesh.flip:             F                  # ref: f
+  mesh.spinEdge:         V                  # ref: v
+  mesh.setMaterial:      M                  # ref: m
+  mesh.copy:             "Cmd+C"            # ref: ctrl-c → Cmd on macOS
+  mesh.paste:            "Cmd+V"            # ref: ctrl-v → Cmd on macOS
+  mesh.cut:              "Cmd+X"            # ref: ctrl-x → Cmd on macOS
+  tool.reset:            "Cmd+D"            # ref: ctrl-d → Cmd on macOS
+  tool.release:          Q
+  history.undo:          "Cmd+Z"
+  history.redo:          "Cmd+Shift+Z"
+  mesh.delete:           Backspace
+  mesh.remove:           "Cmd+Backspace"
+  snap.toggle:           X
+  mesh.hide:             H                  # ref: h
+  mesh.hideUnselected:   "Shift+H"          # ref: shift-h
+  # NOT Cmd+H: SDL's Cocoa backend installs the default application menu,
+  # whose Hide item owns ⌘H — AppKit consumes the chord before SDL ever
+  # emits a keydown, so the binding would be silently unreachable. Kept on
+  # Ctrl+H, the same physical chord as every other platform, rather than
+  # moved to ⇧⌘H: one law across platforms keeps the docs, the test and the
+  # muscle memory identical, and ⌃H is claimed by AppKit only inside text
+  # editing (where the app gates on WantTextInput anyway), never in the
+  # viewport. This is the one Ctrl binding in this file, and deliberately so.
+  mesh.hideInvert:       "Ctrl+H"           # ref: ctrl-h
+  mesh.unhideAll:        U                  # ref: u
+  file.new:              "Cmd+N"
+  file.open:             "Cmd+O"
+  file.save:             "Cmd+S"
+  file.saveAs:           "Cmd+Shift+S"
+  file.quit:             "Cmd+Q"
+
+editmodes:
+  vertices: "1"
+  edges:    "2"
+  polygons: "3"
+  # Items is the FIFTH key, not the fourth. The reference binds top-row
+  # 1..7 to its seven selection types in a fixed order, and 4 belongs to
+  # the material-tag type, which we do not have (see the task card). Taking
+  # 4 now would mean renumbering the day that type lands, so 4 stays free.
+  items:    "5"       # ref: 5
+
+# Scoped bindings — see config/shortcuts.yaml for the full slot documentation.
+# Ctrl, NOT Cmd, on macOS too: Cmd+Space is claimed by Spotlight at the OS
+# level and never reaches SDL, so the Cmd spelling would be a binding that
+# silently does nothing. Same class as mesh.hideInvert above.
+bindings:
+  - { key: "Ctrl+Space",                    command: "ui.pie viewport" }
+  - { key: "Ctrl+Space", zone: layerList,   command: "ui.pie layers" }
+groups:
+  - title: editmode
+    buttons:
+      - label: Vertices
+        action: { kind: command, id: select.vertex }
+        alt:
+          label: "Convert V"
+          action: { kind: script, lines: ["select.convert vertex"] }
+      - label: Edges
+        action: { kind: command, id: select.edge }
+        alt:
+          label: "Convert E"
+          action: { kind: script, lines: ["select.convert edge"] }
+      - label: Polygons
+        action: { kind: command, id: select.polygon }
+        alt:
+          label: "Convert P"
+          action: { kind: script, lines: ["select.convert polygon"] }
+  # Items is its OWN group so the inter-group gap renders the separator the
+  # reference draws between the geometry types and the non-geometry ones.
+  #
+  # No `alt` here, deliberately. The three above carry "Convert" — geometry
+  # types convert into one another (a face selection becomes its vertices).
+  # There is no geometry->item conversion to offer, and copying the shape of
+  # a neighbouring button for symmetry's sake would put a control there that
+  # cannot mean anything.
+  - title: itemmode
+    buttons:
+      - label: Items
+        action: { kind: command, id: select.item }
+  - title: toolpipe
+    buttons:
+      # reference-style Action Center pulldown. Mirrors the action-centers
+      # popover sheet from the reference UI:
+      # top-level actr.<mode> presets, "(none)" first,
+      # divider, then granular Center → / Axis → submenus that map to
+      # vibe3d's per-stage `tool.pipe.attr` commands.
+      #
+      # `dynamicLabel: true` makes the button face show the active
+      # mode's label, which is what the measured button does too — its face
+      # shows the armed mode's name and falls back to the menu's own title
+      # when nothing is armed (task 4320 saw it read "Pivot"). And
+      # `checked: notEquals: "none"` keeps it visually pressed for
+      # every mode except `(none)`.
+      - label: "Action Center"
+        action:
+          kind: popup
+          dynamicLabel: true
+          checked: { path: "actionCenter/mode", notEquals: "none" }
+          items:
+            - { kind: dynamic, dynamicKind: acenModes, tags: [none, auto, select, border, selectauto, element, screen, origin, local, pivot, parent] }
+            - { kind: divider }
+            - kind: submenu
+              label: Center
+              # Granular ACEN-only — leaves AXIS untouched. Mirrors
+              # the reference's centers submenu, which task 4320 MEASURED on
+              # 2026-09-05: it is the COMPLETE set of nine centre modes, not a
+              # curated subset, and this list now matches it entry for entry
+              # and in order. Before that read it was these seven — the same
+              # list with `parent` and `pivot` deleted, because it was copied
+              # five weeks before task 0082 added those two modes. Frozen in
+              # tests/fixtures/action_center_menu_composition.json; changing
+              # the composition without that fixture reddens
+              # tests/unit/action_center_menu_composition_test.d. Maps to
+              # vibe3d's ActionCenterStage.applySetAttr("mode", ...).
+              items:
+                - { kind: dynamic, dynamicKind: acenStageModes, tags: [auto, select, border, element, screen, origin, parent, local, pivot] }
+            - kind: submenu
+              label: Axis
+              # Granular AXIS-only — leaves ACEN untouched. Mirrors
+              # the reference's axis submenu, MEASURED by task 4320: the
+              # complete set of eight axis modes, `parent` and `pivot`
+              # included. Two differences survive on purpose and are recorded
+              # in the fixture, not left to be rediscovered: `workplane` is
+              # ours alone (the reference reaches the work plane through its
+              # `auto` axis), and our `world` is the row the measured list
+              # labels Origin. Maps to vibe3d's
+              # AxisStage.applySetAttr("mode", ...).
+              items:
+                - { kind: dynamic, dynamicKind: axisModes, tags: [auto, world, workplane, select, element, screen, parent, local, pivot] }
+      - label: "AI"
+        action: { kind: command, id: ai.toggle }
+        checked: { path: "ai/enabled", equals: "true" }
+      # reference-style Snapping pulldown. Master toggle on top (matches the
+      # default @x keybind → snap enabled), divider,
+      # then a checkbox per SnapType. Button face stays highlighted as
+      # long as snap is on. Mirrors the snap palette structure but
+      # scoped to vibe3d's seven supported types.
+      - label: "Snap"
+        action: { kind: command, id: snap.toggle }
+        checked: { path: "snap/enabled", equals: "true" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: "Snap (X)"
+                action: { kind: command, id: snap.toggle }
+                checked: { path: "snap/enabled", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Geometry" }
+              - label: Vertex
+                action: { kind: script, lines: ["snap.toggleType vertex"] }
+                checked: { path: "snap/types/vertex", equals: "true" }
+              - label: Edge
+                action: { kind: script, lines: ["snap.toggleType edge"] }
+                checked: { path: "snap/types/edge", equals: "true" }
+              - label: Edge Center
+                action: { kind: script, lines: ["snap.toggleType edgeCenter"] }
+                checked: { path: "snap/types/edgeCenter", equals: "true" }
+              - label: Polygon
+                action: { kind: script, lines: ["snap.toggleType polygon"] }
+                checked: { path: "snap/types/polygon", equals: "true" }
+              - label: Polygon Center
+                action: { kind: script, lines: ["snap.toggleType polyCenter"] }
+                checked: { path: "snap/types/polyCenter", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Plane" }
+              - label: Grid
+                action: { kind: script, lines: ["snap.toggleType grid"] }
+                checked: { path: "snap/types/grid", equals: "true" }
+              - label: Workplane
+                action: { kind: script, lines: ["snap.toggleType workplane"] }
+                checked: { path: "snap/types/workplane", equals: "true" }
+              - { kind: divider }
+              - label: "Fixed Grid"
+                action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
+                checked: { path: "snap/fixedGrid", equals: "true" }
+              # Coordinate Rounding: the step a gizmo axis drag rounds its
+              # scalar to. Lives here because that is where the reference
+              # repeats it, next to its snapping controls. "None" turns the
+              # rounding off entirely (freehand); "Fine" is the default and
+              # puts about one step of rounding on one pixel of mouse move.
+              - { kind: divider }
+              - kind: submenu
+                label: "Coordinate Rounding"
+                items:
+                  - label: None
+                    action: { kind: script, lines: ["pref.coordRounding none"] }
+                    checked: { path: "coordRounding/mode", equals: "none" }
+                  - label: Normal
+                    action: { kind: script, lines: ["pref.coordRounding normal"] }
+                    checked: { path: "coordRounding/mode", equals: "normal" }
+                  - label: Fine
+                    action: { kind: script, lines: ["pref.coordRounding fine"] }
+                    checked: { path: "coordRounding/mode", equals: "fine" }
+                  - label: Fixed
+                    action: { kind: script, lines: ["pref.coordRounding fixed"] }
+                    checked: { path: "coordRounding/mode", equals: "fixed" }
+                  - label: Forced Fixed
+                    action: { kind: script, lines: ["pref.coordRounding forcedFixed"] }
+                    checked: { path: "coordRounding/mode", equals: "forcedFixed" }
+      # Phase 7.5: Falloff (WGHT) pulldown. Type selection drives the
+      # FalloffStage; auto-size on switch fits the falloff to the
+      # current selection's bbox. Button face shows the active type
+      # (dynamicLabel: true → "Linear" / "Radial" / etc.); falls back
+      # to the static label when type=none. Pressed-state is "anything
+      # but none".
+      # Click   → type pulldown for the PRIMARY falloff (below).
+      # Alt+click → falloff-stack manager: the live list of active
+      #   falloff instances (click one to drop it from the queue), an
+      #   Add submenu that stacks a new instance of the chosen type
+      #   (falloff.add <type>), and Clear Stacked. The active rows are
+      #   a `kind: dynamic` placeholder the renderer expands from the
+      #   live pipeline (the stacked ids can't be known up front).
+      - label: "Falloff"
+        action:
+          kind: popup
+          dynamicLabel: true
+          checked: { path: "falloff/type", notEquals: "none" }
+          items:
+            - label: (none)
+              action: { kind: script, lines: ["tool.pipe.attr falloff type none"] }
+              checked: { path: "falloff/types/none", equals: "true" }
+            - label: Linear
+              action: { kind: script, lines: ["tool.pipe.attr falloff type linear"] }
+              checked: { path: "falloff/types/linear", equals: "true" }
+            - label: Radial
+              action: { kind: script, lines: ["tool.pipe.attr falloff type radial"] }
+              checked: { path: "falloff/types/radial", equals: "true" }
+            - label: Cylinder
+              action: { kind: script, lines: ["tool.pipe.attr falloff type cylinder"] }
+              checked: { path: "falloff/types/cylinder", equals: "true" }
+            - label: Screen
+              action: { kind: script, lines: ["tool.pipe.attr falloff type screen"] }
+              checked: { path: "falloff/types/screen", equals: "true" }
+            - label: Lasso
+              action: { kind: script, lines: ["tool.pipe.attr falloff type lasso"] }
+              checked: { path: "falloff/types/lasso", equals: "true" }
+            - label: Element
+              action: { kind: script, lines: ["tool.pipe.attr falloff type element"] }
+              checked: { path: "falloff/types/element", equals: "true" }
+            - label: Selection
+              action: { kind: script, lines: ["tool.pipe.attr falloff type selection"] }
+              checked: { path: "falloff/types/selection", equals: "true" }
+            - label: Vertex Map
+              action: { kind: script, lines: ["tool.pipe.attr falloff type vertexMap"] }
+              checked: { path: "falloff/types/vertexMap", equals: "true" }
+            # Shape preset moved to Tool Properties → Falloff section
+            # (Phase 7.9). Status-bar pulldown owns only the type, not
+            # the per-type config.
+        alt:
+          label: "Falloff"
+          action:
+            kind: popup
+            items:
+              - { kind: header, label: "Active Falloffs" }
+              # Live rows: one per contributing instance. Click removes
+              # it from the queue (primary → type none; extra → remove).
+              - { kind: dynamic, dynamicKind: falloffStack }
+              - { kind: divider }
+              - kind: submenu
+                label: Add
+                # Stack a NEW falloff instance of the chosen type. Each
+                # add appends a "falloff#N" stage; the composite weight
+                # combiner (Mix Mode) blends all contributors.
+                items:
+                  - { label: Linear,    action: { kind: script, lines: ["falloff.add linear"] } }
+                  - { label: Radial,    action: { kind: script, lines: ["falloff.add radial"] } }
+                  - { label: Cylinder,  action: { kind: script, lines: ["falloff.add cylinder"] } }
+                  - { label: Screen,    action: { kind: script, lines: ["falloff.add screen"] } }
+                  - { label: Lasso,     action: { kind: script, lines: ["falloff.add lasso"] } }
+                  - { label: Element,   action: { kind: script, lines: ["falloff.add element"] } }
+                  - { label: Selection,   action: { kind: script, lines: ["falloff.add selection"] } }
+                  - { label: Vertex Map, action: { kind: script, lines: ["falloff.add vertexMap"] } }
+              - { kind: divider }
+              - { label: "Clear Stacked", action: { kind: command, id: falloff.clear } }
+      # Phase 7.6: Symmetry (SYMM) — reference symmetry-popover parity.
+      # Click   → master toggle (symmetry.toggle).
+      # Alt+click → Options popup (axis pick + workplane).
+      # Button face: static "Symmetry" when off; flips to
+      # "Symmetry: X" / "Symmetry: Y" / "Symmetry: Z" /
+      # "Symmetry: Workplane" when on (driven by the button-level
+      # `dynamicLabel` state path the SymmetryStage publishes).
+      # Pressed-state mirrors `symmetry/enabled`.
+      - label: "Symmetry"
+        action: { kind: command, id: symmetry.toggle }
+        checked: { path: "symmetry/enabled", equals: "true" }
+        dynamicLabel: { path: "symmetry/displayName" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: Off
+                action: { kind: script, lines: ["tool.pipe.attr symmetry enabled false"] }
+                checked: { path: "symmetry/axes/off", equals: "true" }
+              - label: X
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis x"
+                checked: { path: "symmetry/axes/x", equals: "true" }
+              - label: Y
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis y"
+                checked: { path: "symmetry/axes/y", equals: "true" }
+              - label: Z
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis z"
+                checked: { path: "symmetry/axes/z", equals: "true" }
+              - { kind: divider }
+              - label: Workplane
+                action: { kind: script, lines: ["tool.pipe.attr symmetry useWorkplane 1"] }
+                checked: { path: "symmetry/useWorkplane", equals: "true" }            
+      - label: "Work Plane"
+        action:
+          kind: popup
+          # Highlight the button whenever the workplane is non-auto — visual
+          # cue that subsequent prim.* / move / rotate / scale tools will
+          # interpret coordinates relative to this plane, not world-XZ.
+          checked: { path: "workplane/auto", equals: "false" }
+          items:
+            - label: Auto
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
+              checked: { path: "workplane/auto", equals: "true" }
+            - label: World Y
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
+              checked: { path: "workplane/mode", equals: "worldY" }
+            - label: World X
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
+              checked: { path: "workplane/mode", equals: "worldX" }
+            - label: World Z
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
+              checked: { path: "workplane/mode", equals: "worldZ" }
+            - { kind: divider }
+            - label: Align To Selection
+              action: { kind: command, id: workplane.alignToSelection }
+            - label: Reset
+              action: { kind: command, id: workplane.reset }
+# Tool presets — declarative "compound" tools built by wrapping a base
+# tool and configuring one or more toolpipe stages on activate. Mirrors
+# the stock tool-preset definitions (e.g. `xfrm.shear`, `xfrm.twist`,
+# `xfrm.softDrag`):
+# each preset names a base tool + per-pipe-stage attributes.
+#
+# When activated via `tool.set <preset-id>`:
+#   1. The base tool's factory runs (Move / Rotate / Scale / ...).
+#   2. For each `pipe.<stageId>` block, `setAttr(key, value)` is called
+#      on the matching toolpipe stage. Values stringify the same way
+#      `tool.pipe.attr <stageId> <name> <value>` does — bool as
+#      "true"/"false", floats / vec3s as raw, etc.
+#
+# Adding a new preset = editing this file. No code change required
+# unless the preset needs behaviour the existing stages can't express.
+presets:
+  # ----- Deform sub-tab (D.1 of doc/deform_plan.md) ---------------
+  - id: xfrm.softDrag
+    base: move
+    # The stock softDrag is a brush-style tool: each LMB drag is one
+    # atomic action that commits to history; the next click starts a
+    # fresh weighted pull from the new grab point instead of piling
+    # onto the previous baseline. Matches the reference brush-reset tool
+    # behaviour.
+    flags: [brushReset]
+    pipe:
+      falloff:
+        type: screen
+        # The reference ships xfrm.softDrag (and the bare
+        # falloff.screen preset) with `trans integer 0` — camera-
+        # facing only. Verts behind the camera don't participate in
+        # the drag; flip to "true" only for through-the-mesh deform.
+        transparent: "false"
+
+  - id: xfrm.softMove
+    base: move
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softRotate
+    base: rotate
+    # Scale the rotation ANGLE by the falloff weight (radius-preserving),
+    # R(w*theta), instead of matrix-lerping toward identity. Reference-verified
+    # for single-axis soft rotation. The other base:rotate soft-rotation presets
+    # (xfrm.swirl / xfrm.twist / xfrm.vortex) set this too — they are all
+    # angle-scaling soft rotations, each reference-verified against the
+    # appropriate falloff (radial / linear / cylinder).
+    attrs:
+      rotFalloffBlend: arc
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softScale
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  # Unified transform (all three banks: translate, rotate, scale) with a
+  # radial soft-selection falloff. One tool.set gives move+rotate+scale all
+  # attenuated by distance from a radial falloff center, matching a combined
+  # soft-selection transform preset. The attrs block is explicit for
+  # documentation; xfrm.transform already defaults all three to true.
+  # NOTE: rotFalloffBlend is deliberately NOT set — the unified xfrm.transform
+  # path uses matrix-lerp for the rotate fold (same as xfrm.flex), not the
+  # angle-scaling (arc) mode of the standalone rotate presets.
+  - id: xfrm.softTransform
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+    pipe:
+      falloff:
+        type: radial
+
+  # xfrm.twist / xfrm.shear / xfrm.taper use `shape integer 0` (Linear).
+  # The falloff stage's default shape is Linear too, so this pin is
+  # belt-and-suspenders — explicit here so a future default-shape change
+  # doesn't silently alter these deform tools' attenuation curve.
+  - id: xfrm.twist
+    base: rotate
+    # Angle-scaling soft rotation (R(w*theta), radius-preserving — see
+    # xfrm.softRotate) under a LINEAR falloff. Reference-verified.
+    attrs:
+      rotFalloffBlend: arc
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.swirl
+    base: rotate
+    # Angle-scaling soft rotation (see xfrm.softRotate) under a radial falloff.
+    attrs:
+      rotFalloffBlend: arc
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.shear
+    base: move
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.taper
+    base: scale
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.bulge
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  # `xfrm.flare` mirrors the reference's stock `Flare` preset —
+  # surprisingly, just push-along-normals + linear falloff (NOT the
+  # outward-scale-perpendicular-to-axis behaviour the name might
+  # suggest). Same wiring lets us match the reference bit-for-bit.
+  - id: xfrm.flare
+    base: xfrm.push
+    pipe:
+      falloff:
+        type:  linear
+        shape: linear
+
+  # `xfrm.vortex` mirrors the reference engine's stock `vortex` preset:
+  # cylinder falloff (radial-perpendicular-to-axis) + Rotate. The user
+  # rotates by setting an axis attr (e.g. RZ) about the matching cylinder
+  # axis; per-vert weight comes from the cylinder falloff so verts on the
+  # axis spin full, verts at the cylinder's radial boundary stay put.
+  # Like the other soft-rotation presets it scales the rotation ANGLE by
+  # the weight (R(w*theta), radius-preserving) — reference-verified.
+  - id: xfrm.vortex
+    base: rotate
+    attrs:
+      rotFalloffBlend: arc
+    pipe:
+      falloff:
+        type:  cylinder
+        shape: linear
+
+  # ----- Transform sub-tab ----------------------------------------
+  # `xfrm.elementMove` mirrors the reference's `tool.set ElementMove` —
+  # the reference preset only sets the ACEN slot to element mode; the WGHT
+  # slot (falloff.element with mode=automatic) and the ACTR slot
+  # (xfrm.transform). It does NOT touch the AXIS slot, so AXIS stays
+  # at its default (axis.auto = workplane / world axes). We match
+  # that — pinning AXIS=element would point the transform gizmo at
+  # per-cluster axes (which the element-move flow doesn't want).
+  # Also published as `move.element` (backwards-compat alias without
+  # the falloff stage activation).
+  - id: xfrm.elementMove
+    base: xfrm.transform
+    # The reference's stock ElementMove: T=1, R=0, S=0 (translate-only).
+    # User flips R/S via the property panel for the unified Transform.
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+    pipe:
+      actionCenter:
+        mode: element
+      falloff:
+        type:  element
+        shape: linear
+        # Mirror the reference's stock `mode integer 0` default —
+        # explicit `auto` so re-activating the preset resets the
+        # 7-mode pick selector to its default (without this, mode
+        # is whatever the previous activation left behind).
+        mode:  auto
+
+  # Reference-name alias for the same preset (stock `ElementMove`). Resolves to
+  # the canonical `xfrm.elementMove` block above — see the loader's `alias:`
+  # handling in source/tool_presets.d. Useful for cross-engine diff cases
+  # that share a case JSON between the reference and vibe3d.
+  - id: ElementMove
+    alias: xfrm.elementMove
+
+  - id: move.element
+    base: move
+    pipe:
+      actionCenter:
+        mode: element
+      axis:
+        mode: element
+
+  # `xfrm.flex` — a soft-selection transform preset: ACEN=border,
+  # AXIS=select, Falloff=selection, Transform with T/R/S all on. The
+  # `falloff.selection` `steps` attr is an integer BFS-hop count (its own
+  # `steps` field/param, labelled "Steps"). Selection's post-smoothing ease
+  # is a fixed smoothstep decoupled from the Shape Preset (FalloffStage's
+  # `shape` config has no effect on this type — see the ease step in
+  # recomputeSelectionWeights), so no `shape` attr is set here.
+  # D.7 of doc/deform_d7_flex_plan.md.
+  - id: xfrm.flex
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+    pipe:
+      actionCenter:
+        mode: border
+      axis:
+        mode: select
+      falloff:
+        type:  selection
+
+  # ----- xfrm.transform per-mode presets --------------------------
+  # Mirror the reference's stock TransformMove / TransformRotate / TransformScale
+  # presets — one tool (xfrm.transform) with different T/R/S flag combos
+  # and H selecting the handle family. `presentation` is vibe3d's explicit
+  # split between the reference's per-mode full handles and bare Transform's compact
+  # combined handles.
+  - id: TransformMove
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+      H: "0"
+      presentation: "full"
+
+  - id: TransformRotate
+    base: xfrm.transform
+    attrs:
+      T: "false"
+      R: "true"
+      S: "false"
+      H: "1"
+      presentation: "full"
+
+  - id: TransformScale
+    base: xfrm.transform
+    attrs:
+      T: "false"
+      R: "false"
+      S: "true"
+      H: "2"
+      presentation: "full"
+
+  # Bare Transform: all three handler banks are visible. The wrapper owns one
+  # edit session and history intent while each bank only produces input.
+  - id: Transform
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+      H: "0"
+      presentation: "compact"
+
+  # Uniform scale: locks all three axes to a single factor.
+  # One numeric `uniformScale` param + centre disc handle only.
+  # base: scale (flagS=true, handleFamily=2, presentation=full).
+  - id: xfrm.scaleUniform
+    base: scale
+    attrs:
+      uniform: "true"
+
+  # Thicken (task 0358) — confirmed to be the SAME tool as Smooth Shift in
+  # the reference editor, activated with its `thicken` attribute forced on,
+  # not a separate tool class. Mirrors the reference editor's own preset
+  # mechanism for this exact relationship (a preset that runs the base tool
+  # with one attr overridden). The reference's own Thicken preset also
+  # forces maxAngle to a slightly different value (90.115deg) than the base
+  # tool's own factory default (89.5deg) — mirrored here for panel fidelity,
+  # though maxAngle does not affect geometry either way (see
+  # source/tools/smooth_shift_tool.d).
+  - id: mesh.thickenTool
+    base: mesh.smoothShiftTool
+    attrs:
+      thicken: "true"
+      maxAngle: "90.115"
