@@ -454,6 +454,10 @@ version (OSX) private string bundledSDL2Path()
 /// regenerate with tools/icon/gen_icons.py). Covers X11 and Windows — on
 /// Wayland the compositor takes the icon from the .desktop entry instead.
 void setWindowIcon(SDL_Window* window) {
+    // Emscripten's SDL_SetWindowIcon hook is intentionally empty; the page
+    // owns its favicon. Avoid manufacturing a temporary SDL surface only to
+    // call that no-op, while retaining the desktop path byte-for-byte.
+    version (web) return;
     static immutable ubyte[] blob = cast(immutable ubyte[]) import("icon_64.rgba");
     static assert(blob.length >= 8, "icon_64.rgba missing or truncated");
     const uint w = blob[0] | (blob[1] << 8) | (blob[2] << 16) | (blob[3] << 24);
@@ -1569,6 +1573,14 @@ void main(string[] args) {
     // wart, the `&fbW()` spelling that existed only because `&fbW` would
     // have taken the FORWARDER's address instead of the field's.
     SDL_GL_GetDrawableSize(window, &ifs.fbW, &ifs.fbH);
+    version (web) if (webFirstFrameProbe) {
+        int browserWinW, browserWinH;
+        float browserDpi;
+        SDL_GetWindowSize(window, &browserWinW, &browserWinH);
+        immutable int dpiRc = SDL_GetDisplayDPI(0, &browserDpi, null, null);
+        writefln("WEB-WINDOW-READY window=%dx%d framebuffer=%dx%d dpiRc=%d dpi=%.2f icon=page-owned",
+            browserWinW, browserWinH, ifs.fbW, ifs.fbH, dpiRc, browserDpi);
+    }
 
     // --perf disables vsync so the benchmark isn't capped at the display
     // refresh rate; --test disables it too so a hidden test window never blocks
@@ -5045,6 +5057,8 @@ void main(string[] args) {
         version (web) static int webProbeMouseX = -1;
         version (web) static int webProbeMouseY = -1;
         version (web) static bool webProbeFirstFrameReported;
+        version (web) static uint webWindowInputMask;
+        version (web) static bool webWindowInputReported;
         version (web) ++webProbeFrameOrdinal;
         version (web) {
             import handles.gl_util : beginWebThickLineReceipt;
@@ -5179,6 +5193,38 @@ void main(string[] args) {
                         writefln("WEB-RUNNER-INPUT-ACK source=sdl generation=router frame=%d mouse=%d,%d",
                             webProbeInputFrame, webProbeMouseX,
                             webProbeMouseY);
+                    }
+                    if (webFirstFrameProbe && eventAccepted) {
+                        immutable uint priorWindowInputMask = webWindowInputMask;
+                        switch (event.type) {
+                            case SDL_KEYDOWN:         webWindowInputMask |= 1u << 0; break;
+                            case SDL_KEYUP:           webWindowInputMask |= 1u << 1; break;
+                            case SDL_TEXTINPUT:       webWindowInputMask |= 1u << 2; break;
+                            case SDL_MOUSEBUTTONDOWN: webWindowInputMask |= 1u << 3; break;
+                            case SDL_MOUSEBUTTONUP:   webWindowInputMask |= 1u << 4; break;
+                            case SDL_MOUSEWHEEL:      webWindowInputMask |= 1u << 5; break;
+                            case SDL_WINDOWEVENT:
+                                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                                    webWindowInputMask |= 1u << 6;
+                                break;
+                            default: break;
+                        }
+                        if (webWindowInputMask != priorWindowInputMask)
+                            writefln("WEB-WINDOW-INPUT-STEP event=%d mask=0x%x",
+                                event.type, webWindowInputMask);
+                        enum uint completeWindowInputMask = (1u << 7) - 1;
+                        if (!webWindowInputReported
+                            && webWindowInputMask == completeWindowInputMask) {
+                            int measuredWinW, measuredWinH;
+                            int measuredFbW, measuredFbH;
+                            SDL_GetWindowSize(window, &measuredWinW, &measuredWinH);
+                            SDL_GL_GetDrawableSize(window, &measuredFbW, &measuredFbH);
+                            writefln("WEB-WINDOW-INPUT source=sdl generation=router keyboard=down+up text=input buttons=down+up wheel=seen resize=seen focus=%s window=%dx%d framebuffer=%dx%d",
+                                SDL_GetKeyboardFocus() == window ? "owned" : "lost",
+                                measuredWinW, measuredWinH,
+                                measuredFbW, measuredFbH);
+                            webWindowInputReported = true;
+                        }
                     }
                 }
                 if (!eventAccepted) {

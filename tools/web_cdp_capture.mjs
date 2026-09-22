@@ -70,6 +70,7 @@ try {
   let report = '';
   let inputSent = false;
   let inputAckAt = 0;
+  let windowInputSent = false;
   while (Date.now() - started < deadlineMs) {
     const result = await send('Runtime.evaluate', {
       expression: "document.querySelector('#report')?.textContent || ''",
@@ -91,13 +92,42 @@ try {
     }
     if (!inputAckAt && /^OUT WEB-RUNNER-INPUT-ACK source=sdl generation=router /m.test(report))
       inputAckAt = Date.now();
+    if (!windowInputSent && /^OUT WEB-RUNNER-LIVE .* context=live /m.test(report)) {
+      // W16-E deliberately starts after W16-R's downstream motion witness.
+      // Drive every remaining browser input family through Chromium's native
+      // input domain, then resize the real canvas that SDL owns.
+      await send('Input.dispatchKeyEvent', {
+        type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65,
+        nativeVirtualKeyCode: 65, text: 'a', unmodifiedText: 'a'
+      });
+      await send('Input.dispatchKeyEvent', {
+        type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65,
+        nativeVirtualKeyCode: 65
+      });
+      await send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x: 10, y: 10, button: 'left', buttons: 1,
+        clickCount: 1, pointerType: 'mouse'
+      });
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: 10, y: 10, button: 'left', buttons: 0,
+        clickCount: 1, pointerType: 'mouse'
+      });
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseWheel', x: 10, y: 10, deltaX: 0, deltaY: -120,
+        pointerType: 'mouse'
+      });
+      await send('Runtime.evaluate', {
+        expression: "canvas.style.width='640px';canvas.style.height='480px';window.dispatchEvent(new Event('resize'))"
+      });
+      windowInputSent = true;
+    }
     if (inputAckAt && Date.now() - inputAckAt > 1500
         && !/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report))
       throw new Error(`downstream ImGui receipt missing after SDL/router ACK:\n${report}`);
-    if (/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report)) break;
+    if (/^OUT WEB-WINDOW-INPUT .* resize=seen /m.test(report)) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (!/^OUT WEB-RUNNER-LIVE .* context=live /m.test(report))
+  if (!/^OUT WEB-WINDOW-INPUT .* resize=seen /m.test(report))
     throw new Error(`browser receipt deadline after ${deadlineMs}ms:\n${report}`);
 
   const dom = await send('Runtime.evaluate', {

@@ -31,7 +31,7 @@ js = js_path.read_text().replace(
     "var fetched = Module['getPreloadedPackage'] && Module['getPreloadedPackage'](REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE);",
     "var fetched = window.__vibeData;")
 token = f"w16-r-{mode}-argv"
-html = f'''<!doctype html><meta charset="utf-8"><style>html,body{{margin:0;overflow:hidden}}canvas{{display:block}}#report{{display:none}}</style>
+html = f'''<!doctype html><meta charset="utf-8"><style>html,body{{margin:0;overflow:hidden}}canvas{{display:block;width:800px;height:600px}}#report{{display:none}}</style>
 <canvas id="canvas" width="1280" height="720"></canvas><pre id="report">BOOT mode={mode}</pre>
 <script>
 const report = document.getElementById('report');
@@ -64,9 +64,13 @@ PY
     receipt=$(grep -Eo 'OUT WEB-FIRST-FRAME-COMPLETE subpatch=1 thickSubmissions=[1-9][0-9]* cells=[1-9][0-9]* previewFaces=[1-9][0-9]* viewport=[0-9,]+' "$scratch/$mode.dom" | head -1 || true)
     ack=$(grep -Eo 'OUT WEB-RUNNER-INPUT-ACK source=sdl generation=router frame=[0-9]+ mouse=321,234' "$scratch/$mode.dom" | head -1 || true)
     live=$(grep -Eo "OUT WEB-RUNNER-LIVE args=w16-r-$mode-argv input=mouse-motion source=imgui-io generation=new-frame mouse=321,234 context=live frame=[0-9]+ inputFrame=[0-9]+" "$scratch/$mode.dom" | head -1 || true)
+    window=$(grep -Eo 'OUT WEB-WINDOW-READY window=800x600 framebuffer=800x600 dpiRc=0 dpi=[0-9.]+ icon=page-owned' "$scratch/$mode.dom" | head -1 || true)
+    window_input=$(grep -Eo 'OUT WEB-WINDOW-INPUT source=sdl generation=router keyboard=down\+up text=input buttons=down\+up wheel=seen resize=seen focus=owned window=640x480 framebuffer=640x480' "$scratch/$mode.dom" | head -1 || true)
     [[ -n $receipt ]] || { echo "$mode: first-frame receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $ack ]] || { echo "$mode: routed input acknowledgement missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     [[ -n $live ]] || { echo "$mode: argv/input/live-context receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
+    [[ -n $window ]] || { echo "$mode: initial window/DPI/framebuffer receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
+    [[ -n $window_input ]] || { echo "$mode: browser window/input receipt missing" >&2; sed -n '/<pre id="report">/,/<\/pre>/p' "$scratch/$mode.dom" >&2; exit 3; }
     python3 - "$ack" "$live" <<'PY'
 import re, sys
 ack, live = sys.argv[1:]
@@ -78,5 +82,5 @@ if reported_input != input_frame or live_frame <= input_frame:
 PY
     viewport=${receipt##*viewport=}
     python3 "$repo_root/tools/check_web_frame_pixels.py" "$scratch/$mode.png" "$viewport"
-    echo "WEB-RUNNER mode=$mode build=O2 runtime=ready frame=1 argv=intact closure=invoked stack=reset-safe input=mouse-motion context=live"
+    echo "WEB-RUNNER mode=$mode build=O2 runtime=ready frame=1 argv=intact closure=invoked stack=reset-safe input=mouse-motion window-input=complete context=live"
 done

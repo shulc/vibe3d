@@ -55,4 +55,23 @@ unittest
         "W16-R stack-reset injection must reject generator drift");
     assert(reset.count("stackRestore(__vibeMainStack)") == 1,
         "W16-R reset lane must restore the pre-main stack pointer");
+
+    // W16-E extends the same live runner after W16-R's mouse-motion witness;
+    // it must not replace that downstream test with a self-authored event.
+    assert(cdp.indexOf("W16-E deliberately starts after W16-R") >= 0
+        && cdp.count("Input.dispatchKeyEvent") == 2
+        && cdp.count("type: 'mousePressed'") == 1
+        && cdp.count("type: 'mouseReleased'") == 1
+        && cdp.count("type: 'mouseWheel'") == 1,
+        "W16-E browser input families escaped the native CDP lane");
+    assert(runner.count("WEB-WINDOW-READY") == 1
+        && runner.count("WEB-WINDOW-INPUT") == 1
+        && runner.indexOf("window=640x480 framebuffer=640x480") >= 0,
+        "W16-E runner must pin logical and drawable resize results");
+    assert(app.count("WEB-WINDOW-INPUT source=sdl generation=router") == 1
+        && app.count("completeWindowInputMask") == 2,
+        "W16-E receipt must follow the production SDL/router seam");
+    assert(app.indexOf("version (web) return;") >= 0
+        && app.indexOf("version (web) return;") < app.indexOf("SDL_SetWindowIcon(window, surf)"),
+        "W16-E web icon path must remain page-owned and skip SDL's no-op hook");
 }
