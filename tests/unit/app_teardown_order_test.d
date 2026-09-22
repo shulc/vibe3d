@@ -23,7 +23,7 @@ private enum refreshCommand =
 
 private enum scopeExitRe = ctRegex!(`\bscope\s*\(\s*exit\s*\)`);
 private enum teardownSymbolRe = ctRegex!(
-    `\b(gl[A-Z]\w*|SDL_\w+|ImGui\w*|ig[A-Z]\w*|shutdownIPR|destroyGL|\.destroy\(\)|\.shutdown\(\))`);
+    `\b(gl[A-Z]\w*|SDL_\w+|ImGui\w*|ig[A-Z]\w*|shutdownIPR|shutdownThickLineProgram|destroyGL|\.destroy\(\)|\.shutdown\(\))`);
 
 private struct ScopeExit
 {
@@ -157,18 +157,20 @@ unittest
 
     // The broad and narrowed population floors precede the order pin. A
     // broken form scan or classifier must fail here, not pass an empty order.
-    assert(rows.length == 26,
-        format("6770 app.d scope(exit) population changed: expected 26, found %d",
+    assert(rows.length == 27,
+        format("6770 app.d scope(exit) population changed: expected 27, found %d",
             rows.length));
     const selected = rows.filter!(row => row.selected).array;
-    assert(selected.length == 16,
-        format("6770 teardown-rule population changed: expected 16, found %d; " ~
-               "the rule is GL/SDL/ImGui/shutdownIPR/destroyGL/.destroy()/.shutdown()",
+    assert(selected.length == 17,
+        format("6770 teardown-rule population changed: expected 17, found %d; " ~
+               "the rule is GL/SDL/ImGui/shutdownIPR/shutdownThickLineProgram/" ~
+               "destroyGL/.destroy()/.shutdown()",
             selected.length));
     const webGuarded = selected.filter!(row =>
-        row.text.startsWith("version (web) { } else ")).array;
-    assert(webGuarded.length == 14,
-        format("6770 web-gated teardown population changed: expected 14, found %d; " ~
+        row.text.startsWith("version (web) { } else ")
+        || row.text.startsWith("version (web) {} else ")).array;
+    assert(webGuarded.length == 15,
+        format("6770 web-gated teardown population changed: expected 15, found %d; " ~
                "desktop LIFO order and web omission are both part of this ledger",
             webGuarded.length));
     foreach (row; selected)
@@ -179,8 +181,8 @@ unittest
                 row.braceDepth, row.key, row.text));
 
     const expected = readLedger(readText(buildPath(repoRoot, ledgerPath)));
-    assert(expected.length == 16,
-        format("6770 generated teardown ledger must contain 16 rows, found %d; refresh with: %s",
+    assert(expected.length == 17,
+        format("6770 generated teardown ledger must contain 17 rows, found %d; refresh with: %s",
             expected.length, refreshCommand));
 
     foreach (i; 0 .. expected.length)
@@ -221,8 +223,8 @@ void main()
 
     const source = readText(buildPath(repoRoot, "source", "app.d"));
     const rows = scanScopeExits(source).filter!(row => row.selected).array;
-    assert(rows.length == 16,
-        format("refusing to generate a teardown ledger with %d rows; expected 16",
+    assert(rows.length == 17,
+        format("refusing to generate a teardown ledger with %d rows; expected 17",
             rows.length));
 
     writeln("# Task 6770 app.d teardown declaration order. GENERATED FILE.");

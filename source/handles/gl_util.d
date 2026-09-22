@@ -521,6 +521,13 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_TYPE, &attribType);
     glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &sourceStride);
     glGetVertexAttribPointerv(0, GL_VERTEX_ATTRIB_ARRAY_POINTER, &sourceOffset);
+    // `buildVao3f` deliberately returns VAO/VBO 0 under -unittest.  The old
+    // glDrawArrays path treated that as an empty submission while still
+    // recording the caller's logical vertices; preserve that contract.
+    if (sourceBuffer == 0) {
+        g_fc.draw(DrawPass.handles, vertCount);
+        return;
+    }
     assert(attribSize == 3, "thick-line position attribute must have size 3");
     assert(attribType == GL_FLOAT, "thick-line position attribute must be GL_FLOAT");
     if (sourceStride == 0)

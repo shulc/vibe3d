@@ -1757,7 +1757,7 @@ void main(string[] args) {
     version (web) {
     } else scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, ifs.fbW, ifs.fbH);
-    scope(exit) shutdownThickLineProgram();
+    version (web) {} else scope(exit) shutdownThickLineProgram();
 
     // Translucent-fill program (flat u_color at u_alpha) — backs
     // handler.drawWorldQuad, used by the Slice tool's cut-plane overlay. No

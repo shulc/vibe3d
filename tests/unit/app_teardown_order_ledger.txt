@@ -10,6 +10,7 @@ scope b237f6b9b8b0440f version (web) { } else scope(exit) SDL_GL_DeleteContext(c
 scope 5b02d9237d8315c1 version (web) { } else scope(exit) { ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui.DestroyContext(); }
 scope 3dc9d413b494ddbe version (WithRender) scope(exit) shutdownIPR();
 scope 35f5b681d37482cb version (web) { } else scope(exit) glDeleteProgram(thickLineProgram);
+scope 5dca414b1c20126d version (web) {} else scope(exit) shutdownThickLineProgram();
 scope f6a5c96d493f2fd1 version (web) { } else scope(exit) glDeleteProgram(fillProgram);
 scope 33ad5f3263d30ce1 version (web) { } else scope(exit) glDeleteProgram(imagePlaneProgram);
 scope 47280d97d3a5a79b version (web) { } else scope(exit) { if (subpatchPreview.worker !is null) { subpatchPreview.joinInFlight(); subpatchPreview.worker.shutdown(); } }

@@ -350,7 +350,7 @@ unittest
         auto ast = parseAst(lowerApp(config));
         const anchor = ast.findAnchor(config);
         const finallyLines = ast.enclosingFinallyLines(anchor);
-        const expectedFinally = config == "modeling" ? 27 : 0;
+        const expectedFinally = config == "modeling" ? 28 : 0;
         assert(finallyLines.length == expectedFinally,
             format("W16-M %s cleanup census: expected %d finally blocks whose try "
                  ~ "contains the main-loop anchor, got %d; lowered-AST lines: %s",

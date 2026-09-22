@@ -279,6 +279,9 @@ private void assertOwnerA(EdgeBevelTool tool, ref Viewport ownerVp) {
         "OWNER CACHED VIEWPORT WIDTH: expected 800 got %s (tol 0)",
         read.cachedWidth));
     const pass = g_fc.lastHandlePass();
+    assert(pass.writes == 2, format(
+        "OWNER HANDLE DRAWS: expected shaft+head=2 got %s (tol 0)",
+        pass.writes));
     assert(pass.submitted == 1, format(
         "OWNER HANDLE SUBMISSIONS: expected 1 got %s (tol 0)",
         pass.submitted));
