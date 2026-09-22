@@ -73,6 +73,7 @@ import sdl_error : sdlError;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+version (web) extern(C) nothrow @nogc ImVec2 igGetMousePos();
 import imgui_impl_sdl2;
 import imgui_event_gate : clearImGuiInputKeysForAutomation, feedImGui,
     keyBelongsToEditor;
@@ -971,6 +972,7 @@ void main(string[] args) {
     // source and behavior is unchanged.
     string aiModelCliPath;
     version (web) bool webFirstFrameProbe;
+    version (web) string webProbeArgument;
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -1019,6 +1021,17 @@ void main(string[] args) {
                 writeln("Error: --web-first-frame-probe requires --config=web");
                 import core.stdc.stdlib : exit;
                 exit(1);
+            }
+        } else if (args[i] == "--web-probe-argument") {
+            version (web) {
+                if (i + 1 >= args.length) {
+                    writeln("Error: --web-probe-argument requires a value");
+                    return;
+                }
+                webProbeArgument = args[++i];
+            } else {
+                writeln("Error: --web-probe-argument requires --config=web");
+                return;
             }
         } else if (args[i] == "--http-port") {
             startHttpServer = true;
@@ -1119,6 +1132,8 @@ void main(string[] args) {
             exit(1);
         }
     }
+    version (web) if (webFirstFrameProbe)
+        writefln("WEB-RUNNER-ARMED args=%s", webProbeArgument);
 
     bool testViewportWindows;
     {
@@ -5025,6 +5040,12 @@ void main(string[] args) {
         // timing and a default-build count describe the SAME frame and can be
         // put side by side without an alignment argument.
         g_fc.beginFrame();
+        version (web) static ulong webProbeFrameOrdinal;
+        version (web) static ulong webProbeInputFrame;
+        version (web) static int webProbeMouseX = -1;
+        version (web) static int webProbeMouseY = -1;
+        version (web) static bool webProbeFirstFrameReported;
+        version (web) ++webProbeFrameOrdinal;
         version (web) {
             import handles.gl_util : beginWebThickLineReceipt;
             beginWebThickLineReceipt();
@@ -5146,7 +5167,21 @@ void main(string[] args) {
                 immutable bool eventWindowFocused = event.type == SDL_KEYUP
                     ? liveKeyEventWindowFocused(window)
                     : SDL_GetKeyboardFocus() == window;
-                if (!router.processEvent(&event, eventWindowFocused)) {
+                immutable bool eventAccepted = router.processEvent(
+                    &event, eventWindowFocused);
+                version (web) {
+                    if (webFirstFrameProbe && eventAccepted
+                        && event.type == SDL_MOUSEMOTION
+                        && event.motion.x == 321 && event.motion.y == 234) {
+                        webProbeInputFrame = webProbeFrameOrdinal;
+                        webProbeMouseX = event.motion.x;
+                        webProbeMouseY = event.motion.y;
+                        writefln("WEB-RUNNER-INPUT-ACK source=sdl generation=router frame=%d mouse=%d,%d",
+                            webProbeInputFrame, webProbeMouseX,
+                            webProbeMouseY);
+                    }
+                }
+                if (!eventAccepted) {
                     running = false;
                     break;
                 }
@@ -5216,6 +5251,27 @@ void main(string[] args) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui.NewFrame();
+        version (web) {
+            // feedImGui queues the SDL payload; NewFrame is the production
+            // consumer that commits it to ImGuiIO. Observe it on a later frame
+            // so the terminal receipt cannot merely echo the router payload.
+            static bool webProbeInputReported;
+            const ImVec2 consumedMouse = igGetMousePos();
+            if (webFirstFrameProbe && webProbeFirstFrameReported
+                && webProbeInputFrame > 0
+                && webProbeFrameOrdinal > webProbeInputFrame
+                && !webProbeInputReported
+                && cast(int)consumedMouse.x == webProbeMouseX
+                && cast(int)consumedMouse.y == webProbeMouseY) {
+                void* liveContext = SDL_GL_GetCurrentContext();
+                writefln("WEB-RUNNER-LIVE args=%s input=mouse-motion source=imgui-io generation=new-frame mouse=%d,%d context=%s frame=%d inputFrame=%d",
+                    webProbeArgument, cast(int)consumedMouse.x,
+                    cast(int)consumedMouse.y,
+                    liveContext is null ? "lost" : "live",
+                    webProbeFrameOrdinal, webProbeInputFrame);
+                webProbeInputReported = true;
+            }
+        }
 
         // ── Phase 0b: full-viewport DockSpace host ─────────────────────────
         // A transparent, no-chrome, no-input window that covers the entire
@@ -7803,8 +7859,7 @@ void main(string[] args) {
             import handles.gl_util : publishWebThickLineReceipt,
                 webThickLineSubmissions;
             publishWebThickLineReceipt();
-            static bool firstFrameReported;
-            if (webFirstFrameProbe && !firstFrameReported) {
+            if (webFirstFrameProbe && !webProbeFirstFrameReported) {
                 const work = g_fc.last();
                 const bool previewDrawn = gpuUploadedPreview
                     && subpatchPreview.active
@@ -7815,7 +7870,8 @@ void main(string[] args) {
                         thickSubmissions, work.cellsRendered,
                         subpatchPreview.mesh.faces.length,
                         layout.vpX, layout.vpY, layout.vpW, layout.vpH);
-                    firstFrameReported = true;
+                    webProbeFirstFrameReported = true;
+                    writeln("WEB-RUNNER-INPUT-REQUEST mouse=321,234");
                 }
             }
         }

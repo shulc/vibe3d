@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Kept as the compatibility entry point used by W16-L.  W16-R strengthens it
+# to the permanent two-mode browser runner (normal + forced stack reset).
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_web_browser_runner.sh" "$@"
+
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 chromium=${VIBE3D_CHROMIUM:-$(command -v chromium-browser || command -v chromium || true)}
 if [[ -z $chromium ]]; then
