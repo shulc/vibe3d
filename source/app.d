@@ -970,6 +970,7 @@ void main(string[] args) {
     // when both unset — the default deterministic advisor stays the decision
     // source and behavior is unchanged.
     string aiModelCliPath;
+    version (web) bool webFirstFrameProbe;
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -1009,6 +1010,16 @@ void main(string[] args) {
             visibleTest = true;
         } else if (args[i] == "--no-http") {
             startHttpServer = false;
+        } else if (args[i] == "--web-first-frame-probe") {
+            // Browser-only, deterministic visual witness used by the tracked
+            // first-frame gate.  It exercises production preview and handle
+            // rendering without opening an HTTP control surface.
+            version (web) webFirstFrameProbe = true;
+            else {
+                writeln("Error: --web-first-frame-probe requires --config=web");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
         } else if (args[i] == "--http-port") {
             startHttpServer = true;
             if (i + 1 >= args.length) {
@@ -1550,7 +1561,11 @@ void main(string[] args) {
     // (the -j8 swap-park hang). Normal runs keep vsync on to avoid tearing.
     // A --visible test session keeps vsync ON so the watched frames pace to the
     // display and the loop doesn't busy-spin; hidden --test stays vsync-off.
-    SDL_GL_SetSwapInterval((perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
+    // Emscripten owns frame pacing through emscripten_set_main_loop_arg below;
+    // SDL's swap-interval API is a pre-loop desktop timing control only.
+    version (web) {
+    } else SDL_GL_SetSwapInterval(
+        (perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
     // Desktop GL requires this capability before a vertex shader's
     // gl_PointSize output controls point rasterisation. WebGL2 / ES uses the
@@ -3963,6 +3978,35 @@ void main(string[] args) {
         import pie_menus : setPieMenus;
         setPieMenus(loadPies("config/pies.yaml"));
     }
+    version (web) {
+        // These command families are deliberately absent from the browser
+        // closure. Keep their shipped buttons visible as disabled placeholders
+        // instead of making startup's registry validation reject the frame.
+        void disableUnavailableWebButton(ref Button btn) {
+            bool unavailable(Action action) {
+                return action.kind == ActionKind.command &&
+                    (action.id == "ai3d.generate.open" ||
+                     action.id == "mesh.remesh.open");
+            }
+            if (unavailable(btn.action) ||
+                (btn.ctrl.present && unavailable(btn.ctrl.action)) ||
+                (btn.alt.present && unavailable(btn.alt.action)) ||
+                (btn.shift.present && unavailable(btn.shift.action)))
+                btn.disabled = true;
+        }
+        foreach (ref p; panels)
+            foreach (ref btn; allButtons(p))
+                disableUnavailableWebButton(btn);
+        foreach (ref grp; statusLineGroups)
+            foreach (ref btn; grp.buttons)
+                disableUnavailableWebButton(btn);
+        {
+            import pie_menus : pieMenus;
+            foreach (ref pm; pieMenus())
+                foreach (ref btn; pm.items)
+                    disableUnavailableWebButton(btn);
+        }
+    }
     // The AI master-switch (ai.toggle/enable/disable) status-line buttons are
     // live only when those commands are actually registered — i.e. a WithAI
     // build (ONNX ranker compiled in) AND the copilot enabled (kCopilotEnabled,
@@ -4011,6 +4055,12 @@ void main(string[] args) {
         import argstring : parseArgstring;
         auto missing = appender!string();
         void check(Action a) {
+            version (web) {
+                if (a.kind == ActionKind.command &&
+                    (a.id == "ai3d.generate.open" ||
+                     a.id == "mesh.remesh.open"))
+                    return;
+            }
             final switch (a.kind) {
                 case ActionKind.tool:
                     if (!reg.hasTool(a.id))
@@ -4768,6 +4818,17 @@ void main(string[] args) {
         ifs.useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
     }
 
+    version (web) if (webFirstFrameProbe) {
+        // A marked cube forces the synchronous CPU OpenSubdiv path on frame
+        // one.  Move supplies a real production gizmo, whose strokes all pass
+        // through drawThickLines.
+        import change_bus : MeshEditScope;
+        foreach (fi; 0 .. mesh.faces.length) mesh.setSubpatch(fi, true);
+        mesh.commitChange(MeshEditScope.Marks);
+        ++mesh.topologyVersion;
+        activateToolById("move");
+    }
+
     // Task 0781 step 2a -- `handleKeyDown` and `handleKeyUp` moved to InputRouter
     // (source/input_router.d), bodies verbatim, for the same reason
     // `handleWindowEvent`/`handleMouseWheel` already live there.
@@ -4964,6 +5025,10 @@ void main(string[] args) {
         // timing and a default-build count describe the SAME frame and can be
         // put side by side without an alignment argument.
         g_fc.beginFrame();
+        version (web) {
+            import handles.gl_util : beginWebThickLineReceipt;
+            beginWebThickLineReceipt();
+        }
 
         // Perf: events phase — playback tick + HTTP event-player drain +
         // the SDL_PollEvent dispatch loop. `toolNs` (the live geometry apply
@@ -7733,6 +7798,27 @@ void main(string[] args) {
         const presentMode = resolveFramePresentMode(
             testMode, perfMode, visibleTest);
         frameRunner.finishFrame(window, ifs.fbW, ifs.fbH, presentMode);
+
+        version (web) {
+            import handles.gl_util : publishWebThickLineReceipt,
+                webThickLineSubmissions;
+            publishWebThickLineReceipt();
+            static bool firstFrameReported;
+            if (webFirstFrameProbe && !firstFrameReported) {
+                const work = g_fc.last();
+                const bool previewDrawn = gpuUploadedPreview
+                    && subpatchPreview.active
+                    && subpatchPreview.mesh.faces.length > mesh.faces.length;
+                const long thickSubmissions = webThickLineSubmissions();
+                if (previewDrawn && thickSubmissions > 0 && work.cellsRendered > 0) {
+                    writefln("WEB-FIRST-FRAME-COMPLETE subpatch=1 thickSubmissions=%d cells=%d previewFaces=%d viewport=%d,%d,%d,%d",
+                        thickSubmissions, work.cellsRendered,
+                        subpatchPreview.mesh.faces.length,
+                        layout.vpX, layout.vpY, layout.vpW, layout.vpH);
+                    firstFrameReported = true;
+                }
+            }
+        }
 
         version (web) {
             if (!running) {

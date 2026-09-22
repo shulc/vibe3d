@@ -1888,7 +1888,12 @@ struct GpuMesh {
         if (ranOccluded) emitHighlights();
         endHighlightPasses(occ, ranOccluded);
 
-        glPointSize(1.0f);
+        // WebGL2 has no programmable point-size state outside the vertex
+        // shader.  Calling the desktop entry point there creates a null GL
+        // dispatch even though the shared u_pointSize reset below is the
+        // actual browser behaviour.
+        version (web) {
+        } else glPointSize(1.0f);
         glUniform1f(locPointSize, 1.0f);
         glBindVertexArray(0);
     }

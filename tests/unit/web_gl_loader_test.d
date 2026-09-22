@@ -213,6 +213,7 @@ unittest
     auto manifest = parseJSON(readText(buildPath(repoRoot, "dub.json")));
     size_t webConfigurations;
     string sdlSubconfiguration;
+    string[] wasmDflags;
     string[] wasmLflags;
     foreach (configuration; manifest["configurations"].array)
     {
@@ -220,6 +221,8 @@ unittest
         ++webConfigurations;
         sdlSubconfiguration = configuration["subConfigurations"]
             ["bindbc-sdl"].str.idup;
+        foreach (flag; configuration["dflags-wasm"].array)
+            wasmDflags ~= flag.str.idup;
         foreach (flag; configuration["lflags-wasm"].array)
             wasmLflags ~= flag.str.idup;
     }
@@ -227,10 +230,30 @@ unittest
         format("W16-LD web must select bindbc-sdl:static exactly once; "
              ~ "configs=%d selection=%s", webConfigurations,
                sdlSubconfiguration));
-    foreach (flag; ["-sUSE_SDL=2", "-sMIN_WEBGL_VERSION=2",
-                    "-sMAX_WEBGL_VERSION=2", "-sFULL_ES3"])
-        assert(wasmLflags.canFind(flag),
-            "W16-LD web linker flag missing: " ~ flag);
+    const expectedDflags = [
+        "-gcc=$PACKAGE_DIR/tools/emcc_web_driver.sh",
+        "-defaultlib=phobos2-ldc,druntime-ldc",
+        "-Xcc=-sDEFAULT_TO_CXX=1",
+        "-Xcc=-sUSE_SDL=2",
+        "-Xcc=-sMIN_WEBGL_VERSION=2",
+        "-Xcc=-sMAX_WEBGL_VERSION=2",
+        "-Xcc=-sFULL_ES3",
+        "-Xcc=-sINCOMING_MODULE_JS_API=arguments,canvas,wasmBinary,print,printErr,onRuntimeInitialized",
+        "-Xcc=--preload-file=$PACKAGE_DIR/config@/config",
+    ];
+    const expectedLflags = [
+        "-L$PACKAGE_DIR/.build/web-deps/lib",
+        "-L$PACKAGE_DIR/.build/web-runtime/lib",
+        "$PACKAGE_DIR/.build/web-deps/lib/libcimgui_docking.a",
+        "$PACKAGE_DIR/.build/web-runtime/lib/libphobos2-ldc.a",
+        "$PACKAGE_DIR/.build/web-runtime/lib/libdruntime-ldc.a",
+    ];
+    assert(wasmDflags == expectedDflags,
+        format("W16-L effective dflags-wasm changed: expected %s, got %s",
+               expectedDflags, wasmDflags));
+    assert(wasmLflags == expectedLflags,
+        format("W16-L effective lflags-wasm changed: expected %s, got %s",
+               expectedLflags, wasmLflags));
 
     const appRaw = readText(buildPath(repoRoot, "source", "app.d"));
     const appCode = blankNonCode(appRaw);
@@ -279,6 +302,51 @@ unittest
 };
     assert(appRaw.canFind(emscriptenContextBlock),
         "W16-LD Emscripten context must request OpenGL ES 3.0");
+
+    enum swapIntervalSeam = q{    version (web) {
+    } else SDL_GL_SetSwapInterval(
+        (perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
+};
+    assert(appRaw.canFind(swapIntervalSeam)
+            && countOccurrences(appCode, "SDL_GL_SetSwapInterval(") == 1,
+        "W16-L web must leave pre-main-loop SDL timing to Emscripten while "
+        ~ "preserving the single native swap-interval call");
+
+    const meshGpuRaw = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    enum pointResetSeam = q"D
+        version (web) {
+        } else glPointSize(1.0f);
+        glUniform1f(locPointSize, 1.0f);
+D";
+    assert(meshGpuRaw.canFind(pointResetSeam),
+        "W16-L must compile the legacy glPointSize reset out on web while "
+        ~ "retaining the shader-uniform reset");
+
+    const thickRaw = readText(buildPath(repoRoot, "source", "handles", "gl_util.d"));
+    enum thickSubmissionSeam = q"D
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, segmentCount);
+    version (web) if (segmentCount > 0) ++g_webThickLineInFlight;
+D";
+    assert(thickRaw.canFind(thickSubmissionSeam),
+        "W16-L thick-line receipt must follow the real instanced draw");
+
+    const buildWebRaw = readText(buildPath(repoRoot, "tools", "build_web.sh"));
+    assert(buildWebRaw.canFind("tools/web_runtime_fingerprint.py") &&
+           buildWebRaw.canFind(".build/web-artifacts") &&
+           buildWebRaw.canFind(".build/web-dub-home") &&
+           buildWebRaw.canFind(".build/web-link") &&
+           buildWebRaw.canFind("--dest=\"$link_root\"") &&
+           buildWebRaw.canFind("cmake -E touch \"$repo_root/source/app.d\"") &&
+           buildWebRaw.canFind("shared_archives_before") &&
+           buildWebRaw.canFind("shared_archives_after") &&
+           buildWebRaw.canFind("WEB-DYNAMIC-LINKS rpath=0 runpath=0"),
+        "W16-L build must fingerprint runtime sources, stale only the final "
+        ~ "web target, and isolate Dub cache/artifacts from native archives");
+    const abiPatchRaw = readText(buildPath(repoRoot, "tools",
+                                            "patch_imgui_font_atlas_abi.py"));
+    assert(abiPatchRaw.canFind("text.count(OLD) != 1") &&
+           abiPatchRaw.canFind("text.count(NEW) != 0"),
+        "W16-L ImFont ABI patch must reject preimage drift and repatching");
 
     assert(requiredWebGlSymbols.length == 83
             && optionalDesktopGlSymbols ==

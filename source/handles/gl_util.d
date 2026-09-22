@@ -24,6 +24,29 @@ private struct ThickLineState {
 }
 private ThickLineState g_thickLine;
 
+// W16-L browser probe: a deliberately separate receipt from FrameWork's
+// aggregate handle accounting.  Only successful returns from the real
+// instanced thick-line submission sites increment the in-flight value.  The
+// app publishes it after finishFrame(), so the first-frame gate cannot observe
+// a half-authored frame.  It is web-only and does not alter normal frame
+// counters or their JSON contract.
+version (web) {
+    private long g_webThickLineInFlight;
+    private long g_webThickLinePublished;
+
+    void beginWebThickLineReceipt() nothrow @nogc {
+        g_webThickLineInFlight = 0;
+    }
+
+    void publishWebThickLineReceipt() nothrow @nogc {
+        g_webThickLinePublished = g_webThickLineInFlight;
+    }
+
+    long webThickLineSubmissions() nothrow @nogc {
+        return g_webThickLinePublished;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Translucent-fill shader state — set once from app.d via initFillProgram()
 // (mirrors initThickLineProgram). Backs drawWorldQuad, which alpha-blends a
@@ -566,6 +589,7 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 
     immutable bool hadBlend = beginHandleBlend();
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, segmentCount);
+    version (web) if (segmentCount > 0) ++g_webThickLineInFlight;
     if (mode == GL_LINE_LOOP && vertCount > 1) {
         glVertexAttribPointer(0, attribSize, cast(GLenum)attribType, GL_FALSE,
                               sourceStride,
@@ -573,6 +597,7 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
         glVertexAttribPointer(1, attribSize, cast(GLenum)attribType, GL_FALSE,
                               sourceStride, cast(void*)baseOffset);
         glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+        version (web) ++g_webThickLineInFlight;
     }
     g_fc.draw(DrawPass.handles, vertCount);
     endHandleBlend(hadBlend);
