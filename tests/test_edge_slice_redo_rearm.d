@@ -249,3 +249,29 @@ unittest {
                   slChain().pairs.length, slHistoryLabels()));
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// Block F — the held gesture is CONSUMED by the redo that replays it. After
+// the replay, the raw `history.undo` pops the activation row again (the tool
+// ends, the row returns to the redo head); the next Ctrl+Shift+Z re-arms bare.
+// Added by the diff sweep: without it, dropping the clear after the redo
+// stayed green.
+unittest {
+    auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
+    slLine("tool.set mesh.edgeSliceTool on");
+    const P = slFrontRightChain();
+    latchPoints(P, HINT_OFF, 1, "block F");
+    ctrlZ("block F Ctrl+Z (ends the session)");
+    ctrlShiftZ("block F Ctrl+Shift+Z (replays)");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 1,
+           format("slice floor (block F): the redo did not replay: tool '%s', points %d",
+                  slTool(), slChain().pairs.length));
+    slCmd("history.undo");
+    assert(slTool() != "edgeSlice" && slHistoryLen() == pro.historyLen && slCanRedo(),
+           format("slice floor (block F): the raw undo did not pop the activation row: "
+                  ~ "tool '%s', history %s", slTool(), slHistoryLabels()));
+    ctrlShiftZ("block F Ctrl+Shift+Z (after the raw undo)");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 0,
+           format("a consumed first gesture replayed again: tool '%s', points %d",
+                  slTool(), slChain().pairs.length));
+    slLine("tool.set mesh.edgeSliceTool off");
+}

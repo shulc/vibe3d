@@ -108,3 +108,35 @@ unittest {
     writeln("slice gesture stack: M1 ", M1, " M2 ", M2, " re-armed ", which(r2));
     slKey(SL_SDLK_w, 0, "W (drop Slice)");
 }
+
+// Block G — an RMB gap drag is its own undo step and restores the gap it
+// changed (the gap is part of the line state a gesture writes). Added by the
+// diff sweep: without it, the press-time latch of the gap drag stayed green.
+unittest {
+    slPrologue(false, "polygons", &slBackAndLeft, false);
+    const base = slMesh();
+    slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
+    const Ha = slHistoryLen();
+    slSliceDrawLine();
+    const M1 = slMesh();
+    assert(M1.faces > 4, "slice floor (block G): the line did not cut: " ~ M1.toString);
+    auto vp = viewportFromCamera(fetchCamera());
+    float ax, ay, bx, by;
+    projectToWindow(Vec3(0, -0.6f, 0), vp, ax, ay);
+    projectToWindow(Vec3(0, 0.6f, 0), vp, bx, by);
+    const mx = cast(int)((ax + bx) / 2) + 60, my = cast(int)((ay + by) / 2);
+    string log = slMotion(20, mx, my, 0) ~ "\n" ~ slButton(40, true, 3, mx, my) ~ "\n";
+    foreach (i; 1 .. 7) log ~= slMotion(40 + 20 * i, mx + 10 * i, my, 4) ~ "\n";
+    log ~= slButton(200, false, 3, mx + 60, my);
+    slPlay(log, "RMB gap drag");
+    const M2 = slMesh();
+    assert(M2.canon != M1.canon && slHistoryLen() == Ha,
+           format("slice floor (block G): the gap drag did not change the cut: %s (line %s)",
+                  M2.toString, M1.toString));
+    slKey(SL_SDLK_z, SL_KMOD_LCTRL, "Ctrl+Z (the gap drag)");
+    const z = slMesh();
+    assert(z.canon == M1.canon && slTool() == "slice",
+           format("an RMB gap drag was not its own undo step: mesh %s (expected the line's %s, "
+                  ~ "base %s), tool '%s'", z.toString, M1.toString, base.toString, slTool()));
+    slKey(SL_SDLK_w, 0, "W (drop Slice)");
+}
