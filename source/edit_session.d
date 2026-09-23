@@ -256,6 +256,19 @@ interface SessionStepUndo {
 }
 
 // ---------------------------------------------------------------------------
+// SessionGestureCancel — optional capability: a press..release gesture IN
+// FLIGHT that an undo keystroke cancels on its own (task 7137, owner's rule
+// "the first Ctrl+Z cancels the LIVE edit, the tool stays"; not captured, gap
+// row 225). navigate() asks it before anything else, so the gesture stack, the
+// session and the history are untouched. SliceTool implements it.
+// ---------------------------------------------------------------------------
+interface SessionGestureCancel {
+    /// Cancel the gesture in flight, back to the state at its press; false
+    /// (and nothing done) when no gesture is in flight.
+    bool cancelGestureInFlight();
+}
+
+// ---------------------------------------------------------------------------
 // SessionFirstGesture — optional capability of a cutting session whose arm is
 // a history row (Slice, Edge Slice; task 7137, §22): the undo that removes the
 // session's first gesture also pops that row, and the navigate redo of the row
@@ -611,6 +624,15 @@ final class EditSession {
     //
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navigate(bool isUndo) {
+        if (isUndo) {
+            // A held first gesture is valid only for the NEXT navigate step
+            // after the undo that ended its session; a raw redo in between
+            // has already re-armed that row bare.
+            pendingGesture_ = null;
+            pendingFor_ = null;
+            if (auto gc = cast(SessionGestureCancel) tool_())
+                if (gc.cancelGestureInFlight()) return true;
+        }
         // A cutting session's sole first gesture, read BEFORE the step or
         // cancel below destroys it (see endSession_).
         Object firstGesture;
@@ -710,7 +732,7 @@ final class EditSession {
         if (firstGesture !is null) sfg.sealFirstGesture(firstGesture);
         pendingGesture_ = firstGesture;
         pendingFor_ = ue[$ - 1].cmd;
-        history_.undo();
+        if (!history_.undo()) { pendingGesture_ = null; pendingFor_ = null; }
     }
 
     // Framework "apply and continue" (task 0461 — the reference editor's

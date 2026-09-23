@@ -44,7 +44,7 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
-import edit_session : SessionStepUndo, SessionFirstGesture;
+import edit_session : SessionStepUndo, SessionFirstGesture, SessionGestureCancel;
 import log : logWarn;
 
 struct PreparedSliceActivationImage {
@@ -705,7 +705,7 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // from under us (scene reset / layer switch) between the last preview and the
 // drop — a mismatch drops the preview instead of baking a bogus entry.
 // ---------------------------------------------------------------------------
-final class SliceTool : Tool, SessionStepUndo, SessionFirstGesture,
+final class SliceTool : Tool, SessionStepUndo, SessionFirstGesture, SessionGestureCancel,
                         PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 private:
@@ -1416,6 +1416,30 @@ public:
         gestureStack_ = gestureStack_[0 .. $ - 1];
         restoreLine(st);
         updatePreview();
+        return true;
+    }
+
+    // SessionGestureCancel (task 7137; owner's rule, gap row 225): an undo
+    // keystroke during a press..release gesture (LMB/MMB drag or RMB gap
+    // drag) restores the line latched at its press and re-previews it; on the
+    // session's first gesture that is the bare armed state (no line, baseline
+    // mesh). The stack is untouched and the stray release is ignored.
+    override bool cancelGestureInFlight() {
+        if (!active || (dragPart_ == DragNone && !gapDrag_)) return false;
+        dragPart_    = DragNone;
+        gapDrag_     = false;
+        ctrlPending_ = false;
+        ctrlAxis_    = -1;
+        restoreLine(preGesture_);
+        preHadLine_  = false;
+        if (hasLine_) {
+            updatePreview();
+        } else if (haveBefore_ && before_.filled) {
+            before_.restore(*mesh);
+            previewLive_ = false;
+            armedKey_.stamp(*mesh);
+            refreshDisplay(mesh, gpu);
+        }
         return true;
     }
 
