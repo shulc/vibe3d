@@ -5,6 +5,7 @@
 // Ctrl+Q, while macOS UI config uses Cmd+Q.
 
 import shortcuts;
+import std.conv : to;
 import bindbc.sdl : SDL_Keymod, SDLK_ESCAPE, SDLK_BACKSPACE, SDLK_DELETE, SDLK_p,
                    KMOD_LSHIFT, KMOD_LGUI;
 
@@ -93,7 +94,8 @@ private string boundCommand(ShortcutTable tbl, int sym, int mod, string mode) {
     assert(canon.length, "chord did not canonicalise");
     immutable i = resolveBinding(tbl.bindings, canon, "", mode, "");
     if (i < 0) return "";
-    assert(tbl.bindings[i].kind == BindingKind.command);
+    assert(tbl.bindings[i].kind == BindingKind.command,
+        "chord is bound, but not to a command: kind " ~ to!string(tbl.bindings[i].kind));
     return tbl.bindings[i].id;
 }
 
