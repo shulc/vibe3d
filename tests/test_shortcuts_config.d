@@ -97,6 +97,15 @@ private string boundCommand(ShortcutTable tbl, int sym, int mod, string mode) {
     return tbl.bindings[i].id;
 }
 
+/// The pinned argstring of the resolved row. Make Polygon declares a visible
+/// `flip` param, so a bare `P` row opens the args dialog instead of running
+/// (`handleKeyDown` -> `tryOpenArgsDialog`); the row must pin its args.
+private string boundArgs(ShortcutTable tbl, int sym, int mod, string mode) {
+    immutable canon = canonFromEvent(sym, cast(SDL_Keymod) mod);
+    immutable i = resolveBinding(tbl.bindings, canon, "", mode, "");
+    return i < 0 ? "" : tbl.bindings[i].args;
+}
+
 unittest {
     auto linux = loadShortcuts("config/shortcuts.yaml");
     auto macos = loadShortcuts("config/shortcuts_macos.yaml");
@@ -125,6 +134,10 @@ unittest {
             "linux p is not make polygon" ~ at);
         assert(boundCommand(macos, SDLK_p, 0, mode) == "mesh.makePolygon",
             "macos p is not make polygon" ~ at);
+        assert(boundArgs(linux, SDLK_p, 0, mode) == "false",
+            "linux p opens the args dialog" ~ at);
+        assert(boundArgs(macos, SDLK_p, 0, mode) == "false",
+            "macos p opens the args dialog" ~ at);
         ++modes;
     }
     assert(modes == 3, "population floor: the pins did not run in 3 modes");

@@ -35,6 +35,14 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// same kernel and relies on the zero-area refusal, and it is a different tool
 /// with a deliberately different law.
 ///
+/// EDGE BRANCH (task 7132): in Edges mode with an edge selection the ring is
+/// the selected edges walked as ONE chain (all vertex degrees <= 2, one
+/// component; an open chain is closed implicitly), started at the first edge
+/// in selection order; winding comes from the same neighbour vote. The new
+/// face is selected, vertices are dropped and the EDGE selection is KEPT.
+/// A branching, split or sub-3-vertex edge set is refused. Law and cells:
+/// `tests/fixtures/delete_makepoly_lasso_hide_keys.json` (`make_polygon`).
+///
 /// Rejections (no-op, no snapshot, no undo entry):
 ///   - fewer than 2 selected vertices. Not a gate that was left in place: a
 ///     one-corner polygon is a shape nobody has measured on either engine, and
@@ -98,6 +106,14 @@ class MeshMakePolygon : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
+
+        if (editMode == EditMode.Edges && mesh.hasAnySelectedEdges()) {
+            uint[] walk = edgeChainWalk(*mesh);
+            if (walk.length < 3) return false;
+            return runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
+                              (ref MeshEditBatch ed) => runKernel(ed, walk, true));
+        }
+
         // Vertex-command convention: fire regardless of EditMode (same as vert.join:53).
         if (!mesh.hasAnySelectedVertices()) return false;
 
@@ -129,12 +145,12 @@ class MeshMakePolygon : Command, Operator {
         // cannot happen. The kernel below may simply answer false from inside
         // the batch.
         const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
-                              (ref MeshEditBatch ed) => runKernel(ed, ordered));
+                              (ref MeshEditBatch ed) => runKernel(ed, ordered, false));
         return applied_;
     }
 
     /// The one mutating body, under whichever arm `runMapEdit` chose.
-    private bool runKernel(ref MeshEditBatch ed, uint[] ordered) {
+    private bool runKernel(ref MeshEditBatch ed, uint[] ordered, bool fromEdges) {
         // Recording arm only — the redo arm keeps the first capture, the hatch
         // has the snapshot.
         if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
@@ -152,7 +168,16 @@ class MeshMakePolygon : Command, Operator {
         // (not a direct `editMode` write) is what keeps EditMode in lockstep
         // with the SelType ordering, and it promotes WITHOUT dropping the
         // active tool — a selection is not a mode switch.
-        repointToFaces(&ed.mesh(), [cast(uint) fi]);
+        if (fromEdges) {
+            // Edge branch: the edge selection is the input AND survives.
+            auto m = &ed.mesh();
+            m.syncSelection();
+            m.clearVertexSelection();
+            m.clearFaceSelection();
+            m.selectFace(fi);
+        } else {
+            repointToFaces(&ed.mesh(), [cast(uint) fi]);
+        }
         if (promoteType !is null) promoteType(EditMode.Polygons);
         return true;
     }
@@ -164,4 +189,64 @@ class MeshMakePolygon : Command, Operator {
         undo_.revert(*mesh);
         preSel_.restore(*mesh);
     }
+}
+
+/// The selected edges as one vertex ring, or `[]` when they are not a single
+/// chain (a vertex of degree > 2, more than one component, or an open chain
+/// whose ends are not exactly two). A closed loop starts at the first
+/// selected edge (selection order, then index) and runs from its stored
+/// `v0` to `v1`; an open chain starts at the end whose edge was selected
+/// first. Winding is NOT decided here — the kernel's neighbour vote does it.
+private uint[] edgeChainWalk(ref const Mesh m) {
+    import std.algorithm : sort;
+    struct E { uint ei; int order; }
+    E[] sel;
+    foreach (ei; 0 .. m.edges.length) {
+        if (!m.isEdgeSelected(ei)) continue;
+        const int ord = (ei < m.edgeSelectionOrder.length)
+                      ? m.edgeSelectionOrder[ei] : 0;
+        sel ~= E(cast(uint) ei, ord > 0 ? ord : int.max);
+    }
+    if (sel.length < 2) return null;
+    sel.sort!((a, b) => a.order != b.order ? a.order < b.order : a.ei < b.ei);
+
+    // Vertex -> positions (into `sel`) of its incident selected edges.
+    size_t[][uint] inc;
+    foreach (k, e; sel)
+        foreach (v; m.edges[e.ei]) inc[v] ~= k;
+    size_t ends;
+    foreach (v, list; inc) {
+        if (list.length > 2) return null;
+        if (list.length == 1) ++ends;
+    }
+    if (ends != 0 && ends != 2) return null;
+
+    // Start: a closed loop at sel[0].v0; an open chain at the degree-1 end
+    // whose incident edge comes first in selection order.
+    uint start = m.edges[sel[0].ei][0];
+    uint cur = m.edges[sel[0].ei][1];
+    size_t prevEdge = 0;
+    if (ends == 2) {
+        size_t best = size_t.max;
+        foreach (v, list; inc)
+            if (list.length == 1 && list[0] < best) { best = list[0]; start = v; }
+        const e = m.edges[sel[best].ei];
+        cur = (e[0] == start) ? e[1] : e[0];
+        prevEdge = best;
+    }
+    uint[] walk = [start, cur];
+    size_t used = 1;
+    foreach (_; 1 .. sel.length) {
+        size_t next = size_t.max;
+        foreach (k; inc[cur]) if (k != prevEdge) { next = k; break; }
+        if (next == size_t.max) break;                 // open chain's far end
+        const e = m.edges[sel[next].ei];
+        cur = (e[0] == cur) ? e[1] : e[0];
+        prevEdge = next;
+        ++used;
+        if (cur == start) break;                       // loop closed
+        walk ~= cur;
+    }
+    if (used != sel.length) return null;               // another component
+    return walk;
 }

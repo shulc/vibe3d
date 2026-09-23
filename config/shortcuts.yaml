@@ -38,8 +38,9 @@ commands:
   tool.release:          Q
   history.undo:          "Ctrl+Z"
   history.redo:          "Ctrl+Shift+Z"
-  mesh.delete:           Delete
-  mesh.remove:           Backspace
+  mesh.delete:           Delete             # Backspace too: see bindings:
+  mesh.remove:           "Shift+Backspace"  # remove, keep the points
+  mesh.makePolygon:      "P false"          # args pinned: no dialog (flip off)
   snap.toggle:           X
   mesh.hide:             H                  # ref: h
   mesh.hideUnselected:   "Shift+H"          # ref: shift-h
@@ -90,3 +91,7 @@ bindings:
   # what the cursor is over.  ref: ctrl-space
   - { key: "Ctrl+Space",                    command: "ui.pie viewport" }
   - { key: "Ctrl+Space", zone: layerList,   command: "ui.pie layers" }
+  # Backspace and Delete both delete (orphan points go too) on every layout;
+  # Shift+Backspace removes and keeps the points (task 7132). A command has
+  # one chord in `commands:`, so the second key for mesh.delete lives here.
+  - { key: "Backspace",                     command: "mesh.delete" }
