@@ -4,7 +4,7 @@
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
   "method": "gui-gesture",
-  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures; residual cells (*_no_read, live_undo_walk_two_presses): no scripting call between gestures, history read from the undo-list frames, one read at the end; residual-4 cells: activation by the tool's key, mid-session counts through the read-only query verb",
+  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures; residual cells (*_no_read, live_undo_walk_two_presses): no scripting call between gestures, history read from the undo-list frames, one read at the end; residual-4 cells: activation by the tool's key, mid-session counts through the read-only query verb; residual-5 cells: a value typed into the tool panel through real keys, read back through the read-only query verb",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_extend/harness (private)",
   "task": "7102"
@@ -3346,6 +3346,254 @@
    ],
    "final_vertex_count": 9,
    "law": "the activation key writes ONE history row at once, but it is not a separate undo step: it is undone together with the run's first gesture group. Live: #1 pops the newest gesture, #2 pops the rest of the run AND the activation (the tool ends), #3 undoes the command before the tool. After a tool switch: #1 the switch group, #2 the whole run with the activation, #3 the command before"
+  },
+  "first_press_after_typed_offset_motionless_click": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry",
+   "typed": "after the activation key, Offset X typed into the tool panel as 300 mm (Return); the other two components held non-zero values carried over from the previous session",
+   "input": "activation key; type the offset; one motionless click on empty space at world (0.5, 1.35); counts and offsets through the read-only query verb",
+   "state_after_typing": {
+    "vertex_count": 9,
+    "polygon_count": 4,
+    "offset": [
+     0.3,
+     0.204,
+     -0.074
+    ]
+   },
+   "offsets_written_by_press": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "state_after_click": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "ridge_x_after_click": [
+    1.002
+   ],
+   "final_new_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     1.0,
+     0.0
+    ]
+   ],
+   "law": "typing the offset before the first press only sets the value (no operation, 9 vertices); the first press starts the operation by writing a ZERO offset on all three components, discarding the typed value: a zero-length ring at the source edge ends"
+  },
+  "first_press_after_typed_offset_drag": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry",
+   "typed": "after the activation key, Offset X typed into the tool panel as 300 mm (Return); the other two components held non-zero values carried over from the previous session",
+   "input": "activation key; type the offset; press on empty space at world (0.5, 1.35), hold 1 s, 10 x (+4,+4) px",
+   "state_after_typing": {
+    "vertex_count": 9,
+    "polygon_count": 4,
+    "offset": [
+     0.3,
+     0.204,
+     -0.074
+    ]
+   },
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     -0.01,
+     0.0
+    ],
+    [
+     0.025,
+     -0.025,
+     0.0
+    ],
+    [
+     0.035,
+     -0.035,
+     0.0
+    ],
+    [
+     0.05,
+     -0.05,
+     0.0
+    ],
+    [
+     0.06,
+     -0.06,
+     0.0
+    ],
+    [
+     0.075,
+     -0.075,
+     0.0
+    ],
+    [
+     0.085,
+     -0.085,
+     0.0
+    ],
+    [
+     0.1,
+     -0.1,
+     0.0
+    ],
+    [
+     0.11,
+     -0.11,
+     0.0
+    ],
+    [
+     0.125,
+     -0.125,
+     0.0
+    ]
+   ],
+   "final_new_vertices": [
+    [
+     1.125,
+     -0.125,
+     0.0
+    ],
+    [
+     1.125,
+     0.875,
+     0.0
+    ]
+   ],
+   "law": "the drag after a typed offset starts from zero, not from the typed value: the first increment writes one increment's worth (0.01), the tenth 0.125"
+  },
+  "switch_undo_restore_then_haul": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry; undo-list palette open before the key",
+   "input": "activation key; haul at world (0.5, 1.35) then at (-0.5, 1.35), each 10 x (+4,+4) px; the scale-tool key; ONE Ctrl+Z; haul at (0.5, 1.35), 10 x (+4,+4) px; no scripting call after the scene build",
+   "live_before_switch": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.25,
+     -0.25,
+     0.0
+    ]
+   },
+   "after_one_undo": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.25,
+     -0.25,
+     0.0
+    ],
+    "tool": "edge_extend",
+    "armed": true
+   },
+   "third_haul_new_activation_row": false,
+   "third_haul_history_rows_added": [
+    "gesture",
+    "post-mode apply"
+   ],
+   "third_haul_offsets": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     -0.01,
+     0.0
+    ],
+    [
+     0.025,
+     -0.025,
+     0.0
+    ],
+    [
+     0.035,
+     -0.035,
+     0.0
+    ],
+    [
+     0.05,
+     -0.05,
+     0.0
+    ],
+    [
+     0.06,
+     -0.06,
+     0.0
+    ],
+    [
+     0.075,
+     -0.075,
+     0.0
+    ],
+    [
+     0.085,
+     -0.085,
+     0.0
+    ],
+    [
+     0.1,
+     -0.1,
+     0.0
+    ],
+    [
+     0.11,
+     -0.11,
+     0.0
+    ],
+    [
+     0.125,
+     -0.125,
+     0.0
+    ]
+   ],
+   "after_third_haul": {
+    "vertex_count": 13,
+    "polygon_count": 6,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ]
+   },
+   "final_new_vertices": [
+    [
+     1.25,
+     -0.25,
+     0.0
+    ],
+    [
+     1.25,
+     0.75,
+     0.0
+    ],
+    [
+     1.375,
+     -0.375,
+     0.0
+    ],
+    [
+     1.375,
+     0.625,
+     0.0
+    ]
+   ],
+   "law": "one Ctrl+Z after a tool switch returns the extend tool armed, showing the run's offset (0.25), but the run is NOT live: its apply stays committed. The next press logs no new activation row, yet it writes offset 0 and extrudes a NEW ring from the committed one (ridge 1.25 -> 1.375, 11 -> 13 vertices); the restored offset is neither continued nor carried"
   }
  }
 }
