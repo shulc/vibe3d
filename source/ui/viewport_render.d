@@ -1050,16 +1050,22 @@ public:
 
     // ---- Vertex dots ----
     // `drawVerts` is a FORCING term from the surface style (a lines-only
-    // style draws vertices as well as edges). The selection-type gate beside
-    // it is a separate, unmodelled axis; the two are OR-ed. Today no style
-    // forces it, so this reads as it always did — except under the item type,
-    // where the dots (and with them the orange SELECTED dots) now go away.
-    // That is the pass the reference's per-vertex colour census measured as
-    // absent, and it is the visible half of "kept but not drawn".
-    if (activePlan.drawVerts || selFeedbackType == SelType.Vertex) {
+    // style draws vertices as well as edges); the selection-type terms are
+    // OR-ed beside it. Captured law (fixture `editor_display_laws_w17.json`,
+    // `vertex_dots_in_edge_mode`; task 7128, item type per 1860): in EDGE mode
+    // every vertex is a PLAIN dot in every style — unselected colour and
+    // size — and the kept vertex selection is not shown, so edge mode hands
+    // the pass an empty mark view (colour AND size follow the mark, see
+    // `drawVertices`). Polygon and item types are uncaptured and keep their
+    // marks as before (dots only where a style forces them). Witness:
+    // tests/test_edge_mode_vertex_dots.d.
+    if (activePlan.drawVerts || selFeedbackType == SelType.Vertex
+        || selFeedbackType == SelType.Edge) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
-                         mesh.selectedVertexView(), occluded);
+                         selFeedbackType == SelType.Edge
+                             ? MarkView.init : mesh.selectedVertexView(),
+                         occluded);
     } else if (showVertHover && hoveredVertex >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
