@@ -1,0 +1,657 @@
+{
+ "provenance": {
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "GUI worker, real XTest pointer/keys, panel entry by typing; live state read only by read-only queries and root-window frames while a tool session was live; mesh dumps after the tool dropped; per-increment translation from the editor's own command journal",
+  "captured_utc": "2026-09-23",
+  "harness": "toolcards/bugfix_w17_display/harness (private)",
+  "task": "7103"
+ },
+ "mirror_preview": {
+  "rig": {
+   "mesh": "cube half-size 0.5, all faces subdivision-surface (smoothed) type, no selection (whole mesh)",
+   "plane": "normal +X through world x = 1.5",
+   "view": "front orthographic, 220 px per metre, world x = 0 at frame column 242, plane at column 572"
+  },
+  "before_first_viewport_press": {
+   "polygons": 6,
+   "copy_drawn": false,
+   "note": "arming the tool and typing the plane into the panel evaluates nothing; the copy appears at the first viewport press, whose point also becomes the plane centre"
+  },
+  "live_before_commit": {
+   "polygons": 12,
+   "copy_is_real_mesh_edit": true,
+   "copy_silhouette_columns": [
+    818,
+    985
+   ],
+   "mirror_of_original_silhouette_columns": [
+    819,
+    986
+   ],
+   "copy_width_m": 0.759,
+   "copy_drawn": "smoothed limit surface with its cage wire and vertex dots, identical to how the original is drawn"
+  },
+  "commit": {
+   "panel_apply_while_live": "refused with a notice (tool already interactive); the copy stays",
+   "drop_tool": "commits",
+   "pixels_changed_in_copy_region_by_commit": 0
+  },
+  "after_commit": {
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    [
+     3.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     2.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     2.5,
+     -0.5,
+     0.5
+    ],
+    [
+     3.5,
+     -0.5,
+     0.5
+    ],
+    [
+     3.5,
+     0.5,
+     -0.5
+    ],
+    [
+     2.5,
+     0.5,
+     -0.5
+    ],
+    [
+     2.5,
+     0.5,
+     0.5
+    ],
+    [
+     3.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     1,
+     0
+    ],
+    [
+     5,
+     6,
+     2,
+     1
+    ],
+    [
+     6,
+     7,
+     3,
+     2
+    ],
+    [
+     7,
+     4,
+     0,
+     3
+    ],
+    [
+     4,
+     7,
+     6,
+     5
+    ],
+    [
+     8,
+     11,
+     10,
+     9
+    ],
+    [
+     12,
+     8,
+     9,
+     13
+    ],
+    [
+     13,
+     9,
+     10,
+     14
+    ],
+    [
+     14,
+     10,
+     11,
+     15
+    ],
+    [
+     15,
+     11,
+     8,
+     12
+    ],
+    [
+     12,
+     13,
+     14,
+     15
+    ]
+   ],
+   "counts": [
+    16,
+    12,
+    24
+   ]
+  },
+  "rivals": {
+   "preview_equals_result": "SELECTED",
+   "preview_is_separate_cage": "rejected (predicted a 1.0 m square spanning columns 792..1012)"
+  }
+ },
+ "mirror_item_space": {
+  "rig": {
+   "mesh": "same cube (local)",
+   "item_transform": {
+    "position": [
+     2,
+     0,
+     0
+    ],
+    "rotation_y_deg": 30,
+    "world_matrix_rows": [
+     [
+      0.8660254037844387,
+      0.0,
+      -0.49999999999999994,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.49999999999999994,
+      0.0,
+      0.8660254037844387,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "plane": "click at world x = 1.5 (wrote centre x 1.49), then typed 1.5 in the panel while live",
+   "view": "top orthographic, 150 px per metre"
+  },
+  "after_commit": {
+   "local_vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.183013,
+     -0.5,
+     -0.316987
+    ],
+    [
+     -0.683013,
+     -0.5,
+     -1.183013
+    ],
+    [
+     -1.549038,
+     -0.5,
+     -0.683013
+    ],
+    [
+     -1.049038,
+     -0.5,
+     0.183013
+    ],
+    [
+     -0.183013,
+     0.5,
+     -0.316987
+    ],
+    [
+     -0.683013,
+     0.5,
+     -1.183013
+    ],
+    [
+     -1.549038,
+     0.5,
+     -0.683013
+    ],
+    [
+     -1.049038,
+     0.5,
+     0.183013
+    ]
+   ],
+   "faces": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     1,
+     0
+    ],
+    [
+     5,
+     6,
+     2,
+     1
+    ],
+    [
+     6,
+     7,
+     3,
+     2
+    ],
+    [
+     7,
+     4,
+     0,
+     3
+    ],
+    [
+     4,
+     7,
+     6,
+     5
+    ],
+    [
+     8,
+     11,
+     10,
+     9
+    ],
+    [
+     12,
+     8,
+     9,
+     13
+    ],
+    [
+     13,
+     9,
+     10,
+     14
+    ],
+    [
+     14,
+     10,
+     11,
+     15
+    ],
+    [
+     15,
+     11,
+     8,
+     12
+    ],
+    [
+     12,
+     13,
+     14,
+     15
+    ]
+   ],
+   "copy_local_centre": [
+    -0.86603,
+    0.0,
+    -0.5
+   ],
+   "copy_world_centre": [
+    1.0,
+    0.0,
+    0.0
+   ]
+  },
+  "law": "the plane centre and normal are WORLD-space; the copy = reflection of the WORLD positions, stored back through the inverse item transform",
+  "rivals": {
+   "plane_in_world": "SELECTED (copy world centre (1,0,0), all 8 vertices within 1e-4)",
+   "plane_in_item_local": "rejected (predicted world centre (4.598,0,-1.5))"
+  },
+  "live_vs_committed_pixels_in_copy_region": 0
+ },
+ "vertex_dots_in_edge_mode": {
+  "rig": {
+   "mesh": "cube half-size 0.5, polygonal",
+   "selected_vertices": [
+    [
+     0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "gesture": "vertex mode -> key for edge mode (selection kept: 2 vertices)"
+  },
+  "conditions": {
+   "psp_default": [
+    {
+     "frame_px": [
+      383,
+      370
+     ],
+     "selection_coloured_px_vertex_mode": 34,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "frame_px": [
+      629,
+      408
+     ],
+     "selection_coloured_px_vertex_mode": 36,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "psp_wire": [
+    {
+     "frame_px": [
+      383,
+      370
+     ],
+     "selection_coloured_px_vertex_mode": 33,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      184,
+      184,
+      184
+     ]
+    },
+    {
+     "frame_px": [
+      629,
+      408
+     ],
+     "selection_coloured_px_vertex_mode": 35,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      184,
+      184,
+      184
+     ]
+    }
+   ],
+   "psp_shade": [
+    {
+     "frame_px": [
+      383,
+      370
+     ],
+     "selection_coloured_px_vertex_mode": 34,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "frame_px": [
+      629,
+      408
+     ],
+     "selection_coloured_px_vertex_mode": 36,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "fnt_shade": [
+    {
+     "frame_px": [
+      371,
+      282
+     ],
+     "selection_coloured_px_vertex_mode": 36,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "frame_px": [
+      771,
+      282
+     ],
+     "selection_coloured_px_vertex_mode": 35,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "fnt_wire": [
+    {
+     "frame_px": [
+      371,
+      282
+     ],
+     "selection_coloured_px_vertex_mode": 30,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      184,
+      184,
+      184
+     ]
+    },
+    {
+     "frame_px": [
+      771,
+      282
+     ],
+     "selection_coloured_px_vertex_mode": 31,
+     "selection_coloured_px_edge_mode": 0,
+     "edge_mode_centre_rgb": [
+      184,
+      184,
+      184
+     ]
+    }
+   ]
+  },
+  "condition_names": {
+   "psp_default": "perspective, default style",
+   "psp_wire": "perspective, wireframe",
+   "psp_shade": "perspective, shaded",
+   "fnt_shade": "front ortho, shaded",
+   "fnt_wire": "front ortho, wireframe"
+  },
+  "dot_size_px": {
+   "selected_vertex_edge_mode_default": 9,
+   "unselected_vertex_vertex_mode_default": 9,
+   "unselected_vertex_edge_mode_default": 9
+  },
+  "law": "in edge mode every vertex is still drawn as a dot, in the UNSELECTED dot colour and size; a vertex selection that survives the mode switch is not shown",
+  "rivals": {
+   "selected_colour_kept": "rejected",
+   "plain_dots": "SELECTED",
+   "no_dots": "rejected"
+  }
+ },
+ "symmetric_subpatch_drag": {
+  "rig": {
+   "mesh": "cube half-size 0.5, smoothed type",
+   "symmetry": "X",
+   "selection": "one click on (0.5,0.5,0.5) with symmetry on selects BOTH (0.5,0.5,0.5) and (-0.5,0.5,0.5)",
+   "gesture": "move tool, press off the handle, 10 increments of +8 px screen right, frames after 1, 5, 10 with the button held"
+  },
+  "translation_x_per_increment": [
+   0.025,
+   0.07,
+   0.145,
+   0.24,
+   0.36,
+   0.505,
+   0.675,
+   0.865,
+   1.085,
+   1.325
+  ],
+  "after_release": {
+   "moved": [
+    [
+     1.825,
+     0.925,
+     0.5
+    ],
+    [
+     -1.825,
+     0.925,
+     0.5
+    ]
+   ]
+  },
+  "frames": "every held frame: smoothed surface deformed on both sides in the same frame; cage wire and dots as when idle; no flat cage fill; handle hidden while held",
+  "rivals": {
+   "smooth_every_frame": "SELECTED",
+   "cage_fill_during_drag": "rejected",
+   "mirror_side_lags": "rejected"
+  },
+  "control_selection_through_script": {
+   "selection": "only (0.5,0.5,0.5), set programmatically after symmetry was on",
+   "after_release": [
+    [
+     1.825,
+     0.925,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "law": "the mirror partner moves only if it is SELECTED; symmetry acts at selection time (and via the transform's sign law on selected elements), not as an extra moved set"
+  }
+ }
+}
