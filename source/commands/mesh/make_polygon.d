@@ -35,14 +35,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// same kernel and relies on the zero-area refusal, and it is a different tool
 /// with a deliberately different law.
 ///
-/// EDGE BRANCH (task 7132): in Edges mode with an edge selection the ring is
-/// the selected edges walked as ONE chain (all vertex degrees <= 2, one
-/// component; an open chain is closed implicitly), started at the first edge
-/// in selection order; winding comes from the same neighbour vote. The new
-/// face is selected, vertices are dropped and the EDGE selection is KEPT.
-/// A branching, split or sub-3-vertex edge set is refused. Law and cells:
-/// `tests/fixtures/delete_makepoly_lasso_hide_keys.json` (`make_polygon`).
-///
 /// Rejections (no-op, no snapshot, no undo entry):
 ///   - fewer than 2 selected vertices. Not a gate that was left in place: a
 ///     one-corner polygon is a shape nobody has measured on either engine, and
@@ -107,6 +99,12 @@ class MeshMakePolygon : Command, Operator {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
+        // EDGE BRANCH (task 7132): in Edges mode with an edge selection the
+        // ring is the selected edges walked as ONE chain (`edgeChainWalk`; an
+        // open chain closes implicitly), winding from the same neighbour
+        // vote. The new face is selected, vertices dropped, the EDGE
+        // selection KEPT; a branching, split or sub-3-vertex set is refused.
+        // Law: `tests/fixtures/delete_makepoly_lasso_hide_keys.json`.
         if (editMode == EditMode.Edges && mesh.hasAnySelectedEdges()) {
             uint[] walk = edgeChainWalk(*mesh);
             if (walk.length < 3) return false;
