@@ -16,6 +16,10 @@
 // means the class does not OVERRIDE the hook; whether an undo keystroke then
 // misbehaves is for a behavioural witness to show, never for this table.
 //
+// Axis 2 reads a field's type head LITERALLY: aliases of the key types are out
+// of the scanner's scope, and a separate floor pins their count (and that of
+// spelled-out `MeshKey!…MeshTermMutation`) at zero in source/tools.
+//
 // Order of the checks is part of the contract (a mutation touching several
 // facts reddens at the EARLIEST step): (1) instrument floors, (2) population
 // floors, (3) violator constants, axis 1 then axis 2, (4) row-by-row ledger
@@ -105,6 +109,12 @@ version (unittest) {
     }
     final class CensusProbeInherit : CensusProbeOwn {}
     final class CensusProbeBare : Tool {}
+    // Reaches SessionStepUndo only through a BASE interface, so the recursive
+    // arm of `implementsIface` is the one that answers.
+    interface CensusProbeStepChild : SessionStepUndo {}
+    final class CensusProbeViaChild : Tool, CensusProbeStepChild {
+        bool tryUndoStepInSession() { return false; }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +223,9 @@ private string identAt(string code, size_t j) {
 
 /// A declared class: its name, whether it is a template, and the leading
 /// identifier of each base (the last dotted segment, before `!` / `(`).
-private struct ClassDecl { string name; bool isTemplate; string[] bases; }
+/// `isAbstract`: the word `abstract` appears in the declaration's own head,
+/// i.e. between the previous `;` / `{` / `}` and `class`.
+private struct ClassDecl { string name; bool isTemplate; bool isAbstract; string[] bases; }
 
 /// Class declarations of a code view that has had `unittest` bodies blanked.
 package ClassDecl[] classDecls(string code) {
@@ -228,6 +240,12 @@ package ClassDecl[] classDecls(string code) {
         skipWs(code, j);
         ClassDecl d;
         d.name = name;
+        {
+            size_t b = i;
+            while (b > 0 && code[b - 1] != ';' && code[b - 1] != '{' && code[b - 1] != '}') --b;
+            for (size_t q = b; q < i; ++q)
+                if (wordAt(code, q, "abstract")) d.isAbstract = true;
+        }
         if (j < code.length && code[j] == '(') {
             d.isTemplate = true;
             int depth = 0;
@@ -340,6 +358,17 @@ private Scope classifyBlock(string decl, Scope parent) {
     return Scope.other;
 }
 
+/// Words skipped in front of a field's type head: protection (also as a label,
+/// `private:`), storage classes, and braceless conditional / attribute heads
+/// (`version (X) T f;`, `debug T f;`, `else T f;`, `static if (c) T f;`).
+private immutable string[] kFieldPrefix = [
+    "private", "public", "protected", "package", "export", "static", "const",
+    "immutable", "shared", "__gshared", "version", "debug", "else", "extern",
+    "deprecated", "align", "final", "abstract", "override", "nothrow", "pure",
+    "synchronized",
+];
+private immutable string[] kTypeCtors = ["const", "immutable", "shared"];
+
 /// Counts of aggregate FIELDS whose type head is `MeshCacheKey` / `SessionMeshKey`.
 /// `code` must be `blankUnittestBodies(blankNonCode(src))`.
 package size_t[2] keyFieldCounts(string code) {
@@ -348,14 +377,40 @@ package size_t[2] keyFieldCounts(string code) {
     size_t stmt = 0;
     void judge(string s) {
         size_t k = 0;
+        void skipParens() {
+            skipWs(s, k);
+            if (k >= s.length || s[k] != '(') return;
+            int dp = 0;
+            for (; k < s.length; ++k) {
+                if (s[k] == '(') ++dp;
+                else if (s[k] == ')') { if (--dp == 0) { ++k; break; } }
+            }
+        }
         while (true) {
             skipWs(s, k);
-            if (k < s.length && s[k] == '@') ++k;
+            // `@attr` / `@attr(...)`: an attribute, never the type head.
+            if (k < s.length && s[k] == '@') {
+                ++k;
+                k += identAt(s, k).length;
+                skipParens();
+                continue;
+            }
             const id = identAt(s, k);
             if (id.length == 0) return;
-            if (["private", "public", "protected", "package", "static",
-                 "const", "immutable", "shared", "__gshared"].canFind(id)) {
+            if (kFieldPrefix.canFind(id)) {
                 k += id.length;
+                // `const(T)` is a type constructor: step inside, the type
+                // head follows and its `)` is skipped with the suffixes.
+                skipWs(s, k);
+                if (kTypeCtors.canFind(id) && k < s.length && s[k] == '(') { ++k; continue; }
+                if (id == "static") {
+                    // `static if (...)`: a braceless conditional head.
+                    if (wordAt(s, k, "if")) { k += 2; skipParens(); }
+                } else skipParens();   // `version (X)`, `extern (C)`, `align (4)`
+                skipWs(s, k);
+                // A protection / attribute LABEL (`private:`) leaves the
+                // declaration after it in the same statement.
+                if (k < s.length && s[k] == ':') ++k;
                 continue;
             }
             // Qualified type head: take the last dotted segment.
@@ -370,7 +425,7 @@ package size_t[2] keyFieldCounts(string code) {
                         : head == "SessionMeshKey" ? 1 : -1;
             if (which < 0) return;
             int bd = 0;
-            while (k < s.length && (bd > 0 || s[k] == '[' || s[k] == '*'
+            while (k < s.length && (bd > 0 || s[k] == '[' || s[k] == '*' || s[k] == ')'
                    || s[k] == ' ' || s[k] == '\n' || s[k] == '\t')) {
                 if (s[k] == '[') ++bd;
                 else if (s[k] == ']') --bd;
@@ -401,10 +456,64 @@ package size_t[2] keyFieldCounts(string code) {
     return n;
 }
 
+/// Spellings of the key types that `keyFieldCounts` does NOT resolve: an
+/// `alias` naming `MeshCacheKey` / `SessionMeshKey` (either alias form), and a
+/// spelled-out `MeshKey!` instantiation carrying `MeshTermMutation` (which is
+/// what `MeshCacheKey` IS, `source/mesh.d`). Aliases are out of the scanner's
+/// scope; the census pins this count at zero over `source/tools` instead.
+package size_t keySpellingEscapes(string code) {
+    size_t n;
+    string dottedLast(ref size_t j) {
+        string last;
+        while (true) {
+            skipWs(code, j);
+            const id = identAt(code, j);
+            if (id.length == 0) return last;
+            last = id;
+            j += id.length;
+            skipWs(code, j);
+            if (j < code.length && code[j] == '.') { ++j; continue; }
+            return last;
+        }
+    }
+    for (size_t i = 0; i < code.length; ++i) {
+        if (wordAt(code, i, "alias")) {
+            size_t j = i + 5;
+            const first = dottedLast(j);
+            string target = first;                       // `alias T name;`
+            if (j < code.length && code[j] == '=') {     // `alias name = T;`
+                ++j;
+                target = dottedLast(j);
+            }
+            if (target == "MeshCacheKey" || target == "SessionMeshKey") ++n;
+        } else if (wordAt(code, i, "MeshKey")) {
+            size_t j = i + 7;
+            skipWs(code, j);
+            if (j >= code.length || code[j] != '!') continue;
+            ++j;
+            skipWs(code, j);
+            size_t e = j;
+            if (e < code.length && code[e] == '(') {
+                int dp = 0;
+                for (; e < code.length; ++e) {
+                    if (code[e] == '(') ++dp;
+                    else if (code[e] == ')') { if (--dp == 0) { ++e; break; } }
+                }
+            } else e += identAt(code, e).length;
+            for (size_t q = j; q < e; ++q)
+                if (wordAt(code, q, "MeshTermMutation")) { ++n; break; }
+        }
+    }
+    return n;
+}
+
 /// The three production views, shared by the census and its scanner cells so
 /// a cell can never drive a different path than the census does.
 private size_t[2] keyCountsOf(string src) {
     return keyFieldCounts(blankUnittestBodies(blankNonCode(src)));
+}
+private size_t keyEscapesOf(string src) {
+    return keySpellingEscapes(blankUnittestBodies(blankNonCode(src)));
 }
 private ClassDecl[] classDeclsOf(string src) {
     return classDecls(blankUnittestBodies(blankNonCode(src)));
@@ -613,7 +722,8 @@ unittest {
     assert(ownerName(pOwn, 0) == pOwn.name && ownerName(pInh, 0) == pOwn.name
            && ownerName(pBare, 0) == typeid(Tool).name
            && ownerName(pOwn, 1) == typeid(Tool).name
-           && implementsIface(pInh, stepInfo) && !implementsIface(pBare, stepInfo),
+           && implementsIface(pInh, stepInfo) && !implementsIface(pBare, stepInfo)
+           && implementsIface(typeid(CensusProbeViaChild), stepInfo),
            "tool census probe: inheritance not resolved");
 
     size_t noModule;
@@ -633,8 +743,21 @@ unittest {
     }
     assert(keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1,
            "tool census: axis 2 needle positive control failed: source/tools/edit/bridge_tool.d");
+    // S1 migrates slice_tool.d and turns this red: REPLACE the control with a
+    // scanner cell of the same shape, never delete it (card 7110).
     assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)[0] == 2,
            "tool census: axis 2 needle positive control failed: source/tools/slice/slice_tool.d");
+    // Axis 2 scope floor: the scanner reads type heads literally, so an alias
+    // of the key or its spelled-out `MeshKey!` form would escape it. Measured 0.
+    {
+        string[] escaped;
+        foreach (f; files)
+            if (f.path.startsWith("source/tools/") && keyEscapesOf(f.src) > 0)
+                escaped ~= f.path;
+        assert(escaped.length == 0,
+               format("tool census: axis 2 key type spelled through an alias or MeshKey! in %s",
+                      escaped));
+    }
 
     // Axis 3 surface pin and needle controls.
     const surface = historySurface();
@@ -673,6 +796,7 @@ unittest {
     ClassDecl[][string] declsOf;
     foreach (f; files) declsOf[f.mod] = classDeclsOf(f.src);
     bool[string] scanned;              // S
+    bool[string] templateTools;        // template tool class -> declared abstract
     for (bool grew = true; grew;) {
         grew = false;
         foreach (mod, ds; declsOf)
@@ -681,6 +805,7 @@ unittest {
                 foreach (b; d.bases) if (b in lineBases) hit = true;
                 if (!hit) continue;
                 if (d.isTemplate) {
+                    templateTools[mod ~ "." ~ d.name] = d.isAbstract;
                     if (d.name !in lineBases) { lineBases[d.name] = true; grew = true; }
                 } else if ((mod ~ "." ~ d.name) !in scanned) {
                     scanned[mod ~ "." ~ d.name] = true;
@@ -737,6 +862,16 @@ unittest {
     foreach (n; population ~ kNamedExceptions)
         assert((n in scanned) !is null,
                "tool census: " ~ n ~ " linked but not found by the text scan");
+    // `localClasses` never lists a template INSTANCE, so a concrete template
+    // tool (`final class T(P) : Tool` + `alias X = T!int`) would be a live tool
+    // with no row. Every template tool class must therefore be abstract, and
+    // the concrete subclasses that instantiate it are the rows. Measured: 1.
+    assert(templateTools.length == 1,
+           format("tool census: template tool class population changed: %s (measured 1)",
+                  templateTools.keys.sort));
+    foreach (n; templateTools.keys.sort)
+        assert(templateTools[n],
+               "tool census: template tool class " ~ n ~ " is not abstract; its instances escape the census");
 
     // ===== (3) violator constants, axis 1 then axis 2 =====================
     const r1 = axis1Violators(recorded.tools);
@@ -758,6 +893,7 @@ unittest {
         const r = recorded.tools.get(n, ToolRow.init);
         assert(r.live == "yes" || r.live == "no",
                "tool census: row " ~ n ~ " has no live classification");
+        // Subsumed by the next assert; kept for its more specific message.
         assert(!(m.snap > 0 && r.live == "no" && r.reason.length == 0),
                "tool census: live proxy (MeshSnapshot) dismissed without a reason: " ~ n);
         assert(r.reason.length > 0, "tool census: row " ~ n ~ " has no reason");
@@ -804,10 +940,36 @@ EOS";
     const c = keyCountsOf(src);
     assert(c[0] == 4 && c[1] == 1,
            format("tool census scanner cell: key fields %s, expected [4, 1]", c));
+    // A label leaves the next declaration in the same statement; braceless
+    // conditional heads, `@attr` and `const(T)` are transparent. One each.
+    const heads = [
+        "class L : Tool {\n    private:\n    MeshCacheKey afterLabel;\n}",
+        "class L : Tool {\n    public: package: MeshCacheKey twoLabels;\n}",
+        "class L : Tool {\n    version (X) MeshCacheKey braceless;\n}",
+        "class L : Tool {\n    version (X) {} else MeshCacheKey inElse;\n}",
+        "class L : Tool {\n    debug MeshCacheKey inDebug;\n}",
+        "class L : Tool {\n    static if (a && b) MeshCacheKey inStaticIf;\n}",
+        "class L : Tool {\n    @nogc @attr(1) MeshCacheKey attributed;\n}",
+        "class L : Tool {\n    const(MeshCacheKey)[] ctor;\n}",
+    ];
+    foreach (h; heads)
+        assert(keyCountsOf(h) == [1, 0],
+               format("tool census scanner cell: key fields %s, expected [1, 0] in\n%s",
+                      keyCountsOf(h), h));
+    // Alias / spelled-out key spellings: four escapes, two non-escapes.
+    const esc = keyEscapesOf(q"EOS
+alias K = mesh.MeshCacheKey;
+alias SessionMeshKey S2;
+class A { MeshKey!(MeshTermGeomEpoch, MeshTermMutation) k; MeshKey!MeshTermMutation j; }
+class B { MeshKey!MeshTermMarks ok; alias Other = int; }
+EOS");
+    assert(esc == 4, format("tool census scanner cell: key spelling escapes %s, expected 4", esc));
     const ds = classDeclsOf("abstract class S(P) : H!(P) {}\nfinal class C : S!int, I {}\n"
+                            ~ "final class F(P) : C {}\n"
                             ~ "unittest { class U : C {} }\n");
-    assert(ds.length == 2 && ds[0].isTemplate && ds[0].bases == ["H"]
-           && !ds[1].isTemplate && ds[1].bases == ["S", "I"],
+    assert(ds.length == 3 && ds[0].isTemplate && ds[0].isAbstract && ds[0].bases == ["H"]
+           && !ds[1].isTemplate && !ds[1].isAbstract && ds[1].bases == ["S", "I"]
+           && ds[2].isTemplate && !ds[2].isAbstract,
            "tool census scanner cell: class declarations misparsed");
     // Every receiver spelling: bare, qualified, camel-case, typed by `auto`,
     // address-of; a non-surface method and a comment do not count.
