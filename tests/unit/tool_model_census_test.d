@@ -525,7 +525,7 @@ private Ledger parseLedger(string text) {
     foreach (raw; text.split("\n")) {
         const line = raw.strip;
         if (line.length == 0 || line[0] == '#') continue;
-        const bar = line.indexOf(" | ");
+        const bar = line.indexOf(" |");
         const head = bar >= 0 ? line[0 .. bar] : line;
         auto f = head.split(" ");
         switch (f[0]) {
@@ -544,7 +544,7 @@ private Ledger parseLedger(string text) {
                 r.keep = kv.get("keep", "") == "yes";
                 r.snap = kv.get("snap", "0").to!size_t;
                 r.live = kv.get("live", "?");
-                r.reason = bar >= 0 ? line[bar + 3 .. $].strip : "";
+                r.reason = bar >= 0 ? line[bar + 2 .. $].strip : "";
                 l.tools[r.name] = r;
                 break;
             }
