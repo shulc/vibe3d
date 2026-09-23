@@ -177,7 +177,7 @@ bool slLineDrawn() {
 // flight: the mesh returns to gesture N-1's, the stack keeps gestures 1..N-1,
 // the tool stays and the history does not move. This is the owner's standing
 // rule ("the first Ctrl+Z cancels the LIVE edit, the tool stays"), NOT a
-// captured law — gap row 225. The release that follows is a stray and changes
+// captured law — gap row 228. The release that follows is a stray and changes
 // nothing.
 unittest {
     slPrologue(false, "polygons", &slBackAndLeft, false);

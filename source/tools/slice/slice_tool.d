@@ -1419,7 +1419,7 @@ public:
         return true;
     }
 
-    // SessionGestureCancel (the owner's rule, gap row 225): an undo
+    // SessionGestureCancel (the owner's rule, gap row 228): an undo
     // keystroke during a press..release gesture (LMB/MMB drag or RMB gap
     // drag) restores the line latched at its press and re-previews it; on the
     // session's first gesture that is the bare armed state (no line, baseline

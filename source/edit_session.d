@@ -259,7 +259,7 @@ interface SessionStepUndo {
 // SessionGestureCancel — optional capability: a press..release gesture IN
 // FLIGHT that an undo keystroke cancels on its own (the owner's rule
 // "the first Ctrl+Z cancels the LIVE edit, the tool stays"; not captured, gap
-// row 225). navigate() asks it before anything else, so the gesture stack, the
+// row 228). navigate() asks it before anything else, so the gesture stack, the
 // session and the history are untouched. SliceTool implements it.
 // ---------------------------------------------------------------------------
 interface SessionGestureCancel {
