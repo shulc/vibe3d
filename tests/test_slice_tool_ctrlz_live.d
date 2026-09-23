@@ -2,9 +2,10 @@
 // Shift+C): the first Ctrl+Z during a live cut cancels that cut. The line is
 // the session's first (and only) gesture, so the same press also ends the tool
 // (owner decision 2026-09-23, after the reference capture, replacing the plan's
-// "tool stays active"); the prologue's records stay and none is added. Whether
-// the tool's own activation record is popped with it is left to the slice's
-// amendment, so the history bound below admits both.
+// "tool stays active"). History: exactly the length after activation — Shift+C
+// records the tool's activation (measured), the cancel consumes and adds
+// nothing. Mesh/history first, the tool-off negation second, each with its
+// own message; a tool-id probe before Ctrl+Z is the negation's control.
 //
 // Prologue (tests/slice_leak_helpers.d): cube, top face lifted by a Move-gizmo
 // drag, back and left faces deleted (8v/4f). Shift+C, one line, Ctrl+Z — all
@@ -24,25 +25,24 @@ void ctrlzBlock(bool subpatchOn) {
     const base = slMesh();
     assert(base.verts == 8 && base.faces == 4,
            "slice floor: the prologue is not the 8v/4f open box: " ~ base.toString);
-    const prologueLabels = slHistoryLabels();
     const recordedHistoryLen = slSliceActivateAndDraw();
     const cut = slMesh();
     assert(cut.faces > 4, format("slice floor: no cut before Ctrl+Z (subpatch %s): %s",
                                  tag, cut.toString));
+    // Positive control for the tool-off negation below: the id the Slice
+    // tool publishes while its cut is live.
+    assert(slTool() == "slice", "slice floor: tool id probe before Ctrl+Z: '" ~ slTool() ~ "'");
     const ok = slKeyTolerant(SL_SDLK_z, SL_KMOD_LCTRL, "Ctrl+Z");
     assert(ok && slAlive(), format("editor died on slice ctrl+z (subpatch %s)", tag));
     const after = slMesh();
-    const len = slHistoryLen();
-    const tool = slTool();
     const labels = slHistoryLabels();
-    const prologueKept = labels.length >= prologueLabels.length
-        && labels[0 .. prologueLabels.length] == prologueLabels;
-    assert(after.canon == base.canon && prologueKept && len <= recordedHistoryLen
-           && tool != "slice",
+    assert(after.canon == base.canon && labels.length == recordedHistoryLen,
            format("slice ctrl+z did not cancel the live cut (subpatch %s): mesh %s (expected %s), "
-                  ~ "history %s (prologue %s, %d after activation), tool '%s'",
-                  tag, after.toString, base.toString, labels, prologueLabels,
-                  recordedHistoryLen, tool));
+                  ~ "history %s (%d records, %d after activation)",
+                  tag, after.toString, base.toString, labels, labels.length, recordedHistoryLen));
+    const tool = slTool();
+    assert(tool != "slice",
+           format("slice ctrl+z did not turn the tool off (subpatch %s): tool '%s'", tag, tool));
 }
 
 // Block A — subpatch OFF: the red cell on HEAD.

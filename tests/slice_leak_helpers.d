@@ -516,13 +516,22 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
         bool okStep;
         if (k == 1)      okStep = s.points == 2 && meshIs(s.mesh, afterDrag2);
         else if (k == 2) okStep = s.points == 1 && meshIs(s.mesh, base);
-        // Step 3 pops the session's FIRST gesture, which also ends the tool
-        // (owner decision 2026-09-23, after the reference capture; it replaces
-        // the plan's "tool stays active" for this step only).
-        else if (k == 3) okStep = s.points == 0 && meshIs(s.mesh, base) && s.tool != "edgeSlice";
+        else if (k == 3) okStep = s.points == 0 && meshIs(s.mesh, base);
         else             okStep = meshIs(s.mesh, pro.meshBefore[cast(size_t)(recordedHistoryLen - (k - 3))]);
         assert(okStep, format("undo step %d: state differs from the peel/undo law: %s",
                               k, s.toString));
+        // Positive control for the step-3 negation: the id the tool state
+        // publishes while the chain still stands.
+        if (k == 2)
+            assert(s.tool == "edgeSlice", format("undo step 2: tool id probe: '%s'", s.tool));
+        // Step 3 pops the session's FIRST gesture, which also ends the tool
+        // (owner decision 2026-09-23 after the reference capture; plan
+        // amendment "Поправка S1"). Its own assert, so a mutation of the tool
+        // drop is attributed to this line alone.
+        if (k == 3)
+            assert(s.tool != "edgeSlice",
+                   format("undo step 3: the first-point peel did not turn the tool off: %s",
+                          s.toString));
     }
 }
 
