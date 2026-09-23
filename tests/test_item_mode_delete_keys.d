@@ -148,6 +148,11 @@ unittest {
     auto c = law()["d-item-sbs"];
     rig(c);
     immutable before = items();
+    // The published readback names the winning row as the no-op kind.
+    auto ctx = getJson("/api/input/context?key=shift+backspace");
+    assert(ctx["mode"].str == "item" && ctx["matched"].type == JSONType.true_
+        && ctx["binding"]["kind"].str == "unbound" && ctx["binding"]["mode"].str == "item",
+        "d-item-sbs: input-context readback does not name the unbound row: " ~ ctx.toString);
     auto polysBefore = getJson("/api/selection")["selectedFaces"].toString;
     pressKey(SDLK_BACKSPACE, KMOD_LSHIFT);
     assert(items() == before && items() == itemsOf(c["after"], true),
