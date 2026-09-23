@@ -29,6 +29,8 @@
 //      ALL five conditions (HEAD drew none under the shaded styles);
 //   6. task 7128: "edge-mode dot has the selected size" — the edge-mode dot
 //      is exactly as wide as an unselected dot in vertex mode.
+// After the five conditions, one polygon-mode block under wireframe: the kept
+// vertex selection IS still drawn there (only edge mode drops the marks).
 // The file-level `scope(exit)` restores the projection, the style AND the
 // selection type the run started in.
 
@@ -418,6 +420,64 @@ private void runCondition(string name, string style, bool front,
                    dotSide(pb, (Px q) => near(q, unselCentre))));
 }
 
+/// Polygon mode is NOT captured and must stay as it was: under a lines-only
+/// style (`drawVerts` forces the dot pass) the kept vertex selection is still
+/// drawn in the selection colour. Only edge mode drops the marks. Same rig and
+/// probe as `runCondition`; the vertex-mode count is the positive control, and
+/// the polygon-mode count must sit in the same measured band (a probe that
+/// reads nothing, or a pass handed an empty mark view, reads 0).
+private void runPolygonWireCondition() {
+    enum name = "poly_wire";
+    postJson("/api/command", commandBody("scene.reset", "{}"));
+    settle();
+    cmdOk(`viewport.view Perspective`);
+    cmdOk(commandBody("viewport.displayStyle", `"wireframe"`));
+    settle();
+    assert(activeStyle() == "Wireframe",
+        format("[%s] rig: display style is %s, expected Wireframe", name,
+               activeStyle()));
+    immutable long a = vertexAt( 0.5, 0.5, 0.5);
+    immutable long b = vertexAt(-0.5, 0.5, 0.5);
+    pressVertexKey();
+    cmdOk(commandBody("mesh.select",
+        format(`{"mode":"vertices","indices":[%d,%d]}`, a, b)));
+    settle();
+    pressVertexKey();
+    immutable int[2] pa = perspPx(DHVec3( 0.5f, 0.5f, 0.5f));
+    immutable int[2] pb = perspPx(DHVec3(-0.5f, 0.5f, 0.5f));
+    auto c = cell();
+    foreach (p; [pa, pb])
+        assert(p[0] >= kHalf && p[1] >= kHalf
+            && p[0] < c.vw - kHalf && p[1] < c.vh - kHalf,
+            format("[%s] rig: probe window at (%d, %d) leaves the %dx%d cell",
+                   name, p[0], p[1], c.vw, c.vh));
+    immutable int va = selCountAround(pa), vb = selCountAround(pb);
+    foreach (n; [va, vb])
+        assert(n >= kVertexModeFloor && n <= kVertexModeCeiling,
+            format("[%s] positive control: in VERTEX mode a selected vertex "
+                   ~ "must show %d..%d selection-coloured px, got %d / %d",
+                   name, kVertexModeFloor, kVertexModeCeiling, va, vb));
+
+    pressKey(51, 32);   // '3'
+    assert(selType() == "polygon",
+        format("[%s] rig: key 3 did not switch to polygon mode (selType %s)",
+               name, selType()));
+    // Population floor: the two vertices are still selected.
+    auto sv = selectedVertices();
+    assert(sv.length == 2 && ((sv[0] == a && sv[1] == b) || (sv[0] == b && sv[1] == a)),
+        format("[%s] the vertex selection must survive the switch to polygon "
+               ~ "mode as vertices %d and %d, got %s", name, a, b, sv));
+    immutable int qa = selCountAround(pa), qb = selCountAround(pb);
+    writeln(format("[%s] vertex mode %d / %d, polygon mode %d / %d "
+                   ~ "selection-coloured px", name, va, vb, qa, qb));
+    foreach (n; [qa, qb])
+        assert(n >= kVertexModeFloor && n <= kVertexModeCeiling,
+            format("[%s] polygon mode under wireframe lost the selected vertex "
+                   ~ "dots: %d / %d selection-coloured px, expected %d..%d as in "
+                   ~ "vertex mode (polygon mode is uncaptured and unchanged)",
+                   name, qa, qb, kVertexModeFloor, kVertexModeCeiling));
+}
+
 /// Our side of the positive control, see the block above.
 private enum int kVertexModeFloor   = 30;
 private enum int kVertexModeCeiling = 36;
@@ -476,4 +536,5 @@ unittest {
             : name[4 .. $] == "shade" ? "shaded" : null;
         runCondition(name, style, front, cast(int)want);
     }
+    runPolygonWireCondition();
 }

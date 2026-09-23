@@ -1057,14 +1057,18 @@ public:
     // size — and the kept vertex selection is not shown, so edge mode hands
     // the pass an empty mark view (colour AND size follow the mark, see
     // `drawVertices`). Polygon and item types are uncaptured and keep their
-    // marks as before (dots only where a style forces them). Witness:
-    // tests/test_edge_mode_vertex_dots.d.
+    // marks as before (dots only where a style forces them). The edge arm
+    // gates the hover on `showVertHover`, like the hover-only arm below: that
+    // flag carries "this cell has the pointer", so in a split layout only one
+    // cell lights it. Witnesses: tests/test_edge_mode_vertex_dots.d,
+    // tests/unit/vertex_dot_arm_census_test.d.
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex
         || selFeedbackType == SelType.Edge) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, shader.locPointSize, hoveredVertex,
-                         selFeedbackType == SelType.Edge
-                             ? MarkView.init : mesh.selectedVertexView(),
+        immutable bool edgeArm = selFeedbackType == SelType.Edge;
+        gpu.drawVertices(shader.locColor, shader.locPointSize,
+                         edgeArm && !showVertHover ? -1 : hoveredVertex,
+                         edgeArm ? MarkView.init : mesh.selectedVertexView(),
                          occluded);
     } else if (showVertHover && hoveredVertex >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
