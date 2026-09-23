@@ -1,8 +1,10 @@
 {
  "provenance": {
+  "schema": 1,
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
-  "method": "GUI worker, real keyboard/pointer input (XTest, acknowledged relative drags), history read from the editor's undo list frames, geometry read by read-only layer queries between inputs",
+  "method": "gui-gesture",
+  "notes": "GUI worker, real keyboard/pointer input (XTest, acknowledged relative drags), history read from the editor's undo list frames, geometry read by read-only layer queries between inputs",
   "captured_utc": "2026-09-23",
   "harness": "private capture card (predictions committed before raw)",
   "task": "7138"
