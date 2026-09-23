@@ -146,8 +146,8 @@ private bool implementsIface(TypeInfo_Class c, TypeInfo_Class iface) {
     return false;
 }
 
+/// Strictly derived: the walk starts at `c.base`, so `Tool` itself is out.
 private bool derivesFromTool(TypeInfo_Class c) {
-    if (c is typeid(Tool)) return false;
     for (auto b = c.base; b !is null; b = b.base)
         if (b is typeid(Tool)) return true;
     return false;
@@ -369,9 +369,19 @@ package size_t[2] keyFieldCounts(string code) {
             const which = head == "MeshCacheKey" ? 0
                         : head == "SessionMeshKey" ? 1 : -1;
             if (which < 0) return;
-            while (k < s.length && (s[k] == '[' || s[k] == ']' || s[k] == '*'
-                   || s[k] == ' ' || s[k] == '\n' || s[k] == '\t')) ++k;
-            if (identAt(s, k).length == 0) return;  // `MeshCacheKey(`, `.init`
+            int bd = 0;
+            while (k < s.length && (bd > 0 || s[k] == '[' || s[k] == '*'
+                   || s[k] == ' ' || s[k] == '\n' || s[k] == '\t')) {
+                if (s[k] == '[') ++bd;
+                else if (s[k] == ']') --bd;
+                ++k;
+            }
+            // A field needs a declarator name, and a name followed by `(` is
+            // a METHOD returning the key, not a field holding one.
+            const nm = identAt(s, k);
+            size_t after = k + nm.length;
+            skipWs(s, after);
+            if (nm.length == 0 || (after < s.length && s[after] == '(')) return;
             n[which] += splitTop(s[k .. $]).length;
             return;
         }
@@ -389,6 +399,18 @@ package size_t[2] keyFieldCounts(string code) {
         }
     }
     return n;
+}
+
+/// The three production views, shared by the census and its scanner cells so
+/// a cell can never drive a different path than the census does.
+private size_t[2] keyCountsOf(string src) {
+    return keyFieldCounts(blankUnittestBodies(blankNonCode(src)));
+}
+private ClassDecl[] classDeclsOf(string src) {
+    return classDecls(blankUnittestBodies(blankNonCode(src)));
+}
+private size_t[string] writeCountsOf(string src, const string[] surface) {
+    return writeCounts(blankNonCode(src), surface);
 }
 
 /// Names declared in `code` with type `CommandHistory` (explicit, or `auto x =
@@ -439,7 +461,6 @@ package size_t[string] writeCounts(string code, const string[] surface) {
             size_t s = b;
             while (s > 0 && isIdentChar(code[s - 1])) --s;
             if (s == b) continue;
-            if (s > 0 && code[s - 1] == '.') continue;   // only a leading receiver
             const recv = code[s .. b];
             if (!isHistoryIdent(recv) && !typed.canFind(recv)) continue;
             size_t j = i + 1;
@@ -607,7 +628,7 @@ unittest {
     size_t[2][string] keyMeasured;
     foreach (f; files) {
         if (!f.path.startsWith("source/tools/")) continue;
-        const c = keyFieldCounts(blankUnittestBodies(blankNonCode(f.src)));
+        const c = keyCountsOf(f.src);
         if (c[0] || c[1]) keyMeasured[f.path] = c;
     }
     assert(keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1,
@@ -623,7 +644,7 @@ unittest {
     size_t[string][string] writeMeasured;
     foreach (f; files) {
         if (!f.path.startsWith("source/tools/")) continue;
-        auto c = writeCounts(blankNonCode(f.src), surface);
+        auto c = writeCountsOf(f.src, surface);
         if (c.length) writeMeasured[f.path] = c;
     }
     size_t pairTotal(string pair) {
@@ -650,7 +671,7 @@ unittest {
     bool[string] lineBases = ["Tool": true];
     foreach (n; population) lineBases[n.split(".")[$ - 1]] = true;
     ClassDecl[][string] declsOf;
-    foreach (f; files) declsOf[f.mod] = classDecls(blankUnittestBodies(blankNonCode(f.src)));
+    foreach (f; files) declsOf[f.mod] = classDeclsOf(f.src);
     bool[string] scanned;              // S
     for (bool grew = true; grew;) {
         grew = false;
@@ -679,7 +700,7 @@ unittest {
         foreach (k; 0 .. kHooks.length) r.owners[k] = ownerName(c, k);
         r.step = implementsIface(c, stepInfo);
         r.keep = implementsIface(c, keepInfo);
-        const file = fileOfModule[n[0 .. n.length - n.split(".")[$ - 1].length - 1]];
+        const file = fileOfModule.get(n[0 .. n.length - n.split(".")[$ - 1].length - 1], "");
         foreach (f; files) if (f.path == file) r.snap = snapshotDecls(blankNonCode(f.src));
         if (auto old = n in recorded.tools) { r.live = old.live; r.reason = old.reason; }
         else r.live = "?";
@@ -773,16 +794,36 @@ struct Image { MeshCacheKey armedKey; int x; }
 class T : Tool {
     private MeshCacheKey armedKey_;
     version (unittest) { SessionMeshKey probeKey; }
+    static if (true) { MeshCacheKey[2] inStaticIf; }
+    MeshCacheKey keyOf() const;
     void f() { MeshCacheKey local; armedKey_ = MeshCacheKey.init; }
 }
 unittest { struct U { MeshCacheKey inTest; } }
 EOS";
-    const c = keyFieldCounts(blankUnittestBodies(blankNonCode(src)));
-    assert(c[0] == 2 && c[1] == 1,
-           format("tool census scanner cell: key fields %s, expected [2, 1]", c));
-    const ds = classDecls(blankUnittestBodies(blankNonCode(
-        "abstract class S(P) : H!(P) {}\nfinal class C : S!int, I {}\n")));
+    const c = keyCountsOf(src);
+    assert(c[0] == 3 && c[1] == 1,
+           format("tool census scanner cell: key fields %s, expected [3, 1]", c));
+    const ds = classDeclsOf("abstract class S(P) : H!(P) {}\nfinal class C : S!int, I {}\n"
+                            ~ "unittest { class U : C {} }\n");
     assert(ds.length == 2 && ds[0].isTemplate && ds[0].bases == ["H"]
            && !ds[1].isTemplate && ds[1].bases == ["S", "I"],
            "tool census scanner cell: class declarations misparsed");
+    // Every receiver spelling: bare, qualified, camel-case, typed by `auto`,
+    // address-of; a non-surface method and a comment do not count.
+    const w = writeCountsOf(q"EOS
+void g() {
+    fooHistory.undo();
+    this.history.record(c);
+    auto hist = new CommandHistory();
+    hist.canUndo;
+    auto d = &history.undo;
+    history.frobnicate();
+    // history.redo();
+    recordGestureEdit(c, m);
+}
+EOS", ["undo", "record", "canUndo", "redo"]);
+    assert(w.get("fooHistory.undo", 0) == 1 && w.get("history.record", 0) == 1
+           && w.get("hist.canUndo", 0) == 1 && w.get("history.undo", 0) == 1
+           && w.length == 5 && w.get("recordGestureEdit", 0) == 1,
+           format("tool census scanner cell: write spellings %s", w));
 }
