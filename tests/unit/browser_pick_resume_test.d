@@ -793,12 +793,13 @@ auto h = "snap/types/workplane";
 auto i = "/workplane";
 auto j = '"';
 auto k = "\"/work\"";
+auto o = r"a\" ~ "/work/z";
 // auto l = "/work";
 /* auto m = "/work"; */
 /+ /+ nested +/ auto n = "/work"; +/
 SAMPLE";
-    assert(workLiteralCount(sample) == 6,
-        "R19 lexer control: six spellings of the root, none of the rest; got "
+    assert(workLiteralCount(sample) == 7,
+        "R19 lexer control: seven spellings of the root, none of the rest; got "
         ~ workLiteralCount(sample).to!string);
     assert(workLiteralCount(`x = "/workshop";`) == 0, "R19 lexer control: a prefix is not the root");
 }
