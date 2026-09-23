@@ -20,56 +20,179 @@ import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestD
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import commands.file.save;
+import std.conv : to;
 
-unittest { // browser backend refuses before FileSave can manufacture a path
+// ---------------------------------------------------------------------------
+// Task 7400 (web file I/O S1a): the browser save path. Rewrites the task-6870
+// block "browser backend refuses before FileSave can manufacture a path" —
+// by design a browser save now CHOOSES a MEMFS path (`browserSaveTarget`,
+// owner Q2), creates its directory, writes, and hands the file to the browser
+// (`deliverSavedFile`) before the document is marked saved. Every path is
+// under a per-process temp root through `setWorkRootForTest`.
+// ---------------------------------------------------------------------------
+
+private string browserSaveRoot(string tag) {
+    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir;
+    import std.format : format;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import io.browser_pick_resume : setWorkRootForTest;
+    auto root = buildPath(tempDir(), format("vibe3d_7400_save_%s_%d", tag, thisProcessID()));
+    if (exists(root)) rmdirRecurse(root);
+    mkdirRecurse(root);
+    setWorkRootForTest(root);
+    return root;
+}
+
+private void dropBrowserSaveRoot(string root) {
+    import std.file : exists, rmdirRecurse;
+    import io.browser_pick_resume : setWorkRootForTest;
+    setWorkRootForTest(null);
+    if (exists(root)) rmdirRecurse(root);
+}
+
+// R10b — an untitled browser save creates `<root>/untitled/` and writes there.
+unittest {
     import command : g_testMode;
-    import document : Document;
+    import std.file : exists;
+    import std.path : buildPath;
     import io.doc_state : clearCurrentDoc;
-    import io.file_dialog : PickOutcome, pickOpenPath, pickSavePath,
-                            selectBrowserBackendForTest;
+    import io.file_dialog : PickOutcome, pickSavePath, selectBrowserBackendForTest,
+                            setDeliverSavedFileForTest;
     import mesh : makeCube;
 
+    const root = browserSaveRoot("r10b");
     const priorTestMode = g_testMode;
-    scope(exit) {
+    string[] delivered;
+    scope (exit) {
         selectBrowserBackendForTest(false);
+        setDeliverSavedFileForTest(null);
         g_testMode = priorTestMode;
         clearCurrentDoc();
+        dropBrowserSaveRoot(root);
     }
-
-    // Keep the native fallback harmless: if the test selector is broken, the
-    // `--test` branch refuses with DIFFERENT text instead of opening a dialog.
+    // Keep the native fallback harmless: if the switch is broken the `--test`
+    // branch refuses instead of opening a dialog.
     g_testMode = true;
+    clearCurrentDoc();
     selectBrowserBackendForTest(true);
+    setDeliverSavedFileForTest((string p) { delivered ~= p; return true; });
 
-    const browserOpen = pickOpenPath([]);
-    const browserSave = pickSavePath([], "Untitled.v3d");
+    const target = buildPath(root, "untitled", "Untitled.v3d");
+    assert(!exists(buildPath(root, "untitled")), "R10b floor: no untitled/ before the save");
+
     auto doc = Document.bootstrap(makeCube());
     auto v = new View(0, 0, 800, 600);
     auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
-    const applied = save.apply();
-    const reason = save.refusalReason();
+    save.configure(FileSaveMode.save);
+    bool applied;
+    try applied = save.apply();
+    catch (Exception e) assert(false, "R10b: untitled browser save threw: " ~ e.msg);
+    assert(applied, "R10b: the untitled browser save applies, reason '"
+        ~ save.refusalReason() ~ "'");
+    assert(exists(target), "R10b: written to " ~ target);
+    assert(delivered == [target], "R10b: and handed to the browser once");
+    assert(currentDocPath() == target, "R10b: it becomes the current document");
+}
 
-    // Restore process-global state before either deliberately mutable assert.
-    selectBrowserBackendForTest(false);
-    g_testMode = priorTestMode;
+// R9 — the hand-off happens after the write and before the document is marked
+// saved; a refused hand-off leaves it dirty. Every dirtiness read follows an
+// explicit `syncDocRevision`, the only place `docDirty()` changes.
+unittest {
+    import std.file : exists, read;
+    import std.path : buildPath;
+    import io.doc_state : clearCurrentDoc, docDirty, syncDocRevision;
+    import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
+    import mesh : makeCube;
+
+    const root = browserSaveRoot("r9");
+    scope (exit) {
+        selectBrowserBackendForTest(false);
+        setDeliverSavedFileForTest(null);
+        clearCurrentDoc();
+        requestDocRebaseline();
+        syncDocRevision(0);
+        dropBrowserSaveRoot(root);
+    }
+    selectBrowserBackendForTest(true);
+    bool deliver = true;
+    const(ubyte)[] handed;
+    int calls;
+    setDeliverSavedFileForTest((string p) {
+        ++calls;
+        handed = null;
+        try handed = cast(const(ubyte)[]) read(p);
+        catch (Exception) {}
+        return deliver;
+    });
+
+    auto doc = Document.bootstrap(makeCube());
+    auto v = new View(0, 0, 800, 600);
+    const path = buildPath(root, "7", "scene.v3d");
+    {
+        import std.file : mkdirRecurse;
+        mkdirRecurse(buildPath(root, "7"));
+    }
+    auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    save.setPath(path);
+
     clearCurrentDoc();
+    requestDocRebaseline(); syncDocRevision(10);
+    syncDocRevision(11);
+    assert(docDirty(), "R9 floor: dirty before save");
+    assert(save.apply(), "R9: the save applies");
+    assert(calls == 1, "R9 floor: one hand-off");
+    assert(handed.length > 0 && handed == cast(const(ubyte)[]) read(path),
+        "R9: the hand-off reads the bytes just written");
+    syncDocRevision(11);
+    assert(!docDirty(), "R9 control: handed-off save is clean (Q6)");
 
-    assert(!applied,
-        "browser FileSave must refuse while its backend cannot produce chosen");
-    assert(reason == "no path given: browser file access requires a user gesture",
-        "browser unavailable reason drifted: '" ~ reason ~ "'");
-    assert(browserOpen.outcome == PickOutcome.unavailable &&
-           browserOpen.path is null,
-        "browser open backend must stay pathless and unavailable");
-    assert(browserOpen.refusalReason() ==
-           "no path given: browser file access requires a user gesture",
-        "browser open reason drifted: '" ~ browserOpen.refusalReason() ~ "'");
-    assert(browserSave.outcome == PickOutcome.unavailable &&
-           browserSave.path is null,
-        "browser save backend must stay pathless and unavailable");
-    assert(browserSave.refusalReason() ==
-           "no path given: browser file access requires a user gesture",
-        "browser save reason drifted: '" ~ browserSave.refusalReason() ~ "'");
+    syncDocRevision(12);
+    assert(docDirty(), "R9 floor 2: dirty again");
+    clearCurrentDoc();
+    deliver = false;
+    assert(!save.apply(), "R9: a refused hand-off refuses the save");
+    assert(save.refusalReason() == "could not hand 'scene.v3d' to the browser",
+        "R9: reason '" ~ save.refusalReason() ~ "'");
+    syncDocRevision(12);
+    assert(!hasCurrentDoc(), "R9: a refused hand-off must not adopt the path");
+    assert(docDirty(), "R9: a refused hand-off must leave the document dirty");
+}
+
+// R9b — every write branch hands off (checklist 7): the LWO export.
+unittest {
+    import std.file : read, mkdirRecurse;
+    import std.path : buildPath, extension;
+    import io.doc_state : clearCurrentDoc;
+    import io.file_dialog : setDeliverSavedFileForTest;
+    import mesh : makeCube;
+
+    const root = browserSaveRoot("r9b");
+    scope (exit) {
+        setDeliverSavedFileForTest(null);
+        clearCurrentDoc();
+        dropBrowserSaveRoot(root);
+    }
+    string[] paths;
+    const(ubyte)[] handed;
+    setDeliverSavedFileForTest((string p) {
+        paths ~= p;
+        try handed = cast(const(ubyte)[]) read(p);
+        catch (Exception) {}
+        return true;
+    });
+    auto doc = Document.bootstrap(makeCube());
+    auto v = new View(0, 0, 800, 600);
+    mkdirRecurse(buildPath(root, "x"));
+    const path = buildPath(root, "x", "scene.lwo");
+    auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    save.configure(FileSaveMode.exportSingle, ".lwo");
+    save.setPath(path);
+    assert(save.apply(), "R9b: the LWO export applies");
+    assert(paths.length == 1, "R9b floor: one hand-off, got " ~ paths.length.to!string);
+    assert(paths[0] == path && extension(paths[0]) == ".lwo", "R9b: the .lwo path is handed off");
+    assert(handed.length > 0 && handed == cast(const(ubyte)[]) read(path),
+        "R9b: the hand-off reads the written LWO bytes");
 }
 
 // ---------------------------------------------------------------------------

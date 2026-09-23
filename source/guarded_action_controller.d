@@ -2,6 +2,7 @@ module guarded_action_controller;
 
 import command : Command, g_testMode;
 import command_history : RecordMode;
+import io.browser_pick_resume : UiApplyContext, beginUiApply, endUiApply;
 import ui.discard_guard : GuardAnswer, GuardRecord, GuardSettle, GuardVerdict,
     UiRunOutcome, guardVerdict, settlePerforms;
 
@@ -106,7 +107,15 @@ public:
             return UiRunOutcome.deferred;
         }
 
-        const applied = ports_.apply(command, mode);
+        // Task 7400: the apply runs inside the UI-apply context so a browser
+        // pick can park THIS command and resume it through this door; the
+        // inner block closes the context before the observation and notice.
+        bool applied;
+        {
+            beginUiApply(UiApplyContext(command, mode, dispatchedId));
+            scope (exit) endUiApply();
+            applied = ports_.apply(command, mode);
+        }
         record.outcome = applied ? "applied" : "refused";
         record.refused = !applied;
         ports_.observation.request(record);
@@ -154,7 +163,13 @@ public:
         if (command is null || !settlePerforms(settle, ports_.dirty()))
             return false;
 
-        const applied = ports_.apply(command, mode);
+        bool applied;
+        {
+            // Same context as `invoke`; a deferred command keeps no id.
+            beginUiApply(UiApplyContext(command, mode, ""));
+            scope (exit) endUiApply();
+            applied = ports_.apply(command, mode);
+        }
         ports_.observation.answer(
             afterSave ? GuardAnswer.save : GuardAnswer.discard, applied);
         if (!applied) ports_.notice(command);

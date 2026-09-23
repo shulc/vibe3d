@@ -160,6 +160,7 @@ tests.unit.backdrop_size_law_test
 tests.unit.base_revert_flag_test
 tests.unit.bg_gpu_cache_wiring_test
 tests.unit.binding_resolve_test
+tests.unit.browser_pick_resume_test
 tests.unit.button_face_test
 tests.unit.bvh_pick_test
 tests.unit.byte_size_test

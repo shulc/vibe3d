@@ -14,7 +14,7 @@ import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
 import io.native : writeV3d;
 import io.formats;
-import io.file_dialog : pickSavePath, PickResult, PickOutcome;
+import io.file_dialog : pickSavePath, PickResult, PickOutcome, deliverSavedFile;
 import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
@@ -174,6 +174,15 @@ class FileSave : Command {
             // above stay single-mesh (active layer). See `wroteComplete`'s
             // comment above for why the return value is still threaded.
             wroteComplete = writeV3d(*document, path);
+        }
+
+        // Task 7400: hand the written file to the user BEFORE the document is
+        // marked saved — in the browser that is the download; a failed
+        // hand-off leaves the document dirty and its path unchanged.
+        if (!deliverSavedFile(path)) {
+            import std.path : baseName;
+            refusal_ = "could not hand '" ~ baseName(path) ~ "' to the browser";
+            return false;
         }
 
         // Document-path memory: a successful native Save / Save As becomes

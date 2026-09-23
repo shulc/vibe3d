@@ -14,7 +14,7 @@ import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
 import io.native : readV3d, lastV3dRejectReason;
 import io.formats;
-import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
+import io.file_dialog : pickOpenPath, PickResult, PickOutcome, browserFileModel;
 import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
@@ -68,7 +68,13 @@ class FileLoad : Command {
     // `file.import.*` ids are covered by one line — they are the same command
     // with a different dialog framing, and the import path is exactly the
     // fourth discard route the card's census found.
-    override bool discardsUnsavedWork() const { return true; }
+    //
+    // Task 7400 (divergence, browser only): without a path the browser pick is
+    // asynchronous and replaces nothing; the resume carries a path and is
+    // guarded then, so the prompt comes once, AFTER the choice.
+    override bool discardsUnsavedWork() const {
+        return !(browserFileModel() && explicitPath.length == 0);
+    }
 
     /// Skip the native file dialog and load from the given path.
     /// Used by /api/command params; leave unset for normal user flow.

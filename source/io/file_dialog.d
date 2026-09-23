@@ -27,10 +27,11 @@ module io.file_dialog;
 // preserves the property the whole harness depends on: a headless run cannot
 // open a native dialog nobody can click.
 //
-// Task 6870 adds the WebAssembly branch behind this same contract. It cannot
-// produce `chosen` until document addressing exists; its result type admits
-// only `unavailable` and `failed`, and the consumer witness is the existing
-// `FileSave.apply()` path exercised from its unit-test module.
+// Task 6870 added the WebAssembly branch behind this same contract; task 7400
+// gives it `chosen` for a save (a MEMFS path, see `file_dialog_browser.d`) and
+// the fifth outcome `started` for an open: the pick continues asynchronously
+// and the command is resumed later through the UI door, so `started` is as
+// silent as a cancel.
 // ---------------------------------------------------------------------------
 
 import io.formats : FilterSpec;
@@ -50,6 +51,7 @@ enum PickOutcome {
     cancelled,    /// the user dismissed the chooser — SILENT, not an error
     unavailable,  /// suppressed before it opened (`--test`)
     failed,       /// the chooser could not run (no session bus, portal error…)
+    started,      /// the browser pick runs asynchronously — SILENT; the command resumes later
 }
 
 struct PickResult {
@@ -71,12 +73,17 @@ struct PickResult {
             case PickOutcome.failed:
                 return "the file chooser failed: " ~ (error.length ? error
                                                                    : "unknown error");
+            case PickOutcome.started:     return "";
         }
     }
 }
 
 private PickResult classifyBrowser(BrowserPickResult r) {
     final switch (r.outcome) {
+        case BrowserPickOutcome.chosen:
+            return PickResult(PickOutcome.chosen, r.path);
+        case BrowserPickOutcome.started:
+            return PickResult(PickOutcome.started);
         case BrowserPickOutcome.unavailable:
             return PickResult(PickOutcome.unavailable, null, r.detail);
         case BrowserPickOutcome.failed:
@@ -91,6 +98,48 @@ version (unittest) {
     /// switch here lets a real command consumer distinguish its outcomes.
     void selectBrowserBackendForTest(bool enabled) {
         g_browserBackendForTest = enabled;
+    }
+
+    private bool delegate(string) g_deliverSavedFileForTest;
+
+    /// Test-only stand-in for the browser hand-off; null restores the default.
+    void setDeliverSavedFileForTest(bool delegate(string) deliver) {
+        g_deliverSavedFileForTest = deliver;
+    }
+}
+
+/// The browser file model (task 7400): files live in MEMFS under
+/// `io.browser_pick_resume.workRoot()`, an open resumes asynchronously and a
+/// save is handed to the browser. True in the web build and under
+/// `selectBrowserBackendForTest(true)`; false on the desktop.
+bool browserFileModel() {
+    version (web) {
+        return true;
+    } else {
+        version (unittest) {
+            return g_browserBackendForTest;
+        } else {
+            return false;
+        }
+    }
+}
+
+/// Hand a just-written file to the user. On the desktop the file already IS
+/// the user's, so this is `true`; in the browser it is a download of the MEMFS
+/// file, and `false` means the bytes could not be handed over (the save then
+/// refuses and the document stays dirty). A `true` from the browser means
+/// "handed to the download mechanism", not "received" (owner Q6).
+bool deliverSavedFile(string path) {
+    version (unittest) {
+        if (g_deliverSavedFileForTest !is null)
+            return g_deliverSavedFileForTest(path);
+    }
+    version (web) {
+        // The JS download bridge lands with slice S2; until then a browser
+        // save refuses loudly instead of claiming a hand-off.
+        return false;
+    } else {
+        return true;
     }
 }
 
