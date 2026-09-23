@@ -729,14 +729,14 @@ unittest {
     foreach (n; scanned.keys.sort)
         assert(population.canFind(n) || kNamedExceptions.canFind(n),
                "tool census: " ~ n ~ " declared but not linked");
+    assert(kNamedExceptions.length == 4, "tool census: named exception list changed");
+    foreach (n; kNamedExceptions)
+        assert((n in runtime) !is null, "tool census: named exception " ~ n ~ " not linked");
     // The converse keeps the scan honest: a scanner that stops following a
     // base (templates, qualified names) would shrink S and pass the line above.
     foreach (n; population ~ kNamedExceptions)
         assert((n in scanned) !is null,
                "tool census: " ~ n ~ " linked but not found by the text scan");
-    assert(kNamedExceptions.length == 4, "tool census: named exception list changed");
-    foreach (n; kNamedExceptions)
-        assert((n in runtime) !is null, "tool census: named exception " ~ n ~ " not linked");
 
     // ===== (3) violator constants, axis 1 then axis 2 =====================
     const r1 = axis1Violators(recorded.tools);
@@ -795,14 +795,15 @@ class T : Tool {
     private MeshCacheKey armedKey_;
     version (unittest) { SessionMeshKey probeKey; }
     static if (true) { MeshCacheKey[2] inStaticIf; }
+    MeshCacheKey[extent(2)] sized;
     MeshCacheKey keyOf() const;
     void f() { MeshCacheKey local; armedKey_ = MeshCacheKey.init; }
 }
 unittest { struct U { MeshCacheKey inTest; } }
 EOS";
     const c = keyCountsOf(src);
-    assert(c[0] == 3 && c[1] == 1,
-           format("tool census scanner cell: key fields %s, expected [3, 1]", c));
+    assert(c[0] == 4 && c[1] == 1,
+           format("tool census scanner cell: key fields %s, expected [4, 1]", c));
     const ds = classDeclsOf("abstract class S(P) : H!(P) {}\nfinal class C : S!int, I {}\n"
                             ~ "unittest { class U : C {} }\n");
     assert(ds.length == 2 && ds[0].isTemplate && ds[0].bases == ["H"]
