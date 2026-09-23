@@ -1431,7 +1431,6 @@ public:
         ctrlPending_ = false;
         ctrlAxis_    = -1;
         restoreLine(preGesture_);
-        preHadLine_  = false;
         if (hasLine_) {
             updatePreview();
         } else if (haveBefore_ && before_.filled) {

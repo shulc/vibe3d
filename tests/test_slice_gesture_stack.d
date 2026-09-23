@@ -203,6 +203,13 @@ unittest {
     const mid = slMesh();
     assert(mid.canon != M2.canon,
            "slice floor (block D): the in-flight gesture 3 did not move the cut: " ~ which(mid));
+    // The REDO direction never cancels an open edit: the drag stays in flight.
+    ctrlShiftZ("block D Ctrl+Shift+Z mid-drag");
+    const rz = slMesh();
+    assert(slTool() == "slice" && rz.canon == mid.canon && slHistoryLen() == Ha,
+           format("ctrl+shift+z mid-drag touched the gesture in flight: tool '%s', mesh %s "
+                  ~ "(expected the in-flight cut), history %d", slTool(), which(rz),
+                  slHistoryLen()));
     ctrlZ("block D Ctrl+Z mid-drag");
     const d = slMesh();
     assert(slTool() == "slice" && d.canon == M2.canon && slHistoryLen() == Ha,
@@ -340,5 +347,43 @@ unittest {
     assert(slTool() == "slice" && z.canon == Mc.canon && len3(vz - v0) < 1e-5f,
            format("a rotate-ring gesture was not undone off the stack: tool '%s', mesh restored %s, "
                   ~ "vector %s (expected %s)", slTool(), z.canon == Mc.canon, vz, v0));
+    slKey(SL_SDLK_w, 0, "W (drop Slice)");
+}
+
+// Block G2 — Ctrl+Z during an RMB gap drag cancels only that drag: the gap
+// the press found comes back and the earlier gap step stays on the stack.
+unittest {
+    slPrologue(false, "polygons", &slBackAndLeft, false);
+    slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
+    const Ha = slHistoryLen();
+    slSliceDrawLine();
+    const M1 = slMesh();
+    int ax, ay, bx, by, mx, my;
+    slLinePixels(ax, ay, bx, by, mx, my);
+    const gx = mx + 60;
+    string gapDrag(int x0, int n) {
+        string log = slMotion(20, x0, my, 0) ~ "\n" ~ slButton(40, true, 3, x0, my) ~ "\n";
+        foreach (i; 1 .. n + 1) log ~= slMotion(40 + 20 * i, x0 + 10 * i, my, 4) ~ "\n";
+        return log;
+    }
+    slPlay(gapDrag(gx, 6) ~ slButton(200, false, 3, gx + 60, my), "block G2 gap drag 1");
+    const M2 = slMesh();
+    assert(M2.canon != M1.canon, "slice floor (block G2): the first gap drag did not change the cut");
+    slPlay(gapDrag(gx + 60, 6), "block G2 gap drag 2 (in flight)");
+    const mid = slMesh();
+    assert(mid.canon != M2.canon,
+           "slice floor (block G2): the in-flight gap drag did not move the cut");
+    ctrlZ("block G2 Ctrl+Z mid gap drag");
+    const d = slMesh();
+    assert(slTool() == "slice" && d.canon == M2.canon && slHistoryLen() == Ha,
+           format("ctrl+z during a gap drag did not cancel only that drag: tool '%s', mesh is "
+                  ~ "%s, history %d (expected %d)", slTool(),
+                  d.canon == mid.canon ? "the in-flight gap" : d.canon == M1.canon ? "the line's"
+                  : d.toString, slHistoryLen(), Ha));
+    slPlay(slButton(20, false, 3, gx + 120, my), "block G2 stray RMB release");
+    assert(slMesh().canon == M2.canon, "the RMB release after a mid-drag ctrl+z changed the cut");
+    ctrlZ("block G2 Ctrl+Z (gap drag 1)");
+    assert(slTool() == "slice" && slMesh().canon == M1.canon,
+           "the mid-gap-drag cancel lost the first gap step off the stack");
     slKey(SL_SDLK_w, 0, "W (drop Slice)");
 }
