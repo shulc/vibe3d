@@ -755,7 +755,7 @@ unittest {
     // ===== (4) row-by-row =================================================
     foreach (n; population) {
         const m = measured.tools[n];
-        const r = recorded.tools[n];
+        const r = recorded.tools.get(n, ToolRow.init);
         assert(r.live == "yes" || r.live == "no",
                "tool census: row " ~ n ~ " has no live classification");
         assert(!(m.snap > 0 && r.live == "no" && r.reason.length == 0),
