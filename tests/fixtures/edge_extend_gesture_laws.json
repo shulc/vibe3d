@@ -1331,7 +1331,8 @@
      ]
     ]
    },
-   "law": "every press on empty space commits the current extend and starts a NEW one at offset 0: (a) adds a zero-length ring (3 coincident vertices, 2 zero-area quads), (b) adds a ring offset by d2 from the previous one"
+   "law": "every press on empty space commits the current extend and starts a NEW one at offset 0: (a) adds a zero-length ring (3 coincident vertices, 2 zero-area quads), (b) adds a ring offset by d2 from the previous one",
+   "instrument_note": "rearm_after_arm_drag / rearm_after_haul (new activation per press) were recorded with a state read between the gestures, which ends the session; they describe that instrument, not a bare re-press"
   },
   "rearm_after_haul": {
    "input": "d1 = 10 x (+4,+4) arm drag (or 10 x (+4,0) haul), release; (a) motionless click on empty space; (b) 5 x (+4,0) drag on empty space",
@@ -1467,7 +1468,8 @@
      ]
     ]
    },
-   "law": "every press on empty space commits the current extend and starts a NEW one at offset 0: (a) adds a zero-length ring (3 coincident vertices, 2 zero-area quads), (b) adds a ring offset by d2 from the previous one"
+   "law": "every press on empty space commits the current extend and starts a NEW one at offset 0: (a) adds a zero-length ring (3 coincident vertices, 2 zero-area quads), (b) adds a ring offset by d2 from the previous one",
+   "instrument_note": "rearm_after_arm_drag / rearm_after_haul (new activation per press) were recorded with a state read between the gestures, which ends the session; they describe that instrument, not a bare re-press"
   },
   "symmetry_on_plane_vertex": {
    "input": "symmetry X on, edge (0,1,0)-(1,1,0) selected (one end ON the plane); drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
@@ -2010,6 +2012,613 @@
    },
    "law_selection": "the click selects the clicked edge AND its mirror (7,8)+(2,1)",
    "law_press_side": "the side of the ACTIVATING press decides which side receives +o: press at x > 0 -> x>0 elements get (+ox, oy, oz) and x<0 elements (-ox, oy, oz) (outward here); press at x < 0 -> the reverse (inward here, = the both-sides arm cell). Every earlier symmetry cell activated with a press at the view-centre column x ~ 0 and follows the x<0-press branch"
+  },
+  "symmetry_second_press_side": {
+   "view": "front orthographic, pixel size 0.0031056 m; symmetry X; (7,8) clicked -> (7,8)+(2,1) selected; extend armed; NO state read between the gestures unless the cell says so",
+   "input": "two hauls on EMPTY space, each 10 x (+4,+4) px, released in between; press world xy given per cell",
+   "cells": {
+    "plus_then_minus": {
+     "press_world_xy": [
+      [
+       0.5,
+       1.35
+      ],
+      [
+       -0.5,
+       1.35
+      ]
+     ],
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      0.25,
+      -0.25,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -0.75,
+       0.75,
+       0.0
+      ],
+      [
+       -0.75,
+       -0.25,
+       0.0
+      ],
+      [
+       0.75,
+       -0.25,
+       0.0
+      ],
+      [
+       0.75,
+       0.75,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "new_activation": false,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ]
+    },
+    "minus_then_plus": {
+     "press_world_xy": [
+      [
+       -0.5,
+       1.35
+      ],
+      [
+       0.5,
+       1.35
+      ]
+     ],
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      0.25,
+      -0.25,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -1.25,
+       0.75,
+       0.0
+      ],
+      [
+       -1.25,
+       -0.25,
+       0.0
+      ],
+      [
+       1.25,
+       -0.25,
+       0.0
+      ],
+      [
+       1.25,
+       0.75,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "new_activation": false,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ]
+    },
+    "plus_then_minus_state_read_between": {
+     "press_world_xy": [
+      [
+       0.5,
+       1.35
+      ],
+      [
+       -0.5,
+       1.35
+      ]
+     ],
+     "note": "a state read through the editor's scripting door between the hauls ENDS the tool session; the second press is then a new activation extending from the first ring",
+     "vertex_count": 17,
+     "polygon_count": 8,
+     "offset_final": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -1.125,
+       0.875,
+       0.0
+      ],
+      [
+       -1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ],
+      [
+       -1.0,
+       0.75,
+       0.0
+      ],
+      [
+       -1.0,
+       -0.25,
+       0.0
+      ],
+      [
+       1.0,
+       -0.25,
+       0.0
+      ],
+      [
+       1.0,
+       0.75,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 13,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 13,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ]
+    },
+    "plus_then_minus_motionless_click_between": {
+     "press_world_xy": [
+      [
+       0.5,
+       1.35
+      ],
+      [
+       -0.5,
+       1.35
+      ]
+     ],
+     "click_world_xy": [
+      0.0,
+      -1.4
+     ],
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      0.25,
+      -0.25,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -0.75,
+       0.75,
+       0.0
+      ],
+      [
+       -0.75,
+       -0.25,
+       0.0
+      ],
+      [
+       0.75,
+       -0.25,
+       0.0
+      ],
+      [
+       0.75,
+       0.75,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "new_activation": false,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "new_activation": false,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.25,
+        -0.25,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      }
+     ]
+    }
+   },
+   "law": "with no intervening state read a second off-handle press CONTINUES the run (no new activation, the offset accumulates, one ring) and a motionless click in between is absorbed; the sign side is RE-LATCHED at every off-handle press: the whole ring takes the side of the LATEST press (plus_then_minus +X ridge 1 - 0.25 = 0.75; minus_then_plus 1 + 0.25 = 1.25; latching at the first press would give the opposite in both)",
+   "supersedes_note": "rearm_after_arm_drag / rearm_after_haul (new activation per press) were recorded with a state read between the gestures, which ends the session; they describe that instrument, not a bare re-press"
+  },
+  "symmetry_handle_press_side": {
+   "view": "front orthographic, pixel size 0.0031056 m; symmetry X; (7,8) clicked -> (7,8)+(2,1) selected; extend armed; NO state read between the gestures unless the cell says so",
+   "input": "engage haul on EMPTY space (press world xy given), release; then press ON the Y (green) arm of the drawn handle and drag 10 x (+4,+4) px (the Y arm freezes the X offset: proof of grab)",
+   "handle_position": "the move handle is drawn at the clicked edge's bounding-box middle (1, 0.5) plus the raw offset, whichever side the ring went",
+   "cells": {
+    "gizmo_plus_side": {
+     "engage_press_world_xy": [
+      -0.5,
+      1.35
+     ],
+     "engage_drag_px": "10 x (+4,+4)",
+     "handle_world_x": 1.125,
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      0.125,
+      -0.25,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -0.875,
+       0.75,
+       0.0
+      ],
+      [
+       -0.875,
+       -0.25,
+       0.0
+      ],
+      [
+       0.875,
+       -0.25,
+       0.0
+      ],
+      [
+       0.875,
+       0.75,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.25,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.25,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ]
+    },
+    "gizmo_minus_side": {
+     "engage_press_world_xy": [
+      0.5,
+      1.35
+     ],
+     "engage_drag_px": "110 x (-4,0)",
+     "handle_world_x": -0.365,
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      -1.365,
+      -0.125,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       0.365,
+       0.875,
+       0.0
+      ],
+      [
+       0.365,
+       -0.125,
+       0.0
+      ],
+      [
+       -0.365,
+       -0.125,
+       0.0
+      ],
+      [
+       -0.365,
+       0.875,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        -1.365,
+        -0.125,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        -1.365,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        -1.365,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ]
+    },
+    "blind_first_press_where_the_arm_would_be": {
+     "press_world_xy": [
+      1.25,
+      0.5
+     ],
+     "note": "after arming no handle is drawn at all (8 frames, 0 arm pixels); a first press where the X arm lies after a haul is an ordinary haul (offset Y moved), +X master",
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset_final": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "new_vertices": [
+      [
+       -1.125,
+       0.875,
+       0.0
+      ],
+      [
+       -1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ]
+     ],
+     "presses_in_journal": [
+      {
+       "new_activation": true,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      }
+     ],
+     "undo_walk": [
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.125,
+        -0.125,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "vertex_count": 9,
+       "offset": [
+        "ERR:command argument parsing failed",
+        "ERR:command argument parsing failed",
+        "ERR:command argument parsing failed"
+       ]
+      }
+     ]
+    }
+   },
+   "law": "a press ON the handle keeps the side latched by the last off-handle press; neither the handle centre's side nor the press pixel's side enters (gizmo_plus_side: +X ridge 0.875 = 1 - 0.125, re-latch would give 1.125; gizmo_minus_side: +X ridge -0.365 = 1 - 1.365, re-latch would give 2.365). The first press of a session can never be a handle press: no handle exists before it"
   }
  }
 }

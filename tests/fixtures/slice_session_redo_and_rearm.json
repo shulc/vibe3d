@@ -354,6 +354,173 @@
     }
    ],
    "law": "unlike slice / edge slice, the loop slice activation is its OWN undo step (it already cuts); Ctrl+Z pops gestures one by one, the step that pops the activation ends the tool, and redo re-arms bare (no gesture replayed)"
+  },
+  "loop_slice_arming_drag_redo": {
+   "scene": "C0 with the faces -Z and -X selected; position p puts the loop at y = 0.5 - p",
+   "question": "the first viewport press after activation is dragged a long way (the analogue of an arming press with its drag); after the undo walk ends the tool, where does redo put the loop",
+   "cells": {
+    "viewport_press": {
+     "input": "toolbox activation; g1 = press on empty viewport, drag +90 px horizontal; g2, g3 = -60 px horizontal scrubs on empty viewport; Ctrl+Z until the tool is off; Ctrl+Shift+Z twice",
+     "after_arm": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": 0.1,
+      "position": 0.4
+     },
+     "after_g1": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": -0.2,
+      "position": 0.7
+     },
+     "after_g2": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": 0.0,
+      "position": 0.5
+     },
+     "after_g3": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": 0.2,
+      "position": 0.3
+     },
+     "undo_steps": [
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.0,
+       "position": 0.5
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": -0.2,
+       "position": 0.7
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      },
+      {
+       "nv": 8,
+       "nf": 4,
+       "tool_active": null
+      }
+     ],
+     "redo_steps": [
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      }
+     ],
+     "journal_positions": {
+      "first": 0.4,
+      "max": 0.7,
+      "count": 73
+     }
+    },
+    "indicator_bar_press": {
+     "input": "toolbox activation; g1 = press on the slice indicator bar line at 20 % of its length, drag +106 px along it; g2, g3 = -60 px horizontal scrubs on empty viewport; Ctrl+Z until the tool is off; Ctrl+Shift+Z twice",
+     "after_arm": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": 0.1,
+      "position": 0.4
+     },
+     "after_g1": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": -0.25,
+      "position": 0.75
+     },
+     "after_g2": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": -0.07,
+      "position": 0.57
+     },
+     "after_g3": {
+      "nv": 11,
+      "nf": 6,
+      "tool_active": "loop_slice",
+      "loop_y": 0.11,
+      "position": 0.39
+     },
+     "undo_steps": [
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": -0.07,
+       "position": 0.57
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": -0.25,
+       "position": 0.75
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      },
+      {
+       "nv": 8,
+       "nf": 4,
+       "tool_active": null
+      }
+     ],
+     "redo_steps": [
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      },
+      {
+       "nv": 11,
+       "nf": 6,
+       "tool_active": "loop_slice",
+       "loop_y": 0.1,
+       "position": 0.4
+      }
+     ],
+     "journal_positions": {
+      "first": 0.4,
+      "max": 0.75,
+      "count": 74
+     }
+    }
+   },
+   "law": "redo re-arms the bare activation at the arm-time position 0.4 (loop y 0.1), neither where the first gesture's release left it (0.7 / 0.75) nor at the last scrub (0.3 / 0.39); the press point never places the loop: both presses start from the arm-time position and move it by the horizontal drag only (about 0.0033 per pixel), the bar press included"
   }
  }
 }
