@@ -2223,9 +2223,11 @@ void drawCommandHistoryPanel(HistoryPanelState state,
                 // walk through history. Each row-height worth of
                 // vertical drag fires one undo() (drag UP, walks
                 // backward) or one redo() (drag DOWN, walks
-                // forward). The cursor visually follows the
-                // mouse because every undo/redo shifts the list
-                // by exactly one row.
+                // forward) through the navigate chokepoint.
+                // A step usually shifts the list by one row, but
+                // not always: the undo that ends a cutting
+                // session also pops its activation row (two), a
+                // live-edit step pops none (task 7137, §22).
                 ImGui.PushStyleColor(ImGuiCol.Text,
                     ImVec4(0.95f, 0.7f, 0.2f, 1.0f));
                 ImGui.Selectable("=== cursor (drag to undo/redo) ===",

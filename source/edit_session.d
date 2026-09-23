@@ -611,8 +611,8 @@ final class EditSession {
     //
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navigate(bool isUndo) {
-        // Task 7137: a cutting session's sole first gesture, read BEFORE the
-        // step or cancel below destroys it (see endSession_).
+        // A cutting session's sole first gesture, read BEFORE the step or
+        // cancel below destroys it (see endSession_).
         Object firstGesture;
         if (isUndo)
             if (auto sfg = cast(SessionFirstGesture) tool_())
@@ -665,8 +665,8 @@ final class EditSession {
             }
             return true;
         }
-        // Task 7137: replay only when the redo head IS the activation row this
-        // session popped (identity, read before the redo moves it).
+        // Replay only when the redo head IS the activation row this session
+        // popped (identity, read before the redo moves it; see endSession_).
         bool replay;
         if (!isUndo) {
             const re = history_.redoEntries();
