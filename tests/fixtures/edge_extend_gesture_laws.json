@@ -4,7 +4,7 @@
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
   "method": "gui-gesture",
-  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures; residual cells (*_no_read, live_undo_walk_two_presses): no scripting call between gestures, history read from the undo-list frames, one read at the end; residual-4 cells: activation by the tool's key, mid-session counts through the read-only query verb; residual-5 cells: a value typed into the tool panel through real keys, read back through the read-only query verb; residual-6 cells: shift-modified and middle-button presses through real input; residual-7 cells: Ctrl+Z walk after a shift or middle press, tool state from a read that opens no command block; residual-8 cells: an operation opened by a shift press under a tool switch, a second shift press, a later plain haul and a redo",
+  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures; residual cells (*_no_read, live_undo_walk_two_presses): no scripting call between gestures, history read from the undo-list frames, one read at the end; residual-4 cells: activation by the tool's key, mid-session counts through the read-only query verb; residual-5 cells: a value typed into the tool panel through real keys, read back through the read-only query verb; residual-6 cells: shift-modified and middle-button presses through real input; residual-7 cells: Ctrl+Z walk after a shift or middle press, tool state from a read that opens no command block; residual-8 cells: an operation opened by a shift press under a tool switch, a second shift press, a later plain haul and a redo; residual-9 cells: undo after a motionless first click, undo of an operation opened after a restored switch, redo of a closed operation behind a tool drop",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_extend/harness (private)",
   "task": "7102"
@@ -5151,6 +5151,469 @@
    },
    "press_journal": "no activation row; a no-change row, the offset re-written at the second operation's value, then growing from it",
    "law": "redo brings the second operation back live with the tool active; a following plain haul continues the second operation from its offset (its ring moves further out); no new ring"
+  },
+  "motionless_first_click_then_haul_undo_walk": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry",
+   "input": "activation key; one motionless left click at the same point (the first press of the run); then h1 = a plain left press at world (0.5, 1.35) + 10 x (+4,+4) px, release; then Ctrl+Z three times",
+   "after_first_click": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "after_haul": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ]
+    ]
+   },
+   "press_journal": "the click logs the activation block with the offset written 0; the haul's press logs a no-change row and no activation, then 0.01 .. 0.125",
+   "undo_steps": [
+    {
+     "vertex_count": 11,
+     "polygon_count": 5,
+     "offset": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "tool_active": true,
+     "new_vertices": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       0.0
+      ]
+     ],
+     "rows_popped": "the haul's adjustment row only; the zero-length ring stays"
+    },
+    {
+     "vertex_count": 9,
+     "polygon_count": 4,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [],
+     "rows_popped": "the tool row, the new vertex map, the click's adjustment row and the apply row together; the tool ends"
+    },
+    {
+     "vertex_count": 9,
+     "polygon_count": 4,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [],
+     "rows_popped": "the selection click before the tool"
+    }
+   ],
+   "law": "a motionless first click is its own undo step: the first Ctrl+Z pops only the later haul and leaves the zero-length ring with the tool active; the second pops the click together with the activation and the tool ends"
+  },
+  "operation_after_restored_switch_undo_walk": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry",
+   "input": "activation key; h1 = a plain left press at world (0.5, 1.35) + 10 x (+4,+4) px, release; the scale key; Ctrl+Z once (the extend tool is back); h2 = the same haul; Ctrl+Z three times",
+   "after_first_haul": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ]
+   },
+   "after_restore": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ]
+    ]
+   },
+   "after_second_haul": {
+    "vertex_count": 13,
+    "polygon_count": 6,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ],
+     [
+      1.25,
+      -0.25,
+      0.0
+     ],
+     [
+      1.25,
+      0.75,
+      0.0
+     ]
+    ]
+   },
+   "undo_rows_at_second_haul": "the switch rows are gone (redo truncated); one adjustment row and one apply row after the first run's apply row",
+   "undo_steps": [
+    {
+     "vertex_count": 11,
+     "polygon_count": 5,
+     "offset": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "tool_active": true,
+     "new_vertices": [
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ]
+     ],
+     "rows_popped": "the new operation's adjustment row and apply row; the first run stays"
+    },
+    {
+     "vertex_count": 9,
+     "polygon_count": 4,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [],
+     "rows_popped": "the first run whole with the activation row; the tool ends"
+    },
+    {
+     "vertex_count": 9,
+     "polygon_count": 4,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [],
+     "rows_popped": "the selection click before the tool"
+    }
+   ],
+   "law": "the operation opened after the switch was undone is popped alone and the tool stays active (panel back to 0); the next Ctrl+Z pops the first run with the activation and ends the tool"
+  },
+  "redo_closed_operation_after_tool_drop_then_haul": {
+   "view": "front orthographic, pixel size 0.0031056 m; (7,8) selected by a real click at world (1.0, 0.5); no symmetry",
+   "input": "activation key; h1 = a plain left press at world (0.5, 1.35) + 10 x (+4,+4) px, release; a Shift+left press at the same point + 10 x (+4,+4) px, release; Escape (drops the tool); Ctrl+Z twice; Ctrl+Shift+Z once; then h3 = the same plain haul",
+   "after_shift_drag": {
+    "vertex_count": 13,
+    "polygon_count": 6,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ],
+     [
+      1.25,
+      -0.25,
+      0.0
+     ],
+     [
+      1.25,
+      0.75,
+      0.0
+     ]
+    ]
+   },
+   "escape_rows": "two undo rows: the tool switched off, then a clear of the snap task",
+   "after_escape": {
+    "vertex_count": 13,
+    "polygon_count": 6,
+    "offset": null,
+    "tool_active": false,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ],
+     [
+      1.25,
+      -0.25,
+      0.0
+     ],
+     [
+      1.25,
+      0.75,
+      0.0
+     ]
+    ]
+   },
+   "undo_steps": [
+    {
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ],
+      [
+       1.25,
+       -0.25,
+       0.0
+      ],
+      [
+       1.25,
+       0.75,
+       0.0
+      ]
+     ],
+     "rows_popped": "the snap-task clear row only; nothing visible changes"
+    },
+    {
+     "vertex_count": 11,
+     "polygon_count": 5,
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "tool_active": true,
+     "new_vertices": [
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ]
+     ],
+     "rows_popped": "the second operation's adjustment and apply rows together with the tool-off row; the tool is active again"
+    }
+   ],
+   "after_redo": {
+    "vertex_count": 13,
+    "polygon_count": 6,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ],
+     [
+      1.25,
+      -0.25,
+      0.0
+     ],
+     [
+      1.25,
+      0.75,
+      0.0
+     ]
+    ],
+    "rows_restored": "the second operation's two rows only; the tool-off and snap rows stay on the redo side"
+   },
+   "after_plain_haul": {
+    "vertex_count": 15,
+    "polygon_count": 7,
+    "offset": [
+     0.125,
+     -0.125,
+     0.0
+    ],
+    "tool_active": true,
+    "new_vertices": [
+     [
+      1.125,
+      -0.125,
+      0.0
+     ],
+     [
+      1.125,
+      0.875,
+      0.0
+     ],
+     [
+      1.25,
+      -0.25,
+      0.0
+     ],
+     [
+      1.25,
+      0.75,
+      0.0
+     ],
+     [
+      1.375,
+      -0.375,
+      0.0
+     ],
+     [
+      1.375,
+      0.625,
+      0.0
+     ]
+    ]
+   },
+   "press_journal": "an activation block at the press, the offset written 0, then 0.01 .. 0.125 (no new tool row in the undo list)",
+   "control_third_undo_then_redo": {
+    "input": "as above but Ctrl+Z three times before the redo",
+    "after_undo3": {
+     "vertex_count": 9,
+     "polygon_count": 4,
+     "offset": null,
+     "tool_active": false,
+     "new_vertices": [],
+     "rows_popped": "the first run whole with the activation row; the tool ends"
+    },
+    "after_redo": {
+     "vertex_count": 11,
+     "polygon_count": 5,
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "tool_active": true,
+     "new_vertices": [
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ]
+     ],
+     "rows_restored": "the first run with the activation; the tool is active"
+    },
+    "after_plain_haul": {
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "tool_active": true,
+     "new_vertices": [
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ],
+      [
+       1.25,
+       -0.25,
+       0.0
+      ],
+      [
+       1.25,
+       0.75,
+       0.0
+      ]
+     ]
+    }
+   },
+   "law": "redo of a closed operation brings it back committed with the tool active; a following plain haul opens a NEW operation from 0 (an activation block, a third ring starting on the second: 13 -> 15 v)"
   }
  }
 }
