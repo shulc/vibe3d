@@ -206,13 +206,11 @@ interface RefireClient {
 // tool's open uncommitted edit from history navigation (navigate()'s
 // whole-edit-cancel branch) does not end the tool's life. Two implementor
 // families:
-//   * the slice standing previews (LoopSliceTool / EdgeSliceTool — task
-//     0232 + 0400): the uncommitted edit is a STANDING preview sitting on
-//     the mesh across arbitrary frames, re-armable after every
-//     commit/cancel. EdgeSliceTool's survival covers only the residual
-//     armed-without-points state: a peel that empties its chain ends the
-//     tool in navigate()'s step branch; SliceTool deliberately
-//     does NOT implement this interface, so its cancel drops the tool;
+//   * the Edge Slice standing preview (0232 + 0400): its survival covers
+//     only the residual armed-without-points state: a peel that empties its
+//     chain ends the tool in navigate()'s step branch. SliceTool and
+//     LoopSliceTool (gap row 205) deliberately do NOT implement this
+//     interface, so a cancel with no session step left ends them;
 //   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
 //     task 0430, capture-measured): a cancelled create gesture leaves the
 //     tool armed for a fresh gesture.
@@ -243,8 +241,9 @@ interface KeepAliveOnCancel {
 
 // ---------------------------------------------------------------------------
 // SessionStepUndo — optional capability: mid-session per-step undo peel
-// (task 0321). EdgeSliceTool (latched points) and SliceTool (its gesture
-// stack, task 7137) implement it.
+// (task 0321). EdgeSliceTool (latched points), SliceTool (its gesture
+// stack, task 7137) and LoopSliceTool (its gesture stack, gap row 205)
+// implement it.
 // ---------------------------------------------------------------------------
 interface SessionStepUndo {
     // navigate() calls this FIRST, before its whole-edit-cancel branch
@@ -260,7 +259,8 @@ interface SessionStepUndo {
 // FLIGHT that an undo keystroke cancels on its own (the owner's rule
 // "the first Ctrl+Z cancels the LIVE edit, the tool stays"; not captured, gap
 // row 228). navigate() asks it before anything else, so the gesture stack, the
-// session and the history are untouched. SliceTool implements it.
+// session and the history are untouched. SliceTool and LoopSliceTool
+// (gap row 205) implement it.
 // ---------------------------------------------------------------------------
 interface SessionGestureCancel {
     /// Cancel the gesture in flight, back to the state at its press; false
@@ -270,7 +270,8 @@ interface SessionGestureCancel {
 
 // ---------------------------------------------------------------------------
 // SessionFirstGesture — optional capability of a cutting session whose arm is
-// a history row (Slice, Edge Slice; task 7137, §22): the undo that removes the
+// a history row (Slice, Edge Slice; task 7137, §22; Loop Slice, whose "first
+// gesture" is its arm-time loop, gap row 205): the undo that removes the
 // session's first gesture also pops that row, and the navigate redo of the row
 // re-arms the tool WITH that gesture. The payload is opaque to the session.
 // ---------------------------------------------------------------------------
@@ -672,11 +673,11 @@ final class EditSession {
             // through to the drop branch. (Codifying the stronger claim as
             // an assert aborted the editor on the first box-gesture Ctrl+Z.)
             // Task 0400 + 0430: a KeepAliveOnCancel tool
-            // (survivesEditCancel()==true — the slice standing previews
-            // LoopSliceTool/EdgeSliceTool, and the create family
-            // PrimitiveCreateTool/BoxTool) is never dropped by this cancel.
-            // Every other tool — SliceTool included, whose single-gesture
-            // cancel ends the tool by the owner's slice law —
+            // (survivesEditCancel()==true — EdgeSliceTool, and the create
+            // family PrimitiveCreateTool/BoxTool) is never dropped by this
+            // cancel. Every other tool — SliceTool and LoopSliceTool
+            // included, whose cancel with no step left ends the tool by the
+            // owner's slice law —
             // keeps the pre-0400 cancel-then-drop behavior. RE-READ, not the `t` cached above — see the method
             // doc.
             auto t2  = tool_();

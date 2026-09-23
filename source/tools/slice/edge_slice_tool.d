@@ -582,10 +582,9 @@ public:
         cancelLiveEdit();
     }
 
-    // Task 0400 (see LoopSliceTool's identical override + the task doc):
-    // EdgeSliceTool shares LoopSliceTool's standing-preview architecture
+    // Task 0400 (see the task doc): EdgeSliceTool is a standing preview
     // (armed_ sits on the mesh across arbitrary frames, re-armable after
-    // commit/cancel — the standing-preview family),
+    // commit/cancel; Loop Slice left this family, gap row 205),
     // so an interactive Ctrl+Z that reaches navHistory()'s whole-edit-cancel
     // branch (only when tryUndoStepInSession() below has nothing left to
     // peel) must not drop the tool either. tryUndoStepInSession() absorbs

@@ -7,7 +7,8 @@ import std.algorithm : sort;
 import operator : VectorStack;
 
 import tool;
-import edit_session : KeepAliveOnCancel;
+import edit_session : SessionStepUndo, SessionFirstGesture, SessionGestureCancel;
+import log : logWarn;
 import tools.common.session_mesh_key : SessionMeshKey;
 import mesh;
 import mesh_gpu : GpuMesh;
@@ -68,6 +69,23 @@ struct PreparedLoopSliceDeactivateImage {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
+}
+
+// One step of a Loop Slice session (gap row 205): every field `scrubPosition`
+// writes and `rebuildCut` reads, the panel settings aside (`positionProxy_` is
+// re-derived by `syncProxy`).
+private struct LoopSliceState {
+    float[] positions;
+    int current;
+}
+
+// The session's arm, carried by EditSession across the undo of the activation
+// row to the navigate redo that re-arms it (verdict RA-act): the seed set and
+// the ARM-TIME loop. The key is sealed after the cancel, over the base mesh.
+private final class LoopSliceFirstGesture {
+    uint[] seeds, armedSelFaces;
+    LoopSliceState arm;
+    SessionMeshKey key;
 }
 
 struct LoopSlicePreparedParamState {
@@ -228,10 +246,13 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // state: `ToolDoApplyCommand` captures its own snapshot pair around the call
 // and IS the undo entry.
 // ---------------------------------------------------------------------------
-// KeepAliveOnCancel (task 0428; interface renamed in 0430): the
-// survivesEditCancel override below is the interface's implementation
-// (EditSession discovers it by cast).
-final class LoopSliceTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+// Session law (owner В23/В26, verdicts LS-R-bare and RA-act, gap rows 205
+// and 213): the arm is a history row and already cuts; each later
+// press..release is one Ctrl+Z step off `gestureStack_`; the Ctrl+Z with no
+// step left ends the tool with its row (no KeepAliveOnCancel since then);
+// the navigate redo re-arms at the arm-time loop.
+final class LoopSliceTool : Tool, SessionStepUndo, SessionFirstGesture,
+                            SessionGestureCancel, PreparedToolDoorClient,
                             PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:
@@ -441,6 +462,18 @@ private:
     // user actually selected rather than the cut's re-selected sub-quads.
     uint[]       armedSelFaces_;
 
+    // The session's steps (gap row 205): the state BEFORE each completed
+    // press..release, pushed at its release even when it moved nothing; the
+    // arming press pushes only when its drag moved the loop. Oldest dropped
+    // at the cap, as Slice's stack.
+    enum size_t MAX_LOOP_SLICE_GESTURE_STACK = 256;
+    LoopSliceState[] gestureStack_;
+    LoopSliceState   prePress_;        // latched at the press in flight
+    bool             pressIsRescrub_;  // a press is in flight and may push
+    bool             pressIsArm_;      // ... and it is the arming press
+    LoopSliceState   armState_;        // the loop right after the arm's cut
+    bool             armStateValid_;
+
 public:
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
             EditMode* editMode, LitShader litShader) {
@@ -563,6 +596,8 @@ public:
         root["edit"]        = JSONValue(wireTagForValue(editTable, cast(int)edit_));
         root["mode"]        = JSONValue(wireTagForValue(modeTable, cast(int)mode_));
         root["current"]     = JSONValue(current_);
+        root["gestureDepth"]  = JSONValue(gestureStack_.length);
+        root["armStateValid"] = JSONValue(armStateValid_);
 
         JSONValue[] posArr;
         foreach (p; positions_) posArr ~= JSONValue(p);
@@ -821,6 +856,7 @@ public:
         positions_ = image.positions; image.positions = null;
         positionProxy_ = image.positionProxy;
         armedKey_ = SessionMeshKey.init;
+        clearSessionSteps();
         image.before.moveInto(before_);
         image.clear();
     }
@@ -845,6 +881,7 @@ public:
         armedSelFaces_  = [];
         insertAt_       = 0.5f;
         removeTrigger_  = false;
+        clearSessionSteps();
         // Settings fields (edit_/mode_/count_/selectNew_/sliceSelected_/
         // keepQuads_/sliceNgon_/sliceSplit_/sliceCaps_/gap_/curvature_/
         // curveTension_/profile_/depth_/reverseX_/reverseY_/aspect_) are
@@ -934,6 +971,7 @@ public:
         if (!image.valid) return;
         active = false; armed_ = false; scrubbing_ = false; built_ = false;
         seeds_ = null; armedSelFaces_ = null; armedKey_ = SessionMeshKey.init;
+        clearSessionSteps();
         if (image.installBeforeFromLive) image.expectedLive.moveInto(before_);
         image.clear();
     }
@@ -989,22 +1027,60 @@ public:
         cancelLiveEdit();
     }
 
-    // Task 0400 (captured reference — see the task doc): interactive Ctrl+Z
-    // during an active Loop Slice never drops the tool, in ANY state —
-    // undo always operates on mesh-edit history and the tool stays live,
-    // ready for another cut. Reported while ARMED (hasUncommittedEdit()),
-    // navHistory()'s whole-edit-cancel branch calls cancelUncommittedEdit()
-    // (== cancelLiveEdit(), reverting to the pre-arm/pre-scrub baseline with
-    // no history side effect) and then checks THIS hook before dropping —
-    // `active` alone is enough: as long as the tool is active at all, a
-    // cancelled preview is a normal idle-armable state, not a reason to
-    // exit. (The post-commit state was already correct: commitEdit() clears
-    // armed_, so hasUncommittedEdit() is false there and navHistory falls
-    // straight through to the plain history.undo() + resyncSession() path,
-    // which never touches activeTool.)
-    public override bool survivesEditCancel() const {
-        return active;
+    // SessionStepUndo (gap row 205): pop the newest session step, restoring
+    // the loop it replaced. Never mid-gesture (SessionGestureCancel owns that).
+    override bool tryUndoStepInSession() {
+        if (!active || !armed_ || scrubbing_ || gestureStack_.length == 0) return false;
+        const st = gestureStack_[$ - 1];
+        gestureStack_ = gestureStack_[0 .. $ - 1];
+        restoreState(st);
+        return true;
     }
+
+    // SessionGestureCancel (owner's rule, gap row 205): an undo keystroke
+    // during a press..release cancels that gesture alone, back to the loop at
+    // its press; the tool stays armed. A MOTIONLESS arming press is not a
+    // gesture, so the keystroke then ends the session like a released arm.
+    override bool cancelGestureInFlight() {
+        if (!active || !armed_ || !scrubbing_ || !pressIsRescrub_) return false;
+        if (pressIsArm_ && currentState() == armState_) return false;
+        scrubbing_ = false;
+        pressIsRescrub_ = pressIsArm_ = false;
+        restoreState(prePress_);
+        return true;
+    }
+
+    // SessionFirstGesture (verdict RA-act): the session's last step is its
+    // arm; its undo pops the activation row and the navigate redo re-arms at
+    // the arm-time loop, released.
+    override Object soleFirstGesture() {
+        if (!active || !armed_ || !armStateValid_ || gestureStack_.length != 0) return null;
+        if (scrubbing_ && !(pressIsArm_ && currentState() == armState_)) return null;
+        auto g = new LoopSliceFirstGesture;
+        g.seeds = seeds_.dup;
+        g.armedSelFaces = armedSelFaces_.dup;
+        g.arm = LoopSliceState(armState_.positions.dup, armState_.current);
+        return g;
+    }
+    override void sealFirstGesture(Object gesture) {
+        if (auto g = cast(LoopSliceFirstGesture) gesture) g.key.stamp(*mesh);
+    }
+    override bool replayFirstGesture(Object gesture) {
+        auto g = cast(LoopSliceFirstGesture) gesture;
+        if (g is null || !active || armed_ || g.seeds.length == 0) return false;
+        if (!g.key.matches(*mesh)) {
+            logWarn("tool", "loop slice redo: the mesh changed since the session ended; re-armed bare");
+            return false;
+        }
+        applyState(g.arm);
+        seatArm(g.seeds.dup, g.armedSelFaces.dup);
+        if (!built_) { cancelLiveEdit(); return false; }
+        armState_ = currentState();
+        armStateValid_ = true;
+        scrubbing_ = false;   // released, as onMouseButtonUp leaves it
+        return true;
+    }
+    override string sessionToolId() const { return "mesh.loopSliceTool"; }
 
     public override void resyncSession() {
         if (!active) return;
@@ -1038,6 +1114,7 @@ public:
         seeds_     = [];
         armedSelFaces_ = [];
         armedKey_.invalidate();
+        clearSessionSteps();
     }
 
     // Tension (task 0255) is only meaningful while Preserve Curvature is on — the
@@ -1396,7 +1473,10 @@ public:
                 return false;
             }
             refreshSeedRail();
-            scrubbing_ = true;
+            prePress_       = currentState();
+            pressIsRescrub_ = true;
+            pressIsArm_     = false;
+            scrubbing_      = true;
             return true;
         }
 
@@ -1440,19 +1520,18 @@ public:
         }
         if (!anyValid) return false;
 
-        seeds_ = candSeeds;
         // Latch the ORIGINAL selection now, before rebuildCut()'s standing
         // preview overwrites it — Slice Selected restricts to THIS set.
-        armedSelFaces_ = selectedFaceIndices();
-        refreshSeedRail();
-        armed_     = true;
+        seatArm(candSeeds, selectedFaceIndices());
         scrubbing_ = true;
-        built_     = false;
-        // Trusted baseline: this IS the mesh we're arming against (nothing
-        // could have swapped it out between the hover/selection read above
-        // and here, all synchronous within this one handler).
-        armedKey_.stamp(*mesh);
-        rebuildCut();   // materialise the default-position cut(s) immediately
+        // The arm-time loop (verdict RA-act): the cut `seatArm` just built
+        // (`rebuildCut` sets `built_`), before any drag; the press point
+        // never places it. The drag of this press is an ordinary gesture.
+        armState_       = currentState();
+        armStateValid_  = true;
+        prePress_       = armState_;
+        pressIsRescrub_ = true;
+        pressIsArm_     = true;
         return true;
     }
 
@@ -1503,7 +1582,12 @@ public:
         // the last rebuildCut() somehow failed to build (should not happen —
         // a valid seed always builds), fail safe by cancelling rather than
         // leaving a bogus armed-but-empty state.
-        if (!built_) cancelLiveEdit();
+        if (!built_) { cancelLiveEdit(); return true; }
+        // A completed gesture is one session step (gap row 205), a
+        // motionless one included; the arming press only when it moved.
+        if (pressIsRescrub_ && (!pressIsArm_ || currentState() != armState_))
+            pushSessionStep(prePress_);
+        pressIsRescrub_ = pressIsArm_ = false;
         return true;
     }
 
@@ -1857,6 +1941,51 @@ private:
         pos = new float[](s.length);
         heights = new float[](s.length);
         foreach (i, smp; s) { pos[i] = smp.t; heights[i] = smp.height; }
+    }
+
+    // The arm's latch and its first cut, shared by the arming press and the
+    // redo re-arm (`replayFirstGesture`). Trusted key: this IS the mesh we
+    // arm against, all synchronous within the caller.
+    void seatArm(uint[] seeds, uint[] selFaces) {
+        seeds_ = seeds;
+        armedSelFaces_ = selFaces;
+        refreshSeedRail();
+        armed_ = true;
+        built_ = false;
+        armedKey_.stamp(*mesh);
+        rebuildCut();   // materialise the cut(s) immediately
+    }
+
+    LoopSliceState currentState() const {
+        return LoopSliceState(positions_.dup, current_);
+    }
+
+    // Seat a step's loop without rebuilding (the count may have moved since:
+    // pad/truncate and re-lay through the Mode law, as a Count edit does).
+    void applyState(const LoopSliceState st) {
+        positions_ = st.positions.dup;
+        current_   = st.current;
+        syncPositionsToCount();
+    }
+
+    void restoreState(const LoopSliceState st) {
+        applyState(st);
+        rebuildCut();
+    }
+
+    void pushSessionStep(LoopSliceState st) {
+        if (gestureStack_.length >= MAX_LOOP_SLICE_GESTURE_STACK)
+            gestureStack_ = gestureStack_[1 .. $];
+        gestureStack_ ~= st;
+    }
+
+    void clearSessionSteps() nothrow @nogc {
+        gestureStack_   = null;
+        prePress_       = LoopSliceState.init;
+        armState_       = LoopSliceState.init;
+        armStateValid_  = false;
+        pressIsRescrub_ = false;
+        pressIsArm_     = false;
     }
 
     // The mutate/revert preview: restore the idle baseline, then reapply the
