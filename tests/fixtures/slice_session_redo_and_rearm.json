@@ -1,0 +1,357 @@
+{
+ "provenance": {
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "GUI worker, real keyboard/pointer input (XTest, acknowledged relative drags), history read from the editor's undo list frames, geometry read by read-only layer queries between inputs",
+  "captured_utc": "2026-09-23",
+  "harness": "private capture card (predictions committed before raw)",
+  "task": "7138"
+ },
+ "scenes": {
+  "B0": "unit cube (+-0.5) with the +Z and +X faces deleted, built directly (no handle drag): 8 v / 4 f / 11 e; subpatch ON; camera azimuth 215, elevation 25, distance 4",
+  "C0": "scene B0 with subpatch OFF"
+ },
+ "history_vocabulary": {
+  "activation": "one row when an interactive cutting tool is armed",
+  "adjustment": "one row per pointer gesture inside the live tool session (press..release), including gestures that add no geometry",
+  "live_apply": "one trailing apply row that stays LAST while the session is live; it becomes a fixed row when the session ends (tool switch, apply-and-rearm, any scripted/command block)"
+ },
+ "cells": {
+  "edge_slice_pending_segment_polygonal": {
+   "scene": "C0",
+   "input": "edge slice; hover a second vertical edge with no point (baseline frame); click point 1 on edge x=+0.5,z=-0.5 at mid-height (no drag); hover the second edge x=-0.5,z=-0.5 at the baseline pixel, then 30 px lower",
+   "counts_during_hover": {
+    "nv": 8,
+    "nf": 4,
+    "tool_active": "edge_slice"
+   },
+   "pending_segment_pixels": {
+    "sampled_along_point_to_cursor": 187,
+    "changed": 0,
+    "second_hover": 0,
+    "positive_control_through_point_label": "103 of 161"
+   },
+   "law": "no pending segment from the last point to the cursor on a polygonal mesh either: only the hovered target edge is highlighted (the subpatch cell edge_slice_pending_segment_subpatch shows the same)"
+  },
+  "edge_slice_undo_after_rearm": {
+   "scene": "C0",
+   "input": "edge slice; point 1 on x=+0.5,z=-0.5 and point 2 on x=-0.5,z=-0.5 (short drags along the edges); shift+tap on empty viewport (apply and re-arm); click point 1 of a new chain on x=-0.5,z=+0.5; Ctrl+Z three times",
+   "after_chain1": {
+    "nv": 10,
+    "nf": 5,
+    "tool_active": "edge_slice"
+   },
+   "after_shift_tap": {
+    "nv": 10,
+    "nf": 5,
+    "tool_active": "edge_slice",
+    "rows_added": [
+     "live_apply fixed",
+     "point-count reset",
+     "live_apply"
+    ]
+   },
+   "after_new_point": {
+    "nv": 10,
+    "nf": 5,
+    "tool_active": "edge_slice",
+    "rows_added": [
+     "adjustment"
+    ]
+   },
+   "undo_steps": [
+    {
+     "nv": 10,
+     "nf": 5,
+     "tool_active": "edge_slice",
+     "pending_points": 0,
+     "effect": "the new chain's point popped; tool stays active; the applied chain 1 is intact"
+    },
+    {
+     "nv": 10,
+     "nf": 5,
+     "tool_active": "edge_slice",
+     "effect": "the re-arm rows (point-count reset + live apply) popped; tool active; geometry unchanged"
+    },
+    {
+     "nv": 8,
+     "nf": 4,
+     "tool_active": null,
+     "effect": "chain 1 popped as ONE step together with the activation; tool off"
+    }
+   ],
+   "law": "after an apply-and-re-arm inside one activation, Ctrl+Z pops the new chain's points and keeps the tool armed with zero points (rule K1)"
+  },
+  "slice_redo_after_session_end": {
+   "scene": "B0",
+   "input": "slice; line 1 across the model; a second drag at another height (re-defines the line); Ctrl+Z; Ctrl+Z (tool off); Ctrl+Shift+Z; Ctrl+Shift+Z",
+   "after_line1": {
+    "nv": 14,
+    "nf": 6,
+    "tool_active": "slice",
+    "new_vertices": {
+     "8": [
+      -0.5,
+      0.067356,
+      -0.5
+     ],
+     "9": [
+      0.5,
+      -0.200553,
+      -0.5
+     ],
+     "10": [
+      -0.5,
+      0.170882,
+      -0.5
+     ],
+     "11": [
+      0.5,
+      -0.097026,
+      -0.5
+     ],
+     "12": [
+      -0.5,
+      0.067356,
+      0.5
+     ],
+     "13": [
+      -0.5,
+      0.170882,
+      0.5
+     ]
+    }
+   },
+   "after_gesture2": {
+    "nv": 14,
+    "nf": 5,
+    "tool_active": "slice"
+   },
+   "undo_steps": [
+    {
+     "nv": 14,
+     "nf": 6,
+     "tool_active": "slice"
+    },
+    {
+     "nv": 8,
+     "nf": 4,
+     "tool_active": null
+    }
+   ],
+   "redo_steps": [
+    {
+     "nv": 14,
+     "nf": 6,
+     "tool_active": "slice",
+     "new_vertices": {
+      "8": [
+       -0.5,
+       0.067356,
+       -0.5
+      ],
+      "9": [
+       0.5,
+       -0.200553,
+       -0.5
+      ],
+      "10": [
+       -0.5,
+       0.170882,
+       -0.5
+      ],
+      "11": [
+       0.5,
+       -0.097026,
+       -0.5
+      ],
+      "12": [
+       -0.5,
+       0.067356,
+       0.5
+      ],
+      "13": [
+       -0.5,
+       0.170882,
+       0.5
+      ]
+     },
+     "effect": "tool re-armed WITH the first gesture: the line-1 cut, vertex positions identical to after_line1; rows activation, adjustment, live_apply"
+    },
+    {
+     "nv": 14,
+     "nf": 6,
+     "tool_active": "slice",
+     "effect": "refused: out of redos (the re-arm truncated the redo stack; the second gesture is gone)"
+    }
+   ],
+   "law": "redo after the session-ending Ctrl+Z re-arms slice with its FIRST gesture and truncates the rest"
+  },
+  "loop_slice_undo_redo": {
+   "scene": "C0 with the faces -Z and -X selected (the tool acts on the selection; with no selection a gesture only moves the position slider)",
+   "input": "loop slice (toolbox button); gesture 1 = short drag on edge x=+0.5,z=-0.5; gesture 2 = short drag on edge x=-0.5,z=+0.5; gesture 3 = 60 px horizontal drag on empty viewport; Ctrl+Z until the tool is off; Ctrl+Shift+Z twice",
+   "after_arm": {
+    "nv": 11,
+    "nf": 6,
+    "tool_active": "loop_slice",
+    "new_vertices": {
+     "8": [
+      0.5,
+      0.1,
+      -0.5
+     ],
+     "9": [
+      -0.5,
+      0.1,
+      -0.5
+     ],
+     "10": [
+      -0.5,
+      0.1,
+      0.5
+     ]
+    },
+    "position": 0.4,
+    "effect": "arming with a polygon selection ALREADY cuts one loop at the remembered position"
+   },
+   "after_gesture1": {
+    "nv": 11,
+    "nf": 6,
+    "tool_active": "loop_slice",
+    "new_vertices": {
+     "8": [
+      0.5,
+      0.095,
+      -0.5
+     ],
+     "9": [
+      -0.5,
+      0.095,
+      -0.5
+     ],
+     "10": [
+      -0.5,
+      0.095,
+      0.5
+     ]
+    },
+    "position": 0.405
+   },
+   "after_gesture2": {
+    "nv": 11,
+    "nf": 6,
+    "tool_active": "loop_slice",
+    "position": 0.405,
+    "effect": "an unchanged position is still its own row"
+   },
+   "after_gesture3": {
+    "nv": 11,
+    "nf": 6,
+    "tool_active": "loop_slice",
+    "new_vertices": {
+     "8": [
+      0.5,
+      -0.1,
+      -0.5
+     ],
+     "9": [
+      -0.5,
+      -0.1,
+      -0.5
+     ],
+     "10": [
+      -0.5,
+      -0.1,
+      0.5
+     ]
+    },
+    "position": 0.6
+   },
+   "rows_live": [
+    "activation",
+    "no-op",
+    "position",
+    "position",
+    "position",
+    "live_apply"
+   ],
+   "undo_steps": [
+    {
+     "nv": 11,
+     "nf": 6,
+     "tool_active": "loop_slice",
+     "position": 0.405
+    },
+    {
+     "nv": 11,
+     "nf": 6,
+     "tool_active": "loop_slice",
+     "position": 0.405
+    },
+    {
+     "nv": 11,
+     "nf": 6,
+     "tool_active": "loop_slice",
+     "new_vertices": {
+      "8": [
+       0.5,
+       0.1,
+       -0.5
+      ],
+      "9": [
+       -0.5,
+       0.1,
+       -0.5
+      ],
+      "10": [
+       -0.5,
+       0.1,
+       0.5
+      ]
+     },
+     "position": 0.4,
+     "effect": "gesture 1 popped; the tool is STILL active with the arm-time loop"
+    },
+    {
+     "nv": 8,
+     "nf": 4,
+     "tool_active": null,
+     "effect": "activation popped; tool off"
+    }
+   ],
+   "redo_steps": [
+    {
+     "nv": 11,
+     "nf": 6,
+     "tool_active": "loop_slice",
+     "new_vertices": {
+      "8": [
+       0.5,
+       0.1,
+       -0.5
+      ],
+      "9": [
+       -0.5,
+       0.1,
+       -0.5
+      ],
+      "10": [
+       -0.5,
+       0.1,
+       0.5
+      ]
+     },
+     "position": 0.4,
+     "effect": "tool re-armed BARE: the arm-time loop, NOT gesture 1 (0.405)"
+    },
+    {
+     "nv": 11,
+     "nf": 6,
+     "tool_active": "loop_slice",
+     "effect": "refused: out of redos"
+    }
+   ],
+   "law": "unlike slice / edge slice, the loop slice activation is its OWN undo step (it already cuts); Ctrl+Z pops gestures one by one, the step that pops the activation ends the tool, and redo re-arms bare (no gesture replayed)"
+  }
+ }
+}

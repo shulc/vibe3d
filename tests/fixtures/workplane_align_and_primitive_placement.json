@@ -7,7 +7,7 @@
   "notes": "GUI worker, real toolbar/popover clicks and key binding for the align; XTest press/relative-increment drags for placement; state read through the editor's scripting bridge between gestures only",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_workplane/harness",
-  "task": "7104"
+  "task": "7104, 7138"
  },
  "conventions": {
   "plane_basis": "B = Rz(rz) * Rx(rx) * Ry(ry); world = origin + B * local; local Y is the plane normal",
@@ -17,7 +17,21 @@
  "laws": {
   "placement": "the gesture point is computed in PLANE-LOCAL view coordinates (ray through the pixel, meeting the local principal plane whose axis is the largest component of the local view direction, through the grid-rounded local camera focus) and written to the channels; world = origin + B * channels. The primitive therefore lies on the ray of the pixel it was placed at (cylinder/sphere: the press pixel = centre; box: the release pixel = centre, press = corner). d_perp <= snap quantum in every cell.",
   "motionless_click": "writes the channels, size 0, and creates no geometry",
-  "orientation": "the primitive is axis-aligned in the plane frame (typed oblique plane, two non-zero angles)"
+  "orientation": "the primitive is axis-aligned in the plane frame (typed oblique plane, two non-zero angles)",
+  "skew_edge_pair": {
+   "applies_when": "exactly two edges selected that share no endpoint and no polygon (an adjacent pair or a pair on one polygon takes other, already recorded, paths)",
+   "origin": "bounding-box centre of the selected edges' endpoints",
+   "normal_y": "least-squares plane n . p = 1 through the endpoint positions p (world): n = (sum p p^T)^-1 (sum p); flipped so mean(p) . n >= 0; normalised; then flipped so its largest-magnitude component is positive. NOT translation-invariant: the fit is anchored at the world origin (singular when every point lies on a plane through the world origin -- not exercised)",
+   "roll": [
+    "k = index of the largest-magnitude component of the normal; M = the shortest-arc rotation taking the normal onto the unit axis e_k; 2-D coordinates (u, v) = ((M p)[a1], (M p)[a2]) with (a1, a2) = ((1,2), (2,0), (0,1))[k]",
+    "convex hull of the 2-D points (start = lowest v, ties highest u; counter-clockwise; collinear nearer points dropped)",
+    "major direction: the first strictly farthest pair of hull points (i < j), flipped so v >= 0, scored by length x width; then the four hull edges adjacent to that pair (i-1,i), (i,i+1), (j-1,j), (j,j+1) each give an edge-aligned bounding rectangle whose direction is its longer side (flipped so v >= 0); a candidate replaces the current one only if its area is STRICTLY smaller",
+    "tie branch (length == width): square bbox equal to that length -> direction (0, 1); else swap the components when |du| > |dv| (not exercised)",
+    "3-D direction d = M^T (du e_a1 + dv e_a2)"
+   ],
+   "axes": "Y = normal; X = normalize(Y x d); Z = X x Y (= d); rows (X, Y, Z) give the plane rotation in the B = Rz Rx Ry convention",
+   "measured": "reproduces a-2e-skew and a-2e-skew-t (matrix residual <= 5e-15) and four new rigs within 0.0005 deg"
+  }
  },
  "align": [
   {
@@ -788,7 +802,7 @@
      -0.8164966
     ]
    },
-   "reading": "origin = bbox centre of the endpoints; orientation NOT reduced to a rule (open)"
+   "reading": "origin = bbox centre of the endpoints; orientation = laws.skew_edge_pair (reproduced to 5e-15)"
   },
   {
    "cell": "a-2e-skew-t",
@@ -837,7 +851,7 @@
      0.6999658
     ]
    },
-   "reading": "orientation depends on position (open)"
+   "reading": "origin = bbox centre of the endpoints; orientation = laws.skew_edge_pair (reproduced to 5e-15)"
   }
  ],
  "placement": [
@@ -3084,6 +3098,1116 @@
      -0.1519142
     ]
    ]
+  }
+ ],
+ "ortho_view": {
+  "cells": [
+   {
+    "cell": "C4-oa",
+    "view": "front",
+    "focus_written_before_plane_world": [
+     0.3,
+     0.2,
+     0.0
+    ],
+    "action": "align on face 0 by the key binding",
+    "before": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      0.0,
+      0.5
+     ],
+     "rotation_rad_xyz": [
+      1.5707963267948966,
+      -0.0,
+      0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "axis_z": [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    },
+    "after": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    }
+   },
+   {
+    "cell": "C4-ob-top",
+    "view": "top",
+    "focus_written_before_plane_world": [
+     0.3,
+     0.0,
+     0.2
+    ],
+    "action": "align on face 0 by the key binding",
+    "before": {
+     "projection": "top",
+     "focus_local": [
+      0.3,
+      0.0,
+      0.2
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      0.0,
+      0.5
+     ],
+     "rotation_rad_xyz": [
+      1.5707963267948966,
+      -0.0,
+      0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "axis_z": [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    },
+    "after": {
+     "projection": "top",
+     "focus_local": [
+      0.3,
+      0.0,
+      0.2
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ]
+     ]
+    }
+   },
+   {
+    "cell": "C4-ob-rgt",
+    "view": "right",
+    "focus_written_before_plane_world": [
+     0.0,
+     0.2,
+     0.3
+    ],
+    "action": "align on face 0 by the key binding",
+    "before": {
+     "projection": "right",
+     "focus_local": [
+      0.0,
+      0.2,
+      0.3
+     ],
+     "orientation_rows_local": [
+      [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      0.0,
+      0.5
+     ],
+     "rotation_rad_xyz": [
+      1.5707963267948966,
+      -0.0,
+      0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "axis_z": [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    },
+    "after": {
+     "projection": "right",
+     "focus_local": [
+      0.0,
+      0.2,
+      0.3
+     ],
+     "orientation_rows_local": [
+      [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    }
+   },
+   {
+    "cell": "C4-oc",
+    "view": "front",
+    "focus_written_before_plane_world": [
+     0.3,
+     0.2,
+     0.0
+    ],
+    "action": "align on face 0, then reset the plane (toolbar popover)",
+    "before": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      0.0,
+      0.5
+     ],
+     "rotation_rad_xyz": [
+      1.5707963267948966,
+      -0.0,
+      0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "axis_z": [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    },
+    "after": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    },
+    "after_reset": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "plane": {
+      "origin": [
+       -0.0,
+       -0.0,
+       -0.0
+      ],
+      "rotation_rad_xyz": [
+       0.0,
+       -0.0,
+       -0.0
+      ],
+      "axis_x": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "axis_y_normal": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "axis_z": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     }
+    }
+   },
+   {
+    "cell": "C4-od",
+    "view": "front",
+    "focus_written_before_plane_world": [
+     0.3,
+     0.2,
+     0.0
+    ],
+    "action": "TYPED plane origin 0, rx 30 deg, ry 40 deg",
+    "before": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      -0.0,
+      -0.0
+     ],
+     "rotation_rad_xyz": [
+      0.5235987755982988,
+      0.6981317007977318,
+      -0.0
+     ],
+     "axis_x": [
+      0.7660444,
+      0.3213938,
+      -0.5566704
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.8660254,
+      0.5
+     ],
+     "axis_z": [
+      0.6427876,
+      -0.3830222,
+      0.6634139
+     ]
+    },
+    "after": {
+     "projection": "front",
+     "focus_local": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    }
+   },
+   {
+    "cell": "C4-oe",
+    "view": "perspective",
+    "focus_written_before_plane_world": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "action": "align on face 0 by the key binding",
+    "before": {
+     "projection": "perspective",
+     "focus_local": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       0.9438584,
+       0.0,
+       -0.3303504
+      ],
+      [
+       -0.1291455,
+       0.9204183,
+       -0.3689873
+      ],
+      [
+       0.3040606,
+       0.390935,
+       0.8687445
+      ]
+     ]
+    },
+    "plane_after": {
+     "origin": [
+      -0.0,
+      0.0,
+      0.5
+     ],
+     "rotation_rad_xyz": [
+      1.5707963267948966,
+      -0.0,
+      0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "axis_z": [
+      0.0,
+      -1.0,
+      0.0
+     ]
+    },
+    "after": {
+     "projection": "perspective",
+     "focus_local": [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       0.9438584,
+       -0.3303504,
+       0.0
+      ],
+      [
+       -0.1291455,
+       -0.3689873,
+       -0.9204183
+      ],
+      [
+       0.3040606,
+       0.8687445,
+       -0.390935
+      ]
+     ]
+    }
+   },
+   {
+    "cell": "C4-o-setc",
+    "view": "front",
+    "focus_written_before_plane_world": null,
+    "action": "TYPED plane origin (3,0,0), no rotation, THEN the focus written as (0,0,0) at 64 px/m",
+    "before": null,
+    "plane_after": {
+     "origin": [
+      3.0,
+      0.0,
+      0.0
+     ],
+     "rotation_rad_xyz": [
+      0.0,
+      -0.0,
+      -0.0
+     ],
+     "axis_x": [
+      1.0,
+      0.0,
+      0.0
+     ],
+     "axis_y_normal": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "axis_z": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "after": {
+     "projection": "front",
+     "focus_local": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "orientation_rows_local": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    },
+    "drawn_offset_px": {
+     "cube_centre_minus_view_centre_x": -192,
+     "reading": "cube (world origin) drawn 3 m left of the view centre: the focus written after the pin is plane-LOCAL"
+    }
+   }
+  ],
+  "laws": {
+   "focus_on_plane_change_ortho": "the focus NUMBERS are kept across align, typed pin and reset (local after = world before, and back): the world focus jumps to origin + B * numbers. Rival 'world focus kept' predicted (0.3, -0.5, -0.2) after the face-0 align and reads (0.3, 0.2, 0)",
+   "ortho_presets_turn": "front, top and right all turn with the plane: after the change the plane-local orientation rows equal the canonical preset rows",
+   "typed_plane_turns_ortho": "a TYPED oblique plane turns the front view too (the model is then drawn obliquely)",
+   "perspective_keeps_world_camera": "control: world orientation rows and world eye are unchanged by the align; the local focus reads B^T(world focus - origin)",
+   "focus_write_after_pin_is_local": "a focus written while a plane is pinned is plane-local; a capture that pins first and then sets the focus exercised no plane-change transition"
+  }
+ },
+ "skew_rigs": [
+  {
+   "cell": "C4-skew-s1",
+   "vertices": [
+    [
+     1.0,
+     -0.5,
+     -1.2
+    ],
+    [
+     1.0,
+     -0.5,
+     -0.19999999999999996
+    ],
+    [
+     1.0,
+     0.5,
+     -1.2
+    ],
+    [
+     1.0,
+     0.5,
+     -0.19999999999999996
+    ],
+    [
+     2.0,
+     -0.5,
+     -1.2
+    ],
+    [
+     2.0,
+     -0.5,
+     -0.19999999999999996
+    ],
+    [
+     2.0,
+     0.5,
+     -1.2
+    ],
+    [
+     2.0,
+     0.5,
+     -0.19999999999999996
+    ]
+   ],
+   "polygons": [
+    [
+     1,
+     5,
+     7,
+     3
+    ],
+    [
+     0,
+     2,
+     6,
+     4
+    ],
+    [
+     4,
+     6,
+     7,
+     5
+    ],
+    [
+     0,
+     1,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     0,
+     4,
+     5,
+     1
+    ]
+   ],
+   "edges_in_selection_order": [
+    [
+     7,
+     3
+    ],
+    [
+     4,
+     5
+    ]
+   ],
+   "result_plane": {
+    "origin": [
+     1.5,
+     -0.0,
+     -0.7
+    ],
+    "rotation_rad_xyz": [
+     -0.21436166336014795,
+     -0.9873198062114753,
+     -1.0096329157272366
+    ],
+    "axis_x": [
+     0.4434912,
+     -0.3719603,
+     0.8154515
+    ],
+    "axis_y_normal": [
+     0.8272591,
+     0.5199914,
+     -0.2127237
+    ],
+    "axis_z": [
+     -0.344903,
+     0.7689307,
+     0.5383192
+    ]
+   },
+   "rule_prediction_rot_deg": [
+    -12.282,
+    -56.569,
+    -57.848
+   ],
+   "max_rotation_error_deg": 0.0003,
+   "nearest_rival_separation_deg": 0.0
+  },
+  {
+   "cell": "C4-skew-s2",
+   "vertices": [
+    [
+     -0.2,
+     -0.6,
+     -1.3
+    ],
+    [
+     -0.2,
+     -0.6,
+     1.7
+    ],
+    [
+     -0.2,
+     1.4,
+     -1.3
+    ],
+    [
+     -0.2,
+     1.4,
+     1.7
+    ],
+    [
+     0.8,
+     -0.6,
+     -1.3
+    ],
+    [
+     0.8,
+     -0.6,
+     1.7
+    ],
+    [
+     0.8,
+     1.4,
+     -1.3
+    ],
+    [
+     0.8,
+     1.4,
+     1.7
+    ]
+   ],
+   "polygons": [
+    [
+     1,
+     5,
+     7,
+     3
+    ],
+    [
+     0,
+     2,
+     6,
+     4
+    ],
+    [
+     4,
+     6,
+     7,
+     5
+    ],
+    [
+     0,
+     1,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     0,
+     4,
+     5,
+     1
+    ]
+   ],
+   "edges_in_selection_order": [
+    [
+     7,
+     3
+    ],
+    [
+     4,
+     6
+    ]
+   ],
+   "result_plane": {
+    "origin": [
+     0.3,
+     0.4,
+     0.2
+    ],
+    "rotation_rad_xyz": [
+     0.06270051089230325,
+     -0.5679258407073802,
+     -1.2277724010730766
+    ],
+    "axis_x": [
+     0.2517977,
+     -0.8052415,
+     0.5368277
+    ],
+    "axis_y_normal": [
+     0.9398914,
+     0.3356755,
+     0.0626594
+    ],
+    "axis_z": [
+     -0.2306559,
+     0.4887822,
+     0.8413619
+    ]
+   },
+   "rule_prediction_rot_deg": [
+    3.592,
+    -32.54,
+    -70.346
+   ],
+   "max_rotation_error_deg": 0.00047,
+   "nearest_rival_separation_deg": 3.859000000000009
+  },
+  {
+   "cell": "C4-skew-s3",
+   "vertices": [
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     -1.0
+    ],
+    [
+     2.0,
+     0.0,
+     -1.0
+    ],
+    [
+     2.2,
+     0.8,
+     0.3
+    ],
+    [
+     2.2,
+     1.3,
+     1.6
+    ],
+    [
+     2.2,
+     2.3,
+     1.6
+    ],
+    [
+     2.2,
+     1.8,
+     0.3
+    ]
+   ],
+   "polygons": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ]
+   ],
+   "edges_in_selection_order": [
+    [
+     0,
+     1
+    ],
+    [
+     4,
+     5
+    ]
+   ],
+   "result_plane": {
+    "origin": [
+     2.5,
+     0.65,
+     0.8
+    ],
+    "rotation_rad_xyz": [
+     -0.19164714984202227,
+     -0.7730947885580844,
+     -1.0420236204764086
+    ],
+    "axis_x": [
+     0.4759315,
+     -0.5508952,
+     0.6855681
+    ],
+    "axis_y_normal": [
+     0.8476191,
+     0.495238,
+     -0.1904761
+    ],
+    "axis_z": [
+     -0.234587,
+     0.6717542,
+     0.7026487
+    ]
+   },
+   "rule_prediction_rot_deg": [
+    -10.981,
+    -44.295,
+    -59.704
+   ],
+   "max_rotation_error_deg": 0.00044,
+   "nearest_rival_separation_deg": 0.0
+  },
+  {
+   "cell": "C4-skew-s4",
+   "vertices": [
+    [
+     -2.0,
+     -1.0,
+     2.0
+    ],
+    [
+     -1.0,
+     -1.0,
+     2.0
+    ],
+    [
+     -1.0,
+     -1.0,
+     1.0
+    ],
+    [
+     -2.0,
+     -1.0,
+     1.0
+    ],
+    [
+     -1.7999999999999998,
+     -0.19999999999999996,
+     2.3
+    ],
+    [
+     -1.7999999999999998,
+     0.30000000000000004,
+     3.6
+    ],
+    [
+     -1.7999999999999998,
+     1.2999999999999998,
+     3.6
+    ],
+    [
+     -1.7999999999999998,
+     0.8,
+     2.3
+    ]
+   ],
+   "polygons": [
+    [
+     0,
+     1,
+     2,
+     3
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ]
+   ],
+   "edges_in_selection_order": [
+    [
+     0,
+     1
+    ],
+    [
+     4,
+     5
+    ]
+   ],
+   "result_plane": {
+    "origin": [
+     -1.5,
+     -0.35,
+     2.8
+    ],
+    "rotation_rad_xyz": [
+     -0.6507313369346043,
+     -0.1267102328063298,
+     -0.35291225365092727
+    ],
+    "axis_x": [
+     0.957306,
+     -0.2710272,
+     0.1005463
+    ],
+    "axis_y_normal": [
+     0.274999,
+     0.7466057,
+     -0.6057684
+    ],
+    "axis_z": [
+     0.0891113,
+     0.6075559,
+     0.7892623
+    ]
+   },
+   "rule_prediction_rot_deg": [
+    -37.284,
+    -7.26,
+    -20.22
+   ],
+   "max_rotation_error_deg": 0.00038,
+   "nearest_rival_separation_deg": 20.22
   }
  ]
 }
