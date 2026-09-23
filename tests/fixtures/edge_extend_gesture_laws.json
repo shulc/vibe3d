@@ -4,7 +4,7 @@
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
   "method": "gui-gesture",
-  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures",
+  "notes": "GUI worker, real XTest pointer/keys, warp-handshake relative increments of 4 px; per-increment offsets from the editor's own command journal (no editor query while a button is held); state reads between gestures; residual cells (*_no_read, live_undo_walk_two_presses): no scripting call between gestures, history read from the undo-list frames, one read at the end",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_extend/harness (private)",
   "task": "7102"
@@ -386,7 +386,8 @@
      ]
     ]
    },
-   "law": "a motionless click commits and leaves no grabbable arm; the next press starts a NEW extend and drags in the screen plane"
+   "law": "a motionless click commits and leaves no grabbable arm; the next press starts a NEW extend and drags in the screen plane",
+   "superseded_by": "arm_press_after_motionless_click_no_read: this cell read the editor through the scripting door between the click and the press, which ends the session; without it the arm is grabbed in the same run"
   },
   "symmetry_plus_side_arm": {
    "input": "symmetry X on, +X ridge selected, X arm 10 x (+4,+4) px (after the 3-increment screen-up engage drag)",
@@ -1056,7 +1057,8 @@
    },
    "notice_shown": false,
    "undo_after_switch": "one undo restores the extend tool with its offset and the geometry; the next removes the extension (ignoring read-induced entries, see README)",
-   "law": "the key switches to the scale transform; the extension is kept (committed)"
+   "law": "the key switches to the scale transform; the extension is kept (committed)",
+   "superseded_undo_walk": "switch_key_undo_walk_no_read: the key/extension law stands; the undo walk here contained entries added by state reads, the read-free walk is 3 steps (switch group, whole run, arming)"
   },
   "switch_key_while_button_held": {
    "input": "X arm: 5 increments, tap the scale-tool key with the button held, 5 more, release",
@@ -2100,7 +2102,8 @@
         0.0
        ]
       }
-     ]
+     ],
+     "undo_walk_note": "this walk ran after the final state read had ended the session (a committed run); the live walk is live_undo_walk_two_presses"
     },
     "minus_then_plus": {
      "press_world_xy": [
@@ -2619,6 +2622,207 @@
     }
    },
    "law": "a press ON the handle keeps the side latched by the last off-handle press; neither the handle centre's side nor the press pixel's side enters (gizmo_plus_side: +X ridge 0.875 = 1 - 0.125, re-latch would give 1.125; gizmo_minus_side: +X ridge -0.365 = 1 - 1.365, re-latch would give 2.365). The first press of a session can never be a handle press: no handle exists before it"
+  },
+  "arm_press_after_motionless_click_no_read": {
+   "view": "top orthographic, 0.0026224 m/px; (6,7)+(7,8) selected; no symmetry",
+   "input": "arm; a motionless click on empty space; press ON the Z (blue) arm drawn in the frame taken right after the click; diagonal 10 x (+4,-4) px; NO scripting call between the click and the drag",
+   "arm_drawn_after_click": true,
+   "activations": 1,
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     -0.01
+    ],
+    [
+     0.0,
+     0.0,
+     -0.02
+    ],
+    [
+     0.0,
+     0.0,
+     -0.03
+    ],
+    [
+     0.0,
+     0.0,
+     -0.04
+    ],
+    [
+     0.0,
+     0.0,
+     -0.05
+    ],
+    [
+     0.0,
+     0.0,
+     -0.065
+    ],
+    [
+     0.0,
+     0.0,
+     -0.075
+    ],
+    [
+     0.0,
+     0.0,
+     -0.085
+    ],
+    [
+     0.0,
+     0.0,
+     -0.095
+    ],
+    [
+     0.0,
+     0.0,
+     -0.105
+    ]
+   ],
+   "final": {
+    "vertex_count": 12,
+    "polygon_count": 6,
+    "new_vertices": [
+     [
+      1.0,
+      -1.0,
+      -0.105
+     ],
+     [
+      1.0,
+      0.0,
+      -0.105
+     ],
+     [
+      1.0,
+      1.0,
+      -0.105
+     ]
+    ]
+   },
+   "law": "after a motionless click the arm IS drawn and grabbable: the press continues the same run (no new activation), the off-arm components stay exactly 0 on every increment (a screen haul would have written offX +0.105), and the click leaves no zero-length ring (one new ring)"
+  },
+  "switch_key_undo_walk_no_read": {
+   "view": "top orthographic; (6,7)+(7,8) selected; no symmetry",
+   "input": "engage haul 3 x (0,-4) on empty space, release; X-arm drag 10 x (+4,+4), release; tap the scale-tool key at once; then Ctrl+Z x4; NO scripting call anywhere before the final read",
+   "extend_offset_before_key": [
+    0.105,
+    0.0,
+    -0.03
+   ],
+   "extend_activations_before_key": 1,
+   "after_key": {
+    "tool": "scale_transform",
+    "extension_kept": true,
+    "history_rows_added": [
+     "tool switch",
+     "tool no-op",
+     "post-mode apply"
+    ]
+   },
+   "undo_walk": [
+    {
+     "step": 1,
+     "pops": "the three switch rows as one step",
+     "tool": "edge_extend",
+     "panel_offset_mm": [
+      105,
+      0,
+      -30
+     ],
+     "extension_present": true
+    },
+    {
+     "step": 2,
+     "pops": "vertex-map row + both gesture rows + post-mode apply (the whole run, both gestures)",
+     "tool": "edge_extend",
+     "extension_present": false
+    },
+    {
+     "step": 3,
+     "pops": "the arming row",
+     "tool": null
+    },
+    {
+     "step": 4,
+     "pops": "the scene build (instrument over-walk)",
+     "tool": null
+    }
+   ],
+   "final_vertex_count": 0,
+   "law": "the key switches to the scale transform and keeps the extension; after a switch the extend run is ONE undo step (both gestures together); the first Ctrl+Z returns Extend with its offset and geometry, the second removes the whole extension, the third ends the tool"
+  },
+  "live_undo_walk_two_presses": {
+   "view": "front orthographic, pixel size 0.0031056 m; symmetry X; (7,8) clicked -> (7,8)+(2,1) selected; extend armed",
+   "input": "haul at world (0.5,1.35) then at (-0.5,1.35), each 10 x (+4,+4) px, one run; then Ctrl+Z x3 with NO scripting call; ridges from the frames",
+   "presses_new_activation": [
+    true,
+    false
+   ],
+   "ridge_x_after_first_press": [
+    -1.124,
+    1.124
+   ],
+   "live": {
+    "offset": [
+     0.25,
+     -0.25,
+     0.0
+    ],
+    "ridge_x": [
+     -0.752,
+     0.748
+    ]
+   },
+   "undo_walk": [
+    {
+     "step": 1,
+     "pops": "the newest gesture row only",
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "ridge_x": [
+      -0.876,
+      0.876
+     ],
+     "tool": "edge_extend"
+    },
+    {
+     "step": 2,
+     "pops": "vertex-map row + first gesture row + post-mode apply",
+     "offset": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "ridge_x": [
+      -1.0,
+      1.0
+     ],
+     "tool": "edge_extend"
+    },
+    {
+     "step": 3,
+     "pops": "the arming row",
+     "tool": null,
+     "vertex_count": 9
+    }
+   ],
+   "repeats": 2,
+   "law": "Ctrl+Z on a LIVE extend pops the newest gesture only (not the run); the offset reverts to the first press's value but the sign side stays latched by the popped press: ridges +-0.875, a state never shown live (after the first press alone they were +-1.125); the next Ctrl+Z removes the rest of the run, the third ends the tool"
   }
  }
 }
