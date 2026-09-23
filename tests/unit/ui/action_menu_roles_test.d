@@ -859,3 +859,76 @@ unittest { // C13: production boundary, wiring, and private-reachability census
     assert(panels.count("tryOpenArgsDialog") == 0,
         "6560 args policy: panels.d regained a second args-dialog door");
 }
+
+// Task 7111 (S1-R, item V19): the panel's Undo/Redo rows must enter through
+// the same session-aware navigator as Ctrl+Z, so `runCommandRow` has to peel
+// `history.undo` / `history.redo` off BEFORE the args-dialog and command
+// doors. A text census of the production body: literal occurrences are found
+// in the raw text at offsets that both blanked projections (code view:
+// literals+comments blank; marker view: literals blank, comments kept) show
+// as blank — i.e. inside a string literal, not in a comment. Red on HEAD by
+// design (the red half of a red/green pair); kept LAST in the module so every
+// cell above runs first.
+private size_t[] literalOffsets(string raw, string needle) {
+    import tests.unit.census_symbols : blankNonCode;
+    const code = blankNonCode(raw);
+    const marked = blankNonCode(raw, true);
+    size_t[] at;
+    for (size_t i = 0; i + needle.length <= raw.length; ++i) {
+        if (raw[i .. i + needle.length] != needle) continue;
+        bool literal = true;
+        foreach (k; i .. i + needle.length)
+            if (code[k] != ' ' || marked[k] != ' ') { literal = false; break; }
+        if (literal) at ~= i;
+    }
+    return at;
+}
+
+private size_t[] identOffsets(string code, string ident) {
+    size_t[] at;
+    for (ptrdiff_t from = 0;;) {
+        const i = code[cast(size_t)from .. $].indexOf(ident);
+        if (i < 0) break;
+        const p = cast(size_t)(from + i);
+        const before = p == 0 ? ' ' : code[p - 1];
+        const after = p + ident.length < code.length ? code[p + ident.length] : ' ';
+        if (!identifierChar(before) && !identifierChar(after)) at ~= p;
+        from = cast(ptrdiff_t)(p + ident.length);
+    }
+    return at;
+}
+
+unittest { // 7111 V19: panel history rows route through navHistory
+    import std.conv : to;
+    import tests.unit.census_symbols : blankNonCode;
+    // Positive control of the detector: one literal counted, the comment
+    // spelling of the same text not counted.
+    enum probe = "void f(string id) {\n    // \"history.undo\" named in a comment\n"
+        ~ "    if (id == \"history.undo\") { nav_(true); return; }\n}\n";
+    assert(literalOffsets(probe, `"history.undo"`).length == 1,
+        "7111 V19 detector control: a literal in code must count once, a comment not at all");
+
+    const raw = readText(repoRoot.buildPath("source", "ui", "action_menu.d"));
+    const code = blankNonCode(raw);
+    const bodyText = bodyAt(code, "void runCommandRow(");
+    const b = cast(size_t)(bodyText.ptr - code.ptr);
+    const e = b + bodyText.length;
+    const openArgs = identOffsets(bodyText, "openArgs_");
+    const dispatch = identOffsets(bodyText, "dispatch_");
+    // POPULATION FLOOR: the two doors the navigation branch must precede.
+    assert(openArgs.length >= 1 && dispatch.length >= 1,
+        "7111 V19 census floor: runCommandRow no longer names openArgs_ and dispatch_");
+    const firstDoor = b + (openArgs[0] < dispatch[0] ? openArgs[0] : dispatch[0]);
+    size_t[] inBody(size_t[] offs) {
+        size_t[] r;
+        foreach (o; offs) if (o >= b && o < e) r ~= o;
+        return r;
+    }
+    const undo = inBody(literalOffsets(raw, `"history.undo"`));
+    const redo = inBody(literalOffsets(raw, `"history.redo"`));
+    assert(undo.length == 1 && redo.length == 1
+        && undo[0] < firstDoor && redo[0] < firstDoor,
+        "panel history.undo bypasses navHistory: runCommandRow has "
+        ~ undo.length.to!string ~ " \"history.undo\" and " ~ redo.length.to!string
+        ~ " \"history.redo\" literal(s) ahead of its openArgs_/dispatch_ doors, expected 1 and 1");
+}

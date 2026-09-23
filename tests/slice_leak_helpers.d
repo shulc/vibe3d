@@ -419,3 +419,130 @@ long[2][] slFrontRightChain() {
     }
     return r;
 }
+
+/// The corner vertex (-0.5, -0.5, -0.5) of the lifted cube.
+int[] slBackLeftBottomCorner() {
+    const v = slCornerVert(getJson("/api/model"), -0.5, false, -0.5);
+    assert(v >= 0, "slice rig: corner (-0.5,-0.5,-0.5) not found");
+    return [v];
+}
+
+// ---------------------------------------------------------------------------
+// the undo-crash witness body (items 21 and 23): one procedure, two prologues
+// ---------------------------------------------------------------------------
+
+struct SlStep {
+    SlMesh mesh;
+    size_t points;
+    string tool;
+    long historyLen;
+    string toString() const {
+        return format("{mesh %s, latched points %d, tool '%s', history %d}",
+                      mesh.toString, points, tool, historyLen);
+    }
+}
+
+SlStep slSnap() {
+    auto c = slChain();
+    return SlStep(slMesh(), c.pairs.length, c.tool, slHistoryLen());
+}
+
+/// Subpatch ON prologue (`deleteMode`/`deleteSel`), Edge Slice, three
+/// click+drag points on the front/right verticals, then Ctrl+Z K times with
+/// K = 3 + recordedHistoryLen, the editor's liveness read after every step.
+/// Only once the loop has run whole does it compare each step against OUR
+/// undo law (task 0321: a Ctrl+Z peels the last latched point while a chain
+/// is live; the peel of the first point also ends the tool; then history
+/// records are undone newest first).
+void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
+                      long expectVerts, long expectFaces, int[2][3] hints) {
+    auto pro = slPrologue(true, deleteMode, deleteSel, true);
+    const base = slMesh();
+    assert(base.verts == expectVerts && base.faces == expectFaces,
+           format("slice floor: the prologue mesh is %s, expected %d verts / %d faces",
+                  base.toString, expectVerts, expectFaces));
+    slLine("tool.set mesh.edgeSliceTool on");
+    assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
+    const recordedHistoryLen = slHistoryLen();
+    assert(recordedHistoryLen == pro.historyLen && recordedHistoryLen > 0,
+           "slice floor: the recorded history is not the prologue's");
+
+    const P = slFrontRightChain();
+    SlMesh afterDrag2;
+    foreach (k; 0 .. 3) {
+        const px = slEdgePixel(P[k][0], P[k][1], hints[k], format("point %d", k + 1));
+        slClickDown(px[0], px[1], format("click %d", k + 1));
+        slDragUp(px[0], px[1], 0, 4, 3, format("drag %d", k + 1));
+        if (k == 1) afterDrag2 = slMesh();
+    }
+    const S0 = slSnap();
+    assert(S0.mesh.faces > expectFaces,
+           "slice floor: no cut on the mesh before the first Ctrl+Z: " ~ S0.toString);
+    writeln("S0 (state before the first Ctrl+Z): ", S0.toString,
+            " latchedPairs ", slPairsStr(slChain().pairs), " history ", slHistoryLabels());
+
+    // Which step first reaches the prologue's Delete record, on two readings:
+    // the chain as it actually stands now, and the three-point chain the input
+    // described (the law).
+    size_t deleteAt = size_t.max;
+    foreach (i, l; pro.labels) if (l.length >= 6 && l[0 .. 6] == "Delete") deleteAt = i;
+    assert(deleteAt != size_t.max, "slice floor: the prologue recorded no Delete");
+    const after = pro.labels.length - 1 - deleteAt;
+    const predictedNow = S0.points + after + 1;
+    const predictedLaw = 3 + after + 1;
+    writeln("the Delete record is reached at Ctrl+Z step ", predictedNow,
+            " with the chain as it stands (", S0.points, " latched point(s)), step ",
+            predictedLaw, " under the peel law");
+
+    const K = 3 + recordedHistoryLen;
+    SlStep[] snaps = [S0];
+    size_t steps;
+    foreach (k; 1 .. K + 1) {
+        const ok = slKeyTolerant(SL_SDLK_z, SL_KMOD_LCTRL, format("Ctrl+Z step %d", k));
+        assert(ok && slAlive(),
+               format("editor died on undo step %d (state before: %s); the Delete record "
+                      ~ "is step %d with the chain as it stood, %d under the peel law",
+                      k, snaps[$ - 1].toString, predictedNow, predictedLaw));
+        snaps ~= slSnap();
+        ++steps;
+    }
+    assert(steps == K && slHistoryLen() == 0,
+           format("undo loop ran %d of %d, history left %d", steps, K, slHistoryLen()));
+
+    // The law table, reachable only by a live editor.
+    bool meshIs(const SlMesh a, const SlMesh b) { return a.canon == b.canon; }
+    foreach (k; 1 .. K + 1) {
+        const s = snaps[k];
+        bool okStep;
+        if (k == 1)      okStep = s.points == 2 && meshIs(s.mesh, afterDrag2);
+        else if (k == 2) okStep = s.points == 1 && meshIs(s.mesh, base);
+        // Step 3 pops the session's FIRST gesture, which also ends the tool
+        // (owner decision 2026-09-23, after the reference capture; it replaces
+        // the plan's "tool stays active" for this step only).
+        else if (k == 3) okStep = s.points == 0 && meshIs(s.mesh, base) && s.tool != "edgeSlice";
+        else             okStep = meshIs(s.mesh, pro.meshBefore[cast(size_t)(recordedHistoryLen - (k - 3))]);
+        assert(okStep, format("undo step %d: state differs from the peel/undo law: %s",
+                              k, s.toString));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the Slice tool (Shift+C) line
+// ---------------------------------------------------------------------------
+
+/// Activate Slice with Shift+C through play-events and draw one line across
+/// the open box (world x = 0, y from -0.6 to 0.6, projected through the live
+/// camera). Returns the history length right after activation, before the
+/// line.
+long slSliceActivateAndDraw() {
+    slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
+    assert(slTool() == "slice", "slice floor: Shift+C did not activate the Slice tool");
+    const recorded = slHistoryLen();
+    auto vp = viewportFromCamera(fetchCamera());
+    float ax, ay, bx, by;
+    assert(projectToWindow(Vec3(0, -0.6f, 0), vp, ax, ay)
+           && projectToWindow(Vec3(0, 0.6f, 0), vp, bx, by),
+           "slice rig: the slice line projects off screen");
+    slFullDrag(cast(int)ax, cast(int)ay, cast(int)bx, cast(int)by, 10, "the Slice line");
+    return recorded;
+}
