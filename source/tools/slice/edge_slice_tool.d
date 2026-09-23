@@ -361,6 +361,14 @@ public:
         // current latched chain describes.
         root["chainSegments"] = JSONValue(
             latchedPoints_.length >= 1 ? cast(long)(latchedPoints_.length - 1) : 0L);
+        // Pure derivation: each latched point's stored vertex pair,
+        // in chain order. Unlike edgeA/edgeB it does not re-resolve through
+        // the (already cut) live mesh, so it stays readable under a standing
+        // preview.
+        auto pairs = JSONValue.emptyArray;
+        foreach (p; latchedPoints_)
+            pairs.array ~= JSONValue([JSONValue(p.v0), JSONValue(p.v1)]);
+        root["latchedPairs"] = pairs;
         return root;
     }
 
