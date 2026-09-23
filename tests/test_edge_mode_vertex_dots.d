@@ -300,17 +300,35 @@ private void runCondition(string name, string style, bool front,
 
     // ---- post-fix floor (not reached on HEAD in the wireframe blocks) -----
     // Under a style that draws dots, the dot is still there in edge mode, in
-    // the UNSELECTED colour (capture: centre pixel = the unselected dot).
+    // the UNSELECTED colour (capture: centre pixel = the unselected dot). In
+    // wireframe the unselected dot and the wire share one colour, so a single
+    // centre pixel cannot tell a dot from the lines meeting there: the floor
+    // is a FULL 3 x 3 block of that colour (the unselected dot is 3 px) inside
+    // the 5 x 5 window around the vertex, which 1 px lines alone never make
+    // (measured with the edge-mode dot pass removed: no such block at either
+    // vertex).
     if (style == "wireframe") {
+        bool same(Px q) {
+            return q.valid && unselCentre.valid
+                && abs(q.r - unselCentre.r) <= 2 && abs(q.g - unselCentre.g) <= 2
+                && abs(q.b - unselCentre.b) <= 2;
+        }
         foreach (p; [pa, pb]) {
-            immutable Px centre = probe([p])[0];
-            assert(centre.valid && unselCentre.valid
-                && abs(centre.r - unselCentre.r) <= 2
-                && abs(centre.g - unselCentre.g) <= 2
-                && abs(centre.b - unselCentre.b) <= 2,
-                format("[%s] in edge mode the selected vertex must still be "
-                       ~ "drawn as an UNSELECTED dot %s, its centre reads %s",
-                       name, unselCentre, centre));
+            int[2][] pts;
+            foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+            auto win = probe(pts);
+            bool found = false;
+            foreach (oy; 0 .. 3) foreach (ox; 0 .. 3) {
+                bool full = true;
+                foreach (dy; 0 .. 3) foreach (dx; 0 .. 3)
+                    if (!same(win[(oy + dy) * 5 + ox + dx])) full = false;
+                if (full) found = true;
+            }
+            assert(found,
+                format("[%s] in edge mode the selected vertex at (%d, %d) must "
+                       ~ "still be drawn as an UNSELECTED dot %s: no full 3 x 3 "
+                       ~ "block of that colour around it", name, p[0], p[1],
+                       unselCentre));
         }
     }
 }
