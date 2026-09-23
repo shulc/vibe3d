@@ -926,9 +926,11 @@ unittest { // 7111 V19: panel history rows route through navHistory
     }
     const undo = inBody(literalOffsets(raw, `"history.undo"`));
     const redo = inBody(literalOffsets(raw, `"history.redo"`));
-    assert(undo.length == 1 && redo.length == 1
-        && undo[0] < firstDoor && redo[0] < firstDoor,
+    const ahead = undo.length == 1 && redo.length == 1
+        && undo[0] < firstDoor && redo[0] < firstDoor;
+    assert(ahead,
         "panel history.undo bypasses navHistory: runCommandRow has "
         ~ undo.length.to!string ~ " \"history.undo\" and " ~ redo.length.to!string
-        ~ " \"history.redo\" literal(s) ahead of its openArgs_/dispatch_ doors, expected 1 and 1");
+        ~ " \"history.redo\" literal(s), expected exactly 1 and 1, each ahead of its "
+        ~ "openArgs_/dispatch_ doors");
 }
