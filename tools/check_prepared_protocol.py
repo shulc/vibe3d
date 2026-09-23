@@ -3226,8 +3226,7 @@ def slice_deactivate_gate(s):
                 "active = false", "dragPart_ = DragNone",
                 "previewLive_ = false", "haveBefore_ = false",
                 "hasLine_ = false", "ctrlAxis_ = -1",
-                "armedKey_.addr = size_t.max",
-                "armedKey_.mutVer = ulong.max")) and
+                "armedKey_.invalidate();")) and
             all(x in owner for x in (
                 "target.classinfo !is SliceTool.classinfo",
                 "!target.ownsPreparedLayer(layer)",
@@ -3253,7 +3252,7 @@ for target, old, new, label in (
     ("tool", "armedKey_.matches(live)", "true", "drop armed identity"),
     ("tool", "active = false", "active = true", "drop active reset"),
     ("tool", "previewLive_ = false", "previewLive_ = true", "drop preview reset"),
-    ("tool", "armedKey_.addr = size_t.max", "armedKey_.addr = 0", "drop key reset"),
+    ("tool", "armedKey_.invalidate();", "", "drop key reset"),
     ("owner", "target.classinfo !is SliceTool.classinfo", "false", "broaden product"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
     ("tool", "context.prepare(cmd,", "context.prepare_DISABLED(cmd,", "drop history"),
@@ -5345,7 +5344,7 @@ def edge_slice_activation_gate(owner, context, tool):
         "active = true; armed_ = false; scrubbing_ = false; built_ = false;" in installer and
         "phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];" in installer and
         "dragPart_ = -1; activePoint_ = -1;" in installer and
-        "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;" in installer and
+        "armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;" in installer and
         "image.clear();" in installer and
         not re.search(r"\b(split_|middle_|snap_|show_|chainArm_|tA_|tB_|"
                       r"pointProxy_|vpWorld_)\s*=", installer) and
@@ -5389,10 +5388,10 @@ for target, old, new, label in (
      "phase_ = Phase.Idle; latchedPoints_ = [];", "retain edges param"),
     ("tool", "dragPart_ = -1; activePoint_ = -1;", "activePoint_ = -1;", "drop drag reset"),
     ("tool", "dragPart_ = -1; activePoint_ = -1;", "dragPart_ = -1;", "drop active point reset"),
-    ("tool", "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;",
+    ("tool", "armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;",
      "chainBefore_ = MeshSnapshot.init;", "retain armed key"),
-    ("tool", "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;",
-     "armedKey_ = MeshCacheKey.init;", "retain snapshot"),
+    ("tool", "armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;",
+     "armedKey_ = SessionMeshKey.init;", "retain snapshot"),
     ("tool", "dragPart_ = -1; activePoint_ = -1;",
      "dragPart_ = -1; activePoint_ = -1; split_ = true;", "reset sticky split"),
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
@@ -5456,7 +5455,7 @@ def loop_slice_activation_gate(owner, context, tool):
         "count_ = image.count; current_ = 0;" in installer and
         "positions_ = image.positions; image.positions = null;" in installer and
         "positionProxy_ = image.positionProxy;" in installer and
-        "armedKey_ = MeshCacheKey.init;" in installer and
+        "armedKey_ = SessionMeshKey.init;" in installer and
         "image.before.moveInto(before_);" in installer and
         not re.search(r"\b(mode_|selectNew_|sliceSelected_|keepQuads_|sliceNgon_|"
                       r"sliceSplit_|sliceCaps_|gap_|curvature_|curveTension_|profile_|"
@@ -5492,7 +5491,7 @@ for target, old, new, label in (
     ("tool", "insertAt_ = 0.5f; removeTrigger_ = false;", "", "drop triggers"),
     ("tool", "count_ = image.count; current_ = 0;", "current_ = 0;", "drop count normalization"),
     ("tool", "positions_ = image.positions; image.positions = null;", "positions_ = image.positions;", "alias retained payload"),
-    ("tool", "armedKey_ = MeshCacheKey.init;", "", "retain armed key"),
+    ("tool", "armedKey_ = SessionMeshKey.init;", "", "retain armed key"),
     ("tool", "image.before.moveInto(before_);", "", "drop baseline"),
     ("tool", "context.prepareLoopSliceActivation(owner)", "true", "drop enlist"),
     ("tool", "context.prepareLoopSliceActivation(owner) &&\n            context.markNoHistoryInstall()",
