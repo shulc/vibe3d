@@ -125,7 +125,7 @@ ptrdiff_t selectPrimary(string[] names, const(FilterSpec)[] fs, out string why) 
     foreach (i, n; names) {
         auto e = extension(n);
         if (e.length > 1 && exts.canFind(e[1 .. $].toLower)) {
-            if (found < 0) found = cast(ptrdiff_t) i;
+            found = cast(ptrdiff_t) i;
             hits ~= n;
         }
     }
@@ -178,11 +178,9 @@ string[] listDirNames(string dir) {
 }
 
 private void removeDirQuietly(string dir) nothrow {
-    import std.file : exists, rmdirRecurse;
-    try {
-        if (exists(dir)) rmdirRecurse(dir);
-    } catch (Exception) {
-    }
+    import std.file : rmdirRecurse;
+    try rmdirRecurse(dir);   // an absent directory throws, and is ignored
+    catch (Exception) {}
 }
 
 /// The notice for a pick the browser reported as failed (`code` from the JS
@@ -233,7 +231,6 @@ private struct PickResumeRecord {
     bool baseTaken;
     ulong base;
     PickState state;
-    uint fileCount;
     int failCode;
 }
 
@@ -247,11 +244,6 @@ struct PickResumeQueue {
     /// The parked command, or null.
     Command pendingCommand() {
         return records_.length ? records_[0].ctx.command : null;
-    }
-
-    /// The parked pick's token, or 0.
-    uint pendingToken() const {
-        return records_.length ? records_[0].token : 0;
     }
 
     /// Whether the parked pick lets the user choose several files.
@@ -276,13 +268,13 @@ struct PickResumeQueue {
         return -1;
     }
 
-    /// The browser wrote `fileCount` files for `token`. Stale tokens are
-    /// dropped with their directory. Safe to call from the bridge callback.
+    /// The browser wrote the pick for `token` (`fileCount` is the bridge's
+    /// report; the drain reads the directory itself). Stale tokens are dropped
+    /// with their directory. Safe to call from the bridge callback.
     void complete(uint token, uint fileCount) nothrow {
         const i = indexOf(token);
         if (i < 0) { removePickDir(token); return; }
         records_[i].state = PickState.done;
-        records_[i].fileCount = fileCount;
     }
 
     /// The browser could not deliver the pick for `token`.

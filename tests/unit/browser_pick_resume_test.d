@@ -93,9 +93,15 @@ struct FakeDrain {
     }
 }
 
-/// Write one document file into the pick directory for `token`.
+/// The pick directory for `token`, built by the TEST from the root (not by
+/// `workDirFor`, so a `workDirFor` that bypasses `workRoot()` is visible).
+string pickDir(uint token) {
+    return buildPath(workRoot(), token.to!string);
+}
+
+/// Write one file into the pick directory for `token`.
 void dropDoc(uint token, string name = "scene.v3d") {
-    auto dir = workDirFor(token);
+    auto dir = pickDir(token);
     mkdirRecurse(dir);
     write(buildPath(dir, name), "{}");
 }
@@ -173,6 +179,16 @@ unittest {
         "R3: a pick outside the UI door refuses loudly, got '"
         ~ direct.refusalReason() ~ "'");
     assert(pickResumes().length == 0, "R3: nothing parked without a UI command");
+    PickResult nullCmd;
+    {
+        beginUiApply(UiApplyContext(null, RecordMode.Record, ""));
+        scope (exit) endUiApply();
+        nullCmd = pickOpenPath(kDocFilters);
+    }
+    assert(nullCmd.outcome == PickOutcome.failed
+        && nullCmd.refusalReason().canFind("needs a UI command"),
+        "R3: a context without a command is no UI command either");
+    assert(pickResumes().length == 0, "R3: still nothing parked");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,15 +245,17 @@ unittest {
     PickResumeQueue q;
     FakeDrain d;
     const t1 = q.start(ctx, kDocFilters, true);
+    dropDoc(t1);
     const t2 = q.start(ctx, kDocFilters, true);
     assert(t1 != t2 && q.length == 1, "R4 floor: the newer pick evicts the older");
-    dropDoc(t1);
+    assert(!exists(pickDir(t1)), "R4: eviction drops the older pick's files");
+    dropDoc(t1);                                  // a late write for the old pick
     dropDoc(t2);
     q.complete(t1, 1);
+    assert(!exists(pickDir(t1)), "R4: a stale completion drops its files");
     q.drain(d.ports());
     assert(d.invokes == 0, "R4: a stale token must not resume, invokes "
         ~ d.invokes.to!string);
-    assert(!exists(workDirFor(t1)), "R4: the stale pick's files are dropped");
     q.complete(t2, 1);
     q.drain(d.ports());
     assert(d.invokes == 1, "R4: the live token resumes once, invokes "
@@ -296,7 +314,7 @@ unittest {
             ~ d.invokes.to!string);
         assert(d.notices.length == 1 && d.notices[0].canFind("document changed"),
             "R5: the user is told why");
-        assert(q.length == 0 && !exists(workDirFor(t)),
+        assert(q.length == 0 && !exists(pickDir(t)),
             "R5: the stale record and its files are gone");
     }
 }
@@ -317,6 +335,7 @@ unittest {
     assert(stillBoundTo(load, &meshA, EditMode.Vertices), "R5b control: bound to meshA");
     assert(!stillBoundTo(load, &meshB, EditMode.Vertices), "R5b: another mesh");
     assert(!stillBoundTo(load, &meshA, EditMode.Polygons), "R5b: another mode");
+    assert(!stillBoundTo(null, &meshA, EditMode.Vertices), "R5b: no command is not bound");
 
     PickResumeQueue q;
     FakeDrain d;
@@ -346,6 +365,25 @@ unittest {
     assert(selectPrimary(["A.V3D"], kDocFilters, why) == 0, "R6: case-insensitive");
     assert(pickIsMultiple(kDocFilters), "R6: document picks are multiple");
     assert(!pickIsMultiple(kImageFilters), "R6: image picks take one file");
+    assert(selectPrimary(["README", "a."], kDocFilters, why) == -1
+        && why == "no supported file among: README, a.", "R6: extensionless names, got '"
+        ~ why ~ "'");
+}
+
+// ---------------------------------------------------------------------------
+// R6b — the production `listDir` port: regular files only, sorted; an absent
+// directory lists nothing.
+// ---------------------------------------------------------------------------
+unittest {
+    const root = freshRoot("r6b");
+    scope (exit) dropRoot(root);
+    const dir = buildPath(root, "9");
+    mkdirRecurse(buildPath(dir, "sub"));
+    write(buildPath(dir, "b.v3d"), "{}");
+    write(buildPath(dir, "a.png"), "x");
+    assert(listDirNames(dir) == ["a.png", "b.v3d"],
+        "R6b: files only, sorted; got " ~ listDirNames(dir).to!string);
+    assert(listDirNames(buildPath(root, "absent")).length == 0, "R6b: absent directory");
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +423,7 @@ unittest {
     d.invokeOverride = (Command c, RecordMode m, string id)
         => c.apply() ? UiRunOutcome.applied : UiRunOutcome.refused;
     const t = q.start(UiApplyContext(rep, RecordMode.Record, ""), kImageFilters, false);
-    writeTestBmp(buildPath(workDirFor(t), "fresh.bmp"), 9, 4);
+    writeTestBmp(buildPath(pickDir(t), "fresh.bmp"), 9, 4);
     q.complete(t, 1);
     q.drain(d.ports());
     assert(d.invokes == 1 && d.notices.length == 0,
@@ -393,7 +431,7 @@ unittest {
         ~ d.notices.to!string);
     assert(images[0].imageOrNull().storedPath == p0,
         "R7: item #0 untouched, got '" ~ images[0].imageOrNull().storedPath ~ "'");
-    assert(images[1].imageOrNull().storedPath == buildPath(workDirFor(t), "fresh.bmp"),
+    assert(images[1].imageOrNull().storedPath == buildPath(pickDir(t), "fresh.bmp"),
         "R7: item #1 replaced from the pick directory, got '"
         ~ images[1].imageOrNull().storedPath ~ "'");
 }
@@ -441,6 +479,18 @@ unittest {
     boom = false;
     assert(ctl.invoke(load, RecordMode.Record, "") == UiRunOutcome.applied,
         "R12: the next UI apply opens its context normally");
+
+    // R12b — depth is exactly one: a nested begin is a wiring error.
+    import core.exception : AssertError;
+    bool nested = false;
+    {
+        beginUiApply(UiApplyContext(load, RecordMode.Record, ""));
+        scope (exit) endUiApply();
+        try beginUiApply(UiApplyContext(load, RecordMode.Record, ""));
+        catch (AssertError) nested = true;
+    }
+    assert(nested, "R12b: a nested beginUiApply must assert");
+    assert(currentUiApply() is null, "R12b: closed afterwards");
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +512,7 @@ unittest {
     q.complete(t, 1);
     d.busy = true;
     q.drain(d.ports());
-    assert(d.invokes == 0 && q.length == 1 && exists(workDirFor(t)),
+    assert(d.invokes == 0 && q.length == 1 && exists(pickDir(t)),
         "R13: a pending guard holds the resume; invokes " ~ d.invokes.to!string
         ~ ", length " ~ q.length.to!string);
     d.busy = false;
@@ -479,10 +529,65 @@ unittest {
     q2.drain(d2.ports());
     assert(d2.invokes == 1, "R13b floor: the deferred resume was invoked");
     assert(q2.length == 0, "R13b: a deferred resume leaves the queue");
-    assert(exists(workDirFor(t2)), "R13b: its files live on (the guard owns the path)");
+    assert(exists(pickDir(t2)), "R13b: its files live on (the guard owns the path)");
     q2.drain(d2.ports());
     assert(d2.invokes == 1, "R13b: no second invoke after the guard settles, got "
         ~ d2.invokes.to!string);
+
+    // The directory's fate follows the outcome: applied keeps, refused drops.
+    assert(exists(pickDir(t)), "R13c: an applied resume keeps its files");
+    PickResumeQueue q3;
+    FakeDrain d3;
+    d3.answer = UiRunOutcome.refused;
+    const t3 = q3.start(ctx, kDocFilters, true);
+    dropDoc(t3);
+    q3.complete(t3, 1);
+    q3.drain(d3.ports());
+    assert(d3.invokes == 1 && q3.length == 0, "R13c floor: refused resume ran once");
+    assert(!exists(pickDir(t3)), "R13c: a refused resume drops its files");
+}
+
+// ---------------------------------------------------------------------------
+// R14 — a failed pick and a pick with no primary file are notices that drop
+// the record and its files; a stale failure drops its files too.
+// ---------------------------------------------------------------------------
+unittest {
+    const root = freshRoot("r14");
+    scope (exit) dropRoot(root);
+    auto doc = Document.bootstrap(makeCube());
+    auto v = new View(0, 0, 800, 600);
+    auto load = new FileLoad(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    auto ctx = UiApplyContext(load, RecordMode.Record, "");
+
+    PickResumeQueue q;
+    FakeDrain d;
+    auto t = q.start(ctx, kDocFilters, true);
+    dropDoc(t);
+    q.fail(t, 1);
+    q.drain(d.ports());
+    assert(d.invokes == 0 && q.length == 0 && !exists(pickDir(t)),
+        "R14: a failed pick resumes nothing and drops its files");
+    assert(d.notices == ["Open: the chosen files are larger than 256 MiB"],
+        "R14: the size notice, got " ~ d.notices.to!string);
+
+    t = q.start(ctx, kDocFilters, true);
+    q.fail(t, 99);
+    q.drain(d.ports());
+    assert(d.notices[$ - 1] == "Open: file transfer failed", "R14: unknown code");
+
+    t = q.start(ctx, kDocFilters, true);
+    const stale = q.start(ctx, kDocFilters, true);
+    dropDoc(t);
+    q.fail(t, 2);
+    assert(!exists(pickDir(t)) && q.length == 1, "R14: a stale failure drops its files only");
+
+    dropDoc(stale, "notes.txt");
+    q.complete(stale, 1);
+    q.drain(d.ports());
+    assert(d.invokes == 0 && q.length == 0 && !exists(pickDir(stale)),
+        "R14: no primary file resumes nothing and drops the files");
+    assert(d.notices[$ - 1] == "Open: no supported file among: notes.txt",
+        "R14: the no-primary notice, got '" ~ d.notices[$ - 1] ~ "'");
 }
 
 // ---------------------------------------------------------------------------

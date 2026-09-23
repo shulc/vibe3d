@@ -93,6 +93,51 @@ unittest {
     assert(exists(target), "R10b: written to " ~ target);
     assert(delivered == [target], "R10b: and handed to the browser once");
     assert(currentDocPath() == target, "R10b: it becomes the current document");
+
+    // Save As with an open document writes beside it (its directory is made).
+    import io.doc_state : setCurrentDocPath;
+    const beside = buildPath(root, "7", "scene.v3d");
+    setCurrentDocPath(beside);
+    auto saveAs = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    assert(saveAs.apply(), "R10b: Save As beside the document, reason '"
+        ~ saveAs.refusalReason() ~ "'");
+    assert(exists(beside) && delivered[$ - 1] == beside, "R10b: written beside it");
+}
+
+// R10c — a directory that cannot be made is a loud refusal, not a throw.
+unittest {
+    import std.file : write, exists;
+    import std.path : buildPath;
+    import std.algorithm : canFind;
+    import io.doc_state : clearCurrentDoc;
+    import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
+    import io.browser_pick_resume : setWorkRootForTest;
+    import mesh : makeCube;
+
+    const root = browserSaveRoot("r10c");
+    const blocked = buildPath(root, "blocked");
+    write(blocked, "a file where the root should be a directory");
+    setWorkRootForTest(blocked);
+    int calls;
+    scope (exit) {
+        selectBrowserBackendForTest(false);
+        setDeliverSavedFileForTest(null);
+        clearCurrentDoc();
+        dropBrowserSaveRoot(root);
+    }
+    clearCurrentDoc();
+    selectBrowserBackendForTest(true);
+    setDeliverSavedFileForTest((string p) { ++calls; return true; });
+    auto doc = Document.bootstrap(makeCube());
+    auto v = new View(0, 0, 800, 600);
+    auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
+    bool applied = true;
+    try applied = save.apply();
+    catch (Exception e) assert(false, "R10c: threw: " ~ e.msg);
+    assert(!applied && save.refusalReason().canFind("could not prepare '"
+        ~ buildPath(blocked, "untitled") ~ "'"),
+        "R10c: loud refusal, got '" ~ save.refusalReason() ~ "'");
+    assert(calls == 0 && !hasCurrentDoc(), "R10c: nothing handed off, no path adopted");
 }
 
 // R9 — the hand-off happens after the write and before the document is marked
