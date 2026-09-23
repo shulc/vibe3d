@@ -954,9 +954,11 @@ unittest {
 //
 //    THE THREE-STEP ANTI-VACUITY, because `canRedo == false` is the trivial
 //    state of a fresh history and would be satisfied for free:
-//      1. a real command, then `/api/undo` -> canRedo must be TRUE;
-//      2. activating the tool must LEAVE it true (so the kill below belongs to
-//         the latch, not to activation);
+//      1. the tool is armed FIRST: since task 7137 Edge Slice's arm is a
+//         history row, and recording it empties the redo stack by itself;
+//      2. then a real command (a selection, which leaves the tool armed and
+//         the mesh untouched), then `history.undo` -> canRedo must be TRUE
+//         with the tool still armed (so the kill below belongs to the latch);
 //      3. only then the latch -> canRedo false, mesh UNCHANGED, and
 //         `history.redo` REFUSED.
 //    A killed timeline and a failed revert are both refusals with the same
@@ -969,13 +971,12 @@ unittest {
     cmd("history.clear");
     setOrbitCamera();
 
-    cmd("mesh.subdivide");
-    settle();
-    immutable size_t vSub = vertexCount();
-    assert(vSub > 8,
-        "control: `mesh.subdivide` left " ~ vSub.to!string ~ " vertices — the "
-      ~ "command that seeds the redo timeline did nothing");
+    cmd("tool.set mesh.edgeSliceTool on");
+    settle(250);
 
+    auto rs = postJ("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
+    assert(rs["status"].str == "ok", "control: the seeding selection failed: " ~ rs.toString);
+    settle();
     auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", "control: /api/undo failed: " ~ ru.toString);
     settle();
@@ -983,14 +984,11 @@ unittest {
         "CONTROL: after undoing a real command `canRedo` is FALSE. Then every "
       ~ "assertion below is satisfied by a field that can only ever answer "
       ~ "false, under the mutation as much as without it");
+    assert(getJ("/api/tool/state")["tool"].str == "edgeSlice",
+        "CONTROL: the seeding undo ended the tool. The latch below would then "
+      ~ "never be reached: " ~ getJ("/api/tool/state").toString);
 
     immutable string beforeLatch = planes();
-
-    cmd("tool.set mesh.edgeSliceTool on");
-    settle(250);
-    assert(canRedo(),
-        "CONTROL: merely ACTIVATING the tool killed the redo timeline. The "
-      ~ "latch below would then be credited with a kill it did not do");
 
     auto m  = model();
     auto vp = viewportFromCamera(fetchCamera(BASE));
