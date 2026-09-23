@@ -256,7 +256,8 @@ Offset[] increments(Px start, int dx, int dy, int n, out Px end) {
 Offset[] haul(Px start, int dx, int dy, int n) {
     press(start);
     assert(grabbedAxis() == 3,
-        "haul press landed on a gizmo arm (dragAxis " ~ grabbedAxis().to!string ~ "), not empty space");
+        "haul press did not begin the screen-plane haul (dragAxis " ~ grabbedAxis().to!string
+        ~ ", expected 3) — it landed on a gizmo arm, or the readout is dead");
     Px end;
     auto tr = increments(start, dx, dy, n, end);
     release(end);
