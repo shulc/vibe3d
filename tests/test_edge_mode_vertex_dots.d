@@ -18,19 +18,26 @@
 //   1. rig premises (selection population, probe points inside the cell);
 //   2. POSITIVE CONTROL — in vertex mode the same window finds the selection
 //      colour (so the probe is on the dot, and a zero below is not a probe
-//      that looks at nothing);
+//      that looks at nothing); then the vertex-mode dot sizes, with the
+//      discrimination floor "selected != unselected" (else the size pin is
+//      blind);
 //   3. the switch by a real key (`2`, through /api/play-events), and a
 //      population floor: the two vertices are STILL selected;
-//   4. the named assert "selected vertex dot drawn in edge mode".
-// The shaded conditions come first: on HEAD they draw no dots in edge mode at
-// all, so their named assert holds and the run buys their green half before
-// the wireframe block reddens.
+//   4. the named assert "selected vertex dot drawn in edge mode" (colour);
+//   5. task 7128: "no unselected vertex dot drawn in edge mode" — a full
+//      3 x 3 block of the unselected dot colour at each selected vertex, in
+//      ALL five conditions (HEAD drew none under the shaded styles);
+//   6. task 7128: "edge-mode dot has the selected size" — the edge-mode dot
+//      is exactly as wide as an unselected dot in vertex mode.
+// The file-level `scope(exit)` restores the projection, the style AND the
+// selection type the run started in.
 
 import http_client : getJson, postJson, testBaseUrl;
 import http_command_helpers : commandBody;
 import std.json;
 import std.format : format;
 import std.math : round, abs, tan, PI;
+import std.algorithm : min;
 import std.stdio : writeln;
 import core.thread : Thread;
 import core.time : msecs;
@@ -113,6 +120,62 @@ private int selCountAround(int[2] c) {
     int n = 0;
     foreach (p; probe(pts)) if (isSel(p)) ++n;
     return n;
+}
+
+
+/// The (2*kHalf+1)^2 window around `c`, row-major.
+private Px[] windowAround(int[2] c) {
+    int[2][] pts;
+    foreach (dy; -kHalf .. kHalf + 1)
+        foreach (dx; -kHalf .. kHalf + 1)
+            pts ~= [c[0] + dx, c[1] + dy];
+    return probe(pts);
+}
+
+private bool near(Px q, Px ref_) {
+    return q.valid && ref_.valid && abs(q.r - ref_.r) <= 2
+        && abs(q.g - ref_.g) <= 2 && abs(q.b - ref_.b) <= 2;
+}
+
+/// Side of the largest SOLID square of pixels matching `hit` inside the
+/// window around `c`. A 1 px line never makes a 2 x 2 block, so lines of the
+/// same colour through the vertex (the unselected dot and the wire share one
+/// scheme colour) cannot widen it; the dot itself is a square point sprite.
+private int dotSide(int[2] c, scope bool delegate(Px) hit) {
+    enum int W = 2 * kHalf + 1;
+    auto win = windowAround(c);
+    int best = 0;
+    foreach (k; 1 .. W + 1)
+        foreach (oy; 0 .. W - k + 1)
+            foreach (ox; 0 .. W - k + 1) {
+                bool full = true;
+                foreach (dy; 0 .. k) {
+                    foreach (dx; 0 .. k)
+                        if (!hit(win[(oy + dy) * W + ox + dx])) { full = false; break; }
+                    if (!full) break;
+                }
+                if (full && k > best) best = k;
+            }
+    return best;
+}
+
+/// Longest horizontal run of pixels matching `hit` in any row of the window
+/// around `c` — the SELECTED dot's width. Its colour is unique in the frame,
+/// but an edge or the translucent occluded pass can cut through the sprite
+/// (measured: a 6 px dot crossed by one row of blended pixels), so a solid
+/// square would under-read it while its intact rows still read 6.
+private int rowRun(int[2] c, scope bool delegate(Px) hit) {
+    enum int W = 2 * kHalf + 1;
+    auto win = windowAround(c);
+    int best = 0;
+    foreach (y; 0 .. W) {
+        int run = 0;
+        foreach (x; 0 .. W) {
+            run = hit(win[y * W + x]) ? run + 1 : 0;
+            if (run > best) best = run;
+        }
+    }
+    return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +340,19 @@ private void runCondition(string name, string style, bool front,
     immutable DHVec3 wu = DHVec3(0.5f, -0.5f, 0.5f);
     immutable int[2] pu = front ? frontPx(wu) : perspPx(wu);
     immutable Px unselCentre = probe([pu])[0];
+    assert(unselCentre.valid && !isSel(unselCentre),
+        format("[%s] rig: the unselected vertex centre reads %s", name, unselCentre));
+    // Dot sizes in vertex mode, the reference points of the size pin below.
+    // Discrimination floor: a selected dot must measure wider than an
+    // unselected one, or a pin of "unselected size" cannot tell the two
+    // apart and is blind.
+    immutable int selSideV   = min(rowRun(pa, delegate(Px q) => isSel(q)),
+                                   rowRun(pb, delegate(Px q) => isSel(q)));
+    immutable int unselSideV = dotSide(pu, (Px q) => near(q, unselCentre));
+    assert(selSideV != unselSideV && unselSideV >= 3,
+        format("[%s] rig: the selected dot (%d px) and the unselected dot "
+               ~ "(%d px) measure the same in vertex mode; the size pin is "
+               ~ "blind", name, selSideV, unselSideV));
 
     // ---- the switch, by key 2 --------------------------------------------
     pressEdgeKey();
@@ -298,39 +374,48 @@ private void runCondition(string name, string style, bool front,
                ~ "selection-coloured px around the two selected vertices, the "
                ~ "capture reads %d", name, ea, eb, expectedEdgePx));
 
-    // ---- post-fix floor (not reached on HEAD in the wireframe blocks) -----
-    // Under a style that draws dots, the dot is still there in edge mode, in
-    // the UNSELECTED colour (capture: centre pixel = the unselected dot). In
-    // wireframe the unselected dot and the wire share one colour, so a single
-    // centre pixel cannot tell a dot from the lines meeting there: the floor
-    // is a FULL 3 x 3 block of that colour (the unselected dot is 3 px) inside
-    // the 5 x 5 window around the vertex, which 1 px lines alone never make
-    // (measured with the edge-mode dot pass removed: no such block at either
-    // vertex).
-    if (style == "wireframe") {
-        bool same(Px q) {
-            return q.valid && unselCentre.valid
-                && abs(q.r - unselCentre.r) <= 2 && abs(q.g - unselCentre.g) <= 2
-                && abs(q.b - unselCentre.b) <= 2;
+    // ---- the dot's edge-mode floor and size -----------------------------
+    // Captured: the dot is still there in edge mode, in the UNSELECTED colour
+    // (and, per the fixture's `dot_size_px`, the unselected SIZE). Under every
+    // style the unselected dot and the wire share one scheme colour, so a
+    // single centre pixel cannot tell a dot from the lines meeting there: the
+    // floor is a FULL 3 x 3 block of that colour (the unselected dot is 3 px)
+    // inside the 5 x 5 window around the vertex, which 1 px lines alone never
+    // make (measured on HEAD, where shaded styles draw no edge-mode dot: no
+    // such block at either vertex).
+    foreach (p; [pa, pb]) {
+        int[2][] pts;
+        foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+        auto win = probe(pts);
+        bool found = false;
+        foreach (oy; 0 .. 3) foreach (ox; 0 .. 3) {
+            bool full = true;
+            foreach (dy; 0 .. 3) foreach (dx; 0 .. 3)
+                if (!near(win[(oy + dy) * 5 + ox + dx], unselCentre)) full = false;
+            if (full) found = true;
         }
-        foreach (p; [pa, pb]) {
-            int[2][] pts;
-            foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
-            auto win = probe(pts);
-            bool found = false;
-            foreach (oy; 0 .. 3) foreach (ox; 0 .. 3) {
-                bool full = true;
-                foreach (dy; 0 .. 3) foreach (dx; 0 .. 3)
-                    if (!same(win[(oy + dy) * 5 + ox + dx])) full = false;
-                if (full) found = true;
-            }
-            assert(found,
-                format("[%s] in edge mode the selected vertex at (%d, %d) must "
-                       ~ "still be drawn as an UNSELECTED dot %s: no full 3 x 3 "
-                       ~ "block of that colour around it", name, p[0], p[1],
-                       unselCentre));
-        }
+        assert(found,
+            format("[%s] no unselected vertex dot drawn in edge mode (capture: "
+                   ~ "plain dots in all five conditions): no full 3 x 3 block "
+                   ~ "of %s around the selected vertex at (%d, %d)", name,
+                   unselCentre, p[0], p[1]));
     }
+    // Size pin: the edge-mode dot at a SELECTED vertex is as wide as an
+    // UNSELECTED dot in vertex mode (±0 px), measured the same way in the
+    // same condition. The 3 x 3 floor above cannot see size — a 6 px dot in
+    // the unselected colour contains a 3 x 3 block too.
+    foreach (p; [pa, pb]) {
+        immutable int ew = dotSide(p, (Px q) => near(q, unselCentre));
+        assert(ew == unselSideV,
+            format("[%s] edge-mode dot has the selected size, reference draws "
+                   ~ "the unselected size: %d px at (%d, %d), the unselected "
+                   ~ "dot in vertex mode is %d px (selected %d px)", name, ew,
+                   p[0], p[1], unselSideV, selSideV));
+    }
+    writeln(format("[%s] dot side: vertex mode selected %d / unselected %d, "
+                   ~ "edge mode %d / %d", name, selSideV, unselSideV,
+                   dotSide(pa, (Px q) => near(q, unselCentre)),
+                   dotSide(pb, (Px q) => near(q, unselCentre))));
 }
 
 /// Our side of the positive control, see the block above.
@@ -338,7 +423,8 @@ private enum int kVertexModeFloor   = 30;
 private enum int kVertexModeCeiling = 36;
 
 /// The five captured conditions, in the order this file runs them: the
-/// three that are green on HEAD first, then the two wireframe ones.
+/// default style first (the first red of the missing shaded dot), the two
+/// wireframe ones last.
 private immutable string[5] kOrder =
     ["psp_default", "psp_shade", "fnt_shade", "psp_wire", "fnt_wire"];
 
@@ -356,9 +442,22 @@ unittest {
     assert(fx["rig"]["selected_vertices"].array.length == 2,
         "fixture: expected 2 selected vertices in the rig");
 
+    // The fixture's size relation, which the size pin below mirrors: in edge
+    // mode a SELECTED vertex's dot is the size of an UNSELECTED vertex-mode
+    // dot (a relation, not an absolute — the reference's pixels are not ours).
+    auto sz = fx["dot_size_px"];
+    assert(sz["selected_vertex_edge_mode_default"].integer
+               == sz["unselected_vertex_vertex_mode_default"].integer,
+        "fixture: the edge-mode dot is no longer the unselected size");
+
+    immutable string startSelType = selType();
     scope (exit) {
         cmdOk(`viewport.view Perspective`);
         cmdOk(commandBody("viewport.displayStyle", `"shaded"`));
+        cmdOk("select.typeFrom " ~ startSelType);
+        assert(selType() == startSelType,
+            format("restore: selection type %s, the run started in %s",
+                   selType(), startSelType));
     }
     foreach (name; kOrder) {
         assert(name in conds, "fixture: missing condition " ~ name);
