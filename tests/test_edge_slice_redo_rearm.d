@@ -253,8 +253,10 @@ unittest {
 // Block F — the held gesture is CONSUMED by the redo that replays it. After
 // the replay, the raw `history.undo` pops the activation row again (the tool
 // ends, the row returns to the redo head); the next Ctrl+Shift+Z re-arms bare.
-// Added by the diff sweep: without it, dropping the clear after the redo
-// stayed green.
+// Two guards hold this, and each hides the other: dropping the clear after
+// the redo ALONE stays green, because the raw undo's cancel restores the
+// chain baseline and the sealed key then refuses the stale replay; with the
+// key check also neutralised this cell reddens (measured in the 7137 sweep).
 unittest {
     auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
     slLine("tool.set mesh.edgeSliceTool on");
