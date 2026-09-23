@@ -1,47 +1,30 @@
 // test_loop_slice_ctrlz.d — task 0400: interactive Ctrl+Z during an active
-// Loop Slice tool must NEVER drop the tool. Reference behavior captured live
-// (gdb symbol channel + geometry cross-check, see
-// doc/tasks/work/0400-ctrlz-during-loop-slice.md's Лог) across four states of
-// an armed Loop Slice: nothing committed since arm (idle-armed / standing
-// preview / mid-scrub — all coalesce to "no net geometry change, tool stays
-// live") and one committed cut with the tool still active (undo reverts
-// exactly that commit, tool stays live and re-armable).
+// Loop Slice tool, driven through the navigate chokepoint. Cases 1 and 2 were
+// re-stated by the Loop Slice session law (verdict `C1-ls-r verdict:
+// LS-R-bare`, toolcards/bugfix_w17_slice_tools; gap row 205): arming is the
+// session's first step, popped TOGETHER with its activation row, so a Ctrl+Z
+// on an armed session with no gesture on its stack ends the tool. The 0400
+// captures behind cases 3-5 (one committed cut, RMB) are unchanged; the
+// tool-stays half of 0400 now holds per gesture, not per arm
+// (tests/test_loop_slice_redo_rearm.d).
 //
 // Drives the REAL interactive path — a synthetic Ctrl+Z (SDLK_z + KMOD_LCTRL)
-// via /api/play-events, the same navHistory() chokepoint a real keypress
-// reaches (source/app.d) — NOT `cmd("history.undo")`, which posts the raw
-// HistoryUndo command directly and bypasses navHistory (and thus the tool's
-// hasUncommittedEdit()/cancelUncommittedEdit()/survivesEditCancel() hooks)
-// entirely. Mirrors the play-events idiom in tests/test_edge_slice_tool.d
-// (test 17's `playKey` helper).
+// via /api/play-events — NOT `cmd("history.undo")`, which bypasses navigate.
+// Loop Slice's interactive arm is SELECTION-based (activationSeeds()), so a
+// single LMB down/up over the viewport arms the tool without hovering a
+// particular pixel.
 //
-// Loop Slice's interactive arm is SELECTION-based (activationSeeds(), see
-// source/tools/loop_slice_tool.d): with the seed edge already selected via
-// /api/select, a single LMB down/up over the viewport arms/scrubs the tool
-// without needing the mouse to actually hover the right screen pixel — so
-// these tests don't depend on GPU picking resolving a specific edge (unlike
-// hover-seeded interactive tests, which are documented best-effort/flaky).
-//
-//   1. Armed standing preview (states 1+2 — idle-armed / standing preview
-//      are the same armed_==true, scrubbing_==false shape in this tool):
-//      Ctrl+Z reverts to the pre-arm baseline (net no geometry change vs the
-//      fresh cube, no undo-ledger entry consumed), and the tool is STILL
-//      ACTIVE (/api/tool/state non-empty) and re-armable with a fresh click.
-//   2. Mid-scrub (state 3, scrubbing_==true — LMB held, no button-up yet):
-//      Ctrl+Z reverts the same way, tool stays active.
-//   3. Post-commit, tool still active (state 4): arm -> Enter commit (+1
-//      undo-ledger entry, 12v/10f) -> Ctrl+Z reverts EXACTLY that commit
-//      (back to 8v/6f, -1 undo-ledger entry) and the tool is still active
-//      (not dropped) — the divergence this task fixes was specific to states
-//      1/2/3 (hasUncommittedEdit()==true), since a post-commit tool already
-//      had hasUncommittedEdit()==false and fell through to plain
-//      history.undo() untouched; this test locks in that it stays correct.
-//   4. Round-trip (mirrors the captured reference's state-4 check): arm ->
-//      commit -> undo -> pre-commit (8v/6f) -> re-arm (same edge, still
-//      selected — MeshSnapshot restores selection) -> re-commit -> back to
-//      the SAME post-commit geometry (12v/10f) as the first commit.
-//   5. RMB while armed cancels the live cut back to 8v/6f without touching
-//      the undo ledger or dropping the active tool.
+//   1. Idle-armed (a motionless arming click, no gesture): Ctrl+Z reverts to
+//      the pre-arm baseline, consumes no model-undo entry and turns the tool
+//      OFF; a re-activation plus a fresh click re-arms the same cut.
+//   2. Mid-scrub of the arming press (LMB held, no motion): the same — the
+//      motionless arming press is not a gesture, so Ctrl+Z ends the tool.
+//   3. Post-commit, tool still active: arm -> Enter commit (+1 entry) ->
+//      Ctrl+Z reverts EXACTLY that commit and the tool stays active.
+//   4. Round-trip: arm -> commit -> undo -> re-arm -> re-commit -> the same
+//      post-commit geometry.
+//   5. RMB while armed cancels the live cut without touching the ledger or
+//      dropping the tool.
 // Standard cube fixture from /api/reset (8 verts, 6 quad faces, ±0.5 each
 // axis). Seed edge (0,1) (verts (-0.5,-0.5,-0.5)-(0.5,-0.5,-0.5)) is the same
 // belt edge used by tests/test_loop_slice_tool.d T1 / test_loop_slice_v2.d;
@@ -199,9 +182,9 @@ void clickRight() {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Armed standing preview (states 1+2): Ctrl+Z reverts to the pre-arm
-//    baseline (no net geometry change, no undo-ledger entry consumed), tool
-//    stays active and is re-armable with a fresh click.
+// 1. Idle-armed, no gesture: Ctrl+Z reverts to the pre-arm baseline (no
+//    undo-ledger entry consumed) and ends the tool with its activation row;
+//    re-activated, a fresh click re-arms the same cut.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -227,8 +210,7 @@ unittest {
     playKey(SDLK_z, KMOD_LCTRL);   // the real interactive Ctrl+Z
 
     auto st1 = toolState();
-    assert(toolIsActive(st1),
-        "Ctrl+Z on an armed-but-uncommitted Loop Slice must NOT drop the tool (task 0400)");
+    assert(!toolIsActive(st1), "loop slice ctrl+z of the arm (idle-armed) did not turn the tool off");
 
     auto m1 = model();
     assert(vertCount(m1) == 8,
@@ -243,7 +225,8 @@ unittest {
         "cancelling an uncommitted arm must NOT touch the committed undo ledger, went "
         ~ depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
 
-    // Tool must still be genuinely usable: a fresh click re-arms it.
+    // A re-activation and a fresh click re-arm the same cut.
+    activateLoopSlice();
     clickLoopSlice(true);
     auto st2 = toolState();
     assert(toolIsActive(st2), "tool must still be active for a re-arm after Ctrl+Z");
@@ -256,9 +239,8 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Mid-scrub (state 3): LMB held (button down, no button-up yet) ->
-//    scrubbing_==true. Ctrl+Z reverts the same way as the standing-preview
-//    case; tool stays active.
+// 2. Mid-scrub of the arming press (LMB held, no motion): not a gesture, so
+//    Ctrl+Z reverts and ends the tool the same way as case 1.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -278,8 +260,7 @@ unittest {
     playKey(SDLK_z, KMOD_LCTRL);
 
     auto st1 = toolState();
-    assert(toolIsActive(st1),
-        "Ctrl+Z during a mid-scrub Loop Slice must NOT drop the tool (task 0400)");
+    assert(!toolIsActive(st1), "loop slice ctrl+z (mid-scrub arm) did not turn the tool off");
 
     auto m1 = model();
     assert(vertCount(m1) == 8 && faceCount(m1) == 6,
@@ -290,8 +271,10 @@ unittest {
     assert(depthAfter == depthBefore,
         "cancelling a mid-scrub arm must NOT touch the committed undo ledger, went "
         ~ depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
-
-    deactivateLoopSlice();
+    // The tool is already off; release the held button so the next case
+    // starts clean.
+    playAndSettle(viewportLine() ~ "\n" ~ format(
+        `{"t":10.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY));
 }
 
 // ---------------------------------------------------------------------------
