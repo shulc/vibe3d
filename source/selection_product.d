@@ -32,8 +32,9 @@ import mesh : Mesh, edgeKey;
 //   * merge (poly input)    → the merged FACE.
 //   * make-polygon (VERTEX
 //     input)                → the new FACE. The product is a dimension ABOVE
-//                             the input, which is why this one alone promotes
-//                             the selection TYPE (see the note on that below).
+//                             the input; the face is selected in the polygon
+//                             domain while the selection TYPE stays put
+//                             (captured, see the note on that below).
 //   * vertex split (vertex
 //     input)                → NOTHING. The reference clears and selects
 //                             neither copy; `repointToNothing` is that answer
@@ -80,10 +81,12 @@ import mesh : Mesh, edgeKey;
 // SELECTION TYPE. Re-pointing is a geometry SELECTION, so where it changes the
 // element type it must go through the app's `promoteGeometryType` funnel (which
 // touches the `SelType` ordering and re-derives `editMode` WITHOUT dropping the
-// active tool) — never by writing `editMode`. That funnel is injected into the
-// one command that needs it (`mesh.makePolygon`) exactly as `select.convert`
-// takes it; this module deliberately does NOT reach for it, so that it stays
-// pure mesh-selection mechanism with no app dependency.
+// active tool) — never by writing `editMode`. `mesh.makePolygon` does NOT take
+// it: its product face is selected behind the current type, which the reference
+// keeps (`make_polygon_selection_mode` in
+// `tests/fixtures/delete_makepoly_lasso_hide_keys.json`). This module
+// deliberately does not reach for the funnel, so that it stays pure
+// mesh-selection mechanism with no app dependency.
 
 /// Select nothing: the answer for a command whose product is not addressable
 /// (a vertex split's two coincident copies — the reference selects neither).
