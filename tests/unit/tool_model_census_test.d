@@ -708,6 +708,11 @@ unittest {
     foreach (n; scanned.keys.sort)
         assert(population.canFind(n) || kNamedExceptions.canFind(n),
                "tool census: " ~ n ~ " declared but not linked");
+    // The converse keeps the scan honest: a scanner that stops following a
+    // base (templates, qualified names) would shrink S and pass the line above.
+    foreach (n; population ~ kNamedExceptions)
+        assert((n in scanned) !is null,
+               "tool census: " ~ n ~ " linked but not found by the text scan");
     assert(kNamedExceptions.length == 4, "tool census: named exception list changed");
     foreach (n; kNamedExceptions)
         assert((n in runtime) !is null, "tool census: named exception " ~ n ~ " not linked");
