@@ -208,6 +208,8 @@ uint[] edgeChainWalk(ref const Mesh m) {
                       ? m.edgeSelectionOrder[ei] : 0;
         sel ~= E(cast(uint) ei, ord > 0 ? ord : int.max);
     }
+    // By-construction guard: `evaluate` never calls with no edge selected, so
+    // this can only redden as a RangeError on `sel[0]` below.
     if (sel.length == 0) return null;
     sel.sort!((a, b) => a.order != b.order ? a.order < b.order : a.ei < b.ei);
 
@@ -238,7 +240,9 @@ uint[] edgeChainWalk(ref const Mesh m) {
     foreach (_; 1 .. sel.length) {
         size_t next = size_t.max;
         foreach (k; inc[cur]) if (k != prevEdge) { next = k; break; }
-        if (next == size_t.max) break;                 // open chain's far end
+        // By-construction guard: an open chain's far end has no other selected
+        // edge; without this break `sel[next]` is a RangeError, never a wrong ring.
+        if (next == size_t.max) break;
         const e = m.edges[sel[next].ei];
         cur = (e[0] == cur) ? e[1] : e[0];
         prevEdge = next;
