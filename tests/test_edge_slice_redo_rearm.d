@@ -219,3 +219,33 @@ unittest {
                   ~ "tool '%s', points %d", slTool(), slChain().pairs.length));
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// Block E — the held gesture replays only on the redo of the row it came
+// with (identity, design item 5). The session ends (gesture held), the raw
+// door re-arms bare, a selection row is recorded on top and undone by
+// Ctrl+Z; the Ctrl+Shift+Z that redoes THAT row must not seat the stale
+// point on the live tool. Added by the diff sweep: without it, dropping the
+// identity term stayed green.
+unittest {
+    auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
+    slLine("tool.set mesh.edgeSliceTool on");
+    const P = slFrontRightChain();
+    latchPoints(P, HINT_OFF, 3, "block E");
+    foreach (k; 1 .. 4) ctrlZ(format("block E Ctrl+Z %d", k));
+    slCmd("history.redo");
+    const H = slHistoryLen();
+    slCmd("mesh.select", `{"mode":"edges","indices":[]}`);
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 0
+           && slHistoryLen() == H + 1 && !slCanRedo(),
+           format("slice floor (block E): bare re-arm plus a selection row: tool '%s', "
+                  ~ "points %d, history %s", slTool(), slChain().pairs.length, slHistoryLabels()));
+    ctrlZ("block E Ctrl+Z (the selection row)");
+    assert(slTool() == "edgeSlice" && slHistoryLen() == H && slCanRedo(),
+           format("slice floor (block E): Ctrl+Z did not undo the selection row alone: "
+                  ~ "tool '%s', history %s", slTool(), slHistoryLabels()));
+    ctrlShiftZ("block E Ctrl+Shift+Z (the selection row)");
+    assert(slHistoryLen() == H + 1 && slChain().pairs.length == 0,
+           format("a stale first gesture replayed on a foreign redo: points %d, history %s",
+                  slChain().pairs.length, slHistoryLabels()));
+    slLine("tool.set mesh.edgeSliceTool off");
+}
