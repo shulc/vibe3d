@@ -1,0 +1,3087 @@
+{
+ "provenance": {
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "GUI worker, real toolbar/popover clicks and key binding for the align; XTest press/relative-increment drags for placement; state read through the editor's scripting bridge between gestures only",
+  "captured_utc": "2026-09-23",
+  "harness": "toolcards/bugfix_w17_workplane/harness",
+  "task": "7104"
+ },
+ "conventions": {
+  "plane_basis": "B = Rz(rz) * Rx(rx) * Ry(ry); world = origin + B * local; local Y is the plane normal",
+  "rig_cube": "+-0.5, vertex index = 4*(x>0) + 2*(y>0) + (z>0); faces [1,5,7,3] (+Z, index 0), [0,2,6,4], [4,6,7,5], [0,1,3,2], [2,3,7,6], [0,4,5,1]",
+  "view_frame": "with a pinned plane every viewport read (focus, orientation, pixel->point) is in plane-local coordinates; an orthographic view is re-expressed in the plane's frame, so it turns with the plane"
+ },
+ "laws": {
+  "placement": "the gesture point is computed in PLANE-LOCAL view coordinates (ray through the pixel, meeting the local principal plane whose axis is the largest component of the local view direction, through the grid-rounded local camera focus) and written to the channels; world = origin + B * channels. The primitive therefore lies on the ray of the pixel it was placed at (cylinder/sphere: the press pixel = centre; box: the release pixel = centre, press = corner). d_perp <= snap quantum in every cell.",
+  "motionless_click": "writes the channels, size 0, and creates no geometry",
+  "orientation": "the primitive is axis-aligned in the plane frame (typed oblique plane, two non-zero angles)"
+ },
+ "align": [
+  {
+   "cell": "a-1p",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "polygon",
+   "selection_in_order": [
+    0
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "reading": "origin = polygon centroid; Y = polygon normal; roll: see basis"
+  },
+  {
+   "cell": "a-1v",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "axis_z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "reading": "origin = the vertex; rotation reset to identity"
+  },
+  {
+   "cell": "a-1v-p-key",
+   "input": "key binding (shift+home)",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "axis_z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "reading": "origin = the vertex; rotation reset to identity (a prior pinned rotation is NOT kept)"
+  },
+  {
+   "cell": "a-1v-p-btn",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "axis_z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "reading": "button path: the toolbar button first toggles the plane state, then aligns"
+  },
+  {
+   "cell": "a-2v",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7,
+    3
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     0.0,
+     -0.7071068,
+     0.7071068
+    ]
+   },
+   "reading": "origin = FIRST selected vertex; Y = averaged normal of the two vertices; X along the pair"
+  },
+  {
+   "cell": "a-2v-rev",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    3,
+    7
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     0.0,
+     -0.7071068,
+     0.7071068
+    ]
+   },
+   "reading": "origin follows selection order (first selected)"
+  },
+  {
+   "cell": "a-2v-p-key",
+   "input": "key binding (shift+home)",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7,
+    3
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     0.0,
+     -0.7071068,
+     0.7071068
+    ]
+   },
+   "reading": "prior plane ignored"
+  },
+  {
+   "cell": "a-2v-t",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7,
+    3
+   ],
+   "cube_offset": [
+    2.0,
+    1.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     2.5,
+     1.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     0.0,
+     -0.7071068,
+     0.7071068
+    ]
+   },
+   "reading": "Y is the averaged NORMAL, not the position direction (shifted rig)"
+  },
+  {
+   "cell": "a-3v",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "vertex",
+   "selection_in_order": [
+    7,
+    3,
+    5
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     3.141592653589793
+    ],
+    "axis_x": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     -0.0,
+     -0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   },
+   "reading": "origin = first vertex; Y = normal of the three-vertex plane"
+  },
+  {
+   "cell": "a-1e",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ]
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.0,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -3.141592653589793,
+     -0.0
+    ],
+    "axis_x": [
+     -1.0,
+     -0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     -0.0,
+     0.7071068,
+     -0.7071068
+    ]
+   },
+   "reading": "origin = edge MIDPOINT; Y = averaged normal of the edge's vertices"
+  },
+  {
+   "cell": "a-1e-p-key",
+   "input": "key binding (shift+home)",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ]
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "result_plane": {
+    "origin": [
+     0.0,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -3.141592653589793,
+     -0.0
+    ],
+    "axis_x": [
+     -1.0,
+     -0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     -0.0,
+     0.7071068,
+     -0.7071068
+    ]
+   },
+   "reading": "prior plane ignored"
+  },
+  {
+   "cell": "a-1e-t",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ]
+   ],
+   "cube_offset": [
+    2.0,
+    1.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     2.0,
+     1.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     0.7853981633974483,
+     -3.141592653589793,
+     -0.0
+    ],
+    "axis_x": [
+     -1.0,
+     -0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.7071068,
+     0.7071068
+    ],
+    "axis_z": [
+     -0.0,
+     0.7071068,
+     -0.7071068
+    ]
+   },
+   "reading": "Y is the averaged normal (shifted rig)"
+  },
+  {
+   "cell": "a-2e-adj",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ],
+    [
+     7,
+     5
+    ]
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     3.141592653589793
+    ],
+    "axis_x": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     -0.0,
+     -0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   },
+   "reading": "equals the three-vertex case with the shared vertex as origin"
+  },
+  {
+   "cell": "a-2e-par",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ],
+    [
+     5,
+     1
+    ]
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "reading": "origin = bbox centre of the endpoints; Y = their common plane normal"
+  },
+  {
+   "cell": "a-2e-skew",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ],
+    [
+     4,
+     6
+    ]
+   ],
+   "cube_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     2.526112944919406,
+     -0.7853981633974485
+    ],
+    "axis_x": [
+     -0.5773503,
+     0.5773503,
+     -0.5773503
+    ],
+    "axis_y_normal": [
+     0.7071068,
+     0.7071068,
+     0.0
+    ],
+    "axis_z": [
+     0.4082483,
+     -0.4082483,
+     -0.8164966
+    ]
+   },
+   "reading": "origin = bbox centre of the endpoints; orientation NOT reduced to a rule (open)"
+  },
+  {
+   "cell": "a-2e-skew-t",
+   "input": "toolbar work-plane button, then popover item",
+   "selection_type": "edge",
+   "selection_in_order": [
+    [
+     7,
+     3
+    ],
+    [
+     4,
+     6
+    ]
+   ],
+   "cube_offset": [
+    2.0,
+    1.0,
+    0.0
+   ],
+   "prior_plane": null,
+   "result_plane": {
+    "origin": [
+     2.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.1918675614856913,
+     -0.7769568488033582,
+     -1.0636978224025604
+    ],
+    "axis_x": [
+     0.2294157,
+     -0.6882472,
+     0.6882472
+    ],
+    "axis_y_normal": [
+     0.8581163,
+     0.4767313,
+     0.1906925
+    ],
+    "axis_z": [
+     -0.4593526,
+     0.5468483,
+     0.6999658
+    ]
+   },
+   "reading": "orientation depends on position (open)"
+  }
+ ],
+ "placement": [
+  {
+   "cell": "c-psp-cyl",
+   "scenario": "owner",
+   "tool": "primitive_cylinder",
+   "view": "perspective",
+   "gesture": "motionless click",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.19959385098045596,
+     -0.16715694300346734,
+     -0.21622021146734996
+    ],
+    "f2": [
+     0.2445146053398406,
+     0.0,
+     -0.2805797380305796
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -2.4805494847391065,
+     1.0526615976893245,
+     2.411386166495525
+    ],
+    "eye": [
+     1.1527181572607026,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.41153909205570155,
+      -0.7420686040441818,
+      0.529121689785902
+     ]
+    ],
+    "center": [
+     0.0,
+     -0.5,
+     0.0
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9438583563660174,
+      -0.3303504247281061,
+      3.015539369403226e-17
+     ],
+     [
+      -0.12914554939819198,
+      -0.3689872839948343,
+      -0.9204182806315587
+     ],
+     [
+      0.3040605699341486,
+      0.8687444855261388,
+      -0.39093501848676254
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "channels": [
+    0.244,
+    0.0,
+    -0.28
+   ],
+   "size": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "new_vertices_after_drop": 0
+  },
+  {
+   "cell": "c-psp-cyl-drag",
+   "scenario": "owner",
+   "tool": "primitive_cylinder",
+   "view": "perspective",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.19959385098045596,
+     -0.16715694300346734,
+     -0.21622021146734996
+    ],
+    "f2": [
+     0.2445146053398406,
+     0.0,
+     -0.2805797380305796
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -2.4805494847391065,
+     1.0526615976893245,
+     2.411386166495525
+    ],
+    "eye": [
+     1.1527181572607026,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.41153909205570155,
+      -0.7420686040441818,
+      0.529121689785902
+     ]
+    ],
+    "center": [
+     0.0,
+     -0.5,
+     0.0
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9438583563660174,
+      -0.3303504247281061,
+      3.015539369403226e-17
+     ],
+     [
+      -0.12914554939819198,
+      -0.3689872839948343,
+      -0.9204182806315587
+     ],
+     [
+      0.3040605699341486,
+      0.8687444855261388,
+      -0.39093501848676254
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    0.0,
+    0.5
+   ],
+   "rot_deg": [
+    90.0,
+    -0.0,
+    0.0
+   ],
+   "channels": [
+    0.244,
+    0.0,
+    -0.28
+   ],
+   "size": [
+    0.02400000000000002,
+    0.0,
+    0.014000000000000012
+   ],
+   "O_plus_Bc": [
+    0.244,
+    0.28,
+    0.5
+   ],
+   "world_centre": [
+    0.244,
+    0.28,
+    0.5
+   ],
+   "n_new": 8,
+   "local_new_verts": [
+    [
+     0.244,
+     0.0,
+     -0.294
+    ],
+    [
+     0.22703,
+     0.0,
+     -0.2899
+    ],
+    [
+     0.22,
+     0.0,
+     -0.28
+    ],
+    [
+     0.22703,
+     0.0,
+     -0.2701
+    ],
+    [
+     0.244,
+     0.0,
+     -0.266
+    ],
+    [
+     0.26097,
+     0.0,
+     -0.2701
+    ],
+    [
+     0.268,
+     0.0,
+     -0.28
+    ],
+    [
+     0.26097,
+     0.0,
+     -0.2899
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.0007027343900683368,
+   "dperp_world_centre_release_ray": 0.013680736249189168,
+   "dperp_channels_press_ray": 0.0007027343900683368,
+   "dperp_channels_release_ray": 0.013680736249189168,
+   "wlaw_click_world": [
+    0.1101476040288246,
+    0.0880674636170225,
+    0.0
+   ],
+   "wlaw_pred_centre": [
+    0.1101476040288246,
+    5.3925768713806295e-18,
+    0.5880674636170224
+   ],
+   "wlaw_pred_dperp_press_ray": 0.31931060773669173,
+   "release_ray_local": {
+    "f0": [
+     0.2134423625703611,
+     -0.16829121080292347,
+     -0.20796974200732632
+    ],
+    "f2": [
+     0.25634116705767107,
+     0.0,
+     -0.274050547187365
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.244,
+     0.294,
+     0.5
+    ],
+    [
+     0.2270294,
+     0.2898995,
+     0.5
+    ],
+    [
+     0.22,
+     0.28,
+     0.5
+    ],
+    [
+     0.2270294,
+     0.2701005,
+     0.5
+    ],
+    [
+     0.244,
+     0.266,
+     0.5
+    ],
+    [
+     0.2609706,
+     0.2701005,
+     0.5
+    ],
+    [
+     0.268,
+     0.28,
+     0.5
+    ],
+    [
+     0.2609706,
+     0.2898995,
+     0.5
+    ]
+   ]
+  },
+  {
+   "cell": "c0-psp-cyl-drag",
+   "scenario": "control_identity_plane",
+   "tool": "primitive_cylinder",
+   "view": "perspective",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "axis_z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.09356915407251953,
+     0.06431494196959649,
+     -0.06169092781170026
+    ],
+    "f2": [
+     0.11014760402882458,
+     0.08806746361702247,
+     0.0
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -0.33667481938672716,
+     0.40164723638876565,
+     3.2762706183259084e-17
+    ],
+    "eye": [
+     1.5601779077699254,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.30406056993414854,
+      -0.39093501848676254,
+      -0.8687444855261386
+     ]
+    ],
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9438583563660174,
+      -3.015539369403226e-17,
+      -0.3303504247281061
+     ],
+     [
+      -0.12914554939819198,
+      0.9204182806315586,
+      -0.3689872839948343
+     ],
+     [
+      0.30406056993414854,
+      0.39093501848676254,
+      0.8687444855261387
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    -0.0,
+    -0.0
+   ],
+   "rot_deg": [
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "channels": [
+    0.11,
+    0.088,
+    0.0
+   ],
+   "size": [
+    0.03799999999999999,
+    0.01999999999999999,
+    0.0
+   ],
+   "O_plus_Bc": [
+    0.11,
+    0.088,
+    0.0
+   ],
+   "world_centre": [
+    0.10999999999999999,
+    0.088,
+    0.0
+   ],
+   "n_new": 8,
+   "local_new_verts": [
+    [
+     0.072,
+     0.088,
+     0.0
+    ],
+    [
+     0.08313,
+     0.07386,
+     0.0
+    ],
+    [
+     0.11,
+     0.068,
+     0.0
+    ],
+    [
+     0.13687,
+     0.07386,
+     0.0
+    ],
+    [
+     0.148,
+     0.088,
+     0.0
+    ],
+    [
+     0.13687,
+     0.10214,
+     0.0
+    ],
+    [
+     0.11,
+     0.108,
+     0.0
+    ],
+    [
+     0.08313,
+     0.10214,
+     0.0
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.00015102261702226835,
+   "dperp_world_centre_release_ray": 0.021491066886440986,
+   "dperp_channels_press_ray": 0.00015102261702514,
+   "dperp_channels_release_ray": 0.021491066886440945,
+   "wlaw_click_world": [
+    0.11014760402882458,
+    0.08806746361702247,
+    0.0
+   ],
+   "wlaw_pred_centre": [
+    0.11014760402882458,
+    0.08806746361702247,
+    0.0
+   ],
+   "wlaw_pred_dperp_press_ray": 0.0,
+   "release_ray_local": {
+    "f0": [
+     0.11276086940105641,
+     0.05288117450833488,
+     -0.06326283281912046
+    ],
+    "f2": [
+     0.12888708231183596,
+     0.0777217999379847,
+     0.0
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.072,
+     0.088,
+     0.0
+    ],
+    [
+     0.0831299,
+     0.0738579,
+     0.0
+    ],
+    [
+     0.11,
+     0.068,
+     0.0
+    ],
+    [
+     0.1368701,
+     0.0738579,
+     0.0
+    ],
+    [
+     0.148,
+     0.088,
+     0.0
+    ],
+    [
+     0.1368701,
+     0.1021421,
+     0.0
+    ],
+    [
+     0.11,
+     0.108,
+     0.0
+    ],
+    [
+     0.0831299,
+     0.1021421,
+     0.0
+    ]
+   ]
+  },
+  {
+   "cell": "c-psp-cube-drag",
+   "scenario": "owner",
+   "tool": "primitive_box",
+   "view": "perspective",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.19959385098045596,
+     -0.16715694300346734,
+     -0.21622021146734996
+    ],
+    "f2": [
+     0.2445146053398406,
+     0.0,
+     -0.2805797380305796
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -2.4805494847391065,
+     1.0526615976893245,
+     2.411386166495525
+    ],
+    "eye": [
+     1.1527181572607026,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.41153909205570155,
+      -0.7420686040441818,
+      0.529121689785902
+     ]
+    ],
+    "center": [
+     0.0,
+     -0.5,
+     0.0
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9438583563660174,
+      -0.3303504247281061,
+      3.015539369403226e-17
+     ],
+     [
+      -0.12914554939819198,
+      -0.3689872839948343,
+      -0.9204182806315587
+     ],
+     [
+      0.3040605699341486,
+      0.8687444855261388,
+      -0.39093501848676254
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    0.0,
+    0.5
+   ],
+   "rot_deg": [
+    90.0,
+    -0.0,
+    0.0
+   ],
+   "channels": [
+    0.256,
+    0.0,
+    -0.273
+   ],
+   "size": [
+    0.02400000000000002,
+    0.0,
+    0.014000000000000012
+   ],
+   "O_plus_Bc": [
+    0.256,
+    0.273,
+    0.5
+   ],
+   "world_centre": [
+    0.256,
+    0.273,
+    0.5
+   ],
+   "n_new": 4,
+   "local_new_verts": [
+    [
+     0.244,
+     0.0,
+     -0.28
+    ],
+    [
+     0.268,
+     0.0,
+     -0.28
+    ],
+    [
+     0.268,
+     0.0,
+     -0.266
+    ],
+    [
+     0.244,
+     0.0,
+     -0.266
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.013760216473554722,
+   "dperp_world_centre_release_ray": 0.001007679552294399,
+   "dperp_channels_press_ray": 0.013760216473554722,
+   "dperp_channels_release_ray": 0.001007679552294399,
+   "wlaw_click_world": [
+    0.1101476040288246,
+    0.0880674636170225,
+    0.0
+   ],
+   "wlaw_pred_centre": [
+    0.1101476040288246,
+    5.3925768713806295e-18,
+    0.5880674636170224
+   ],
+   "wlaw_pred_dperp_press_ray": 0.31931060773669173,
+   "release_ray_local": {
+    "f0": [
+     0.2134423625703611,
+     -0.16829121080292347,
+     -0.20796974200732632
+    ],
+    "f2": [
+     0.25634116705767107,
+     0.0,
+     -0.274050547187365
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.244,
+     0.28,
+     0.5
+    ],
+    [
+     0.268,
+     0.28,
+     0.5
+    ],
+    [
+     0.268,
+     0.266,
+     0.5
+    ],
+    [
+     0.244,
+     0.266,
+     0.5
+    ]
+   ]
+  },
+  {
+   "cell": "c-fnt-cyl-drag",
+   "scenario": "owner",
+   "tool": "primitive_cylinder",
+   "view": "front_ortho_128px_per_m",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.296875,
+     0.203125,
+     0.0
+    ],
+    "f2": [
+     0.296875,
+     0.203125,
+     0.0
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -0.0,
+     0.0,
+     -0.0
+    ],
+    "eye": [
+     1.0,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "px": 0.0078125,
+    "m": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "fnt"
+   },
+   "O": [
+    -0.0,
+    0.0,
+    0.5
+   ],
+   "rot_deg": [
+    90.0,
+    -0.0,
+    0.0
+   ],
+   "channels": [
+    0.3,
+    0.2,
+    0.0
+   ],
+   "size": [
+    0.19,
+    0.12,
+    0.0
+   ],
+   "O_plus_Bc": [
+    0.3,
+    1.2246467991473533e-17,
+    0.7
+   ],
+   "world_centre": [
+    0.3,
+    0.0,
+    0.7
+   ],
+   "n_new": 8,
+   "local_new_verts": [
+    [
+     0.11,
+     0.2,
+     0.0
+    ],
+    [
+     0.16565,
+     0.11515,
+     0.0
+    ],
+    [
+     0.3,
+     0.08,
+     0.0
+    ],
+    [
+     0.43435,
+     0.11515,
+     0.0
+    ],
+    [
+     0.49,
+     0.2,
+     0.0
+    ],
+    [
+     0.43435,
+     0.28485,
+     0.0
+    ],
+    [
+     0.3,
+     0.32,
+     0.0
+    ],
+    [
+     0.16565,
+     0.28485,
+     0.0
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.004419417382415946,
+   "dperp_world_centre_release_ray": 0.10834334889599821,
+   "dperp_channels_press_ray": 0.004419417382415945,
+   "dperp_channels_release_ray": 0.10834334889599821,
+   "release_ray_local": {
+    "f0": [
+     0.390625,
+     0.140625,
+     0.0
+    ],
+    "f2": [
+     0.390625,
+     0.140625,
+     0.0
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.11,
+     0.0,
+     0.7
+    ],
+    [
+     0.1656497,
+     0.0,
+     0.6151472
+    ],
+    [
+     0.3,
+     0.0,
+     0.58
+    ],
+    [
+     0.4343503,
+     0.0,
+     0.6151472
+    ],
+    [
+     0.49,
+     0.0,
+     0.7
+    ],
+    [
+     0.4343503,
+     0.0,
+     0.7848528
+    ],
+    [
+     0.3,
+     0.0,
+     0.82
+    ],
+    [
+     0.1656497,
+     0.0,
+     0.7848528
+    ]
+   ]
+  },
+  {
+   "cell": "c0-fnt-cyl-drag",
+   "scenario": "control_identity_plane",
+   "tool": "primitive_cylinder",
+   "view": "front_ortho_128px_per_m",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.0,
+     -0.0,
+     -0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "axis_z": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.296875,
+     0.203125,
+     0.0
+    ],
+    "f2": [
+     0.296875,
+     0.203125,
+     0.0
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -0.0,
+     0.0,
+     -0.0
+    ],
+    "eye": [
+     1.0,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "px": 0.0078125,
+    "m": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "fnt"
+   },
+   "O": [
+    -0.0,
+    -0.0,
+    -0.0
+   ],
+   "rot_deg": [
+    0.0,
+    -0.0,
+    -0.0
+   ],
+   "channels": [
+    0.3,
+    0.2,
+    0.0
+   ],
+   "size": [
+    0.19,
+    0.12,
+    0.0
+   ],
+   "O_plus_Bc": [
+    0.3,
+    0.2,
+    0.0
+   ],
+   "world_centre": [
+    0.3,
+    0.2,
+    0.0
+   ],
+   "n_new": 8,
+   "local_new_verts": [
+    [
+     0.11,
+     0.2,
+     0.0
+    ],
+    [
+     0.16565,
+     0.11515,
+     0.0
+    ],
+    [
+     0.3,
+     0.08,
+     0.0
+    ],
+    [
+     0.43435,
+     0.11515,
+     0.0
+    ],
+    [
+     0.49,
+     0.2,
+     0.0
+    ],
+    [
+     0.43435,
+     0.28485,
+     0.0
+    ],
+    [
+     0.3,
+     0.32,
+     0.0
+    ],
+    [
+     0.16565,
+     0.28485,
+     0.0
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.004419417382415906,
+   "dperp_world_centre_release_ray": 0.10834334889599824,
+   "dperp_channels_press_ray": 0.004419417382415906,
+   "dperp_channels_release_ray": 0.10834334889599824,
+   "wlaw_click_world": [
+    0.296875,
+    0.203125,
+    0.0
+   ],
+   "wlaw_pred_centre": [
+    0.296875,
+    0.203125,
+    0.0
+   ],
+   "wlaw_pred_dperp_press_ray": 0.0,
+   "release_ray_local": {
+    "f0": [
+     0.390625,
+     0.140625,
+     0.0
+    ],
+    "f2": [
+     0.390625,
+     0.140625,
+     0.0
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.11,
+     0.2,
+     0.0
+    ],
+    [
+     0.1656497,
+     0.1151472,
+     0.0
+    ],
+    [
+     0.3,
+     0.08,
+     0.0
+    ],
+    [
+     0.4343503,
+     0.1151472,
+     0.0
+    ],
+    [
+     0.49,
+     0.2,
+     0.0
+    ],
+    [
+     0.4343503,
+     0.2848528,
+     0.0
+    ],
+    [
+     0.3,
+     0.32,
+     0.0
+    ],
+    [
+     0.1656497,
+     0.2848528,
+     0.0
+    ]
+   ]
+  },
+  {
+   "cell": "c-fnt-cube-drag",
+   "scenario": "owner",
+   "tool": "primitive_box",
+   "view": "front_ortho_128px_per_m",
+   "gesture": "drag 4 x (+6,+4) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     0.0,
+     0.5
+    ],
+    "rotation_rad_xyz": [
+     1.5707963267948966,
+     -0.0,
+     0.0
+    ],
+    "axis_x": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "axis_z": [
+     0.0,
+     -1.0,
+     0.0
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     0.296875,
+     0.203125,
+     0.0
+    ],
+    "f2": [
+     0.296875,
+     0.203125,
+     0.0
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     -0.0,
+     0.0,
+     -0.0
+    ],
+    "eye": [
+     1.0,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "px": 0.0078125,
+    "m": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "fnt"
+   },
+   "O": [
+    -0.0,
+    0.0,
+    0.5
+   ],
+   "rot_deg": [
+    90.0,
+    -0.0,
+    0.0
+   ],
+   "channels": [
+    0.395,
+    0.14,
+    0.0
+   ],
+   "size": [
+    0.19,
+    0.12000000000000001,
+    0.0
+   ],
+   "O_plus_Bc": [
+    0.395,
+    8.572527594031473e-18,
+    0.64
+   ],
+   "world_centre": [
+    0.395,
+    0.0,
+    0.6399999999999999
+   ],
+   "n_new": 4,
+   "local_new_verts": [
+    [
+     0.3,
+     0.08,
+     0.0
+    ],
+    [
+     0.3,
+     0.2,
+     0.0
+    ],
+    [
+     0.49,
+     0.2,
+     0.0
+    ],
+    [
+     0.49,
+     0.08,
+     0.0
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.11667596689121551,
+   "dperp_world_centre_release_ray": 0.004419417382415953,
+   "dperp_channels_press_ray": 0.11667596689121544,
+   "dperp_channels_release_ray": 0.004419417382415938,
+   "release_ray_local": {
+    "f0": [
+     0.390625,
+     0.140625,
+     0.0
+    ],
+    "f2": [
+     0.390625,
+     0.140625,
+     0.0
+    ]
+   },
+   "new_vertices_world": [
+    [
+     0.3,
+     0.0,
+     0.58
+    ],
+    [
+     0.3,
+     0.0,
+     0.7
+    ],
+    [
+     0.49,
+     0.0,
+     0.7
+    ],
+    [
+     0.49,
+     0.0,
+     0.58
+    ]
+   ]
+  },
+  {
+   "cell": "b-cube",
+   "scenario": "typed_oblique_plane",
+   "tool": "primitive_box",
+   "view": "perspective",
+   "gesture": "drag 8 x (+8,-6) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     -0.44764381631946826,
+     -0.57371337423499,
+     0.6228946760713896
+    ],
+    "f2": [
+     -0.41552815117488223,
+     -1.0,
+     0.2819811914271823
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     0.1983645376819318,
+     0.8834491187721216,
+     0.26336183965679516
+    ],
+    "eye": [
+     1.4880519968939234,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.3470797632849506,
+      -0.22840994233942324,
+      -0.9095958092243852
+     ]
+    ],
+    "center": [
+     -0.3213938048432695,
+     -0.8660254037844387,
+     0.3830222215594889
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9069337518036118,
+      -0.16517521236405305,
+      0.3875413772230195
+     ],
+     [
+      0.40228980148032106,
+      0.6126119711371073,
+      -0.6803451245099299
+     ],
+     [
+      -0.12503633657600746,
+      0.7729319000015449,
+      0.6220467767745874
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    1.0,
+    5.551115123125783e-17
+   ],
+   "rot_deg": [
+    29.999999999999996,
+    40.0,
+    -0.0
+   ],
+   "channels": [
+    -0.34900000000000003,
+    -1.0,
+    0.263
+   ],
+   "size": [
+    0.134,
+    0.0,
+    0.038000000000000034
+   ],
+   "O_plus_Bc": [
+    -0.09829636930096353,
+    -0.07892668594488539,
+    -0.13124416230154873
+   ],
+   "world_centre": [
+    -0.09829634999999999,
+    -0.0789267,
+    -0.13124415
+   ],
+   "n_new": 4,
+   "local_new_verts": [
+    [
+     -0.416,
+     -1.0,
+     0.244
+    ],
+    [
+     -0.282,
+     -1.0,
+     0.244
+    ],
+    [
+     -0.282,
+     -1.0,
+     0.282
+    ],
+    [
+     -0.416,
+     -1.0,
+     0.282
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.0673681436222694,
+   "dperp_world_centre_release_ray": 0.0015820280573530065,
+   "dperp_channels_press_ray": 0.0673681449194422,
+   "dperp_channels_release_ray": 0.0015820227095955596,
+   "release_ray_local": {
+    "f0": [
+     -0.4026351984144948,
+     -0.5627546239826688,
+     0.6183248349225913
+    ],
+    "f2": [
+     -0.34749149867417334,
+     -1.0,
+     0.26218831031847506
+    ]
+   },
+   "new_vertices_world": [
+    [
+     -0.1618343,
+     -0.0931827,
+     -0.1065521
+    ],
+    [
+     -0.0591844,
+     -0.0501159,
+     -0.1811459
+    ],
+    [
+     -0.0347584,
+     -0.0646707,
+     -0.1559362
+    ],
+    [
+     -0.1374084,
+     -0.1077375,
+     -0.0813424
+    ]
+   ]
+  },
+  {
+   "cell": "b-sphere",
+   "scenario": "typed_oblique_plane",
+   "tool": "primitive_sphere",
+   "view": "perspective",
+   "gesture": "drag 8 x (+8,-6) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     -0.44764381631946826,
+     -0.57371337423499,
+     0.6228946760713896
+    ],
+    "f2": [
+     -0.41552815117488223,
+     -1.0,
+     0.2819811914271823
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     0.1983645376819318,
+     0.8834491187721216,
+     0.26336183965679516
+    ],
+    "eye": [
+     1.4880519968939234,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.3470797632849506,
+      -0.22840994233942324,
+      -0.9095958092243852
+     ]
+    ],
+    "center": [
+     -0.3213938048432695,
+     -0.8660254037844387,
+     0.3830222215594889
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9069337518036118,
+      -0.16517521236405305,
+      0.3875413772230195
+     ],
+     [
+      0.40228980148032106,
+      0.6126119711371073,
+      -0.6803451245099299
+     ],
+     [
+      -0.12503633657600746,
+      0.7729319000015449,
+      0.6220467767745874
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    1.0,
+    5.551115123125783e-17
+   ],
+   "rot_deg": [
+    29.999999999999996,
+    40.0,
+    -0.0
+   ],
+   "channels": [
+    -0.41600000000000004,
+    -1.0,
+    0.28200000000000003
+   ],
+   "size": [
+    0.134,
+    0.0,
+    0.038000000000000034
+   ],
+   "O_plus_Bc": [
+    -0.13740838240589082,
+    -0.1077374930790147,
+    -0.08134238053816875
+   ],
+   "world_centre": [
+    -0.13740839999999999,
+    -0.10773749999999999,
+    -0.08134235000000001
+   ],
+   "n_new": 24,
+   "local_new_verts": [
+    [
+     -0.416,
+     -1.0,
+     0.244
+    ],
+    [
+     -0.45068,
+     -1.0,
+     0.24529
+    ],
+    [
+     -0.483,
+     -1.0,
+     0.24909
+    ],
+    [
+     -0.51075,
+     -1.0,
+     0.25513
+    ],
+    [
+     -0.53205,
+     -1.0,
+     0.263
+    ],
+    [
+     -0.54543,
+     -1.0,
+     0.27216
+    ],
+    [
+     -0.55,
+     -1.0,
+     0.282
+    ],
+    [
+     -0.54543,
+     -1.0,
+     0.29184
+    ],
+    [
+     -0.53205,
+     -1.0,
+     0.301
+    ],
+    [
+     -0.51075,
+     -1.0,
+     0.30887
+    ],
+    [
+     -0.483,
+     -1.0,
+     0.31491
+    ],
+    [
+     -0.45068,
+     -1.0,
+     0.31871
+    ],
+    [
+     -0.416,
+     -1.0,
+     0.32
+    ],
+    [
+     -0.38132,
+     -1.0,
+     0.31871
+    ],
+    [
+     -0.349,
+     -1.0,
+     0.31491
+    ],
+    [
+     -0.32125,
+     -1.0,
+     0.30887
+    ],
+    [
+     -0.29995,
+     -1.0,
+     0.301
+    ],
+    [
+     -0.28657,
+     -1.0,
+     0.29184
+    ],
+    [
+     -0.282,
+     -1.0,
+     0.282
+    ],
+    [
+     -0.28657,
+     -1.0,
+     0.27216
+    ],
+    [
+     -0.29995,
+     -1.0,
+     0.263
+    ],
+    [
+     -0.32125,
+     -1.0,
+     0.25513
+    ],
+    [
+     -0.349,
+     -1.0,
+     0.24909
+    ],
+    [
+     -0.38132,
+     -1.0,
+     0.24529
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.00047060543556206664,
+   "dperp_world_centre_release_ray": 0.06870492624753019,
+   "dperp_channels_press_ray": 0.0004705735546877384,
+   "dperp_channels_release_ray": 0.06870489520043666,
+   "release_ray_local": {
+    "f0": [
+     -0.4026351984144948,
+     -0.5627546239826688,
+     0.6183248349225913
+    ],
+    "f2": [
+     -0.34749149867417334,
+     -1.0,
+     0.26218831031847506
+    ]
+   },
+   "new_vertices_world": [
+    [
+     -0.1618343,
+     -0.0931827,
+     -0.1065521
+    ],
+    [
+     -0.1875698,
+     -0.1048251,
+     -0.0863868
+    ],
+    [
+     -0.2098868,
+     -0.116666,
+     -0.0658777
+    ],
+    [
+     -0.2272646,
+     -0.1278985,
+     -0.0464225
+    ],
+    [
+     -0.2385188,
+     -0.137757,
+     -0.0293471
+    ],
+    [
+     -0.2428825,
+     -0.1455697,
+     -0.015815
+    ],
+    [
+     -0.2400583,
+     -0.1508043,
+     -0.0067485
+    ],
+    [
+     -0.2302387,
+     -0.1531039,
+     -0.0027655
+    ],
+    [
+     -0.2140929,
+     -0.1523118,
+     -0.0041374
+    ],
+    [
+     -0.1927211,
+     -0.1484821,
+     -0.0107706
+    ],
+    [
+     -0.1675799,
+     -0.1418758,
+     -0.0222132
+    ],
+    [
+     -0.1403825,
+     -0.1329429,
+     -0.0376853
+    ],
+    [
+     -0.1129825,
+     -0.1222923,
+     -0.0561327
+    ],
+    [
+     -0.087247,
+     -0.1106499,
+     -0.0762979
+    ],
+    [
+     -0.0649299,
+     -0.098809,
+     -0.096807
+    ],
+    [
+     -0.0475522,
+     -0.0875765,
+     -0.1162622
+    ],
+    [
+     -0.036298,
+     -0.077718,
+     -0.1333377
+    ],
+    [
+     -0.0319343,
+     -0.0699053,
+     -0.1468697
+    ],
+    [
+     -0.0347584,
+     -0.0646707,
+     -0.1559362
+    ],
+    [
+     -0.044578,
+     -0.0623711,
+     -0.1599192
+    ],
+    [
+     -0.0607239,
+     -0.0631632,
+     -0.1585474
+    ],
+    [
+     -0.0820957,
+     -0.0669929,
+     -0.1519142
+    ],
+    [
+     -0.1072369,
+     -0.0735992,
+     -0.1404715
+    ],
+    [
+     -0.1344343,
+     -0.0825321,
+     -0.1249994
+    ]
+   ]
+  },
+  {
+   "cell": "b-cyl",
+   "scenario": "typed_oblique_plane",
+   "tool": "primitive_cylinder",
+   "view": "perspective",
+   "gesture": "drag 8 x (+8,-6) px",
+   "plane_at_gesture": {
+    "origin": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "rotation_rad_xyz": [
+     0.5235987755982988,
+     0.6981317007977318,
+     -0.0
+    ],
+    "axis_x": [
+     0.7660444,
+     0.3213938,
+     -0.5566704
+    ],
+    "axis_y_normal": [
+     0.0,
+     0.8660254,
+     0.5
+    ],
+    "axis_z": [
+     0.6427876,
+     -0.3830222,
+     0.6634139
+    ]
+   },
+   "view_reads_are_plane_local": true,
+   "press_ray_local": {
+    "f0": [
+     -0.44764381631946826,
+     -0.57371337423499,
+     0.6228946760713896
+    ],
+    "f2": [
+     -0.41552815117488223,
+     -1.0,
+     0.2819811914271823
+    ]
+   },
+   "view_at_press_local": {
+    "ang": [
+     0.1983645376819318,
+     0.8834491187721216,
+     0.26336183965679516
+    ],
+    "eye": [
+     1.4880519968939234,
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.3470797632849506,
+      -0.22840994233942324,
+      -0.9095958092243852
+     ]
+    ],
+    "center": [
+     -0.3213938048432695,
+     -0.8660254037844387,
+     0.3830222215594889
+    ],
+    "px": 0.0012422360248447205,
+    "m": [
+     [
+      0.9069337518036118,
+      -0.16517521236405305,
+      0.3875413772230195
+     ],
+     [
+      0.40228980148032106,
+      0.6126119711371073,
+      -0.6803451245099299
+     ],
+     [
+      -0.12503633657600746,
+      0.7729319000015449,
+      0.6220467767745874
+     ]
+    ],
+    "bounds": [
+     4,
+     4,
+     1144,
+     966
+    ],
+    "proj": "psp"
+   },
+   "O": [
+    -0.0,
+    1.0,
+    5.551115123125783e-17
+   ],
+   "rot_deg": [
+    29.999999999999996,
+    40.0,
+    -0.0
+   ],
+   "channels": [
+    -0.41600000000000004,
+    -1.0,
+    0.28200000000000003
+   ],
+   "size": [
+    0.134,
+    0.0,
+    0.038000000000000034
+   ],
+   "O_plus_Bc": [
+    -0.13740838240589082,
+    -0.1077374930790147,
+    -0.08134238053816875
+   ],
+   "world_centre": [
+    -0.13740835,
+    -0.1077375,
+    -0.08134235
+   ],
+   "n_new": 8,
+   "local_new_verts": [
+    [
+     -0.416,
+     -1.0,
+     0.244
+    ],
+    [
+     -0.51075,
+     -1.0,
+     0.25513
+    ],
+    [
+     -0.55,
+     -1.0,
+     0.282
+    ],
+    [
+     -0.51075,
+     -1.0,
+     0.30887
+    ],
+    [
+     -0.416,
+     -1.0,
+     0.32
+    ],
+    [
+     -0.32125,
+     -1.0,
+     0.30887
+    ],
+    [
+     -0.282,
+     -1.0,
+     0.282
+    ],
+    [
+     -0.32125,
+     -1.0,
+     0.25513
+    ]
+   ],
+   "dperp_world_centre_press_ray": 0.0004705668240945974,
+   "dperp_world_centre_release_ray": 0.06870489273832928,
+   "dperp_channels_press_ray": 0.0004705735546877384,
+   "dperp_channels_release_ray": 0.06870489520043666,
+   "release_ray_local": {
+    "f0": [
+     -0.4026351984144948,
+     -0.5627546239826688,
+     0.6183248349225913
+    ],
+    "f2": [
+     -0.34749149867417334,
+     -1.0,
+     0.26218831031847506
+    ]
+   },
+   "new_vertices_world": [
+    [
+     -0.1618343,
+     -0.0931827,
+     -0.1065521
+    ],
+    [
+     -0.2272646,
+     -0.1278985,
+     -0.0464225
+    ],
+    [
+     -0.2400583,
+     -0.1508043,
+     -0.0067485
+    ],
+    [
+     -0.1927211,
+     -0.1484821,
+     -0.0107706
+    ],
+    [
+     -0.1129825,
+     -0.1222923,
+     -0.0561327
+    ],
+    [
+     -0.0475522,
+     -0.0875765,
+     -0.1162622
+    ],
+    [
+     -0.0347584,
+     -0.0646707,
+     -0.1559362
+    ],
+    [
+     -0.0820957,
+     -0.0669929,
+     -0.1519142
+    ]
+   ]
+  }
+ ]
+}
