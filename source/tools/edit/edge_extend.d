@@ -739,6 +739,17 @@ public:
         root["pivot"] = JSONValue([JSONValue(initPivot_.x),
                                    JSONValue(initPivot_.y),
                                    JSONValue(initPivot_.z)]);
+        // Test-only readouts: which bank owns the drag and which
+        // Move-bank axis the press grabbed (0/1/2 arms, 3 = centre / haul,
+        // -1 = none). A witness that drags diagonally needs these to know the
+        // press took the ARM and not the haul — both move the same channel.
+        final switch (dragBank) {
+            case DragBank.None:   root["dragBank"] = JSONValue("none");   break;
+            case DragBank.Move:   root["dragBank"] = JSONValue("move");   break;
+            case DragBank.Rotate: root["dragBank"] = JSONValue("rotate"); break;
+            case DragBank.Scale:  root["dragBank"] = JSONValue("scale");  break;
+        }
+        root["dragAxis"] = JSONValue(xfrm.moveDragAxisPublic());
         return root;
     }
 
