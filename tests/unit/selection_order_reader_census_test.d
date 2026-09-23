@@ -111,6 +111,11 @@ private immutable LedgerRow[] kRoster = [
     LedgerRow("applyFaceReindexReverse", 1,
         "plane CARRIES across a vertex compaction / face reindex — the value "
       ~ "moves index-to-index and is never compared to another element's."),
+    LedgerRow("edgeChainWalk", 1,
+        "a RANK read, and legal for the same reason as the row below: the "
+      ~ "loop `continue`s on `!isEdgeSelected` one line above the read, so "
+      ~ "only selected edges are ranked (mesh.makePolygon's edge chain, task "
+      ~ "7132; an accessor twin in `Mesh` would bump the struct-member ratchet)."),
     LedgerRow("extractAlignChain.fallbackOrder", 2,
         "a genuine RANK read, and legal: `fallbackOrder` sorts an index list "
       ~ "that `operandVertexMask` already filtered to the selection, so the "
@@ -317,9 +322,9 @@ unittest {
     // task 4059 generated `mesh_planes.d`'s dropped-face record through a
     // `static foreach`, which put that read out of a text scanner's reach —
     // see the "ALSO NOT ROSTERED" note above for why the row went away rather
-    // than becoming a zero.
-    assert(hits.length == 8,
-        format("selection-order value-read population changed: expected 8, found %d",
+    // than becoming a zero. 9 again since task 7132's `edgeChainWalk` row.
+    assert(hits.length == 9,
+        format("selection-order value-read population changed: expected 9, found %d",
                hits.length));
 }
 
