@@ -77,18 +77,21 @@ private void assertNoLadderBinding(ShortcutTable shortcuts, string label) {
 }
 
 // Task 7131 (wave bugfix S11 items 3 and 16): the component-mode delete keys
-// and P, pinned per layout and per chord through the loader and the SAME
-// resolver the keyboard dispatcher uses (`resolveBinding`, polygon mode, no
-// zone, no tool), with each chord canonicalised from the SDL event rather than
-// typed as a string. Law: Backspace and Delete = mesh.delete, Shift+Backspace =
-// mesh.remove, on BOTH layouts; the old remove chord is gone; P = make polygon.
-// The two already-true surfaces sit above the red ones (one assert per
+// and P, pinned per layout, per chord AND per component mode through the
+// loader and the SAME resolver the keyboard dispatcher uses (`resolveBinding`,
+// no zone, no tool), with each chord canonicalised from the SDL event rather
+// than typed as a string. Law: Backspace and Delete = mesh.delete,
+// Shift+Backspace = mesh.remove, on BOTH layouts and in EVERY component mode;
+// the old remove chord is gone; P = make polygon. The mode loop is load-
+// bearing (task 7132): a Backspace row scoped to `mode: polygon` alone passed
+// a polygon-only pin while vertex and edge mode still removed. The two
+// already-true surfaces sit above the red ones in each mode (one assert per
 // surface; the module stops at its first red, the rest are shown by
 // isolation — task card 7131).
-private string boundCommand(ShortcutTable tbl, int sym, int mod) {
+private string boundCommand(ShortcutTable tbl, int sym, int mod, string mode) {
     immutable canon = canonFromEvent(sym, cast(SDL_Keymod) mod);
     assert(canon.length, "chord did not canonicalise");
-    immutable i = resolveBinding(tbl.bindings, canon, "", "polygon", "");
+    immutable i = resolveBinding(tbl.bindings, canon, "", mode, "");
     if (i < 0) return "";
     assert(tbl.bindings[i].kind == BindingKind.command);
     return tbl.bindings[i].id;
@@ -99,24 +102,30 @@ unittest {
     auto macos = loadShortcuts("config/shortcuts_macos.yaml");
     assert(linux.bindings.length > 0 && macos.bindings.length > 0);
 
-    // Already true on both layouts (green controls).
-    assert(boundCommand(linux, SDLK_DELETE, 0) == "mesh.delete",
-        "linux delete is not delete");
-    assert(boundCommand(macos, SDLK_BACKSPACE, 0) == "mesh.delete",
-        "macos backspace is not delete");
+    size_t modes;
+    foreach (mode; ["vertex", "edge", "polygon"]) {
+        immutable at = " (" ~ mode ~ " mode)";
+        // Already true on both layouts (green controls).
+        assert(boundCommand(linux, SDLK_DELETE, 0, mode) == "mesh.delete",
+            "linux delete is not delete" ~ at);
+        assert(boundCommand(macos, SDLK_BACKSPACE, 0, mode) == "mesh.delete",
+            "macos backspace is not delete" ~ at);
 
-    assert(boundCommand(linux, SDLK_BACKSPACE, 0) == "mesh.delete",
-        "linux backspace is not delete");
-    assert(boundCommand(linux, SDLK_BACKSPACE, KMOD_LSHIFT) == "mesh.remove",
-        "linux shift+backspace is not remove");
-    assert(boundCommand(macos, SDLK_DELETE, 0) == "mesh.delete",
-        "macos delete is not delete");
-    assert(boundCommand(macos, SDLK_BACKSPACE, KMOD_LSHIFT) == "mesh.remove",
-        "macos shift+backspace is not remove");
-    assert(boundCommand(macos, SDLK_BACKSPACE, KMOD_LGUI) == "",
-        "macos still binds cmd+backspace");
-    assert(boundCommand(linux, SDLK_p, 0) == "mesh.makePolygon",
-        "linux p is not make polygon");
-    assert(boundCommand(macos, SDLK_p, 0) == "mesh.makePolygon",
-        "macos p is not make polygon");
+        assert(boundCommand(linux, SDLK_BACKSPACE, 0, mode) == "mesh.delete",
+            "linux backspace is not delete" ~ at);
+        assert(boundCommand(linux, SDLK_BACKSPACE, KMOD_LSHIFT, mode) == "mesh.remove",
+            "linux shift+backspace is not remove" ~ at);
+        assert(boundCommand(macos, SDLK_DELETE, 0, mode) == "mesh.delete",
+            "macos delete is not delete" ~ at);
+        assert(boundCommand(macos, SDLK_BACKSPACE, KMOD_LSHIFT, mode) == "mesh.remove",
+            "macos shift+backspace is not remove" ~ at);
+        assert(boundCommand(macos, SDLK_BACKSPACE, KMOD_LGUI, mode) == "",
+            "macos still binds cmd+backspace" ~ at);
+        assert(boundCommand(linux, SDLK_p, 0, mode) == "mesh.makePolygon",
+            "linux p is not make polygon" ~ at);
+        assert(boundCommand(macos, SDLK_p, 0, mode) == "mesh.makePolygon",
+            "macos p is not make polygon" ~ at);
+        ++modes;
+    }
+    assert(modes == 3, "population floor: the pins did not run in 3 modes");
 }

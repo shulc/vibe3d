@@ -8,9 +8,11 @@
 //
 // Polygons are compared CYCLICALLY (a rotation is allowed, a reversal is
 // not): the reference's start corner is not observable from its selection.
-// Two holes on opposite faces of the cube (`cube_minus_face0` / `_face1`)
-// need opposite windings relative to the stored edge direction, so a kernel
-// that ignored the neighbours could not satisfy both.
+// On both holes (`cube_minus_face0` / `_face1`) every boundary edge is
+// stored in its NEIGHBOUR's direction (live `/api/model`: face1's hole stores
+// edge 0-2 as [2,0], face0's stores 3-7 as [3,7]), so the new polygon must run
+// AGAINST the stored direction on both: a kernel that walked the edges as
+// stored and ignored the neighbours would fail both holes, not one.
 //
 // Order is load-bearing: floors, then the vertex-selection branch (a green
 // control on HEAD), then the edge branch through the COMMAND, and the key P
