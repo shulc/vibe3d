@@ -168,8 +168,8 @@ class MeshMakePolygon : Command, Operator {
         // active tool — a selection is not a mode switch.
         if (fromEdges) {
             // Edge branch: the edge selection is the input AND survives.
+            // (the kernel already grew the selection planes for the face)
             auto m = &ed.mesh();
-            m.syncSelection();
             m.clearVertexSelection();
             m.clearFaceSelection();
             m.selectFace(fi);

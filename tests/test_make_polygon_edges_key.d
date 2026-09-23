@@ -335,6 +335,10 @@ unittest {
     assert(ints(s2["selectedFaces"]) == [5],
         format("edge make polygon kept a lingering polygon selection: %s", ints(s2["selectedFaces"])));
     assert(s2["selectedEdges"].array.length == 4, "edge make polygon dropped the edge selection (lingering)");
+    // Our rule, as in the vertex branch (the reference's mode change is not
+    // recorded): the product is a polygon, so the selection type follows it.
+    assert(s2["mode"].str == "polygons",
+        "edge make polygon did not promote the selection type: " ~ s2["mode"].str);
 }
 
 // 4. The key: P in edge mode is Make Polygon. RED on HEAD 9f434948 (shown by
