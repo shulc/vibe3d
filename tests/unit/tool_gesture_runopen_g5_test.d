@@ -13,7 +13,7 @@
 //       `tests/test_tool_gesture_g5.d` reads.
 //
 //   (2) `invalidateRedo` is called FOUR times in this family — three in
-//       `edge_slice_tool.d` (`latchFirstPoint`, `armChain`, `rebuildPreview`),
+//       `edge_slice_tool.d` (`seatFirstPoint`, `armChain`, `rebuildPreview`),
 //       one in `loop_slice_tool.d` (`rebuildCut`) — and it is DELIBERATE, the
 //       task-0429 primitive: a standing preview writes into the real mesh
 //       outside the history, so a redo stepping the stack under it would replay

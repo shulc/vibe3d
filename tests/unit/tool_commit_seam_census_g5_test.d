@@ -13,7 +13,7 @@
 // not a copy of its G3 sibling with the names changed. The slice family holds
 // the task's ONLY legitimate non-recorder mutation of the history:
 // `CommandHistory.invalidateRedo()`, called four times — three in
-// `edge_slice_tool.d` (`latchFirstPoint`, `armChain`, `rebuildPreview`), one in
+// `edge_slice_tool.d` (`seatFirstPoint`, `armChain`, `rebuildPreview`), one in
 // `loop_slice_tool.d` (`rebuildCut`). It is the task-0429 primitive: a standing
 // preview writes into the real mesh OUTSIDE the history, so a redo stepping the
 // stack under that preview would replay onto a mesh nobody recorded. Those four
@@ -229,7 +229,7 @@ private enum LedgerRow[] kSurfaceRoster = [
     LedgerRow("Tool.recordGestureEdit|recordInSession", 1, "session recorder dispatch"),
     LedgerRow("Tool.recordGestureEdit|replaceInSessionTailWith", 1, "tail recorder dispatch"),
     LedgerRow("Tool.refuseGestureRecord|consolidate", 1, "refusal belt"),
-    LedgerRow("EdgeSliceTool.latchFirstPoint|invalidateRedo", 1, "legal non-recorder"),
+    LedgerRow("EdgeSliceTool.seatFirstPoint|invalidateRedo", 1, "legal non-recorder (moved from latchFirstPoint, task 7137)"),
     LedgerRow("EdgeSliceTool.armChain|invalidateRedo", 1, "legal non-recorder"),
     LedgerRow("EdgeSliceTool.rebuildPreview|invalidateRedo", 1, "legal non-recorder"),
     LedgerRow("LoopSliceTool.rebuildCut|invalidateRedo", 1, "legal non-recorder"),
