@@ -37,8 +37,10 @@ void chainBlock(bool subpatchOn) {
     slLine("tool.set mesh.edgeSliceTool on");
     assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
     const recordedHistoryLen = slHistoryLen();
-    assert(recordedHistoryLen == pro.historyLen,
-           "slice floor: activating the tool moved the history");
+    // Task 7137: the arm writes one activation row, like Slice.
+    assert(recordedHistoryLen == pro.historyLen + 1
+           && slHistoryLabels()[$ - 1] == "Activate Tool",
+           "slice floor: Edge Slice arm did not write its activation row");
 
     const P = slFrontRightChain();
     const hints = subpatchOn ? HINT_ON : HINT_OFF;

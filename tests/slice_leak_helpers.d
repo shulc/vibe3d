@@ -226,6 +226,30 @@ string slTool() {
     return ("tool" in s.object) ? s["tool"].str : "";
 }
 
+/// Edge Slice's per-point `t`, in chain order (`latchedT`, task 7137); empty
+/// when the field is absent, so a pre-7137 binary reads as "no points".
+double[] slLatchedT() {
+    auto s = getJson("/api/tool/state");
+    double[] r;
+    if ("latchedT" in s.object)
+        foreach (t; s["latchedT"].array)
+            r ~= t.type == JSONType.integer ? cast(double)t.integer : t.floating;
+    return r;
+}
+
+/// Edge Slice's `scrubbing` (task 7137): whether a point's `t` follows the
+/// mouse. Absent reads as true, so a missing field can never pass a
+/// "released" assert.
+bool slScrubbing() {
+    auto s = getJson("/api/tool/state");
+    if (!("scrubbing" in s.object)) return true;
+    return s["scrubbing"].type == JSONType.true_;
+}
+
+bool slCanRedo() {
+    return getJson("/api/undo/status")["canRedo"].type == JSONType.true_;
+}
+
 /// Order matters, a pair's orientation does not: both sides go to (min, max).
 long[2][] slNorm(const long[2][] ps) {
     long[2][] r;
@@ -449,7 +473,8 @@ SlStep slSnap() {
 
 /// Subpatch ON prologue (`deleteMode`/`deleteSel`), Edge Slice, three
 /// click+drag points on the front/right verticals, then Ctrl+Z K times with
-/// K = 3 + recordedHistoryLen, the editor's liveness read after every step.
+/// K = 3 + the prologue's history length (step 3 pops the activation row with
+/// the first point, task 7137), the editor's liveness read after every step.
 /// Only once the loop has run whole does it compare each step against OUR
 /// undo law (task 0321: a Ctrl+Z peels the last latched point while a chain
 /// is live; the peel of the first point also ends the tool; then history
@@ -463,9 +488,12 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
                   base.toString, expectVerts, expectFaces));
     slLine("tool.set mesh.edgeSliceTool on");
     assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
+    // Task 7137: the arm writes its activation row on top of the prologue.
     const recordedHistoryLen = slHistoryLen();
-    assert(recordedHistoryLen == pro.historyLen && recordedHistoryLen > 0,
-           "slice floor: the recorded history is not the prologue's");
+    assert(recordedHistoryLen == pro.historyLen + 1 && pro.historyLen > 0
+           && slHistoryLabels()[$ - 1] == "Activate Tool",
+           format("slice floor: the recorded history is not the prologue's plus the "
+                  ~ "activation row: %s", slHistoryLabels()));
 
     const P = slFrontRightChain();
     SlMesh afterDrag2;
@@ -494,7 +522,7 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
             " with the chain as it stands (", S0.points, " latched point(s)), step ",
             predictedLaw, " under the peel law");
 
-    const K = 3 + recordedHistoryLen;
+    const K = 3 + pro.historyLen;
     SlStep[] snaps = [S0];
     size_t steps;
     foreach (k; 1 .. K + 1) {
@@ -515,7 +543,7 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
         if (k == 1)      okStep = s.points == 2 && meshIs(s.mesh, afterDrag2);
         else if (k == 2) okStep = s.points == 1 && meshIs(s.mesh, base);
         else if (k == 3) okStep = s.points == 0 && meshIs(s.mesh, base);
-        else             okStep = meshIs(s.mesh, pro.meshBefore[cast(size_t)(recordedHistoryLen - (k - 3))]);
+        else             okStep = meshIs(s.mesh, pro.meshBefore[cast(size_t)(pro.historyLen - (k - 3))]);
         assert(okStep, format("undo step %d: state differs from the peel/undo law: %s",
                               k, s.toString));
         // Positive control for the step-3 negation: the id the tool state
@@ -530,11 +558,12 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
             assert(s.tool != "edgeSlice",
                    format("undo step 3: the first-point peel did not turn the tool off: %s",
                           s.toString));
-        // Ending the tool with no latched point records nothing (plan S1,
-        // "Дизайн F (7112)"); below the tool-off assert so each is attributed.
+        // The peel that ends the tool also pops its activation row (task
+        // 7137); below the tool-off assert so each is attributed.
         if (k == 3)
-            assert(s.historyLen == recordedHistoryLen,
-                   format("undo step 3: ending the tool changed the history: %s", s.toString));
+            assert(s.historyLen == pro.historyLen,
+                   format("undo step 3: the first-point peel did not pop the activation row: %s",
+                          s.toString));
     }
     // End of loop, BELOW the law table (plan S1 RELAY → 7112, item 1): a stray
     // history row must redden the step-3 line above first, not this one.

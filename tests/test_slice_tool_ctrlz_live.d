@@ -2,10 +2,11 @@
 // Shift+C): the first Ctrl+Z during a live cut cancels that cut. The line is
 // the session's first (and only) gesture, so the same press also ends the tool
 // (owner decision 2026-09-23, after the reference capture, replacing the plan's
-// "tool stays active"). History: exactly the length after activation — Shift+C
-// records the tool's activation (measured), the cancel consumes and adds
-// nothing. Mesh/history first, the tool-off negation second, each with its
-// own message; a tool-id probe before Ctrl+Z is the negation's control.
+// "tool stays active"). History: Shift+C records the tool's activation
+// (measured); the press that ends the session pops that row too (task 7137),
+// so the history ends one below the length after activation. Mesh first, the
+// tool-off negation second, the history third, each with its own message; a
+// tool-id probe before Ctrl+Z is the negation's control.
 //
 // Prologue (tests/slice_leak_helpers.d): cube, top face lifted by a Move-gizmo
 // drag, back and left faces deleted (8v/4f). Shift+C, one line, Ctrl+Z — all
@@ -36,13 +37,18 @@ void ctrlzBlock(bool subpatchOn) {
     assert(ok && slAlive(), format("editor died on slice ctrl+z (subpatch %s)", tag));
     const after = slMesh();
     const labels = slHistoryLabels();
-    assert(after.canon == base.canon && labels.length == recordedHistoryLen,
+    assert(after.canon == base.canon,
            format("slice ctrl+z did not cancel the live cut (subpatch %s): mesh %s (expected %s), "
                   ~ "history %s (%d records, %d after activation)",
                   tag, after.toString, base.toString, labels, labels.length, recordedHistoryLen));
     const tool = slTool();
     assert(tool != "slice",
            format("slice ctrl+z did not turn the tool off (subpatch %s): tool '%s'", tag, tool));
+    // Task 7137: the press that ends the session also pops its activation row.
+    assert(labels.length == recordedHistoryLen - 1,
+           format("slice ctrl+z did not pop the activation row (subpatch %s): history %s "
+                  ~ "(%d records, %d after activation)",
+                  tag, labels, labels.length, recordedHistoryLen));
 }
 
 // Block A — subpatch OFF: the red cell on HEAD.
