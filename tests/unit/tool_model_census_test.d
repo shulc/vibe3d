@@ -821,9 +821,11 @@ void g() {
     // history.redo();
     recordGestureEdit(c, m);
 }
+void k(CommandHistory h) { h.redo(); }
 EOS", ["undo", "record", "canUndo", "redo"]);
     assert(w.get("fooHistory.undo", 0) == 1 && w.get("history.record", 0) == 1
            && w.get("hist.canUndo", 0) == 1 && w.get("history.undo", 0) == 1
-           && w.length == 5 && w.get("recordGestureEdit", 0) == 1,
+           && w.get("h.redo", 0) == 1
+           && w.length == 6 && w.get("recordGestureEdit", 0) == 1,
            format("tool census scanner cell: write spellings %s", w));
 }
