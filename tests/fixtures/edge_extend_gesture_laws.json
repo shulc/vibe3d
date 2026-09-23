@@ -995,7 +995,7 @@
     ]
    }
   },
-  "symmetry_law": "no mirrored copy is created; an element with x>0 receives (-ox, oy, oz), an element with x<0 receives (ox, oy, oz); the drawn arm follows +o",
+  "symmetry_law": "no mirrored copy is created; an element with x>0 receives (-ox, oy, oz), an element with x<0 receives (ox, oy, oz), an element with x==0 receives (0, oy, oz); the drawn arm follows +o",
   "switch_key_after_release": {
    "input": "after the X-arm drag is released, tap the scale-tool key",
    "before": {
@@ -1466,6 +1466,462 @@
     ]
    },
    "law": "every press on empty space commits the current extend and starts a NEW one at offset 0: (a) adds a zero-length ring (3 coincident vertices, 2 zero-area quads), (b) adds a ring offset by d2 from the previous one"
-  }
+  },
+  "symmetry_on_plane_vertex": {
+   "input": "symmetry X on, edge (0,1,0)-(1,1,0) selected (one end ON the plane); drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
+   "source_vertex_5": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0,
+     0.01
+    ],
+    [
+     0.02,
+     0.0,
+     0.02
+    ],
+    [
+     0.03,
+     0.0,
+     0.03
+    ],
+    [
+     0.04,
+     0.0,
+     0.04
+    ],
+    [
+     0.05,
+     0.0,
+     0.05
+    ],
+    [
+     0.065,
+     0.0,
+     0.065
+    ],
+    [
+     0.075,
+     0.0,
+     0.075
+    ],
+    [
+     0.085,
+     0.0,
+     0.085
+    ],
+    [
+     0.095,
+     0.0,
+     0.095
+    ],
+    [
+     0.105,
+     0.0,
+     0.105
+    ]
+   ],
+   "released": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.105,
+     0.0,
+     0.10499999999999998
+    ],
+    "tool": [
+     "edge_extend"
+    ],
+    "new_vertices": [
+     [
+      0.895,
+      1.0,
+      0.105
+     ],
+     [
+      0.0,
+      1.0,
+      0.105
+     ]
+    ]
+   },
+   "extruded_from_vertex_5_nearest_other_vertex": 0.105
+  },
+  "symmetry_on_plane_chain": {
+   "input": "symmetry X on, chain (-1,1,0)-(0,1,0)-(1,1,0) selected (crosses the plane at its middle vertex); drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
+   "source_vertex_5": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0,
+     0.01
+    ],
+    [
+     0.02,
+     0.0,
+     0.02
+    ],
+    [
+     0.03,
+     0.0,
+     0.03
+    ],
+    [
+     0.04,
+     0.0,
+     0.04
+    ],
+    [
+     0.05,
+     0.0,
+     0.05
+    ],
+    [
+     0.065,
+     0.0,
+     0.065
+    ],
+    [
+     0.075,
+     0.0,
+     0.075
+    ],
+    [
+     0.085,
+     0.0,
+     0.085
+    ],
+    [
+     0.095,
+     0.0,
+     0.095
+    ],
+    [
+     0.105,
+     0.0,
+     0.105
+    ]
+   ],
+   "released": {
+    "vertex_count": 12,
+    "polygon_count": 6,
+    "offset": [
+     0.105,
+     0.0,
+     0.10499999999999998
+    ],
+    "tool": [
+     "edge_extend"
+    ],
+    "new_vertices": [
+     [
+      0.0,
+      1.0,
+      0.105
+     ],
+     [
+      -0.895,
+      1.0,
+      0.105
+     ],
+     [
+      0.895,
+      1.0,
+      0.105
+     ]
+    ]
+   },
+   "extruded_from_vertex_5_nearest_other_vertex": 0.105
+  },
+  "symmetry_near_plane_plus": {
+   "input": "as symmetry_on_plane_vertex with the on-plane vertex moved to x = +1e-4; drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
+   "source_vertex_5": [
+    0.0001,
+    1.0,
+    0.0
+   ],
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0,
+     0.01
+    ],
+    [
+     0.02,
+     0.0,
+     0.02
+    ],
+    [
+     0.03,
+     0.0,
+     0.03
+    ],
+    [
+     0.04,
+     0.0,
+     0.04
+    ],
+    [
+     0.05,
+     0.0,
+     0.05
+    ],
+    [
+     0.065,
+     0.0,
+     0.065
+    ],
+    [
+     0.075,
+     0.0,
+     0.075
+    ],
+    [
+     0.085,
+     0.0,
+     0.085
+    ],
+    [
+     0.095,
+     0.0,
+     0.095
+    ],
+    [
+     0.105,
+     0.0,
+     0.105
+    ]
+   ],
+   "released": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.105,
+     0.0,
+     0.10499999999999998
+    ],
+    "tool": [
+     "edge_extend"
+    ],
+    "new_vertices": [
+     [
+      0.895,
+      1.0,
+      0.105
+     ],
+     [
+      -0.1049,
+      1.0,
+      0.105
+     ]
+    ]
+   },
+   "extruded_from_vertex_5_nearest_other_vertex": 0.148492
+  },
+  "symmetry_near_plane_minus": {
+   "input": "as symmetry_on_plane_vertex with the on-plane vertex moved to x = -1e-4; drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
+   "source_vertex_5": [
+    -0.0001,
+    1.0,
+    0.0
+   ],
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0,
+     0.01
+    ],
+    [
+     0.02,
+     0.0,
+     0.02
+    ],
+    [
+     0.03,
+     0.0,
+     0.03
+    ],
+    [
+     0.04,
+     0.0,
+     0.04
+    ],
+    [
+     0.05,
+     0.0,
+     0.05
+    ],
+    [
+     0.065,
+     0.0,
+     0.065
+    ],
+    [
+     0.075,
+     0.0,
+     0.075
+    ],
+    [
+     0.085,
+     0.0,
+     0.085
+    ],
+    [
+     0.095,
+     0.0,
+     0.095
+    ],
+    [
+     0.105,
+     0.0,
+     0.105
+    ]
+   ],
+   "released": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.105,
+     0.0,
+     0.10499999999999998
+    ],
+    "tool": [
+     "edge_extend"
+    ],
+    "new_vertices": [
+     [
+      0.895,
+      1.0,
+      0.105
+     ],
+     [
+      0.1049,
+      1.0,
+      0.105
+     ]
+    ]
+   },
+   "extruded_from_vertex_5_nearest_other_vertex": 0.148492
+  },
+  "on_plane_vertex_no_symmetry_control": {
+   "input": "symmetry OFF, edge (0,1,0)-(1,1,0) selected; drag on EMPTY space 10 x (+4,+4) px (diagonal), release",
+   "source_vertex_5": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "offset_trace": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.01,
+     0.0,
+     0.01
+    ],
+    [
+     0.02,
+     0.0,
+     0.02
+    ],
+    [
+     0.03,
+     0.0,
+     0.03
+    ],
+    [
+     0.04,
+     0.0,
+     0.04
+    ],
+    [
+     0.05,
+     0.0,
+     0.05
+    ],
+    [
+     0.065,
+     0.0,
+     0.065
+    ],
+    [
+     0.075,
+     0.0,
+     0.075
+    ],
+    [
+     0.085,
+     0.0,
+     0.085
+    ],
+    [
+     0.095,
+     0.0,
+     0.095
+    ],
+    [
+     0.105,
+     0.0,
+     0.105
+    ]
+   ],
+   "released": {
+    "vertex_count": 11,
+    "polygon_count": 5,
+    "offset": [
+     0.105,
+     0.0,
+     0.10499999999999998
+    ],
+    "tool": [
+     "edge_extend"
+    ],
+    "new_vertices": [
+     [
+      1.105,
+      1.0,
+      0.105
+     ],
+     [
+      0.105,
+      1.0,
+      0.105
+     ]
+    ]
+   },
+   "extruded_from_vertex_5_nearest_other_vertex": 0.148492
+  },
+  "symmetry_on_plane_law": "a source vertex with x == 0 exactly receives (0, oy, oz): its X offset is ZEROED, it stays on the plane and is extruded once, welded to nothing; the sign test is strict -- x = +1e-4 already receives -ox and x = -1e-4 receives +ox (no tolerance band at 1e-4)"
  }
 }
