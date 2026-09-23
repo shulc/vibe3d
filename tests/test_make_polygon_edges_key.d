@@ -335,10 +335,11 @@ unittest {
     assert(ints(s2["selectedFaces"]) == [5],
         format("edge make polygon kept a lingering polygon selection: %s", ints(s2["selectedFaces"])));
     assert(s2["selectedEdges"].array.length == 4, "edge make polygon dropped the edge selection (lingering)");
-    // Our rule, as in the vertex branch (the reference's mode change is not
-    // recorded): the product is a polygon, so the selection type follows it.
-    assert(s2["mode"].str == "polygons",
-        "edge make polygon did not promote the selection type: " ~ s2["mode"].str);
+    // Captured law (`make_polygon_selection_mode`, block 5 drives the key):
+    // the selection type does NOT follow the product. Red before the fix:
+    // "edge make polygon changed the selection type: polygons".
+    assert(s2["mode"].str == "edges" && s2["selType"].str == "edge",
+        "edge make polygon changed the selection type: " ~ s2["mode"].str);
 }
 
 // 4. The key: P in edge mode is Make Polygon. RED on HEAD 9f434948 (shown by
@@ -354,4 +355,60 @@ unittest {
         format("key P: edge make polygon winding disagrees with neighbours: got %s", np));
     assert(selectedEdgePairs() == pairs(c["after"]["selected"]["edges"]),
         "key P: make polygon dropped the edge selection");
+}
+
+// 5. Mode after P (captured law `make_polygon_selection_mode`): the selection
+// TYPE stays where it was — edge stays edge with its edges kept, vertex stays
+// vertex with its vertices dropped — and the new polygon is selected behind
+// it. Both cells went red on the promoting build (mode "polygons").
+unittest {
+    auto law = fixture()["make_polygon_selection_mode"]["cells"];
+    size_t cells;
+    foreach (name; ["p-e4-mode", "p-v4-mode"]) {
+        auto c = law[name];
+        immutable bool edges = c["mode"].str == "edge";
+        assert(c["mode_before"].str == c["mode"].str, "fixture: " ~ name ~ " mode_before");
+        auto rg = fixture()["rigs"][c["rig"].str];
+        auto body = JSONValue.emptyObject;
+        body["vertices"] = rg["vertices"];
+        body["faces"] = rg["polygons"];
+        ok(postJson("/api/command", commandBody("scene.reset")), "scene.reset");
+        ok(postJson("/api/command", commandBody("scene.loadMesh", body.toString)), "scene.loadMesh");
+        ok(postJson("/api/command", edges ? "select.typeFrom edge" : "select.typeFrom vertex"),
+            "select.typeFrom");
+        string idx;
+        if (edges) {
+            uint[2][] ps;
+            foreach (p; ints2(c["selection_given"])) ps ~= [cast(uint) p[0], cast(uint) p[1]];
+            idx = edgeIdx(ps);
+        } else {
+            idx = "[";
+            foreach (i, v; ints(c["selection_given"])) idx ~= (i ? "," : "") ~ format("%d", v);
+            idx ~= "]";
+        }
+        sel(edges ? "edges" : "vertices", idx);
+        clearHistory();
+        auto s0 = getJson("/api/selection");
+        immutable string wantMode = edges ? "edges" : "vertices";
+        assert(s0["mode"].str == wantMode, name ~ ": rig mode is " ~ s0["mode"].str);
+
+        pressKey(SDLK_p, 0);
+        auto m = getJson("/api/model");
+        assert(m["faceCount"].integer == 6, name ~ ": key P did not make a polygon");
+        assert(cyclicEqual(ints2(m["faces"])[5], ints(c["new_polygon"])),
+            name ~ ": new polygon differs from the fixture");
+        auto s = getJson("/api/selection");
+        assert(c["mode_after"].str == c["mode"].str, "fixture: " ~ name ~ " mode_after");
+        assert(s["mode"].str == wantMode,
+            name ~ ": make polygon changed the selection type: " ~ s["mode"].str);
+        assert(ints(s["selectedVertices"]) == ints(c["selected_after"]["vertices"]),
+            name ~ ": vertex selection after P differs from the fixture");
+        assert(ints(s["selectedFaces"]) == ints(c["selected_after"]["polygons"]),
+            name ~ ": polygon selection after P differs from the fixture");
+        if (edges)
+            assert(selectedEdgePairs() == pairs(c["selection_given"]),
+                name ~ ": make polygon dropped the edge selection");
+        ++cells;
+    }
+    assert(cells == 2);
 }

@@ -80,3 +80,10 @@ bindings:
   # Same delete law as config/shortcuts.yaml (task 7132): Delete (forward
   # delete) also deletes; Shift+Backspace removes; Cmd+Backspace is unbound.
   - { key: "Delete",                        command: "mesh.delete" }
+  # Item mode: Backspace and Delete delete the selected ITEM (layer.delete),
+  # (args pinned: -1 = the edit target, and no args dialog), and
+  # Shift+Backspace does nothing — the mesh rows above would otherwise
+  # edit the retained geometry selection of a mode that is not current.
+  - { key: "Backspace",       mode: item,   command: "layer.delete -1" }
+  - { key: "Delete",          mode: item,   command: "layer.delete -1" }
+  - { key: "Shift+Backspace", mode: item,   unbound: true }

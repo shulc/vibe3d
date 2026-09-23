@@ -190,6 +190,7 @@ string inputContextJson(bool havePoint, int px, int py, string canon) {
             JSONValue m;
             m["kind"]     = JSONValue(b.kind == BindingKind.tool ? "tool"
                                     : b.kind == BindingKind.command ? "command"
+                                    : b.kind == BindingKind.unbound ? "unbound"
                                     : "editmode");
             m["id"]       = JSONValue(b.id);
             m["args"]     = JSONValue(b.args);

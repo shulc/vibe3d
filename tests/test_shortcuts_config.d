@@ -142,3 +142,51 @@ unittest {
     }
     assert(modes == 3, "population floor: the pins did not run in 3 modes");
 }
+
+// Item mode (captured law `item_mode_delete_keys`, task 7132): Backspace and
+// Delete delete the selected ITEM whole, Shift+Backspace does nothing. So in
+// `mode: item` both delete keys resolve to `layer.delete` with the edit-target
+// argument pinned (a visible `index` param would otherwise open the args
+// dialog), and Shift+Backspace resolves to an explicit no-op row — a MISSING
+// row would fall through to the wildcard `mesh.remove` and edit the retained
+// geometry selection. Red before the fix: "... backspace is not layer.delete
+// (item mode)". The component-mode rows above stay mesh.* (their own block).
+private string boundKind(ShortcutTable tbl, int sym, int mod, string mode) {
+    immutable canon = canonFromEvent(sym, cast(SDL_Keymod) mod);
+    immutable i = resolveBinding(tbl.bindings, canon, "", mode, "");
+    if (i < 0) return "none";
+    final switch (tbl.bindings[i].kind) {
+        case BindingKind.tool:     return "tool";
+        case BindingKind.command:  return "command:" ~ tbl.bindings[i].id
+                                        ~ "|" ~ tbl.bindings[i].args;
+        case BindingKind.editMode: return "editmode";
+        case BindingKind.unbound:  return "unbound";
+    }
+}
+
+unittest {
+    size_t layouts;
+    foreach (path; ["config/shortcuts.yaml", "config/shortcuts_macos.yaml"]) {
+        auto tbl = loadShortcuts(path);
+        immutable at = " (item mode, " ~ path ~ ")";
+        assert(boundKind(tbl, SDLK_BACKSPACE, 0, "item") == "command:layer.delete|-1",
+            "backspace is not layer.delete" ~ at ~ ": " ~ boundKind(tbl, SDLK_BACKSPACE, 0, "item"));
+        assert(boundKind(tbl, SDLK_DELETE, 0, "item") == "command:layer.delete|-1",
+            "delete is not layer.delete" ~ at ~ ": " ~ boundKind(tbl, SDLK_DELETE, 0, "item"));
+        assert(boundKind(tbl, SDLK_BACKSPACE, KMOD_LSHIFT, "item") == "unbound",
+            "shift+backspace is not an explicit no-op" ~ at ~ ": "
+            ~ boundKind(tbl, SDLK_BACKSPACE, KMOD_LSHIFT, "item"));
+        ++layouts;
+    }
+    assert(layouts == 2);
+
+    // Loader contract of the no-op row: `unbound: false` is refused.
+    import std.file : write, remove, tempDir;
+    import std.path : buildPath;
+    import std.exception : collectExceptionMsg;
+    immutable tmp = buildPath(tempDir, "vibe3d_unbound_false_test.yaml");
+    write(tmp, "bindings:\n  - { key: \"Shift+Backspace\", mode: item, unbound: false }\n");
+    scope (exit) remove(tmp);
+    immutable msg = collectExceptionMsg(loadShortcuts(tmp));
+    assert(msg !is null && msg.length > 0, "`unbound: false` loaded silently");
+}

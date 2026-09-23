@@ -328,14 +328,9 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         new MeshVertexSplit(&owner.activeMesh(), live.view(), live.mode()));
     reg.registerCommand("mesh.reduce", () => cast(Command)
         new MeshReduce(&owner.activeMesh(), live.view(), live.mode()));
-    reg.registerCommand("mesh.makePolygon", () {
-        auto c = new MeshMakePolygon(&owner.activeMesh(), live.view(), live.mode());
-        // Task 1180: the new face is the command's PRODUCT and re-pointing at
-        // it changes the element type — route that through the geometry-type
-        // funnel (promote, no tool-drop), same hook mesh.select takes.
-        c.setPromoteHook(deps.promoteGeometryType());
-        return cast(Command) c;
-    });
+    // No promote hook: Make Polygon leaves the selection type alone (task 7132).
+    reg.registerCommand("mesh.makePolygon", () => cast(Command)
+        new MeshMakePolygon(&owner.activeMesh(), live.view(), live.mode()));
     reg.registerCommand("mesh.select", () {
         auto c = new MeshSelect(&owner.activeMesh(), live.view(), live.mode(), live.modeCell());
         c.setPromoteHook(deps.promoteGeometryType());

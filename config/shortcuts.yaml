@@ -83,8 +83,9 @@ editmodes:
 # different axes" cannot happen. Two rows identical in chord AND slots are a
 # load error rather than a silent first-wins.
 #
-# Exactly one of `command:` / `tool:` / `editmode:` per row. `command:` takes
-# the whole argstring, like the baked form above.
+# Exactly one of `command:` / `tool:` / `editmode:` / `unbound: true` per row.
+# `command:` takes the whole argstring, like the baked form above; `unbound`
+# consumes the chord in its scope and runs nothing.
 # ---------------------------------------------------------------------------
 bindings:
   # Pie (radial) menu — the same chord means a different menu depending on
@@ -95,3 +96,10 @@ bindings:
   # Shift+Backspace removes and keeps the points (task 7132). A command has
   # one chord in `commands:`, so the second key for mesh.delete lives here.
   - { key: "Backspace",                     command: "mesh.delete" }
+  # Item mode: Backspace and Delete delete the selected ITEM (layer.delete),
+  # (args pinned: -1 = the edit target, and no args dialog), and
+  # Shift+Backspace does nothing — the mesh rows above would otherwise
+  # edit the retained geometry selection of a mode that is not current.
+  - { key: "Backspace",       mode: item,   command: "layer.delete -1" }
+  - { key: "Delete",          mode: item,   command: "layer.delete -1" }
+  - { key: "Shift+Backspace", mode: item,   unbound: true }

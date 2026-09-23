@@ -285,7 +285,11 @@ ShortcutTable loadShortcuts(string path) {
 // Scoped bindings (task 1810)
 // ===========================================================================
 
-enum BindingKind { tool, command, editMode }
+/// `unbound` is an explicit NO-OP row: it wins its context by the usual weight
+/// and consumes the chord, so a wildcard row cannot fire there (item-mode
+/// Shift+Backspace, task 7132 — the reference binds that chord in component
+/// modes only).
+enum BindingKind { tool, command, editMode, unbound }
 
 /// One row of the resolved input map: a chord, the context slots it requires,
 /// and what it runs. An empty slot is a WILDCARD — it matches anything.
@@ -434,10 +438,11 @@ private Binding[] buildBindings(NodeT)(NodeT root, ref ShortcutTable tbl, string
             if (row.containsKey("command"))  ++actions;
             if (row.containsKey("tool"))     ++actions;
             if (row.containsKey("editmode")) ++actions;
+            if (row.containsKey("unbound"))  ++actions;
             if (actions != 1)
                 throw new Exception(format(
                     "shortcuts: `bindings:` row '%s' in '%s' must have exactly one of "
-                    ~ "command / tool / editmode, found %d", rawKey, path, actions));
+                    ~ "command / tool / editmode / unbound, found %d", rawKey, path, actions));
 
             if (row.containsKey("command")) {
                 b.kind = BindingKind.command;
@@ -449,6 +454,14 @@ private Binding[] buildBindings(NodeT)(NodeT root, ref ShortcutTable tbl, string
                 while (sp < line.length && line[sp] != ' ' && line[sp] != '\t') ++sp;
                 b.id   = line[0 .. sp];
                 b.args = sp < line.length ? line[sp .. $].strip : "";
+            } else if (row.containsKey("unbound")) {
+                // Only `true` means anything; `unbound: false` would read as
+                // "bound" while binding nothing.
+                if (!row["unbound"].as!bool)
+                    throw new Exception(format(
+                        "shortcuts: `bindings:` row '%s' in '%s' has `unbound: false`; "
+                        ~ "omit the row instead", rawKey, path));
+                b.kind = BindingKind.unbound;
             } else if (row.containsKey("tool")) {
                 b.kind = BindingKind.tool;
                 b.id   = row["tool"].as!string;

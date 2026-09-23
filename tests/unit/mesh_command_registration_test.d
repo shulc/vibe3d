@@ -250,8 +250,9 @@ unittest {
         "6509 remesh door: mesh.remesh.open reached the rebuild-drop door");
 }
 
-// B7: the two selection-type producers receive the promote door and an
-// unrelated mesh command does not.
+// B7: mesh.select receives the promote door; Make Polygon (which leaves the
+// selection type alone — captured law, task 7132) and an unrelated mesh
+// command do not.
 unittest {
     auto rig = registeredRig();
     assert(rig.promotions.length == 0,
@@ -261,16 +262,19 @@ unittest {
     m.selectVertex(0);
     m.selectVertex(1);
     m.selectVertex(2);
+    const facesBefore = m.faces.length;
     rig.registry.makeCommand("mesh.makePolygon").apply();
-    assert(rig.promotions == [EditMode.Polygons],
-        "6509 promote door: mesh.makePolygon did not promote to polygons");
+    assert(m.faces.length == facesBefore + 1,
+        "7132 promote floor: mesh.makePolygon did not build its polygon");
+    assert(rig.promotions.length == 0,
+        "7132 promote ceiling: mesh.makePolygon changed the selection type");
 
     auto select = cast(MeshSelect) rig.registry.makeCommand("mesh.select");
     assert(select !is null, "6509 promote fixture: mesh.select type changed");
     select.setMode("edges");
     select.setIndices([0]);
     select.apply();
-    assert(rig.promotions == [EditMode.Polygons, EditMode.Edges],
+    assert(rig.promotions == [EditMode.Edges],
         "6509 promote door: mesh.select did not promote to edges");
 
     const before = rig.promotions.length;

@@ -523,6 +523,8 @@ struct InputRouter {
                                                   ictx.zone, ictx.mode, ictx.whenTool);
                 if (bi >= 0) {
                   auto bnd = shortcuts.bindings[bi];
+                  // An explicit no-op row: the chord is consumed, nothing runs.
+                  if (bnd.kind == BindingKind.unbound) return;
                   if (bnd.kind == BindingKind.tool) {
                     activateToolById(bnd.id);
                     return;

@@ -45,12 +45,12 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// `repointToNothing`, which clears all three domains, and no op-log kind
 /// carries a selection-order stamp.
 ///
-/// WHAT NEITHER PATH RESTORES, recorded rather than fixed here: the selection
-/// TYPE. `promoteType(EditMode.Polygons)` writes `SelType`, not the mesh, and
-/// `MeshSnapshot` never carried it either — so an undo of this command leaves
-/// the editor in Polygons mode on BOTH paths. That is unchanged behaviour, not
-/// a regression of the migration, and fixing it is a SelType question rather
-/// than an undo one.
+/// The selection TYPE does not change: from an edge selection the mode stays
+/// edge, from a vertex selection it stays vertex; the new face is selected in
+/// the polygon domain behind the current type. Captured, not chosen (task
+/// 7132): `make_polygon_selection_mode` in
+/// `tests/fixtures/delete_makepoly_lasso_hide_keys.json`, pinned live by
+/// `tests/test_make_polygon_edges_key.d`.
 class MeshMakePolygon : Command, Operator {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
@@ -63,21 +63,8 @@ class MeshMakePolygon : Command, Operator {
         public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
     }
 
-    // Task 1180: the app's geometry-type funnel (`promoteGeometryType`), taken
-    // exactly as `select.convert` takes it. Re-pointing at the new FACE is a
-    // geometry selection that changes the element TYPE, and `editMode` is never
-    // written independently of the SelType recent-ordering (see seltype.d).
-    // Null in unit tests / any host without an ordering — the selection is
-    // re-pointed either way, only the type promotion is skipped.
-    private void delegate(EditMode) promoteType;
-
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
-    }
-
-    MeshMakePolygon setPromoteHook(void delegate(EditMode) h) {
-        promoteType = h;
-        return this;
     }
 
     override string name()  const { return "mesh.makePolygon"; }
@@ -157,15 +144,9 @@ class MeshMakePolygon : Command, Operator {
             ordered, flip_, /*autoOrient*/true, Mesh.MakePolyGates.none);
         if (fi < 0) return false;
 
-        // Post-success (task 1180): re-point at the PRODUCT — the new face —
-        // and drop the vertices it consumed. This is the one command in the
-        // family whose product sits a dimension ABOVE its input, so it is also
-        // the one that promotes the selection TYPE: selecting a face while the
-        // type stayed Vertex is exactly the incoherence the previous comment
-        // here named as its reason for leaving the vertices alone. The funnel
-        // (not a direct `editMode` write) is what keeps EditMode in lockstep
-        // with the SelType ordering, and it promotes WITHOUT dropping the
-        // active tool — a selection is not a mode switch.
+        // Post-success: re-point at the PRODUCT — the new face — and drop the
+        // vertices it consumed. The selection TYPE is left alone (see the
+        // class doc): the face is selected in the polygon domain only.
         if (fromEdges) {
             // Edge branch: the edge selection is the input AND survives.
             // (the kernel already grew the selection planes for the face)
@@ -176,7 +157,6 @@ class MeshMakePolygon : Command, Operator {
         } else {
             repointToFaces(&ed.mesh(), [cast(uint) fi]);
         }
-        if (promoteType !is null) promoteType(EditMode.Polygons);
         return true;
     }
 
