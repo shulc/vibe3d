@@ -956,8 +956,10 @@ EOS";
         assert(keyCountsOf(h) == [1, 0],
                format("tool census scanner cell: key fields %s, expected [1, 0] in\n%s",
                       keyCountsOf(h), h));
-    // Alias / spelled-out key spellings: four escapes, two non-escapes.
+    // Alias / spelled-out key spellings: four escapes; a bare `MeshKey` beside
+    // the term (an import), a non-mutation term and another alias are not.
     const esc = keyEscapesOf(q"EOS
+import mesh : MeshKey, MeshTermMutation;
 alias K = mesh.MeshCacheKey;
 alias SessionMeshKey S2;
 class A { MeshKey!(MeshTermGeomEpoch, MeshTermMutation) k; MeshKey!MeshTermMutation j; }
