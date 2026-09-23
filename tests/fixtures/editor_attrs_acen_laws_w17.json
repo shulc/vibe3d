@@ -1,0 +1,2748 @@
+{
+ "provenance": {
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "GUI worker, real XTest pointer/keys with relative increments (one in flight); per-increment values read by a debugger hook at the tool-attribute write and at the transform-handle compute site (no editor call while a button is held), cross-checked against the editor's command journal; root-window frames; state read through the editor bridge only before arming and after release",
+  "captured_utc": "2026-09-23",
+  "harness": "toolcards/bugfix_w17_attrs_acen/harness (private)",
+  "task": "7105"
+ },
+ "value_drag": {
+  "gesture": "LMB press in empty viewport space with the tool armed, then relative increments; x = screen right",
+  "merge_points": {
+   "rig": "cube half-size 0.5, the 4 top vertices selected, top orthographic view",
+   "law": "value = value_at_press + 0.05 * pixel_size * (screen-x offset from the press); the written value is SIGNED during the drag (goes below 0); the value kept after release is max(0, last); a vertical drag leaves the value unchanged",
+   "horizontal": {
+    "pixel_size_m": 0.0021959837925048056,
+    "legs_px": [
+     [
+      "+x",
+      10,
+      4
+     ],
+     [
+      "-x",
+      20,
+      4
+     ],
+     [
+      "+x",
+      5,
+      4
+     ]
+    ],
+    "value_at_press": 0.001,
+    "values_per_increment": [
+     0.001439197,
+     0.001878394,
+     0.00231759,
+     0.002756787,
+     0.003195984,
+     0.003635181,
+     0.004074377,
+     0.004513574,
+     0.004952771,
+     0.005391968,
+     0.004952771,
+     0.004513574,
+     0.004074377,
+     0.003635181,
+     0.003195984,
+     0.002756787,
+     0.00231759,
+     0.001878394,
+     0.001439197,
+     0.001,
+     0.000560803,
+     0.000121606,
+     -0.00031759,
+     -0.000756787,
+     -0.001195984,
+     -0.001635181,
+     -0.002074377,
+     -0.002513574,
+     -0.002952771,
+     -0.003391968,
+     -0.002952771,
+     -0.002513574,
+     -0.002074377,
+     -0.001635181,
+     -0.001195984
+    ],
+    "stored_after_release": 0.0
+   },
+   "horizontal_long_zoomed": {
+    "pixel_size_m": 0.004391967585009611,
+    "legs_px": [
+     [
+      "+x",
+      12,
+      1
+     ],
+     [
+      "-x",
+      60,
+      4
+     ],
+     [
+      "+x",
+      10,
+      4
+     ]
+    ],
+    "value_at_press": 0.001,
+    "values_per_increment": [
+     0.001219598,
+     0.001439197,
+     0.001658795,
+     0.001878394,
+     0.002097992,
+     0.00231759,
+     0.002537189,
+     0.002756787,
+     0.002976385,
+     0.003195984,
+     0.003415582,
+     0.003635181,
+     0.002756787,
+     0.001878394,
+     0.001,
+     0.000121606,
+     -0.000756787,
+     -0.001635181,
+     -0.002513574,
+     -0.003391968,
+     -0.004270361,
+     -0.005148755,
+     -0.006027148,
+     -0.006905542,
+     -0.007783935,
+     -0.008662329,
+     -0.009540722,
+     -0.010419116,
+     -0.011297509,
+     -0.012175903,
+     -0.013054296,
+     -0.01393269,
+     -0.014811083,
+     -0.015689477,
+     -0.01656787,
+     -0.017446264,
+     -0.018324657,
+     -0.019203051,
+     -0.020081444,
+     -0.020959838,
+     -0.021838231,
+     -0.022716625,
+     -0.023595018,
+     -0.024473412,
+     -0.025351806,
+     -0.026230199,
+     -0.027108593,
+     -0.027986986,
+     -0.02886538,
+     -0.029743773,
+     -0.030622167,
+     -0.03150056,
+     -0.032378954,
+     -0.033257347,
+     -0.034135741,
+     -0.035014134,
+     -0.035892528,
+     -0.036770921,
+     -0.037649315,
+     -0.038527708,
+     -0.039406102,
+     -0.040284495,
+     -0.041162889,
+     -0.042041282,
+     -0.042919676,
+     -0.043798069,
+     -0.044676463,
+     -0.045554856,
+     -0.04643325,
+     -0.047311643,
+     -0.048190037,
+     -0.04906843,
+     -0.048190037,
+     -0.047311643,
+     -0.04643325,
+     -0.045554856,
+     -0.044676463,
+     -0.043798069,
+     -0.042919676,
+     -0.042041282,
+     -0.041162889,
+     -0.040284495
+    ],
+    "stored_after_release": 0.0
+   },
+   "vertical": {
+    "legs_px": [
+     [
+      "+y",
+      10,
+      4
+     ],
+     [
+      "-y",
+      20,
+      4
+     ],
+     [
+      "+y",
+      5,
+      4
+     ]
+    ],
+    "values_per_increment": [
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001,
+     0.001
+    ]
+   }
+  },
+  "inset": {
+   "rig": "cube half-size 0.5, the top polygon selected, top orthographic view",
+   "law": "value = value_at_press + c * (screen-x offset from the press), c a round step proportional to the pixel size (0.0005 m/px at pixel size 0.0021960, 0.001 at 0.0043920); SIGNED (no clamp at 0, kept negative after release); DETENTS: the value holds for 40 px of travel at 0 and at every 100 px-worth multiple (0.05 m at the first zoom, 0.1 m at the second) before continuing",
+   "horizontal": {
+    "pixel_size_m": 0.0021959837925048056,
+    "legs_px": [
+     [
+      "+x",
+      10,
+      4
+     ],
+     [
+      "-x",
+      20,
+      4
+     ],
+     [
+      "+x",
+      5,
+      4
+     ]
+    ],
+    "value_at_press": 0.0,
+    "values_per_increment": [
+     0.002,
+     0.004,
+     0.006,
+     0.008,
+     0.01,
+     0.012,
+     0.014,
+     0.016,
+     0.018,
+     0.02,
+     0.018,
+     0.016,
+     0.014,
+     0.012,
+     0.01,
+     0.008,
+     0.006,
+     0.004,
+     0.002,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     -0.002,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "stored_after_release": 0.0
+   },
+   "horizontal_long_zoomed": {
+    "pixel_size_m": 0.004391967585009611,
+    "legs_px": [
+     [
+      "+x",
+      12,
+      1
+     ],
+     [
+      "-x",
+      60,
+      4
+     ],
+     [
+      "+x",
+      10,
+      4
+     ]
+    ],
+    "value_at_press": 0.0,
+    "values_per_increment": [
+     0.001,
+     0.002,
+     0.003,
+     0.004,
+     0.005,
+     0.006,
+     0.007,
+     0.008,
+     0.009,
+     0.01,
+     0.011,
+     0.012,
+     0.008,
+     0.004,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     -0.004,
+     -0.008,
+     -0.012,
+     -0.016,
+     -0.02,
+     -0.024,
+     -0.028,
+     -0.032,
+     -0.036,
+     -0.04,
+     -0.044,
+     -0.048,
+     -0.052,
+     -0.056,
+     -0.06,
+     -0.064,
+     -0.068,
+     -0.072,
+     -0.076,
+     -0.08,
+     -0.084,
+     -0.088,
+     -0.092,
+     -0.096,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.1,
+     -0.104,
+     -0.108,
+     -0.112,
+     -0.116,
+     -0.12,
+     -0.124,
+     -0.128,
+     -0.132,
+     -0.136,
+     -0.14,
+     -0.144,
+     -0.148,
+     -0.152,
+     -0.156,
+     -0.152,
+     -0.148,
+     -0.144,
+     -0.14,
+     -0.136,
+     -0.132,
+     -0.128,
+     -0.124,
+     -0.12,
+     -0.116
+    ],
+    "stored_after_release": -0.116
+   }
+  },
+  "rivals": {
+   "press_relative": "selected (both tools)",
+   "accumulate_with_clamp": "refuted: merge requests go negative mid-drag; inset after the final +5 stays at the press-relative value",
+   "last_step_only": "refuted: the value grows linearly with k on every leg"
+  }
+ },
+ "selection_centre_move": {
+  "rig": {
+   "v": "quad strip in XZ, x lines 0..5, z 0..1; vertices (0,0,0),(1,0,0),(5,0,0) selected (box centre x 2.5, mean 2.0)",
+   "e": "same strip; the three z-edges at x = 0, 1, 5 selected",
+   "p": "strip x lines -0.5..5.5; the quads centred at x = 0, 1, 5 selected (box 2.5, unique-vertex mean 2.3, polygon-centre mean 2.0)",
+   "v-off": "as v, but the second press lands on empty space (off every handle)"
+  },
+  "tool": "move, action centre = selection (centre mode 'center' = bounding-box centre, the reference help's own words), no falloff, no symmetry, top orthographic",
+  "gesture": "press the arm of the first in-plane axis, 10 x 4 px right, release; press the other in-plane arm (or empty space for v-off), 5 x 4 px up, release",
+  "law": "centre = bounding-box centre of the selection's vertices, computed at the session's start and FROZEN for the whole run (both drags); handle = centre + M*T at every increment with residual 0; slope exactly 1, no first-step offset. A press on an arm continues the run (T accumulates, centre unchanged); a press off every handle restarts it: T := 0 and the centre is recomputed from the MOVED selection (= old centre + M*T), so the drawn handle does not move at the press either",
+  "rivals": {
+   "bbox_centre": "selected in v, e, p (margin 0.5 against the vertex mean, 0.2 against the unique-vertex mean in p)",
+   "vertex_mean": "refuted",
+   "polygon_centre_mean": "refuted",
+   "double_count": "refuted (slope 1, residual 0)",
+   "first_step_rule_switch": "refuted (handle_1 - handle_0 = M*T_1 exactly)"
+  },
+  "cells": {
+   "v": {
+    "axis_matrix_rows": [
+     [
+      -1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "steps": [
+     {
+      "at": "PRESSED D1",
+      "handle": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=1",
+      "handle": [
+       2.53,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.03,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=2",
+      "handle": [
+       2.55,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.05,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=3",
+      "handle": [
+       2.58,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.08,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=4",
+      "handle": [
+       2.6,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.1,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=5",
+      "handle": [
+       2.63,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.13,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=6",
+      "handle": [
+       2.66,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.16,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=7",
+      "handle": [
+       2.68,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.18,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=8",
+      "handle": [
+       2.71,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.21,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=9",
+      "handle": [
+       2.74,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.24,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=10",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D1",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE1",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "PRESSED D2",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=1",
+      "handle": [
+       2.76,
+       0.0,
+       -0.03
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.03
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=2",
+      "handle": [
+       2.76,
+       0.0,
+       -0.05
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.05
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=3",
+      "handle": [
+       2.76,
+       0.0,
+       -0.08
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.08
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=4",
+      "handle": [
+       2.76,
+       0.0,
+       -0.1
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.1
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=5",
+      "handle": [
+       2.76,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D2",
+      "handle": [
+       2.76,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE2",
+      "handle": [
+       2.76,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     }
+    ],
+    "vertices_before": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.0,
+      0.0,
+      0.0
+     ],
+     [
+      5.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "vertices_after": [
+     [
+      0.26,
+      0.0,
+      -0.13
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.26,
+      0.0,
+      -0.13
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.2600002,
+      0.0,
+      -0.13
+     ],
+     [
+      5.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "e": {
+    "axis_matrix_rows": [
+     [
+      -1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -1.0,
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ],
+    "steps": [
+     {
+      "at": "PRESSED D1",
+      "handle": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=1",
+      "handle": [
+       2.53,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.03,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=2",
+      "handle": [
+       2.55,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.05,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=3",
+      "handle": [
+       2.58,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.08,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=4",
+      "handle": [
+       2.6,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.1,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=5",
+      "handle": [
+       2.63,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.13,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=6",
+      "handle": [
+       2.66,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.16,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=7",
+      "handle": [
+       2.68,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.18,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=8",
+      "handle": [
+       2.71,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.21,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=9",
+      "handle": [
+       2.74,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.24,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=10",
+      "handle": [
+       2.76,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D1",
+      "handle": [
+       2.76,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE1",
+      "handle": [
+       2.76,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "PRESSED D2",
+      "handle": [
+       2.76,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=1",
+      "handle": [
+       2.76,
+       0.0,
+       0.47
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.03,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=2",
+      "handle": [
+       2.76,
+       0.0,
+       0.45
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.05,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=3",
+      "handle": [
+       2.76,
+       0.0,
+       0.42
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.08,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=4",
+      "handle": [
+       2.76,
+       0.0,
+       0.4
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.1,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=5",
+      "handle": [
+       2.76,
+       0.0,
+       0.37
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.13,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D2",
+      "handle": [
+       2.76,
+       0.0,
+       0.37
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.13,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE2",
+      "handle": [
+       2.76,
+       0.0,
+       0.37
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.26,
+       0.13,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     }
+    ],
+    "vertices_before": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.0,
+      0.0,
+      0.0
+     ],
+     [
+      5.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "vertices_after": [
+     [
+      0.26,
+      0.0,
+      -0.13
+     ],
+     [
+      0.26,
+      0.0,
+      0.87
+     ],
+     [
+      1.26,
+      0.0,
+      -0.13
+     ],
+     [
+      1.26,
+      0.0,
+      0.87
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.2600002,
+      0.0,
+      -0.13
+     ],
+     [
+      5.2600002,
+      0.0,
+      0.87
+     ]
+    ]
+   },
+   "p": {
+    "axis_matrix_rows": [
+     [
+      -1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -1.0,
+      0.0,
+      -1.0,
+      0.0
+     ]
+    ],
+    "steps": [
+     {
+      "at": "PRESSED D1",
+      "handle": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=1",
+      "handle": [
+       2.53,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.03,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=2",
+      "handle": [
+       2.56,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.06,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=3",
+      "handle": [
+       2.59,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.09,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=4",
+      "handle": [
+       2.63,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.13,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=5",
+      "handle": [
+       2.66,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.16,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=6",
+      "handle": [
+       2.69,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.19,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=7",
+      "handle": [
+       2.72,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.22,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=8",
+      "handle": [
+       2.75,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.25,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=9",
+      "handle": [
+       2.78,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.28,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 4.440892098500626e-16
+     },
+     {
+      "at": "INC D1 k=10",
+      "handle": [
+       2.81,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D1",
+      "handle": [
+       2.81,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE1",
+      "handle": [
+       2.81,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "PRESSED D2",
+      "handle": [
+       2.81,
+       0.0,
+       0.5
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=1",
+      "handle": [
+       2.81,
+       0.0,
+       0.47
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.03,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=2",
+      "handle": [
+       2.81,
+       0.0,
+       0.44
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.06,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=3",
+      "handle": [
+       2.81,
+       0.0,
+       0.41
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.09,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 5.551115123125783e-17
+     },
+     {
+      "at": "INC D2 k=4",
+      "handle": [
+       2.81,
+       0.0,
+       0.37
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.13,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=5",
+      "handle": [
+       2.81,
+       0.0,
+       0.34
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.16,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 5.551115123125783e-17
+     },
+     {
+      "at": "RELEASED D2",
+      "handle": [
+       2.81,
+       0.0,
+       0.34
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.16,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 5.551115123125783e-17
+     },
+     {
+      "at": "IDLE2",
+      "handle": [
+       2.81,
+       0.0,
+       0.34
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.5
+      ],
+      "T": [
+       -0.31,
+       0.16,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 5.551115123125783e-17
+     }
+    ],
+    "vertices_before": [
+     [
+      -0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      1.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.0
+     ],
+     [
+      2.5,
+      0.0,
+      0.0
+     ],
+     [
+      2.5,
+      0.0,
+      1.0
+     ],
+     [
+      3.5,
+      0.0,
+      0.0
+     ],
+     [
+      3.5,
+      0.0,
+      1.0
+     ],
+     [
+      4.5,
+      0.0,
+      0.0
+     ],
+     [
+      4.5,
+      0.0,
+      1.0
+     ],
+     [
+      5.5,
+      0.0,
+      0.0
+     ],
+     [
+      5.5,
+      0.0,
+      1.0
+     ]
+    ],
+    "vertices_after": [
+     [
+      -0.19,
+      0.0,
+      -0.16
+     ],
+     [
+      -0.19,
+      0.0,
+      0.84
+     ],
+     [
+      0.81,
+      0.0,
+      -0.16
+     ],
+     [
+      0.81,
+      0.0,
+      0.84
+     ],
+     [
+      1.8099999,
+      0.0,
+      -0.16
+     ],
+     [
+      1.8099999,
+      0.0,
+      0.84
+     ],
+     [
+      2.5,
+      0.0,
+      0.0
+     ],
+     [
+      2.5,
+      0.0,
+      1.0
+     ],
+     [
+      3.5,
+      0.0,
+      0.0
+     ],
+     [
+      3.5,
+      0.0,
+      1.0
+     ],
+     [
+      4.8099999,
+      0.0,
+      -0.16
+     ],
+     [
+      4.8099999,
+      0.0,
+      0.84
+     ],
+     [
+      5.8099999,
+      0.0,
+      -0.16
+     ],
+     [
+      5.8099999,
+      0.0,
+      0.84
+     ]
+    ]
+   },
+   "v-off": {
+    "axis_matrix_rows": [
+     [
+      -1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "steps": [
+     {
+      "at": "PRESSED D1",
+      "handle": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=1",
+      "handle": [
+       2.53,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.03,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=2",
+      "handle": [
+       2.55,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.05,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=3",
+      "handle": [
+       2.58,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.08,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=4",
+      "handle": [
+       2.6,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.1,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=5",
+      "handle": [
+       2.63,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.13,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=6",
+      "handle": [
+       2.66,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.16,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=7",
+      "handle": [
+       2.68,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.18,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=8",
+      "handle": [
+       2.71,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.21,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=9",
+      "handle": [
+       2.74,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.24,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D1 k=10",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D1",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE1",
+      "handle": [
+       2.76,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.5,
+       0.0,
+       0.0
+      ],
+      "T": [
+       -0.26,
+       0.0,
+       -0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "PRESSED D2",
+      "handle": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=1",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.03
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.03
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=2",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.05
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.05
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=3",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.08
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.08
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=4",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.1
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.1
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "INC D2 k=5",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "RELEASED D2",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     },
+     {
+      "at": "IDLE2",
+      "handle": [
+       2.76000011,
+       0.0,
+       -0.13
+      ],
+      "centre": [
+       2.76000011,
+       0.0,
+       0.0
+      ],
+      "T": [
+       0.0,
+       0.0,
+       0.13
+      ],
+      "residual_handle_minus_centre_plus_MT": 0.0
+     }
+    ],
+    "vertices_before": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.0,
+      0.0,
+      0.0
+     ],
+     [
+      5.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "vertices_after": [
+     [
+      0.26,
+      0.0,
+      -0.13
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.26,
+      0.0,
+      -0.13
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      5.2600002,
+      0.0,
+      -0.13
+     ],
+     [
+      5.0,
+      0.0,
+      1.0
+     ]
+    ]
+   }
+  }
+ },
+ "element_move_range": {
+  "rig": "4x4 quad grid in XZ, spacing 0.5, facing +Y, top orthographic; the two picked vertices selected; re-arm selection = 7 boundary vertices (box 2.0 x 0.5)",
+  "law": "a typed Range survives both hauls, a drop of the tool (switch to another tool, or Escape) and a re-arm with a different selection: it is NOT re-fitted to the selection and NOT reset to the arm-time value",
+  "rivals": {
+   "kept": "selected",
+   "refit_to_selection": "refuted",
+   "reset_to_default": "refuted"
+  },
+  "cells": {
+   "drop_by_tool_switch": {
+    "range_at_arm_before_typing": 0.044,
+    "range_typed": 0.37,
+    "range_after_first_haul": 0.37000000000000005,
+    "range_after_second_haul": 0.37000000000000005,
+    "range_after_drop_and_rearm_with_other_selection": 0.37,
+    "selection_at_rearm_vertices": 7,
+    "picked_vertices_moved": [
+     [
+      -0.375,
+      0.0,
+      -0.5
+     ],
+     [
+      0.625,
+      0.0,
+      0.5
+     ]
+    ]
+   },
+   "drop_by_escape": {
+    "range_at_arm_before_typing": 0.044,
+    "range_typed": 0.37,
+    "range_after_first_haul": 0.37000000000000005,
+    "range_after_second_haul": 0.37000000000000005,
+    "range_after_drop_and_rearm_with_other_selection": 0.37,
+    "selection_at_rearm_vertices": 7,
+    "picked_vertices_moved": [
+     [
+      -0.375,
+      0.0,
+      -0.5
+     ],
+     [
+      0.625,
+      0.0,
+      0.5
+     ]
+    ]
+   }
+  },
+  "side_observation": "with a selection present only selected vertices move; an element pick on an interior vertex of back-facing polygons silently misses"
+ },
+ "channel_drag_live": {
+  "rig": "cube half-size 0.05, item mode, mesh item selected, no tool, top orthographic",
+  "channel_list_value_cell_lmb_drag": "absent: no value change, no command (5 x 20 px)",
+  "properties_position_x_slider_lmb_drag": {
+   "increments_px": 20,
+   "channel_value_per_increment": [
+    0.002,
+    0.0037,
+    0.0054,
+    0.0071,
+    0.0088,
+    0.01,
+    0.01,
+    0.0103,
+    0.012,
+    0.0137
+   ],
+   "cube_silhouette_columns_per_frame": {
+    "s0": [
+     508,
+     1152
+    ],
+    "slider_pressed": [
+     508,
+     1152
+    ],
+    "slider_k01": [
+     521,
+     1165
+    ],
+    "slider_k02": [
+     532,
+     1176
+    ],
+    "slider_k03": [
+     543,
+     1187
+    ],
+    "slider_k04": [
+     554,
+     1198
+    ],
+    "slider_k05": [
+     565,
+     1209
+    ],
+    "slider_k06": [
+     573,
+     1217
+    ],
+    "slider_k07": [
+     573,
+     1217
+    ],
+    "slider_k08": [
+     575,
+     1219
+    ],
+    "slider_k09": [
+     586,
+     1230
+    ],
+    "slider_k10": [
+     597,
+     1241
+    ],
+    "slider_released": [
+     597,
+     1241
+    ],
+    "idle": [
+     597,
+     1241
+    ]
+   },
+   "final_position_x": 0.0137
+  },
+  "law": "the viewport follows every channel write while the button is still held (one channel write per increment, the drawn cube moves by the same step in the frame taken right after it); release changes nothing further",
+  "rivals": {
+   "live": "selected",
+   "on_release_only": "refuted",
+   "absent": "refuted for the properties field; TRUE for an LMB drag on the channel-list value cell"
+  }
+ }
+}
