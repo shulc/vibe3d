@@ -14,7 +14,11 @@
 // the selection frame of this ridge puts world Z in the handler's Y slot), so
 // its floor names axis 1; the trace law is the same.
 //
-// Status on the HEAD this file was written against: GREEN in both blocks —
+// Block C: a motionless click on empty space first, then the Z arm drawn
+// after it — the arm is grabbable and the click leaves no zero-length ring
+// of its own (C2-z', gap 214).
+//
+// Status on the HEAD this file was written against: GREEN in all blocks —
 // the jump does not reproduce on this rig (recorded in the task card as the
 // "not reproduced" outcome). The file stays as the regression witness.
 
@@ -28,12 +32,12 @@ void main() {}
 
 enum int[2][] kPlusRidge = [[6, 7], [7, 8]];
 
-void zArmCell(string axisMode, int expectAxis, string sfx) {
+void zArmCell(string axisMode, int expectAxis, string sfx, string floorMsg) {
     armRig(kPlusRidge, 1.0, false, axisMode);
     engage();
     immutable Offset o0 = offset();
 
-    Px p = pressArm(0, kArmPressPx, expectAxis, "z arm press did not grab the arm" ~ sfx);
+    Px p = pressArm(0, kArmPressPx, expectAxis, floorMsg);
     Px end;
     auto tr = increments(p, kIncrementPx, -kIncrementPx, 10, end);
     release(end);
@@ -71,10 +75,34 @@ void zArmCell(string axisMode, int expectAxis, string sfx) {
     cmd("tool.set edge.extend off");
 }
 
-unittest { // A: world axis
-    zArmCell(null, 2, "");
+unittest { // (A) world axis
+    zArmCell(null, 2, "", "z arm press did not grab the arm");
 }
 
-unittest { // B: selection axis stage armed
-    zArmCell("select", 1, " (selection axis)");
+unittest { // (B) selection axis stage armed
+    zArmCell("select", 1, " (selection axis)",
+             "z arm press did not grab the arm (selection axis: world Z is Move-bank axis 1)");
+}
+
+unittest { // (C) the Z arm after a motionless click (arm_press_after_motionless_click_no_read)
+    armRig(kPlusRidge, 1.0);
+    Px c = clickPx();
+    click(c);
+    Px p = pressArm(0, kArmPressPx, 2, "z arm after a motionless click was not grabbable");
+    Px end;
+    auto tr = increments(p, kIncrementPx, -kIncrementPx, 10, end);
+    release(end);
+    assert(tr.length == 10, "z arm after a click: read " ~ tr.length.to!string ~ " states");
+    foreach (i, o; tr)
+        assert(abs(o.x) <= 1e-6 && abs(o.y) <= 1e-6,
+            format("arm after a motionless click wrote off-arm channels: increment %d %s", i + 1, o));
+    auto nv = newVertices();
+    bool coincident = false;
+    foreach (i; 0 .. nv.length)
+        foreach (j; i + 1 .. nv.length)
+            if (abs(nv[i][0] - nv[j][0]) <= 1e-6 && abs(nv[i][1] - nv[j][1]) <= 1e-6
+                && abs(nv[i][2] - nv[j][2]) <= 1e-6) coincident = true;
+    assert(vertexCount() == 12 && !coincident,
+        format("motionless click left a zero-length ring: %d v, new %s", vertexCount(), nv));
+    cmd("tool.set edge.extend off");
 }

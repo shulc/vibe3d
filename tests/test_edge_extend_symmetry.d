@@ -24,6 +24,15 @@
 //
 // The 12-vertex count in (a) is a FLOOR, not a mutation witness: there is no
 // copying code to break.
+//
+// The press side (C2-sym-sel, `S-both M-press`): the sign of the reflection is
+// chosen by the side of the ACTIVATING press. Every symmetry cell above
+// therefore puts the press that starts the run on the -X side (the branch the
+// cells were captured on) and pins it with a floor on `pressAnchor`; the arm
+// cells start their run with a motionless click there and only then take the
+// arm (an arm press continues the run and keeps the side). Below (d): (e) and
+// (e-m) select by a real symmetric click in the front camera and press on the
+// +X / -X side (outward / inward), (g) presses +X on the top rig.
 
 import edge_extend_gesture_helpers;
 import std.algorithm : sort;
@@ -37,21 +46,33 @@ enum int[2][] kPlusRidge  = [[6, 7], [7, 8]];
 enum int[2][] kMinusRidge = [[0, 1], [1, 2]];
 enum int[2][] kOnPlane    = [[5, 8]];          // (0,1,0)-(1,1,0)
 
+/// Empty space on the -X side of the top rig (below the edge-on plane row).
+Px negPx() { return topScreen(-0.3, 0.5); }
+
 __gshared double[] ctlHaul;   // offsetX after each of 10 haul increments, no symmetry
 __gshared double[] ctlArm;    // offsetX after each of 10 X-arm increments, no symmetry
 __gshared double   ctlPlaneX, ctlPlaneZ;
+__gshared Offset   ctlFront;  // front rig: haul (+4,+4) x 10, no symmetry
 
-/// Haul (+4,0) x 10 on empty space; returns offsetX per increment.
-double[] haulX10() {
-    auto tr = haul(haulPx(), kIncrementPx, 0, 10);
+/// Haul (+4,0) x 10 on empty space; returns offsetX per increment. A
+/// symmetry cell (`cell` non-null) presses on the -X side and pins it.
+double[] haulX10(string cell = null) {
+    auto tr = haul(cell is null ? haulPx() : negPx(), kIncrementPx, 0, 10);
+    if (cell !is null)
+        assert(pressAnchor()[0] < -0.05, cell ~ ": activating press not on the -X side (rig): "
+            ~ pressAnchor().to!string);
     double[] xs;
     foreach (o; tr) xs ~= o.x;
     return xs;
 }
 
-/// Engage, then X arm (+4,+4) x 10; returns offsetX per increment.
-double[] armX10(string what) {
-    engage();
+/// A motionless click on the -X side starts the run, then X arm (+4,+4) x 10;
+/// returns offsetX per increment. `cell` non-null pins the click's side.
+double[] armX10(string what, string cell = null) {
+    click(negPx());
+    if (cell !is null)
+        assert(pressAnchor()[0] < -0.05, cell ~ ": activating press not on the -X side (rig): "
+            ~ pressAnchor().to!string);
     Px p = pressArm(kArmPressPx, 0, 0, what);
     Px end;
     auto tr = increments(p, kIncrementPx, kIncrementPx, 10, end);
@@ -108,7 +129,7 @@ unittest { // (k3) on-plane rig, no symmetry: diagonal haul on empty space
 
 unittest { // (b) -X ridge, haul, symmetry on — the law gives +o here
     armRig(kMinusRidge, -1.0, true);
-    haulX10();
+    haulX10("(b)");
     assert(vertexCount() == 12, "extend moved the negative side the wrong way: "
         ~ vertexCount().to!string ~ " vertices, expected 12");
     assertAllX(newVertices(), -1 + ctlHaul[9], 3, "extend moved the negative side the wrong way");
@@ -117,7 +138,7 @@ unittest { // (b) -X ridge, haul, symmetry on — the law gives +o here
 
 unittest { // (b') -X ridge, X arm, symmetry on
     armRig(kMinusRidge, -1.0, true);
-    armX10("extend moved the negative side the wrong way (arm): x arm press did not grab the arm");
+    armX10("extend moved the negative side the wrong way (arm): x arm press did not grab the arm", "(b')");
     assert(vertexCount() == 12, "extend moved the negative side the wrong way (arm): "
         ~ vertexCount().to!string ~ " vertices, expected 12");
     assertAllX(newVertices(), -1 + ctlArm[9], 3, "extend moved the negative side the wrong way (arm)");
@@ -148,19 +169,19 @@ void plusSideCell(double[] trace, double[] ctl, string sfx) {
 
 unittest { // (a) +X ridge, haul — the red line on HEAD
     armRig(kPlusRidge, 1.0, true);
-    auto tr = haulX10();
+    auto tr = haulX10("(a)");
     plusSideCell(tr, ctlHaul, "");
 }
 
 unittest { // (a') +X ridge, X arm
     armRig(kPlusRidge, 1.0, true);
-    auto tr = armX10("extend ignored symmetry (arm): x arm press did not grab the arm");
+    auto tr = armX10("extend ignored symmetry (arm): x arm press did not grab the arm", "(a')");
     plusSideCell(tr, ctlArm, " (arm)");
 }
 
 unittest { // (c) both ridges
     armRig(kPlusRidge ~ kMinusRidge, 0.0, true);
-    haulX10();
+    haulX10("(c)");
     assert(vertexCount() == 15, "extend under symmetry: both sides: " ~ vertexCount().to!string ~ " vertices");
     auto nv = sortedByX(newVertices());
     assert(nv.length == 6, "extend under symmetry: both sides: " ~ nv.length.to!string ~ " new vertices");
@@ -172,7 +193,8 @@ unittest { // (c) both ridges
 
 unittest { // (d) on-plane vertex: its X offset is zeroed
     armRig(kOnPlane, 0.5, true);
-    haul(haulPx(), kIncrementPx, kIncrementPx, 10);
+    haul(negPx(), kIncrementPx, kIncrementPx, 10);
+    assert(pressAnchor()[0] < -0.05, "(d): activating press not on the -X side (rig): " ~ pressAnchor().to!string);
     assert(vertexCount() == 11 && faceCount() == 5,
         format("on-plane floor: counts (%d v / %d f), expected (11, 5)", vertexCount(), faceCount()));
     auto nv = sortedByX(newVertices());
@@ -180,5 +202,56 @@ unittest { // (d) on-plane vertex: its X offset is zeroed
         && abs(nv[0][0]) <= 1e-6 && abs(nv[0][2] - ctlPlaneZ) <= 1e-4
         && abs(nv[1][0] - (1 - ctlPlaneX)) <= 1e-4,
         format("on-plane vertex offset not zeroed: %s, control o = (%s, 0, %s)", nv, ctlPlaneX, ctlPlaneZ));
+    assert(abs(nv[1][2] - ctlPlaneZ) <= 1e-4,
+        format("on-plane vertex offset not zeroed (z of the (1,1,0) ring vertex): %s, control o_z %s", nv[1], ctlPlaneZ));
+    cmd("tool.set edge.extend off");
+}
+
+// --- the press side (C2-sym-sel, front camera) ------------------------------
+
+/// Front control: the capture's haul, no symmetry.
+void frontControl() {
+    rigNoArm([[7, 8]], true, 0.25, 0.55);
+    keyArm();
+    frontHaul(0.5, 1.35, kIncrementPx, kIncrementPx, 10);
+    ctlFront = offset();
+    assert(ctlFront.x > 0.05, "front control: the haul did not move: " ~ ctlFront.to!string);
+    cmd("tool.set edge.extend off");
+}
+
+/// (e)/(e-m): the symmetric click selects both edges, the haul presses at `px`.
+void pressSideCell(double px, bool outward, string msg) {
+    frontControl();
+    immutable double want = outward ? 1 + ctlFront.x : 1 - ctlFront.x;
+    symSelRig();
+    keyArm();
+    frontHaul(px, 1.35, kIncrementPx, kIncrementPx, 10);
+    assert(px > 0 ? pressAnchor()[0] > 0.05 : pressAnchor()[0] < -0.05,
+        msg ~ ": the press was not on its side (rig): " ~ pressAnchor().to!string);
+    assert(vertexCount() == 13, msg ~ ": " ~ vertexCount().to!string ~ " v, expected 13");
+    auto nv = newVertices();
+    size_t plus = 0, minus = 0;
+    foreach (v; nv) {
+        if (abs(v[0] - want) <= 1e-4) ++plus;
+        else if (abs(v[0] + want) <= 1e-4) ++minus;
+    }
+    assert(plus == 2 && minus == 2, format("%s: new vertices %s, expected x = +-%s", msg, nv, want));
+    cmd("tool.set edge.extend off");
+}
+
+unittest { // (e) C2-sym-sel: +X press, outward
+    pressSideCell(0.5, true, "extend under symmetry ignored the press side (+X press, outward)");
+}
+
+unittest { // (e-m) C2-sym-sel-m: -X press, inward
+    pressSideCell(-0.5, false, "extend under symmetry ignored the press side (-X press, inward)");
+}
+
+unittest { // (g) +X press on the top rig (+X ridge, symmetry after the selection)
+    armRig(kPlusRidge, 1.0, true);
+    auto tr = haul(haulPx(), kIncrementPx, 0, 10);
+    assert(pressAnchor()[0] > 0.05, "(g): activating press not on the +X side (rig): " ~ pressAnchor().to!string);
+    assert(vertexCount() == 12, "(g): " ~ vertexCount().to!string ~ " v, expected 12");
+    assertAllX(newVertices(), 1 + ctlHaul[9], 3, "extend under symmetry: +X press still reflected the +X side");
     cmd("tool.set edge.extend off");
 }

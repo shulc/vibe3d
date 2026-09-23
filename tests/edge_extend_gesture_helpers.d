@@ -1,7 +1,8 @@
 module edge_extend_gesture_helpers;
 
 // Shared rig + real-input drivers for the Edge Extend gesture witnesses
-// (tests/test_edge_extend_{z_axis,symmetry,rearm_offset,tool_switch}.d).
+// (tests/test_edge_extend_{z_axis,symmetry,rearm_offset,tool_switch,live_undo,
+// first_press,shift_middle}.d).
 //
 // The rig is the frozen capture's own (tests/fixtures/edge_extend_gesture_laws.json,
 // `rig`): an open 2x2 quad plane in XY, vertices x,y in {-1,0,1}, index
@@ -17,6 +18,18 @@ module edge_extend_gesture_helpers;
 // (`dragAxis` in /api/tool/state) before trusting the trace, because a press
 // that misses the arm becomes the screen-plane haul, which moves the same
 // offset channel and would read as a plausible drag.
+//
+// Two cameras. The TOP rig above serves the capture's top-view cells; the
+// FRONT rig (`frontRig`) serves the cells captured in a front orthographic
+// view, where the plane faces the camera and world (x, y) points are pressed
+// directly. Its distance is chosen so ONE pixel is 0.003125 m: ten 4-px
+// increments are then exactly 0.125, the capture's own value, because our
+// haul maps pixels linearly and does not round (the capture's 0.005 offset
+// quantum is not reproduced — recorded as a divergence, not a law).
+//
+// HTTP reads between gestures do not end the run (gap 211: the law "a new
+// press starts a fresh extend", gap 174, is refuted), so every witness reads
+// state freely between presses.
 
 import http_client : getJson, postJson;
 import std.conv : to;
@@ -29,11 +42,16 @@ import core.time : dur;
 enum int kIncrementPx = 4;       // fixture rig.increment_px
 enum int kArmPressPx  = 91;      // 24 px shaft start + 70 % of the 96 px shaft
 enum int kScaleKey = 114;     // SDL keycode 'r' — the scale-tool binding
+enum int kExtendKey = 122;    // SDL keycode 'z' — config/shortcuts.yaml edge.extend: Z
+enum int SDLK_z = 122;
+enum int KMOD_LSHIFT = 0x0001, KMOD_LCTRL = 0x0040, KMOD_LALT = 0x0100;
+enum double kFrontWpp = 0.003125;   // front rig: metres per pixel
 
 // Empty-space press points, far from the gizmo, the plane (edge-on on the
 // z = 0 row) and each other. Relative to the viewport centre.
 enum int kHaulDx = -150, kHaulDy = 150;
 enum int kClickDx = 175,  kClickDy = -150;
+enum int kThirdDx = -150, kThirdDy = -150;
 
 struct Offset { double x, y, z; }
 
@@ -70,6 +88,34 @@ Offset offset() {
 }
 
 int grabbedAxis() { return cast(int) toolState()["dragAxis"].integer; }
+
+/// The Move bank's handler centre as the last press left it (world).
+double[3] pressAnchor() {
+    auto a = toolState()["pressAnchor"].array;
+    return [num(a[0]), num(a[1]), num(a[2])];
+}
+
+bool moveOffGizmo() { return toolState()["moveOffGizmo"].type == JSONType.true_; }
+bool built()        { return toolState()["built"].type == JSONType.true_; }
+bool runStarted()   { return toolState()["runStarted"].type == JSONType.true_; }
+
+/// The active tool id, or "" when no tool is armed. /api/tool/state names an
+/// Edge Extend `edgeExtend` and a transform `xfrm`.
+string toolId() {
+    auto s = toolState();
+    return ("tool" in s.object) ? s["tool"].str : "";
+}
+
+size_t[] selectedEdgeList() {
+    size_t[] out_;
+    foreach (e; getJson("/api/selection")["selectedEdges"].array) out_ ~= cast(size_t) e.integer;
+    return out_;
+}
+
+string topHistoryLabel() {
+    auto u = getJson("/api/history")["undo"].array;
+    return u.length ? u[$ - 1]["label"].str : "";
+}
 
 /// The fixture rig: 3x3 grid in XY, four quads, index (x+1)*3+(y+1).
 void loadPlaneRig() {
@@ -178,7 +224,18 @@ Px topScreen(double wx, double wz) {
               cast(int) round(cy + (wz - num(c["focus"]["z"])) / wpp));
 }
 
-/// The gizmo centre on screen: the action centre, projected.
+/// World point -> window pixel under the FRONT ortho camera (screen right =
+/// +X, screen up = +Y).
+Px frontScreen(double wx, double wy) {
+    auto c = getJson("/api/camera");
+    immutable double wpp = 2.0 * num(c["distance"]) * tan(PI / 8) / cast(double) c["height"].integer;
+    immutable double cx = c["vpX"].integer + c["width"].integer / 2.0;
+    immutable double cy = c["vpY"].integer + c["height"].integer / 2.0;
+    return Px(cast(int) round(cx + (wx - num(c["focus"]["x"])) / wpp),
+              cast(int) round(cy - (wy - num(c["focus"]["y"])) / wpp));
+}
+
+/// The gizmo centre on screen: the action centre, projected (top view).
 Px gizmoPx() {
     foreach (st; getJson("/api/toolpipe")["stages"].array) {
         if (st["id"].str != "actionCenter") continue;
@@ -187,8 +244,13 @@ Px gizmoPx() {
     assert(false, "no actionCenter stage in /api/toolpipe");
 }
 
+/// The Z arm's press pixel in the top view: the gizmo centre plus the same
+/// screen offset file 1's block A presses (the arm points screen-down).
+Px zArmPx() { auto g = gizmoPx(); return Px(g.x, g.y + kArmPressPx); }
+
 Px haulPx()  { auto c = viewCentre(); return Px(c.x + kHaulDx,  c.y + kHaulDy); }
 Px clickPx() { auto c = viewCentre(); return Px(c.x + kClickDx, c.y + kClickDy); }
+Px thirdPx() { auto c = viewCentre(); return Px(c.x + kThirdDx, c.y + kThirdDy); }
 
 // --- real input -----------------------------------------------------------
 
@@ -212,40 +274,58 @@ void play(string body_) {
 }
 
 /// Hover (button up) then press — the hover lets the arbiter see the arm.
-void press(Px p) {
-    play(format(`{"t":20.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
-              ~ `{"t":200.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-                p.x, p.y, p.x, p.y));
+/// The hover carries no button mask (nothing is held yet) but does carry the
+/// modifiers, so a Shift or Alt chord is already down when the press lands.
+void press(Px p, int btn = 1, int mod = 0) {
+    play(format(`{"t":20.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":%d}` ~ "\n"
+              ~ `{"t":200.000,"type":"SDL_MOUSEBUTTONDOWN","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+                p.x, p.y, mod, btn, p.x, p.y, mod));
 }
 
-void motion(Px to_, int dx, int dy) {
-    play(format(`{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+/// One motion with button `btn` held (SDL mask 1 << (btn - 1)).
+void motion(Px to_, int dx, int dy, int btn = 1, int mod = 0) {
+    play(format(`{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%d,"mod":%d}` ~ "\n",
+                to_.x, to_.y, dx, dy, 1 << (btn - 1), mod));
+}
+
+/// One motion with NO button held.
+void hover(Px to_, int dx, int dy) {
+    play(format(`{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":0,"mod":0}` ~ "\n",
                 to_.x, to_.y, dx, dy));
 }
 
 /// Release; while Edge Extend is the tool, the drag must be over afterwards
 /// (the other half of the press floor: `dragBank` is read both ways).
-void release(Px p) {
-    play(format(`{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-                p.x, p.y));
+void release(Px p, int btn = 1, int mod = 0) {
+    play(format(`{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%d}` ~ "\n",
+                btn, p.x, p.y, mod));
     auto s = toolState();
-    if (s["tool"].str == "edgeExtend")
+    if ("tool" in s.object && s["tool"].str == "edgeExtend")
         assert(s["dragBank"].str == "none", "release did not end the extend drag: " ~ s.toString);
 }
 
-void tapKey(int sym) {
-    play(format(`{"t":50.000,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":0,"repeat":0}` ~ "\n"
-              ~ `{"t":80.000,"type":"SDL_KEYUP","sym":%d,"scan":0,"mod":0,"repeat":0}` ~ "\n", sym, sym));
+/// A motionless click: press and release at one pixel.
+void click(Px p, int btn = 1, int mod = 0) { press(p, btn, mod); release(p, btn, mod); }
+
+void tapKey(int sym, int mod = 0) {
+    play(format(`{"t":50.000,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":%d,"repeat":0}` ~ "\n"
+              ~ `{"t":80.000,"type":"SDL_KEYUP","sym":%d,"scan":0,"mod":%d,"repeat":0}` ~ "\n",
+                sym, mod, sym, mod));
 }
+
+/// The real interactive undo / redo keystrokes (the navHistory path through
+/// the input router), never the raw `history.undo` command.
+void ctrlZ()      { tapKey(SDLK_z, KMOD_LCTRL); settle(); }
+void ctrlShiftZ() { tapKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT); settle(); }
 
 /// `n` increments of (dx,dy) from an already-pressed `start`, the offset read
 /// after each. Returns the trace; `end` receives the final pointer pixel.
-Offset[] increments(Px start, int dx, int dy, int n, out Px end) {
+Offset[] increments(Px start, int dx, int dy, int n, out Px end, int btn = 1, int mod = 0) {
     Offset[] tr;
     Px p = start;
     foreach (i; 0 .. n) {
         p = Px(p.x + dx, p.y + dy);
-        motion(p, dx, dy);
+        motion(p, dx, dy, btn, mod);
         tr ~= offset();
     }
     end = p;
@@ -258,6 +338,7 @@ Offset[] haul(Px start, int dx, int dy, int n) {
     assert(grabbedAxis() == 3,
         "haul press did not begin the screen-plane haul (dragAxis " ~ grabbedAxis().to!string
         ~ ", expected 3) — it landed on a gizmo arm, or the readout is dead");
+    assert(moveOffGizmo(), "haul press was not an off-gizmo press (moveOffGizmo false)");
     Px end;
     auto tr = increments(start, dx, dy, n, end);
     release(end);
@@ -290,4 +371,121 @@ double[3][] newVertices() {
     double[3][] out_;
     foreach (i; 9 .. m["vertices"].array.length) out_ ~= vtx(m, i);
     return out_;
+}
+
+// --- key arm, panel, probe ---------------------------------------------------
+
+/// The tool's own key, as a user presses it.
+void keyArm() {
+    tapKey(kExtendKey);
+    settle(250);
+    assert(toolId() == "edgeExtend", "the tool's key did not arm Edge Extend: " ~ toolState().toString);
+}
+
+/// A value typed into the tool panel: the interactive script door
+/// (ParameterChangeSource.InteractiveValue), as tests/test_mixed_bank_history_probe.d.
+void typePanel(string line) {
+    auto r = postJson("/api/script?interactive=true", line);
+    assert(r["status"].str == "ok", "panel edit `" ~ line ~ "` failed: " ~ r.toString);
+    settle();
+}
+
+/// One framebuffer pixel of the active cell, as [r, g, b].
+int[3] probe(Px p) {
+    auto c = getJson("/api/camera");
+    auto j = getJson(format("/api/viewport/probe?points=%d,%d",
+                            p.x - cast(int) c["vpX"].integer, p.y - cast(int) c["vpY"].integer));
+    assert("error" !in j, "probe failed: " ~ j.toString);
+    assert(j["renders"].type == JSONType.true_, "probe cell did not render");
+    auto e = j["points"].array[0];
+    assert("error" !in e, "probe point failed: " ~ e.toString);
+    return [cast(int) num(e["r"]), cast(int) num(e["g"]), cast(int) num(e["b"])];
+}
+
+// --- the rig without an armed tool ------------------------------------------
+
+/// Reset, rig, optional recorded selection edit, camera — no tool armed.
+/// `front` picks the front ortho camera at 0.003125 m/px focused on
+/// (focusX, focusY); otherwise the top camera focused on x = focusX.
+/// With `recordedEdit`, history is cleared BEFORE the selection, so the
+/// selection is the one recorded edit a third undo must reach; returns sel0,
+/// the selected edges before it.
+size_t[] rigNoArm(int[2][] pairs, bool front, double focusX, double focusY = 0,
+                  bool recordedEdit = false) {
+    auto r = postJson("/api/command", `{"id":"scene.reset"}`);
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    loadPlaneRig();
+    setSymmetryX(false);
+    if (front) {
+        cmd("viewport.view Front");
+        auto c0 = getJson("/api/camera");
+        immutable double dist = kFrontWpp * cast(double) c0["height"].integer / (2.0 * tan(PI / 8));
+        r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":%s,"z":0},"distance":%s,"roll":0}`,
+                                           focusX, focusY, dist));
+    } else {
+        cmd("viewport.view Top");
+        r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":0,"z":0}}`, focusX));
+    }
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho", "rig premise: the view must be orthographic");
+    size_t[] sel0;
+    if (recordedEdit) {
+        cmd("history.clear");
+        sel0 = selectedEdgeList();
+        selectEdges(edgesOf(pairs));
+        assert(topHistoryLabel() == "Select" && selectedEdgeList().length == pairs.length,
+            "rig: no recorded edit before the tool (the third undo would be vacuous): "
+            ~ getJson("/api/history")["undo"].toString);
+    } else {
+        selectEdges(edgesOf(pairs));
+        cmd("history.clear");
+    }
+    settle(250);
+    return sel0;
+}
+
+/// The capture's symmetric-click rig (C2-sym-sel): front camera, symmetry X
+/// on, edge mode, and ONE real click on the midpoint of the +X ridge edge
+/// (7,8) at world (1.0, 0.5) — under symmetry the click selects the mirror
+/// edge too (S-both). No tool is armed.
+void symSelRig(double focusX = 0.0, double focusY = 0.55) {
+    auto r = postJson("/api/command", `{"id":"scene.reset"}`);
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    loadPlaneRig();
+    setSymmetryX(false);
+    cmd("viewport.view Front");
+    auto c0 = getJson("/api/camera");
+    immutable double dist = kFrontWpp * cast(double) c0["height"].integer / (2.0 * tan(PI / 8));
+    r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":%s,"z":0},"distance":%s,"roll":0}`,
+                                       focusX, focusY, dist));
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    setSymmetryX(true);
+    tapKey(50);   // '2' — edge mode
+    assert(getJson("/api/selection")["mode"].str == "edges", "rig: edge mode did not take");
+    click(frontScreen(1.0, 0.5));
+    assert(selectedEdgeList().length == 2, "symmetric click did not select the mirror edge: "
+        ~ getJson("/api/selection")["selectedEdges"].toString);
+    cmd("history.clear");
+    settle(250);
+}
+
+/// |pressAnchor - (wx, wy)| <= 0.02 in the front plane.
+void assertAnchorAt(double wx, double wy, string msg) {
+    auto a = pressAnchor();
+    assert(abs(a[0] - wx) <= 0.02 && abs(a[1] - wy) <= 0.02,
+        format("%s: press anchor %s, press point (%s, %s)", msg, a, wx, wy));
+}
+
+/// Front-rig haul on empty space at world (wx, wy): press, the floor that it
+/// is an off-handle press at that point (moveOffGizmo + anchor), `n`
+/// increments of (dx, dy) read after each, release.
+Offset[] frontHaul(double wx, double wy, int dx, int dy, int n, string rigMsg = "rig: the haul press grabbed a handle (not an off-handle haul)") {
+    Px p = frontScreen(wx, wy);
+    press(p);
+    assert(moveOffGizmo(), rigMsg ~ ": moveOffGizmo false");
+    assertAnchorAt(wx, wy, rigMsg);
+    Px end;
+    auto tr = increments(p, dx, dy, n, end);
+    release(end);
+    return tr;
 }

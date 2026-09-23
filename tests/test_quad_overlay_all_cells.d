@@ -275,18 +275,48 @@ bool testFlowA() {
     // this says something actually reached a non-owner cell's framebuffer.
     // Categorical (the buffer CHANGED), never a shading value: the lane runs
     // software GL.
+    //
+    // Gap 217 (task 7117): Edge Extend draws NO handle until the first press
+    // of the run, so the replica is compared on the two sides of that press.
+    // Armed but not yet pressed, the non-owner cell must equal the dropped
+    // image; after one motionless click on empty space of the OWNER cell it
+    // must differ (the same click on both sides of that comparison, so the
+    // ring it adds to the selection cannot make the difference); re-armed, it
+    // is back to the dropped image.
     immutable int other = (owner == 0) ? 1 : 0;
-    string armed, dropped, rearmed;
-    bool r1, r2, r3;
-    cellHash(other, armed, r1);
-    enforce(r1,
+    string armed0, dropped0, armed, dropped, rearmed;
+    bool r0, r1, r2, r3, r4;
+    cellHash(other, armed0, r0);
+    enforce(r0,
         format("cell %d reports renders=false — its framebuffer was never "
                ~ "filled, so a hash taken off it means nothing", other));
-
     script("tool.set edge.extend off");
     settle();
-    cellHash(other, dropped, r2);
-    enforce(r2, "the non-owner cell must still render with no tool armed");
+    cellHash(other, dropped0, r1);
+    enforce(r1, "the non-owner cell must still render with no tool armed");
+    enforce(armed0 == dropped0,
+        format("a non-owner cell drew the Edge Extend replica before the first "
+               ~ "press (gap 217): cell %d armed %s, dropped %s", other, armed0, dropped0));
+
+    // The first press: a motionless click on empty space of the owner cell.
+    script("tool.set edge.extend on");
+    settle();
+    auto oc2 = parseJSON(httpGet(format("/api/camera?viewport=%d", owner)));
+    immutable int cx = jsonInt(oc2, "vpX") + 30, cy = jsonInt(oc2, "vpY") + 30;
+    writefln("    A3 owner-cell click at window pixel (%d, %d)", cx, cy);
+    play(motionAt(0.0, cx, cy) ~ "\n" ~ motionAt(30.0, cx, cy));
+    play(buttonAt("SDL_MOUSEBUTTONDOWN", cx, cy));
+    play(buttonAt("SDL_MOUSEBUTTONUP", cx, cy));
+    auto ts = parseJSON(httpGet("/api/tool/state"));
+    enforce("built" in ts && ts["built"].type == JSONType.TRUE,
+        "rig: the owner-cell click did not start the Edge Extend run (edit mode "
+        ~ "or edge selection): " ~ ts.toString);
+    cellHash(other, armed, r2);
+    enforce(r2, "the non-owner cell must render after the first press");
+    script("tool.set edge.extend off");
+    settle();
+    cellHash(other, dropped, r3);
+    enforce(r3, "the non-owner cell must still render with no tool armed");
     enforce(armed != dropped,
         format("cell %d's framebuffer is byte-identical with edge.extend armed "
                ~ "and with it dropped — the cell reports overlayMode=Visual but "
@@ -294,14 +324,13 @@ bool testFlowA() {
 
     script("tool.set edge.extend on");
     settle();
-    cellHash(other, rearmed, r3);
-    enforce(r3, "the non-owner cell must render after re-arming");
-    enforce(rearmed == armed,
-        format("cell %d did not return to its armed image on re-arm (%s vs %s) "
-               ~ "— the replica is not a deterministic function of the tool "
-               ~ "state", other, rearmed, armed));
-    writefln("    A3 PASS: cell %d's pixels change with the tool and return on "
-             ~ "re-arm", other);
+    cellHash(other, rearmed, r4);
+    enforce(r4, "the non-owner cell must render after re-arming");
+    enforce(rearmed == dropped,
+        format("re-armed Edge Extend drew its replica before the first press: "
+               ~ "cell %d re-armed %s, dropped %s", other, rearmed, dropped));
+    writefln("    A3 PASS: cell %d draws the replica only after the first "
+             ~ "press, and not again on re-arm", other);
     return true;
 }
 

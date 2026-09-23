@@ -237,6 +237,10 @@ private:
     // offset; each motion sets offset = dragBaseOffset + (move world delta since
     // drag start).
     Vec3 dragBaseOffset;           // `offset` at drag start (Move bank)
+    // Test readout only: the Move bank's handler centre as the press left it
+    // (after bank selection), i.e. the side a press latched.
+    Vec3 pressAnchor_ = Vec3(0, 0, 0);
+    bool moveOffGizmo_;            // the Move bank's lastClickWasOffGizmo, same moment
 
     // The R/S pivot: the MID of the BOUNDING BOX of the SELECTED vertices,
     // captured once at tool INITIALISATION (reinitSession) and recomputed at
@@ -750,6 +754,17 @@ public:
             case DragBank.Scale:  root["dragBank"] = JSONValue("scale");  break;
         }
         root["dragAxis"] = JSONValue(xfrm.moveDragAxisPublic());
+        // Whether the last press missed every Move-bank handle, and where the
+        // bank's handler centre stood after that press: a witness pins that a
+        // haul really was an off-handle press, and on which side.
+        root["moveOffGizmo"] = JSONValue(moveOffGizmo_);
+        root["pressAnchor"]  = JSONValue([JSONValue(pressAnchor_.x),
+                                          JSONValue(pressAnchor_.y),
+                                          JSONValue(pressAnchor_.z)]);
+        // "The run has started" as a floor readout. This HEAD has no
+        // awaiting-first-press state, so a run is started exactly when a
+        // preview is built; the fix redefines it.
+        root["runStarted"] = JSONValue(built);
         return root;
     }
 
@@ -931,6 +946,8 @@ public:
         // halves of that were wrong — see initPivot_'s comment.
         dragBank       = picked;
         dragBaseOffset = offsetVec();
+        pressAnchor_   = mv.handler.center;
+        moveOffGizmo_  = mv.lastClickWasOffGizmo;
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
         return true;
     }

@@ -906,10 +906,39 @@ unittest {
             setOrbitCamera();
             cmd("tool.set edge.extend on");
             settle(250);
+            // Gap 217 (task 7117): the run starts with a first press, so a
+            // motionless click on empty space >= 150 px from the gizmo opens
+            // it; the arrow drag below is then the run's second press. The
+            // click writes offset 0 either way.
+            {
+                int gx, gy;
+                px(Vec3(0.5f, 0.0f, -0.5f), gx, gy);
+                immutable int cx = gx > 475 ? gx - 200 : gx + 200;
+                playAndWait(kClickHeader ~ "\n" ~ clickAt(100, cx, gy), BASE);
+                settle(150);
+                auto st = getJ("/api/tool/state");
+                double n(string k) {
+                    return st[k].type == JSONType.integer ? cast(double) st[k].integer : st[k].floating;
+                }
+                assert(n("offsetX") == 0 && n("offsetY") == 0 && n("offsetZ") == 0,
+                    "edge.extend first click wrote a non-zero offset: " ~ st.toString);
+            }
         },
         {
             auto vp = viewportFromCamera(fetchCamera(BASE));
-            Vec3 anchor = Vec3(0.5f, 0.0f, -0.5f);
+            // The click relocated the action centre (the off-gizmo press of
+            // the None/Auto modes), so the anchor is RE-READ, not assumed.
+            Vec3 anchor;
+            {
+                bool found;
+                foreach (st; getJ("/api/toolpipe")["stages"].array) {
+                    if (st["id"].str != "actionCenter") continue;
+                    anchor = Vec3(st["attrs"]["cenX"].str.to!float, st["attrs"]["cenY"].str.to!float,
+                                  st["attrs"]["cenZ"].str.to!float);
+                    found = true;
+                }
+                assert(found, "no actionCenter stage in /api/toolpipe");
+            }
             enum float R = 0.70710678f;
             Vec3 axis   = Vec3(R, 0.0f, -R);
             float arm   = gizmoSize(anchor, vp);

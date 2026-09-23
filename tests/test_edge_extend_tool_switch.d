@@ -13,6 +13,20 @@
 // interrupted the extend drag", because HEAD switches tools mid-drag; (S) the
 // after-release cell, below the red line (HEAD already switches there).
 //
+// Below them the undo walk of the switch (fixture cells
+// `switch_key_undo_walk_no_read`, `switch_undo_restore_then_haul`; gaps
+// 215/218/221): (W) undoing the scale tool's arm row re-arms Edge Extend with
+// the committed run's values in the panel, NOT live; the next Ctrl+Z removes
+// the run together with the tool; the third reaches the edit before the tool.
+// (X) is a BOUNDARY, not a law: an undone Edge Extend run must not end a
+// DIFFERENT tool. (Y) a haul after the restore starts a new ring from 0 over
+// the committed run and records no activation row. (O) only Edge Extend is a
+// restorable predecessor: undoing a switch away from Edge Extrude leaves no
+// tool, as today. W/X/Y rigs record the selection AFTER `history.clear`, so
+// the third undo is never vacuous. Ctrl+Z is the real keystroke (navHistory),
+// never the raw `history.undo` command. On HEAD, W fails at "undo of the tool
+// switch did not return Edge Extend" (run in isolation: H is red above it).
+//
 // Every H assert carries the same message prefix, the population floor
 // included: the floor ("all ten increments were accepted by the extend") is
 // what keeps the offset comparison from being vacuous, and on HEAD it is the
@@ -32,7 +46,7 @@ enum string kHeld = "scale key interrupted the extend drag";
 
 __gshared double ctl10;
 
-unittest { // C0: the X-arm drag, no key
+unittest { // (C0) the X-arm drag, no key
     armRig(kPlusRidge, 1.0);
     engage();
     Px p = pressArm(kArmPressPx, 0, 0, "tool switch control: x arm press did not grab the arm");
@@ -52,7 +66,7 @@ double extendOffsetXOrNaN() {
     return num(s["offsetX"]);
 }
 
-unittest { // H: R with the button held is ignored
+unittest { // (H) R with the button held is ignored
     armRig(kPlusRidge, 1.0);
     engage();
     Px p = pressArm(kArmPressPx, 0, 0, kHeld ~ ": x arm press did not grab the arm");
@@ -75,7 +89,7 @@ unittest { // H: R with the button held is ignored
     cmd("tool.set edge.extend off");
 }
 
-unittest { // S: R after the release switches to scale, extension kept
+unittest { // (S) R after the release switches to scale, extension kept
     armRig(kPlusRidge, 1.0);
     engage();
     Px p = pressArm(kArmPressPx, 0, 0, "scale did not arm after extend move: x arm press did not grab the arm");
@@ -99,4 +113,106 @@ unittest { // S: R after the release switches to scale, extension kept
     assert(undo.length == h0 + 2
         && undo[h0]["label"].str == "Edge Extend" && undo[h0 + 1]["label"].str == "Activate Tool",
         "scale did not arm after extend move: history " ~ undo.to!string);
+}
+
+// --- the undo walk of the switch --------------------------------------------
+
+/// W/X/Y rig: symmetry off, the selection a RECORDED edit, the tool armed.
+size_t[] recordedRig() {
+    auto sel0 = rigNoArm(kPlusRidge, false, 1.0, 0, true);
+    cmd("tool.set edge.extend on");
+    settle(250);
+    return sel0;
+}
+
+struct Switched { long h0; Offset oR; size_t v1; }
+
+/// W up to (and including) the first Ctrl+Z.
+Switched switchAndUndoOnce() {
+    engage();
+    Px p = pressArm(kArmPressPx, 0, 0, "switch undo: x arm press did not grab the arm");
+    Px end;
+    increments(p, kIncrementPx, kIncrementPx, 10, end);
+    release(end);
+    Switched w;
+    w.h0 = undoLen();
+    w.oR = offset();
+    import std.math : sqrt;
+    assert(sqrt(w.oR.x ^^ 2 + w.oR.y ^^ 2 + w.oR.z ^^ 2) > 0.05,
+        "rig: committed offset too small to tell carried from zero: " ~ w.oR.to!string);
+    w.v1 = vertexCount();
+    tapKey(kScaleKey);
+    settle(250);
+    assert(toolId() == "xfrm" && undoLen() == w.h0 + 2,
+        format("rig: R did not switch to scale behind two rows: tool %s, %d new records", toolId(), undoLen() - w.h0));
+    ctrlZ();
+    assert(toolId() == "edgeExtend",
+        "undo of the tool switch did not return Edge Extend (reference: re-armed, gap 221): tool " ~ toolId());
+    assert(vertexCount() == w.v1, "undo of the tool switch changed the committed run: " ~ vertexCount().to!string ~ " v");
+    assert(undoLen() == w.h0 + 1, "undo of the tool switch recorded or removed a second row: "
+        ~ (undoLen() - w.h0).to!string ~ " records over H0");
+    immutable Offset o = offset();
+    assert(abs(o.x - w.oR.x) <= 1e-6 && abs(o.y - w.oR.y) <= 1e-6 && abs(o.z - w.oR.z) <= 1e-6,
+        format("restored Edge Extend does not show the committed offset (reference: the panel shows the run's "
+             ~ "offset, gap 221): %s, run %s", o, w.oR));
+    assert(!built() && !runStarted(), "restored Edge Extend resumed the committed run as live (reference: not live, "
+        ~ "gap 221): " ~ toolState().toString);
+    return w;
+}
+
+unittest { // (W) the undo walk after R (switch_key_undo_walk_no_read)
+    auto sel0 = recordedRig();
+    auto w = switchAndUndoOnce();
+    ctrlZ();
+    assert(vertexCount() == 9 && undoLen() == w.h0,
+        format("the committed run is not one undo step (gap 215): %d v, %d records", vertexCount(), undoLen() - w.h0));
+    assert(toolId() != "edgeExtend",
+        "undo of the committed run did not end the tool (reference: the activation is undone with the run, gap 218)");
+    ctrlZ();
+    assert(selectedEdgeList() == sel0 && toolId() != "edgeExtend",
+        "third undo after the switch did not undo the edit before the tool (gap 218): " ~ selectedEdgeList().to!string);
+}
+
+unittest { // (X) boundary (not a law): an undone Extend run ends no other tool
+    recordedRig();
+    engage();
+    cmd("tool.set edge.extrude on");
+    settle(250);
+    assert(topHistoryLabel() == "Edge Extend", "rig: the switch did not record the Extend run: " ~ topHistoryLabel());
+    ctrlZ();
+    assert(vertexCount() == 9 && toolId() == "edgeExtrude",
+        format("divergence scope (not captured, gap 218): an undone Edge Extend run ended a different tool: "
+             ~ "%d v, tool %s", vertexCount(), toolId()));
+    cmd("tool.set edge.extrude off");
+}
+
+unittest { // (Y) R-fresh-noact (switch_undo_restore_then_haul)
+    recordedRig();
+    auto w = switchAndUndoOnce();
+    auto tr = haul(haulPx(), kIncrementPx, kIncrementPx, 10);
+    assert(tr.length == 10, "haul after the restore: read " ~ tr.length.to!string ~ " states");
+    assert(vertexCount() == w.v1 + (w.v1 - 9), format("haul after a switch-undo restore did not start a new ring "
+        ~ "over the committed run (reference: 11 -> 13 v, gap 221): %d v, run %d v", vertexCount(), w.v1));
+    import std.math : sqrt;
+    immutable double m1 = sqrt(tr[0].x ^^ 2 + tr[0].y ^^ 2 + tr[0].z ^^ 2);
+    immutable double mR = sqrt(w.oR.x ^^ 2 + w.oR.y ^^ 2 + w.oR.z ^^ 2);
+    assert(m1 <= 0.5 * mR, format("haul after a switch-undo restore continued from the committed offset (reference "
+        ~ "restarts at 0: 0.0 -> 0.125, gap 221): o_1 %s, run %s", tr[0], w.oR));
+    cmd("tool.set edge.extend off");
+    assert(undoLen() == w.h0 + 2, "the restored tool's run recorded an activation row (reference: none, gap 221): "
+        ~ (undoLen() - w.h0).to!string ~ " records over the run's H0");
+}
+
+unittest { // (O) only Edge Extend is a restorable predecessor
+    armRig(kPlusRidge, 1.0);
+    cmd("tool.set edge.extend off");
+    cmd("tool.set edge.extrude on");
+    settle(250);
+    tapKey(kScaleKey);
+    settle(250);
+    assert(toolId() == "xfrm", "rig: R did not switch Edge Extrude to scale: tool " ~ toolId());
+    ctrlZ();
+    // "No tool" reads as an EMPTY /api/tool/state object, i.e. toolId() == "".
+    assert(toolId() == "", "undoing a switch away from a tool without the restorable marker restored it (only "
+        ~ "Edge Extend is restorable, gap 221 scope): tool " ~ toolId());
 }
