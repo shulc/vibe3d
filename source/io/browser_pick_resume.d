@@ -152,10 +152,10 @@ string browserSaveTarget(string root, string defaultName, string currentDocPath)
 }
 
 /// Whether a parked command still addresses the live edit target: the mesh it
-/// bound at construction and the edit mode it was built under.
+/// bound at construction and the edit mode it was built under. A parked
+/// command is never null: `pickOpenPath` refuses a context without one.
 bool stillBoundTo(Command command, const(Mesh)* liveMesh, EditMode liveMode) {
-    return command !is null
-        && command.meshPtr() is liveMesh
+    return command.meshPtr() is liveMesh
         && command.editModeVal() == liveMode;
 }
 

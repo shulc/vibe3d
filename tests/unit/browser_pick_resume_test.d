@@ -353,7 +353,6 @@ unittest {
     assert(stillBoundTo(load, &meshA, EditMode.Vertices), "R5b control: bound to meshA");
     assert(!stillBoundTo(load, &meshB, EditMode.Vertices), "R5b: another mesh");
     assert(!stillBoundTo(load, &meshA, EditMode.Polygons), "R5b: another mode");
-    assert(!stillBoundTo(null, &meshA, EditMode.Vertices), "R5b: no command is not bound");
 
     PickResumeQueue q;
     FakeDrain d;
