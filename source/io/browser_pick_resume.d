@@ -163,11 +163,11 @@ bool stillBoundTo(Command command, const(Mesh)* liveMesh, EditMode liveMode) {
 /// the directory is absent. The production `listDir` port.
 string[] listDirNames(string dir) {
     import std.algorithm : sort;
-    import std.file : dirEntries, exists, isDir, SpanMode;
+    import std.file : dirEntries, SpanMode;
     import std.path : baseName;
     string[] names;
     try {
-        if (!exists(dir) || !isDir(dir)) return names;
+        // An absent directory (or a file) throws here and lists nothing.
         foreach (e; dirEntries(dir, SpanMode.shallow))
             if (e.isFile) names ~= baseName(e.name);
     } catch (Exception) {

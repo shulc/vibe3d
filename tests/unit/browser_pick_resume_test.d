@@ -70,6 +70,8 @@ final class NoPathCommand : Command {
 struct FakeDrain {
     int invokes;
     Command lastInvoked;
+    RecordMode lastMode;
+    string lastId;
     string[] notices;
     ulong rev;
     bool busy;
@@ -83,6 +85,8 @@ struct FakeDrain {
         p.invoke = (Command c, RecordMode m, string id) {
             ++invokes;
             lastInvoked = c;
+            lastMode = m;
+            lastId = id;
             return invokeOverride !is null ? invokeOverride(c, m, id) : answer;
         };
         p.notice = (string s) { notices ~= s; };
@@ -170,6 +174,20 @@ unittest {
         "R2: the queue holds the SAME command object");
     assert(pickResumes().pendingMultiple(),
         "R2: a document open lets the user pick the document with its images");
+    // The resume carries the door's id and record mode back to the door.
+    {
+        FakeDrain d;
+        const t = cast(uint) 1;
+        dropDoc(t);
+        pickResumes().complete(t, 1);
+        drainPickResumes(d.ports());
+        assert(d.invokes == 1 && d.lastInvoked is load, "R2 floor: the parked open resumed");
+        assert(d.lastId == "file.open" && d.lastMode == RecordMode.Record,
+            "R2: the resume carries id 'file.open' and mode Record, got '"
+            ~ d.lastId ~ "' " ~ d.lastMode.to!string);
+        assert(load.discardsUnsavedWork() && pickResumes().length == 0,
+            "R2: the resumed open carries its path (guarded) and left the queue");
+    }
 
     // R3 — no UI command.
     resetPickResumesForTest();
