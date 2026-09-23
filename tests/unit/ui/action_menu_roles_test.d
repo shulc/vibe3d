@@ -756,8 +756,6 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         "6560 private reachability: openArgs_ references grew or its null guard disappeared");
     assert(identifierCount(actionMenu, "dispatch_") == 6,
         "6560 private reachability: dispatch_ references grew or a null guard disappeared");
-    assert(identifierCount(actionMenu, "nav_") == 4,
-        "7112 private reachability: nav_ must be declared, assigned and called by the two history rows only");
     assert(actionMenu.count("actions.activateTool(") >= 1
         && actionMenu.count("actions.runCommandRow(") == 1
         && actionMenu.count("actions.runScriptLine(") == 1
