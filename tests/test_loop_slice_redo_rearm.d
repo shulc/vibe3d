@@ -16,7 +16,8 @@
 // subpatch OFF, the front and right faces of the open box selected (their
 // shared vertical edge seeds the ring). Scrub pixels are FRACTIONS of that
 // edge's screen length, so every step lands a distinct loop position.
-// Blocks M and M0 pin the Ctrl+Z during a drag (not captured; gap 205).
+// Blocks M and M0 pin the Ctrl+Z during a drag (not captured; gap 205);
+// blocks R2 and S came from the diff sweep (see each).
 
 import slice_leak_helpers;
 import http_client : getJson;
@@ -235,8 +236,78 @@ unittest {
            && slHistoryLen() == Hp + 1,
            format("redo after the loop slice re-arm is not empty: canRedo before %s, mesh %s, "
                   ~ "tool '%s', history %d", redoBefore, which(slMesh()), slTool(), slHistoryLen()));
+    // The re-armed session is a session like the first: its Ctrl+Z ends it
+    // again with its row, and the redo re-arms at the same loop.
+    ctrlZ("Z6 (the re-armed session)");
+    assert(slTool() != "loopSlice" && slMesh().canon == base.canon && slHistoryLen() == Hp,
+           format("slice floor: Ctrl+Z on the re-armed session did not end it: tool '%s', "
+                  ~ "mesh %s, history %s", slTool(), which(slMesh()), slHistoryLabels()));
+    ctrlShiftZ("Ctrl+Shift+Z (second re-arm)");
+    assert(slTool() == "loopSlice" && slMesh().canon == A0.canon
+           && abs(lsState().pos0 - pA0) <= 1e-6,
+           format("a re-armed loop slice session did not re-arm again at its arm-time loop: "
+                  ~ "tool '%s', mesh %s, %s", slTool(), which(slMesh()), lsState().toString));
     writeln("loop slice redo re-arm: arm-time position ", pA0, " -> re-armed ", r.pos0);
     slLine("tool.set mesh.loopSliceTool off");
+}
+
+// Block R2 — the arm-time loop is the SESSION's, not a fresh tool's default:
+// a Position typed before the arm is where the redo re-arms. Added by the
+// diff sweep: without it, a replay that ignored the carried loop stayed green
+// (the main walk's arm-time loop IS the default position).
+unittest {
+    SlMesh base;
+    Rail rail;
+    const Hp = rig(base, rail);
+    slLine("tool.set mesh.loopSliceTool on");
+    slLine("tool.attr mesh.loopSliceTool position 0.3");
+    assert(slHistoryLen() == Hp + 1 && topLabel() == "Activate Tool",
+           format("slice floor (block R2): the Position write moved the history: %s",
+                  slHistoryLabels()));
+    const pa = at(rail, F_ARM);
+    slClickDown(pa[0], pa[1], "block R2 arming press");
+    const A0 = slMesh();
+    const pA0 = lsState().pos0;
+    assert(abs(pA0 - 0.3) <= 1e-6 && A0.faces > 4,
+           format("slice floor (block R2): the arm did not cut at the typed Position: %s",
+                  lsState().toString));
+    holdTo(rail, F_ARM, F_A30, "block R2 arming drag");
+    release(rail, F_A30, "block R2 arming release");
+    ctrlZ("block R2 Z1 (the arming drag)");
+    ctrlZ("block R2 Z2 (the arm)");
+    assert(slTool() != "loopSlice" && slHistoryLen() == Hp,
+           format("slice floor (block R2): the session did not end: tool '%s', history %s",
+                  slTool(), slHistoryLabels()));
+    ctrlShiftZ("block R2 Ctrl+Shift+Z");
+    assert(slTool() == "loopSlice" && slMesh().canon == A0.canon
+           && abs(lsState().pos0 - pA0) <= 1e-6,
+           format("loop slice redo did not keep the session's arm-time loop (typed Position %s): "
+                  ~ "tool '%s', mesh equal %s, %s", pA0, slTool(), slMesh().canon == A0.canon,
+                  lsState().toString));
+    slLine("tool.set mesh.loopSliceTool off");
+}
+
+// Block S — an RMB cancel ends the arm with its steps: a later motionless
+// re-arm has none, so its Ctrl+Z ends the session with the row. Added by the
+// diff sweep: without it, keeping the stack across the cancel stayed green.
+unittest {
+    SlMesh base;
+    Rail rail;
+    const Hp = rig(base, rail);
+    slLine("tool.set mesh.loopSliceTool on");
+    gesture(rail, F_ARM, F_A30, "block S arming drag");
+    gesture(rail, F_A30, F_G1, "block S g1");
+    assert(lsState().depth == 2, "slice floor (block S): two steps before RMB: " ~ lsState().toString);
+    const pr = at(rail, F_G1);
+    slRmb(pr[0], pr[1]);
+    assert(slTool() == "loopSlice" && !lsState().armed && slMesh().canon == base.canon,
+           "slice floor (block S): RMB did not cancel the arm: " ~ lsState().toString);
+    gesture(rail, F_ARM, F_ARM, "block S motionless re-arm");
+    assert(lsState().armed, "slice floor (block S): the re-arm did not arm: " ~ lsState().toString);
+    ctrlZ("block S Ctrl+Z");
+    assert(slTool() != "loopSlice" && slMesh().canon == base.canon && slHistoryLen() == Hp,
+           format("an RMB cancel left stale loop slice steps on the stack: tool '%s', %s, "
+                  ~ "history %s", slTool(), lsState().toString, slHistoryLabels()));
 }
 
 // Block M — Ctrl+Z during a scrub cancels only the gesture in flight: the

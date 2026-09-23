@@ -147,6 +147,7 @@ void playKey(int sym, int mod = 0) {
 enum SDLK_RETURN  = 13;
 enum SDLK_z       = 122;
 enum KMOD_LCTRL   = 64;
+enum KMOD_LSHIFT  = 1;
 
 // A fixed viewport matching the default /api/camera pose for a freshly reset
 // cube (same rect as tests/test_edge_slice_tool.d's interactive replay).
@@ -271,10 +272,20 @@ unittest {
     assert(depthAfter == depthBefore,
         "cancelling a mid-scrub arm must NOT touch the committed undo ledger, went "
         ~ depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
-    // The tool is already off; release the held button so the next case
-    // starts clean.
+    // The session's arm survives the end (diff sweep: the held motionless
+    // press still carries its arm): the redo re-arms the cut, released.
+    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
+    auto st2 = toolState();
+    auto m2 = model();
+    assert(toolIsActive(st2) && st2["armed"].type == JSONType.true_
+           && st2["dragging"].type == JSONType.false_
+           && vertCount(m2) == 12 && faceCount(m2) == 10,
+        "loop slice redo after a mid-press ctrl+z did not re-arm the arm-time loop: "
+        ~ st2.toString);
+    // Release the held button (a stray now) so the next case starts clean.
     playAndSettle(viewportLine() ~ "\n" ~ format(
         `{"t":10.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY));
+    deactivateLoopSlice();
 }
 
 // ---------------------------------------------------------------------------
