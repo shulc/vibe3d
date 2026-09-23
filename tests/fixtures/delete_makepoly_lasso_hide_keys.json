@@ -4,7 +4,7 @@
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
   "method": "gui-gesture",
-  "notes": "GUI worker, one fresh boot per cell, real XTest keys/pointer; state read back after each step",
+  "notes": "GUI worker, one fresh boot per cell, real XTest keys/pointer; state read back after each step; follow-up cells: selection mode after key P, item-mode delete keys (undo rows read from the history palette frame)",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_keys_lasso_tab/harness",
   "task": "7106"
@@ -3559,6 +3559,245 @@
       ]
      }
     }
+   }
+  }
+ },
+ "make_polygon_selection_mode": {
+  "law": "Make Polygon by key does not change the selection mode: from an edge selection the mode stays edge (the edge selection is kept), from a vertex selection the mode stays vertex (the vertex selection is dropped); the new polygon joins the polygon selection in the background",
+  "cells": {
+   "p-e4-mode": {
+    "rig": "cube_minus_face0",
+    "mode": "edge",
+    "selection_given": [
+     [
+      7,
+      3
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      5,
+      7
+     ]
+    ],
+    "input": "key P",
+    "mode_before": "edge",
+    "mode_after": "edge",
+    "mode_button_lit_after": "edges",
+    "new_polygon": [
+     7,
+     3,
+     1,
+     5
+    ],
+    "selected_after": {
+     "vertices": [],
+     "polygons": [
+      5
+     ]
+    }
+   },
+   "p-v4-mode": {
+    "rig": "cube_minus_face0",
+    "mode": "vertex",
+    "selection_given": [
+     1,
+     5,
+     7,
+     3
+    ],
+    "input": "key P",
+    "mode_before": "vertex",
+    "mode_after": "vertex",
+    "mode_button_lit_after": "vertices",
+    "new_polygon": [
+     3,
+     1,
+     5,
+     7
+    ],
+    "selected_after": {
+     "vertices": [],
+     "polygons": [
+      5
+     ]
+    }
+   }
+  }
+ },
+ "item_mode_delete_keys": {
+  "law": "In item mode Backspace runs the removing command and Delete the deleting command; both delete the SELECTED mesh item whole (the unselected item stays), one undo step each (row 'Delete Item' / 'Delete'); Shift+Backspace has no item-mode binding and does nothing",
+  "cells": {
+   "d-item-bs": {
+    "rig": "two mesh items: a cube (8 v / 6 p) SELECTED and a quad (4 v / 1 p) unselected; item mode",
+    "key": "Backspace",
+    "command": "remove",
+    "undo_row": "Delete Item",
+    "before": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after_undo": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after_redo": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    }
+   },
+   "d-item-del": {
+    "rig": "two mesh items: a cube (8 v / 6 p) SELECTED and a quad (4 v / 1 p) unselected; item mode",
+    "key": "Delete",
+    "command": "delete",
+    "undo_row": "Delete",
+    "before": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after_undo": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after_redo": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    }
+   },
+   "d-item-sbs": {
+    "rig": "two mesh items: a cube (8 v / 6 p) SELECTED and a quad (4 v / 1 p) unselected; item mode",
+    "key": "Shift+Backspace",
+    "command": null,
+    "undo_row": null,
+    "before": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "after": {
+     "mode": "item",
+     "mesh_items": [
+      {
+       "name_order": 0,
+       "selected": true,
+       "vertex_count": 8,
+       "polygon_count": 6
+      },
+      {
+       "name_order": 1,
+       "selected": false,
+       "vertex_count": 4,
+       "polygon_count": 1
+      }
+     ]
+    },
+    "note": "no command and no undo row; the Ctrl+Z that followed undid the scene build (instrument), not scored"
    }
   }
  }
