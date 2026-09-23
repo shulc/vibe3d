@@ -192,12 +192,15 @@ class MeshMakePolygon : Command, Operator {
 }
 
 /// The selected edges as one vertex ring, or `[]` when they are not a single
-/// chain (a vertex of degree > 2, more than one component, or an open chain
-/// whose ends are not exactly two). A closed loop starts at the first
-/// selected edge (selection order, then index) and runs from its stored
-/// `v0` to `v1`; an open chain starts at the end whose edge was selected
-/// first. Winding is NOT decided here — the kernel's neighbour vote does it.
-private uint[] edgeChainWalk(ref const Mesh m) {
+/// chain. A closed loop starts at the first selected edge (selection order,
+/// then index) and runs from its stored `v0` to `v1`; an open chain starts at
+/// the end whose edge was selected first. A single edge answers its two
+/// vertices (the caller refuses rings under 3). Refused: a vertex of degree
+/// > 2, and more than one component — which with degrees <= 2 also covers
+/// "more than two open ends", since each path owns exactly two. Winding is
+/// NOT decided here; the kernel's neighbour vote does it. Pinned by
+/// `tests/unit/make_polygon_edge_chain_test.d`.
+uint[] edgeChainWalk(ref const Mesh m) {
     import std.algorithm : sort;
     struct E { uint ei; int order; }
     E[] sel;
@@ -207,29 +210,27 @@ private uint[] edgeChainWalk(ref const Mesh m) {
                       ? m.edgeSelectionOrder[ei] : 0;
         sel ~= E(cast(uint) ei, ord > 0 ? ord : int.max);
     }
-    if (sel.length < 2) return null;
+    if (sel.length == 0) return null;
     sel.sort!((a, b) => a.order != b.order ? a.order < b.order : a.ei < b.ei);
 
     // Vertex -> positions (into `sel`) of its incident selected edges.
     size_t[][uint] inc;
     foreach (k, e; sel)
         foreach (v; m.edges[e.ei]) inc[v] ~= k;
-    size_t ends;
-    foreach (v, list; inc) {
+    foreach (v, list; inc)
         if (list.length > 2) return null;
-        if (list.length == 1) ++ends;
-    }
-    if (ends != 0 && ends != 2) return null;
 
-    // Start: a closed loop at sel[0].v0; an open chain at the degree-1 end
-    // whose incident edge comes first in selection order.
+    // Start: a closed loop at sel[0].v0 -> v1; an open chain at the degree-1
+    // end whose incident edge comes first in selection order.
     uint start = m.edges[sel[0].ei][0];
-    uint cur = m.edges[sel[0].ei][1];
+    uint cur   = m.edges[sel[0].ei][1];
     size_t prevEdge = 0;
-    if (ends == 2) {
-        size_t best = size_t.max;
-        foreach (v, list; inc)
-            if (list.length == 1 && list[0] < best) { best = list[0]; start = v; }
+    size_t best = size_t.max;
+    // In `sel` order, stored v0 before v1: deterministic (an AA is not).
+    ends: foreach (k, e; sel)
+        foreach (v; m.edges[e.ei])
+            if (inc[v].length == 1) { best = k; start = v; break ends; }
+    if (best != size_t.max) {
         const e = m.edges[sel[best].ei];
         cur = (e[0] == start) ? e[1] : e[0];
         prevEdge = best;

@@ -252,6 +252,91 @@ unittest {
     assert(cells == 4);
 }
 
+// 3b. Which branch runs, and what the edge branch clears (task 7132). NOT
+// captured cells: the reference fixture has no lingering cross-domain
+// selection, so these pin OUR branch rule (plan S11 №16 step 1: edge mode
+// AND an edge selection -> edges; otherwise the vertex branch unchanged) and
+// the refusal of a ring under three vertices.
+string edgeIdx(uint[2][] ps) {
+    auto m = getJson("/api/model");
+    string r = "[";
+    foreach (i, p; ps) {
+        immutable ei = edgeIndex(m, p[0], p[1]);
+        assert(ei >= 0, format("rig: edge %s not in the loaded mesh", p));
+        r ~= (i ? "," : "") ~ format("%d", ei);
+    }
+    return r ~ "]";
+}
+
+void loadHoleRig() {
+    auto rg = fixture()["rigs"]["cube_minus_face0"];
+    auto body = JSONValue.emptyObject;
+    body["vertices"] = rg["vertices"];
+    body["faces"] = rg["polygons"];
+    ok(postJson("/api/command", commandBody("scene.reset")), "scene.reset");
+    ok(postJson("/api/command", commandBody("scene.loadMesh", body.toString)), "scene.loadMesh");
+    assert(getJson("/api/model")["faceCount"].integer == 5, "rig: polygon count is not 5");
+}
+
+void sel(string mode, string indices) {
+    ok(postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"` ~ mode ~ `","indices":` ~ indices ~ `}`)), "mesh.select " ~ mode);
+}
+
+void clearHistory() {
+    ok(postJson("/api/command", `{"id":"history.clear"}`), "history.clear");
+    assert(getJson("/api/history")["undo"].array.length == 0, "rig: history not empty");
+}
+
+unittest {
+    enum uint[2][] hole = [[7, 3], [1, 5], [3, 1], [5, 7]];
+
+    // A single edge is a two-vertex ring: refused, nothing recorded.
+    loadHoleRig();
+    sel("edges", edgeIdx([[7, 3]]));
+    clearHistory();
+    auto r = postJson("/api/command", `{"id":"mesh.makePolygon"}`);
+    assert(r["status"].str == "error"
+        && getJson("/api/model")["faceCount"].integer == 5
+        && getJson("/api/history")["undo"].array.length == 0,
+        "make polygon built from a single edge: " ~ r.toString);
+
+    // Vertex mode ignores a lingering edge selection: three hole corners give
+    // a triangle, not the hole's quad.
+    loadHoleRig();
+    sel("edges", edgeIdx(hole));
+    sel("vertices", "[1,5,7]");
+    clearHistory();
+    ok(postJson("/api/command", `{"id":"mesh.makePolygon"}`), "mesh.makePolygon (vertex mode)");
+    auto f = ints2(getJson("/api/model")["faces"]);
+    assert(f.length == 6 && f[5].length == 3,
+        format("vertex mode built from the lingering edge selection: %s", f[$ - 1]));
+
+    // Edge mode with NO edge selected falls back to the vertex branch.
+    loadHoleRig();
+    sel("vertices", "[1,5,7,3]");
+    sel("edges", "[]");
+    clearHistory();
+    ok(postJson("/api/command", `{"id":"mesh.makePolygon"}`),
+        "edge mode without edges did not fall back to the vertex selection");
+    assert(getJson("/api/model")["faceCount"].integer == 6,
+        "edge mode without edges did not fall back to the vertex selection");
+
+    // The edge branch drops lingering vertex AND polygon selections.
+    loadHoleRig();
+    sel("vertices", "[0]");
+    sel("polygons", "[0]");
+    sel("edges", edgeIdx(hole));
+    clearHistory();
+    ok(postJson("/api/command", `{"id":"mesh.makePolygon"}`), "mesh.makePolygon (lingering)");
+    auto s2 = getJson("/api/selection");
+    assert(s2["selectedVertices"].array.length == 0,
+        "edge make polygon kept a lingering vertex selection");
+    assert(ints(s2["selectedFaces"]) == [5],
+        format("edge make polygon kept a lingering polygon selection: %s", ints(s2["selectedFaces"])));
+    assert(s2["selectedEdges"].array.length == 4, "edge make polygon dropped the edge selection (lingering)");
+}
+
 // 4. The key: P in edge mode is Make Polygon. RED on HEAD 9f434948 (shown by
 // isolation — block 3 stops the module first): P is bound to nothing.
 unittest {
