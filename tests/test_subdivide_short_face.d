@@ -476,6 +476,8 @@ private void diagonal2(string id, bool drop = true) {
     ok("select.typeFrom vertex", id);
     ok("select.element vertex set 0 6", id);
     ok(`{"id":"mesh.makePolygon"}`, id);
+    // Make Polygon keeps the selection type; the rig works on the product.
+    ok("select.typeFrom polygon", id);
     auto m = model();
     assert(counts(m) == "8/13/7", id ~ ": diag2 topology floor failed");
     auto f = m["faces"].array[6].array;
@@ -493,6 +495,8 @@ private void edge2(string id, bool drop = true) {
     ok("select.typeFrom vertex", id);
     ok("select.element vertex set 0 3", id);
     ok(`{"id":"mesh.makePolygon"}`, id);
+    // Make Polygon keeps the selection type; the rig works on the product.
+    ok("select.typeFrom polygon", id);
     auto m = model();
     assert(counts(m) == "8/12/7", id ~ ": edge2 topology floor failed");
     auto f = m["faces"].array[6].array;

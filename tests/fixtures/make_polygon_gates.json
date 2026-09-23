@@ -299,7 +299,7 @@
      ]
     ],
     "selection": {
-     "mode": "polygons",
+     "mode": "vertices",
      "vertices": [],
      "edges": [],
      "polygons": [
@@ -519,7 +519,7 @@
      ]
     ],
     "selection": {
-     "mode": "polygons",
+     "mode": "vertices",
      "vertices": [],
      "edges": [],
      "polygons": [
@@ -841,7 +841,7 @@
      ]
     ],
     "selection": {
-     "mode": "polygons",
+     "mode": "vertices",
      "vertices": [],
      "edges": [],
      "polygons": [
@@ -1366,7 +1366,7 @@
      ]
     ],
     "selection": {
-     "mode": "polygons",
+     "mode": "vertices",
      "vertices": [],
      "edges": [],
      "polygons": [

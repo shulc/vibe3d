@@ -1548,7 +1548,7 @@
   },
   {
    "name": "make_leaves_new_face_selected",
-   "note": "the product of make-polygon is the new FACE \u2014 a dimension ABOVE its VERTEX input. It is the one command in the family that therefore also promotes the selection TYPE, through the app's geometry-type funnel (no tool-drop).",
+   "note": "the product of make-polygon is the new FACE \u2014 a dimension ABOVE its VERTEX input. It is selected in the polygon domain, but the selection TYPE stays vertex (captured: `make_polygon_selection_mode` in delete_makepoly_lasso_hide_keys.json).",
    "input": [
     {
      "reset": true,
@@ -1840,7 +1840,7 @@
      ]
     ],
     "selection": {
-     "mode": "polygons",
+     "mode": "vertices",
      "vertices": [],
      "edges": [],
      "polygons": [
