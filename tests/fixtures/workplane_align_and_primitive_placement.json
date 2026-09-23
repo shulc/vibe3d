@@ -3888,6 +3888,614 @@
      ]
     },
     "selected": "numbers_kept"
+   },
+   {
+    "cell": "C4-quad",
+    "rig": "cube +-0.5 rotated 30 deg about +Y, face 0 selected; the startup viewport group un-maximized into its four cells; pans by real view-pan drags; the plane pinned by the align-to-selection key",
+    "plane_after_align": {
+     "origin": [
+      0.25,
+      0.0,
+      0.433
+     ],
+     "normal": [
+      0.5,
+      0.0,
+      0.866
+     ]
+    },
+    "shipped_projections": {
+     "quad0": {
+      "bottom-right": {
+       "projection": "rgt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.44,
+        0.0,
+        -0.04
+       ],
+       "focus_world": [
+        -0.44,
+        0.0,
+        -0.04
+       ]
+      },
+      "top-right": {
+       "projection": "psp",
+       "link_group": "perspective",
+       "focus_read": [
+        -0.58,
+        0.1441,
+        0.0167
+       ],
+       "focus_world": [
+        -0.58,
+        0.1441,
+        0.0167
+       ]
+      },
+      "bottom-left": {
+       "projection": "fnt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.44,
+        0.0,
+        -0.04
+       ],
+       "focus_world": [
+        -0.44,
+        0.0,
+        -0.04
+       ]
+      },
+      "top-left": {
+       "projection": "top",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.44,
+        0.0,
+        -0.04
+       ],
+       "focus_world": [
+        -0.44,
+        0.0,
+        -0.04
+       ]
+      }
+     },
+     "after_pan_front": {
+      "bottom-right": {
+       "projection": "rgt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      },
+      "top-right": {
+       "projection": "psp",
+       "link_group": "perspective",
+       "focus_read": [
+        -0.58,
+        0.1441,
+        0.0167
+       ],
+       "focus_world": [
+        -0.58,
+        0.1441,
+        0.0167
+       ]
+      },
+      "bottom-left": {
+       "projection": "fnt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      },
+      "top-left": {
+       "projection": "top",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      }
+     },
+     "after_pan_persp": {
+      "bottom-right": {
+       "projection": "rgt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      },
+      "top-right": {
+       "projection": "psp",
+       "link_group": "perspective",
+       "focus_read": [
+        -0.9963,
+        0.4564,
+        0.0167
+       ],
+       "focus_world": [
+        -0.9963,
+        0.4564,
+        0.0167
+       ]
+      },
+      "bottom-left": {
+       "projection": "fnt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      },
+      "top-left": {
+       "projection": "top",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ]
+      }
+     },
+     "after_align": {
+      "bottom-right": {
+       "projection": "rgt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -1.806,
+        -0.4343
+       ]
+      },
+      "top-right": {
+       "projection": "psp",
+       "link_group": "perspective",
+       "focus_read": [
+        0.4564,
+        -0.9837,
+        -0.8711
+       ],
+       "focus_world": [
+        -0.9963,
+        0.4564,
+        0.0167
+       ]
+      },
+      "bottom-left": {
+       "projection": "fnt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -1.806,
+        -0.4343
+       ]
+      },
+      "top-left": {
+       "projection": "top",
+       "link_group": "orthographic",
+       "focus_read": [
+        -1.806,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -1.806,
+        -0.4343
+       ]
+      }
+     },
+     "after_pan_front_pinned": {
+      "bottom-right": {
+       "projection": "rgt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.7132,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -0.7132,
+        -0.4343
+       ]
+      },
+      "top-right": {
+       "projection": "psp",
+       "link_group": "perspective",
+       "focus_read": [
+        0.4564,
+        -0.9837,
+        -0.8711
+       ],
+       "focus_world": [
+        -0.9963,
+        0.4564,
+        0.0167
+       ]
+      },
+      "bottom-left": {
+       "projection": "fnt",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.7132,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -0.7132,
+        -0.4343
+       ]
+      },
+      "top-left": {
+       "projection": "top",
+       "link_group": "orthographic",
+       "focus_read": [
+        -0.7132,
+        -1.0245,
+        -0.04
+       ],
+       "focus_world": [
+        -0.2969,
+        -0.7132,
+        -0.4343
+       ]
+      }
+     }
+    },
+    "shipped_residuals": {
+     "ortho_group_local_kept": 0.0,
+     "ortho_group_world_kept_rival": 1.7446
+    },
+    "mixed_group_control": {
+     "note": "same drive with the startup projections left by the worker bootstrap: the orthographic link group then contained a perspective-projected cell; that group kept its WORLD focus across the pin (local = B^T(W - O), residual < 1e-4)",
+     "states": {
+      "quad0": {
+       "bottom-right": {
+        "projection": "psp",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ],
+        "focus_world": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ]
+       },
+       "top-right": {
+        "projection": "lft",
+        "link_group": "perspective",
+        "focus_read": [
+         -0.58,
+         0.1441,
+         0.0167
+        ],
+        "focus_world": [
+         -0.58,
+         0.1441,
+         0.0167
+        ]
+       },
+       "bottom-left": {
+        "projection": "fnt",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ],
+        "focus_world": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ]
+       },
+       "top-left": {
+        "projection": "top",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ],
+        "focus_world": [
+         -0.4313,
+         0.5017,
+         -0.0457
+        ]
+       }
+      },
+      "after_pan_front": {
+       "bottom-right": {
+        "projection": "psp",
+        "link_group": "orthographic",
+        "focus_read": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ],
+        "focus_world": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ]
+       },
+       "top-right": {
+        "projection": "lft",
+        "link_group": "perspective",
+        "focus_read": [
+         -0.58,
+         0.1441,
+         0.0167
+        ],
+        "focus_world": [
+         -0.58,
+         0.1441,
+         0.0167
+        ]
+       },
+       "bottom-left": {
+        "projection": "fnt",
+        "link_group": "orthographic",
+        "focus_read": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ],
+        "focus_world": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ]
+       },
+       "top-left": {
+        "projection": "top",
+        "link_group": "orthographic",
+        "focus_read": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ],
+        "focus_world": [
+         -1.7973,
+         -0.5229,
+         -0.0457
+        ]
+       }
+      },
+      "after_pan_persp": {
+       "bottom-right": {
+        "projection": "psp",
+        "link_group": "orthographic",
+        "focus_read": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       },
+       "top-right": {
+        "projection": "lft",
+        "link_group": "perspective",
+        "focus_read": [
+         -0.58,
+         0.1441,
+         0.0167
+        ],
+        "focus_world": [
+         -0.58,
+         0.1441,
+         0.0167
+        ]
+       },
+       "bottom-left": {
+        "projection": "fnt",
+        "link_group": "orthographic",
+        "focus_read": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       },
+       "top-left": {
+        "projection": "top",
+        "link_group": "orthographic",
+        "focus_read": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       }
+      },
+      "after_align": {
+       "bottom-right": {
+        "projection": "psp",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.5229,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       },
+       "top-right": {
+        "projection": "lft",
+        "link_group": "perspective",
+        "focus_read": [
+         -0.58,
+         0.1441,
+         0.0167
+        ],
+        "focus_world": [
+         0.3365,
+         -0.58,
+         0.5495
+        ]
+       },
+       "bottom-left": {
+        "projection": "fnt",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.5229,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       },
+       "top-left": {
+        "projection": "top",
+        "link_group": "orthographic",
+        "focus_read": [
+         -0.5229,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         -0.5229,
+         -1.0702
+        ]
+       }
+      },
+      "after_pan_front_pinned": {
+       "bottom-right": {
+        "projection": "psp",
+        "link_group": "orthographic",
+        "focus_read": [
+         0.57,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         0.57,
+         -1.0702
+        ]
+       },
+       "top-right": {
+        "projection": "lft",
+        "link_group": "perspective",
+        "focus_read": [
+         -0.58,
+         0.1441,
+         0.0167
+        ],
+        "focus_world": [
+         0.3365,
+         -0.58,
+         0.5495
+        ]
+       },
+       "bottom-left": {
+        "projection": "fnt",
+        "link_group": "orthographic",
+        "focus_read": [
+         0.57,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         0.57,
+         -1.0702
+        ]
+       },
+       "top-left": {
+        "projection": "top",
+        "link_group": "orthographic",
+        "focus_read": [
+         0.57,
+         -3.0085,
+         -2.2044
+        ],
+        "focus_world": [
+         -3.1633,
+         0.57,
+         -1.0702
+        ]
+       }
+      }
+     }
+    },
+    "law": "cells share a focus by their LINK GROUP, not by projection: the three orthographic cells share one focus, the perspective cell has its own (a pan in either never moves the other). When a plane is pinned the orthographic group keeps its plane-LOCAL focus numbers (its world focus jumps to O + B*nums, as a single orthographic cell does) and its views turn with the plane; the perspective cell keeps its WORLD focus. A group that contains a perspective-projected cell keeps its world focus instead"
    }
   ],
   "laws": {
@@ -3896,7 +4504,8 @@
    "typed_plane_turns_ortho": "a TYPED oblique plane turns the front view too (the model is then drawn obliquely)",
    "perspective_keeps_world_camera": "control: world orientation rows and world eye are unchanged by the align; the local focus reads B^T(world focus - origin)",
    "focus_write_after_pin_is_local": "a focus written while a plane is pinned is plane-local; a capture that pins first and then sets the focus exercised no plane-change transition",
-   "focus_pinned_to_pinned": "pinned to pinned (re-align to another face): the focus NUMBERS are kept again, so the world focus jumps from origin + B * numbers to origin' + B' * numbers ((0.3, 0, 0.7) -> (0, 0.7, 0.3) here); the front view turns into the new plane (canonical front rows). 'World focus kept' predicted local (0.7, -0.5, -0.3), 0.86 away; 'reset to the new origin' predicted (0, 0, 0), 0.36 away"
+   "focus_pinned_to_pinned": "pinned to pinned (re-align to another face): the focus NUMBERS are kept again, so the world focus jumps from origin + B * numbers to origin' + B' * numbers ((0.3, 0, 0.7) -> (0, 0.7, 0.3) here); the front view turns into the new plane (canonical front rows). 'World focus kept' predicted local (0.7, -0.5, -0.3), 0.86 away; 'reset to the new origin' predicted (0, 0, 0), 0.36 away",
+   "linked_cells": "cells share a focus by their LINK GROUP, not by projection: the three orthographic cells share one focus, the perspective cell has its own (a pan in either never moves the other). When a plane is pinned the orthographic group keeps its plane-LOCAL focus numbers (its world focus jumps to O + B*nums, as a single orthographic cell does) and its views turn with the plane; the perspective cell keeps its WORLD focus. A group that contains a perspective-projected cell keeps its world focus instead"
   }
  },
  "skew_rigs": [
