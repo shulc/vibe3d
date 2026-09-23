@@ -926,11 +926,27 @@ unittest { // 7111 V19: panel history rows route through navHistory
     }
     const undo = inBody(literalOffsets(raw, `"history.undo"`));
     const redo = inBody(literalOffsets(raw, `"history.redo"`));
-    const ahead = undo.length == 1 && redo.length == 1
-        && undo[0] < firstDoor && redo[0] < firstDoor;
+    // Every spelling of each literal must sit ahead of the first door (>= 1
+    // each: a split undo/redo branch is legal), and the navigator door
+    // `nav_` must be NAMED between the first literal and that door — an
+    // empty branch that falls through to the doors has the literals in
+    // place and must still redden (reviewer mutation R-M2, task 7112).
+    bool allAhead(const size_t[] offs) {
+        foreach (o; offs) if (o >= firstDoor) return false;
+        return true;
+    }
+    const ahead = undo.length >= 1 && redo.length >= 1
+        && allAhead(undo) && allAhead(redo);
     assert(ahead,
         "panel history.undo bypasses navHistory: runCommandRow has "
         ~ undo.length.to!string ~ " \"history.undo\" and " ~ redo.length.to!string
-        ~ " \"history.redo\" literal(s), expected exactly 1 and 1, each ahead of its "
+        ~ " \"history.redo\" literal(s), expected at least 1 and 1, all ahead of its "
         ~ "openArgs_/dispatch_ doors");
+    const firstLiteral = undo[0] < redo[0] ? undo[0] : redo[0];
+    bool navBetween = false;
+    foreach (o; identOffsets(bodyText, "nav_"))
+        if (b + o > firstLiteral && b + o < firstDoor) { navBetween = true; break; }
+    assert(navBetween,
+        "panel history.undo bypasses navHistory: runCommandRow names no nav_ door "
+        ~ "between its first history literal and its openArgs_/dispatch_ doors");
 }
