@@ -1,8 +1,10 @@
 {
  "provenance": {
+  "schema": 1,
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
-  "method": "GUI worker, real toolbar/popover clicks and key binding for the align; XTest press/relative-increment drags for placement; state read through the editor's scripting bridge between gestures only",
+  "method": "gui-gesture",
+  "notes": "GUI worker, real toolbar/popover clicks and key binding for the align; XTest press/relative-increment drags for placement; state read through the editor's scripting bridge between gestures only",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_workplane/harness",
   "task": "7104"

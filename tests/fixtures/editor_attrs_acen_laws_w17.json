@@ -1,8 +1,10 @@
 {
  "provenance": {
+  "schema": 1,
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
-  "method": "GUI worker, real XTest pointer/keys with relative increments (one in flight); per-increment values read by a debugger hook at the tool-attribute write and at the transform-handle compute site (no editor call while a button is held), cross-checked against the editor's command journal; root-window frames; state read through the editor bridge only before arming and after release",
+  "method": "debug-live",
+  "notes": "GUI worker, real XTest pointer/keys with relative increments (one in flight); per-increment values read by a debugger hook at the tool-attribute write and at the transform-handle compute site (no editor call while a button is held), cross-checked against the editor's command journal; root-window frames; state read through the editor bridge only before arming and after release",
   "captured_utc": "2026-09-23",
   "harness": "toolcards/bugfix_w17_attrs_acen/harness (private)",
   "task": "7105"
