@@ -200,8 +200,8 @@ unittest {
     assert(save.refusalReason() == "could not hand 'scene.v3d' to the browser",
         "R9: reason '" ~ save.refusalReason() ~ "'");
     syncDocRevision(12);
-    assert(!hasCurrentDoc(), "R9: a refused hand-off must not adopt the path");
     assert(docDirty(), "R9: a refused hand-off must leave the document dirty");
+    assert(!hasCurrentDoc(), "R9: a refused hand-off must not adopt the path");
 }
 
 // R9b — every write branch hands off (checklist 7): the LWO export.
