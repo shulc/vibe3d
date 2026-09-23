@@ -95,6 +95,10 @@ int[] ints(JSONValue a) {
     return r;
 }
 
+/// Undo-stack depth; history is cleared in `rig`, so after the key this must
+/// be exactly the key's own entry (the law: ONE undo step restores).
+size_t undoDepth() { return getJson("/api/history")["undo"].array.length; }
+
 /// Compare live state to a fixture state block: counts, polygon list by
 /// identity (corner order included) and the polygon selection.
 void expectState(JSONValue want, string label) {
@@ -139,6 +143,7 @@ unittest {
     auto m = getJson("/api/model");
     assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 5, "cube face delete");
     expectState(c["after"], "cube face delete");
+    assert(undoDepth() == 1, "cube face delete: the key did not record exactly one undo entry");
     pressKey(SDLK_z, KMOD_LCTRL);
     expectState(c["after_undo"], "cube face delete undo");
 }
@@ -153,6 +158,7 @@ unittest {
     assert(m["vertexCount"].integer == 0 && m["faceCount"].integer == 0,
         "delete left orphan points");
     expectState(c["after"], "d-iso-del");
+    assert(undoDepth() == 1, "d-iso-del: the key did not record exactly one undo entry");
     pressKey(SDLK_z, KMOD_LCTRL);
     expectState(c["after_undo"], "d-iso-del undo");
 }
@@ -168,6 +174,7 @@ unittest {
         format("backspace in component mode is not delete (got %d/%d, want 0/0)",
                m["vertexCount"].integer, m["faceCount"].integer));
     expectState(c["after"], "d-iso-bs");
+    assert(undoDepth() == 1, "d-iso-bs: the key did not record exactly one undo entry");
     pressKey(SDLK_z, KMOD_LCTRL);
     expectState(c["after_undo"], "d-iso-bs undo");
 }
@@ -184,6 +191,7 @@ unittest {
         format("shift+backspace did not remove (keep points) (got %d/%d, want 4/0)",
                m["vertexCount"].integer, m["faceCount"].integer));
     expectState(c["after"], "d-iso-sbs");
+    assert(undoDepth() == 1, "d-iso-sbs: the key did not record exactly one undo entry");
     pressKey(SDLK_z, KMOD_LCTRL);
     expectState(c["after_undo"], "d-iso-sbs undo");
 }

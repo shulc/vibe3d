@@ -175,6 +175,9 @@ int[] newPolygon(JSONValue c, string failMsg) {
     // The five pre-existing polygons are untouched, by identity.
     assert(f[0 .. 5] == ints2(c["before"]["polygons"]),
         "make polygon changed an existing polygon (" ~ c["rig"].str ~ ")");
+    // History was cleared in `rig`: the command is exactly one undo entry.
+    assert(getJson("/api/history")["undo"].array.length == 1,
+        "make polygon did not record exactly one undo entry (" ~ c["rig"].str ~ ")");
     return f[5];
 }
 
