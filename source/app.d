@@ -4656,7 +4656,14 @@ void main(string[] args) {
             a, document.hasEditTarget(), activeToolId),
         uiCommandDelegate,
         cast(void delegate(string))&activateToolById,
-        cast(bool delegate(string))&tryOpenArgsDialog);
+        cast(bool delegate(string))&tryOpenArgsDialog,
+        // Late-reading: `navHistory` is declared below and published through
+        // `app.navHistory` before the first frame (task 7112, V19).
+        (bool u) {
+            assert(app.navHistory !is null,
+                "panel history row fired before app.navHistory was bound");
+            return app.navHistory(u);
+        });
     import ui.layer_list_panel : bindLayerListPanel;
     auto layerListRoles = bindLayerListPanel(sessionOwner, commandBinding,
                                              formsPanel, toolHost.getActiveTool);

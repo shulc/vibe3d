@@ -31,10 +31,10 @@ import mesh_edit_delta : MeshEditScope;
 ///   * a `mesh_dirty` EPOCH still reads its pre-reset value, because the
 ///     publish that advances it runs 24 lines AFTER the tool was dropped.
 ///
-/// A polled COUNTER is what survives that ordering, which is the shape
-/// `LoopSliceTool.armedKey_` / `EdgeSliceTool` / `SliceTool` already use for
-/// this same hazard. This type is that shape, named, so a fourth tool does not
-/// have to rediscover it.
+/// A polled COUNTER is what survives that ordering. This type is that shape,
+/// named: used by Bridge, Radial Sweep and Magnet, and by the three slice
+/// tools' `armedKey_` since task 7112 (whose `mutationVersion` key dropped a
+/// live chain every subpatch-preview frame — the hazard described next).
 ///
 /// WHICH COUNTER, AND WHY NOT `mutationVersion`. What these tools freeze is a
 /// VERTEX SET and a FACE SET, so the counter that owns the class is
@@ -64,7 +64,7 @@ struct SessionMeshKey {
     /// Freeze the identity of `m`. Call this exactly where the mesh-indexed
     /// state it protects is (re-)derived — including from a `resyncSession()`,
     /// or the guard refuses a commit undo/redo legitimately re-baselined.
-    void stamp(ref Mesh m) nothrow @nogc {
+    void stamp(ref const Mesh m) nothrow @nogc {
         key_   = MeshTopoKey.init;
         key_.stamp(m);
         verts_ = m.vertices.length;
@@ -72,10 +72,23 @@ struct SessionMeshKey {
     }
 
     /// Is `m` still the mesh this gesture was armed over?
-    bool matches(ref Mesh m) const nothrow @nogc {
+    bool matches(ref const Mesh m) const nothrow @nogc {
         return key_.matches(m)
             && verts_ == m.vertices.length
             && faces_ == m.faces.length;
+    }
+
+    /// Stamp from an IMAGE that will be installed WHOLE into the mesh at
+    /// `liveAddr` (`installPreparedMeshImage` does `target = image;`), so
+    /// every counter and count equals the live mesh's after install; only the
+    /// address differs, and it is the live one. Pinned by
+    /// `tests/unit/session_mesh_key_stamp_as_test.d`.
+    void stampAs(ref const Mesh image, size_t liveAddr) nothrow @nogc {
+        key_   = MeshTopoKey.init;
+        key_.stamp(image);
+        key_.addr = liveAddr;
+        verts_ = image.vertices.length;
+        faces_ = image.faces.length;
     }
 
     /// Forget the stamp — a fresh key matches nothing (`MeshTopoKey`'s own

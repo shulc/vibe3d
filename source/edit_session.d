@@ -208,7 +208,10 @@ interface RefireClient {
 //   * the slice standing previews (LoopSliceTool / EdgeSliceTool — task
 //     0232 + 0400): the uncommitted edit is a STANDING preview sitting on
 //     the mesh across arbitrary frames, re-armable after every
-//     commit/cancel;
+//     commit/cancel. EdgeSliceTool's survival covers only the residual
+//     armed-without-points state: a peel that empties its chain ends the
+//     tool in navigate()'s step branch; SliceTool deliberately
+//     does NOT implement this interface, so its cancel drops the tool;
 //   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
 //     task 0430, capture-measured): a cancelled create gesture leaves the
 //     tool armed for a fresh gesture.
@@ -586,7 +589,15 @@ final class EditSession {
         // base-Tool default (false) ⇒ every other tool is byte-identical.
         {
             auto su = cast(SessionStepUndo) tool_();
-            if (isUndo && su !is null && su.tryUndoStepInSession()) return true;
+            if (isUndo && su !is null && su.tryUndoStepInSession()) {
+                // Task 7112 (owner's law for the slice tools, capture-
+                // verified for Edge Slice): the peel that removes the
+                // session's FIRST gesture also ends the tool. RE-READ, as
+                // below — the peel may itself have changed the active tool.
+                auto tp = tool_();
+                if (tp !is null && !tp.hasUncommittedEdit()) dropTool_();
+                return true;
+            }
         }
         auto t = tool_();
         if (t !is null && t.hasUncommittedEdit() && isUndo) {
@@ -605,10 +616,10 @@ final class EditSession {
             // Task 0400 + 0430: a KeepAliveOnCancel tool
             // (survivesEditCancel()==true — the slice standing previews
             // LoopSliceTool/EdgeSliceTool, and the create family
-            // PrimitiveCreateTool/BoxTool) is never dropped by this cancel;
-            // the reference editor's interactive undo never drops an active
-            // tool. Every other tool keeps the pre-0400 cancel-then-drop
-            // behavior. RE-READ, not the `t` cached above — see the method
+            // PrimitiveCreateTool/BoxTool) is never dropped by this cancel.
+            // Every other tool — SliceTool included, whose single-gesture
+            // cancel ends the tool by the owner's slice law —
+            // keeps the pre-0400 cancel-then-drop behavior. RE-READ, not the `t` cached above — see the method
             // doc.
             auto t2  = tool_();
             auto ka2 = cast(KeepAliveOnCancel) t2;

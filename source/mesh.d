@@ -549,9 +549,9 @@ struct MeshMap {
 /// (task 0401). A position-dependent cache pairs it with a bus epoch —
 /// `mesh_dirty`'s header says which.
 struct MeshTermMutation {
-    /// The field name this term contributes to a `MeshKey`. Kept as the
-    /// spelling the three folded structs used, because call sites read it
-    /// directly (`armedKey_.mutVer`, ~15 sites across the slice tools).
+    /// The field name this term contributes to a `MeshKey` — the spelling
+    /// the three folded structs used; no tool reads it directly since task
+    /// 7112 moved the slice tools to `SessionMeshKey`.
     enum string field = "mutVer";
 
     static ulong read(ref const Mesh m) nothrow @nogc {
@@ -559,12 +559,9 @@ struct MeshTermMutation {
     }
     static bool same(ulong v, ref const Mesh m) nothrow @nogc {
         // recorded remainder (1906 §3.6): `mutationVersion` owns this compare,
-        // and it survives for ONE consumer group — the slice tools' `armedKey_`
-        // (plan §3.4 row 18) — plus `SubpatchPreview`'s freshness half. Those
-        // are not caches: they guard that an armed preview's baseline still
-        // belongs to THIS mesh at THIS edit, evaluated between mouse events. A
-        // bus epoch answers "did anything change"; the guard asks "is my
-        // baseline still valid", and only an identity can answer that.
+        // and it survives for `SubpatchPreview`'s freshness half. (The slice
+        // tools' `armedKey_` left it in task 7112: position moves this counter
+        // under a live subpatch preview, so they key on `SessionMeshKey`.)
         return v == m.mutationVersion;
     }
 }

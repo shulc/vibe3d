@@ -14,6 +14,9 @@ alias ActionMenuDispatch = void delegate(string id, string paramsJson);
 alias ActionMenuToolActivate = void delegate(string id);
 alias ActionMenuArgsDialog = bool delegate(string id);
 alias ActionMenuRefusal = string delegate(ref const Action action);
+/// The session-aware history navigator (`app.d`'s `navHistory`): the one
+/// door the panel's Undo/Redo rows take, same as Ctrl+Z (V19).
+alias ActionMenuHistoryNav = bool delegate(bool isUndo);
 
 struct ActionMenuRead {
 private:
@@ -38,28 +41,38 @@ private:
     ActionMenuToolActivate activateTool_;
     ActionMenuArgsDialog openArgs_;
     ActionMenuDispatch dispatch_;
+    ActionMenuHistoryNav nav_;
 
 public:
     @disable this();
 
     this(ActionMenuToolActivate activateTool, ActionMenuArgsDialog openArgs,
-         ActionMenuDispatch dispatch) {
+         ActionMenuDispatch dispatch, ActionMenuHistoryNav nav) {
         assert(activateTool !is null,
             "ActionMenuActions requires a tool-activation door");
         assert(openArgs !is null,
             "ActionMenuActions requires an args-dialog door");
         assert(dispatch !is null,
             "ActionMenuActions requires a UI command door");
+        assert(nav !is null,
+            "ActionMenuActions requires a history-navigation door");
         activateTool_ = activateTool;
         openArgs_ = openArgs;
         dispatch_ = dispatch;
+        nav_ = nav;
     }
 
     void activateTool(string id) {
         if (activateTool_ !is null) activateTool_(id);
     }
 
+    // The history rows leave for the navigator BEFORE the args-dialog and
+    // command doors, as `InputRouter.handleKeyDown` does for Ctrl+Z: the raw
+    // `history.undo` command undoes UNDER a live tool edit (task 7112, V19;
+    // the script doors stay raw by design).
     void runCommandRow(string id) {
+        if (id == "history.undo") { nav_(true); return; }
+        if (id == "history.redo") { nav_(false); return; }
         if (openArgs_ !is null && openArgs_(id)) return;
         if (dispatch_ !is null) dispatch_(id, "");
     }
@@ -76,7 +89,7 @@ struct ActionMenuRoles {
 
 ActionMenuRoles bindActionMenu(ActionMenuRefusal refusal,
         ActionMenuDispatch dispatch, ActionMenuToolActivate activateTool,
-        ActionMenuArgsDialog openArgs) {
+        ActionMenuArgsDialog openArgs, ActionMenuHistoryNav nav) {
     assert(refusal !is null,
         "bindActionMenu requires an availability read");
     assert(dispatch !is null,
@@ -85,8 +98,10 @@ ActionMenuRoles bindActionMenu(ActionMenuRefusal refusal,
         "bindActionMenu requires a tool-activation door");
     assert(openArgs !is null,
         "bindActionMenu requires an args-dialog door");
+    assert(nav !is null,
+        "bindActionMenu requires a history-navigation door");
     return ActionMenuRoles(ActionMenuRead(refusal),
-        ActionMenuActions(activateTool, openArgs, dispatch));
+        ActionMenuActions(activateTool, openArgs, dispatch, nav));
 }
 
 void dispatchAction(ActionMenuActions actions, ref Action action) {

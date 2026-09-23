@@ -296,33 +296,24 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 6. THE LAYER-1 WITNESS — a tool whose gesture CANNOT be cancelled.
+// 6. A reset under a live `mesh.sliceTool` cut — which used to be the LAYER-1
+//    witness and, since task 7112, is a layer-2 one.
 //
-//    Blocks 1-5 all ride `mesh.mirrorTool`, whose `cancelUncommittedEdit()`
-//    clears the exact field its `deactivate()` commit tests. That is layer 2,
-//    and a fix built on layer 2 alone would be green in every block above and
-//    still wrong: a census of all 35 `deactivate()` overrides found FIVE that
-//    write and whose cancel does NOT clear their commit guard —
-//    `slice/slice_tool.d`, `edit/topology_pen/tool.d`, `transform/rotate.d`,
-//    `transform/scale.d` and `edit/edge_extend.d`'s embedded transform. Four of
-//    those five never override the pair at all, so `hasUncommittedEdit()`
-//    answers the base `false` and the cancel loop is a NO-OP for them.
+//    `mesh.sliceTool` writes to the DOCUMENT mesh during the drag (12v/10f
+//    standing before any commit). Until task 7112 it did not override the
+//    cancel pair, so the disarm's cancel loop was a no-op for it and only
+//    layer 1 (drop-before-replace) kept its commit on the mesh it was armed
+//    on: the reset then filed ["Slice", "Reset to "]. Task 7112 gave
+//    `SliceTool` the live-edit hooks (item 24: Ctrl+Z went to the history
+//    UNDER its live cut), so the disarm now CANCELS the cut first, exactly as
+//    for the mirror tool in blocks 1-5: the reset hands back a plain cube and
+//    files only its own row.
 //
-//    `mesh.sliceTool` is the drivable one, and it is the sharpest of the five
-//    because it writes to the DOCUMENT mesh during the drag (12v/10f standing
-//    before any commit) rather than into a private preview. What protects the
-//    fresh scene here is layer 1 alone: the tool is dropped while its own mesh
-//    is still current.
-//
-//    THE UNDO ENTRY IS PART OF THE LAW, not an accident. Layer 1 lets this
-//    tool's commit run against the mesh it was armed on, so the session bakes
-//    its usual single entry — and that entry is what EXPLAINS the geometry the
-//    reset then snapshots. Before this task the same reset left a 12v/10f mesh
-//    in the undo image with NO entry accounting for the cut (`SliceTool`'s own
-//    `armedKey_` guard, task 2880, silently refused the commit once the mesh
-//    had been swapped). "Silent" there meant an un-undoable edit inside the
-//    reset's own snapshot; asserting the entry HERE is what stops a future
-//    change from calling that silence an improvement.
+//    What this block no longer witnesses is layer 1 ALONE: of the census's
+//    tools that write during a gesture without the cancel pair, the ones
+//    left are `edit/topology_pen/tool.d`, `transform/rotate.d`,
+//    `transform/scale.d` and `edit/edge_extend.d`'s embedded transform
+//    (recorded as a finding of task 7112).
 // ---------------------------------------------------------------------------
 unittest {
     resetToCube("block 6 baseline");
@@ -372,16 +363,14 @@ unittest {
     resetToCube("block 6 — with a live slice standing");
 
     assert(counts() == kCube,
-        "LAYER 1 FAILED: a reset under a live `mesh.sliceTool` cut must hand "
-        ~ "back a plain cube (" ~ kCube.toString ~ "), got " ~ counts().toString
-        ~ ". This tool does not implement the cancel pair, so the cancel loop "
-        ~ "is a no-op for it — only the unconditional DROP-BEFORE-REPLACE "
-        ~ "keeps its session away from the scene the reset just built.");
-    assert(editUndoLabels() == ["Slice", "Reset to "],
-        "the slice session must bake its one entry against the mesh it was "
-        ~ "armed on, BEFORE the reset's own entry; got "
-        ~ editUndoLabels().to!string ~ ". Order matters: \"Slice\" after \"Reset "
-        ~ "to \" would mean the cut was baked into the replacement.");
+        "a reset under a live `mesh.sliceTool` cut must hand back a plain cube ("
+        ~ kCube.toString ~ "), got " ~ counts().toString
+        ~ ". The disarm cancels the cut and drops the tool before the "
+        ~ "geometry is replaced.");
+    assert(editUndoLabels() == ["Reset to "],
+        "a reset under a live `mesh.sliceTool` cut must CANCEL the cut (the "
+        ~ "tool implements the cancel pair since task 7112) and file only its "
+        ~ "own row; got " ~ editUndoLabels().to!string);
 }
 
 // ---------------------------------------------------------------------------

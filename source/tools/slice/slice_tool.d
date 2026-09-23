@@ -43,14 +43,15 @@ import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
+import tools.common.session_mesh_key : SessionMeshKey;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
-    MeshCacheKey armedKey;
+    SessionMeshKey armedKey;
     uint[] restrictFaces;
     bool valid;
     void clear() nothrow @nogc {
-        before = MeshSnapshot.init; armedKey = MeshCacheKey.init;
+        before = MeshSnapshot.init; armedKey = SessionMeshKey.init;
         restrictFaces = null; valid = false;
     }
 }
@@ -61,7 +62,7 @@ struct PreparedSliceDeactivateImage {
     bool expectedHaveRaw, expectedSnapTempInvert, expectedHaveFrozen;
     bool expectedPendingAxisClassify, expectedHasLine, expectedDrawGesture;
     bool expectedCtrlPending, expectedGapDrag;
-    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    SessionMeshKey expectedArmedKey;
     MeshSnapshot expectedLive, expectedBefore;
     bool commitEligible;
     void clear() nothrow @nogc {
@@ -83,7 +84,7 @@ struct PreparedSliceParamImage {
     uint[] expectedRestrictFaces;
     Mesh candidate;
     uint deliveryFlags, deliveryDomains;
-    ulong nextMutationVersion;
+    SessionMeshKey nextArmedKey;
     void clear() nothrow @nogc {
         pname = null; expectedLive = MeshSnapshot.init;
         expectedBefore = MeshSnapshot.init; expectedRestrictFaces = null;
@@ -870,7 +871,7 @@ private:
     // Session state. `before_` is the session baseline captured ONCE at
     // activation (task 0278); `previewLive_` is true whenever a real cut sits
     // on the mesh (the thing `deactivate` commits). `armedKey_` stamps the
-    // mesh identity+version we last left the preview at, so the deferred
+    // mesh identity (topology) we last left the preview at, so the deferred
     // commit can detect an external mesh swap and drop rather than corrupt it.
     bool     active;
     int      dragPart_ = DragNone;
@@ -905,16 +906,14 @@ private:
     // baseline (reverting face indices), so these activation-time indices stay
     // valid across the whole session. Empty ⇒ whole-mesh cut.
     uint[]   restrictFaces_;
-    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
-    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
-    // mouse events: "is the baseline I armed still the mesh I armed it on, at
-    // the state I armed it in?". A bus class answers a different question
-    // ("did anything change"), and the guard's correct response to any change
-    // at all is the same one — drop the armed preview. Replacing an equality
-    // on a monotone counter with a subscription would also make the answer
-    // depend on when the bus last delivered, which replay determinism forbids.
-    // Plan §3.4 row 18.
-    MeshCacheKey armedKey_;      // mesh identity+version guard for the deferred commit
+    // IDENTITY guard for the deferred commit: "is the baseline I armed still
+    // on the mesh I armed it on?". Keyed on TOPOLOGY + address + the
+    // vertex/face counts (`SessionMeshKey`), never on `mutationVersion`: a
+    // live subpatch preview publishes `Position` on this mesh every refresh
+    // frame, and a position-keyed guard refused the commit, leaving the cut
+    // with no history row (item 24; see
+    // `tools/common/session_mesh_key.d`).
+    SessionMeshKey armedKey_;    // mesh identity guard for the deferred commit
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). Every
     // one of its uses was re-read and every one is genuinely WORLD: the
     // Ctrl-axis election, the workplane ray, the Start/End handle and line
@@ -1221,8 +1220,7 @@ public:
         image.expectedDrawGesture = drawGesture_;
         image.expectedCtrlPending = ctrlPending_;
         image.expectedGapDrag = gapDrag_;
-        image.expectedArmedAddr = armedKey_.addr;
-        image.expectedArmedMutVer = armedKey_.mutVer;
+        image.expectedArmedKey = armedKey_;
         image.expectedLive = MeshSnapshot.capture(live);
         image.expectedBefore = before_;
         image.commitEligible = active && previewLive_ && haveBefore_ &&
@@ -1244,8 +1242,7 @@ public:
             drawGesture_ == image.expectedDrawGesture &&
             ctrlPending_ == image.expectedCtrlPending &&
             gapDrag_ == image.expectedGapDrag &&
-            armedKey_.addr == image.expectedArmedAddr &&
-            armedKey_.mutVer == image.expectedArmedMutVer &&
+            armedKey_ == image.expectedArmedKey &&
             image.expectedLive.matches(live) &&
             image.expectedBefore.matches(before_);
     }
@@ -1257,7 +1254,7 @@ public:
         haveFrozen_ = false; pendingAxisClassify_ = false;
         hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
         ctrlAxis_ = -1; gapDrag_ = false;
-        armedKey_.addr = size_t.max; armedKey_.mutVer = ulong.max;
+        armedKey_.invalidate();
         image.clear();
     }
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
@@ -1313,7 +1310,7 @@ public:
             !haveBefore_ && !haveRaw_ && !snapTempInvert_ && !haveFrozen_ &&
             !pendingAxisClassify_ && !hasLine_ && !drawGesture_ &&
             !ctrlPending_ && ctrlAxis_ == -1 && !gapDrag_ &&
-            armedKey_.addr == size_t.max && armedKey_.mutVer == ulong.max;
+            armedKey_ == SessionMeshKey.init;
     }
     version(unittest) final void mutatePreparedDeactivateForTest()
             nothrow @nogc { gapDrag_ = false; }
@@ -1338,9 +1335,38 @@ public:
         armedKey_.invalidate();
     }
 
-    // No standing preview persists across frames outside a drag, so there is
-    // never an uncommitted edit to coordinate with history navigation.
     override void evaluate() {}
+
+    // Live-edit hooks (task 7112, item 24). A cut that sits on the mesh
+    // between gestures IS an uncommitted edit: without these, Ctrl+Z went to
+    // `history.undo()` UNDER the live cut. The predicate is exactly the
+    // condition under which `commitCurrentSlice` would record (the base-class
+    // invariant "hasUncommittedEdit() <=> a commit would fire"); the key is
+    // not a term — it no longer moves on position, and a foreign topology is
+    // dropped by `deactivate` via `dropPreview`. No `KeepAliveOnCancel`: the
+    // cancel removes the session's only gesture, which ends the tool (owner's
+    // slice law; `EditSession.navigate` drops it).
+    public override bool hasUncommittedEdit() const {
+        return active && previewLive_ && haveBefore_ && before_.filled;
+    }
+
+    // Back to the session baseline — the same restore `sliceFromBaseline`
+    // starts every preview with. The line and the baseline stay (as for RMB).
+    public override void cancelUncommittedEdit() {
+        before_.restore(*mesh);
+        previewLive_ = false;
+        armedKey_.stamp(*mesh);
+        refreshDisplay(mesh, gpu);
+    }
+
+    // After a raw history step under a live tool with no cut on the mesh the
+    // activation baseline is stale; re-take it, or the next preview restores
+    // it over the undo (same shape as `EdgeSliceTool.resyncSession`).
+    public override void resyncSession() {
+        if (!active || !haveBefore_ || previewLive_) return;
+        before_ = MeshSnapshot.capture(*mesh);
+        armedKey_.stamp(*mesh);
+    }
 
     private static bool preparedParamRecognized(string pname) pure nothrow @nogc {
         switch (pname) {
@@ -1390,7 +1416,7 @@ public:
             normal, axisMode, vector_, infinite_, split_, caps_,
             restrictFaces_, gap_, cast(int)gapSide_);
         image.nextPreviewLive = n > 0;
-        image.nextMutationVersion = image.candidate.mutationVersion;
+        image.nextArmedKey.stampAs(image.candidate, cast(size_t)mesh);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
         shadow.close();
@@ -1432,8 +1458,7 @@ public:
         axisLocked_ = image.nextAxisLocked;
         if (image.applies) {
             previewLive_ = image.nextPreviewLive;
-            armedKey_.addr = cast(size_t)mesh;
-            armedKey_.mutVer = image.nextMutationVersion;
+            armedKey_ = image.nextArmedKey;
         }
         image.clear();
     }
@@ -2104,10 +2129,12 @@ private:
                                           infinite_, split_, caps_, restrictFaces_,
                                           gap_, cast(int)gapSide_);
         previewLive_ = nSplit > 0;
-        // Stamp AFTER the cut, BEFORE refreshDisplay (which does not bump
-        // mutationVersion): the guard now reflects the mesh state WE produced,
-        // so deactivate() can tell whether anything external has since touched
-        // it (mirrors LoopSliceTool.rebuildCut).
+        // Stamp AFTER the cut, BEFORE refreshDisplay: the guard now reflects
+        // the topology WE produced, so deactivate() can tell whether anything
+        // external has since replaced it. refreshDisplay DOES bump
+        // `mutationVersion` under a live subpatch preview (its suppressed-cage
+        // `Position` publish) — which is why the key is a `SessionMeshKey`,
+        // which position does not move.
         armedKey_.stamp(*mesh);
         refreshDisplay(mesh, gpu);
     }
@@ -2134,7 +2161,7 @@ private:
     // preview (armedKey_ mismatch) rather than baking a bogus entry.
     void commitCurrentSlice() {
         if (!previewLive_ || !haveBefore_ || !before_.filled) return;
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) return;   // mesh swapped since last preview — drop
         if (history is null || gestureFactory is null) return;
         auto cmd = cast(MeshSessionEdit) gestureFactory();

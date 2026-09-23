@@ -441,6 +441,7 @@ tests.unit.selection_order_scan_test
 tests.unit.selection_projection_test
 tests.unit.seltype_test
 tests.unit.session_edit_payload_test
+tests.unit.session_mesh_key_stamp_as_test
 tests.unit.session_ownership_test
 tests.unit.snap_election_corpus_test
 tests.unit.snap_test

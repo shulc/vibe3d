@@ -1031,7 +1031,9 @@ void playKey(int sym, int mod = 0) {
 //            disambiguates: peelLastPoint's length==1 branch sets
 //            activePoint_=0, the length==0 branch sets it to -1.
 //       3rd: peels A -> the chain is FINALLY empty (peelLastPoint's
-//            length==0 branch, previously uncovered), tool STILL active.
+//            length==0 branch), and removing the session's FIRST gesture
+//            also ends the tool (owner's slice law, task 7112 — this block
+//            asserted "tool STILL active" before it).
 //     None of the three peels records anything to the committed undo ledger.
 // ---------------------------------------------------------------------------
 unittest {
@@ -1088,6 +1090,9 @@ unittest {
     assert(st2["armed"].type == JSONType.false_, "a lone latched point is not armed");
     assert(cast(int)st2["activePoint"].integer == 0,
         "a lone latched point must report activePoint==0, distinguishing it from an empty chain's -1");
+    // Positive control for the tool-off negation after the third Ctrl+Z.
+    assert(("tool" in st2.object) && st2["tool"].str == "edgeSlice",
+        "tool id probe: the lone-point state does not publish tool 'edgeSlice'");
 
     auto m1 = model();
     assert(vertCount(m1) == 8, "a lone latched point cuts nothing -> base mesh (8v)");
@@ -1098,17 +1103,11 @@ unittest {
         "peel must NOT touch the committed undo ledger, went " ~
         depthBefore.to!string ~ " -> " ~ depthMid2.to!string);
 
-    // Third Ctrl+Z: peel A -> the chain is now genuinely empty
-    // (peelLastPoint's length==0 branch, previously uncovered), tool STILL
-    // active.
+    // Third Ctrl+Z: peel A -> the chain is genuinely empty, and the peel of
+    // the session's first gesture ends the tool (task 7112). With no tool,
+    // /api/tool/state answers "{}", so the chain fields are not read here.
     playKey(SDLK_z, KMOD_LCTRL);
     auto st3 = getJson("/api/tool/state");
-    assert(st3["chainSegments"].integer == 0,
-        "third Ctrl+Z must peel to an empty chain, got " ~
-        st3["chainSegments"].integer.to!string ~ " segments");
-    assert(st3["armed"].type == JSONType.false_, "an empty chain is not armed");
-    assert(cast(int)st3["activePoint"].integer == -1,
-        "an empty chain must report activePoint==-1, distinguishing it from the lone-point state");
 
     auto m2 = model();
     assert(vertCount(m2) == 8, "peel to an empty chain must restore the base mesh (8v)");
@@ -1119,9 +1118,8 @@ unittest {
         "peel must never record an undo entry, went " ~
         depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
 
-    // The tool is still active-idle after peeling everything (not dropped) —
-    // a further command against it must still succeed.
-    deactivateTool();
+    assert(!("tool" in st3.object) || st3["tool"].str != "edgeSlice",
+        "peel of the last point did not end the tool");
 }
 
 // ---------------------------------------------------------------------------

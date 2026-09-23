@@ -554,11 +554,17 @@ long slSliceActivateAndDraw() {
     slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
     assert(slTool() == "slice", "slice floor: Shift+C did not activate the Slice tool");
     const recorded = slHistoryLen();
+    slSliceDrawLine();
+    return recorded;
+}
+
+/// Draw the Slice line (world x = 0, y from -0.6 to 0.6) with the tool
+/// already active and no line on it yet.
+void slSliceDrawLine() {
     auto vp = viewportFromCamera(fetchCamera());
     float ax, ay, bx, by;
     assert(projectToWindow(Vec3(0, -0.6f, 0), vp, ax, ay)
            && projectToWindow(Vec3(0, 0.6f, 0), vp, bx, by),
            "slice rig: the slice line projects off screen");
     slFullDrag(cast(int)ax, cast(int)ay, cast(int)bx, cast(int)by, 10, "the Slice line");
-    return recorded;
 }

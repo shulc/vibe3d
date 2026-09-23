@@ -8,6 +8,7 @@ import operator : VectorStack;
 
 import tool;
 import edit_session : KeepAliveOnCancel;
+import tools.common.session_mesh_key : SessionMeshKey;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -56,7 +57,7 @@ struct PreparedLoopSliceActivationImage {
 
 struct PreparedLoopSliceDeactivateImage {
     bool valid, expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
-    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    SessionMeshKey expectedArmedKey;
     uint[] expectedSeeds, expectedSelectedFaces;
     MeshSnapshot expectedLive, expectedBefore;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
@@ -78,7 +79,7 @@ struct LoopSlicePreparedParamState {
     float proxy, insertAt, gap, tension, depth;
     float[] positions;
     uint[] seeds, selectedFaces;
-    size_t armedAddr; ulong armedMutVer;
+    SessionMeshKey armedKey;
     MeshSnapshot before;
     void clear() nothrow @nogc {
         positions = null; seeds = null; selectedFaces = null;
@@ -416,22 +417,20 @@ private:
     // lying about a space, and the drag law below read it at face value).
     Vec3         seedA_, seedB_;
     MeshSnapshot before_;      // idle baseline: mesh == before_ whenever !armed_
-    // Address + mutationVersion of the mesh exactly as WE last left it — see
-    // the header comment. Stamped at the end of every successful rebuildCut()
+    // Identity (address + topology + counts) of the mesh exactly as WE last
+    // left it — see the header comment. Stamped at the end of every successful rebuildCut()
     // (and once, trusted, at arm-time). Any commit/cancel/rebuild first checks
     // this against the CURRENT mesh; a mismatch means some OTHER path (reset,
     // layer switch) touched the mesh since, and the preview is dropped rather
     // than committed/restored against the wrong target.
-    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
-    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
-    // mouse events: "is the baseline I armed still the mesh I armed it on, at
-    // the state I armed it in?". A bus class answers a different question
-    // ("did anything change"), and the guard's correct response to any change
-    // at all is the same one — drop the armed preview. Replacing an equality
-    // on a monotone counter with a subscription would also make the answer
-    // depend on when the bus last delivered, which replay determinism forbids.
-    // Plan §3.4 row 18.
-    MeshCacheKey armedKey_;
+    // IDENTITY guard, asked between mouse events: "is the baseline I armed
+    // still on the mesh I armed it on?". Keyed on TOPOLOGY + address + the
+    // vertex/face counts (`SessionMeshKey`), never on `mutationVersion`: a
+    // live subpatch preview publishes `Position` on this mesh every refresh
+    // frame, and a position-keyed guard dropped the armed loop, leaving the
+    // cut with no history row (task 7112; see
+    // `tools/common/session_mesh_key.d`).
+    SessionMeshKey armedKey_;
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). Its
     // only reader is the **Closest** election in `onMouseMotion`, which runs
     // in world space by law (§1.3) and must NOT be handed a composed one.
@@ -821,7 +820,7 @@ public:
         count_ = image.count; current_ = 0;
         positions_ = image.positions; image.positions = null;
         positionProxy_ = image.positionProxy;
-        armedKey_ = MeshCacheKey.init;
+        armedKey_ = SessionMeshKey.init;
         image.before.moveInto(before_);
         image.clear();
     }
@@ -901,8 +900,7 @@ public:
         PreparedLoopSliceDeactivateImage image; image.valid = true;
         image.expectedActive = active; image.expectedArmed = armed_;
         image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
-        image.expectedArmedAddr = armedKey_.addr;
-        image.expectedArmedMutVer = armedKey_.mutVer;
+        image.expectedArmedKey = armedKey_;
         image.expectedSeeds = seeds_.dup;
         image.expectedSelectedFaces = armedSelFaces_.dup;
         image.expectedLive = MeshSnapshot.capture(live);
@@ -926,8 +924,7 @@ public:
             nothrow @nogc {
         return image.valid && active == image.expectedActive &&
             armed_ == image.expectedArmed && scrubbing_ == image.expectedScrubbing &&
-            built_ == image.expectedBuilt && armedKey_.addr == image.expectedArmedAddr &&
-            armedKey_.mutVer == image.expectedArmedMutVer &&
+            built_ == image.expectedBuilt && armedKey_ == image.expectedArmedKey &&
             seeds_ == image.expectedSeeds && armedSelFaces_ == image.expectedSelectedFaces &&
             image.expectedLive.matches(live) && image.expectedBefore.matches(before_);
     }
@@ -936,7 +933,7 @@ public:
             ref PreparedLoopSliceDeactivateImage image) nothrow @nogc {
         if (!image.valid) return;
         active = false; armed_ = false; scrubbing_ = false; built_ = false;
-        seeds_ = null; armedSelFaces_ = null; armedKey_ = MeshCacheKey.init;
+        seeds_ = null; armedSelFaces_ = null; armedKey_ = SessionMeshKey.init;
         if (image.installBeforeFromLive) image.expectedLive.moveInto(before_);
         image.clear();
     }
@@ -1085,7 +1082,7 @@ public:
         s.proxy = positionProxy_; s.insertAt = insertAt_; s.gap = gap_;
         s.tension = curveTension_; s.depth = depth_; s.positions = positions_.dup;
         s.seeds = seeds_.dup; s.selectedFaces = armedSelFaces_.dup;
-        s.armedAddr = armedKey_.addr; s.armedMutVer = armedKey_.mutVer;
+        s.armedKey = armedKey_;
         s.before = before_; return s;
     }
 
@@ -1104,8 +1101,8 @@ public:
             positionProxy_ == s.proxy && insertAt_ == s.insertAt && gap_ == s.gap &&
             curveTension_ == s.tension && depth_ == s.depth &&
             positions_ == s.positions && seeds_ == s.seeds &&
-            armedSelFaces_ == s.selectedFaces && armedKey_.addr == s.armedAddr &&
-            armedKey_.mutVer == s.armedMutVer && s.before.matches(before_);
+            armedSelFaces_ == s.selectedFaces && armedKey_ == s.armedKey &&
+            s.before.matches(before_);
     }
 
     private void copyPreparedParamInputsTo(LoopSliceTool shadow,
@@ -1147,10 +1144,15 @@ public:
         image.appliesMesh = shadowTool.preparedRebuildAttempted_;
         image.invalidateRedo = image.appliesMesh && history !is null;
         image.stampKey = image.appliesMesh && image.next.armed;
-        if (image.stampKey) {
-            image.next.armedAddr = image.expected.armedAddr;
-            image.next.armedMutVer = image.expected.armedMutVer;
-        }
+        // The key is computed HERE, from the image that install copies whole
+        // into the live mesh, at the live address. Without a
+        // re-stamp the mesh is untouched by this update and the live key
+        // stands; the shadow's own key names the CANDIDATE and is never
+        // installed.
+        if (image.stampKey)
+            image.next.armedKey.stampAs(image.candidate, cast(size_t)mesh);
+        else
+            image.next.armedKey = image.expected.armedKey;
         return image;
     }
 
@@ -1172,11 +1174,7 @@ public:
         positionProxy_ = image.next.proxy; seeds_ = image.next.seeds;
         image.next.seeds = null; armedSelFaces_ = image.next.selectedFaces;
         image.next.selectedFaces = null; before_ = image.next.before;
-        if (image.stampKey) {
-            armedKey_.addr = cast(size_t)mesh;
-            armedKey_.mutVer = mesh.mutationVersion;
-        }
-        else { armedKey_.addr = image.next.armedAddr; armedKey_.mutVer = image.next.armedMutVer; }
+        armedKey_ = image.next.armedKey;
         image.clear();
     }
 
@@ -1392,7 +1390,7 @@ public:
             // commits/cancels first. If the mesh underneath the armed
             // preview was swapped/clobbered since our last touch, drop it
             // instead of re-engaging against the wrong target.
-            // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+            // IDENTITY guard (topology, not position); see the `armedKey_` field note.
             if (seeds_.length == 0 || !armedKey_.matches(*mesh)) {
                 dropArmedPreview();
                 return false;
@@ -1873,7 +1871,7 @@ private:
     // WRONG mesh.
     void rebuildCut() {
         if (!before_.filled || seeds_.length == 0) return;
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         if (preparedShadow_) preparedRebuildAttempted_ = true;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
@@ -1940,7 +1938,7 @@ private:
 
     void commitEdit() {
         if (history is null || gestureFactory is null || !before_.filled) return;
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) {
             // The mesh underneath us was swapped/clobbered (scene reset,
             // active-layer switch) since our last touch — the standing
@@ -1965,7 +1963,7 @@ private:
         // Same hazard as commitEdit: only restore `before_` if the mesh is
         // still the one we armed against (armedKey_ match) — otherwise there
         // is nothing safely ours to restore; just drop the state.
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (armedKey_.matches(*mesh) && before_.filled) before_.restore(*mesh);
         dropArmedPreview();
         refreshCaches();
@@ -2013,7 +2011,7 @@ public:
             !selectNew_ && sliceSelected_ && keepQuads_ && length_ == 321 &&
             sliderX_ == 32 && sliderY_ == 54 && seedA_ == Vec3(1,2,3) &&
             seedB_ == Vec3(4,5,6) && vpWorld_.view[0] == 9 &&
-            armedKey_ == MeshCacheKey.init && before_.filled && before_.matches(*mesh);
+            armedKey_ == SessionMeshKey.init && before_.filled && before_.matches(*mesh);
     }
     version(unittest) final void seedPreparedActivationFreeForTest() {
         seedPreparedActivationForTest();
@@ -2049,7 +2047,7 @@ public:
         return !active && !armed_ && !scrubbing_ && !built_ &&
             seeds_.length == 0 && seeds_.ptr is null &&
             armedSelFaces_.length == 0 && armedSelFaces_.ptr is null &&
-            armedKey_ == MeshCacheKey.init &&
+            armedKey_ == SessionMeshKey.init &&
             (!beforeMatches || (before_.filled && before_.matches(live)));
     }
     version(unittest) final void mutatePreparedDeactivateForTest()

@@ -21,6 +21,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
@@ -50,7 +51,7 @@ struct PreparedEdgeSliceActivationImage {
 struct PreparedEdgeSliceDeactivateImage {
     bool valid, expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
     int expectedPhase, expectedDragPart, expectedActivePoint;
-    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    SessionMeshKey expectedArmedKey;
     uint[] expectedEdges, expectedPointVerts; float[] expectedPointT;
     MeshSnapshot expectedLive, expectedBefore;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
@@ -69,14 +70,14 @@ struct PreparedEdgeSliceParamImage {
     string pname;
     bool expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
     int expectedPhase, expectedDragPart, expectedActivePoint;
-    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    SessionMeshKey expectedArmedKey;
     bool expectedSplit, expectedMiddle; float expectedSnap, expectedProxy;
     float expectedTA, expectedTB;
     uint[] expectedEdges, expectedPointVerts; float[] expectedPointT;
     MeshSnapshot expectedLive, expectedBefore;
     bool nextArmed, nextScrubbing, nextBuilt;
     int nextPhase, nextDragPart, nextActivePoint;
-    size_t nextArmedAddr; ulong nextArmedMutVer; float nextProxy;
+    SessionMeshKey nextArmedKey; float nextProxy;
     uint[] nextEdges, nextPointVerts; float[] nextPointT;
     private EdgeSliceChainPoint[] nextChainPoints;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
@@ -214,16 +215,14 @@ private:
     bool         scrubbing_;   // the last latched point's `t` is being dragged
     bool         built_;       // true once the last bake actually produced a cut
     int          dragPart_ = -1;
-    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
-    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
-    // mouse events: "is the baseline I armed still the mesh I armed it on, at
-    // the state I armed it in?". A bus class answers a different question
-    // ("did anything change"), and the guard's correct response to any change
-    // at all is the same one — drop the armed preview. Replacing an equality
-    // on a monotone counter with a subscription would also make the answer
-    // depend on when the bus last delivered, which replay determinism forbids.
-    // Plan §3.4 row 18.
-    MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / item-selection change)
+    // IDENTITY guard, asked between mouse events: "is the baseline I armed
+    // still on the mesh I armed it on?". It keys on TOPOLOGY + address + the
+    // vertex/face counts (`SessionMeshKey`), never on `mutationVersion`: a
+    // live subpatch preview publishes `Position` on this mesh every refresh
+    // frame, and a position-keyed guard dropped the chain between two clicks,
+    // leaving the cut on the mesh with no history row (task 7112, items
+    // 21/23/24; see `tools/common/session_mesh_key.d`).
+    SessionMeshKey armedKey_;  // mesh identity guard (scene reset / item-selection change)
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). All
     // five uses were re-read and classified:
     //   * `tFromLocalRailClick` — the **Closest** aiming kind (§1.3), which
@@ -393,7 +392,7 @@ public:
         active = true; armed_ = false; scrubbing_ = false; built_ = false;
         phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];
         dragPart_ = -1; activePoint_ = -1;
-        armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;
+        armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;
         image.clear();
     }
     final PreparedSessionActivateEffect prepareActivate(
@@ -450,8 +449,8 @@ public:
         image.expectedActive = active; image.expectedArmed = armed_;
         image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
         image.expectedPhase = cast(int)phase_; image.expectedDragPart = dragPart_;
-        image.expectedActivePoint = activePoint_; image.expectedArmedAddr = armedKey_.addr;
-        image.expectedArmedMutVer = armedKey_.mutVer; image.expectedEdges = edgesParam_.dup;
+        image.expectedActivePoint = activePoint_; image.expectedArmedKey = armedKey_;
+        image.expectedEdges = edgesParam_.dup;
         image.expectedPointVerts.length = latchedPoints_.length * 2;
         image.expectedPointT.length = latchedPoints_.length;
         foreach (i, p; latchedPoints_) {
@@ -491,8 +490,8 @@ public:
         if (!image.valid || active != image.expectedActive || armed_ != image.expectedArmed ||
             scrubbing_ != image.expectedScrubbing || built_ != image.expectedBuilt ||
             cast(int)phase_ != image.expectedPhase || dragPart_ != image.expectedDragPart ||
-            activePoint_ != image.expectedActivePoint || armedKey_.addr != image.expectedArmedAddr ||
-            armedKey_.mutVer != image.expectedArmedMutVer || edgesParam_ != image.expectedEdges ||
+            activePoint_ != image.expectedActivePoint || armedKey_ != image.expectedArmedKey ||
+            edgesParam_ != image.expectedEdges ||
             latchedPoints_.length != image.expectedPointT.length ||
             !image.expectedLive.matches(live) || !image.expectedBefore.matches(chainBefore_)) return false;
         foreach (i, p; latchedPoints_)
@@ -507,7 +506,7 @@ public:
         if (!image.valid) return;
         active = false; armed_ = false; scrubbing_ = false; built_ = false;
         phase_ = Phase.Idle; latchedPoints_ = null; edgesParam_ = null;
-        dragPart_ = -1; activePoint_ = -1; armedKey_ = MeshCacheKey.init;
+        dragPart_ = -1; activePoint_ = -1; armedKey_ = SessionMeshKey.init;
         chainBefore_ = MeshSnapshot.init; handles_ = null; image.clear();
     }
 
@@ -572,9 +571,10 @@ public:
     // commit/cancel — the standing-preview family),
     // so an interactive Ctrl+Z that reaches navHistory()'s whole-edit-cancel
     // branch (only when tryUndoStepInSession() below has nothing left to
-    // peel) must not drop the tool either. In practice tryUndoStepInSession()
-    // absorbs almost every Ctrl+Z while any chain state is live, so this
-    // guard mainly covers the residual armed_-but-no-latched-points case.
+    // peel) must not drop the tool either. tryUndoStepInSession() absorbs
+    // every Ctrl+Z while points are latched — and the peel of the FIRST
+    // point ends the tool there — so this guard covers only the
+    // residual armed_-but-no-latched-points case.
     public override bool survivesEditCancel() const {
         return active;
     }
@@ -582,8 +582,9 @@ public:
     // Mid-chain per-click undo peel (task 0321, D1). Reached from the app's
     // navHistory() chokepoint BEFORE its whole-edit cancel branch: while a
     // live latched chain exists, Ctrl+Z peels exactly the LAST latched point
-    // (keeping earlier ones) instead of unwinding the whole chain and
-    // dropping the tool. Returns false once the chain is empty (committed or
+    // (keeping earlier ones) instead of unwinding the whole chain. Peeling
+    // the FIRST point leaves no uncommitted edit, and navigate() then ends
+    // the tool (owner's slice law). Returns false once the chain is empty (committed or
     // never started), so navHistory falls through to the ordinary
     // hasUncommittedEdit()/history.undo() path — the post-commit whole-chain
     // undo (chainBefore_ + the single MeshSessionEdit at commitChain) is
@@ -650,8 +651,8 @@ public:
         image.expectedActive = active; image.expectedArmed = armed_;
         image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
         image.expectedPhase = cast(int)phase_; image.expectedDragPart = dragPart_;
-        image.expectedActivePoint = activePoint_; image.expectedArmedAddr = armedKey_.addr;
-        image.expectedArmedMutVer = armedKey_.mutVer; image.expectedSplit = split_;
+        image.expectedActivePoint = activePoint_; image.expectedArmedKey = armedKey_;
+        image.expectedSplit = split_;
         image.expectedMiddle = middle_; image.expectedSnap = snap_;
         image.expectedProxy = pointProxy_; image.expectedTA = tA_; image.expectedTB = tB_;
         image.expectedEdges = edgesParam_.dup;
@@ -659,8 +660,8 @@ public:
         image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = chainBefore_;
         image.nextArmed = armed_; image.nextScrubbing = scrubbing_; image.nextBuilt = built_;
         image.nextPhase = cast(int)phase_; image.nextDragPart = dragPart_;
-        image.nextActivePoint = activePoint_; image.nextArmedAddr = armedKey_.addr;
-        image.nextArmedMutVer = armedKey_.mutVer; image.nextProxy = pointProxy_;
+        image.nextActivePoint = activePoint_; image.nextArmedKey = armedKey_;
+        image.nextProxy = pointProxy_;
         image.nextEdges = edgesParam_.dup;
         image.nextPointVerts = image.expectedPointVerts.dup;
         image.nextPointT = image.expectedPointT.dup;
@@ -701,8 +702,7 @@ public:
                 image.nextPointVerts = null; image.nextPointT = null;
                 image.nextChainPoints = null;
                 image.nextEdges = null; image.nextDragPart = -1;
-                image.nextActivePoint = -1; image.nextArmedAddr = size_t.max;
-                image.nextArmedMutVer = ulong.max;
+                image.nextActivePoint = -1; image.nextArmedKey.invalidate();
                 image.appliesState = true;
                 return image;
             }
@@ -716,8 +716,8 @@ public:
             image.deliveryDomains); shadow.close();
         image.appliesState = true; image.appliesMesh = true;
         image.invalidateRedo = history !is null;
-        image.nextBuilt = n > 0; image.nextArmedAddr = cast(size_t)mesh;
-        image.nextArmedMutVer = image.candidate.mutationVersion;
+        image.nextBuilt = n > 0;
+        image.nextArmedKey.stampAs(image.candidate, cast(size_t)mesh);
         storePreparedPoints(image.nextPointVerts, image.nextPointT, nextPoints);
         image.nextChainPoints = nextPoints;
         return image;
@@ -730,8 +730,8 @@ public:
             active != image.expectedActive || armed_ != image.expectedArmed ||
             scrubbing_ != image.expectedScrubbing || built_ != image.expectedBuilt ||
             cast(int)phase_ != image.expectedPhase || dragPart_ != image.expectedDragPart ||
-            activePoint_ != image.expectedActivePoint || armedKey_.addr != image.expectedArmedAddr ||
-            armedKey_.mutVer != image.expectedArmedMutVer || split_ != image.expectedSplit ||
+            activePoint_ != image.expectedActivePoint || armedKey_ != image.expectedArmedKey ||
+            split_ != image.expectedSplit ||
             middle_ != image.expectedMiddle || snap_ != image.expectedSnap ||
             pointProxy_ != image.expectedProxy || tA_ != image.expectedTA ||
             tB_ != image.expectedTB || edgesParam_ != image.expectedEdges ||
@@ -752,7 +752,7 @@ public:
         armed_ = image.nextArmed; scrubbing_ = image.nextScrubbing;
         built_ = image.nextBuilt; phase_ = cast(Phase)image.nextPhase;
         dragPart_ = image.nextDragPart; activePoint_ = image.nextActivePoint;
-        armedKey_.addr = image.nextArmedAddr; armedKey_.mutVer = image.nextArmedMutVer;
+        armedKey_ = image.nextArmedKey;
         pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
         latchedPoints_ = image.nextChainPoints;
         if (image.pname == "chainArm" && image.appliesMesh)
@@ -1083,7 +1083,7 @@ private:
         if (history !is null) history.invalidateRedo();
         size_t n = bakeChainFrom(chainBefore_, latchedPoints_);
         // Stamp AFTER baking — bakeChainFrom mutates the mesh (bumps
-        // mutationVersion), so stamping before it would leave armedKey_
+        // topologyVersion), so stamping before it would leave armedKey_
         // stale the instant this returns, and commitChain()'s
         // armedKey_.matches() guard would then (wrongly) treat the just-armed
         // chain as clobbered-from-under-us and drop it without recording.
@@ -1368,7 +1368,7 @@ private:
             return;
         }
         if (latchedPoints_.length < 2) { cancelLiveEdit(); return; }
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) {
             // The mesh underneath us was swapped/clobbered since our last
             // touch — nothing safely ours to commit.
@@ -1419,7 +1419,7 @@ private:
     void cancelLiveEdit() {
         // Restores chainBefore_ — the WHOLE chain, never a per-segment
         // baseline — so RMB/Ctrl+Z/redo-cancel unwinds every baked segment.
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (armedKey_.matches(*mesh) && chainBefore_.filled) chainBefore_.restore(*mesh);
         dropArmedPreview();
         refreshCaches();
@@ -1438,7 +1438,7 @@ private:
     // write) until it is itself latched by a real click.
     void rebuildPreview() {
         if (!chainBefore_.filled || latchedPoints_.length == 0) return;
-        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
+        // IDENTITY guard (topology, not position); see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
@@ -1498,7 +1498,7 @@ public:
             activePoint_ == -1 && !split_ && middle_ && snap_ == 0.75f &&
             show_ == Show.None && chainArm_ == [7,8] && tA_ == 0.2f &&
             tB_ == 0.8f && pointProxy_ == 0.3f && vpWorld_.view[0] == 9 &&
-            armedKey_ == MeshCacheKey.init && !chainBefore_.filled;
+            armedKey_ == SessionMeshKey.init && !chainBefore_.filled;
     }
     version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {
         suppressRefreshForTest_ = true;
@@ -1510,7 +1510,7 @@ public:
         return !active && !armed_ && !scrubbing_ && !built_ &&
             phase_ == Phase.Idle && latchedPoints_.length == 0 &&
             edgesParam_.length == 0 && dragPart_ == -1 && activePoint_ == -1 &&
-            armedKey_ == MeshCacheKey.init && !chainBefore_.filled &&
+            armedKey_ == SessionMeshKey.init && !chainBefore_.filled &&
             handles_.length == 0;
     }
     version(unittest) final void mutatePreparedDeactivateForTest()

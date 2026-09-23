@@ -43,7 +43,8 @@ static import ui.action_menu;
 // module, then copying its emitted literal and removing the pragma.
 static assert([__traits(allMembers, ui.action_menu)] == [
     "object", "ImGui", "ActionMenuDispatch", "ActionMenuToolActivate",
-    "ActionMenuArgsDialog", "ActionMenuRefusal", "ActionMenuRead",
+    "ActionMenuArgsDialog", "ActionMenuRefusal", "ActionMenuHistoryNav",
+    "ActionMenuRead",
     "ActionMenuActions", "ActionMenuRoles", "bindActionMenu",
     "dispatchAction", "renderFalloffStackItems", "renderDynamicPopupItems",
     "renderPopupItems", "renderVariantPopup", "renderButtonPopups",
@@ -55,7 +56,7 @@ static assert([__traits(allMembers, ui.action_menu.ActionMenuRead)]
     == ["refusal_", "__ctor", "refusal"],
     "6560 ActionMenuRead member set changed — the read role gained a capability");
 static assert([__traits(allMembers, ui.action_menu.ActionMenuActions)]
-    == ["activateTool_", "openArgs_", "dispatch_", "__ctor",
+    == ["activateTool_", "openArgs_", "dispatch_", "nav_", "__ctor",
         "activateTool", "runCommandRow", "runScriptLine"],
     "6560 ActionMenuActions member set changed — the action role gained a door");
 static assert([__traits(allMembers, ui.action_menu.ActionMenuRoles)]
@@ -66,6 +67,10 @@ static assert(!__traits(compiles, {
     ActionMenuRoles roles = void;
     roles.actions.dispatch_ = (string id, string paramsJson) {};
 }), "6560 cross-module half: an outside module must not replace the dispatch door");
+static assert(!__traits(compiles, {
+    ActionMenuRoles roles = void;
+    roles.actions.nav_ = (bool isUndo) => false;
+}), "7112 cross-module half: an outside module must not replace the history-navigation door");
 static assert(!__traits(compiles, new ui.action_menu.ActionMenuRead()),
     "6560 only bindActionMenu may build a read role");
 static assert(__traits(compiles, (ui.action_menu.ActionMenuActions actions) {
@@ -180,7 +185,8 @@ private final class ActionMenuHarness {
             (string id) {
                 ++openArgsCount;
                 return openParameterized && id == "probe.args";
-            });
+            },
+            (bool) => false);
     }
 
     void clear() {
@@ -425,7 +431,7 @@ unittest { // C4: real YAML popup rows publish enabled and refused availability
         (ref const Action action) => action.id == refusedId
             ? refusalSentence : "",
         (string id, string paramsJson) {}, (string id) {},
-        (string id) => false);
+        (string id) => false, (bool) => false);
     auto ui = openPanel(() {
         beginButtonAvailabilityFrame(true, "", 0);
         scope (exit) endButtonAvailabilityFrame();
@@ -562,7 +568,7 @@ unittest { // C9/C10: real rows carry production commands and remove one extra
             auto stage = context.pipeline.findById(target);
             if (stage !is null) context.pipeline.removeStage(stage);
         },
-        (string) {}, (string) => false);
+        (string) {}, (string) => false, (bool) => false);
     auto ui = openPanel(() {
         beginButtonAvailabilityFrame(true, "", 0);
         scope (exit) endButtonAvailabilityFrame();
@@ -750,6 +756,8 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         "6560 private reachability: openArgs_ references grew or its null guard disappeared");
     assert(identifierCount(actionMenu, "dispatch_") == 6,
         "6560 private reachability: dispatch_ references grew or a null guard disappeared");
+    assert(identifierCount(actionMenu, "nav_") == 4,
+        "7112 private reachability: nav_ must be declared, assigned and called by the two history rows only");
     assert(actionMenu.count("actions.activateTool(") >= 1
         && actionMenu.count("actions.runCommandRow(") == 1
         && actionMenu.count("actions.runScriptLine(") == 1
@@ -762,9 +770,9 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         "6560 binder floor: bindActionMenu body is unexpectedly small");
     assert(binder.count("ActionMenuRead(refusal)") == 1
         && binder.count(
-            "ActionMenuActions(activateTool, openArgs, dispatch)") == 1
-        && identifierCount(binder, "assert") == 4,
-        "6560 binder census: all four doors must be asserted and assigned once");
+            "ActionMenuActions(activateTool, openArgs, dispatch, nav)") == 1
+        && identifierCount(binder, "assert") == 5,
+        "6560 binder census: all five doors must be asserted and assigned once");
 
     const flatActionMenu = collapseWhitespace(actionMenu);
     assert(flatActionMenu.count(
@@ -835,7 +843,7 @@ unittest { // C13: production boundary, wiring, and private-reachability census
     assert(flatApp.count("import ui.action_menu : bindActionMenu;") == 1
         && flatApp.count("import ui.availability : actionRefusal;") == 1
         && flatApp.count(
-            "auto actionMenuRoles = bindActionMenu((ref const Action a) => actionRefusal(reg, a, document.hasEditTarget(), activeToolId), uiCommandDelegate, cast(void delegate(string))&activateToolById, cast(bool delegate(string))&tryOpenArgsDialog);") == 1
+            "auto actionMenuRoles = bindActionMenu((ref const Action a) => actionRefusal(reg, a, document.hasEditTarget(), activeToolId), uiCommandDelegate, cast(void delegate(string))&activateToolById, cast(bool delegate(string))&tryOpenArgsDialog, (bool u) { assert(app.navHistory !is null, ); return app.navHistory(u); });") == 1
         && flatApp.count(
             "router.fireAction = (ref Action a) => dispatchAction(actionMenuRoles.actions, a);") == 1
         && flatApp.count("drawSidePanel(app, actionMenuRoles);") == 1
@@ -949,4 +957,42 @@ unittest { // 7111 V19: panel history rows route through navHistory
     assert(navBetween,
         "panel history.undo bypasses navHistory: runCommandRow names no nav_ door "
         ~ "between its first history literal and its openArgs_/dispatch_ doors");
+}
+
+// Task 7112 (V19, behaviour): the PRODUCTION binder and dispatcher, with spy
+// doors. The panel's history rows reach the navigator once, with the right
+// direction, and never the raw command door; an ordinary command row still
+// goes to the command door and never to the navigator (the control that a
+// catch-all interception would fail). Below the text census on purpose: a
+// mutation of the branch reddens the census first, and this cell is run in
+// isolation for it (plan S1a, M10).
+unittest { // 7112 V19: panel history rows reach the navigator, not the raw door
+    import std.conv : to;
+    bool[] navCalls;
+    string[] dispatched;
+    string[] argsAsked;
+    auto roles = bindActionMenu(
+        (ref const Action) => "",
+        (string id, string paramsJson) { dispatched ~= id; },
+        (string) {},
+        (string id) { argsAsked ~= id; return false; },
+        (bool isUndo) { navCalls ~= isUndo; return true; });
+
+    auto undo = Action(ActionKind.command, "history.undo");
+    dispatchAction(roles.actions, undo);
+    assert(navCalls == [true] && dispatched.length == 0 && argsAsked.length == 0,
+        "panel undo reached the raw command door: nav " ~ navCalls.to!string
+        ~ ", dispatched " ~ dispatched.to!string ~ ", args " ~ argsAsked.to!string);
+
+    auto redo = Action(ActionKind.command, "history.redo");
+    dispatchAction(roles.actions, redo);
+    assert(navCalls == [true, false] && dispatched.length == 0 && argsAsked.length == 0,
+        "panel redo reached the raw command door: nav " ~ navCalls.to!string
+        ~ ", dispatched " ~ dispatched.to!string ~ ", args " ~ argsAsked.to!string);
+
+    auto del = Action(ActionKind.command, "mesh.delete");
+    dispatchAction(roles.actions, del);
+    assert(navCalls.length == 2 && dispatched == ["mesh.delete"],
+        "panel mesh.delete row did not take the command door (or took the navigator): nav "
+        ~ navCalls.to!string ~ ", dispatched " ~ dispatched.to!string);
 }

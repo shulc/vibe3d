@@ -743,10 +743,16 @@ unittest {
     }
     assert(keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1,
            "tool census: axis 2 needle positive control failed: source/tools/edit/bridge_tool.d");
-    // S1 migrates slice_tool.d and turns this red: REPLACE the control with a
-    // scanner cell of the same shape, never delete it (card 7110).
-    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)[0] == 2,
-           "tool census: axis 2 needle positive control failed: source/tools/slice/slice_tool.d");
+    // Task 7112 moved the slice tools to SessionMeshKey, so no production
+    // file holds a MeshCacheKey field any more; the needle's CAPACITY to see
+    // one is witnessed by the scanner cell below ("expected [4, 1]"), which
+    // drives the production `keyCountsOf`. This row is the FLIPPED control:
+    // the migrated file reads zero MeshCacheKey fields and its measured
+    // SessionMeshKey fields (activation / deactivate / param images + the
+    // tool's own key).
+    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 4],
+           format("tool census: axis 2 flipped control failed: source/tools/slice/slice_tool.d reads %s, expected [0, 4]",
+                  keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)));
     // Axis 2 scope floor: the scanner reads type heads literally, so an alias
     // of the key or its spelled-out `MeshKey!` form would escape it. Measured 0.
     {
