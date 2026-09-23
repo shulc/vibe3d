@@ -84,11 +84,13 @@ private void abandon(PreparedRecordContext context) nothrow @nogc {
 
 /// One classification for both sides of a prepared tool boundary. Tools whose
 /// visible arm participates in history opt in through the marker (see
-/// `toolcards/undo_surfaces/`); Slice retains its measured legacy lifecycle
-/// policy until that special case is migrated independently.
+/// `toolcards/undo_surfaces/`). The cutting sessions Slice and Edge Slice are
+/// named by id instead: their arm is a row the session's first-gesture undo
+/// pops and its redo re-arms with (§22, task 7137), and the marker would also
+/// move them onto the transform tools' lifecycle path.
 bool toolArmEmitsLifecycle(Tool candidate, string id) nothrow @nogc {
     return cast(LifecycleUndoEmitter)candidate !is null ||
-           id == "mesh.sliceTool";
+           id == "mesh.sliceTool" || id == "mesh.edgeSliceTool";
 }
 
 /// Prepare a complete arm with zero live writes. The candidate's direct Param

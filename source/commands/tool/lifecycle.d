@@ -46,7 +46,10 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
 
     override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
 
-    // Redo exists only for the captured none->cutting law.
+    // Redo exists only for the captured none->cutting law (Slice, Edge
+    // Slice). The session's first gesture is NOT re-applied here: the session
+    // replays it after this redo (EditSession.navigate, task 7137, §22), so
+    // the raw redo doors re-arm bare.
     protected override bool applyImpl() {
         if (onActivate !is null) onActivate(armedId_);
         return true;
@@ -64,6 +67,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     string armedId() const { return armedId_; }
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
-        return previousId_.length == 0 && armedId_ == "mesh.sliceTool";
+        return previousId_.length == 0 &&
+            (armedId_ == "mesh.sliceTool" || armedId_ == "mesh.edgeSliceTool");
     }
 }

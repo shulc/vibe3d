@@ -6,8 +6,8 @@
 // fixture toolcards/bugfix_w17_slice_tools (verdicts C1-u, C1-rearm).
 //
 // Every gesture is real SDL input through /api/play-events; the redo is the
-// keystroke (the navigate chokepoint), never /api/redo — the raw doors re-arm
-// BARE by design, which block D pins.
+// keystroke (the navigate chokepoint), never the `history.redo` command — the
+// raw doors re-arm BARE by design, which block D pins.
 //
 // Block A (subpatch OFF) runs before block B (ON, the captured cell) so a red
 // on A names the capability first. Block C pins rule K (verdict K1) and our
@@ -15,7 +15,7 @@
 // pins the raw redo door. Rig: tests/slice_leak_helpers.d.
 
 import slice_leak_helpers;
-import http_client : getJson, postRaw;
+import http_client : getJson;
 import drag_helpers : Vec3, fetchCamera, viewportFromCamera, projectToWindow;
 import std.format : format;
 import std.math : abs, sqrt, round;
@@ -213,7 +213,7 @@ unittest {
     assert(slTool() != "edgeSlice" && slHistoryLen() == pro.historyLen,
            format("slice floor (block D): the session did not close: tool '%s', history %s",
                   slTool(), slHistoryLabels()));
-    postRaw("/api/redo", "");
+    slCmd("history.redo");   // the script door (`/api/redo` was retired, task 4063)
     assert(slTool() == "edgeSlice" && slChain().pairs.length == 0,
            format("raw redo replayed the first gesture (replay belongs to navigate only): "
                   ~ "tool '%s', points %d", slTool(), slChain().pairs.length));

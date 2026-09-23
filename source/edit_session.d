@@ -34,6 +34,7 @@ module edit_session;
 import tool            : Tool;
 import command         : Command;
 import command_history : CommandHistory;
+import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
 
@@ -242,7 +243,8 @@ interface KeepAliveOnCancel {
 
 // ---------------------------------------------------------------------------
 // SessionStepUndo — optional capability: mid-session per-step undo peel
-// (task 0321). EdgeSliceTool is the sole implementor.
+// (task 0321). EdgeSliceTool (latched points) and SliceTool (its gesture
+// stack, task 7137) implement it.
 // ---------------------------------------------------------------------------
 interface SessionStepUndo {
     // navigate() calls this FIRST, before its whole-edit-cancel branch
@@ -251,6 +253,26 @@ interface SessionStepUndo {
     // ONE of those steps here and report true, so a real undo keystroke
     // un-does one step at a time instead of unwinding the whole live edit.
     bool tryUndoStepInSession();
+}
+
+// ---------------------------------------------------------------------------
+// SessionFirstGesture — optional capability of a cutting session whose arm is
+// a history row (Slice, Edge Slice; task 7137, §22): the undo that removes the
+// session's first gesture also pops that row, and the navigate redo of the row
+// re-arms the tool WITH that gesture. The payload is opaque to the session.
+// ---------------------------------------------------------------------------
+interface SessionFirstGesture {
+    /// Non-null only while exactly ONE gesture of the live session is
+    /// left, i.e. the next undo step ends the session. Read BEFORE the
+    /// step (the step itself destroys what it describes).
+    Object soleFirstGesture();
+    /// Stamp the gesture's mesh key over the mesh AS IT STANDS AFTER the
+    /// step, immediately before the activation row is undone.
+    void sealFirstGesture(Object gesture);
+    /// Re-arm with that gesture on the freshly activated tool, RELEASED.
+    bool replayFirstGesture(Object gesture);
+    /// The registration id the activation row carries ("mesh.…Tool").
+    string sessionToolId() const;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +317,14 @@ final class EditSession {
     // (tryRefireDispatch's non-reentrancy tripwire). Everything else is
     // computed from tool_() — see SessionPhase.
     private bool refireDriving_ = false;
+    // The first gesture of a cutting session this session ended, held for
+    // the navigate redo of the activation row it popped (task 7137). Kept
+    // HERE, keyed by the row's identity, not in the history: a replay from
+    // inside `ToolActivationCommand.apply` would run under the history's
+    // Suspend state (its redo invalidation dropped) and would also fire from
+    // the raw redo doors, which re-arm bare by design.
+    private Object pendingGesture_;
+    private Rebindable!(const Command) pendingFor_;
     // One write-set accumulator for the synchronous ValueWritten ->
     // BatchComplete protocol.  It deliberately records names at write time;
     // reconstructing the set from final values would lose identity returns.
@@ -581,6 +611,12 @@ final class EditSession {
     //
     // Returns true if anything happened (edit cancelled OR stack moved).
     bool navigate(bool isUndo) {
+        // Task 7137: a cutting session's sole first gesture, read BEFORE the
+        // step or cancel below destroys it (see endSession_).
+        Object firstGesture;
+        if (isUndo)
+            if (auto sfg = cast(SessionFirstGesture) tool_())
+                firstGesture = sfg.soleFirstGesture();
         // Mid-session per-step undo peel (task 0321) — checked BEFORE the
         // whole-edit cancel branch below, so a tool holding an internal
         // sequence of not-yet-committed steps (EdgeSliceTool's latched chain)
@@ -595,7 +631,7 @@ final class EditSession {
                 // session's FIRST gesture also ends the tool. RE-READ, as
                 // below — the peel may itself have changed the active tool.
                 auto tp = tool_();
-                if (tp !is null && !tp.hasUncommittedEdit()) dropTool_();
+                if (tp !is null && !tp.hasUncommittedEdit()) endSession_(tp, firstGesture);
                 return true;
             }
         }
@@ -625,9 +661,17 @@ final class EditSession {
             auto ka2 = cast(KeepAliveOnCancel) t2;
             if (t2 !is null && !t2.hasUncommittedEdit()
                 && !(ka2 !is null && ka2.survivesEditCancel())) {
-                dropTool_();
+                endSession_(t2, firstGesture);
             }
             return true;
+        }
+        // Task 7137: replay only when the redo head IS the activation row this
+        // session popped (identity, read before the redo moves it).
+        bool replay;
+        if (!isUndo) {
+            const re = history_.redoEntries();
+            replay = pendingGesture_ !is null && re.length > 0
+                && re[0].cmd is pendingFor_.get;
         }
         bool ok = isUndo ? history_.undo() : history_.redo();
         if (ok) {
@@ -636,7 +680,37 @@ final class EditSession {
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
         }
+        if (!isUndo) {
+            // AFTER the redo: it is the redo that arms the tool (and its
+            // `activate` clears whatever a replay before it would have seated).
+            if (ok && replay)
+                if (auto s = cast(SessionFirstGesture) tool_())
+                    s.replayFirstGesture(pendingGesture_);
+            pendingGesture_ = null;
+            pendingFor_ = null;
+        }
         return ok;
+    }
+
+    // End of a live session whose last gesture the undo just removed (task
+    // 7112; task 7137 for the cutting sessions). A tool without
+    // SessionFirstGesture is dropped, as before. A cutting session whose
+    // activation row is the undo top pops it — the tool ends through the
+    // row's revert and the row goes to redo carrying the first gesture. Any
+    // other top means the session was re-armed inside its activation (Edge
+    // Slice's Enter commit): rule K, captured verdict K1 — the tool stays,
+    // armed with nothing latched, and nothing else is undone.
+    private void endSession_(Tool t, Object firstGesture) {
+        auto sfg = cast(SessionFirstGesture) t;
+        if (sfg is null) { dropTool_(); return; }
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const ue = history_.undoEntries();
+        auto act = ue.length ? cast(const ToolActivationCommand) ue[$ - 1].cmd : null;
+        if (act is null || act.armedId != sfg.sessionToolId()) return;   // rule K (K1)
+        if (firstGesture !is null) sfg.sealFirstGesture(firstGesture);
+        pendingGesture_ = firstGesture;
+        pendingFor_ = ue[$ - 1].cmd;
+        history_.undo();
     }
 
     // Framework "apply and continue" (task 0461 — the reference editor's

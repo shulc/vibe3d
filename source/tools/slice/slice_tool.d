@@ -44,6 +44,8 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
+import edit_session : SessionStepUndo, SessionFirstGesture;
+import log : logWarn;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
@@ -161,6 +163,26 @@ SliceAxis classifyPlaneAxis(Vec3 dir, out Vec3 vector, float tol = 0.999f) {
 //   Negative — the −n-side shell takes the full gap along −n; the other stays.
 // (Total shell separation is always exactly `gap` for all three.)
 enum SliceGapSide : int { Center = 0, Positive = 1, Negative = 2 }
+
+// One gesture's definition of the slice line (task 7137, owner decision В22):
+// every field a press..release gesture WRITES and the cut reads — the line,
+// its frozen plane orientation, the axis/vector the draw classifies or the
+// rotate ring tilts, and the gap the RMB drag sets. Panel-only options (fast,
+// infinite, split, caps, gapSide, snap) are never written by a gesture and
+// are not part of it.
+struct SliceLineState {
+    Vec3 start, end, vector, frozenNormal;
+    SliceAxis axis;
+    bool axisLocked, haveFrozen, hasLine;
+    float gap;
+}
+
+// The session's first gesture, carried by EditSession across the undo of the
+// activation row (task 7137); the key is sealed AFTER the cancel.
+private final class SliceFirstGesture {
+    SliceLineState line;
+    SessionMeshKey key;
+}
 
 static immutable IntEnumEntry[3] sliceGapSideTable = [
     IntEnumEntry(cast(int)SliceGapSide.Center,   "center",   "Center"),
@@ -683,7 +705,8 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // from under us (scene reset / layer switch) between the last preview and the
 // drop — a mismatch drops the preview instead of baking a bogus entry.
 // ---------------------------------------------------------------------------
-final class SliceTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+final class SliceTool : Tool, SessionStepUndo, SessionFirstGesture,
+                        PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -934,6 +957,16 @@ private:
     // RMB-cancel of a rotate gesture restores the pre-drag tilt.
     Vec3 gStart0_, gEnd0_, gVector0_;
 
+    // Per-gesture undo (task 7137, В22): the line as it stood BEFORE each
+    // completed gesture that re-defined an existing line, newest last. A
+    // motionless click is a gesture too. The first gesture of the session is
+    // never pushed — undoing it ends the session (EditSession.navigate).
+    // Bounded; on overflow the OLDEST entry is dropped.
+    enum size_t MAX_SLICE_GESTURE_STACK = 256;
+    SliceLineState[] gestureStack_;
+    SliceLineState   preGesture_;
+    bool             preHadLine_;
+
     // Rotate-gesture (DragRotate, task 0287) frozen reference: the line axis
     // (rotation axis), the ring centre, the in-plane grab direction, and the
     // Custom vector — all latched at gesture start. Each motion recomputes
@@ -1140,6 +1173,7 @@ public:
     override void activate() {
         active = true;
         dropPreview();
+        gestureStack_ = null;
         // Snapshot the SESSION baseline once, now, at tool activation. Every
         // drag re-cuts non-cumulatively from this (never per-gesture), and the
         // deferred commit records before_ → the final cut as ONE undo entry.
@@ -1173,6 +1207,7 @@ public:
         haveFrozen_ = false; pendingAxisClassify_ = false;
         hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
         ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;
+        gestureStack_ = null;
         image.before.moveInto(before_);
         restrictFaces_ = image.restrictFaces; image.restrictFaces = null;
         armedKey_ = image.armedKey;
@@ -1200,6 +1235,7 @@ public:
         if (active) commitCurrentSlice();
         active = false;
         dropPreview();
+        gestureStack_ = null;
     }
 
     final bool ownsPreparedLayer(Layer layer) const {
@@ -1254,6 +1290,7 @@ public:
         haveFrozen_ = false; pendingAxisClassify_ = false;
         hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
         ctrlAxis_ = -1; gapDrag_ = false;
+        gestureStack_ = null;
         armedKey_.invalidate();
         image.clear();
     }
@@ -1355,6 +1392,7 @@ public:
     public override void cancelUncommittedEdit() {
         before_.restore(*mesh);
         previewLive_ = false;
+        gestureStack_ = null;
         armedKey_.stamp(*mesh);
         refreshDisplay(mesh, gpu);
     }
@@ -1366,7 +1404,45 @@ public:
         if (!active || !haveBefore_ || previewLive_) return;
         before_ = MeshSnapshot.capture(*mesh);
         armedKey_.stamp(*mesh);
+        gestureStack_ = null;
     }
+
+    // SessionStepUndo (task 7137, В22): pop the newest gesture, restoring the
+    // line it replaced. Never mid-gesture.
+    override bool tryUndoStepInSession() {
+        if (!active || dragPart_ != DragNone || gapDrag_ || gestureStack_.length == 0)
+            return false;
+        const st = gestureStack_[$ - 1];
+        gestureStack_ = gestureStack_[0 .. $ - 1];
+        restoreLine(st);
+        updatePreview();
+        return true;
+    }
+
+    // SessionFirstGesture (task 7137, В21, verdict C1-s-r R-first).
+    override Object soleFirstGesture() {
+        if (!active || gestureStack_.length != 0 || !previewLive_) return null;
+        auto g = new SliceFirstGesture;
+        g.line = currentLine();
+        return g;
+    }
+    override void sealFirstGesture(Object gesture) {
+        if (auto g = cast(SliceFirstGesture) gesture) g.key.stamp(*mesh);
+    }
+    override bool replayFirstGesture(Object gesture) {
+        auto g = cast(SliceFirstGesture) gesture;
+        if (g is null || !active || !haveBefore_) return false;
+        if (!g.key.matches(*mesh)) {
+            logWarn("tool", "slice redo: the mesh changed since the session ended; re-armed bare");
+            return false;
+        }
+        restoreLine(g.line);
+        dragPart_ = DragNone;   // released
+        gapDrag_  = false;
+        updatePreview();
+        return true;
+    }
+    override string sessionToolId() const { return "mesh.sliceTool"; }
 
     private static bool preparedParamRecognized(string pname) pure nothrow @nogc {
         switch (pname) {
@@ -1645,7 +1721,7 @@ public:
         // line exists yet so the app's RMB paths still work at bare activation.
         if (e.button == SDL_BUTTON_RIGHT) {
             if (dragPart_ != DragNone) { cancelGesture(); return true; }
-            if (hasLine_) { beginGapDrag(e.x, e.y); return true; }
+            if (hasLine_) { latchPreGesture(); beginGapDrag(e.x, e.y); return true; }
             return false;
         }
 
@@ -1659,6 +1735,7 @@ public:
         gStart0_  = start_;
         gEnd0_    = end_;
         gVector0_ = vector_;   // task 0287: rotate-gesture RMB-cancel restores the tilt
+        latchPreGesture();
 
         // Middle-click relocates the whole line to the cursor: translate so the
         // line midpoint lands on the work-plane hit, then drag it as a line
@@ -1836,6 +1913,7 @@ public:
         if (gapDrag_ && e.button == SDL_BUTTON_RIGHT) {
             gapDrag_ = false;
             updatePreview();
+            pushGesture();
             return true;
         }
         if (dragPart_ == DragNone) return false;
@@ -1859,6 +1937,7 @@ public:
             pendingAxisClassify_ = false;
             classifyDrawnPlaneAxis();
         }
+        pushGesture();
         return true;
     }
 
@@ -2142,6 +2221,41 @@ private:
     // RMB cancel: revert ONLY the current gesture (restore the line to where it
     // stood when this drag began) and re-preview from the session baseline. The
     // session stays alive — the baseline is not dropped.
+    // --- per-gesture undo (task 7137) -------------------------------------
+
+    SliceLineState currentLine() const {
+        SliceLineState st;
+        st.start = start_; st.end = end_; st.vector = vector_;
+        st.frozenNormal = frozenNormal_; st.axis = axis_;
+        st.axisLocked = axisLocked_; st.haveFrozen = haveFrozen_;
+        st.hasLine = hasLine_; st.gap = gap_;
+        return st;
+    }
+
+    void restoreLine(const SliceLineState st) {
+        start_ = st.start; end_ = st.end; vector_ = st.vector;
+        frozenNormal_ = st.frozenNormal; axis_ = st.axis;
+        axisLocked_ = st.axisLocked; haveFrozen_ = st.haveFrozen;
+        hasLine_ = st.hasLine; gap_ = st.gap;
+        pendingAxisClassify_ = false;
+    }
+
+    // At a gesture's press: the line it may re-define.
+    void latchPreGesture() {
+        preGesture_ = currentLine();
+        preHadLine_ = hasLine_;
+    }
+
+    // At a completed gesture's release: push the line it replaced — always,
+    // changed or not — unless it drew the session's first line.
+    void pushGesture() {
+        if (!preHadLine_) return;
+        preHadLine_ = false;
+        if (gestureStack_.length >= MAX_SLICE_GESTURE_STACK)
+            gestureStack_ = gestureStack_[1 .. $];
+        gestureStack_ ~= preGesture_;
+    }
+
     void cancelGesture() {
         dragPart_    = DragNone;
         ctrlPending_ = false;   // task 0286: cancel drops any in-flight Ctrl lock

@@ -10,7 +10,8 @@ import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
 import operator : VectorStack;
 
 import tool;
-import edit_session : KeepAliveOnCancel, SessionStepUndo;
+import edit_session : KeepAliveOnCancel, SessionStepUndo, SessionFirstGesture;
+import log : logWarn;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
@@ -42,6 +43,15 @@ import mesh_gpu : GpuUploadOwner;
 import handler : BoxHandlerBatchResourceOwner;
 
 private struct EdgeSliceChainPoint { uint v0, v1; float t; }
+
+// The session's first point, carried by EditSession across the undo of the
+// activation row to the redo that re-arms it (task 7137). The key is sealed
+// AFTER the peel, over the mesh the redo will find.
+private final class EdgeSliceFirstGesture {
+    EdgeSliceChainPoint point;
+    uint edge;
+    SessionMeshKey key;
+}
 
 struct PreparedEdgeSliceActivationImage {
     bool valid;
@@ -140,6 +150,7 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 // 0430): the survivesEditCancel / tryUndoStepInSession overrides below are
 // the interfaces' implementations (EditSession discovers them by cast).
 final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo,
+                            SessionFirstGesture,
                             PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:
@@ -368,6 +379,12 @@ public:
         foreach (p; latchedPoints_)
             pairs.array ~= JSONValue([JSONValue(p.v0), JSONValue(p.v1)]);
         root["latchedPairs"] = pairs;
+        // Task 7137: each point's `t` in chain order, and whether the active
+        // point follows the mouse (the released state a redo re-arm leaves).
+        auto ts = JSONValue.emptyArray;
+        foreach (p; latchedPoints_) ts.array ~= JSONValue(p.t);
+        root["latchedT"]  = ts;
+        root["scrubbing"] = JSONValue(scrubbing_);
         return root;
     }
 
@@ -595,6 +612,34 @@ public:
         peelLastPoint();
         return true;
     }
+
+    // SessionFirstGesture (task 7137, §22): the undo that peels the last
+    // point also pops the activation row; the navigate redo of that row
+    // re-arms this (fresh) tool with the point, released.
+    override Object soleFirstGesture() {
+        if (!active || latchedPoints_.length != 1 || edgesParam_.length != 1) return null;
+        auto g = new EdgeSliceFirstGesture;
+        g.point = latchedPoints_[0];
+        g.edge  = edgesParam_[0];
+        return g;
+    }
+    override void sealFirstGesture(Object gesture) {
+        if (auto g = cast(EdgeSliceFirstGesture) gesture) g.key.stamp(*mesh);
+    }
+    override bool replayFirstGesture(Object gesture) {
+        auto g = cast(EdgeSliceFirstGesture) gesture;
+        if (g is null || !active) return false;
+        if (!g.key.matches(*mesh) || g.edge >= mesh.edges.length) {
+            logWarn("tool", "edge slice redo: the mesh changed since the session ended; re-armed bare");
+            return false;
+        }
+        seatFirstPoint(g.point, g.edge);
+        // Released, as onMouseButtonUp leaves it (a latch leaves it scrubbing).
+        scrubbing_ = false;
+        dragPart_  = -1;
+        return true;
+    }
+    override string sessionToolId() const { return "mesh.edgeSliceTool"; }
 
     public override void resyncSession() {
         if (!active) return;
@@ -1022,16 +1067,22 @@ public:
 
 private:
     void latchFirstPoint(int h, float sx, float sy) {
-        chainBefore_ = MeshSnapshot.capture(*mesh);
         ChainPoint p;
         p.v0 = mesh.edges[h][0];
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
-        latchedPoints_ = [p];
-        edgesParam_    = [cast(uint)h];
-        phase_     = Phase.EdgeA;
+        seatFirstPoint(p, cast(uint)h);
         scrubbing_ = true;
         dragPart_  = 0;
+    }
+
+    // Everything a first latch does except deriving `t` from the click and
+    // starting the scrub — shared with the redo replay (task 7137).
+    void seatFirstPoint(ChainPoint p, uint h) {
+        chainBefore_ = MeshSnapshot.capture(*mesh);
+        latchedPoints_ = [p];
+        edgesParam_    = [h];
+        phase_     = Phase.EdgeA;
         activePoint_ = 0;
         syncProxy();
         armedKey_.stamp(*mesh);
