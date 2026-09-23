@@ -1924,6 +1924,92 @@
    },
    "extruded_from_vertex_5_nearest_other_vertex": 0.148492
   },
-  "symmetry_on_plane_law": "a source vertex with x == 0 exactly receives (0, oy, oz): its X offset is ZEROED, it stays on the plane and is extruded once, welded to nothing; the sign test is strict -- x = +1e-4 already receives -ox and x = -1e-4 receives +ox (no tolerance band at 1e-4)"
+  "symmetry_on_plane_law": "a source vertex with x == 0 exactly receives (0, oy, oz): its X offset is ZEROED, it stays on the plane and is extruded once, welded to nothing; the sign test is strict -- x = +1e-4 already receives -ox and x = -1e-4 receives +ox (no tolerance band at 1e-4)",
+  "symmetric_click_selection": {
+   "view": "front orthographic (the plane faces the camera), pixel size 0.0031056 m",
+   "input": "symmetry X on, edge mode, nothing selected, no tool; one motionless click on the midpoint of the +X ridge edge (7,8); then the extend tool armed and a haul on EMPTY space 10 x (+4,+4) px",
+   "cells": {
+    "press_plus_x": {
+     "selected_after_click": [
+      "(2,1)",
+      "(7,8)"
+     ],
+     "press_world_xy": [
+      0.5,
+      1.35
+     ],
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "new_vertices": [
+      [
+       -1.125,
+       0.875,
+       0.0
+      ],
+      [
+       -1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       -0.125,
+       0.0
+      ],
+      [
+       1.125,
+       0.875,
+       0.0
+      ]
+     ]
+    },
+    "press_minus_x": {
+     "selected_after_click": [
+      "(2,1)",
+      "(7,8)"
+     ],
+     "press_world_xy": [
+      -0.5,
+      1.35
+     ],
+     "offset": [
+      0.125,
+      -0.125,
+      0.0
+     ],
+     "vertex_count": 13,
+     "polygon_count": 6,
+     "new_vertices": [
+      [
+       -0.875,
+       0.875,
+       0.0
+      ],
+      [
+       -0.875,
+       -0.125,
+       0.0
+      ],
+      [
+       0.875,
+       -0.125,
+       0.0
+      ],
+      [
+       0.875,
+       0.875,
+       0.0
+      ]
+     ]
+    }
+   },
+   "law_selection": "the click selects the clicked edge AND its mirror (7,8)+(2,1)",
+   "law_press_side": "the side of the ACTIVATING press decides which side receives +o: press at x > 0 -> x>0 elements get (+ox, oy, oz) and x<0 elements (-ox, oy, oz) (outward here); press at x < 0 -> the reverse (inward here, = the both-sides arm cell). Every earlier symmetry cell activated with a press at the view-centre column x ~ 0 and follows the x<0-press branch"
+  }
  }
 }

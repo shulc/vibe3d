@@ -3738,6 +3738,156 @@
      "cube_centre_minus_view_centre_x": -192,
      "reading": "cube (world origin) drawn 3 m left of the view centre: the focus written after the pin is plane-LOCAL"
     }
+   },
+   {
+    "cell": "C4-of",
+    "view": "front",
+    "focus_written_before_plane_world": [
+     0.3,
+     0.2,
+     0.0
+    ],
+    "action": "align on face 0 (+Z) by the key binding, then select face 4 (+Y) and align again by the key binding",
+    "states": {
+     "pre": {
+      "plane_origin": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "plane_rotation_rad_xyz": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "focus_local": [
+       0.3,
+       0.2,
+       0.0
+      ],
+      "focus_world": [
+       0.3,
+       0.2,
+       0.0
+      ],
+      "orientation_rows_local": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        1.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "projection": "fnt"
+     },
+     "mid": {
+      "plane_origin": [
+       0.0,
+       0.0,
+       0.5
+      ],
+      "plane_rotation_rad_xyz": [
+       1.5707963267948966,
+       0.0,
+       0.0
+      ],
+      "focus_local": [
+       0.3,
+       0.2,
+       0.0
+      ],
+      "focus_world": [
+       0.3,
+       0.0,
+       0.7
+      ],
+      "orientation_rows_local": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        1.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "projection": "fnt"
+     },
+     "post": {
+      "plane_origin": [
+       0.0,
+       0.5,
+       0.0
+      ],
+      "plane_rotation_rad_xyz": [
+       0.0,
+       -1.5707963267948966,
+       0.0
+      ],
+      "focus_local": [
+       0.3,
+       0.2,
+       0.0
+      ],
+      "focus_world": [
+       0.0,
+       0.7,
+       0.3
+      ],
+      "orientation_rows_local": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        1.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "projection": "fnt"
+     }
+    },
+    "rivals_post_focus_local": {
+     "numbers_kept": [
+      0.3,
+      0.2,
+      0.0
+     ],
+     "world_kept": [
+      0.7,
+      -0.5,
+      -0.3
+     ],
+     "new_origin": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "selected": "numbers_kept"
    }
   ],
   "laws": {
@@ -3745,7 +3895,8 @@
    "ortho_presets_turn": "front, top and right all turn with the plane: after the change the plane-local orientation rows equal the canonical preset rows",
    "typed_plane_turns_ortho": "a TYPED oblique plane turns the front view too (the model is then drawn obliquely)",
    "perspective_keeps_world_camera": "control: world orientation rows and world eye are unchanged by the align; the local focus reads B^T(world focus - origin)",
-   "focus_write_after_pin_is_local": "a focus written while a plane is pinned is plane-local; a capture that pins first and then sets the focus exercised no plane-change transition"
+   "focus_write_after_pin_is_local": "a focus written while a plane is pinned is plane-local; a capture that pins first and then sets the focus exercised no plane-change transition",
+   "focus_pinned_to_pinned": "pinned to pinned (re-align to another face): the focus NUMBERS are kept again, so the world focus jumps from origin + B * numbers to origin' + B' * numbers ((0.3, 0, 0.7) -> (0, 0.7, 0.3) here); the front view turns into the new plane (canonical front rows). 'World focus kept' predicted local (0.7, -0.5, -0.3), 0.86 away; 'reset to the new origin' predicted (0, 0, 0), 0.36 away"
   }
  },
  "skew_rigs": [
