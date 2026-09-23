@@ -1,0 +1,3563 @@
+{
+ "provenance": {
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "GUI worker, one fresh boot per cell, real XTest keys/pointer; state read back after each step",
+  "captured_utc": "2026-09-23",
+  "harness": "toolcards/bugfix_w17_keys_lasso_tab/harness",
+  "task": "7106"
+ },
+ "rigs": {
+  "quad": {
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     0
+    ],
+    [
+     0.5,
+     -0.5,
+     0
+    ],
+    [
+     0.5,
+     0.5,
+     0
+    ],
+    [
+     -0.5,
+     0.5,
+     0
+    ]
+   ],
+   "polygons": [
+    [
+     0,
+     1,
+     2,
+     3
+    ]
+   ]
+  },
+  "cube": {
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "polygons": [
+    [
+     1,
+     5,
+     7,
+     3
+    ],
+    [
+     0,
+     2,
+     6,
+     4
+    ],
+    [
+     4,
+     6,
+     7,
+     5
+    ],
+    [
+     0,
+     1,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     0,
+     4,
+     5,
+     1
+    ]
+   ],
+   "index_rule": "index = 4*(x>0) + 2*(y>0) + (z>0)"
+  },
+  "cube_minus_face0": {
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "polygons": [
+    [
+     0,
+     2,
+     6,
+     4
+    ],
+    [
+     4,
+     6,
+     7,
+     5
+    ],
+    [
+     0,
+     1,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     0,
+     4,
+     5,
+     1
+    ]
+   ],
+   "hole_boundary": [
+    1,
+    5,
+    7,
+    3
+   ],
+   "outward_winding": [
+    1,
+    5,
+    7,
+    3
+   ]
+  },
+  "cube_minus_face1": {
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "polygons": [
+    [
+     1,
+     5,
+     7,
+     3
+    ],
+    [
+     4,
+     6,
+     7,
+     5
+    ],
+    [
+     0,
+     1,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     0,
+     4,
+     5,
+     1
+    ]
+   ],
+   "hole_boundary": [
+    0,
+    2,
+    6,
+    4
+   ],
+   "outward_winding": [
+    0,
+    2,
+    6,
+    4
+   ]
+  }
+ },
+ "delete_keys": {
+  "law": "In polygon selection mode Backspace and Delete both run the deleting command, which also removes points left without a polygon; Shift+Backspace runs the removing command, which keeps them. One undo step restores geometry and selection.",
+  "cells": {
+   "d-iso-bs": {
+    "rig": "quad",
+    "mode": "polygon",
+    "selected_polygons": [
+     0
+    ],
+    "key": "Backspace",
+    "command": "delete",
+    "before": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 0,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 0,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "d-iso-del": {
+    "rig": "quad",
+    "mode": "polygon",
+    "selected_polygons": [
+     0
+    ],
+    "key": "Delete",
+    "command": "delete",
+    "before": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 0,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 0,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "d-iso-sbs": {
+    "rig": "quad",
+    "mode": "polygon",
+    "selected_polygons": [
+     0
+    ],
+    "key": "Shift+Backspace",
+    "command": "remove_keep_points",
+    "before": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 4,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 4,
+     "polygon_count": 1,
+     "polygons": [
+      [
+       0,
+       1,
+       2,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 4,
+     "polygon_count": 0,
+     "polygons": [],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "d-cube-bs": {
+    "rig": "cube",
+    "mode": "polygon",
+    "selected_polygons": [
+     0
+    ],
+    "key": "Backspace",
+    "command": "delete",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   }
+  }
+ },
+ "make_polygon": {
+  "law": "Key P (and the Make button, via its dialog) builds ONE polygon. From an edge selection it walks the selected edges as a chain: a closed 4-edge hole gives the quad, an open 3-edge chain is closed to the same quad. Winding matches the neighbouring polygons across the shared edges, NOT the selection order (vertex or edge) and NOT the view direction. The new polygon becomes selected; a vertex selection is dropped, an edge selection is kept.",
+  "cells": {
+   "p-e4-key": {
+    "rig": "cube_minus_face0",
+    "mode": "edge",
+    "selection_order_given": [
+     [
+      7,
+      3
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      5,
+      7
+     ]
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       7,
+       3,
+       1,
+       5
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     7,
+     3,
+     1,
+     5
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    }
+   },
+   "p-e4-btn": {
+    "rig": "cube_minus_face0",
+    "mode": "edge",
+    "selection_order_given": [
+     [
+      7,
+      3
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      5,
+      7
+     ]
+    ],
+    "input": "Make button + dialog OK",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       7,
+       3,
+       1,
+       5
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     7,
+     3,
+     1,
+     5
+    ],
+    "new_polygon_is_outward": true
+   },
+   "p-v4-key": {
+    "rig": "cube_minus_face0",
+    "mode": "vertex",
+    "selection_order_given": [
+     1,
+     5,
+     7,
+     3
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       1,
+       5,
+       7,
+       3
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       3,
+       1,
+       5,
+       7
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     3,
+     1,
+     5,
+     7
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       1,
+       5,
+       7,
+       3
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "p-v4-rev": {
+    "rig": "cube_minus_face0",
+    "mode": "vertex",
+    "selection_order_given": [
+     1,
+     3,
+     7,
+     5
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       1,
+       3,
+       7,
+       5
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       5,
+       7,
+       3,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     5,
+     7,
+     3,
+     1
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       1,
+       3,
+       7,
+       5
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "p-e3-key": {
+    "rig": "cube_minus_face0",
+    "mode": "edge",
+    "selection_order_given": [
+     [
+      1,
+      5
+     ],
+     [
+      5,
+      7
+     ],
+     [
+      7,
+      3
+     ]
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       1,
+       5,
+       7,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     1,
+     5,
+     7,
+     3
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    }
+   },
+   "p-e3-rev": {
+    "rig": "cube_minus_face0",
+    "mode": "edge",
+    "selection_order_given": [
+     [
+      7,
+      3
+     ],
+     [
+      5,
+      7
+     ],
+     [
+      1,
+      5
+     ]
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       1,
+       5,
+       7,
+       3
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     1,
+     5,
+     7,
+     3
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        7,
+        5
+       ],
+       [
+        3,
+        7
+       ],
+       [
+        5,
+        1
+       ]
+      ],
+      "polygons": []
+     }
+    }
+   },
+   "p-v4-back": {
+    "rig": "cube_minus_face1",
+    "mode": "vertex",
+    "selection_order_given": [
+     0,
+     2,
+     6,
+     4
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       0,
+       2,
+       6,
+       4
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       4,
+       0,
+       2,
+       6
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     4,
+     0,
+     2,
+     6
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [
+       0,
+       2,
+       6,
+       4
+      ],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "p-e4-back": {
+    "rig": "cube_minus_face1",
+    "mode": "edge",
+    "selection_order_given": [
+     [
+      0,
+      2
+     ],
+     [
+      2,
+      6
+     ],
+     [
+      6,
+      4
+     ],
+     [
+      4,
+      0
+     ]
+    ],
+    "input": "key P",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        4,
+        6
+       ],
+       [
+        2,
+        0
+       ],
+       [
+        6,
+        2
+       ],
+       [
+        0,
+        4
+       ]
+      ],
+      "polygons": []
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        4,
+        6
+       ],
+       [
+        2,
+        0
+       ],
+       [
+        6,
+        2
+       ],
+       [
+        0,
+        4
+       ]
+      ],
+      "polygons": [
+       5
+      ]
+     }
+    },
+    "new_polygon": [
+     0,
+     2,
+     6,
+     4
+    ],
+    "new_polygon_is_outward": true,
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 5,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [
+       [
+        4,
+        6
+       ],
+       [
+        2,
+        0
+       ],
+       [
+        6,
+        2
+       ],
+       [
+        0,
+        4
+       ]
+      ],
+      "polygons": []
+     }
+    }
+   }
+  }
+ },
+ "subpatch_vertex_lasso": {
+  "law": "With a subdivision-surface cage in vertex mode, a lasso selects a cage vertex when the loop contains the vertex's DISPLAYED (limit-surface) position; a loop around the cage position alone selects nothing. Vertex dots are drawn at the limit position.",
+  "limit_of_cube_corner": "0.5 x cage position (valence-3 Catmull-Clark limit)",
+  "cells": {
+   "l-lim": {
+    "subdivision": true,
+    "target_vertex": 7,
+    "loop": "loop around the limit position only",
+    "lasso": {
+     "loop_px": [
+      [
+       664.5,
+       442.5
+      ],
+      [
+       660.1,
+       458.7
+      ],
+      [
+       648.3,
+       470.6
+      ],
+      [
+       632.1,
+       474.9
+      ],
+      [
+       615.9,
+       470.6
+      ],
+      [
+       604.1,
+       458.7
+      ],
+      [
+       599.8,
+       442.5
+      ],
+      [
+       604.1,
+       426.4
+      ],
+      [
+       615.9,
+       414.5
+      ],
+      [
+       632.1,
+       410.2
+      ],
+      [
+       648.3,
+       414.5
+      ],
+      [
+       660.1,
+       426.4
+      ]
+     ],
+     "cage_px": {
+      "0": [
+       490.32,
+       539.33
+      ],
+      "1": [
+       352.34,
+       683.76
+      ],
+      "2": [
+       481.77,
+       272.4
+      ],
+      "3": [
+       317.35,
+       347.59
+      ],
+      "4": [
+       757.27,
+       581.97
+      ],
+      "5": [
+       691.26,
+       757.6
+      ],
+      "6": [
+       780.12,
+       293.84
+      ],
+      "7": [
+       711.86,
+       386.95
+      ]
+     },
+     "limit_px": {
+      "0": [
+       527.22,
+       515.36
+      ],
+      "1": [
+       463.95,
+       582.72
+      ],
+      "2": [
+       524.25,
+       371.47
+      ],
+      "3": [
+       456.07,
+       421.49
+      ],
+      "4": [
+       671.17,
+       536.63
+      ],
+      "5": [
+       627.66,
+       610.54
+      ],
+      "6": [
+       677.94,
+       387.11
+      ],
+      "7": [
+       632.12,
+       442.53
+      ]
+     },
+     "cage_points_inside": [],
+     "limit_points_inside": [
+      7
+     ]
+    },
+    "selected_after": [
+     7
+    ]
+   },
+   "l-cage": {
+    "subdivision": true,
+    "target_vertex": 7,
+    "loop": "loop around the cage position only",
+    "lasso": {
+     "loop_px": [
+      [
+       727.1,
+       386.9
+      ],
+      [
+       725.1,
+       394.6
+      ],
+      [
+       719.5,
+       400.2
+      ],
+      [
+       711.9,
+       402.2
+      ],
+      [
+       704.2,
+       400.2
+      ],
+      [
+       698.6,
+       394.6
+      ],
+      [
+       696.6,
+       386.9
+      ],
+      [
+       698.6,
+       379.3
+      ],
+      [
+       704.2,
+       373.7
+      ],
+      [
+       711.9,
+       371.7
+      ],
+      [
+       719.5,
+       373.7
+      ],
+      [
+       725.1,
+       379.3
+      ]
+     ],
+     "cage_px": {
+      "0": [
+       490.32,
+       539.33
+      ],
+      "1": [
+       352.34,
+       683.76
+      ],
+      "2": [
+       481.77,
+       272.4
+      ],
+      "3": [
+       317.35,
+       347.59
+      ],
+      "4": [
+       757.27,
+       581.97
+      ],
+      "5": [
+       691.26,
+       757.6
+      ],
+      "6": [
+       780.12,
+       293.84
+      ],
+      "7": [
+       711.86,
+       386.95
+      ]
+     },
+     "limit_px": {
+      "0": [
+       527.22,
+       515.36
+      ],
+      "1": [
+       463.95,
+       582.72
+      ],
+      "2": [
+       524.25,
+       371.47
+      ],
+      "3": [
+       456.07,
+       421.49
+      ],
+      "4": [
+       671.17,
+       536.63
+      ],
+      "5": [
+       627.66,
+       610.54
+      ],
+      "6": [
+       677.94,
+       387.11
+      ],
+      "7": [
+       632.12,
+       442.53
+      ]
+     },
+     "cage_points_inside": [
+      7
+     ],
+     "limit_points_inside": []
+    },
+    "selected_after": []
+   },
+   "l-both": {
+    "subdivision": true,
+    "target_vertex": 7,
+    "loop": "loop around both",
+    "lasso": {
+     "loop_px": [
+      [
+       630.0,
+       454.6
+      ],
+      [
+       723.9,
+       389.1
+      ],
+      [
+       714.0,
+       374.9
+      ],
+      [
+       620.1,
+       440.4
+      ]
+     ],
+     "cage_px": {
+      "0": [
+       490.32,
+       539.33
+      ],
+      "1": [
+       352.34,
+       683.76
+      ],
+      "2": [
+       481.77,
+       272.4
+      ],
+      "3": [
+       317.35,
+       347.59
+      ],
+      "4": [
+       757.27,
+       581.97
+      ],
+      "5": [
+       691.26,
+       757.6
+      ],
+      "6": [
+       780.12,
+       293.84
+      ],
+      "7": [
+       711.86,
+       386.95
+      ]
+     },
+     "limit_px": {
+      "0": [
+       527.22,
+       515.36
+      ],
+      "1": [
+       463.95,
+       582.72
+      ],
+      "2": [
+       524.25,
+       371.47
+      ],
+      "3": [
+       456.07,
+       421.49
+      ],
+      "4": [
+       671.17,
+       536.63
+      ],
+      "5": [
+       627.66,
+       610.54
+      ],
+      "6": [
+       677.94,
+       387.11
+      ],
+      "7": [
+       632.12,
+       442.53
+      ]
+     },
+     "cage_points_inside": [
+      7
+     ],
+     "limit_points_inside": [
+      7
+     ]
+    },
+    "selected_after": [
+     7
+    ]
+   },
+   "l-cage-nosub": {
+    "subdivision": false,
+    "target_vertex": 7,
+    "loop": "control: no subdivision, loop around the vertex",
+    "lasso": {
+     "loop_px": [
+      [
+       727.1,
+       386.9
+      ],
+      [
+       725.1,
+       394.6
+      ],
+      [
+       719.5,
+       400.2
+      ],
+      [
+       711.9,
+       402.2
+      ],
+      [
+       704.2,
+       400.2
+      ],
+      [
+       698.6,
+       394.6
+      ],
+      [
+       696.6,
+       386.9
+      ],
+      [
+       698.6,
+       379.3
+      ],
+      [
+       704.2,
+       373.7
+      ],
+      [
+       711.9,
+       371.7
+      ],
+      [
+       719.5,
+       373.7
+      ],
+      [
+       725.1,
+       379.3
+      ]
+     ],
+     "cage_px": {
+      "0": [
+       490.32,
+       539.33
+      ],
+      "1": [
+       352.34,
+       683.76
+      ],
+      "2": [
+       481.77,
+       272.4
+      ],
+      "3": [
+       317.35,
+       347.59
+      ],
+      "4": [
+       757.27,
+       581.97
+      ],
+      "5": [
+       691.26,
+       757.6
+      ],
+      "6": [
+       780.12,
+       293.84
+      ],
+      "7": [
+       711.86,
+       386.95
+      ]
+     },
+     "limit_px": {
+      "0": [
+       527.22,
+       515.36
+      ],
+      "1": [
+       463.95,
+       582.72
+      ],
+      "2": [
+       524.25,
+       371.47
+      ],
+      "3": [
+       456.07,
+       421.49
+      ],
+      "4": [
+       671.17,
+       536.63
+      ],
+      "5": [
+       627.66,
+       610.54
+      ],
+      "6": [
+       677.94,
+       387.11
+      ],
+      "7": [
+       632.12,
+       442.53
+      ]
+     },
+     "cage_points_inside": [
+      7
+     ],
+     "limit_points_inside": []
+    },
+    "selected_after": [
+     7
+    ]
+   }
+  }
+ },
+ "hide_family": {
+  "law": "The reference's family is four component actions, in this menu order: Hide Selected (H), Hide Unselected (Shift+H), Hide Invert (Ctrl+H), Unhide (U; Shift+U also unhides all). Hide Selected hides the selected polygons and they leave the selection; Hide Unselected keeps the selection; Hide Invert flips every polygon's hidden flag in polygon mode; Unhide clears all hidden flags regardless of selection. Each is one undo step restoring the selection too, except that Hide Invert's undo restores NOTHING hidden (the pre-invert hidden set is lost) -- a known reference defect we do not reproduce.",
+  "menu_order": [
+   "hide_selected",
+   "hide_unselected",
+   "hide_invert",
+   "unhide_all"
+  ],
+  "also_in_menu_not_component": [
+   "unhide_selected_items (item level)",
+   "render_hide_selected / render_unhide (item render visibility)"
+  ],
+  "cells": {
+   "t-hs": {
+    "rig": "cube",
+    "mode": "polygon",
+    "action": "hide_selected",
+    "input": "menu click",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      0,
+      2
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      0,
+      2
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "t-hu": {
+    "rig": "cube",
+    "mode": "polygon",
+    "action": "hide_unselected",
+    "input": "menu click",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      1,
+      3,
+      4,
+      5
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    },
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      1,
+      3,
+      4,
+      5
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0,
+       2
+      ]
+     }
+    }
+   },
+   "t-hi": {
+    "rig": "cube",
+    "mode": "polygon",
+    "action": "hide_invert",
+    "input": "menu click",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      1,
+      3
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      0,
+      2,
+      4,
+      5
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    },
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      0,
+      2,
+      4,
+      5
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": []
+     }
+    }
+   },
+   "t-un": {
+    "rig": "cube",
+    "mode": "polygon",
+    "action": "unhide_all",
+    "input": "menu click",
+    "before": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      1,
+      3
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_undo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [
+      1,
+      3
+     ],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    },
+    "after_redo": {
+     "vertex_count": 8,
+     "polygon_count": 6,
+     "polygons": [
+      [
+       1,
+       5,
+       7,
+       3
+      ],
+      [
+       0,
+       2,
+       6,
+       4
+      ],
+      [
+       4,
+       6,
+       7,
+       5
+      ],
+      [
+       0,
+       1,
+       3,
+       2
+      ],
+      [
+       2,
+       3,
+       7,
+       6
+      ],
+      [
+       0,
+       4,
+       5,
+       1
+      ]
+     ],
+     "hidden_polygons": [],
+     "selected": {
+      "vertices": [],
+      "edges": [],
+      "polygons": [
+       0
+      ]
+     }
+    }
+   }
+  }
+ }
+}
