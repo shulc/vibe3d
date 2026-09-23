@@ -108,5 +108,11 @@ unittest
     assert(edgeChainWalk(pair) is null, "two disjoint edges were walked as one");
     ++refused;
 
-    assert(refused == 3);
+    // Nothing selected (a caller that skipped its own gate): empty, not a
+    // read of sel[0].
+    auto none = build(4, [[0u, 1, 2, 3]]);
+    assert(edgeChainWalk(none) is null, "an empty edge selection was walked");
+    ++refused;
+
+    assert(refused == 4);
 }
