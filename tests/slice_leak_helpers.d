@@ -506,10 +506,8 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
         snaps ~= slSnap();
         ++steps;
     }
-    assert(steps == K && slHistoryLen() == 0,
-           format("undo loop ran %d of %d, history left %d", steps, K, slHistoryLen()));
 
-    // The law table, reachable only by a live editor.
+    // The law table, reachable only by a live editor; it reads only `snaps`.
     bool meshIs(const SlMesh a, const SlMesh b) { return a.canon == b.canon; }
     foreach (k; 1 .. K + 1) {
         const s = snaps[k];
@@ -532,7 +530,16 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
             assert(s.tool != "edgeSlice",
                    format("undo step 3: the first-point peel did not turn the tool off: %s",
                           s.toString));
+        // Ending the tool with no latched point records nothing (plan S1,
+        // "Дизайн F (7112)"); below the tool-off assert so each is attributed.
+        if (k == 3)
+            assert(s.historyLen == recordedHistoryLen,
+                   format("undo step 3: ending the tool changed the history: %s", s.toString));
     }
+    // End of loop, BELOW the law table (plan S1 RELAY → 7112, item 1): a stray
+    // history row must redden the step-3 line above first, not this one.
+    assert(steps == K && slHistoryLen() == 0,
+           format("undo loop ran %d of %d, history left %d", steps, K, slHistoryLen()));
 }
 
 // ---------------------------------------------------------------------------
