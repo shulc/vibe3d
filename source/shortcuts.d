@@ -287,8 +287,7 @@ ShortcutTable loadShortcuts(string path) {
 
 /// `unbound` is an explicit NO-OP row: it wins its context by the usual weight
 /// and consumes the chord, so a wildcard row cannot fire there (item-mode
-/// Shift+Backspace, task 7132 — the reference binds that chord in component
-/// modes only).
+/// Shift+Backspace — pinned by `tests/test_item_mode_delete_keys.d`).
 enum BindingKind { tool, command, editMode, unbound }
 
 /// One row of the resolved input map: a chord, the context slots it requires,

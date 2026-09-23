@@ -280,8 +280,8 @@ unittest {
         "6509 receiver reconciliation: owner must serve exactly 107 reads");
     assert(identifierCount(body, "live") == 215,
         "6509 receiver reconciliation: live must serve exactly 215 reads");
-    assert(identifierCount(body, "deps") == 15,
-        "6509 receiver reconciliation: deps must serve exactly 15 reads");
+    assert(identifierCount(body, "deps") == 14,
+        "6509 receiver reconciliation: deps must serve exactly 14 reads");
     struct Row { string receiver, member; size_t count; }
     immutable rows = [
         Row("owner", "activeMesh", 107),
@@ -290,7 +290,7 @@ unittest {
         Row("deps", "meshRebuildDrop", 7),
         Row("deps", "originSnapshot", 3), Row("deps", "remeshJob", 2),
         Row("deps", "requestRemeshOpen", 1),
-        Row("deps", "promoteGeometryType", 2),
+        Row("deps", "promoteGeometryType", 1),
     ];
     foreach (row; rows) {
         const actual = countOccurrences(body,
