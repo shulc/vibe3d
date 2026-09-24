@@ -27,7 +27,8 @@ const planeScene = join(fixtures, 'plane_scene.v3d');
 //   PLANE-PIXELS with-image magenta=192731 of 1280x720
 //   PLANE-PIXELS missing magenta=0 of 1280x720
 // A quarter of the desktop count: >4x headroom for the browser page's own
-// camera and layout, while both controls (I0, I4) must read ZERO.
+// camera and layout, while both controls (I0, I4) must read ZERO. The browser
+// page itself measured 149161 of 1280x633 in both artifact modes (2026-09-24).
 const MAGENTA_FLOOR = 48000;
 
 const DEADLINE = 20000;
@@ -154,7 +155,10 @@ try {
   if (img6 !== `WEB-IMAGE dims=8x8 missing=0 path=/work/${t2}/magenta8.png`)
     fail('I6', `the reopened image resolves as ${img6} (document folder ${t2}, stale copy ${t1})`);
   if (t2 === t1) fail('I6', `the reopen reused /work/${t1}`);
-  ok('I6', `${dirs6} | ${i6.line} | ${img6}`);
+  // The owner's MEMFS rule: this Open sweeps the earlier folders (the stale
+  // copy's and the untitled save's) and keeps the new document's.
+  const swept6 = (await b.waitFor(new RegExp(`^WEB-WORK-DIRS dirs=${t2}$`), DEADLINE, mark)).line;
+  ok('I6', `${dirs6} -> ${swept6} | ${i6.line} | ${img6}`);
 
   // I3 open plane_scene.v3d picked with magenta8.png: the plane's image is
   // found, and the page draws its pixels.
