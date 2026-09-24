@@ -1,0 +1,860 @@
+{
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-09-24",
+  "harness": "toolcards/symmetry_selection/harness (private)",
+  "task": "7145",
+  "notes": "GUI worker, fresh boot per cell, selections by real pointer input except the script/command doors; numeric transforms applied as one scripted block while no tool session was live; drags by relative pointer increments; every cell journal passed the session gate with 0 in-session reads"
+ },
+ "index_map": {
+  "note": "cube vertices named as in our 8-vertex cube; captured indices differ for two of them",
+  "captured_index": {
+   "v6": 6,
+   "v7": 7,
+   "v2": 5,
+   "v3": 4
+  }
+ },
+ "law": {
+  "partner": "a transform writes only the operand (the selection, or the whole mesh when nothing is selected); an unselected partner is never written -- by move, rotate, with or without a falloff",
+  "pairing_doors": "pointer gestures pair (click, shift-click, ctrl-click deselect, region, double-click loop, in vertex/edge/polygon modes); script and command doors do not (the index selection command in set and add mode, the scripting API, expand); turning symmetry on does not widen an existing selection",
+  "authoring_side": "each operand vertex on the AUTHORING side A takes the transform T; each operand vertex on the other side takes its mirror M T M. The side is a latched state: every press (on or off the handle) sets it to the press side, it survives a tool drop and re-arm, and a fresh session starts at -X (so a numeric apply with no earlier press authors on -X). A selected pair therefore stays mirror-symmetric; a lone vertex off A moves by the mirrored delta",
+  "weights": "numeric door: falloff weights of a pair are read at its +X member (and a lone vertex uses its own position); the action centre handle sits on the +X member. Drag-door weights under a linear falloff are NOT measured (see notes)",
+  "on_plane": "an on-plane vertex keeps its plane coordinate"
+ },
+ "cells": {
+  "C-order": {
+   "rig": "8-vertex cube +-0.5; one vertex (0.5,0.5,0.5) selected by a real click with symmetry OFF; symmetry X switched on; numeric move TX 0.4 (one scripted application)",
+   "selection_after_symmetry_on": [
+    6
+   ],
+   "v_pos_x_after": [
+    0.1,
+    0.5,
+    0.5
+   ],
+   "v_neg_x_partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "verdict": "O-sel: the selection is not widened when symmetry turns on and the unselected partner is never written",
+   "twins": {
+    "drag_press_pos_x": {
+     "final_T": [
+      0.24,
+      0.08,
+      0.0
+     ],
+     "selected_after": [
+      0.74,
+      0.58,
+      0.5
+     ],
+     "partner_after": [
+      -0.5,
+      0.5,
+      0.5
+     ]
+    },
+    "drag_press_neg_x": {
+     "final_T": [
+      0.435,
+      0.11,
+      0.0
+     ],
+     "selected_after": [
+      0.065,
+      0.61,
+      0.5
+     ],
+     "partner_after": [
+      -0.5,
+      0.5,
+      0.5
+     ]
+    }
+   }
+  },
+  "C-lone-neg": {
+   "rig": "symmetry X on; only (-0.5,0.5,0.5) selected by the scripting API (no selection command); numeric TX 0.4",
+   "selection": [
+    7
+   ],
+   "selected_after": [
+    -0.1,
+    0.5,
+    0.5
+   ],
+   "partner_after": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "twin_drag_press_pos_x": {
+    "final_T": [
+     0.24,
+     0.08,
+     0.0
+    ],
+    "selected_after": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "partner_after": [
+     0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "verdict": "not L-own as a law: the numeric value equals L-own only because the lone vertex lies on the side the numeric door authors on; with the press on the other side the same vertex takes the mirrored delta. Partner never written."
+  },
+  "C-fall": {
+   "rig": "symmetry X; only (0.5,0.5,0.5) selected (scripting API); linear falloff start (-1,0,0) weight 1, end (1,0,0) weight 0, written after the arm and read back before the apply; numeric TY 0.4",
+   "falloff_readback": {
+    "startZ": 0.0,
+    "startX": -1.0,
+    "startY": 0.0,
+    "endY": 0.0,
+    "endX": 1.0,
+    "endZ": 0.0,
+    "mix": "multiply",
+    "shape": "linear"
+   },
+   "selected_after": [
+    0.5,
+    0.6,
+    0.5
+   ],
+   "partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "control_symmetry_off_selected_after": [
+    0.5,
+    0.6,
+    0.5
+   ],
+   "verdict": "F-sel: the falloff does not widen the operand; the selected vertex moves by its own weight (0.25 * 0.4)"
+  },
+  "C-plane": {
+   "rig": "cube +-0.5 with 2 segments in X; symmetry X; real click on the on-plane vertex (0,0.5,0.5); numeric TX 0.4 TY 0.2",
+   "selection_count": 1,
+   "on_plane_vertex": {
+    "10": {
+     "before": [
+      0.0,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.0,
+      0.7,
+      0.5
+     ]
+    }
+   },
+   "verdict": "P-proj: an on-plane vertex keeps x = 0"
+  },
+  "C-base": {
+   "rig": "symmetry X; pair selected; linear falloff giving weight 1 at x=-0.5 and 0 at x=+0.5 (C-base, C-base-td) or the reverse (C-base+); numeric TY 0.4; handle read after arming",
+   "click_neg_x_w_neg1_pos0": {
+    "selection": [
+     7,
+     6
+    ],
+    "pos_after": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "neg_after": [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "click_pos_x_w_pos1_neg0": {
+    "selection": [
+     6,
+     7
+    ],
+    "pos_after": [
+     0.5,
+     0.9,
+     0.5
+    ],
+    "neg_after": [
+     -0.5,
+     0.9,
+     0.5
+    ]
+   },
+   "script_pair_w_neg1_pos0": {
+    "selection": [
+     6,
+     7
+    ],
+    "pos_after": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "neg_after": [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   },
+   "handle_after_arm": "drawn at the +X member (0.5,0.5,0.5) in all three cells (frame centre within 3 px of its projection), whichever side was clicked",
+   "verdict": "B-fixed for the WEIGHT: a selected pair moves by the weight at its +X member, clicked side irrelevant; B-anchor and B-own refuted"
+  },
+  "C-script": {
+   "rig": "symmetry X; selection dropped before each door; index 6 = (0.5,0.5,0.5)",
+   "index_command_set": [
+    6
+   ],
+   "index_command_add": [
+    6
+   ],
+   "scripting_api_select": [
+    6
+   ],
+   "verdict": "S-single on every script/command door: only a pointer gesture pairs"
+  },
+  "C-desel": {
+   "rig": "symmetry X; click (0.5,0.5,0.5); Shift-click (0.5,0.5,-0.5); Ctrl-click (-0.5,0.5,0.5); numeric TX 0.4",
+   "after_click": [
+    6,
+    7
+   ],
+   "after_shift_click": [
+    6,
+    7,
+    5,
+    4
+   ],
+   "after_ctrl_click": [
+    5,
+    4
+   ],
+   "moved": {
+    "4": {
+     "before": [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "5": {
+     "before": [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      -0.5
+     ]
+    }
+   },
+   "verdict": "D-pair: deselecting one vertex drops its partner too"
+  },
+  "C-lasso": {
+   "rig": "symmetry X; right-button region gesture whose closed outline encloses only (0.5,0.5,-0.5) (a triangle; see notes)",
+   "selection": [
+    5,
+    4
+   ],
+   "verdict": "L-pair: the region gesture adds the partner of every enclosed vertex"
+  },
+  "C-edge": {
+   "rig": "edge mode; symmetry X; real click on the top edge at x = +0.5; numeric TX 0.4",
+   "selection": [
+    [
+     5,
+     6
+    ],
+    [
+     4,
+     7
+    ]
+   ],
+   "moved": {
+    "4": {
+     "before": [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "5": {
+     "before": [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "6": {
+     "before": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      0.5
+     ]
+    },
+    "7": {
+     "before": [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "verdict": "E-pair"
+  },
+  "C-poly": {
+   "rig": "polygon mode; symmetry X; real click on the +X face; numeric TX 0.4",
+   "selection": [
+    2,
+    4
+   ],
+   "moved": {
+    "0": {
+     "before": [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     "after": [
+      -0.1,
+      -0.5,
+      -0.5
+     ]
+    },
+    "1": {
+     "before": [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      -0.5,
+      -0.5
+     ]
+    },
+    "2": {
+     "before": [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      -0.5,
+      0.5
+     ]
+    },
+    "3": {
+     "before": [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     "after": [
+      -0.1,
+      -0.5,
+      0.5
+     ]
+    },
+    "4": {
+     "before": [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "5": {
+     "before": [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "6": {
+     "before": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      0.5
+     ]
+    },
+    "7": {
+     "before": [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "verdict": "P-pair"
+  },
+  "C-loop": {
+   "rig": "cube +-0.5, 4 segments in X; edge mode; symmetry X; real double-click on the top edge at x = +0.25; numeric TX 0.4",
+   "selected_edges": [
+    [
+     13,
+     16
+    ],
+    [
+     6,
+     16
+    ],
+    [
+     3,
+     6
+    ],
+    [
+     3,
+     13
+    ],
+    [
+     11,
+     18
+    ],
+    [
+     8,
+     18
+    ],
+    [
+     1,
+     8
+    ],
+    [
+     1,
+     11
+    ]
+   ],
+   "moved": {
+    "1": {
+     "before": [
+      -0.25,
+      -0.5,
+      -0.5
+     ],
+     "after": [
+      0.15,
+      -0.5,
+      -0.5
+     ]
+    },
+    "3": {
+     "before": [
+      0.25,
+      -0.5,
+      -0.5
+     ],
+     "after": [
+      -0.15,
+      -0.5,
+      -0.5
+     ]
+    },
+    "6": {
+     "before": [
+      0.25,
+      -0.5,
+      0.5
+     ],
+     "after": [
+      -0.15,
+      -0.5,
+      0.5
+     ]
+    },
+    "8": {
+     "before": [
+      -0.25,
+      -0.5,
+      0.5
+     ],
+     "after": [
+      0.15,
+      -0.5,
+      0.5
+     ]
+    },
+    "11": {
+     "before": [
+      -0.25,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.15,
+      0.5,
+      -0.5
+     ]
+    },
+    "13": {
+     "before": [
+      0.25,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      -0.15,
+      0.5,
+      -0.5
+     ]
+    },
+    "16": {
+     "before": [
+      0.25,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.15,
+      0.5,
+      0.5
+     ]
+    },
+    "18": {
+     "before": [
+      -0.25,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.15,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "verdict": "Lp-pair: the loop gesture selects the x = +0.25 loop AND the x = -0.25 loop (8 edges)"
+  },
+  "C-expand": {
+   "rig": "cube +-0.5, 4 segments in X; click (0.5,0.5,0.5) with symmetry OFF; symmetry X; select-expand command; numeric TX 0.4",
+   "after_click": [
+    15
+   ],
+   "after_expand": [
+    5,
+    14,
+    15,
+    16
+   ],
+   "moved": {
+    "5": {
+     "before": [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      -0.5,
+      0.5
+     ]
+    },
+    "14": {
+     "before": [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "15": {
+     "before": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      0.5
+     ]
+    },
+    "16": {
+     "before": [
+      0.25,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.15,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "verdict": "X-single: the expand command does not pair (4 vertices, all x > 0)"
+  },
+  "C-rot": {
+   "rig": "symmetry X; only (0.5,0.5,0.5) selected (scripting API); rotate 60 deg about Y around the ORIGIN, numeric",
+   "selected_after": [
+    -0.183013,
+    0.5,
+    0.683013
+   ],
+   "partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "control_symmetry_off_selected_after": [
+    0.683013,
+    0.5,
+    -0.183013
+   ],
+   "pair_selected": {
+    "pos_after": [
+     -0.183013,
+     0.5,
+     0.683013
+    ],
+    "neg_after": [
+     0.183013,
+     0.5,
+     0.683013
+    ]
+   },
+   "verdict": "Rp-stay: the unselected partner is not written by a rotation either; the lone +X vertex takes the MIRRORED rotation (numeric door); a pair rotates with the -X member taking the typed rotation and the +X member its mirror"
+  },
+  "C-elm": {
+   "rig": "no selection; symmetry X; element-move preset (range 0.044); press on a vertex and haul up 10 x 8 px",
+   "press_neg_x": {
+    "final_T": [
+     0.025,
+     0.23,
+     0.0
+    ],
+    "moved": {
+     "6": {
+      "before": [
+       0.5,
+       0.5,
+       0.5
+      ],
+      "after": [
+       0.475,
+       0.73,
+       0.5
+      ]
+     },
+     "7": {
+      "before": [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      "after": [
+       -0.475,
+       0.73,
+       0.5
+      ]
+     }
+    }
+   },
+   "press_pos_x": {
+    "final_T": [
+     -0.01,
+     0.2,
+     0.0
+    ],
+    "moved": {
+     "6": {
+      "before": [
+       0.5,
+       0.5,
+       0.5
+      ],
+      "after": [
+       0.49,
+       0.7,
+       0.5
+      ]
+     },
+     "7": {
+      "before": [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      "after": [
+       -0.49,
+       0.7,
+       0.5
+      ]
+     }
+    }
+   },
+   "verdict": "Em-mirror: the picked vertex takes the drag and its partner the mirror, on either side"
+  },
+  "C-rot45": {
+   "rig": "symmetry X; only (0.5,0.5,0.5) selected (scripting API); rotate 45 deg about Y around the ORIGIN, numeric",
+   "selected_after": [
+    0.0,
+    0.5,
+    0.707107
+   ],
+   "partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "verdict": "Rt-conj: the lone +X vertex takes the conjugate rotation (RY -45 about the origin); the partner is untouched"
+  },
+  "C-mixed": {
+   "rig": "symmetry X; (0.5,0.5,0.5), (-0.5,0.5,0.5) and (0.5,0.5,-0.5) selected by the scripting API ((-0.5,0.5,-0.5) not selected); numeric TX 0.4",
+   "moved": {
+    "5": {
+     "before": [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      -0.5
+     ]
+    },
+    "6": {
+     "before": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      0.1,
+      0.5,
+      0.5
+     ]
+    },
+    "7": {
+     "before": [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.1,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "unselected_partner_after": [
+    -0.5,
+    0.5,
+    -0.5
+   ],
+   "verdict": "M-one-frame: the pair and the lone vertex follow ONE authoring side (-X on this door): pair members +-0.1, lone +X vertex 0.1, its partner untouched"
+  },
+  "C-unpaired": {
+   "rig": "symmetry OFF; (-0.5,0.5,0.5) moved to (-0.5,0.5,0.7) so (0.5,0.5,0.5) has no partner; select (0.5,0.5,0.5) by the scripting API; symmetry X; numeric TX 0.4",
+   "selected_after": [
+    0.1,
+    0.5,
+    0.5
+   ],
+   "verdict": "U-reflect: the side rule applies with no partner at all"
+  },
+  "C-handle": {
+   "rig": "symmetry X; (0.5,0.5,0.5) selected (scripting API); move preset armed; press ON the handle centre (at that vertex, +X side) and haul 10 x 8 px right",
+   "final_T": [
+    0.195,
+    0.025,
+    0.0
+   ],
+   "selected_after": [
+    0.695,
+    0.525,
+    0.5
+   ],
+   "partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "verdict": "H-latch: a press on the handle also sets the authoring side to the press side (+X here): own delta"
+  },
+  "C-latch": {
+   "rig": "as C-handle but the press is OFF the handle at +X; haul right; tool dropped (Space); then a numeric TX 0.4 in a fresh arm",
+   "after_drag": [
+    0.74,
+    0.58,
+    0.5
+   ],
+   "after_numeric": [
+    1.14,
+    0.58,
+    0.5
+   ],
+   "verdict": "P-persist: the side latched by the press survives the tool drop and re-arm; the numeric step moved the +X vertex by +0.4 (a fresh boot's numeric step moves it by -0.4)"
+  }
+ },
+ "notes": [
+  "Linear falloff with a DRAG cannot be driven here: the press re-fits the falloff to the symmetry-halved selection box (start = end), zeroing every weight; so the pair weight side on the drag door is open.",
+  "C-lasso's outline was a triangle enclosing one vertex; a closed rectangle path returning to its start selected nothing (kept as raw/C-lasso-r1-closedpath)."
+ ]
+}
