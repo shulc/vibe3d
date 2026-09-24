@@ -181,6 +181,13 @@ unittest {
     command("tool.set prim.cylinder");
     drag(p, p2);
     Vec3 cen = channels("prim.cylinder");
+    auto axisR = postJson("/api/command", "tool.attr prim.cylinder axis ?");
+    assert(axisR["status"].str == "ok", "axis query failed: " ~ axisR.toString);
+    // An int-enum Param reads back as its token ("x" / "y" / "z").
+    auto av = axisR["value"];
+    immutable int cylAxis = av.type == JSONType.string
+        ? (av.str == "x" ? 0 : av.str == "y" ? 1 : av.str == "z" ? 2 : -1)
+        : cast(int)number(av);
     Vec3 cyl = commitCentre("prim.cylinder", 8, "C cylinder");
     double dc = offRay(cyl, p);
     assert(dc <= 1e-3,
@@ -192,6 +199,28 @@ unittest {
     assert(abs(comp(cen, al) - comp(focusL, al)) <= 1e-4,
         format("placement plane is not the local principal plane through the local "
              ~ "focus: channel %d = %.5f, local focus %s", al, comp(cen, al), s(focusL)));
+    // The construction axes follow the same local plane: the cylinder stands
+    // on it (its axis is the plane's local normal index), as it does on the
+    // identity plane with the world axis.
+    assert(cylAxis == al,
+        format("cylinder axis %d is not the local principal axis %d", cylAxis, al));
+
+    // The box's construction axes follow the same local plane: a plain
+    // (corner-to-corner) base drag lies IN the local principal plane — flat
+    // along its normal channel, spanning the other two.
+    rig(true);
+    command("tool.set prim.cube");
+    drag(p, p2);
+    float sz(string n) {
+        auto r = postJson("/api/command", "tool.attr prim.cube " ~ n ~ " ?");
+        assert(r["status"].str == "ok", "size query failed: " ~ r.toString);
+        return cast(float)number(r["value"]);
+    }
+    Vec3 base = Vec3(sz("sizeX"), sz("sizeY"), sz("sizeZ"));
+    assert(abs(comp(base, al)) <= 1e-5
+        && abs(comp(base, (al + 1) % 3)) > 1e-3 && abs(comp(base, (al + 2) % 3)) > 1e-3,
+        format("box base is not in the local principal plane (axis %d): size %s", al, s(base)));
+    command("tool.set prim.cube off");
 
     rig(true);
     command("tool.set prim.cube");
@@ -201,4 +230,72 @@ unittest {
     assert(db <= 1e-3,
         format("primitive not placed on the ray of its placing pixel under a pinned "
              ~ "plane (box): d_perp %.5f, centre %s", db, s(box)));
+}
+
+unittest { // S — the box centre snap writes the snapped point's LOCAL components
+    // Same conversion point as the centre drag: under a pinned plane the
+    // centre handle's locked axis is read off the plane-local view and the
+    // snapped target is written to the channels in plane-local numbers. Rig:
+    // a turned Front view (typed oblique plane), a small box, vertex snap with
+    // unbounded ranges enabled only for the centre drag.
+    import core.thread : Thread;
+    import core.time : dur;
+    auto r0 = postJson("/api/command", commandBody("scene.reset", "{}"));
+    assert(r0["status"].str == "ok", "scene reset failed: " ~ r0.toString);
+    command("history.clear");
+    command("workplane.reset");
+    command("viewport.view Front");
+    auto rc = postJson("/api/camera", `{"focus":{"x":0,"y":0,"z":0},"distance":4}`);
+    assert(rc["status"].str == "ok", "camera setup failed: " ~ rc.toString);
+    command("workplane.edit rotX:30 rotY:40 rotZ:0");
+    Plane pl = readPlane();
+    command("tool.set prim.cube");
+    auto vp = viewportFromCameraMatrices();
+    immutable int cx = vp.x + vp.width / 2, cy = vp.y + vp.height / 2;
+    drag([cx, cy], [cx + 48, cy - 48], 64);
+    foreach (n; ["cenX", "cenY", "cenZ"]) command("tool.attr prim.cube " ~ n ~ " 0");
+    foreach (n; ["sizeX", "sizeY", "sizeZ"]) command("tool.attr prim.cube " ~ n ~ " 2");
+    Thread.sleep(dur!"msecs"(120));
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
+                     ~ `{"t":10.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+                       vp.x, vp.y, vp.width, vp.height, cx, cy), testBaseUrl);
+    bool captured;
+    foreach (_; 0 .. 40) {
+        auto h = getJson("/api/tool/handles")["handles"];
+        if (h.type != JSONType.null_ && cast(int)h["captured"].integer == 13) { captured = true; break; }
+        Thread.sleep(dur!"msecs"(25));
+    }
+    assert(captured, "rig: the press did not capture the box centre handle (part 13)");
+    foreach (n; ["sizeX", "sizeY", "sizeZ"]) command("tool.attr prim.cube " ~ n ~ " 0.2");
+    command("tool.pipe.attr snap enabled true");
+    command("tool.pipe.attr snap types vertex");
+    command("tool.pipe.attr snap innerRange 999999");
+    command("tool.pipe.attr snap outerRange 999999");
+    scope (exit) command("tool.pipe.attr snap enabled false");
+
+    // The target: the cube vertex whose turned-view pixel is farthest from the
+    // centre (so the drag is long and the snap unambiguous).
+    Vec3 target;
+    int tx, ty;
+    double far = -1;
+    foreach (v; getJson("/api/model")["vertices"].array) {
+        Vec3 w = Vec3(cast(float)number(v.array[0]), cast(float)number(v.array[1]),
+                      cast(float)number(v.array[2]));
+        float px, py;
+        if (!projectToWindow(w, vp, px, py)) continue;
+        double d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (d > far) { far = d; target = w; tx = cast(int)(px + 0.5f); ty = cast(int)(py + 0.5f); }
+    }
+    assert(far > 400, "rig: no cube vertex off the centre of the turned view");
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
+                     ~ `{"t":10.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n"
+                     ~ `{"t":20.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+                       vp.x, vp.y, vp.width, vp.height, tx, ty, tx - cx, ty - cy, tx, ty), testBaseUrl);
+    Vec3 cen = channels("prim.cube");
+    Vec3 tl = toLocalD(pl, target - pl.o);
+    // A turned Front view looks down local -Z: the free components are local X, Y.
+    assert(abs(cen.x - tl.x) <= 1e-3 && abs(cen.y - tl.y) <= 1e-3,
+        format("box centre snap wrote non-local components: channels %s, target local %s",
+               s(cen), s(tl)));
+    command("tool.set prim.cube off");
 }

@@ -151,21 +151,25 @@ unittest {
 
 // -------------------------------------------------------------------------
 // 2. The same collapse in a SECOND axis-locked cell, so the guard is not
-// specific to Front. TOP ortho locks Y; the plane is still pinned to world
-// X at x=3, so the collapsed arm wrote 3 into cenY.
+// specific to Front. The plane is still pinned to world X at x=3. An ortho
+// preset view turns with a pinned plane (gap 187, task 7139), so the cell has
+// to be one where that plane stays EDGE-ON: a turned Top looks along the plane
+// normal (face-on) and could no longer separate anything. RIGHT turned by
+// rotZ 90 looks along world -Y, so it locks Y — the component the collapsed
+// arm wrote 3 into, exactly as the unturned Top did before 7139.
 // -------------------------------------------------------------------------
 unittest {
-    setupPinned("Top", "workplane.edit cenX:3 rotZ:90", "none");
+    setupPinned("Right", "workplane.edit cenX:3 rotZ:90", "none");
     clickOffGizmo(fetchCamera());
     auto a = getAcenAttrs();
-    assertRelocated(a, "Top ortho + plane pinned to world X");
+    assertRelocated(a, "Right ortho (turned) + plane pinned to world X");
 
     immutable float y = floatAttr(a, "cenY");
     assert(abs(y - 3.0f) > 0.5f,
         format("the pinned plane's X offset (3) was written into the VIEW "
                ~ "axis's Y component: cenY=%.4f", y));
     assert(abs(y) < 5e-2,
-        format("Top ortho relocate must land on the camera-perpendicular "
+        format("Right ortho relocate must land on the camera-perpendicular "
                ~ "plane through the pinned origin, y~0; cenY=%.4f", y));
 }
 

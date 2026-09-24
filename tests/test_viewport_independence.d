@@ -1,6 +1,8 @@
 // test_viewport_independence.d — Phase-5 per-cell independence follow + commands.
 //
-// Flow A: Quad linked defaults — follower center+scale follow master.
+// Flow A: Quad linked defaults — the ortho cells' center+scale follow their
+//         group's store, cell 1 (gap 219, task 7139: the perspective cell is
+//         its own link group).
 // Flow B: Explicit viewport.master + viewport.indCenter commands.
 // Regression: default GET/POST /api/camera (no query) unchanged.
 module test_viewport_independence;
@@ -188,35 +190,38 @@ bool testFlowD() {
     postCommand("viewport.layout", "Quad");
 
     auto before3 = getCam(3);
-    auto cam1 = getCam(1);   // Front ortho follower — a different cell than C
+    auto cam1 = getCam(1);   // Front ortho cell — a different cell than C
 
     int cx = cast(int)(cam1.vpX + cam1.w * 0.5);
     int cy = cast(int)(cam1.vpY + cam1.h * 0.5);
     playEvents(dragLog(cx, cy, cx + 40, cy, MOD_ZOOM));   // dx=+40
 
-    auto after3 = getCam(3);
-    double expected = before3.distance * (1.0 - 0.01 * 40.0);   // View.zoom(dx)
-    enforce(isClose(after3.distance, expected, 1e-2),
-        format("Flow D: master distance = %.6f, expected %.6f (follower zoom not coupled to master)",
-               after3.distance, expected));
-    writefln("    D1 PASS: master (cell 3) distance %.4f -> %.4f from cell 1's zoom drag",
-        before3.distance, after3.distance);
+    auto after1 = getCam(1);
+    double expected = cam1.distance * (1.0 - 0.01 * 40.0);   // View.zoom(dx)
+    enforce(isClose(after1.distance, expected, 1e-2),
+        format("Flow D: ortho group distance = %.6f, expected %.6f (zoom not coupled)",
+               after1.distance, expected));
+    writefln("    D1 PASS: ortho group distance %.4f -> %.4f from cell 1's zoom drag",
+        cam1.distance, after1.distance);
 
     foreach (id; [0, 1, 2]) {
         auto c = getCam(id);
-        enforce(isClose(c.distance, after3.distance, 1e-3),
-            format("Flow D: follower cell %d must track the new group distance " ~
-                   "(master=%.4f, cell %d=%.4f)", id, after3.distance, id, c.distance));
+        enforce(isClose(c.distance, after1.distance, 1e-3),
+            format("Flow D: ortho cell %d must track the new group distance " ~
+                   "(group=%.4f, cell %d=%.4f)", id, after1.distance, id, c.distance));
     }
-    writeln("    D2 PASS: cells 0/1/2 all resolve to the new group distance");
+    enforce(isClose(getCam(3).distance, before3.distance, 1e-4),
+        "Flow D: an ortho zoom changed the perspective cell's distance (gap 219)");
+    writeln("    D2 PASS: cells 0/1/2 resolve to the new group distance, cell 3 untouched");
 
     return true;
 }
 
 // --------------------------------------------------------------------------
-// Flow E — `viewport.indScale yes` OVERRIDE: a zoom-drag in the MASTER cell
-// must still couple to every default follower EXCEPT the one cell opted out
-// via indScale (keeps its own distance); pan stays coupled regardless.
+// Flow E — `viewport.indScale yes` OVERRIDE: a zoom-drag in the ortho group's
+// store (cell 1) must still couple to every default ortho cell EXCEPT the one
+// opted out via indScale (keeps its own distance); pan stays coupled
+// regardless (gap 219, task 7139: the perspective cell is not in this group).
 // --------------------------------------------------------------------------
 
 bool testFlowE() {
@@ -228,15 +233,15 @@ bool testFlowE() {
     postCommand("viewport.indScale", "yes");
 
     auto dist0Baseline = getCam(0).distance;
-    auto cam3 = getCam(3);   // master / perspective cell
+    auto cam1 = getCam(1);   // the ortho group's store
 
-    int cx = cast(int)(cam3.vpX + cam3.w * 0.5);
-    int cy = cast(int)(cam3.vpY + cam3.h * 0.5);
-    playEvents(dragLog(cx, cy, cx + 40, cy, MOD_ZOOM));   // zoom-drag IN the master
+    int cx = cast(int)(cam1.vpX + cam1.w * 0.5);
+    int cy = cast(int)(cam1.vpY + cam1.h * 0.5);
+    playEvents(dragLog(cx, cy, cx + 40, cy, MOD_ZOOM));   // zoom-drag IN the store
 
     auto after0 = getCam(0);
-    auto after1 = getCam(1);   // default follower — must track
-    auto after3 = getCam(3);
+    auto after1 = getCam(2);   // default ortho cell — must track
+    auto after3 = getCam(1);
 
     enforce(isClose(after0.distance, dist0Baseline, 1e-3),
         format("Flow E: cell 0 (indScale=yes) distance must stay own (expected %.4f, got %.4f)",
@@ -244,16 +249,16 @@ bool testFlowE() {
     enforce(!isClose(after3.distance, dist0Baseline, 1e-3),
         "Flow E: master distance must actually have changed (test setup sanity)");
     enforce(isClose(after1.distance, after3.distance, 1e-3),
-        format("Flow E: default-follower cell 1 must track the master's new distance " ~
-               "(master=%.4f, cell1=%.4f)", after3.distance, after1.distance));
-    writefln("    E1 PASS: cell 0 kept its own distance (%.4f) while cell 1 tracked the master (%.4f)",
+        format("Flow E: default ortho cell 2 must track the group's new distance " ~
+               "(group=%.4f, cell2=%.4f)", after3.distance, after1.distance));
+    writefln("    E1 PASS: cell 0 kept its own distance (%.4f) while cell 2 tracked the group (%.4f)",
         after0.distance, after1.distance);
 
     // Pan must still couple even with indScale=yes on cell 0 (indCenter still
     // false by default — only Scale was opted out).
-    auto before3Focus = getCam(3);
+    auto before3Focus = getCam(1);
     playEvents(dragLog(cx, cy, cx + 30, cy, MOD_PAN));
-    auto after3Focus = getCam(3);
+    auto after3Focus = getCam(1);
     enforce(!isClose(after3Focus.fx, before3Focus.fx, 1e-4),
         "Flow E: pan must still couple to the master even with indScale=yes on cell 0");
     auto after0Focus = getCam(0);
@@ -275,14 +280,17 @@ bool testFlowF() {
     resetApp();
     postCommand("viewport.layout", "Quad");
 
-    auto cam0 = getCam(0);        // Top ortho follower
-    auto before3 = getCam(3);     // perspective master
+    auto cam0 = getCam(0);        // Top ortho cell
+    auto before3 = getCam(1);     // the ortho group's store (gap 219)
+    auto persp = getCam(3);
 
     int cx = cast(int)(cam0.vpX + cam0.w * 0.5);
     int cy = cast(int)(cam0.vpY + cam0.h * 0.5);
     playEvents(dragLog(cx, cy, cx + 50, cy - 30, MOD_ORBIT));
 
-    auto after3 = getCam(3);
+    auto after3 = getCam(1);
+    enforce(isClose(getCam(3).fx, persp.fx, 1e-4, 1e-4) && isClose(getCam(3).fz, persp.fz, 1e-4, 1e-4),
+        "Flow F: an ortho Alt+LMB pan moved the perspective cell (gap 219)");
     double speed = cam0.distance * 0.001;
     double expDx = -50.0 * speed;
     double expDz =  30.0 * speed;
@@ -356,17 +364,18 @@ bool testFlowA() {
     resetApp();
 
     // Switch to Quad layout: cells 0-2 get indCenter=false, indScale=false;
-    // cell 3 = persp master (masterId=3).
+    // their link group's store is cell 1 (masterId=1); the perspective cell 3
+    // is its own group (gap 219, task 7139).
     postCommand("viewport.layout", "Quad");
 
     // Record cell 0's own distance before touching the master.
     auto cam0before = parseJSON(httpGet("/api/camera?viewport=0"));
     double ownDist = getField(cam0before, "distance");
 
-    // POST-pan the master (cell 3) to focus.x = 5.
-    string resp3 = httpPost("/api/camera?viewport=3", `{"focus":{"x":5,"y":0,"z":0}}`);
+    // POST-pan the group's store (cell 1) to focus.x = 5.
+    string resp3 = httpPost("/api/camera?viewport=1", `{"focus":{"x":5,"y":0,"z":0}}`);
     auto r3 = parseJSON(resp3);
-    enforce(r3["status"].str == "ok", "POST camera?viewport=3 failed: " ~ resp3);
+    enforce(r3["status"].str == "ok", "POST camera?viewport=1 failed: " ~ resp3);
 
     // GET follower (cell 0) resolved camera — focus.x must track master.
     auto cam0 = parseJSON(httpGet("/api/camera?viewport=0"));
@@ -378,8 +387,8 @@ bool testFlowA() {
     // Cell 0 is the active cell after Quad (activeId defaults to 0).
     postCommand("viewport.indScale", "yes");
 
-    // POST-zoom the master distance.
-    string respb = httpPost("/api/camera?viewport=3", `{"distance":10}`);
+    // POST-zoom the group's distance.
+    string respb = httpPost("/api/camera?viewport=1", `{"distance":10}`);
     enforce(parseJSON(respb)["status"].str == "ok", "POST camera distance failed");
 
     // GET cell 0 resolved — distance must be OWN (not 10); focus.x still follows.

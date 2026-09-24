@@ -3619,7 +3619,14 @@ void main(string[] args) {
     // pickWorkplane(vp), so the global "workplane mode" attr is honoured
     // (auto / worldX / worldY / worldZ).
     g_pipeCtx = new ToolPipeContext();
-    g_pipeCtx.pipeline.add(new WorkplaneStage());
+    {
+        // Task 7139 (gap 187): the ONE writer of the work plane tells the
+        // cells, synchronously, so ortho views turn and the focus transition
+        // runs in the same tick as the edit.
+        auto workplaneStage = new WorkplaneStage();
+        workplaneStage.onEffectiveFrameChanged = &vpm.applyPlaneFrame;
+        g_pipeCtx.pipeline.add(workplaneStage);
+    }
     {
         import toolpipe.stages.actcenter : ActionCenterStage;
         import toolpipe.stages.axis      : AxisStage;

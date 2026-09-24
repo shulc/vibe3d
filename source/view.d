@@ -196,6 +196,20 @@ class View {
     ProjKind   projKind   = ProjKind.Perspective;
     ViewPreset viewPreset = ViewPreset.Perspective;
 
+    // Task 7139 (gap 187): the pinned work plane's world basis columns
+    // (local X, Y = normal, Z), read only by `effectiveOrientation`. Derived
+    // from the work plane, never serialised (not in toJson, prefs or .v3d);
+    // written by `ViewportManager.applyPlaneFrame`.
+    private Vec3[3] planeAxes_ = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+    private bool    planeTurned_;
+
+    /// Express the ortho presets in a pinned plane's frame (`on`), or in the
+    /// world frame again. `x`, `y`, `z` are the plane's world axes.
+    void setPlaneTurn(bool on, Vec3 x, Vec3 y, Vec3 z) {
+        planeTurned_ = on;
+        planeAxes_ = [x, y, z];
+    }
+
     this(int x, int y, int w, int h) { setSize(w, h); setPos(x, y); }
     void setSize(int w, int h) { width = w; height = h; }
     void setPos(int x, int y) { this.x = x; this.y = y; }
@@ -566,12 +580,22 @@ class View {
     /// module still depends on it. It is sound for a preset cell because the
     /// stored rotation is a free-camera one and the chart is only degenerate
     /// when THAT rotation is polar.
+    ///
+    /// With a pinned work plane (`setPlaneTurn`) the preset is expressed in the
+    /// plane's frame — right/up become `B*right`/`B*up` — so an ortho preset
+    /// cell TURNS with the plane while a perspective one does not (§23, gap
+    /// 187, task 7139). The focus stays world; only the basis turns, here, and
+    /// both `viewportWith` and `panDeltaWith` read it.
     private Orientation effectiveOrientation(Orientation o) const {
         if (projKind != ProjKind.Ortho) return o;
         Vec3 right, up;
         // An ortho cell that is not axis-locked (`Perspective` / `Camera`)
         // keeps the free orbit — that is exactly the `false` answer.
         if (!presetBasis(viewPreset, right, up)) return o;
+        if (planeTurned_) {
+            right = planeAxes_[0] * right.x + planeAxes_[1] * right.y + planeAxes_[2] * right.z;
+            up    = planeAxes_[0] * up.x    + planeAxes_[1] * up.y    + planeAxes_[2] * up.z;
+        }
         Orientation preset = Orientation.fromBasis(right, up, cross(right, up));
         immutable float r = o.roll;
         if (r == 0.0f) return preset;

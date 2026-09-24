@@ -104,9 +104,30 @@ void setOrtho(string preset) {
     assert(r["status"].str == "ok", preset ~ " distance set failed");
 }
 
+/// The pinned plane's world basis (local X, Y = normal, Z), read back from
+/// the WORK stage.
+V3[3] planeBasis() {
+    import std.conv : to;
+    foreach (st; getJson("/api/toolpipe")["stages"].array) {
+        if (st["task"].str != "WORK") continue;
+        auto a = st["attrs"];
+        double g(string k) { return a[k].str.to!double; }
+        return [V3(g("axisXx"), g("axisXy"), g("axisXz")),
+                V3(g("normalX"), g("normalY"), g("normalZ")),
+                V3(g("axisZx"), g("axisZy"), g("axisZz"))];
+    }
+    assert(false, "WORK stage not found");
+}
+
+// The oblique camera is built in the pinned plane's LOCAL frame and handed to
+// the endpoint through the plane basis: every view read under a pinned plane is
+// plane-local (§23, task 7139), so the captured perspective delta is a local
+// one. The construction below is unchanged; only its frame is.
 void setObliquePerspective() {
     cmd("viewport.view Perspective");
     auto c = fetchCamera(BASE);
+    immutable V3[3] B = planeBasis();
+    V3 toW(V3 l) { return B[0] * l.x + B[1] * l.y + B[2] * l.z; }
     immutable V3 target = V3(0.0, 2.5, 3.75);
     V3 back = unit(V3(-4.0, 1.0, 1.0));
     V3 p = unit(target - back * dot(target, back));
@@ -115,6 +136,7 @@ void setObliquePerspective() {
     V3 up    = p * (2.0 / sqrt(13.0)) - t * (3.0 / sqrt(13.0));
     double k = cast(double)c.height / (2.0 * tan(PI / 8.0));
     double distance = dot(target, back) + k * dot(target, right) / 96.0;
+    right = toW(right); up = toW(up); back = toW(back);
     auto r = postJson("/api/camera", format(
         `{"focus":{"x":0,"y":0,"z":0},"distance":%.9f,` ~
         `"orientation":[%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f]}`,

@@ -83,8 +83,17 @@ class WorkplaneStage : Stage, Operator {
     Vec3 rotation  = Vec3(0, 0, 0);   // degrees, B = Rz * Rx * Ry
 
     this() {
-        publishState();
+        publishState(false);
     }
+
+    /// Task 7139 (gap 187): called synchronously whenever the EFFECTIVE frame
+    /// changes — every mutator and reset publishes through `publishState`, so
+    /// a `workplane.edit`/align is seen by the next click in the same tick.
+    /// `userEdit` is false for the constructor and the lifecycle `reset()`
+    /// (scene reset, stage replacement); the viewport moves its focus only on
+    /// a user edit. The app binds it to `ViewportManager.applyPlaneFrame`.
+    void delegate(in WorkplanePacket before, in WorkplanePacket after,
+                  bool userEdit) onEffectiveFrameChanged;
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Work; }
     override string   id()       const                          { return "workplane"; }
@@ -139,11 +148,22 @@ class WorkplaneStage : Stage, Operator {
     public override bool attrArmsSlot(string name) const { return true; }
 
     override void reset() {
+        clearState();
+        publishState(false);
+    }
+
+    /// The `workplane.reset` command's reset: the same state as `reset()`,
+    /// published as a USER edit so the view transition runs (C4-oc, task 7139).
+    void resetByUser() {
+        clearState();
+        publishState(true);
+    }
+
+    private void clearState() {
         isAuto   = true;
         center   = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);
         directBasisActive = false;
-        publishState();
     }
 
     /// Set absolute center / rotation. Pass NaN for any component to
@@ -289,10 +309,19 @@ private:
     // Publish current state under the `workplane/` prefix so popup
     // checkmarks (see source/popup_state.d) can reflect it. Called
     // from constructor + every mutator.
-    void publishState() {
+    void publishState(bool userEdit = true) {
         setStatePath("workplane/auto", isAuto ? "true" : "false");
         setStatePath("workplane/mode", modeLabel());
+        WorkplanePacket now = currentState();
+        if (now == published_) return;
+        WorkplanePacket before = published_;
+        published_ = now;
+        if (onEffectiveFrameChanged !is null)
+            onEffectiveFrameChanged(before, now, userEdit);
     }
+
+    // The effective frame last handed to `onEffectiveFrameChanged` (task 7139).
+    WorkplanePacket published_;
 
     bool applySetAttr(string name, string value) {
         switch (name) {

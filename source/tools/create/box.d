@@ -32,8 +32,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
-                              primitivePlacementFrame, ConstructionPlaneMode,
-                              screenToConstructionPlane,
+                              primitivePlacementFrame, screenToPlacementLocal,
+                              planeLocalViewport,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
@@ -618,9 +618,8 @@ public:
 
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
             // the SnapStage's innerRange; lastSnap drives the overlay.
@@ -762,13 +761,12 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         // Idle-state live snap preview. Before any clicks, show the
         // cyan target where the first click would anchor the box.
-        // The generator frame is not captured until the first click. Preview
-        // the world-channel placement independently of that frame.
+        // The generator frame is not captured until the first click; preview
+        // with the frame the click would capture.
         if (state == BoxState.Idle) {
             auto f = primitivePlacementFrame();
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, f);
             lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
@@ -800,8 +798,9 @@ public:
                                            moverDragAxis, mover, cachedVp, skip);
                 if (!skip) applyMoverDelta(delta);
             } else {
+                Viewport lvp = planeLocalViewport(cachedVp, frame);
                 Vec3 delta = primitiveCenterDragDelta(e.x, e.y, moverLastMX,
-                                                       moverLastMY, cenVec(), cachedVp);
+                                                       moverLastMY, cenVec(), lvp);
                 applyMoverParameterDelta(delta);
             }
             lastSnap = snapMover(moverDragAxis, e.x, e.y);
@@ -1392,9 +1391,9 @@ private:
 
     // Snap the moved box center onto the nearest snap target on the mover's
     // free axes (free-axis projection). Arrows 0/1/2 keep their oriented
-    // workplane axes. The centerBox (3) instead uses LAW D's world-component
-    // index and writes snapped world components directly into Position, just
-    // as the centre drag writes its world-indexed delta without toLocalD.
+    // workplane axes. The centerBox (3) instead uses LAW D's component index
+    // on the PLANE-LOCAL view and writes the snapped LOCAL components into
+    // Position, like the centre drag itself (task 7139).
     SnapResult snapMover(int axisIdx, int sx, int sy) {
         bool f1, fn, f2;
         int centerLock = -1;
@@ -1402,7 +1401,8 @@ private:
         else if (axisIdx == 1) fn = true;
         else if (axisIdx == 2) f2 = true;
         else {
-            centerLock = primitiveCenterPlaneAxis(cenVec(), cachedVp);
+            Viewport lvp = planeLocalViewport(cachedVp, frame);
+            centerLock = primitiveCenterPlaneAxis(cenVec(), lvp);
         }
         Vec3 hitLocal = toLocalP(mover.center);
         auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
@@ -1410,9 +1410,9 @@ private:
         if (sr.snapped) {
             Vec3 cen = cenVec();
             if (centerLock >= 0) {
-                if (centerLock != 0) cen.x = sr.worldPos.x;
-                if (centerLock != 1) cen.y = sr.worldPos.y;
-                if (centerLock != 2) cen.z = sr.worldPos.z;
+                if (centerLock != 0) cen.x = hitLocal.x;
+                if (centerLock != 1) cen.y = hitLocal.y;
+                if (centerLock != 2) cen.z = hitLocal.z;
             } else {
                 if (f1) cen = cen - planeAxis1 * dot(cen, planeAxis1)
                                   + planeAxis1 * dot(hitLocal, planeAxis1);
@@ -1575,11 +1575,12 @@ private:
     }
 
     void choosePlane(const ref Viewport vp) {
-        // Placement writes world-coordinate channels; generation alone owns
-        // the pinned workplane frame.
+        // The construction axes are read off the PLANE-LOCAL view (§23, task
+        // 7139): the channels are local, so the principal plane is too.
         placementFrame = primitivePlacementFrame();
         frame = primitiveParameterFrame();
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        Viewport lvp = planeLocalViewport(vp, placementFrame);
+        Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
         final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
                                      Vec3(0, 1, 0), Vec3(0, 0, 1))) {
         case 0: {

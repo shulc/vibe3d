@@ -10,8 +10,8 @@ import params : Param;
 import handler : gizmoSize;
 import shader : LitShader;
 import tools.create.primitive_create_tool : HandledCreateTool;
-import tools.create.create_common : ConstructionPlaneMode,
-                                    screenToConstructionPlane, snapLocalHit;
+import tools.create.create_common :
+                                    screenToPlacementLocal, snapLocalHit;
 import editmode : EditMode;
 import snap_render : publishLastSnap;
 
@@ -230,9 +230,8 @@ public:
 
         if (state == TorusState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
@@ -293,9 +292,8 @@ public:
         if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == TorusState.DrawingMajor) {
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             {
                 lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

@@ -403,11 +403,16 @@ unittest { // Box base-only commit maps placement channels through a rotated wor
     assert(faceCount() == 1,
         "rotated workplane base should create exactly one polygon, got " ~ faceCount().to!string);
 
+    // The base lies on the LOCAL principal plane through the LOCAL focus
+    // (§23, task 7139). The camera focus is the plane centre, so that plane
+    // passes through it: offset 0. (The 0.35 frozen here before 7139 was the
+    // world composition — the world click point mapped through the frame
+    // again — which §23 measured off the cursor.)
     auto m = getJson("/api/model");
     foreach (i; 0 .. 4) {
         Vec3 v = vertexAt(m, i);
         double dist = dotD(v - wpCenter, expectedNormal);
-        assert(approx(dist, wpCenter.x, 1e-3),
+        assert(approx(dist, 0.0, 1e-3),
             "vertex " ~ i.to!string ~
             " has wrong generator-mapped plane offset: signed dist=" ~ dist.to!string);
     }

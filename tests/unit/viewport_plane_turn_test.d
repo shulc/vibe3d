@@ -77,6 +77,9 @@ unittest { // L7 (+L2) — an all-orthographic group keeps its local numbers
     immutable Vec3 f = m.resolvedSnapshot(0).focus;
     immutable Vec3 f3 = m.views[3].camera.focus;
     immutable float[16] v3 = m.resolvedSnapshot(3).view;
+    m.views[0].camera.focus = Vec3(0.9f, -0.4f, 0.2f);   // followers' own (unread) foci
+    m.views[2].camera.focus = Vec3(-0.6f, 0.5f, 0.8f);
+    immutable Vec3 own0 = m.views[0].camera.focus, own2 = m.views[2].camera.focus;
     auto p = obliquePlane();
     m.applyPlaneFrame(WorkplanePacket.init, p, true);
     foreach (k; 0 .. 3)
@@ -84,10 +87,15 @@ unittest { // L7 (+L2) — an all-orthographic group keeps its local numbers
             format("all-orthographic link group did not keep its plane-local focus "
                  ~ "numbers (gap 219): cell %d focus %s, expected O + B*%s = %s",
                    k, s(m.resolvedSnapshot(k).focus), s(f), s(toWorld(p, f))));
-    assert(near(m.views[3].camera.focus, f3, 1e-7f)
-        && sameMat(m.resolvedSnapshot(3).view, v3, 1e-7f),
+    assert(near(m.views[3].camera.focus, f3, 1e-7f),
         format("a plane transition moved the perspective cell's focus: %s -> %s",
                s(f3), s(m.views[3].camera.focus)));
+    assert(sameMat(m.resolvedSnapshot(3).view, v3, 1e-7f),
+        "the perspective cell turned with the plane");
+    assert(near(m.views[0].camera.focus, own0, 1e-7f) && near(m.views[2].camera.focus, own2, 1e-7f),
+        format("the plane transition composed a follower's own focus (a group moves ONCE, "
+             ~ "through its owner): cell 0 %s -> %s, cell 2 %s -> %s", s(own0),
+               s(m.views[0].camera.focus), s(own2), s(m.views[2].camera.focus)));
 }
 
 unittest { // L8 — a group with a perspective member keeps its WORLD focus
@@ -127,8 +135,11 @@ unittest { // L1 — every linked ortho preset cell turns; L5 — a non-preset o
     m.applyPlaneFrame(p, WorkplanePacket.init, false);
     immutable float[16] flat = m.resolvedSnapshot(3).view;
     m.applyPlaneFrame(WorkplanePacket.init, p, false);
-    assert(sameMat(m.resolvedSnapshot(3).view, flat, 1e-7f),
-        "a non-preset ortho cell turned with the plane");
+    // The rotation rows only: this cell owns its focus, so what is asserted is
+    // the basis, independent of any focus transition.
+    immutable float[16] now = m.resolvedSnapshot(3).view;
+    foreach (i; [0, 1, 2, 4, 5, 6, 8, 9, 10])
+        assert(abs(now[i] - flat[i]) <= 1e-7f, "a non-preset ortho cell turned with the plane");
 }
 
 unittest { // L3 — own-focus ortho (Single): pin, pinned->pinned, unpin keep the numbers
@@ -178,4 +189,39 @@ unittest { // L6 — a non-user publication (load, reset) turns the view but kee
     assert(near(m.views[0].camera.focus, f, 1e-7f),
         format("a non-user plane publication moved the focus: %s -> %s",
                s(f), s(m.views[0].camera.focus)));
+}
+
+unittest { // L10 — a cell that goes live after the pin renders turned
+    auto m = new ViewportManager(0, 0, 800, 600);
+    m.applyLayout(LayoutPreset.Single);
+    auto p = obliquePlane();
+    m.applyPlaneFrame(WorkplanePacket.init, p, true);
+    m.applyLayout(LayoutPreset.Quad);
+    Viewport v1 = m.resolvedSnapshot(1);
+    Vec3 r1 = Vec3(v1.view[0], v1.view[4], v1.view[8]);
+    Vec3 u1 = Vec3(v1.view[1], v1.view[5], v1.view[9]);
+    assert(near(r1, p.axis1, 1e-5f) && near(u1, p.normal, 1e-5f),
+        format("a cell that went live after the pin did not turn: Front right %s up %s",
+               s(r1), s(u1)));
+}
+
+unittest { // L11 — the stage publishes every effective-frame change, flagged by its origin
+    enum float nan = float.nan;
+    auto st = new WorkplaneStage();
+    bool[] user;
+    bool[] pinned;
+    st.onEffectiveFrameChanged = (in WorkplanePacket b, in WorkplanePacket a, bool u) {
+        user ~= u;
+        pinned ~= !a.isAuto;
+    };
+    st.edit(nan, nan, nan, 30.0f, 40.0f, 0.0f);   // pin: user
+    st.edit(0.4f, nan, nan, nan, nan, nan);       // pinned -> pinned: user
+    st.reset();                                   // lifecycle reset: not a user edit
+    st.reset();                                   // no change: no publication
+    st.edit(nan, nan, nan, 10.0f, 0.0f, 0.0f);    // pin again: user
+    st.resetByUser();                             // `workplane.reset`: user
+    assert(user == [true, true, false, true, true] && pinned == [true, true, false, true, false],
+        format("work-plane publications differ: user %s pinned %s (expected user "
+             ~ "[true, true, false, true, true], pinned [true, true, false, true, false])",
+               user, pinned));
 }

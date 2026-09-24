@@ -286,7 +286,8 @@ unittest { // 6509: resolved Quad snapshot must differ from the raw active cell
     rig.wireEditorApp();
     rig.wireMeshCommandDeps();
     rig.vpm.activeId = 0;
-    rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
+    // The Quad ortho group's focus lives in cell 1 (gap 219, task 7139).
+    rig.vpm.views[1].camera.focus = Vec3(37, 0, 0);
     const resolved = rig.vpm.originSnapshot();
     const raw = rig.vpm.views[0].camera;
     assert(resolved.focus.x == 37.0f && raw.focus.x != resolved.focus.x,

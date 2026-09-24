@@ -138,7 +138,8 @@ unittest {
     auto rig = wiredRig();
     rig.vpm.activeId = 0;
     rig.vpm.dragOriginId = -1;
-    rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
+    // The Quad ortho group's focus lives in cell 1 (gap 219, task 7139).
+    rig.vpm.views[1].camera.focus = Vec3(37, 0, 0);
     const raw = rig.vpm.views[0].camera;
     const expected = rig.vpm.originSnapshot();
     assert(expected.focus.x == 37.0f && raw.focus.x != expected.focus.x,
@@ -151,10 +152,10 @@ unittest {
         assert(provider !is null && provider().focus.x == expected.focus.x,
             "6509 resolved viewport: " ~ id
           ~ " reads the active cell's own camera, not the follow-resolved snapshot");
-        rig.vpm.views[3].camera.focus = Vec3(91, 0, 0);
+        rig.vpm.views[1].camera.focus = Vec3(91, 0, 0);
         assert(provider().focus.x == 91.0f,
             "6509 resolved viewport: the provider froze the registration-time snapshot");
-        rig.vpm.views[3].camera.focus = Vec3(37, 0, 0);
+        rig.vpm.views[1].camera.focus = Vec3(37, 0, 0);
     }
     foreach (id; kMeshIds) {
         if (id == "mesh.screenSlice" || id == "mesh.select"

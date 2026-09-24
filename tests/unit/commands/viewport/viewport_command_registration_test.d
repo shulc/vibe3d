@@ -82,6 +82,11 @@ private final class Fixture {
 
         vpm = new ViewportManager(0, 0, 800, 600);
         vpm.applyLayout(LayoutPreset.Quad);
+        // The rig's own owner topology: group master = cell 3, cell 1 fully
+        // independent, cell 2 split. Pinned explicitly since the shipped Quad
+        // stores its ortho group in cell 1 (gap 219, task 7139); this test is
+        // about fit routing to owners, not about the layout default.
+        vpm.masterId = 3;
         vpm.views[1].indCenter = true;
         vpm.views[1].indScale = true;
         vpm.views[2].indCenter = true;

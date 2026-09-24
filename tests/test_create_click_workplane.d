@@ -437,22 +437,51 @@ unittest { // the click that used to be dropped in silence, at its own call site
     writeln("test_create_click_workplane PASS");
 }
 
-unittest { // radial-array click retains the pre-5430 pinned-plane branch
+unittest { // radial-array click retains the active-workplane (pinned-plane) branch
+    // An ortho preset turns with a pinned plane (gap 187, task 7139), and a
+    // turned Front looks ALONG the plane, where both candidate planes meet the
+    // ray on the same edge-on fallback — so the cell lives in TOP, which a
+    // turned view aims down the plane normal: the pinned plane is FACE-ON. The
+    // focus is written before the pin at local y = 0.7 and keeps those numbers
+    // (C4-oa F1), so the focus-plane rival sits 0.7 m off the pinned plane.
+    // Every matrix and the plane come from the live endpoints — nothing here
+    // re-derives the Euler law or the turned basis.
+    import drag_helpers : DVec3 = Vec3, viewportFromCameraMatrices, pixelRay;
     postJson("/api/command", commandBody("scene.reset", "{}"));
-    cmd("viewport.view Front");
+    cmd("viewport.view Top");
+    auto cr = postJson("/api/camera", `{"focus":{"x":0,"y":0.7,"z":0}}`);
+    assert(cr["status"].str == "ok", "camera setup failed: " ~ cr.toString);
     cmd("workplane.edit cenX:2 cenY:-1 cenZ:0.5 rotX:30 rotY:40 rotZ:0");
     cmd("select.typeFrom polygon");
     cmd("select.polygon");
     cmd("tool.set mesh.radialArrayTool");
 
-    auto c = readCamera("Front");
-    immutable V3 focusPlaneAim = V3(0.9, -0.8, c.focus.z);
-    int px, py;
-    pixelOf(c, focusPlaneAim, px, py);
+    V3 po, pn;
+    foreach (st; getJson("/api/toolpipe")["stages"].array) {
+        if (st["task"].str != "WORK") continue;
+        auto a = st["attrs"];
+        double g(string k) { return a[k].str.to!double; }
+        po = V3(g("cenX"), g("cenY"), g("cenZ"));
+        pn = V3(g("normalX"), g("normalY"), g("normalZ"));
+    }
+    assert(pn.len > 0.5, "rig: WORK stage not found in /api/toolpipe");
+    auto vp = viewportFromCameraMatrices();
+    auto camj = getJson("/api/camera");
+    V3 focus = V3(num(camj["focus"]["x"]), num(camj["focus"]["y"]), num(camj["focus"]["z"]));
+    immutable int px = vp.x + vp.width / 2 + 60, py = vp.y + vp.height / 2 + 45;
+    DVec3 ro, rd;
+    pixelRay(px, py, vp, ro, rd);
+    V3 o = V3(ro.x, ro.y, ro.z), d = V3(rd.x, rd.y, rd.z);
+    assert(abs(dot(d, pn)) > 0.99, "rig: the turned Top view does not face the pinned plane");
+    V3 expected = o + d * (dot(po - o, pn) / dot(d, pn));
+    V3 rival    = o + d * (dot(focus - o, pn) / dot(d, pn));
+    assert((expected - rival).len > 0.3,
+        format("rig: the pinned plane and the focus plane coincide (%.4f apart)",
+               (expected - rival).len));
 
     string log =
         format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`,
-               c.vpX, c.vpY, c.width, c.height) ~ "\n" ~
+               vp.x, vp.y, vp.width, vp.height) ~ "\n" ~
         format(`{"t":10.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
                px, py) ~ "\n" ~
         format(`{"t":20.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
@@ -465,21 +494,9 @@ unittest { // radial-array click retains the pre-5430 pinned-plane branch
     assert(r["status"].str == "ok", "centre query failed: " ~ r.toString);
     auto val = r["value"].array;
     V3 got = V3(num(val[0]), num(val[1]), num(val[2]));
-    // The active-workplane branch on this exact pixel: the orthographic ray
-    // meets the pinned plane. x/y were frozen from the pre-5430 branch; the
-    // depth is the ray's meeting with the plane whose normal the reference
-    // gives for rot 30/40 (fixture workplane_align_and_primitive_placement,
-    // b-cube, B = Rz*Rx*Ry: n = (0, 0.8660254, 0.5)). Task 7120 corrected our
-    // Euler order; the literal 0.969656 frozen before it was the old order's
-    // plane (n = (0.321, 0.866, 0.383)). The focus-plane rival's depth is 0,
-    // so the ~0.153 m gap still makes this cell discriminate the routing.
-    immutable double ey = -0.799493074;
-    immutable double ez = 0.5 - 0.8660254 * (ey - (-1.0)) / 0.5;
-    immutable V3 expected = V3(0.900000870, ey, ez);
-    assert((got - expected).len < 1e-5,
-        format("radial pinned-plane centre: expected (%.9f,%.9f,%.9f), "
-             ~ "actual (%.9f,%.9f,%.9f)",
-               expected.x, expected.y, expected.z, got.x, got.y, got.z));
+    assert((got - expected).len < 1e-4,
+        format("radial pinned-plane centre: expected %s (on the pinned plane), "
+             ~ "actual %s (focus-plane rival %s)", expected, got, rival));
 
     cmd("tool.set mesh.radialArrayTool off");
     cmd("workplane.reset");

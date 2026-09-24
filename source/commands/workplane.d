@@ -57,9 +57,10 @@ class WorkplaneResetCommand : Command, Operator {
         auto wp = findWorkplane();
         if (wp is null)
             throw new Exception("workplane.reset: WorkplaneStage not registered");
-        wp.reset();
+        wp.resetByUser();
         // Task 0791 — the stage's reset() is shared with the lifecycle paths,
-        // so the count lives here, where the user actually asked for it.
+        // so the count lives here, where the user actually asked for it
+        // (and, task 7139, so does the user-edit flag of the view transition).
         wp.noteSlotArmed();
         return true;
     }

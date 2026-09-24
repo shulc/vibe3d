@@ -84,8 +84,8 @@ import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import tools.create.create_common : WorkplaneFrame, primitiveParameterFrame,
-                              primitivePlacementFrame, ConstructionPlaneMode,
-                              screenToConstructionPlane,
+                              primitivePlacementFrame, screenToPlacementLocal,
+                              planeLocalViewport,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
@@ -545,11 +545,12 @@ public:
     // -----  inherited event handlers) --------------------------------------
 protected:
     void choosePlane(const ref Viewport vp) {
-        // Placement writes world-coordinate channels; generation alone owns
-        // the pinned workplane frame.
+        // The construction axes are read off the PLANE-LOCAL view (§23, task
+        // 7139): the channels are local, so the principal plane is too.
         placementFrame = primitivePlacementFrame();
         frame = primitiveParameterFrame();
-        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        Viewport lvp = planeLocalViewport(vp, placementFrame);
+        Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
         final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
                                      Vec3(0, 1, 0), Vec3(0, 0, 1))) {
             case 0:
@@ -708,8 +709,11 @@ protected:
                                   moverDragAxis, mover, cachedVp, skip);
             if (!skip) delta = toLocalD(delta);
         } else {
+            // `center()` is a channel (local), so the drag reads the
+            // plane-local view: its delta is local too (§14 read by §23).
+            Viewport lvp = planeLocalViewport(cachedVp, frame);
             delta = primitiveCenterDragDelta(mx, my, moverLastMX, moverLastMY,
-                                             center(), cachedVp);
+                                             center(), lvp);
         }
         if (!skip) {
             Vec3 c  = center();
@@ -725,9 +729,8 @@ protected:
     // the next click would anchor the primitive.
     void updateIdleSnap(int mx, int my) {
         auto f = primitivePlacementFrame();
-        Vec3 hit = screenToConstructionPlane(
-            cast(float)mx, cast(float)my, cachedVp,
-            ConstructionPlaneMode.primitivePlacement);
+        Vec3 hit = screenToPlacementLocal(
+            cast(float)mx, cast(float)my, cachedVp, f);
         lastSnap = snapLocalHit(hit, f, mx, my, cachedVp,
                                 *mesh, EditMode.Vertices);
         publishLastSnap(lastSnap);
@@ -1046,9 +1049,8 @@ public:
 
         if (state == RadialState.Idle) {
             choosePlane(cachedVp);
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             // Snap the click anchor to the closest pipeline-enabled target.
             lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
@@ -1134,9 +1136,8 @@ public:
         if (handleMoverDrag(e.x, e.y)) return true;
 
         if (state == RadialState.DrawingBase) {
-            Vec3 hit = screenToConstructionPlane(
-                cast(float)e.x, cast(float)e.y, cachedVp,
-                ConstructionPlaneMode.primitivePlacement);
+            Vec3 hit = screenToPlacementLocal(
+                cast(float)e.x, cast(float)e.y, cachedVp, placementFrame);
             {
                 lastSnap = snapLocalHit(hit, placementFrame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

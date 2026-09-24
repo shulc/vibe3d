@@ -409,42 +409,68 @@ unittest {
         assert( g.visible[P_RING_VIEW], "the screen-plane ring is never culled");
     }
 
-    // 3. ORTHO FRONT, basis turned 45 degrees about Y. The two rings whose
-    //    normals are 45 degrees to the eye are perfectly grabbable and must
-    //    survive; only the Y ring, still exactly edge-on, goes.
-    script("workplane.edit rotY:45");
-    script("tool.pipe.attr axis mode workplane");
+    // 3. ORTHO FRONT, a ROTATED gizmo basis. Two rings at 45 degrees to the
+    //    eye are perfectly grabbable and must survive; only the edge-on one
+    //    goes. The basis comes from the ELEMENT axis of a cube turned 45
+    //    degrees about Y, not from a pinned work plane: since task 7139 an
+    //    ortho preset turns WITH a pinned plane (gap 187), so a workplane
+    //    basis is always axis-aligned to the turned view and could no longer
+    //    separate the two rules. Whether a turned view still counts as an
+    //    "axis view" for this cull is gap row 336 (not captured).
     {
-        // Premise: the basis really did rotate. Read it back rather than
-        // trusting that two commands landed — the whole point of this leg is
-        // that the gizmo is NOT world-aligned, and a silently-ignored command
-        // would leave leg 2's reading and prove nothing.
-        {
-            import std.conv : to;
-            bool found = false;
-            foreach (st; getJson("/api/toolpipe")["stages"].array) {
-                if (st["id"].str != "axis") continue;
-                found = true;
-                auto a = st["attrs"];
-                assert(a["mode"].str == "workplane",
-                       "fixture premise: the axis stage must be in workplane mode");
-                immutable double rx = to!double(a["rightX"].str);
-                immutable double rz = to!double(a["rightZ"].str);
-                assert(abs(rx - 0.707107) < 1e-3 && abs(rz + 0.707107) < 1e-3,
-                       format("fixture premise: the axis basis must be turned 45 deg "
-                              ~ "about Y, right = (%g, _, %g)", rx, rz));
-            }
-            assert(found, "fixture premise: the pipeline must publish an axis stage");
+        import std.math : cos, sin, PI;
+        immutable double c = cos(PI / 4), sn = sin(PI / 4);
+        string verts;
+        foreach (x; [-0.5, 0.5]) foreach (y; [-0.5, 0.5]) foreach (z; [-0.5, 0.5])
+            verts ~= format(`%s[%.9f,%.9f,%.9f]`, verts.length ? "," : "",
+                            c * x + sn * z, y, -sn * x + c * z);
+        postRaw("/api/command", format(
+            `{"id":"scene.loadMesh","params":{"vertices":[%s],"faces":`
+            ~ `[[0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3]]}}`, verts));
+        postRaw("/api/command",
+            `{"id":"mesh.select","params":{"mode":"polygons","indices":[0,1,2,3,4,5]}}`);
+    }
+    script("tool.set rotate on");   // the load dropped the tool
+    command("viewport.view", `"Front"`);
+    script("tool.pipe.attr axis mode element");
+    {
+        // Premise: the basis really is rotated — one axis edge-on to the
+        // Front view (normal to world Z), the other two at 45 degrees.
+        // Read back, not trusted: a silently-ignored command would leave
+        // leg 2's world basis and prove nothing.
+        import std.conv : to;
+        double[3][3] axes;
+        bool found = false;
+        foreach (st; getJson("/api/toolpipe")["stages"].array) {
+            if (st["id"].str != "axis") continue;
+            found = true;
+            auto a = st["attrs"];
+            assert(a["mode"].str == "element",
+                   "fixture premise: the axis stage must be in element mode");
+            foreach (i, k; ["right", "up", "fwd"])
+                axes[i] = [to!double(a[k ~ "X"].str), to!double(a[k ~ "Y"].str),
+                           to!double(a[k ~ "Z"].str)];
         }
+        assert(found, "fixture premise: the pipeline must publish an axis stage");
+        int edgeOn = -1, at45 = 0;
+        foreach (i; 0 .. 3) {
+            immutable double d = abs(axes[i][2]);
+            if (d < 1e-3) edgeOn = cast(int)i;
+            else if (abs(d - 0.707107) < 1e-3) ++at45;
+        }
+        assert(edgeOn >= 0 && at45 == 2,
+               format("fixture premise: the element basis must hold one axis edge-on "
+                      ~ "to Front and two at 45 degrees, got %s", axes));
 
         auto g = registry();
-        assert(g.visible[P_RING_X],
-               "a ring 45 degrees to the eye is grabbable and must be drawn — "
-               ~ "the rule that kept only the FACE-ON ring left none of the three");
-        assert(g.visible[P_RING_Z],
-               "...and so is its partner in the turned basis");
-        assert(!g.visible[P_RING_Y],
-               "the Y ring is still exactly edge-on and is the one that goes");
+        foreach (i; 0 .. 3) {
+            if (i == edgeOn) continue;
+            assert(g.visible[ROT_BASE + i],
+                   "a ring 45 degrees to the eye is grabbable and must be drawn — "
+                   ~ "the rule that kept only the FACE-ON ring left none of the three");
+        }
+        assert(!g.visible[ROT_BASE + edgeOn],
+               "the edge-on ring is the one that goes");
         assert(g.visible[P_RING_VIEW], "the screen-plane ring is never culled");
     }
 }

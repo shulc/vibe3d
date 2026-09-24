@@ -1,7 +1,7 @@
 module tools.create.create_common;
 
-import math : Vec3, Viewport, dot, isOrtho, matrixMirrorsWinding, rayPlaneIntersect,
-              screenPointToRay;
+import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding,
+              rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
 
 import toolpipe.pipeline       : g_pipeCtx;
@@ -231,11 +231,47 @@ WorkplaneFrame primitiveParameterFrame() {
     return f.isAuto ? worldXZFrame() : f;
 }
 
-/// Primitive placement channels are world coordinates even when generation
-/// later maps them through a pinned workplane. Keep the gesture frame at the
-/// world identity so snapping does not apply the generator transform twice.
+/// The frame a primitive's placement GESTURE works in: the same frame the
+/// generator maps the channels through (auto: the world identity; pinned: the
+/// stage's frame), because the channels ARE plane-local. §23, task 7139.
 WorkplaneFrame primitivePlacementFrame() {
-    return worldXZFrame();
+    return primitiveParameterFrame();
+}
+
+/// The view re-expressed in `frame`'s LOCAL space: every read a gesture makes
+/// of the camera (cursor ray, eye, focus, view axes) comes out plane-local.
+/// This is the ONE conversion point for the create family's gestures — the
+/// placement click (§13/§23), the centre drag (§14) and the principal-plane
+/// choice all read this view instead of converting a world answer after the
+/// fact, which is how a WORLD point ended up in a plane-local field (task
+/// 7139, doc/measured_laws.md §23). With the identity frame it is `vp` itself.
+Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
+    Viewport l = vp;
+    l.view  = matMul4(vp.view, frame.toWorld);
+    l.eye   = transformPoint(frame.toLocal, vp.eye);
+    l.focus = transformPoint(frame.toLocal, vp.focus);
+    return l;
+}
+
+/// Where a primitive placement gesture lands, in `frame`'s LOCAL space (= the
+/// channels): the cursor ray of the plane-local view meets the local principal
+/// plane (`axisLocal` = the largest component of the local view direction)
+/// through the local camera focus (§23; task 7139). Total, like
+/// `screenToConstructionPlane`: a parallel principal plane falls back to the
+/// view-perpendicular plane through the same focus.
+Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
+                            in WorkplaneFrame frame, out int axisLocal)
+{
+    Viewport l = planeLocalViewport(vp, frame);
+    Vec3 camBack = Vec3(l.view[2], l.view[6], l.view[10]);
+    axisLocal = mostFacingAxis(camBack, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
+    Vec3 normal = Vec3(axisLocal == 0 ? 1 : 0, axisLocal == 1 ? 1 : 0,
+                       axisLocal == 2 ? 1 : 0);
+    Vec3 o, d, hit;
+    screenPointToRay(sx, sy, l, o, d);
+    if (rayPlaneIntersect(o, d, l.focus, normal, hit)) return hit;
+    if (rayPlaneIntersect(o, d, l.focus, camBack, hit)) return hit;
+    return l.focus;
 }
 
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
@@ -325,7 +361,6 @@ bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
 
 enum ConstructionPlaneMode {
     activeWorkplane,
-    primitivePlacement,
 }
 
 /// Where a placement click lands, in WORLD space.
@@ -342,18 +377,16 @@ enum ConstructionPlaneMode {
 /// normal (0,1,0)), which a horizontal view's ray is exactly parallel to — so
 /// all four horizontal axis presets refused, every time, in silence.
 ///
-/// Primitive placement uses the camera-facing focus plane in both automatic
-/// and pinned modes; the pinned frame belongs to generation (task 5430,
-/// `doc/measured_laws.md` §13). Other tools retain the active construction
-/// plane law that predates and lies outside that create-only measurement.
+/// Primitive placement does NOT come here: it is plane-local and lives in
+/// `screenToPlacementLocal` (task 7139, §23). The tools that still do keep the
+/// active construction plane law, which lies outside that create-only
+/// measurement.
 Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp,
                                ConstructionPlaneMode mode)
 {
     WorkplaneFrame wf = currentWorkplaneFrame();
-    bool primitive = mode == ConstructionPlaneMode.primitivePlacement;
-    Vec3 planeOrigin = primitive || wf.isAuto ? vp.focus : wf.origin;
-    Vec3 planeNormal = primitive || wf.isAuto
-        ? pickMostFacingPlane(vp).normal : wf.normal;
+    Vec3 planeOrigin = wf.isAuto ? vp.focus : wf.origin;
+    Vec3 planeNormal = wf.isAuto ? pickMostFacingPlane(vp).normal : wf.normal;
 
     Vec3 o, d;
     screenPointToRay(sx, sy, vp, o, d);
@@ -373,6 +406,14 @@ Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp,
     // (the point under the cursor at screen centre) is a defined answer, not
     // a silent retention of whatever the caller had before.
     return planeOrigin;
+}
+
+/// `screenToPlacementLocal` for a caller that does not need the axis.
+Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
+                            in WorkplaneFrame frame)
+{
+    int axisLocal;
+    return screenToPlacementLocal(sx, sy, vp, frame, axisLocal);
 }
 
 /// Build a frame from explicit basis + origin. Useful for tools that
@@ -685,10 +726,13 @@ unittest { // screenToConstructionPlane is TOTAL where the old floor plane refus
     assert(!rayPlaneIntersect(rayO, rayD, Vec3(0, 0, 0), Vec3(0, 1, 0), floorHit),
            "premise: the Y=0 floor is degenerate in a horizontal view");
 
-    // No `g_pipeCtx` in a unittest, so `currentWorkplaneFrame` returns the
-    // auto identity and the auto branch runs — the one this defect lived in.
-    Vec3 got = screenToConstructionPlane(
-        500.0f, 120.0f, vp, ConstructionPlaneMode.primitivePlacement);
+    // No `g_pipeCtx` in a unittest, so `primitivePlacementFrame` is the auto
+    // identity — the frame this defect lived in (task 7139 moved the
+    // placement arm into `screenToPlacementLocal`).
+    int axisLocal;
+    Vec3 got = screenToPlacementLocal(
+        500.0f, 120.0f, vp, primitivePlacementFrame(), axisLocal);
+    assert(axisLocal == 2, "a Front view's principal plane is the Z plane");
     assert(abs(got.z - focus.z) < 1e-5f,
            "the plane follows the view AND is anchored at the camera focus: "
            ~ "a Front view lands on Z = focus.z, not Z = 0");

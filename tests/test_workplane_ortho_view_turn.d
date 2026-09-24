@@ -13,9 +13,9 @@
 // by 0.05). Predicted = basis B*preset, eye = focus' + B*back*d, focus' by F1.
 //
 // Order (druntime stops at the first red): P (perspective control), K (probe
-// control before the pin), T (pixel, then the camera JSON matrix), K2 (a pick
-// after the turn), F (pin transition), PF (pinned -> pinned), U (reset), then
-// T and U for the Top preset.
+// control before the pin), T (pixel, then the camera JSON matrix), F (pin
+// transition), PF (pinned -> pinned), U (reset); K2 (a pick after a turn, in
+// its own block); then T and U for the Top preset under a typed plane.
 
 import create_law_helpers : command, number;
 import drag_helpers : Vec3, Viewport, viewportFromCameraMatrices, pixelRay,
@@ -165,11 +165,18 @@ private int dist(Px a, Px b) { return abs(a.r - b.r) + abs(a.g - b.g) + abs(a.b 
 
 /// True when the pixel shows the cube rather than the background colour read
 /// at the cell's corner. Measured on this rig: the lit cube face reads
-/// (105, 105, 105), the background (92, 102, 107) — a distance of 18.
+/// (105, 105, 105) or (169, 169, 169), the background (92, 102, 107) — a
+/// distance of 18 at the least. A face-on work-plane grid draws 1-px lines
+/// over the background (measured (126, 127, 127) at a Top probe), so the
+/// verdict is a majority over a 3x3 stencil 3 px apart: a line crosses at most
+/// five of the nine samples.
 private bool seesCube(int[2] q, Viewport vp) {
     settle();
     Px bg = probe(vp.x + 4, vp.y + 4, vp);
-    return dist(probe(q[0], q[1], vp), bg) > 8;
+    int off = 0;
+    foreach (dy; [-3, 0, 3]) foreach (dx; [-3, 0, 3])
+        if (dist(probe(q[0] + dx, q[1] + dy, vp), bg) > 8) ++off;
+    return off >= 6;
 }
 
 private void rig(string preset, Vec3 f) {
@@ -208,7 +215,7 @@ unittest { // P — perspective control: the camera does not move with the plane
         format("perspective camera moved with the plane: %s -> %s", m(before.view), m(after.view)));
 }
 
-unittest { // Front: K, T, K2, F, PF, U
+unittest { // Front: K, T, F, PF, U
     rig("Front", kFocus);
     auto vp = viewportFromCameraMatrices();
     // K — the probe and the matrices are what they claim before the pin.
@@ -234,36 +241,6 @@ unittest { // Front: K, T, K2, F, PF, U
         format("camera JSON view matrix is not the plane-local front view:\n  got  %s\n  want %s",
                m(turned.view), m(predicted)));
 
-    // K2 — a pick after the turn reads an ID buffer rasterised under it.
-    {
-        auto mdl = getJson("/api/model");
-        Vec3 back = Vec3(turned.view[2], turned.view[6], turned.view[10]);
-        int best = -1;
-        float bestDepth = -float.max;
-        float bx, by;
-        foreach (i, v; mdl["vertices"].array) {
-            Vec3 w = Vec3(cast(float)number(v.array[0]), cast(float)number(v.array[1]),
-                          cast(float)number(v.array[2]));
-            float px, py;
-            if (!projectToWindow(w, turned, px, py)) continue;
-            if (px < turned.x + 10 || py < turned.y + 10 || px > turned.x + turned.width - 10
-                || py > turned.y + turned.height - 10) continue;
-            if (dot(w, back) > bestDepth) { bestDepth = dot(w, back); best = cast(int)i; bx = px; by = py; }
-        }
-        assert(best >= 0, "rig: no cube vertex projects into the turned view");
-        command("select.typeFrom vertex");
-        command(commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
-        int cx = cast(int)(bx + 0.5f), cy = cast(int)(by + 0.5f);
-        playAndWait(buildDragLog(turned.x, turned.y, turned.width, turned.height,
-                                 cx, cy, cx, cy, 1), testBaseUrl);
-        auto sel = parseJSON(cast(string)get(testBaseUrl() ~ "/api/selection"));
-        int[] ids;
-        foreach (v; sel["selectedVertices"].array) ids ~= cast(int)v.integer;
-        assert(ids == [best],
-            format("picker served an ID buffer from before the turn: clicked vertex %d "
-                 ~ "at (%d, %d), selected %s", best, cx, cy, ids));
-    }
-
     // F — the pin transition (C4-oa F1).
     assert(near(focus(), f1, 1e-4f),
         format("ortho focus transition differs from the captured rule (pin): %s, expected %s",
@@ -286,17 +263,68 @@ unittest { // Front: K, T, K2, F, PF, U
                s(focus()), m(back_.view)));
 }
 
-unittest { // Top: T and U (C4-ob T-all)
+unittest { // K2 — a pick after the turn reads an ID buffer rasterised under it
+    // The vertex-mode ID buffer is made valid under the WORLD view first (a
+    // hover in vertex mode), then the plane is pinned by a typed edit, which
+    // changes neither the mesh nor the selection — so the camera is the only
+    // term that can tell the picker its buffer is stale.
+    rig("Front", kFocus);
+    command("select.typeFrom vertex");
+    command(commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
+    auto world = viewportFromCameraMatrices();
+    int hx = world.x + world.width / 2, hy = world.y + world.height / 2;
+    playAndWait(format(`{"t":0.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":1,"yrel":0,"state":0,"mod":0}`
+                       ~ "\n", hx, hy), testBaseUrl);
+    settle();
+    command("workplane.edit cenX:0.4 cenY:0 cenZ:0 rotX:30 rotY:40 rotZ:0");
+    settle();
+    auto turned = viewportFromCameraMatrices();
+    assert(!sameMat(turned.view, world.view, 1e-3f), "rig: the typed pin did not turn the view");
+    auto mdl = getJson("/api/model");
+    Vec3 back = Vec3(turned.view[2], turned.view[6], turned.view[10]);
+    int best = -1;
+    float bestDepth = -float.max, bx, by;
+    foreach (i, v; mdl["vertices"].array) {
+        Vec3 w = Vec3(cast(float)number(v.array[0]), cast(float)number(v.array[1]),
+                      cast(float)number(v.array[2]));
+        float px, py, ox, oy;
+        if (!projectToWindow(w, turned, px, py)) continue;
+        if (px < turned.x + 10 || py < turned.y + 10 || px > turned.x + turned.width - 10
+            || py > turned.y + turned.height - 10) continue;
+        // The same pixel must NOT show this vertex in the world view, or a
+        // stale buffer would answer correctly by accident.
+        if (projectToWindow(w, world, ox, oy) && abs(ox - px) + abs(oy - py) < 20) continue;
+        if (dot(w, back) > bestDepth) { bestDepth = dot(w, back); best = cast(int)i; bx = px; by = py; }
+    }
+    assert(best >= 0, "rig: no cube vertex separates the turned view from the world view");
+    int cx = cast(int)(bx + 0.5f), cy = cast(int)(by + 0.5f);
+    playAndWait(buildDragLog(turned.x, turned.y, turned.width, turned.height,
+                             cx, cy, cx, cy, 1), testBaseUrl);
+    auto sel = parseJSON(cast(string)get(testBaseUrl() ~ "/api/selection"));
+    int[] ids;
+    foreach (v; sel["selectedVertices"].array) ids ~= cast(int)v.integer;
+    assert(ids == [best],
+        format("picker served an ID buffer from before the turn: clicked vertex %d "
+             ~ "at (%d, %d), selected %s", best, cx, cy, ids));
+    command("workplane.reset");
+}
+
+unittest { // Top: T and U (C4-ob T-all) under a TYPED oblique plane (C4-od D-turn)
+    // A face-aligned plane cannot separate the Top views: the cube stays
+    // centred on the plane's in-plane axes and the Top view hides the normal,
+    // so the world and the turned projections are the same square. A typed
+    // oblique, off-centre plane draws the cube obliquely.
     immutable Vec3 ft = Vec3(0.3f, 0.0f, 0.2f);
+    enum typed = "workplane.edit cenX:0.4 cenY:0 cenZ:0 rotX:30 rotY:40 rotZ:0";
     rig("Top", ft);
     auto vp = viewportFromCameraMatrices();
-    alignToFace(2);
+    command(typed);
     Plane p = readPlane();
     auto predicted = turnedView("Top", p, toWorldP(p, ft));
     command("workplane.reset");
     int[2] q = chooseQ(vp, worldView("Top", ft), predicted, "Top");
     assert(seesCube(q, vp), format("rig: Top probe q (%d, %d) does not see the cube", q[0], q[1]));
-    alignToFace(2);
+    command(typed);
     assert(!seesCube(q, vp),
         format("ortho Top view did not turn with the pinned plane (pixel %d, %d)", q[0], q[1]));
     assert(sameMat(viewportFromCameraMatrices().view, predicted, 1e-4f),

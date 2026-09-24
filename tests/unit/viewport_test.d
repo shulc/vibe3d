@@ -804,12 +804,12 @@ unittest {
 
 unittest {
     // Quad layout defaults: cells 0-2 indCenter=false, indScale=false, indRotate=true;
-    // cell 3 fully-independent; group masterId=3.
+    // cell 3 fully-independent; group masterId=1 (the ortho group, gap 219).
     auto m = new ViewportManager(0, 0, 640, 480);
     m.lx = 0; m.ly = 0; m.lw = 640; m.lh = 480;
     m.applyLayout(LayoutPreset.Quad);
 
-    assert(m.masterId == 3, "Quad group masterId must be 3");
+    assert(m.masterId == 1, "Quad group masterId must be 1 (ortho link group, gap 219)");
     foreach (k; 0..3) {
         assert(!m.views[k].indCenter, "Quad ortho cell indCenter must be false");
         assert(!m.views[k].indScale,  "Quad ortho cell indScale must be false");
@@ -831,7 +831,7 @@ unittest {
     m.applyLayout(LayoutPreset.Quad);
     assert(!m.views[0].indCenter, "Quad again: cell 0 indCenter must be false");
     assert(!m.views[1].indScale,  "Quad again: cell 1 indScale must be false");
-    assert(m.masterId == 3,       "Quad again: group masterId must be 3");
+    assert(m.masterId == 1,       "Quad again: group masterId must be 1");
 }
 
 unittest {

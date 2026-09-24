@@ -865,16 +865,21 @@ final class ViewportManager {
             views[3].camera.viewPreset = ViewPreset.Perspective;
             views[3].camera.projKind   = ProjKind.Perspective;
 
-            // Phase-5: linked quad defaults — ortho cells follow the persp master
-            // (cell 3) on Center + Scale but keep their own Rotate (az/el is
-            // irrelevant for axis-locked ortho).
+            // Linked quad defaults (gap 219, task 7139; C4-quad): the three
+            // ortho cells are ONE link group on Center + Scale and keep their
+            // own Rotate; the perspective cell is its own group. Cell 1 (Front)
+            // stores the ortho group's focus/scale — not cell 0, because
+            // `viewport.indCenter/indScale/master` target `activeId`, which is
+            // cell 0 after entering Quad, and detaching cell 0 must honestly
+            // leave the group {1, 2}. Residual (gap 219): detaching cell 1
+            // itself leaves 0 and 2 following its camera.
             foreach (k; 0..3) {
                 views[k].indCenter = false;
                 views[k].indScale  = false;
                 views[k].indRotate = true;
-                // masterId=-1 → use group master (masterId=3 set below)
+                // masterId=-1 → use group master (masterId=1 set below)
             }
-            masterId = 3;  // perspective cell is the group master
+            masterId = 1;  // Front cell stores the ortho group's view
         }
 
         // Task 0594: seed each cell's display style from the layout template.
@@ -1150,10 +1155,43 @@ final class ViewportManager {
     /// Resolved snapshot for the currently active cell.
     Viewport activeSnapshot() { return resolvedSnapshot(activeId); }
 
-    /// Task 7139: a work-plane change reaches the cells here (gap 187 / 219).
-    /// Commit-1 seam only: the witnesses compile against it and stay red.
+    /// A work-plane change reaches the cells here (task 7139; §23, gaps 187
+    /// and 219). Every cell gets the new frame — whether it turns is decided
+    /// by `View.effectiveOrientation` from its own projection and preset at
+    /// render time. On a USER edit the focus of each link group moves once, by
+    /// the captured rule (C4-oa / C4-oc / C4-of: the plane-local focus NUMBERS
+    /// are kept), and only when every member of the group is orthographic: a
+    /// group with a perspective member keeps its world focus (C4-quad). The
+    /// focus stays stored WORLD; a load or reset publication (`userEdit`
+    /// false) restores the view as saved.
     void applyPlaneFrame(in WorkplanePacket before, in WorkplanePacket after,
                          bool userEdit) {
+        foreach (k; 0 .. 4)
+            views[k].camera.setPlaneTurn(!after.isAuto, after.axis1, after.normal,
+                                         after.axis2);
+        // No explicit dirty mark: a turn changes the cell's view matrix, and
+        // `DirtyKey.cam` (CameraStamp) re-renders the cell on that alone.
+        if (!userEdit) return;
+        foreach (o; 0 .. cellCount) {
+            if (focusOwner(o) != o) continue;
+            bool allOrtho = true;
+            foreach (j; 0 .. cellCount)
+                if (focusOwner(j) == o && !views[j].isOrtho()) allOrtho = false;
+            if (!allOrtho) continue;
+            views[o].camera.focus = keepPlaneLocal(views[o].camera.focus, before, after);
+        }
+    }
+
+    /// The world point whose plane-local numbers under `after` equal `f`'s
+    /// under `before`. An auto plane publishes the world identity frame
+    /// (`WorkplanePacket.init`), so no auto branch is needed: the composition
+    /// is exact there.
+    private static Vec3 keepPlaneLocal(Vec3 f, in WorkplanePacket before,
+                                       in WorkplanePacket after) {
+        import math : dot;
+        Vec3 d = f - before.center;
+        Vec3 l = Vec3(dot(d, before.axis1), dot(d, before.normal), dot(d, before.axis2));
+        return after.center + after.axis1 * l.x + after.normal * l.y + after.axis2 * l.z;
     }
 
 
