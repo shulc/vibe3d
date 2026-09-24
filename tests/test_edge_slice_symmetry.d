@@ -587,7 +587,8 @@ unittest {
 // not read its vanished vertex (before: `ArrayIndexError … [27] … length 27`,
 // the app died). Retroactive parameters re-baking earlier points are OUR
 // behaviour, not captured.
-void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, string tag) {
+void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, string tag,
+              bool p3 = false) {
     gridRig(false);
     symmetryX(sym);
     scope (exit) symmetryX(false);
@@ -596,6 +597,10 @@ void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, stri
     clickXZ(0.5, 1, [0, 0, 1], [1, 0, 1], tag ~ " P1");
     clickXZ(p2x, 0, a2, b2, tag ~ " P2");
     slLine("tool.attr mesh.edgeSliceTool snap 50");
+    // P3 after the park puts the parked point in the MIDDLE: each handle's
+    // part id must stay its POINT's index ([0, 1, 3]), or a re-pick grabs the
+    // wrong point.
+    if (p3) clickXZ(1.5, 2, [1, 0, 2], [2, 0, 2], tag ~ " P3");
     // Several frames under the re-baked preview (draw, handles, HUD).
     foreach (k; 0 .. 3) slHover(pixelOf(0, 0, -1.5)[0], pixelOf(0, 0, -1.5)[1]);
     auto st = getJson("/api/tool/state");
@@ -611,7 +616,13 @@ void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, stri
     slLine("tool.set mesh.edgeSliceTool off");
     writeln("parked ", tag, ": parked ", parked, " handles ", handles.toString, " committed ",
             mesh, " new ", p3s(born));
-    if (sym)
+    if (p3)
+        assert(parked == "[false,false,true,false]" && parts == [0L, 1L, 3L] && mesh.verts == 29
+               && mesh.faces == 18 && mirrorClosed(born),
+               format("parked %s: expected the MIDDLE point parked, handle parts [0, 1, 3] and "
+                      ~ "29 v / 18 f mirrored; parked %s, handle parts %s, mesh %s, new %s", tag,
+                      parked, parts, mesh.toString, p3s(born)));
+    else if (sym)
         assert(parked == "[false,false,true]" && parts == [0L, 1L] && mesh.verts == 27
                && mesh.faces == 18 && mirrorClosed(born),
                format("parked %s: expected P2 parked (no handle) and the 27 v / 18 f mirrored cut; "
@@ -626,6 +637,7 @@ void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, stri
 }
 
 unittest { parkCell(true, 1.1, -1.5, [-2, 0, 0], [-1.1, 0, 0], "sym"); }
+unittest { parkCell(true, 1.1, -1.5, [-2, 0, 0], [-1.1, 0, 0], "sym-mid", true); }
 
 // The same sequence with symmetry OFF, P0 at x = 1.2 and P2 on the sub-edge
 // (1..1.2, z0) P0's split made: after the re-bake vertex 25 is P1's cut, so

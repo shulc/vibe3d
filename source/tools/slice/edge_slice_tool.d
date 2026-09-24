@@ -523,7 +523,7 @@ public:
             ref PreparedEdgeSliceActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; armed_ = false; scrubbing_ = false; built_ = false;
-        phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];
+        phase_ = Phase.Idle; latchedPoints_ = []; parked_ = null; edgesParam_ = [];
         dragPart_ = -1; activePoint_ = -1;
         armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;
         image.clear();
@@ -547,6 +547,7 @@ public:
         built_      = false;
         phase_      = Phase.Idle;
         latchedPoints_ = [];
+        parked_ = null;
         edgesParam_    = [];
         dragPart_   = -1;
         activePoint_ = -1;
@@ -637,7 +638,7 @@ public:
             ref PreparedEdgeSliceDeactivateImage image) nothrow @nogc {
         if (!image.valid) return;
         active = false; armed_ = false; scrubbing_ = false; built_ = false;
-        phase_ = Phase.Idle; latchedPoints_ = null; edgesParam_ = null;
+        phase_ = Phase.Idle; latchedPoints_ = null; parked_ = null; edgesParam_ = null;
         dragPart_ = -1; activePoint_ = -1; armedKey_ = SessionMeshKey.init;
         chainBefore_ = MeshSnapshot.init; handles_ = null; image.clear();
     }
