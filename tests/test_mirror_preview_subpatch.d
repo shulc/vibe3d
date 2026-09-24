@@ -13,8 +13,10 @@
 //
 // Blocks, in the order the law needs them: A (time: nothing before the press),
 // B (press = live edit; refusal; drop; one undo step), C (item space), D (the
-// first Ctrl+Z drops the live copy and keeps the tool). Each block opens with
-// its rig floor, so a red below it cannot be a rig that never happened.
+// first Ctrl+Z drops the live copy and keeps the tool); task 7116 adds E (a
+// press on a handle also starts the edit) and F (a tool switch commits it).
+// Each block opens with its rig floor, so a red below it cannot be a rig that
+// never happened.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
@@ -353,13 +355,69 @@ unittest {
 unittest {
     subpatchCube();
     auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
+    double[3][] copyPts = [[3.0, 0.25, 0], [3.0, -0.25, 0], [3.15, 0.2, 0]];
+    auto empty = probe(c, copyPts);
     armAtOrigin();
     pressAt(c, [1.5, 0, 0]);
+    assert(probe(c, copyPts) != empty, "7115 D rig: the press drew no copy");
     ctrlZ(c);
     assert(faceCount() == 6,
         format("7115 ctrl+z left the live mirror copy: %d polygons", faceCount()));
     assert(activeTool() == TOOL,
         "7115 ctrl+z dropped the mirror tool: active tool '" ~ activeTool() ~ "'");
+    // Task 7116: the restored base is also what is DRAWN.
+    auto after = probe(c, copyPts);
+    assert(after == empty,
+        format("7116 ctrl+z left the mirror copy drawn: %s, was %s", after, empty));
     cmd("tool.set " ~ TOOL ~ " off");
+    cmd("viewport.view Perspective");
+}
+
+// ---- E (task 7116): a press ON a handle is also the first press ------------
+unittest {
+    subpatchCube();
+    auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
+    cmd("tool.set " ~ TOOL);
+    attrCenter(1.5, 0, 0);
+    cmd("tool.attr " ~ TOOL ~ " axis X");
+    settle();
+    assert(faceCount() == 6, "7116 E rig: the tool evaluated before the press");
+    // The centre box sits at the plane centre; a press and release there
+    // with no motion must still start the live edit.
+    pressAt(c, [1.5, 0, 0]);
+    auto centre = readCenter();
+    assert(abs(centre[0] - 1.5) < 1e-6,
+        format("7116 E rig: the handle press moved the centre to %s — it missed "
+             ~ "the handle", centre));
+    assert(faceCount() == 12,
+        format("7116 handle press did not start the live mirror edit: %d polygons",
+               faceCount()));
+    cmd("tool.set " ~ TOOL ~ " off");
+    cmd("viewport.view Perspective");
+}
+
+// ---- F (task 7116): switching to another tool commits the live copy --------
+// The tool-to-tool switch goes through the prepared deactivation door, not
+// `deactivate()`, so it is its own cell.
+unittest {
+    subpatchCube();
+    auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
+    armAtOrigin();
+    pressAt(c, [1.5, 0, 0]);
+    assert(faceCount() == 12, "7116 F rig: the press did not start the live edit");
+    cmd("tool.set move");
+    settle();
+    assert(activeTool() == "move", "7116 F rig: the switch did not arm move");
+    assert(faceCount() == 12 && vertexCount() == 16,
+        format("7116 tool switch changed the live mirror result: %d polygons, "
+             ~ "%d vertices", faceCount(), vertexCount()));
+    cmd("tool.set move off");
+    // Edit records only: tool lifecycle rows (flag bit 10) share the stack.
+    string[] edits;
+    foreach (e; getJson("/api/history")["undo"].array)
+        if ((e["flags"].integer & (1L << 10)) == 0) edits ~= e["label"].str;
+    assert(edits == ["Mirror"],
+        format("7116 tool switch did not commit the mirror as one edit record: %s",
+               edits));
     cmd("viewport.view Perspective");
 }
