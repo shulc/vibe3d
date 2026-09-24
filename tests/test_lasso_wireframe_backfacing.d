@@ -18,8 +18,10 @@
 // (distance 90 on the rig's centre line) that every far quad stays behind its
 // near quad — asserted below from the projected corners, not assumed.
 //
-// Order: floor (8 quads) -> solid control (the fixture's 4) -> the red line
-// (wireframe: the fixture's 8).
+// Order: floor (8 quads) -> solid control (the fixture's 4) -> wireframe (the
+// fixture's 8) -> solid again (4: the style is re-read per gesture) -> the same
+// pair under a live subpatch preview, which is the lasso's second polygon
+// branch with its own cull.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -202,4 +204,39 @@ unittest {
     assert(gotWire == wantWire,
            format("wireframe lasso culled back-facing polygons: selected %s, "
                   ~ "reference %s", gotWire, wantWire));
+
+    // ---- the style is re-read per gesture: back to solid, back to 4 --------
+    // Pins the other direction: a cull resolved once and kept (or a term
+    // latched off by the wireframe gesture) would answer 8 here.
+    setStyle("solid");
+    auto gotSolidAgain = lassoFaces();
+    assert(gotSolidAgain == wantSolid,
+           format("solid-style lasso after a wireframe lasso selected %s, "
+                  ~ "reference %s (the style was not re-read)",
+                  gotSolidAgain, wantSolid));
+
+    // ---- the PREVIEW branch: the same rig under subpatch --------------------
+    // The lasso block has two polygon branches (cage and subpatch preview);
+    // each carries its own facing cull, so each needs its own red line.
+    cmdOk(commandBody("mesh.select",
+                      `{"mode":"polygons","indices":[0,1,2,3,4,5,6,7]}`));
+    cmdOk(`{"id":"mesh.subpatch_toggle"}`);
+    JSONValue pv;
+    foreach (_; 0 .. 1500) {
+        pv = getJson("/api/subpatch/preview");
+        if (pv["pending"].type != JSONType.true_) break;
+        Thread.sleep(20.msecs);
+    }
+    assert(pv["pending"].type != JSONType.true_ && pv["active"].type == JSONType.true_,
+           "rig: the subpatch preview is not live and settled: " ~ pv.toString);
+
+    auto gotSubSolid = lassoFaces();
+    assert(gotSubSolid == wantSolid,
+           format("subpatch solid-style polygon lasso selected %s, reference %s",
+                  gotSubSolid, wantSolid));
+    setStyle("wireframe");
+    auto gotSubWire = lassoFaces();
+    assert(gotSubWire == wantWire,
+           format("subpatch wireframe lasso culled back-facing polygons: "
+                  ~ "selected %s, reference %s", gotSubWire, wantWire));
 }

@@ -28,7 +28,7 @@ import display_state : DrawPlan;
 // CONSUMED TODAY — `occlusionTerm` by the ID-buffer picker
 // (`gpu_select.renderMode` runs its face depth pre-pass only when the term is
 // set) for hover, click and paint, and by the lasso's independent geometric
-// occlusion probe. See `facingTerm`'s own comment below for the rest.
+// occlusion probe; `facingTerm` by the lasso's polygon cull (task 7130).
 // ---------------------------------------------------------------------------
 
 /// The five values of the selection-visibility rule.
@@ -57,19 +57,19 @@ enum SelectVisibility : ubyte {
 struct SelectVisibilityTerms {
     /// Cull geometry turned away from the eye.
     ///
-    /// RESOLVED BUT NOT CONSUMED, and that is a hazard with a guard. Its only
-    /// LAWFUL future consumers are the lasso's polygon cull (`frontFacing` in
-    /// `app.d`) and snap (`snap.d`) — the two places that carry a facing rule
-    /// today. It MUST NEVER be wired into the click/hover path: that path is
+    /// CONSUMED by the lasso's polygon cull only (`frontFacing` in
+    /// `InputRouter`'s lasso block, both branches, task 7130). Its one other
+    /// LAWFUL future consumer is snap (`snap.d`), which still carries its own
+    /// unconditional facing rule. It MUST NEVER be wired into the click/hover path: that path is
     /// MEASURED to have no facing term at all (`CLAUDE.md` §Measured laws,
     /// `bvh_pick.d`'s characterisation unittests, and the two-sided pre-pass
     /// `gpu_select.renderMode` now enforces explicitly). A suite cell exists
     /// whose only job is to keep that true — an unoccluded BACK-FACING quad
     /// stays click-pickable in both styles (`tests/test_wireframe_select_through.d`).
     ///
-    /// Do not write a test that infers rendering or picking from this field:
-    /// nothing reads it, so such a test would pass forever — the same trap
-    /// `DrawPlan.wireColor` documents.
+    /// A test of this field must drive the LASSO (it is read nowhere else);
+    /// inferring click, hover or rendering from it would pass forever — the
+    /// same trap `DrawPlan.wireColor` documents.
     bool facingTerm;
     /// Let the drawn surface hide what is behind it. Consumed by the
     /// ID-buffer picker's face depth pre-pass and the region gesture's

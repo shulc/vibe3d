@@ -1278,16 +1278,21 @@ struct InputRouter {
                 // state, so the lasso picks vertices and edges THROUGH the
                 // model, exactly as click and paint now do.
                 //
-                // The polygon half of the lasso is deliberately UNCHANGED:
-                // `SelectMode.Face` never ran the pre-pass (the face pass is
-                // the surface), and the separate `frontFacing` cull below is
-                // its own, still-unwired term. See the follow-up named in
-                // doc/tasks/work/1830-wireframe-select-through.md.
+                // The polygon half's `frontFacing` cull below reads the
+                // resolver's `facingTerm` (task 7130): a style that draws no
+                // faces shows both sides, so the lasso takes back-facing
+                // polygons too — measured 8 of 8 against 4 of 8 filled
+                // (`tests/fixtures/lasso_polygon_facing_by_style.json`,
+                // `tests/test_lasso_wireframe_backfacing.d`). The style enters
+                // through the resolver only, never by name.
                 //
                 // Hoisted rather than resolved per element: it is one pure
-                // resolve, and per-edge calls would put it inside the probe
-                // loop for no gain.
-                immutable bool occlTerm = app.vpm.pickVisibility().occlusionTerm;
+                // resolve per GESTURE — nothing caches it, so a style switch
+                // is seen by the next lasso — and per-edge calls would put it
+                // inside the probe loop for no gain.
+                immutable svTerms  = app.vpm.pickVisibility();
+                immutable bool occlTerm   = svTerms.occlusionTerm;
+                immutable bool facingTerm = svTerms.facingTerm;
 
                 bool preview = app.subpatchPreview.active;
                 // Preserve the existing publication invariant even though
@@ -1345,7 +1350,7 @@ struct InputRouter {
                             if (app.mesh.isFaceHidden(cage)) continue;
                             auto face = pv.faces[fi];
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
-                            if (!frontFacing(pv.vertices, face)) continue;
+                            if (facingTerm && !frontFacing(pv.vertices, face)) continue;
                             bool anyVisible = false;
                             foreach (vi; face) {
                                 if (regionVisible.visible(vi)) {
@@ -1374,7 +1379,7 @@ struct InputRouter {
                             // Hide, branch 2/6. Same reasoning as the preview
                             // branch above.
                             if (app.mesh.isFaceHidden(fi)) continue;
-                            if (!frontFacing(app.mesh.vertices, face)) continue;
+                            if (facingTerm && !frontFacing(app.mesh.vertices, face)) continue;
                             bool anyVisible = false;
                             foreach (vi; face) {
                                 if (regionVisible.visible(vi)) {
