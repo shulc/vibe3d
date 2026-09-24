@@ -241,6 +241,7 @@ tests.unit.edge_bevel_open_fan_cap_test
 tests.unit.edge_bevel_replica_ownership_test
 tests.unit.edge_crease_weight_test
 tests.unit.edge_plane_rekey_census_test
+tests.unit.edge_slice_locate_base_test
 tests.unit.edge_vertex_map_rows_test
 tests.unit.edit_registration_boundary_test
 tests.unit.edit_session_test

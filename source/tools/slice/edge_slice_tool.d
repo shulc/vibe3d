@@ -132,6 +132,85 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
     return a + (b - a) * t;
 }
 
+// Edge Slice's base-mesh ownership (C1-sym-own / C1-own-off, gap rows 290/314);
+// module-level so tests/unit/edge_slice_locate_base_test.d drives them.
+// The BASE-mesh polygons point `q` lies in: the faces of the base edge it
+// is on (all faces of a base vertex at an edge end), else the one base
+// polygon it is inside (`facePoint`). Tolerances are relative to the edge
+// or polygon size; a polygon is tested in its Newell plane, so a point on
+// a chord of a WARPED polygon is still inside it.
+uint[] locateBase(const Vec3[] vs, const uint[2][] es, const uint[][] fs,
+                  Vec3 q, out bool facePoint) {
+    import std.math : abs, sqrt;
+    facePoint = false;
+    uint[] faces;
+    foreach (e; es) {
+        const a = vs[e[0]], b = vs[e[1]];
+        const ab = b - a;
+        const len2 = dot(ab, ab);
+        if (len2 <= 1e-20f) continue;
+        const len = sqrt(len2);
+        const s = dot(q - a, ab) / len2;
+        if (s < -1e-4f || s > 1.0f + 1e-4f) continue;
+        if ((a + ab * s - q).length() > 1e-4f * len) continue;
+        const atA = s <= 1e-4f, atB = s >= 1.0f - 1e-4f;
+        foreach (fi, f; fs) {
+            bool hasA, hasB;
+            foreach (v; f) { if (v == e[0]) hasA = true; if (v == e[1]) hasB = true; }
+            if ((atA && hasA) || (atB && hasB) || (hasA && hasB)) faces ~= cast(uint)fi;
+        }
+        return faces;
+    }
+    facePoint = true;
+    float best = float.infinity;
+    foreach (fi, f; fs) {
+        float d;
+        if (pointInPolygon(q, vs, f, d) && d < best) { best = d; faces = [cast(uint)fi]; }
+    }
+    return faces;
+}
+
+// `q` inside polygon `f`, tested in the polygon's Newell plane: within the
+// polygon's own warp of that plane (plus a size-relative slack), and inside
+// its outline projected there (crossing number). `dist`: the plane distance.
+bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
+    import std.math : abs, sqrt;
+    dist = float.infinity;
+    if (f.length < 3) return false;
+    Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
+    float size = 0;
+    foreach (i, vi; f) {
+        const p0 = vs[vi], p1 = vs[f[(i + 1) % f.length]];
+        n.x += (p0.y - p1.y) * (p0.z + p1.z);
+        n.y += (p0.z - p1.z) * (p0.x + p1.x);
+        n.z += (p0.x - p1.x) * (p0.y + p1.y);
+        c = c + p0;
+        const l = (p1 - p0).length();
+        if (l > size) size = l;
+    }
+    const nl = n.length();
+    if (nl <= 1e-20f || size <= 0) return false;
+    n = n * (1.0f / nl);
+    c = c * (1.0f / f.length);
+    float warp = 0;
+    foreach (vi; f) { const w = abs(dot(vs[vi] - c, n)); if (w > warp) warp = w; }
+    dist = abs(dot(q - c, n));
+    if (dist > warp + 1e-4f * size) return false;
+    // A 2D frame in the plane.
+    Vec3 u = abs(n.x) < 0.9f ? cross(n, Vec3(1, 0, 0)) : cross(n, Vec3(0, 1, 0));
+    u = u * (1.0f / u.length());
+    const w = cross(n, u);
+    const qx = dot(q - c, u), qy = dot(q - c, w);
+    bool inside;
+    foreach (i, vi; f) {
+        const a = vs[vi] - c, b = vs[f[(i + 1) % f.length]] - c;
+        const ax = dot(a, u), ay = dot(a, w), bx = dot(b, u), by = dot(b, w);
+        if ((ay > qy) != (by > qy) && qx < ax + (qy - ay) * (bx - ax) / (by - ay))
+            inside = !inside;
+    }
+    return inside;
+}
+
 // ---------------------------------------------------------------------------
 // EdgeSliceTool — interactive N-cut chain (factory id `mesh.edgeSliceTool`),
 // driving the EXISTING `Mesh.edgeSliceEx(edgeA, edgeB, tA, tB, splitPolygons)`
@@ -1188,83 +1267,6 @@ private:
         if (!chainBefore_.filled || !pointRail(*mesh, p, ra, rb)) return;
         p.latchFaces = locateBase(chainBefore_.vertices, chainBefore_.edges, chainBefore_.faces,
                                   lerpVec3(ra, rb, effectiveT(p.t)), p.facePoint);
-    }
-
-    // The BASE-mesh polygons point `q` lies in: the faces of the base edge it
-    // is on (all faces of a base vertex at an edge end), else the one base
-    // polygon it is inside (`facePoint`). Tolerances are relative to the edge
-    // or polygon size; a polygon is tested in its Newell plane, so a point on
-    // a chord of a WARPED polygon is still inside it.
-    static uint[] locateBase(const Vec3[] vs, const uint[2][] es, const uint[][] fs,
-                             Vec3 q, out bool facePoint) {
-        import std.math : abs, sqrt;
-        facePoint = false;
-        uint[] faces;
-        foreach (e; es) {
-            const a = vs[e[0]], b = vs[e[1]];
-            const ab = b - a;
-            const len2 = dot(ab, ab);
-            if (len2 <= 1e-20f) continue;
-            const len = sqrt(len2);
-            const s = dot(q - a, ab) / len2;
-            if (s < -1e-4f || s > 1.0f + 1e-4f) continue;
-            if ((a + ab * s - q).length() > 1e-4f * len) continue;
-            const atA = s <= 1e-4f, atB = s >= 1.0f - 1e-4f;
-            foreach (fi, f; fs) {
-                bool hasA, hasB;
-                foreach (v; f) { if (v == e[0]) hasA = true; if (v == e[1]) hasB = true; }
-                if ((atA && hasA) || (atB && hasB) || (hasA && hasB)) faces ~= cast(uint)fi;
-            }
-            return faces;
-        }
-        facePoint = true;
-        float best = float.infinity;
-        foreach (fi, f; fs) {
-            float d;
-            if (pointInPolygon(q, vs, f, d) && d < best) { best = d; faces = [cast(uint)fi]; }
-        }
-        return faces;
-    }
-
-    // `q` inside polygon `f`, tested in the polygon's Newell plane: within the
-    // polygon's own warp of that plane (plus a size-relative slack), and inside
-    // its outline projected there (crossing number). `dist`: the plane distance.
-    static bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
-        import std.math : abs, sqrt;
-        dist = float.infinity;
-        if (f.length < 3) return false;
-        Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
-        float size = 0;
-        foreach (i, vi; f) {
-            const p0 = vs[vi], p1 = vs[f[(i + 1) % f.length]];
-            n.x += (p0.y - p1.y) * (p0.z + p1.z);
-            n.y += (p0.z - p1.z) * (p0.x + p1.x);
-            n.z += (p0.x - p1.x) * (p0.y + p1.y);
-            c = c + p0;
-            const l = (p1 - p0).length();
-            if (l > size) size = l;
-        }
-        const nl = n.length();
-        if (nl <= 1e-20f || size <= 0) return false;
-        n = n * (1.0f / nl);
-        c = c * (1.0f / f.length);
-        float warp = 0;
-        foreach (vi; f) { const w = abs(dot(vs[vi] - c, n)); if (w > warp) warp = w; }
-        dist = abs(dot(q - c, n));
-        if (dist > warp + 1e-4f * size) return false;
-        // A 2D frame in the plane.
-        Vec3 u = abs(n.x) < 0.9f ? cross(n, Vec3(1, 0, 0)) : cross(n, Vec3(0, 1, 0));
-        u = u * (1.0f / u.length());
-        const w = cross(n, u);
-        const qx = dot(q - c, u), qy = dot(q - c, w);
-        bool inside;
-        foreach (i, vi; f) {
-            const a = vs[vi] - c, b = vs[f[(i + 1) % f.length]] - c;
-            const ax = dot(a, u), ay = dot(a, w), bx = dot(b, u), by = dot(b, w);
-            if ((ay > qy) != (by > qy) && qx < ax + (qy - ay) * (bx - ax) / (by - ay))
-                inside = !inside;
-        }
-        return inside;
     }
 
     static bool sharesFace(const uint[] a, const uint[] b) {
