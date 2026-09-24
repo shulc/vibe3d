@@ -291,3 +291,20 @@ unittest { // (Csh) a Shift press opens an operation on the committed ridge: the
     assertHandleAt(1 + o1.x, 0.5 + o1.y, 0.02, "a Shift press did not re-base the handle on the committed ridge");
     cmd("tool.set edge.extend off");
 }
+
+unittest { // (Csh-s) the Shift re-base under symmetry X: the base is the committed +X ridge, not the whole selection
+    symSelRig(0.3, 0.55);
+    keyArm();
+    frontHaul(kPX, kPY, kIncrementPx, kIncrementPx, 10);
+    immutable Offset o1 = offset();
+    assert(pressAnchor()[0] > 0.05 && vertexCount() == 13 && abs(o1.x) > 0.05,
+        format("rig: the prologue haul did not latch +X and build both rings: %d v, %s", vertexCount(), o1));
+    click(frontScreen(kPX, kPY), 1, KMOD_LSHIFT);
+    assert(vertexCount() == 17 && zeroOffset(), format("rig: the Shift press did not open a new operation "
+        ~ "(gap 222): %d v, offset %s", vertexCount(), offset()));
+    // HS-plus on the committed ridges: the +X ridge's mid, whatever the
+    // selection's whole bbox says (its mid is at x = 0).
+    assertHandleAt(1 + o1.x, 0.5 + o1.y, 0.02,
+        "a Shift press under symmetry did not re-base the handle on the committed +X ridge (HS-plus)");
+    cmd("tool.set edge.extend off");
+}
