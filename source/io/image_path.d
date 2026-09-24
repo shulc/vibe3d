@@ -61,7 +61,7 @@ module io.image_path;
 // ever owed by it — see the lifetime note in `commands/image/commands.d`.
 // ---------------------------------------------------------------------------
 
-import std.file : read, exists, getSize;
+import std.file : read, exists, getSize, isFile;
 import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
 
@@ -263,17 +263,37 @@ private string resolveInDocumentFolder(string stored, string dir) {
 /// the right pixels either way.
 ///
 /// Never throws (opponent R2 #2): an UNREADABLE entry — missing, larger than
-/// `maxFileBytes`, a directory, or EMPTY (which names no file, so it cannot
-/// be read either) — has no bytes to compare and collides with nothing. The unreadable case is the realistic one — a `.v3d`
-/// opened without its picture, then the picture loaded again from a new pick
-/// — and saving there must succeed, since the name then points both items at
-/// the file the user just supplied.
+/// `maxFileBytes`, not a regular file, or EMPTY (which names no file) — has no
+/// bytes to compare and collides with nothing. The unreadable case is the
+/// realistic one — a `.v3d` opened without its picture, then the picture loaded
+/// again from a new pick — and saving there must succeed, since the name then
+/// points both items at the file the user just supplied.
+///
+/// COST CONTRACT: a whole-file read is up to `maxFileBytes` on the wasm heap,
+/// so a read happens only when a byte comparison can still decide. The same
+/// path twice is skipped before any I/O (N items sharing one picture read
+/// nothing, not N(N-1) files); unequal sizes decide without reading; and `a`
+/// is read at most once per outer step. `imageCollisionReadsForTest` counts
+/// the reads that pin this.
 string firstCollidingImageName(const(string)[] resolvedPaths,
                                size_t maxFileBytes = MAX_IMAGE_FILE_BYTES) nothrow {
     import std.path : baseName;
-    bool bytesOf(string p, out const(ubyte)[] bytes) nothrow {
+    // Readable without reading: a regular file within the bound that opens.
+    bool statOf(string p, out ulong size) nothrow {
         try {
-            if (getSize(p) > maxFileBytes) return false;
+            import std.stdio : File;
+            if (!isFile(p)) return false;
+            size = getSize(p);
+            if (size > maxFileBytes) return false;
+            File(p, "rb").close();
+            return true;
+        } catch (Exception) {
+            return false;
+        }
+    }
+    bool bytesOf(string p, out const(ubyte)[] bytes) nothrow {
+        version (unittest) ++imageCollisionReadsForTest;
+        try {
             bytes = cast(const(ubyte)[]) read(p);
             return true;
         } catch (Exception) {
@@ -282,11 +302,20 @@ string firstCollidingImageName(const(string)[] resolvedPaths,
     }
     foreach (i, a; resolvedPaths) {
         const name = baseName(a);
+        bool statedA, okA, readA;
+        ulong sizeA;
         const(ubyte)[] bytesA;
         foreach (b; resolvedPaths[i + 1 .. $]) {
-            // The same path twice needs no rule: its bytes are equal.
-            if (baseName(b) != name) continue;
-            if (!bytesOf(a, bytesA)) break;     // `a` unreadable: collides with nothing
+            if (b == a || baseName(b) != name) continue;
+            if (!statedA) { okA = statOf(a, sizeA); statedA = true; }
+            if (!okA) break;                    // `a` unreadable: collides with nothing
+            ulong sizeB;
+            if (!statOf(b, sizeB)) continue;
+            if (sizeA != sizeB) return name;    // unequal sizes: different bytes
+            if (!readA) {
+                if (!bytesOf(a, bytesA)) break;
+                readA = true;
+            }
             const(ubyte)[] bytesB;
             if (!bytesOf(b, bytesB)) continue;
             if (bytesA != bytesB) return name;
@@ -388,6 +417,9 @@ bool refreshImageMeta(ImageData img, size_t maxFileBytes = MAX_IMAGE_FILE_BYTES)
 // ---------------------------------------------------------------------------
 
 version (unittest) {
+    /// Whole-file reads made by `firstCollidingImageName` (its cost contract).
+    size_t imageCollisionReadsForTest;
+
     import std.file : write, remove, tempDir, mkdirRecurse, rmdirRecurse;
     import std.path : buildPath;
     import std.conv : to;

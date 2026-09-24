@@ -9,7 +9,7 @@
 module tests.unit.browser_image_paths_test;
 
 import std.algorithm : canFind;
-import std.file : exists, mkdirRecurse, read, rmdirRecurse, tempDir, write;
+import std.file : exists, getSize, mkdirRecurse, read, rmdirRecurse, tempDir, write;
 import std.format : format;
 import std.json : JSONType, parseJSON;
 import std.path : buildNormalizedPath, buildPath;
@@ -23,8 +23,8 @@ import editmode : EditMode;
 import io.browser_pick_resume : setWorkRootForTest;
 import io.doc_state : clearCurrentDoc, currentDocPath, hasCurrentDoc;
 import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
-import io.image_path : firstCollidingImageName, resolveStoredPath, storePathFor,
-                       writeTestBmp;
+import io.image_path : firstCollidingImageName, imageCollisionReadsForTest,
+                       resolveStoredPath, storePathFor, writeTestBmp;
 import mesh : makeCube;
 import view : View;
 
@@ -194,6 +194,56 @@ unittest {
         "R18b: an empty entry names no file and collides with nothing");
     assert(firstCollidingImageName([x1, y2], 10) == "",
         "R18b: a file over the byte bound is not read and collides with nothing");
+
+    // Same size, different bytes: only a byte compare can decide this row.
+    const z5 = buildPath(r, "5", "a.png");
+    auto flipped = cast(ubyte[]) read(x1).dup;
+    flipped[$ - 1] ^= 0xFF;
+    mkdirRecurse(buildPath(r, "5"));
+    write(z5, flipped);
+    assert(getSize(z5) == getSize(x1) && read(z5) != read(x1),
+        "R18b fixture: z5 has x1's size and different bytes");
+    assert(call([x1, z5]) == "a.png", "R18b: same size, different bytes collide, got "
+        ~ call([x1, z5]));
+
+    // A directory with the picture's name is not a readable file (its stat
+    // size differs from x1's, so a size-only readability test would collide).
+    const d6 = buildPath(r, "6", "a.png");
+    mkdirRecurse(d6);
+    assert(call([d6, x1]) == "" && call([x1, d6]) == "",
+        "R18b: a directory is not a file and collides with nothing");
+}
+
+// R18d — the cost contract: reads happen only where a byte compare decides.
+unittest {
+    const r = freshRoot("r18d");
+    scope (exit) dropRoot(r);
+    const x1 = buildPath(r, "1", "a.png");
+    const y2 = buildPath(r, "2", "a.png");
+    writeTestBmp(x1, 2, 2);
+    writeTestBmp(y2, 3, 2);
+    string[] copies;
+    foreach (k; 0 .. 4) {
+        copies ~= buildPath(r, format("c%d", k), "a.png");
+        mkdirRecurse(buildPath(r, format("c%d", k)));
+        write(copies[$ - 1], read(x1));
+    }
+    size_t readsOf(string[] paths, string want) {
+        imageCollisionReadsForTest = 0;
+        const got = firstCollidingImageName(paths);
+        assert(got == want, "R18d: verdict " ~ got ~ ", want " ~ want);
+        return imageCollisionReadsForTest;
+    }
+    // One picture on four items: the same path is skipped before any I/O.
+    const same = readsOf([x1, x1, x1, x1], "");
+    assert(same == 0, format("R18d: one path four times read %d files, want 0", same));
+    // Unequal sizes decide without reading.
+    const sized = readsOf([x1, y2], "a.png");
+    assert(sized == 0, format("R18d: unequal sizes read %d files, want 0", sized));
+    // Four equal copies: `a` once per outer step plus each `b` = 4+3+2 = 9
+    // (12 when `a` is re-read for every pair).
+    const equal = readsOf(copies, "");
+    assert(equal == 9, format("R18d: four equal copies read %d files, want 9", equal));
 }
 
 // R18c — the collision refusal through the real commands.
@@ -231,7 +281,7 @@ unittest {
         format("R18c control: two items named a.png, got %s", savedImageNames(ok)));
 
     // Different bytes. The desktop saves them (its paths keep them apart),
-    // and so does a browser LWO export (the rule is `.v3d`-only).
+    // and so does a browser LWO export (the rule is the native writer's only).
     clearCurrentDoc();
     selectBrowserBackendForTest(false);
     writeTestBmp(p2, 3, 2);
@@ -263,6 +313,18 @@ unittest {
         "R18c: different bytes refuse, reason '" ~ s2.refusalReason() ~ "'");
     assert(!exists(refused) && delivered == handedBefore && !hasCurrentDoc(),
         "R18c: nothing written, handed off or adopted");
+
+    // An unknown extension falls through to the same native writer, so the
+    // same refusal applies there.
+    const unknown = buildPath(r, "out", "d3.v3dx");
+    auto s3 = new FileSave(diff.activeMesh(), v, EditMode.Vertices, &diff);
+    s3.setPath(unknown);
+    bool appliedUnknown = true;
+    try appliedUnknown = s3.apply();
+    catch (Exception e) assert(false, "R18c: threw " ~ e.msg);
+    assert(!appliedUnknown && s3.refusalReason().canFind("both named 'a.png'")
+        && !exists(unknown),
+        "R18c: an unknown extension refuses too, reason '" ~ s3.refusalReason() ~ "'");
 }
 
 // R20 — the write through the production save path.

@@ -143,10 +143,13 @@ class FileSave : Command {
         // rows (obj/gltf/glb/fbx) take the registry's exporter id.
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
+        const toLwo = fi !is null && fi.kind == FormatKind.lwoNative;
+        const toAssimp = fi !is null && fi.kind == FormatKind.assimp && fi.canExport;
         // Task 7430 (plan §3.8 rule 3, owner Q7): under the browser file model
-        // a `.v3d` stores image FILE NAMES only, so two different pictures
-        // sharing a name cannot survive the write — refuse before writing.
-        if (browserFileModel() && ext == ".v3d") {
+        // the native writer (`.v3d` and every extension that falls through to
+        // it) stores image FILE NAMES only, so two different pictures sharing
+        // a name cannot survive the write — refuse before writing.
+        if (browserFileModel() && !toLwo && !toAssimp) {
             const clash = firstCollidingImageName(imagePathsOf(*document));
             if (clash.length) {
                 refusal_ = "two images are both named '" ~ clash ~ "' — the saved "
@@ -168,14 +171,14 @@ class FileSave : Command {
         // rather than have to re-derive it. (It was introduced when v7 had to
         // skip non-mesh items, which is exactly the loss v8 closes.)
         bool wroteComplete = true;
-        if (fi !is null && fi.kind == FormatKind.lwoNative) {
+        if (toLwo) {
             // LWO export is LAYER-AWARE (Stage 2): one LAYR per Document layer
             // (visible AND hidden), each layer's per-item xform baked into its
             // points, ONE global surface table. A single-VISIBLE-layer document
             // with identity xform exports BYTE-IDENTICAL to the old flatten
             // path (N=1 case of the multi-layer builder).
             exportLwoDocument(*document, path);
-        } else if (fi !is null && fi.kind == FormatKind.assimp && fi.canExport) {
+        } else if (toAssimp) {
             // OBJ / glTF export is LAYER-AWARE (Stage 4): one aiMesh per Document
             // layer on its own child node (N>=2), or today's exact root-mesh shape
             // (N==1, byte-identical single-layer export). Per-layer xform rides the
