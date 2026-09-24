@@ -268,9 +268,9 @@ unittest {
                   ~ "%d/%d, mesh %s, new vertices %s", segs, msegs, mesh.toString, p3s(born)));
 }
 
-// The mirror chain's vertex ranges belong to ONE session. Commit a mirrored
-// cut (its -X chord is now ordinary geometry at the indices the ranges named),
-// open a new session and click that chord second: it is a plain point, not a
+// The mirror chain's vertex ranges belong to ONE session. Apply a mirrored
+// cut with Shift+click (its -X chord is now ordinary geometry at the indices
+// the ranges named), then click that chord second in the re-armed session: it is a plain point, not a
 // mirror-chain one. Ranges carried over from the dropped session read it as
 // mirror-made.
 unittest {
@@ -278,11 +278,19 @@ unittest {
     symmetryX(true);
     scope (exit) symmetryX(false);
     twoClicks(1.5, 1.5);
-    slLine("tool.set mesh.edgeSliceTool off");
+    // Shift+click on a far face: apply and re-arm the SAME tool instance (a
+    // tool switch would build a fresh one and could not see stale state).
+    const pf = pixelOf(-1.5, 0, -0.5);
+    slPlay(format(`{"t":20.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":%d}`
+                  ~ "\n" ~ `{"t":40.0,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}`
+                  ~ "\n" ~ `{"t":60.0,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":%d}`,
+                  pf[0], pf[1], SL_KMOD_LSHIFT, pf[0], pf[1], SL_KMOD_LSHIFT,
+                  pf[0], pf[1], SL_KMOD_LSHIFT), "session 1 shift+click apply");
     const committed = verticesFrom(GRID_VERTS);
-    assert(slMesh().verts == 29 && committed.length == 4 && committed[2][0] < 0,
-           "session-1 commit: expected the mirrored 29 v cut: " ~ p3s(committed));
-    slLine("tool.set mesh.edgeSliceTool on");
+    assert(slMesh().verts == 29 && committed.length == 4 && committed[2][0] < 0
+           && slTool() == "edgeSlice" && latchedPositions().length == 0,
+           "session-1 apply: expected the mirrored 29 v cut, the tool re-armed: "
+           ~ slMesh().toString ~ " " ~ p3s(committed) ~ " tool " ~ slTool());
     const p1 = pixelOf(1.5, 0, 2);
     const pr1 = gridPair(1, 2, 2, 2);
     hoverFloor(p1, pr1[0], pr1[1], "session 2 click 1");
