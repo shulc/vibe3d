@@ -830,7 +830,7 @@
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "754f843cd4f5fcbc2d7ae6c82952b8eacdcce9674fcff77b7b323c4cc24920c4",
+      "semantic_sha256": "50e44da24e1564fc10761b92fcb27e5e80e6b97cb4477f84b00ec0f80f37ab33",
       "signature": "void()",
       "symbol": "activate"
     },
@@ -844,14 +844,14 @@
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "1c8700f3a1cf3d55a11d9af76f44668cbcf89dd3ac68bc4b37107317de16ee15",
+      "semantic_sha256": "59c4f186737e17400bdfb69e99320741d4c9aac379740ea1499efb6bbb8d393f",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "546262f78f4e5e63dca7218a94ce12a4582e77d9023b3b37c6cdb6f9f52afdbf",
+      "semantic_sha256": "78efe5fc8f743a4058a2dc2c96f62c75b03da1e1fafe9f767835541006f8f29f",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
@@ -1210,11 +1210,11 @@
     {
       "line": 100,
       "path": "source/prepared_tool_transition.d",
-      "semantic_sha256": "8ce8b6f1672ab6fe3fe51465df2a096851fc74092639833588367acf1b3df27a",
+      "semantic_sha256": "3e54974cf99871bd3455ca9eadc23a90bdc4f5e17111b0304bc65529042e4568",
       "symbol": "prepareArm"
     },
     {
-      "line": 241,
+      "line": 252,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
