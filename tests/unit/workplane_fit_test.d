@@ -114,3 +114,17 @@ unittest { // exact duplicate endpoints are merged before the fit
     assert(skewEdgePairFrame(five, x5, y5, z5) == SkewFit.ok, "five points must fit");
     assert(x4 == x5 && y4 == y5 && z4 == z5, "a duplicated endpoint must not weight the fit");
 }
+
+unittest { // the refusals name their arm (the HTTP cells only see "refused")
+    import math : Vec3;
+    Vec3 x, y, z;
+    // On y = -1 the fitted normal is exactly -Y: the shortest arc onto +Y is
+    // undefined and the reference branch was not decoded.
+    Vec3[] anti = [Vec3(1, -1, 0), Vec3(2, -1, 1), Vec3(-1, -1, 2), Vec3(-1, -1, 3)];
+    assert(skewEdgePairFrame(anti, x, y, z) == SkewFit.antiparallel,
+        "a normal opposite its dominant axis must refuse as antiparallel");
+    // On z = x, a plane through the world origin: singular.
+    Vec3[] sing = [Vec3(1, 0, 1), Vec3(2, 1, 2), Vec3(0, 2, 0), Vec3(2, 2, 2)];
+    assert(skewEdgePairFrame(sing, x, y, z) == SkewFit.singular,
+        "endpoints on a plane through the origin must refuse as singular");
+}
