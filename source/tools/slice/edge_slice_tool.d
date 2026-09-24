@@ -25,7 +25,7 @@ import snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
-import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
+import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels;
 import viewport_scheme : schemeColor, SchemeColor;
 import document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
@@ -281,14 +281,13 @@ private:
     float        pointProxy_  = 0.5f;
 
     // Cut-point handles (lazily built inside a live GL context) — one per
-    // latched point, plus one for the pending (hover-derived) point.
+    // latched point.
     BoxHandler[] handles_;
     ToolHandles  toolHandles_;
     version(unittest) bool suppressRefreshForTest_;
 
     enum float HANDLE_HALF_PX = 5.0f;
     enum Vec3  HANDLE_COLOR = schemeColor(SchemeColor.toolPath);
-    enum Vec3  CHORD_COLOR  = schemeColor(SchemeColor.toolPathLine);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
@@ -407,7 +406,7 @@ public:
     }
 
     // Test-introspection (GET /api/tool/handles) — one part per latched point
-    // plus the pending one (see draw()).
+    // (see draw()).
     override JSONValue toolHandlesJson() const {
         return toolHandles_ is null ? JSONValue(null) : toolHandles_.toJson(vpWorld_);
     }
@@ -462,8 +461,7 @@ public:
 
     override void deactivate() {
         // A chain of >=2 latched points is a deliberate placement — commit it
-        // on tool-drop, same as Loop Slice, REGARDLESS of whether a pending
-        // (unlatched) tip was being previewed. A lone latched point (or none)
+        // on tool-drop, same as Loop Slice. A lone latched point (or none)
         // has nothing worth keeping, so it cancels instead.
         if (active) {
             if (latchedPoints_.length >= 2) commitChain();
@@ -945,10 +943,9 @@ public:
         // Re-pick (task 0321, D3): a press ON an already-latched point's
         // handle grabs IT as the drag target — "grab the point under the
         // cursor" rather than always scrubbing the tail. Checked BEFORE the
-        // hovered-edge latch/append logic below. `part < latchedPoints_.length`
-        // excludes the PENDING (hover-derived, not-yet-latched) handle draw()
-        // registers at part==latchedPoints_.length, so a click on the pending
-        // handle still falls through to the normal latch/append path below.
+        // hovered-edge latch/append logic below. draw() registers exactly one
+        // part per latched point; `part < latchedPoints_.length` stays as a
+        // bound on the index the grab writes.
         if (toolHandles_ !is null && latchedPoints_.length >= 1) {
             int part = toolHandles_.test(cast(int)e.x, cast(int)e.y, vpWorld_);
             if (part >= 0 && part < cast(int)latchedPoints_.length) {
@@ -996,9 +993,8 @@ public:
     // picker (g_hoveredEdge) is re-evaluated against whatever the CURRENT
     // mesh looks like, so a speculative hover-triggered cut would desync the
     // NEXT click's captured vertex pair from chainBefore_'s indices (a
-    // restore-then-index-out-of-bounds hazard). The "live between click 1
-    // and click 2" preview is covered by draw()'s own non-mutating
-    // hover-derived pending point/line — no mesh write needed for that.
+    // restore-then-index-out-of-bounds hazard). Between clicks nothing is
+    // drawn for the next point but the application's target-edge highlight.
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !scrubbing_ || latchedPoints_.length == 0) return false;
         // Generalised (task 0321, D2/D3) from the hard-wired last point to
@@ -1045,37 +1041,20 @@ public:
         positions.length = latchedPoints_.length;
         foreach (i, p; latchedPoints_) positions[i] = chainPointPos(p);
 
-        // The pending (hover-derived, not-yet-latched) point — previews the
-        // NEXT segment live (a strict superset of v1's "preview only after
-        // the 2nd click"; deliberate, topology unaffected).
-        bool  havePending = false;
-        Vec3  pendingPos;
-        float pendingT = 0.0f;
-        int h = g_hoveredEdge;
-        if (h >= 0 && h < cast(int)mesh.edges.length) {
-            uint lastEdge = (*mesh).edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
-            if (cast(int)lastEdge != h) {
-                Vec3 r0 = mesh.vertices[mesh.edges[h][0]];
-                Vec3 r1 = mesh.vertices[mesh.edges[h][1]];
-                int mx, my;
-                queryMouse(mx, my);
-                pendingT    = tFromLocalRailClick(r0, r1, cast(float)mx, cast(float)my);
-                pendingPos  = lerpVec3(r0, r1, pendingT);
-                havePending = true;
-            }
-        }
-
-        size_t total = positions.length + (havePending ? 1 : 0);
-        ensureHandleCount(total);
+        // Nothing is drawn for a point that has not been clicked: before the
+        // press the display is the target-edge highlight alone (drawn by the
+        // application), and the point's cut appears at its PRESS (task 7114,
+        // measured law). Chords between latched points are baked mesh edges.
+        ensureHandleCount(positions.length);
 
         immutable float handleScale = HANDLE_HALF_PX / getGizmoPixels();
-        // The bank's own space, settled (task 0645). `positions` and
-        // `pendingPos` are LOCAL — both lerp raw `mesh.vertices` — while
-        // `BoxHandler.pos`, `gizmoSize`, `Handler.draw` and
-        // `ToolHandles.hitTest` are all WORLD. One lift here serves the draw
-        // AND the hit-test, because they read these very objects; that is the
-        // whole reason the comment on `vpWorld_` above says converting the
-        // hit-test alone would break the one property that worked.
+        // The bank's own space, settled (task 0645). `positions` are LOCAL —
+        // they lerp raw `mesh.vertices` — while `BoxHandler.pos`,
+        // `gizmoSize`, `Handler.draw` and `ToolHandles.hitTest` are all
+        // WORLD. One lift here serves the draw AND the hit-test, because they
+        // read these very objects; that is the whole reason the comment on
+        // `vpWorld_` above says converting the hit-test alone would break the
+        // one property that worked.
         const auto os = OverlaySpace.ofPrimary();
         toolHandles_.begin();
         foreach (i, pos; positions) {
@@ -1084,34 +1063,15 @@ public:
             handles_[i].size = gizmoSize(posW, vp, handleScale);
             toolHandles_.add(handles_[i], cast(int)i);
         }
-        if (havePending) {
-            const Vec3 pendW     = os.pos(pendingPos);
-            handles_[$ - 1].pos  = pendW;
-            handles_[$ - 1].size = gizmoSize(pendW, vp, handleScale);
-            toolHandles_.add(handles_[$ - 1], cast(int)(total - 1));
-        }
         toolHandles_.setHaul(dragPart_);
         int mx, my;
         queryMouse(mx, my);
         toolHandles_.update(mx, my, vp);
 
-        // Chords between consecutive LATCHED points are already baked into
-        // the mesh (real edges — the normal edge-draw pass renders them); the
-        // PENDING chord is the only one that needs an explicit world-space
-        // line, since it isn't baked yet.
-        if (havePending)
-            // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
-            // extrusion-unit fix (see shader.thickLineVertexSrc). Same ink.
-            drawWorldSegment(os.pos(positions[$ - 1]), os.pos(pendingPos), vp,
-                             CHORD_COLOR, 1.0f, shader.program);
-
         foreach (hd; handles_) hd.draw(shader, vp);
 
-        if (show_ == Show.Position) {
-            Vec3  anchor = havePending ? pendingPos : positions[$ - 1];
-            float t      = havePending ? pendingT   : effectiveT(latchedPoints_[$ - 1].t);
-            drawHud(vp, anchor, t);
-        }
+        if (show_ == Show.Position)
+            drawHud(vp, positions[$ - 1], effectiveT(latchedPoints_[$ - 1].t));
     }
 
 private:
@@ -1335,7 +1295,7 @@ private:
     }
 
     // AIMING KIND: **Pixel** (task 0619 §1.1) — `anchor` is a LOCAL point
-    // (`chainPointPos` / the pending point both lerp raw `mesh.vertices`), and
+    // (`chainPointPos` lerps raw `mesh.vertices`), and
     // the label has to land on the pixel that point is DRAWN at. The law for
     // this kind is "keep the geometry local, compose the viewport":
     // `proj*(view*M)*v == proj*view*(M*v)` exactly, and `aimSpace` is the
@@ -1490,9 +1450,9 @@ private:
         return best;
     }
 
-    // The ONE-undo boundary (task 0295, F2, objection 2/3). Commits ONLY the
-    // LATCHED polyline — a pending (hover-derived, un-latched) tip is dropped
-    // (bakeChainFrom re-cuts from chainBefore_ using latchedPoints_ alone).
+    // The ONE-undo boundary (task 0295, F2, objection 2/3). Commits the
+    // LATCHED polyline (bakeChainFrom re-cuts from chainBefore_ using
+    // latchedPoints_ alone).
     void commitChain() {
         if (history is null || gestureFactory is null || !chainBefore_.filled) {
             dropArmedPreview();
@@ -1557,16 +1517,13 @@ private:
     }
 
     // The mutate/revert preview: restore chainBefore_, then re-bake the
-    // WHOLE polyline (latched points + a hover-derived pending point) via
-    // bakeChainFrom. Guarded by armedKey_: if the mesh underneath an armed
-    // preview was swapped/clobbered by something else since our last touch,
-    // drop the preview instead of restoring/cutting against the WRONG mesh.
-    // Re-bakes ONLY the CONFIRMED latched chain — deliberately NOT the
-    // hover-derived pending tip (see onMouseMotion's comment): mutating the
-    // mesh from mere hovering would desync the app's picker (g_hoveredEdge)
-    // from chainBefore_'s vertex indices by the time the NEXT click actually
-    // latches, so the pending segment stays a draw()-only visual (no mesh
-    // write) until it is itself latched by a real click.
+    // latched chain via bakeChainFrom. Guarded by armedKey_: if the mesh
+    // underneath an armed preview was swapped/clobbered by something else
+    // since our last touch, drop the preview instead of restoring/cutting
+    // against the WRONG mesh. Re-bakes only the latched chain. Hovering never
+    // writes the mesh and draws nothing for a not-yet-clicked point: the
+    // pre-click display is the target-edge highlight alone, and a point's cut
+    // appears at its PRESS (task 7114; measured law, see the design doc).
     void rebuildPreview() {
         if (!chainBefore_.filled || latchedPoints_.length == 0) return;
         // IDENTITY guard (topology, not position); see the `armedKey_` field note.

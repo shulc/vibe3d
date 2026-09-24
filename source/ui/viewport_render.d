@@ -43,6 +43,7 @@ import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadiu
 import shader                : Shader, LitShader, CheckerShader, GridShader;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
+import tools.slice.edge_slice_tool : EdgeSliceTool;
 import tools.transform.transform   : TransformTool;
 
 // The copilot ghost overlay at the tail of the scene pass; compiled out of
@@ -762,11 +763,24 @@ public:
             // `armed_` for this tool) is the generic, already-existing
             // Tool hook for exactly this "an uncommitted edit is live"
             // condition — every other tool defaults it to false, so this
-            // is a no-op change for them.
+            // is a no-op change for them. ONE exception (task 7114, measured
+            // law): Edge Slice outside a drag keeps its target-edge highlight
+            // through a live chain.
+            //
+            // Why that index is not a stale alias: outside a drag Edge Slice's
+            // hover is re-picked every frame against the current (cut) mesh;
+            // while the preview's index space is stale the picker holds its
+            // last answer, but the screen then also holds the previous preview
+            // buffer, so the index and the drawn edges come from one space.
+            // During a drag the suppression stays.
             int          hovForDraw = hoveredEdge;
             const(bool)[] loopMask  = (bool[]).init;
             if (activeTool !is null) {
-                if (activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                const keepEdgeSliceTarget = activeTool.hasUncommittedEdit()
+                    && !activeTool.isDragging()
+                    && cast(EdgeSliceTool) activeTool !is null;
+                if ((activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                        && !keepEdgeSliceTarget)
                     hovForDraw = -1;
                 else if (activeTool.wantsEdgeLoopHover()
                          && showEdgeHover && hoveredEdge >= 0)
