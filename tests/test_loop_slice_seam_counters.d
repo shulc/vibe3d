@@ -501,7 +501,10 @@ unittest {
         "the Loop Slice scrub opened a NESTED batch — the per-frame preview "
       ~ "batch must be the outermost open on its frame (task 1903 §2.3 rule 2).");
 
-    // Leave the tool in a clean state for whatever runs next.
+    // Leave the tool in a clean state for whatever runs next: release the
+    // held button first — a key pressed while it is held is dropped (M1a).
+    playAndSettle(format(`{"t":0.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+                         175 + (kFrames - 1) * 25, CY));
     playAndSettle(format(`{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":29,"mod":64,"repeat":0}`));
     cmd("tool.set mesh.loopSliceTool off");
 }

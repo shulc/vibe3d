@@ -173,12 +173,10 @@ bool slLineDrawn() {
     return ("lineDrawn" in s.object) !is null && s["lineDrawn"].type == JSONType.true_;
 }
 
-// Block D — Ctrl+Z DURING a drag on gesture N > 1 cancels ONLY the gesture in
-// flight: the mesh returns to gesture N-1's, the stack keeps gestures 1..N-1,
-// the tool stays and the history does not move. This is the owner's standing
-// rule ("the first Ctrl+Z cancels the LIVE edit, the tool stays"), NOT a
-// captured law — gap row 228. The release that follows is a stray and changes
-// nothing.
+// Block D — Ctrl+Z (and Ctrl+Shift+Z) DURING a drag on gesture N > 1 is
+// DROPPED: no key dispatches while a mouse button is held (slice M1a, captured
+// C-O5-slice). The gesture completes at its release and stays; the next
+// Ctrl+Z pops it, then gesture 2, then gesture 1 with the tool (§22).
 unittest {
     slPrologue(false, "polygons", &slBackAndLeft, false);
     const base = slMesh();
@@ -203,39 +201,41 @@ unittest {
     const mid = slMesh();
     assert(mid.canon != M2.canon,
            "slice floor (block D): the in-flight gesture 3 did not move the cut: " ~ which(mid));
-    // The REDO direction never cancels an open edit: the drag stays in flight.
     ctrlShiftZ("block D Ctrl+Shift+Z mid-drag");
-    const rz = slMesh();
-    assert(slTool() == "slice" && rz.canon == mid.canon && slHistoryLen() == Ha,
-           format("ctrl+shift+z mid-drag touched the gesture in flight: tool '%s', mesh %s "
-                  ~ "(expected the in-flight cut), history %d", slTool(), which(rz),
-                  slHistoryLen()));
     ctrlZ("block D Ctrl+Z mid-drag");
     const d = slMesh();
-    assert(slTool() == "slice" && d.canon == M2.canon && slHistoryLen() == Ha,
-           format("ctrl+z mid-drag did not cancel only the gesture in flight: tool '%s', mesh %s "
-                  ~ "(expected M2), history %d (expected %d)", slTool(), which(d),
+    assert(slTool() == "slice" && d.canon == mid.canon && slHistoryLen() == Ha,
+           format("a key pressed mid-drag reached the Slice session (it must be dropped): "
+                  ~ "tool '%s', mesh %s (expected the in-flight cut), history %d (expected %d)",
+                  slTool(), which(d), slHistoryLen(), Ha));
+    slPlay(slButton(20, false, 1, mx + 80, my), "block D release");
+    const M3 = slMesh();
+    assert(M3.canon == mid.canon && slHistoryLen() == Ha,
+           format("the release after a dropped mid-drag ctrl+z did not keep gesture 3: mesh %s, "
+                  ~ "history %d", which(M3), slHistoryLen()));
+    ctrlZ("block D Ctrl+Z (gesture 3)");
+    const z3 = slMesh();
+    assert(slTool() == "slice" && z3.canon == M2.canon && slHistoryLen() == Ha,
+           format("ctrl+z after the release did not pop gesture 3: tool '%s', mesh %s "
+                  ~ "(expected M2), history %d (expected %d)", slTool(), which(z3),
                   slHistoryLen(), Ha));
-    slPlay(slButton(20, false, 1, mx + 80, my), "block D stray release");
-    const r = slMesh();
-    assert(r.canon == M2.canon && slHistoryLen() == Ha,
-           format("the release after a mid-drag ctrl+z changed something: mesh %s (expected M2), "
-                  ~ "history %d", which(r), slHistoryLen()));
     ctrlZ("block D Ctrl+Z (gesture 2)");
     const z2 = slMesh();
     assert(slTool() == "slice" && z2.canon == M1.canon && slHistoryLen() == Ha,
-           format("the mid-drag cancel lost gesture 2 off the stack: tool '%s', mesh %s "
+           format("block D lost gesture 2 off the stack: tool '%s', mesh %s "
                   ~ "(expected M1), history %d (expected %d)", slTool(), which(z2),
                   slHistoryLen(), Ha));
     ctrlZ("block D Ctrl+Z (gesture 1)");
     const z1 = slMesh();
     assert(slTool() != "slice" && z1.canon == base.canon && slHistoryLen() == Ha - 1,
-           format("the mid-drag cancel lost gesture 1: tool '%s', mesh %s (expected base), "
+           format("block D lost gesture 1: tool '%s', mesh %s (expected base), "
                   ~ "history %d (expected %d)", slTool(), which(z1), slHistoryLen(), Ha - 1));
 }
 
-// Block D1 — the same on gesture 1: Ctrl+Z mid-drag returns to the armed
-// state before it (tool stays, no line captured, no history row moved).
+// Block D1 — the same on gesture 1: Ctrl+Z while held is dropped (the preview
+// stays, the tool stays, no row moves); the release keeps gesture 1 and its
+// line; the next Ctrl+Z pops gesture 1 AND the activation row (§22, first
+// gesture of Slice: the window opens at the first press).
 unittest {
     slPrologue(false, "polygons", &slBackAndLeft, false);
     const base = slMesh();
@@ -249,14 +249,18 @@ unittest {
            "slice floor (block D1): the in-flight gesture 1 did not preview a cut: " ~ mid.toString);
     ctrlZ("block D1 Ctrl+Z mid-drag");
     const d = slMesh();
-    assert(slTool() == "slice" && d.canon == base.canon && slHistoryLen() == Ha && !slLineDrawn(),
-           format("ctrl+z mid-drag on gesture 1 did not return to the armed tool: tool '%s', "
-                  ~ "mesh %s (base %s), history %d (expected %d), lineDrawn %s",
-                  slTool(), d.toString, base.toString, slHistoryLen(), Ha, slLineDrawn()));
-    slPlay(slButton(20, false, 1, bx, by), "block D1 stray release");
-    assert(slMesh().canon == base.canon && !slLineDrawn() && slHistoryLen() == Ha,
-           "the release after a mid-drag ctrl+z on gesture 1 captured a line");
-    slKey(SL_SDLK_w, 0, "W (drop Slice)");
+    assert(slTool() == "slice" && d.canon == mid.canon && slHistoryLen() == Ha && slLineDrawn(),
+           format("ctrl+z mid-drag on gesture 1 reached the Slice session (it must be dropped): "
+                  ~ "tool '%s', mesh %s (preview %s), history %d (expected %d), lineDrawn %s",
+                  slTool(), d.toString, mid.toString, slHistoryLen(), Ha, slLineDrawn()));
+    slPlay(slButton(20, false, 1, bx, by), "block D1 release");
+    assert(slMesh().canon == mid.canon && slLineDrawn() && slHistoryLen() == Ha,
+           "the release after a dropped mid-drag ctrl+z on gesture 1 lost the line");
+    ctrlZ("block D1 Ctrl+Z (gesture 1)");
+    assert(slTool() != "slice" && slMesh().canon == base.canon && slHistoryLen() == Ha - 1,
+           format("ctrl+z after the release did not pop gesture 1 with the activation row: "
+                  ~ "tool '%s', mesh %s (base %s), history %d (expected %d)",
+                  slTool(), slMesh().toString, base.toString, slHistoryLen(), Ha - 1));
 }
 
 // Block N — a raw `history.redo` re-arm (bare, by design) spends the first
@@ -350,8 +354,9 @@ unittest {
     slKey(SL_SDLK_w, 0, "W (drop Slice)");
 }
 
-// Block G2 — Ctrl+Z during an RMB gap drag cancels only that drag: the gap
-// the press found comes back and the earlier gap step stays on the stack.
+// Block G2 — Ctrl+Z during an RMB gap drag is DROPPED (slice M1a: the right
+// button counts, C-H9-rmb): the gap drag completes at its release as its own
+// step; Ctrl+Z then pops it, and the next one pops the earlier gap step.
 unittest {
     slPrologue(false, "polygons", &slBackAndLeft, false);
     slKey(SL_SDLK_c, SL_KMOD_LSHIFT, "Shift+C (Slice)");
@@ -375,15 +380,18 @@ unittest {
            "slice floor (block G2): the in-flight gap drag did not move the cut");
     ctrlZ("block G2 Ctrl+Z mid gap drag");
     const d = slMesh();
-    assert(slTool() == "slice" && d.canon == M2.canon && slHistoryLen() == Ha,
-           format("ctrl+z during a gap drag did not cancel only that drag: tool '%s', mesh is "
-                  ~ "%s, history %d (expected %d)", slTool(),
-                  d.canon == mid.canon ? "the in-flight gap" : d.canon == M1.canon ? "the line's"
-                  : d.toString, slHistoryLen(), Ha));
-    slPlay(slButton(20, false, 3, gx + 120, my), "block G2 stray RMB release");
-    assert(slMesh().canon == M2.canon, "the RMB release after a mid-drag ctrl+z changed the cut");
+    assert(slTool() == "slice" && d.canon == mid.canon && slHistoryLen() == Ha,
+           format("a ctrl+z during a gap drag reached the Slice session (it must be dropped): "
+                  ~ "tool '%s', mesh is %s, history %d (expected %d)", slTool(),
+                  d.canon == mid.canon ? "the in-flight gap" : d.canon == M2.canon ? "gap step 1"
+                  : d.canon == M1.canon ? "the line's" : d.toString, slHistoryLen(), Ha));
+    slPlay(slButton(20, false, 3, gx + 120, my), "block G2 RMB release");
+    assert(slMesh().canon == mid.canon, "the RMB release after a dropped ctrl+z lost gap drag 2");
+    ctrlZ("block G2 Ctrl+Z (gap drag 2)");
+    assert(slTool() == "slice" && slMesh().canon == M2.canon,
+           "ctrl+z after the release did not pop gap drag 2");
     ctrlZ("block G2 Ctrl+Z (gap drag 1)");
     assert(slTool() == "slice" && slMesh().canon == M1.canon,
-           "the mid-gap-drag cancel lost the first gap step off the stack");
+           "block G2 lost the first gap step off the stack");
     slKey(SL_SDLK_w, 0, "W (drop Slice)");
 }

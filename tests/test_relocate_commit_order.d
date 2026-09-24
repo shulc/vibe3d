@@ -1,7 +1,19 @@
 // A production interactive numeric edit followed by an off-gizmo relocate
-// must freeze the pre-relocate action-centre pin before the bank publishes the
-// new one.  The click log contains mouse-down only: no synthetic motion and no
-// mouse-up can close the fresh relocate edit before Ctrl+Z tests its baseline.
+// press. The click log contains mouse-down only: no synthetic motion and no
+// mouse-up can close the fresh relocate before Ctrl+Z is pressed WHILE the
+// button is held.
+//
+// Law (slice M1a of doc/tool_session_model_plan_2026-09-24.md, R4.4; capture
+// C-O5-relocate, verdict O5+beta, gap 304): a key pressed while a mouse button
+// is held is dropped, so that Ctrl+Z does nothing — the pin stays at the new
+// point and the numeric edit stays open. The relocate is not an undo row: the
+// Ctrl+Z after the release pops the numeric edit AND the arm together (the tool
+// ends), and the pin is NOT restored to the pre-relocate point. Only the
+// held-key half and "the numeric edit is popped, no relocate row" are ours
+// (M1a). Two halves are NOT yet, pinned below as OUR model so the slice that
+// aligns them reddens here: our activation is its own row (H1, later slice),
+// so the tool stays; and Move's numeric edit undo restores the pin frozen at
+// the relocate press (Rotate and Scale keep it, as the reference; gap 304).
 
 import core.thread : Thread;
 import core.time : msecs;
@@ -118,11 +130,14 @@ string pressOnlyLog(CameraState cam, int x, int y) {
         cam.vpX, cam.vpY, cam.width, cam.height, x, y);
 }
 
-string cancelAndReleaseLog(int x, int y) {
+string ctrlZLog() {
+    return `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n" ~
+           `{"t":10.000,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n";
+}
+
+string releaseLog(int x, int y) {
     return format(
-        `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n" ~
-        `{"t":10.000,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n" ~
-        `{"t":20.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        `{"t":0.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         x, y);
 }
 
@@ -212,20 +227,60 @@ unittest {
         assert(afterPressState["activeBank"].str == bank.name,
             bank.name ~ ": relocate press reached wrong bank: "
             ~ afterPressState["activeBank"].str);
-        playAndWait(cancelAndReleaseLog(clickX, clickY));
-        settle();
+        immutable string armedTool = afterPressState["tool"].str;
+        immutable long pressDepth = modelDepth();
 
-        // Step 3: only now judge Ctrl+Z.  It cancels the open, motionless
-        // relocate while preserving the already-committed numeric geometry.
-        Vec3 afterUndo = publishedPivot();
-        assert(close(afterUndo, oldPivot),
-            bank.name ~ ": Ctrl+Z must restore pre-relocate pivot; old="
-            ~ oldPivot.to!string ~ " after=" ~ afterUndo.to!string);
-        assert(sameGeometry(vertices(), numericGeometry),
-            bank.name ~ ": Ctrl+Z must preserve committed numeric geometry");
-        assert(modelDepth() == floor + 1,
-            bank.name ~ ": Ctrl+Z must preserve committed numeric history above floor; floor="
+        // Step 3: Ctrl+Z while the button is held is DROPPED. Asserted first,
+        // so the half that must stay green stands above the one that moves.
+        playAndWait(ctrlZLog());
+        settle();
+        auto heldEval = getJson("/api/toolpipe/eval");
+        auto heldState = getJson("/api/tool/state");
+        assert(close(readVec3(heldEval["actionCenter"]["center"]), targetPivot)
+               && heldState["editOpen"].type == JSONType.true_
+               && heldState["tool"].str == armedTool
+               && sameGeometry(vertices(), numericGeometry)
+               && modelDepth() == pressDepth,
+            bank.name ~ ": Ctrl+Z while the button was held was not dropped; pin="
+            ~ readVec3(heldEval["actionCenter"]["center"]).to!string
+            ~ " target=" ~ targetPivot.to!string ~ " editOpen="
+            ~ heldState["editOpen"].toString ~ " tool=" ~ heldState["tool"].toString
+            ~ " depth=" ~ modelDepth().to!string ~ " at the press=" ~ pressDepth.to!string);
+
+        // Step 4: release, then Ctrl+Z pops the numeric edit and the arm
+        // together; the relocated pin is not an undo row, so it stays.
+        playAndWait(releaseLog(clickX, clickY));
+        settle();
+        playAndWait(ctrlZLog());
+        settle();
+        auto afterState = getJson("/api/tool/state");
+        immutable string toolAfter = ("tool" in afterState.object) ? afterState["tool"].str : "";
+        assert(sameGeometry(vertices(), floorGeometry),
+            bank.name ~ ": Ctrl+Z after the release did not pop the numeric edit");
+        // The reference pops the ARM with that Ctrl+Z too (its activation row
+        // joins the first group, H1). Ours keeps the activation as its own row
+        // until the H1 slice lands, so the tool stays and that row is on top.
+        // Pinned as OUR model so the H1 slice's flip is a visible red here.
+        auto undoRows = getJson("/api/history")["undo"].array;
+        assert(toolAfter == armedTool && undoRows.length > 0
+               && undoRows[$ - 1]["command"].str == "tool.activate",
+            bank.name ~ ": our model (activation is its own row until H1) changed; tool="
+            ~ toolAfter ~ " top=" ~ (undoRows.length ? undoRows[$ - 1]["command"].str : "<none>"));
+        assert(modelDepth() == floor,
+            bank.name ~ ": the relocate or the numeric edit left a model row; floor="
             ~ floor.to!string ~ " depth=" ~ modelDepth().to!string);
+        // The reference does NOT restore the pin here (the relocate is no undo
+        // row). Rotate and Scale agree; Move does not yet: its numeric edit's
+        // row carries the pin frozen at the relocate press and restores it
+        // (gap 304, open residual). Pinned per bank as MEASURED so the slice
+        // that aligns Move reddens here.
+        Vec3 afterUndo = publishedPivot();
+        immutable bool restored = close(afterUndo, oldPivot);
+        immutable bool kept = close(afterUndo, targetPivot);
+        assert(bank.name == "move" ? restored : kept,
+            bank.name ~ ": the pin after Ctrl+Z changed from the measured model (move: restored, "
+            ~ "a divergence; rotate/scale: kept, the reference); old=" ~ oldPivot.to!string
+            ~ " target=" ~ targetPivot.to!string ~ " after=" ~ afterUndo.to!string);
     }
 
     foreach (tool; ["move", "rotate", "scale"])

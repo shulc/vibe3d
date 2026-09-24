@@ -16,7 +16,8 @@
 // subpatch OFF, the front and right faces of the open box selected (their
 // shared vertical edge seeds the ring). Scrub pixels are FRACTIONS of that
 // edge's screen length, so every step lands a distinct loop position.
-// Blocks M and M0 pin the Ctrl+Z during a drag (not captured; gap 205);
+// Blocks M and M0 pin the Ctrl+Z during a drag: dropped, since no key
+// dispatches while a mouse button is held (slice M1a, captured C-O5);
 // blocks R2 and S came from the diff sweep (see each).
 
 import slice_leak_helpers;
@@ -310,8 +311,8 @@ unittest {
                   ~ "history %s", slTool(), lsState().toString, slHistoryLabels()));
 }
 
-// Block M — Ctrl+Z during a scrub cancels only the gesture in flight: the
-// loop the press found, the stack kept, the tool armed (gap 205).
+// Block M — Ctrl+Z during a scrub is DROPPED (slice M1a): the scrub completes
+// at its release as one step and the next Ctrl+Z pops it, tool still armed.
 unittest {
     SlMesh base;
     Rail rail;
@@ -327,17 +328,25 @@ unittest {
            "slice floor (block M): the in-flight g1 did not move the loop");
     ctrlZ("block M Ctrl+Z mid-drag");
     const s = lsState();
-    assert(slTool() == "loopSlice" && slMesh().canon == A30.canon && s.armed && s.depth == 1,
-           format("ctrl+z during a loop slice scrub did not abort only the gesture in flight: "
-                  ~ "tool '%s', mesh (A30 %s), %s", slTool(), slMesh().canon == A30.canon,
+    assert(slTool() == "loopSlice" && slMesh().canon == mid.canon && s.armed && s.dragging
+           && s.depth == 1,
+           format("a ctrl+z during a loop slice scrub reached the session (it must be dropped): "
+                  ~ "tool '%s', mesh (in flight %s), %s", slTool(), slMesh().canon == mid.canon,
                   s.toString));
-    release(rail, F_G1, "block M stray release");
-    assert(slMesh().canon == A30.canon && lsState().depth == 1,
-           "the release after a mid-scrub ctrl+z changed the loop slice session");
+    release(rail, F_G1, "block M release");
+    assert(slMesh().canon == mid.canon && lsState().depth == 2,
+           "the release after a dropped mid-scrub ctrl+z did not keep g1 as a step: "
+           ~ lsState().toString);
+    ctrlZ("block M Ctrl+Z (g1)");
+    const z = lsState();
+    assert(slTool() == "loopSlice" && slMesh().canon == A30.canon && z.armed && z.depth == 1,
+           format("ctrl+z after the release did not pop g1: tool '%s', mesh (A30 %s), %s",
+                  slTool(), slMesh().canon == A30.canon, z.toString));
     slLine("tool.set mesh.loopSliceTool off");
 }
 
-// Block M0 — the same during the ARMING drag: back to the arm-time loop.
+// Block M0 — the same during the ARMING drag: dropped; the release makes the
+// arming drag a step; the next Ctrl+Z returns to the arm-time loop.
 unittest {
     SlMesh base;
     Rail rail;
@@ -347,15 +356,24 @@ unittest {
     slClickDown(pa[0], pa[1], "block M0 arming press");
     const A0 = slMesh();
     holdTo(rail, F_ARM, F_A30, "block M0 held arming drag");
-    assert(slMesh().canon != A0.canon,
+    const mid = slMesh();
+    assert(mid.canon != A0.canon,
            "slice floor (block M0): the held arming drag did not move the loop");
     ctrlZ("block M0 Ctrl+Z mid-drag");
     const s = lsState();
-    assert(slTool() == "loopSlice" && slMesh().canon == A0.canon && s.armed && s.depth == 0,
-           format("ctrl+z during the arming drag did not return to the arm-time loop: tool '%s', "
-                  ~ "mesh (A0 %s), %s", slTool(), slMesh().canon == A0.canon, s.toString));
-    release(rail, F_A30, "block M0 stray release");
-    assert(slMesh().canon == A0.canon && lsState().depth == 0,
-           "the release after a mid-arming-drag ctrl+z changed the loop slice session");
+    assert(slTool() == "loopSlice" && slMesh().canon == mid.canon && s.armed && s.dragging
+           && s.depth == 0,
+           format("a ctrl+z during the arming drag reached the session (it must be dropped): "
+                  ~ "tool '%s', mesh (in flight %s), %s", slTool(), slMesh().canon == mid.canon,
+                  s.toString));
+    release(rail, F_A30, "block M0 release");
+    assert(slMesh().canon == mid.canon && lsState().depth == 1,
+           "the release after a dropped mid-arming-drag ctrl+z did not keep the drag as a step: "
+           ~ lsState().toString);
+    ctrlZ("block M0 Ctrl+Z (the arming drag)");
+    const z = lsState();
+    assert(slTool() == "loopSlice" && slMesh().canon == A0.canon && z.armed && z.depth == 0,
+           format("ctrl+z after the release did not return to the arm-time loop: tool '%s', "
+                  ~ "mesh (A0 %s), %s", slTool(), slMesh().canon == A0.canon, z.toString));
     slLine("tool.set mesh.loopSliceTool off");
 }

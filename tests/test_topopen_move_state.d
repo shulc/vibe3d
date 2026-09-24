@@ -7,15 +7,11 @@
 // coverage): a plain-LMB press on an existing vertex arms `moveArmed`/
 // `grabbedVert` WITHOUT mutating the mesh; a stationary release disarms and
 // mutates nothing (the eps no-op guard); a press on empty background arms
-// `placeArmed` instead; and an external history navigation mid-drag clears
-// the armed Move state via `resyncSession`.
-//
-// The mid-drag external-undo check uses the KEYBOARD Ctrl+Z path
-// (SDL_KEYDOWN through handleKeyDown -> navHistory -> EditSession.navigate,
-// which calls resyncSession on the active tool) — NOT the plain `/api/undo`
-// HTTP endpoint, which deliberately bypasses navHistory/resyncSession (see
-// test_topopen_build_state.d's own doc comment / app.d's `navHistory`
-// frozen-contract comment).
+// `placeArmed` instead; and a keyboard Ctrl+Z pressed mid-drag is DROPPED
+// (slice M1a: no key dispatches while a mouse button is held), so the armed
+// Move state and the mesh survive it, and the same Ctrl+Z after the release
+// undoes the Place gesture (the KEYBOARD path: handleKeyDown -> navHistory ->
+// EditSession.navigate, never the raw HTTP undo).
 //
 // Run via: ./run_test.d topopen_move_state
 
@@ -120,9 +116,7 @@ unittest {
     assert(s4["placeArmed"].type == JSONType.false_, "release must disarm Place");
     assert(vertexCountLayer(1) == 2, "the stationary background click must have PLACED a new vertex");
 
-    // --- 3) Mid-drag external history navigation clears the armed Move
-    // state (resyncSession), mirroring test_topopen_build_state.d's P3
-    // coverage of the same mechanism ---------------------------------------
+    // --- 3) A Ctrl+Z mid-drag is dropped; after the release it undoes ------
     postJson("/api/play-events", viewport ~ "\n" ~ downOnly(10.0, cx, cy) ~ "\n");
     waitPlayerIdle();
 
@@ -133,18 +127,21 @@ unittest {
     waitPlayerIdle();
 
     auto s6 = getJson("/api/tool/state");
-    assert(s6["moveArmed"].type == JSONType.false_,
-        "an external Ctrl+Z mid-drag must clear the armed Move state via resyncSession");
-    assert(cast(int)s6["grabbedVert"].integer == -1,
-        "grabbedVert must reset to -1 after the external undo");
+    assert(s6["moveArmed"].type == JSONType.true_ && cast(int)s6["grabbedVert"].integer == 0
+           && vertexCountLayer(1) == 2,
+        "a Ctrl+Z pressed while the Move press is held reached the editor (it must be "
+        ~ "dropped): " ~ s6.toString);
 
-    // The undo itself must have reverted the 2nd (Place) vertex, back to 1.
-    assert(vertexCountLayer(1) == 1,
-        "the undo itself must revert the Place gesture from step 2");
-
-    // Release the now-stale down event so the harness's own button state
-    // doesn't leak into the next test (up without a matching armed gesture
-    // is a safe no-op — onMouseButtonUp gates on the armed flags).
+    // The stationary release disarms and mutates nothing.
     postJson("/api/play-events", viewport ~ "\n" ~ upOnly(20.0, cx, cy) ~ "\n");
     waitPlayerIdle();
+    assert(getJson("/api/tool/state")["moveArmed"].type == JSONType.false_,
+        "the release after the dropped Ctrl+Z did not disarm Move");
+
+    // Positive control: the same Ctrl+Z after the release reverts the Place
+    // gesture from step 2 (back to 1 vertex).
+    postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
+    waitPlayerIdle();
+    assert(vertexCountLayer(1) == 1,
+        "Ctrl+Z after the release did not revert the Place gesture from step 2");
 }

@@ -152,6 +152,7 @@ unittest { // RMB + redraw in the same Pen session works
         ~ clickAt(200, 525, 250) ~ "\n"
         ~ clickAt(300, 475, 350) ~ "\n"
         ~ `{"t":400,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":475,"y":300,"clicks":1,"mod":0}` ~ "\n"
+        ~ `{"t":420,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":475,"y":300,"clicks":1,"mod":0}` ~ "\n"
         // Second polygon: 3 clicks + Enter — commits a triangle.
         ~ clickAt(500, 425, 250) ~ "\n"
         ~ clickAt(600, 525, 250) ~ "\n"

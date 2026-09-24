@@ -6,17 +6,11 @@
 // vertex classifies as "tri" — the KILLER-1 regression guard AT THE STATE
 // LEVEL, one layer below the full build (test_topopen_build_tri.d already
 // covers the end-to-end mesh result); a release without motion disarms and
-// builds nothing; and an external history navigation mid-drag clears the
-// armed source via `resyncSession`.
-//
-// The undo used for the last check is the KEYBOARD Ctrl+Z path
-// (SDL_KEYDOWN through handleKeyDown -> navHistory -> EditSession.navigate,
-// which calls resyncSession on the active tool) — NOT the plain
-// `/api/undo` HTTP endpoint, which app.d documents as a frozen contract
-// that deliberately BYPASSES navHistory/resyncSession (straight
-// `history.undo()`, no tool resync at all; see app.d's `navHistory` doc
-// comment). Only the keyboard chokepoint exercises the resyncSession path
-// this guard is actually about.
+// builds nothing; and a keyboard Ctrl+Z pressed mid-drag is DROPPED (slice
+// M1a: no key dispatches while a mouse button is held), so the armed source
+// and the mesh survive it, and the same Ctrl+Z after the release reverts the
+// edge-build (the KEYBOARD path: handleKeyDown -> navHistory ->
+// EditSession.navigate, never the raw HTTP undo).
 //
 // Run via: ./run_test.d topopen_build_state
 
@@ -124,27 +118,26 @@ unittest {
         ~ "(edgesAroundVertex/vertexValence are blind to a face-less edge); got case="
         ~ s3["case"].str);
 
-    // --- 3) Mid-drag external history navigation clears the armed source ---
-    // Ctrl+Z (the keyboard chokepoint, navHistory -> EditSession.navigate),
-    // NOT /api/undo — see the module doc comment.
+    // --- 3) A Ctrl+Z mid-drag is dropped; after the release it undoes ---
     postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
     waitPlayerIdle();
 
     auto s4 = getJson("/api/tool/state");
-    assert(s4["dragArmed"].type == JSONType.false_,
-        "an external Ctrl+Z mid-drag must clear the armed source via resyncSession");
-    assert(cast(int)s4["sourceVert"].integer == -1, "sourceVert must reset to -1 after the external undo");
-    assert(s4["case"].str == "none", "case must reset to none after the external undo");
+    assert(s4["dragArmed"].type == JSONType.true_ && cast(int)s4["sourceVert"].integer == 0
+           && vertexCountLayer(1) == 2 && edgeCountLayer(1) == 1,
+        "a Ctrl+Z pressed while the build drag's button is held reached the editor "
+        ~ "(it must be dropped): " ~ s4.toString);
 
-    // The undo itself must have reverted the drag1 edge-build (back to 1
-    // vertex) — resyncSession clearing the armed state is orthogonal to, but
-    // must not interfere with, the undo's own effect.
-    assert(vertexCountLayer(1) == 1 && edgeCountLayer(1) == 0,
-        "the undo itself must revert drag1's edge-build");
-
-    // Release the now-stale down event so the harness's own button state
-    // doesn't leak into the next test (up without a matching armed drag is a
-    // safe no-op — onMouseButtonUp gates on dragArmed_).
+    // The release without motion disarms and builds nothing.
     postJson("/api/play-events", viewport ~ "\n" ~ upOnly(20.0, cx, cy, LSHIFT) ~ "\n");
     waitPlayerIdle();
+    assert(getJson("/api/tool/state")["dragArmed"].type == JSONType.false_,
+        "the release after the dropped Ctrl+Z did not disarm");
+
+    // Positive control: the same Ctrl+Z after the release reverts drag1's
+    // edge-build (back to 1 vertex, no edge).
+    postJson("/api/play-events", viewport ~ "\n" ~ ctrlZTap(30.0) ~ "\n");
+    waitPlayerIdle();
+    assert(vertexCountLayer(1) == 1 && edgeCountLayer(1) == 0,
+        "Ctrl+Z after the release did not revert drag1's edge-build");
 }

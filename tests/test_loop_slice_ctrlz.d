@@ -17,8 +17,9 @@
 //   1. Idle-armed (a motionless arming click, no gesture): Ctrl+Z reverts to
 //      the pre-arm baseline, consumes no model-undo entry and turns the tool
 //      OFF; a re-activation plus a fresh click re-arms the same cut.
-//   2. Mid-scrub of the arming press (LMB held, no motion): the same — the
-//      motionless arming press is not a gesture, so Ctrl+Z ends the tool.
+//   2. Mid-scrub of the arming press (LMB held, no motion): Ctrl+Z is
+//      DROPPED while the button is held (slice M1a, the held-button input
+//      rule); after the release it ends the tool the same way as case 1.
 //   3. Post-commit, tool still active: arm -> Enter commit (+1 entry) ->
 //      Ctrl+Z reverts EXACTLY that commit and the tool stays active.
 //   4. Round-trip: arm -> commit -> undo -> re-arm -> re-commit -> the same
@@ -240,8 +241,10 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Mid-scrub of the arming press (LMB held, no motion): not a gesture, so
-//    Ctrl+Z reverts and ends the tool the same way as case 1.
+// 2. Mid-scrub of the arming press (LMB held, no motion): Ctrl+Z pressed while
+//    the button is held is DROPPED (slice M1a: no key dispatches during a held
+//    button). After the release the motionless arm is not a gesture, so the
+//    next Ctrl+Z reverts and ends the tool the same way as case 1.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -260,31 +263,40 @@ unittest {
 
     playKey(SDLK_z, KMOD_LCTRL);
 
+    auto stHeld = toolState();
+    auto mHeld = model();
+    assert(toolIsActive(stHeld) && stHeld["armed"].type == JSONType.true_
+           && stHeld["dragging"].type == JSONType.true_
+           && vertCount(mHeld) == 12 && faceCount(mHeld) == 10
+           && undoModelDepth() == depthBefore,
+        "loop slice ctrl+z pressed while the arming press was held reached the session "
+        ~ "(it must be dropped): " ~ stHeld.toString);
+
+    playAndSettle(viewportLine() ~ "\n" ~ format(
+        `{"t":10.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY));
+    playKey(SDLK_z, KMOD_LCTRL);
+
     auto st1 = toolState();
-    assert(!toolIsActive(st1), "loop slice ctrl+z (mid-scrub arm) did not turn the tool off");
+    assert(!toolIsActive(st1), "loop slice ctrl+z after the arming release did not turn the tool off");
 
     auto m1 = model();
     assert(vertCount(m1) == 8 && faceCount(m1) == 6,
-        "Ctrl+Z mid-scrub (nothing committed) must revert to the pre-arm baseline (8v/6f), got "
-        ~ vertCount(m1).to!string ~ "v/" ~ faceCount(m1).to!string ~ "f");
+        "Ctrl+Z after a motionless arm (nothing committed) must revert to the pre-arm baseline "
+        ~ "(8v/6f), got " ~ vertCount(m1).to!string ~ "v/" ~ faceCount(m1).to!string ~ "f");
 
     long depthAfter = undoModelDepth();
     assert(depthAfter == depthBefore,
-        "cancelling a mid-scrub arm must NOT touch the committed undo ledger, went "
+        "cancelling a motionless arm must NOT touch the committed undo ledger, went "
         ~ depthBefore.to!string ~ " -> " ~ depthAfter.to!string);
-    // The session's arm survives the end (diff sweep: the held motionless
-    // press still carries its arm): the redo re-arms the cut, released.
+    // The session's arm survives the end: the redo re-arms the cut, released.
     playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
     auto st2 = toolState();
     auto m2 = model();
     assert(toolIsActive(st2) && st2["armed"].type == JSONType.true_
            && st2["dragging"].type == JSONType.false_
            && vertCount(m2) == 12 && faceCount(m2) == 10,
-        "loop slice redo after a mid-press ctrl+z did not re-arm the arm-time loop: "
+        "loop slice redo after the arm's ctrl+z did not re-arm the arm-time loop: "
         ~ st2.toString);
-    // Release the held button (a stray now) so the next case starts clean.
-    playAndSettle(viewportLine() ~ "\n" ~ format(
-        `{"t":10.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, CX, CY));
     deactivateLoopSlice();
 }
 

@@ -2308,7 +2308,8 @@ bool prepareWorker(ref Worker w) {
 //      LPT packing below is recomputed from a timing cache that every run
 //      rewrites, that pairing is re-rolled every run — which is what made this
 //      look like "a different test fails each time, and it passes on the rerun".
-//      Closed inside /api/reset (step 3): see eventlog.parkOverrideMouse.
+//      Closed by the scene.reset in step 3: its automation tail
+//      (CommandHttpAdapter.resetAutomationAfter) calls eventlog.parkOverrideMouse.
 //   6. THE SELECTION TYPE. Every viewport pick site gates on the front of the
 //      selection-type ordering, not on the edit mode, and the two are not the
 //      same reading: under the ITEM type `/api/selection` still reports mode
@@ -2334,6 +2335,14 @@ bool prepareWorker(ref Worker w) {
 // here because it belongs to exactly this family and cost a CI lane a day —
 // red at -j 4, green at -j 8, on the same commit, because the packing below
 // decides which test inherits the latch.
+// A NINTH, THE HELD MOUSE BUTTONS (slice M1a): no key is dispatched while a
+// mouse button is held, and a replayed press with no release leaves the button
+// held — so EVERY key of every later test on this editor is silently dropped,
+// and each one fails as "the key did nothing". Closed by the scene.reset in
+// step 3: its automation tail (CommandHttpAdapter.resetAutomationAfter) clears
+// the held set. NOT closed at the end of a replay, deliberately: tests split
+// one held gesture across two play-events calls (press, then a key, then the
+// release) and a replay-end clear would release the button they are holding.
 //
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
