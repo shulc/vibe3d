@@ -1175,6 +1175,7 @@ void g(Tool t) {
     auto b = cast( const SessionProbe )t;
     auto c = cast(const(EdgeExtendTool)) t;
     auto d = cast(tools.edit.edge_extend.EdgeExtendTool) t;
+    auto q = cast(shared const EdgeExtendTool) t;
     auto e = cast(OtherTool) t;
     // cast(EdgeExtendTool) t
     auto s = "cast(EdgeExtendTool)";
@@ -1182,8 +1183,8 @@ void g(Tool t) {
 }
 unittest { auto u = cast(EdgeExtendTool) t; }
 EOS", ["EdgeExtendTool": true, "SessionProbe": true]);
-    assert(ct.get("EdgeExtendTool", 0) == 3 && ct.get("SessionProbe", 0) == 1 && ct.length == 2,
-           format("tool census scanner cell: cast targets %s, expected EdgeExtendTool 3, SessionProbe 1", ct));
+    assert(ct.get("EdgeExtendTool", 0) == 4 && ct.get("SessionProbe", 0) == 1 && ct.length == 2,
+           format("tool census scanner cell: cast targets %s, expected EdgeExtendTool 4, SessionProbe 1", ct));
     const idecl = interfaceDecls(blankUnittestBodies(blankNonCode(
         "interface A {}\nprivate interface B : A {}\n// interface C {}\nunittest { interface D {} }\n")));
     assert(idecl == ["A", "B"],
