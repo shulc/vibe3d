@@ -47,16 +47,15 @@ import handler : BoxHandlerBatchResourceOwner;
 // (m0, m1): the point's mirror edge under the symmetry that was live when it
 // latched (`mirrorEdgePoint`), or ~0u, in the mesh edge's stored order like
 // (v0, v1); `mflip` when that order reverses the mirror of (v0, v1), so the
-// mirror point sits at `1 - t` along it. `baseKnown`: symmetry was live at the
-// latch, so the chain follows the measured ownership law (C1-sym-own, gap row
-// 290): a point is owned where it was CLICKED, in BASE-mesh terms, whichever
-// side made the edge. Its base polygons are located at every bake, from its
-// effective position (`locateBase`); `facePoint` is the latch-time answer,
-// kept for introspection only.
+// mirror point sits at `1 - t` along it. Every chain follows the measured
+// ownership law (C1-sym-own / C1-own-off, gap rows 290 and 314): a point is
+// owned where it was CLICKED, in BASE-mesh terms, whichever side made the edge;
+// its base polygons are located at every bake from its effective position
+// (`locateBase`). `facePoint` is the latch-time answer, for introspection only.
 private struct EdgeSliceChainPoint {
     uint v0, v1; float t;
     uint m0 = ~0u, m1 = ~0u; bool mflip;
-    bool baseKnown, facePoint;
+    bool facePoint;
 }
 
 // The session's first point, carried by EditSession across the undo of the
@@ -1099,7 +1098,7 @@ private:
         assignMirror(p, sym);
         seatFirstPoint(p, cast(uint)h);
         // The first point's base IS the mesh `seatFirstPoint` just captured.
-        assignBase(latchedPoints_[0], sym);
+        assignBase(latchedPoints_[0]);
         scrubbing_ = true;
         dragPart_  = 0;
     }
@@ -1133,7 +1132,7 @@ private:
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         assignMirror(p, sym);
-        assignBase(p, sym);
+        assignBase(p);
         latchedPoints_ ~= p;
         edgesParam_    ~= cast(uint)h;
         armed_     = true;
@@ -1162,12 +1161,10 @@ private:
         }
     }
 
-    // Marks a point latched under live symmetry (measured law C1-sym-own, gap
-    // row 290) and records, for introspection, whether it landed off every
-    // base edge (a click on any chord the tool made, primary or mirror).
-    void assignBase(ref ChainPoint p, const SymmetryPacket* sym) {
-        if (sym is null || !sym.enabled || sym.axisIndex < 0 || !chainBefore_.filled) return;
-        p.baseKnown = true;
+    // Records, for introspection, whether the point landed off every base
+    // edge (a click on any chord the tool made, primary or mirror).
+    void assignBase(ref ChainPoint p) {
+        if (!chainBefore_.filled) return;
         locateBase(chainBefore_, chainPointPos(p), p.facePoint);
     }
 
@@ -1458,10 +1455,10 @@ private:
     }
 
     // Restores `baseline` and bakes `pts`. Returns the chain steps that wrote
-    // the mesh; `mirrorN` the mirror side's (symmetric chains only).
+    // the mesh; `mirrorN` the mirror side's (points latched under symmetry).
     //
-    // A chain latched under live symmetry (every point `baseKnown`) follows
-    // the measured ownership law (C1-sym-own, gap row 290,
+    // Every chain — clicked, scripted (`chainArm`) or headless — follows the
+    // measured ownership law (C1-sym-own and C1-own-off, gap rows 290/314,
     // tests/test_edge_slice_symmetry.d): the chain is ONE ordered list of
     // clicked points that crosses the plane freely; segment k cuts only when
     // points k and k+1 share a BASE polygon, so a crossing segment makes
@@ -1475,20 +1472,6 @@ private:
             const ChainPoint[] pts, out size_t mirrorN) {
         baseline.restore(work);
         if (pts.length < 2) return 0;
-        bool symmetric = true;
-        foreach (p; pts) if (!p.baseKnown) symmetric = false;
-        if (symmetric) return bakeSymmetricInto(work, baseline, pts, mirrorN);
-        size_t n;
-        uint seed = ~0u;
-        foreach (k; 0 .. pts.length - 1) {
-            if (!bakeSegmentInto(work, pts, k, seed)) break;
-            n = k + 1;
-        }
-        return n;
-    }
-
-    size_t bakeSymmetricInto(ref Mesh work, ref MeshSnapshot baseline,
-            const ChainPoint[] pts, out size_t mirrorN) {
         auto img = new ChainPoint[pts.length];
         auto hasImg = new bool[pts.length];
         foreach (i, p; pts) {
@@ -1587,8 +1570,8 @@ private:
         if (eB == ~0u) return false;   // destination not a live baseline edge
 
         EdgeSliceResult r;
-        // No seed: the first segment, or (symmetric chains) a segment whose
-        // start no earlier step materialised — cut from the point itself.
+        // No seed: a segment whose start no earlier step materialised (the
+        // first one, or one after a face point) — cut from the point itself.
         if (seed == ~0u) {
             uint eA = work.edgeIndexOf(pts[k].v0, pts[k].v1);
             if (eA == ~0u) return false;

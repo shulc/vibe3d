@@ -452,24 +452,51 @@ unittest {
                 [-1.5, 0, 0.5], [2, 0, 0.5], [-2, 0, 0.5]], 20);
 }
 
-// Scope control — symmetry OFF (after a symmetry-ON session): two points that
-// share no base polygon still cut the strip between them. The ownership law
-// above was captured only under symmetry, so the tool applies it only to a
-// chain latched with symmetry live; whether the reference cuts this strip
-// with symmetry off is NOT captured (task card). Under the law this would be
-// two edge splits (27 v / 16 f).
-unittest {
+// Ownership with symmetry OFF (captured law C1-own-off, gap row 314; raw
+// `toolcards/bugfix_w17_slice_tools/raw/C1-own-off{,-ctl}/` in the private
+// tree): the law is one mechanism, not a symmetry feature. Taps (1.5, z0),
+// (1.5, z2) share no base polygon: both edges split, NO chord and no vertex at
+// (1.5, 0, 1) — 27 v / 16 f / 42 e (a strip cut would give 28/18). Tap 3 at
+// (2, z1.5) shares the (1..2, 1..2) cell with the LATEST point: 28 / 17 / 44.
+// The control's first two taps share the (1..2, 0..1) cell: 27/17/43, then
+// 28/18/45.
+void ownOffCell(string cell, double z2, long[3] want2, long[3] want3,
+                const double[3][] born3) {
     gridRig(false);
-    symmetryX(true);
     symmetryX(false);
     slLine("tool.set mesh.edgeSliceTool on");
-    clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], "off P1");
-    clickXZ(1.5, 2, [1, 0, 2], [2, 0, 2], "off P2");
+    void check(string step, long[3] want) {
+        const m = slMesh();
+        const ec = edgeCounts();
+        writeln("own-off ", cell, " ", step, ": ", m, " edges ", ec[0], " new ",
+                p3s(verticesFrom(GRID_VERTS)));
+        assert(m.verts == want[0] && m.faces == want[1] && ec[0] == want[2],
+               format("own-off %s %s: expected %s v/f/e, got %s, %d e, new %s", cell, step,
+                      want, m.toString, ec[0], p3s(verticesFrom(GRID_VERTS))));
+    }
+    clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], cell ~ " t1");
+    clickXZ(1.5, z2, [1, 0, z2], [2, 0, z2], cell ~ " t2");
+    check("t2", want2);
+    clickXZ(2, 1.5, [2, 0, 1], [2, 0, 2], cell ~ " t3");
+    check("t3", want3);
     slLine("tool.set mesh.edgeSliceTool off");
-    const mesh = slMesh();
-    writeln("symmetry off, no shared base polygon: ", mesh, " new ", p3s(verticesFrom(GRID_VERTS)));
-    assert(mesh.faces > GRID_FACES && mesh.verts > GRID_VERTS + 2,
-           "symmetry off: a chain across two cells was not cut: " ~ mesh.toString);
+    check("committed", want3);
+    const born = verticesFrom(GRID_VERTS);
+    bool setOk = born.length == born3.length;
+    foreach (w; born3) {
+        bool hit;
+        foreach (g; born) if (dist3(g, w) <= 2e-2) hit = true;
+        setOk = setOk && hit;
+    }
+    assert(setOk, format("own-off %s: new vertices %s, expected %s", cell, p3s(born), p3s(born3)));
+}
+
+unittest {
+    ownOffCell("main", 2, [27, 16, 42], [28, 17, 44], [[1.5, 0, 0], [1.5, 0, 2], [2, 0, 1.5]]);
+}
+
+unittest {
+    ownOffCell("ctl", 1, [27, 17, 43], [28, 18, 45], [[1.5, 0, 0], [1.5, 0, 1], [2, 0, 1.5]]);
 }
 
 // A PARAMETER re-bake keeps the law: cell c, then Split Polygons off and on
