@@ -825,7 +825,7 @@ unittest { // applySymmetryMirrorDelta: deformed base — partner gets delta, no
     // Drive mirror with A and its partner D in the operand (task 7144).
     bool[] sel = new bool[](6);
     sel[2] = true;
-    sel[4] = true;   // task 7144: the partner is written only when it is in the operand
+    sel[4] = true;   // the partner is written only when it is in the operand
     bool[] touched = new bool[](6);
 
     applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
@@ -873,7 +873,7 @@ unittest { // equivalence: on symmetric base, delta-mirror == absolute-mirror (f
     Vec3 delta = Vec3(0.2f, 0.15f, 0.05f);
     m.vertices[2] = baseline[2] + delta;
 
-    bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // task 7144: both in the operand
+    bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // both in the operand
     bool[] touched = new bool[](6);
 
     applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
@@ -1081,7 +1081,7 @@ unittest { // T-R3 row 1 — applySymmetryMirror refuses a hidden partner
         assert(sp.pairOf[2] == 4, "fixture: A(2) must pair with D(4)");
 
         m.vertices[2].y += DRAG_Y;
-        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // task 7144: both in the operand
+        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // both in the operand
         bool[] touched = new bool[](6);
         applySymmetryMirror(&m, sp, sel, touched);
 
@@ -1104,7 +1104,7 @@ unittest { // T-R3 row 1 — applySymmetryMirror refuses a hidden partner
             ~ "hidden face owns all its corners lets an unrelated check pass this");
 
         m.vertices[2].y += DRAG_Y;
-        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // task 7144: both in the operand
+        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // both in the operand
         bool[] touched = new bool[](6);
         applySymmetryMirror(&m, sp, sel, touched);
 
@@ -1136,7 +1136,7 @@ unittest { // T-R3 row 2 — applySymmetryMirrorDelta has the identical hole
         rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
         auto baseline = m.vertices.dup;
         m.vertices[2].y += DRAG_Y;
-        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // task 7144: both in the operand
+        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // both in the operand
         bool[] touched = new bool[](6);
         applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
         assert(isClose(m.vertices[4].y, MIRRORED_Y, 1e-5f),
@@ -1153,7 +1153,7 @@ unittest { // T-R3 row 2 — applySymmetryMirrorDelta has the identical hole
 
         auto baseline = m.vertices.dup;
         m.vertices[2].y += DRAG_Y;
-        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // task 7144: both in the operand
+        bool[] sel = new bool[](6); sel[2] = true; sel[4] = true;   // both in the operand
         bool[] touched = new bool[](6);
         applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
 

@@ -9,8 +9,8 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 573
-task-citation-lines 5250
-citing-files 443
+task-citation-lines 5284
+citing-files 444
 long-comment-runs 273
 files-with-long-runs 146
 
@@ -37,7 +37,7 @@ allow source/bg_gpu_cache.d 1
 allow source/buttonset.d 1
 allow source/bvh_pick.d 17
 allow source/camera_stamp.d 3
-allow source/change_bus.d 30
+allow source/change_bus.d 31
 allow source/command.d 29
 allow source/command_args.d 3
 allow source/command_executor.d 7
@@ -123,7 +123,7 @@ allow source/commands/mesh/subpatch_toggle.d 7
 allow source/commands/mesh/sweep.d 4
 allow source/commands/mesh/symmetrize.d 7
 allow source/commands/mesh/thicken.d 2
-allow source/commands/mesh/transform.d 10
+allow source/commands/mesh/transform.d 12
 allow source/commands/mesh/triple.d 5
 allow source/commands/mesh/unify.d 3
 allow source/commands/mesh/uv_map_util.d 9
@@ -240,7 +240,7 @@ allow source/imgui_event_gate.d 3
 allow source/imgui_flag_boundary.d 1
 allow source/input_context.d 3
 allow source/input_frame_state.d 36
-allow source/input_router.d 66
+allow source/input_router.d 67
 allow source/input_zones.d 1
 allow source/io/assimp_wire.d 1
 allow source/io/browser_pick_resume.d 2
@@ -310,6 +310,7 @@ allow source/prefs.d 31
 allow source/prepared_pipe_activation.d 1
 allow source/prepared_record_context.d 2
 allow source/prepared_tool_transition.d 3
+allow source/prepared_xfrm_activation_session.d 2
 allow source/property_panel.d 3
 allow source/record_observer_hub.d 1
 allow source/registration.d 8
@@ -338,24 +339,24 @@ allow source/subpatch_osd.d 40
 allow source/subpatch_preview.d 24
 allow source/subpatch_worker.d 2
 allow source/subpatch_worker_web.d 1
-allow source/symmetry.d 6
-allow source/symmetry_pick.d 2
+allow source/symmetry.d 10
+allow source/symmetry_pick.d 4
 allow source/tool.d 33
 allow source/tool_activation_ownership.d 6
 allow source/tool_disarm.d 2
 allow source/tool_lifecycle_registration.d 1
 allow source/toolpipe/obbox.d 2
 allow source/toolpipe/package.d 1
-allow source/toolpipe/packets.d 11
+allow source/toolpipe/packets.d 12
 allow source/toolpipe/pipeline.d 9
 allow source/toolpipe/stage.d 11
-allow source/toolpipe/stages/actcenter.d 58
+allow source/toolpipe/stages/actcenter.d 61
 allow source/toolpipe/stages/axis.d 16
 allow source/toolpipe/stages/constrain.d 8
 allow source/toolpipe/stages/falloff.d 34
 allow source/toolpipe/stages/path.d 1
 allow source/toolpipe/stages/snap.d 12
-allow source/toolpipe/stages/symmetry.d 15
+allow source/toolpipe/stages/symmetry.d 16
 allow source/toolpipe/stages/workplane.d 12
 allow source/toolpipe/subject.d 3
 allow source/tools/alignment/align_kernels.d 7
@@ -388,7 +389,7 @@ allow source/tools/deform/stroke_extrude_tool.d 6
 allow source/tools/edit/bridge_tool.d 19
 allow source/tools/edit/drag_weld.d 3
 allow source/tools/edit/edge_bevel.d 11
-allow source/tools/edit/edge_extend.d 33
+allow source/tools/edit/edge_extend.d 35
 allow source/tools/edit/edge_extrude.d 16
 allow source/tools/edit/poly_bevel.d 16
 allow source/tools/edit/poly_extrude.d 9
@@ -410,17 +411,17 @@ allow source/tools/slice/edge_slice_tool.d 43
 allow source/tools/slice/loop_slice_tool.d 90
 allow source/tools/slice/slice_tool.d 97
 allow source/tools/transform/item_xform_kernels.d 3
-allow source/tools/transform/morph_route.d 4
-allow source/tools/transform/move.d 7
+allow source/tools/transform/morph_route.d 3
+allow source/tools/transform/move.d 9
 allow source/tools/transform/relocate_plane.d 2
-allow source/tools/transform/rotate.d 1
-allow source/tools/transform/scale.d 4
-allow source/tools/transform/transform.d 35
-allow source/tools/transform/xform_kernels.d 8
-allow source/tools/transform/xfrm_apply.d 19
+allow source/tools/transform/rotate.d 2
+allow source/tools/transform/scale.d 5
+allow source/tools/transform/transform.d 37
+allow source/tools/transform/xform_kernels.d 11
+allow source/tools/transform/xfrm_apply.d 20
 allow source/tools/transform/xfrm_handles.d 6
 allow source/tools/transform/xfrm_item.d 8
-allow source/tools/transform/xfrm_transform.d 83
+allow source/tools/transform/xfrm_transform.d 89
 allow source/transform_tool_registration.d 2
 allow source/tsan_annotate.d 1
 allow source/tsan_preinit.d 1
