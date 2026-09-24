@@ -1159,10 +1159,18 @@ void main(string[] args) {
         writefln("WEB-RUNNER-ARMED args=%s", webProbeArgument);
 
     bool testViewportWindows;
+    // `--test` renders its cells unconditionally and skips the interactive
+    // DirtyKey compare, so no suite pixel can see a render input the key
+    // forgot. This opt-in keeps the production compare under `--test`;
+    // `tests/test_channels_live_update.d` launches its own instance with it.
+    // Test automation only, like the viewport-window opt-in above.
+    bool testDirtyKeyGate;
     {
         import std.process : environment;
         testViewportWindows = testMode
             && environment.get("VIBE3D_TEST_VIEWPORT_WINDOWS", "") == "1";
+        testDirtyKeyGate = testMode
+            && environment.get("VIBE3D_TEST_DIRTY_KEY", "") == "1";
     }
 
     // Headless render-diff path. Bypasses SDL + ImGui + main loop
@@ -7888,7 +7896,7 @@ void main(string[] args) {
                 // invariant the two are the same answer, and a test only gets
                 // the wider one by switching layout itself.
                 bool needRender;
-                if (testMode) {
+                if (testMode && !testDirtyKeyGate) {
                     needRender = testRendersCell(k, vpm.activeId, vpm.cellCount);
                 } else {
                     // Interactive: dirty-key compare (skip if nothing changed).
