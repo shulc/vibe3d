@@ -645,6 +645,8 @@ class View {
         }
         Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
         vp.focus = f;
+        Vec3 pr, pu;
+        vp.axisPreset = presetBasis(viewPreset, pr, pu);
         return vp;
     }
 

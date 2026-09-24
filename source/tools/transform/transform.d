@@ -1889,8 +1889,8 @@ protected:
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
         import tools.create.create_common         : currentWorkplaneFrame, mostFacingAxis;
-        import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter,
-                                                    lockedViewAxis;
+        import tools.transform.relocate_plane     : RelocatePlanePrefs, principalPlaneCenter;
+        import math : isAxisView;
         import viewgrid : g_viewGrid, viewWorldPerPixel, relocateQuantum,
                           viewGridSize, viewGridSubStep;
         import math : rayPlaneIntersect, screenPointToRay, isOrtho;
@@ -1999,7 +1999,7 @@ protected:
                 // under the cursor, so the two answers differ only in DEPTH
                 // along the view axis; 0226 chose focus depth and nothing
                 // measured says otherwise.
-                if (isOrtho(cachedVp) && lockedViewAxis(cachedVp) < 0) {
+                if (isOrtho(cachedVp) && !isAxisView(cachedVp)) {
                     Vec3 camPerp = Vec3(cachedVp.view[2],
                                         cachedVp.view[6],
                                         cachedVp.view[10]);

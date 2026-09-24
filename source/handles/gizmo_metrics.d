@@ -634,9 +634,10 @@ bool planeHandleHidden(Vec3 u, Vec3 v, Vec3 gizmoCenter, const ref Viewport vp)
 ///
 /// The only cull of the four that is GATED ON THE VIEWPORT, and the gate is a
 /// viewport-type question — "is this one of the axis views?" — that never asks
-/// where the camera is pointing. `lockedViewAxis` is how we ask it (an ortho
-/// projection whose forward is a world axis); in a perspective cell it answers
-/// -1 and no ring is ever culled, however the camera is aimed.
+/// where the camera is pointing: `isAxisView` (ortho AND an axis preset). A
+/// Front turned by a pinned plane is still one, and the edge-on test then runs
+/// against the gizmo's own axes (capture `gizmo_view_cull_plane`, V-none, task
+/// 7139). A perspective cell is never one, and no ring is culled there.
 ///
 /// Inside an axis view, a ring goes when it is within ~5 degrees of EDGE-ON.
 /// Note the polarity: this drops the unusable rings and keeps everything else,
@@ -651,7 +652,7 @@ bool planeHandleHidden(Vec3 u, Vec3 v, Vec3 gizmoCenter, const ref Viewport vp)
 bool rotateRingHidden(Vec3 normal, Vec3 gizmoCenter, const ref Viewport vp)
     @safe pure nothrow @nogc
 {
-    if (lockedViewAxis(vp) < 0) return false;
+    if (!isAxisView(vp)) return false;
     immutable Vec3 eye = eyeVectorAt(vp, gizmoCenter);
     return abs(dot(normalize(normal), eye)) < GIZMO_RING_EDGE_SIN;
 }

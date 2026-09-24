@@ -1,0 +1,198 @@
+{
+ "schema": 1,
+ "method": "gui-gesture",
+ "notes": "Rotate gizmo ring cull. Gate: the cell's orthographic PRESET type only (no camera test); then a ring is hidden iff |ring normal . eye| < 0.087. The gizmo axes are the item's local frame; the plane, when pinned, is rotX 30 rotY 40 (B = Rx*Ry) and turns the front preset so it looks along B*(0,0,-1). Cell K3 (an orbited preset) is unreachable and omitted.",
+ "ring_edge_on_sin": 0.087,
+ "cells": {
+  "C0-front-world": {
+   "projection": "orthographic front preset",
+   "plane_pinned": false,
+   "view_dir_world": [
+    0,
+    0,
+    -1
+   ],
+   "gizmo_axes_world": [
+    [
+     1,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     0,
+     1
+    ]
+   ],
+   "abs_dot_ring_normal_eye": [
+    0,
+    0,
+    1
+   ],
+   "measured_hidden_rings": "XY",
+   "predicted": {
+    "V-world": "XY",
+    "V-plane": "XY",
+    "V-gizmo": "XY",
+    "V-none": "XY"
+   }
+  },
+  "C1-front-gizmoRy40": {
+   "projection": "orthographic front preset",
+   "plane_pinned": false,
+   "view_dir_world": [
+    0,
+    0,
+    -1
+   ],
+   "gizmo_axes_world": [
+    [
+     0.76604,
+     0,
+     -0.64279
+    ],
+    [
+     0,
+     1,
+     0
+    ],
+    [
+     0.64279,
+     0,
+     0.76604
+    ]
+   ],
+   "abs_dot_ring_normal_eye": [
+    0.6428,
+    0,
+    0.766
+   ],
+   "measured_hidden_rings": "Y",
+   "predicted": {
+    "V-world": "Y",
+    "V-plane": "Y",
+    "V-gizmo": "none",
+    "V-none": "Y"
+   }
+  },
+  "K1-turned-gizmoBRx35": {
+   "projection": "orthographic front preset",
+   "plane_pinned": true,
+   "view_dir_world": [
+    -0.64279,
+    0.38302,
+    -0.66341
+   ],
+   "gizmo_axes_world": [
+    [
+     0.76604,
+     0.32139,
+     -0.55667
+    ],
+    [
+     0.36869,
+     0.48971,
+     0.79009
+    ],
+    [
+     0.52654,
+     -0.81049,
+     0.25665
+    ]
+   ],
+   "abs_dot_ring_normal_eye": [
+    0.0,
+    0.5736,
+    0.8192
+   ],
+   "measured_hidden_rings": "X",
+   "predicted": {
+    "V-world": "none",
+    "V-plane": "X",
+    "V-gizmo": "none",
+    "V-none": "X"
+   }
+  },
+  "K2-turned-gizmoBRz30": {
+   "projection": "orthographic front preset",
+   "plane_pinned": true,
+   "view_dir_world": [
+    -0.64279,
+    0.38302,
+    -0.66341
+   ],
+   "gizmo_axes_world": [
+    [
+     0.66341,
+     0.71135,
+     -0.23209
+    ],
+    [
+     -0.38302,
+     0.5893,
+     0.71135
+    ],
+    [
+     0.64279,
+     -0.38302,
+     0.66341
+    ]
+   ],
+   "abs_dot_ring_normal_eye": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "measured_hidden_rings": "XY",
+   "predicted": {
+    "V-world": "none",
+    "V-plane": "XY",
+    "V-gizmo": "XY",
+    "V-none": "XY"
+   }
+  },
+  "P1-persp-turned": {
+   "projection": "perspective",
+   "plane_pinned": true,
+   "view_dir_world": [
+    -0.64279,
+    0.38302,
+    -0.66341
+   ],
+   "gizmo_axes_world": [
+    [
+     0.76604,
+     0.32139,
+     -0.55667
+    ],
+    [
+     0.36869,
+     0.48971,
+     0.79009
+    ],
+    [
+     0.52654,
+     -0.81049,
+     0.25665
+    ]
+   ],
+   "abs_dot_ring_normal_eye": [
+    0.0,
+    0.5736,
+    0.8192
+   ],
+   "measured_hidden_rings": "none",
+   "predicted": {
+    "V-world": "none",
+    "V-plane": "none",
+    "V-gizmo": "none",
+    "V-none": "none"
+   }
+  }
+ }
+}

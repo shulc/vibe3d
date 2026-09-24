@@ -121,7 +121,9 @@ unittest {
         vp.proj = orthographicMatrix(2.0f, 1.0f, 0.001f, 100.0f);
         vp.eye  = Vec3(0, 0, 10);
         vp.width = 800; vp.height = 600;
-        assert(lockedViewAxis(vp) == 2, "fixture premise: this is a Z axis view");
+        vp.axisPreset = true;   // a Front preset, as `View.viewportWith` marks it
+        assert(isAxisView(vp) && lockedViewAxis(vp) == 2,
+               "fixture premise: this is a Z axis view");
 
         assert( rotateRingHidden(Vec3(1, 0, 0), Vec3(0, 0, 0), vp), "X ring edge-on");
         assert( rotateRingHidden(Vec3(0, 1, 0), Vec3(0, 0, 0), vp), "Y ring edge-on");
@@ -132,6 +134,32 @@ unittest {
         assert(!rotateRingHidden(rx, Vec3(0, 0, 0), vp), "a 45 deg ring is usable");
         assert( rotateRingHidden(ry, Vec3(0, 0, 0), vp), "...its Y sibling is not");
         assert(!rotateRingHidden(rz, Vec3(0, 0, 0), vp), "...and so is its partner");
+
+        // The gate is the view TYPE (task 7139, capture gizmo_view_cull_plane
+        // V-none): the SAME world-Z camera NOT on an axis preset (a free ortho
+        // cell) culls nothing, although it looks exactly along a world axis.
+        vp.axisPreset = false;
+        assert(lockedViewAxis(vp) == 2 && !isAxisView(vp), "rig: free ortho along Z");
+        assert(!rotateRingHidden(Vec3(1, 0, 0), Vec3(0, 0, 0), vp),
+               "a non-preset ortho view is not an axis view, however it is aimed");
+    }
+
+    // ...and a preset turned OFF every world axis (a Front under a pinned
+    // oblique plane) is still an axis view: its edge-on ring goes.
+    {
+        immutable Vec3 fwd = normalize(Vec3(-0.64279f, 0.38302f, -0.66341f));
+        Viewport vp;
+        vp.view = lookAt(fwd * -10.0f, Vec3(0, 0, 0), Vec3(0, 1, 0));
+        vp.proj = orthographicMatrix(2.0f, 1.0f, 0.001f, 100.0f);
+        vp.eye  = fwd * -10.0f;
+        vp.width = 800; vp.height = 600;
+        vp.axisPreset = true;
+        assert(lockedViewAxis(vp) == -1 && isAxisView(vp),
+               "rig: a turned preset looks along no world axis");
+        immutable Vec3 edge = normalize(cross(fwd, Vec3(0, 1, 0)));
+        assert( rotateRingHidden(edge, Vec3(0, 0, 0), vp),
+               "a turned axis view hides its edge-on ring (world-axis gate is refuted)");
+        assert(!rotateRingHidden(fwd, Vec3(0, 0, 0), vp), "...and keeps the face-on one");
     }
 }
 

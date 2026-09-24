@@ -64,11 +64,13 @@
 //           part 0".
 //   * `rotateRingHidden` reverted to the shipped form (ortho gate, keep only
 //     `|dot| >= 0.999`)
-//        -> Flow D, "a ring 45 degrees to the eye is grabbable and must be
-//           drawn — the rule that kept only the FACE-ON ring left none of the
-//           three". Legs 1 and 2 of that flow stay GREEN under the mutation,
+//        -> Flow E, cell C1-front-gizmoRy40 (task 7139 moved the 45-degree
+//           case there from Flow D leg 3, which a turned view no longer
+//           separates). Legs 1 and 2 of Flow D stay GREEN under the mutation,
 //           which is the point: the old rule is indistinguishable from this
-//           one until the gizmo's basis stops being the world basis.
+//           one until the gizmo's basis stops being the view's basis.
+//   * the gate reverted to `lockedViewAxis(vp) < 0` (a WORLD-axis view test)
+//        -> Flow D leg 3 and Flow E cell K1 (task 7139).
 
 import http_client : getJson, postRaw, testBaseUrl;
 import std.format : format;
@@ -174,7 +176,7 @@ private void hoverAt(int x, int y) {
 // work-plane rotation or an axis-stage mode, and three of the flows below set
 // one of those.
 private void restoreWorld() {
-    script("workplane.edit rotY:0");
+    script("workplane.reset");
     script("tool.pipe.attr axis mode auto");
     command("viewport.view", `"Perspective"`);
     script("tool.set move off");
@@ -409,68 +411,148 @@ unittest {
         assert( g.visible[P_RING_VIEW], "the screen-plane ring is never culled");
     }
 
-    // 3. ORTHO FRONT, a ROTATED gizmo basis. Two rings at 45 degrees to the
-    //    eye are perfectly grabbable and must survive; only the edge-on one
-    //    goes. The basis comes from the ELEMENT axis of a cube turned 45
-    //    degrees about Y, not from a pinned work plane: since task 7139 an
-    //    ortho preset turns WITH a pinned plane (gap 187), so a workplane
-    //    basis is always axis-aligned to the turned view and could no longer
-    //    separate the two rules. Whether a turned view still counts as an
-    //    "axis view" for this cull is gap row 336 (not captured).
+    // 3. ORTHO FRONT under a plane pinned 45 degrees about Y, gizmo on the
+    //    WORKPLANE axis. Since task 7139 the Front preset TURNS with the plane
+    //    (gap 187), so it looks along the plane's -Z and its forward is no
+    //    world axis. It is still an axis view — the gate is the view TYPE
+    //    (capture gizmo_view_cull_plane, V-none) — so the gizmo's two rings
+    //    edge-on to the turned view (X and Y) go and the face-on Z ring stays.
+    //    The world-axis gate kept all three here, edge-on rings grabbable.
+    //    The "45 degrees survive" half of this rule is the C1 cell below.
+    script("workplane.edit rotY:45");
+    script("tool.pipe.attr axis mode workplane");
     {
-        import std.math : cos, sin, PI;
-        immutable double c = cos(PI / 4), sn = sin(PI / 4);
-        string verts;
-        foreach (x; [-0.5, 0.5]) foreach (y; [-0.5, 0.5]) foreach (z; [-0.5, 0.5])
-            verts ~= format(`%s[%.9f,%.9f,%.9f]`, verts.length ? "," : "",
-                            c * x + sn * z, y, -sn * x + c * z);
-        postRaw("/api/command", format(
-            `{"id":"scene.loadMesh","params":{"vertices":[%s],"faces":`
-            ~ `[[0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3]]}}`, verts));
-        postRaw("/api/command",
-            `{"id":"mesh.select","params":{"mode":"polygons","indices":[0,1,2,3,4,5]}}`);
-    }
-    script("tool.set rotate on");   // the load dropped the tool
-    command("viewport.view", `"Front"`);
-    script("tool.pipe.attr axis mode element");
-    {
-        // Premise: the basis really is rotated — one axis edge-on to the
-        // Front view (normal to world Z), the other two at 45 degrees.
-        // Read back, not trusted: a silently-ignored command would leave
-        // leg 2's world basis and prove nothing.
-        import std.conv : to;
-        double[3][3] axes;
-        bool found = false;
-        foreach (st; getJson("/api/toolpipe")["stages"].array) {
-            if (st["id"].str != "axis") continue;
-            found = true;
-            auto a = st["attrs"];
-            assert(a["mode"].str == "element",
-                   "fixture premise: the axis stage must be in element mode");
-            foreach (i, k; ["right", "up", "fwd"])
-                axes[i] = [to!double(a[k ~ "X"].str), to!double(a[k ~ "Y"].str),
-                           to!double(a[k ~ "Z"].str)];
+        // Premise: the basis really did rotate. Read it back rather than
+        // trusting that two commands landed — the whole point of this leg is
+        // that the gizmo is NOT world-aligned, and a silently-ignored command
+        // would leave leg 2's reading and prove nothing.
+        {
+            import std.conv : to;
+            bool found = false;
+            foreach (st; getJson("/api/toolpipe")["stages"].array) {
+                if (st["id"].str != "axis") continue;
+                found = true;
+                auto a = st["attrs"];
+                assert(a["mode"].str == "workplane",
+                       "fixture premise: the axis stage must be in workplane mode");
+                immutable double rx = to!double(a["rightX"].str);
+                immutable double rz = to!double(a["rightZ"].str);
+                assert(abs(rx - 0.707107) < 1e-3 && abs(rz + 0.707107) < 1e-3,
+                       format("fixture premise: the axis basis must be turned 45 deg "
+                              ~ "about Y, right = (%g, _, %g)", rx, rz));
+            }
+            assert(found, "fixture premise: the pipeline must publish an axis stage");
         }
-        assert(found, "fixture premise: the pipeline must publish an axis stage");
-        int edgeOn = -1, at45 = 0;
-        foreach (i; 0 .. 3) {
-            immutable double d = abs(axes[i][2]);
-            if (d < 1e-3) edgeOn = cast(int)i;
-            else if (abs(d - 0.707107) < 1e-3) ++at45;
-        }
-        assert(edgeOn >= 0 && at45 == 2,
-               format("fixture premise: the element basis must hold one axis edge-on "
-                      ~ "to Front and two at 45 degrees, got %s", axes));
 
         auto g = registry();
-        foreach (i; 0 .. 3) {
-            if (i == edgeOn) continue;
-            assert(g.visible[ROT_BASE + i],
-                   "a ring 45 degrees to the eye is grabbable and must be drawn — "
-                   ~ "the rule that kept only the FACE-ON ring left none of the three");
-        }
-        assert(!g.visible[ROT_BASE + edgeOn],
-               "the edge-on ring is the one that goes");
+        assert(!g.visible[P_RING_X] && !g.visible[P_RING_Y],
+               "a turned Front is still an axis view: the rings edge-on to it go");
+        assert( g.visible[P_RING_Z], "the ring face-on to the turned view stays");
         assert(g.visible[P_RING_VIEW], "the screen-plane ring is never culled");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Flow E — the gate under a pinned plane, one cell per captured cell (task
+// 7139; capture gizmo_view_cull_plane, verdict V-none;
+// tests/fixtures/rotate_ring_cull_gate.json). An axis view is ortho AND on an
+// axis preset — never "looks along a world axis" — and inside one a ring goes
+// when |gizmo axis . eye| < 0.087. The gizmo basis is the ELEMENT axis of one
+// quad built from the cell's own axes (element basis: up = face normal, right =
+// first edge), read back before the rings are judged.
+// ---------------------------------------------------------------------------
+unittest {
+    scope(exit) restoreWorld();
+    auto fx = parseJSON(import("fixtures/rotate_ring_cull_gate.json"));
+    auto cells = fx["cells"];
+    enum string[] order = ["C0-front-world", "C1-front-gizmoRy40",
+                           "K1-turned-gizmoBRx35", "K2-turned-gizmoBRz30",
+                           "P1-persp-turned"];
+    assert(cells.object.length == order.length,
+           format("fixture population: %d cells, expected %d",
+                  cells.object.length, order.length));
+    int judged = 0;
+    foreach (name; order) {
+        auto c = cells[name];
+        double[3][3] G;
+        foreach (i; 0 .. 3) foreach (k; 0 .. 3) G[i][k] = jnum(c["gizmo_axes_world"].array[i].array[k]);
+        double[3] w(double x, double z) {
+            double[3] r;
+            foreach (k; 0 .. 3) r[k] = 0.25 * (x * G[0][k] + z * G[2][k]);
+            return r;
+        }
+        // Face winding (-X+Z)->(X+Z)->(X-Z)->(-X-Z): first edge +X, normal +Y.
+        auto q = [w(-1, 1), w(1, 1), w(1, -1), w(-1, -1)];
+        postRaw("/api/command", `{"id":"scene.reset","params":{"empty":true}}`);
+        script("workplane.reset");
+        postRaw("/api/command", format(
+            `{"id":"scene.loadMesh","params":{"vertices":[[%.9f,%.9f,%.9f],[%.9f,%.9f,%.9f],`
+          ~ `[%.9f,%.9f,%.9f],[%.9f,%.9f,%.9f]],"faces":[[0,1,2,3]]}}`,
+            q[0][0], q[0][1], q[0][2], q[1][0], q[1][1], q[1][2],
+            q[2][0], q[2][1], q[2][2], q[3][0], q[3][1], q[3][2]));
+        postRaw("/api/command", `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`);
+        immutable bool persp = c["projection"].str == "perspective";
+        command("viewport.view", persp ? `"Perspective"` : `"Front"`);
+        if (c["plane_pinned"].type == JSONType.true_)
+            script("workplane.edit rotX:30 rotY:40 rotZ:0");
+        if (persp) {
+            // Aimed along the turned Front's direction, in world terms.
+            double[3] vd;
+            foreach (k; 0 .. 3) vd[k] = jnum(c["view_dir_world"].array[k]);
+            double[3] up = [0, 1, 0];
+            double[3] b = [-vd[0], -vd[1], -vd[2]];
+            double[3] r = [up[1]*b[2]-up[2]*b[1], up[2]*b[0]-up[0]*b[2], up[0]*b[1]-up[1]*b[0]];
+            double rl = (r[0]*r[0] + r[1]*r[1] + r[2]*r[2]) ^^ 0.5;
+            foreach (k; 0 .. 3) r[k] /= rl;
+            double[3] u = [b[1]*r[2]-b[2]*r[1], b[2]*r[0]-b[0]*r[2], b[0]*r[1]-b[1]*r[0]];
+            postRaw("/api/camera", format(
+                `{"focus":{"x":0,"y":0,"z":0},"distance":3,"orientation":`
+              ~ `[%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f]}`,
+                r[0], r[1], r[2], u[0], u[1], u[2], b[0], b[1], b[2]));
+        }
+        script("tool.set rotate on");
+        script("tool.pipe.attr axis mode element");
+
+        // Premises: the view direction and the gizmo basis are the cell's.
+        {
+            import std.conv : to;
+            auto cam = getJson("/api/camera");
+            double[3] vdGot = [-jnum(cam["viewMatrix"].array[2]),
+                               -jnum(cam["viewMatrix"].array[6]),
+                               -jnum(cam["viewMatrix"].array[10])];
+            foreach (k; 0 .. 3)
+                assert(abs(vdGot[k] - jnum(c["view_dir_world"].array[k])) < 1e-3,
+                       format("%s premise: view direction %s", name, vdGot));
+            bool found;
+            foreach (st; getJson("/api/toolpipe")["stages"].array) {
+                if (st["id"].str != "axis") continue;
+                found = true;
+                auto a = st["attrs"];
+                foreach (i, key; ["right", "up", "fwd"])
+                    foreach (k, comp; ["X", "Y", "Z"])
+                        assert(abs(to!double(a[key ~ comp].str) - G[i][k]) < 1e-3,
+                               format("%s premise: gizmo axis %s%s = %s, fixture %g",
+                                      name, key, comp, a[key ~ comp].str, G[i][k]));
+            }
+            assert(found, name ~ " premise: no axis stage");
+        }
+
+        auto g = registry();
+        string hidden;
+        foreach (i, letter; ["X", "Y", "Z"])
+            if (!g.visible[ROT_BASE + cast(int)i]) hidden ~= letter;
+        if (hidden.length == 0) hidden = "none";
+        assert(hidden == c["measured_hidden_rings"].str,
+               format("%s: hidden rotate rings %s, the reference hides %s", name,
+                      hidden, c["measured_hidden_rings"].str));
+        assert(g.visible[P_RING_VIEW], name ~ ": the screen-plane ring is never culled");
+        ++judged;
+        script("tool.set rotate off");
+    }
+    assert(judged == 5, format("judged %d cells, expected 5", judged));
+}
+
+private double jnum(JSONValue v) {
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
 }

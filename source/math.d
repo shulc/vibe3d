@@ -64,6 +64,11 @@ struct Viewport {
     // headless fixtures routinely do not. A consumer that must survive both
     // has to say so — see `viewPixelScale`.
     Vec3 focus;
+    // Task 7139 (gap-row "ring cull gate"): the cell's view is on an AXIS
+    // PRESET (Top/Bottom/Front/Back/Right/Left). A view TYPE, not a camera
+    // direction: set by `View.viewportWith` only; hand-built fixtures leave it
+    // false. Read through `isAxisView`, never raw.
+    bool axisPreset;
 }
 
 Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
@@ -963,6 +968,17 @@ float[16] orthographicMatrix(float halfH, float aspect, float near, float far) {
 /// Perspective has proj[15] == 0; ortho has proj[15] == 1.
 bool isOrtho(const ref Viewport vp) @safe pure nothrow @nogc {
     return vp.proj[15] != 0.0f;
+}
+
+/// "Is this one of the axis views?" — orthographic AND on an axis preset. The
+/// reference answers it from the view's projection flag and preset index
+/// alone and never reads where the camera points, so a Front view turned by a
+/// pinned plane is still an axis view (capture `gizmo_view_cull_plane`, verdict
+/// V-none; task 7139). The ONE home of that question: `lockedViewAxis` below
+/// answers a different one (which WORLD axis the view looks along) and must
+/// not be used as a view-type test.
+bool isAxisView(const ref Viewport vp) @safe pure nothrow @nogc {
+    return isOrtho(vp) && vp.axisPreset;
 }
 
 /// The eye vector at a world point: the direction the view looks ALONG as it
