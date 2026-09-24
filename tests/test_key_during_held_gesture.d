@@ -164,48 +164,6 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (c)+(g) C-O5-es — Edge Slice, a third point held down: Ctrl+Z and Return are
-// dropped (the chain stays live, the history does not move); after the release
-// Ctrl+Z pops the third point and Return commits (positive controls).
-// ---------------------------------------------------------------------------
-enum int[2][3] HINT_OFF = [[315, 303], [531, 355], [616, 270]];
-
-unittest {
-    auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
-    slLine("tool.set mesh.edgeSliceTool on");
-    assert(slTool() == "edgeSlice", "(c) edge slice floor: the tool did not arm");
-    const P = slFrontRightChain();
-    int[2][3] px;
-    foreach (k; 0 .. 3)
-        px[k] = slEdgePixel(P[k][0], P[k][1], HINT_OFF[k], format("(c) point %d", k + 1));
-    foreach (k; 0 .. 2) {
-        slClickDown(px[k][0], px[k][1], format("(c) click %d", k + 1));
-        slDragUp(px[k][0], px[k][1], 0, 4, 3, format("(c) drag %d", k + 1));
-    }
-    assert(slChain().pairs.length == 2, "(c) edge slice floor: two points did not latch");
-    const H2 = slHistoryLen();
-    slClickDown(px[2][0], px[2][1], "(c) point 3 press, held");
-    ctrlZ("(c) Ctrl+Z while held");
-    tap(K_RETURN, K_RETURN_SCAN, 0, "(g) Return while held");
-    slDragUp(px[2][0], px[2][1], 0, 4, 3, "(c) point 3 drag + release");
-    const c3 = slChain();
-    assert(slTool() == "edgeSlice" && c3.pairs.length == 3 && slHistoryLen() == H2,
-           format("(c)/(g) C-O5-es: a key reached Edge Slice while its button was held: tool '%s', "
-                  ~ "%d point(s) after the release (expected 3), history %d (expected %d)",
-                  slTool(), c3.pairs.length, slHistoryLen(), H2));
-    ctrlZ("(c) Ctrl+Z after the release");
-    assert(slChain().pairs.length == 2 && slTool() == "edgeSlice",
-           format("(c) positive control: Ctrl+Z after the release did not pop point 3: %d point(s)",
-                  slChain().pairs.length));
-    tap(K_RETURN, K_RETURN_SCAN, 0, "(g) Return after the release");
-    assert(slHistoryLen() == H2 + 1 && slChain().pairs.length == 0,
-           format("(g) positive control: Return after the release did not commit: history %d "
-                  ~ "(expected %d), %d point(s)", slHistoryLen(), H2 + 1, slChain().pairs.length));
-    slLine("tool.set mesh.edgeSliceTool off");
-    cast(void) pro;
-}
-
-// ---------------------------------------------------------------------------
 // (d) MIDDLE button — Slice's middle-drag relocate: Ctrl+Z held is dropped.
 // (f) C-H9-X — X during a held LMB draw is dropped: the chord never engages.
 // (i) C-H9-X-up — an X release during the hold is never delivered: the chord
@@ -295,6 +253,48 @@ unittest { // (i) C-H9-X-up, the release
     keyUp(K_x, K_x_SCAN, "(i) free X up");
     assert(!chordOn(), "(i) positive control: a free X tap did not clear the chord");
     slLine("tool.set mesh.sliceTool off");
+}
+
+// ---------------------------------------------------------------------------
+// (c)+(g) C-O5-es — Edge Slice, a third point held down: Ctrl+Z and Return are
+// dropped (the chain stays live, the history does not move); after the release
+// Ctrl+Z pops the third point and Return commits (positive controls).
+// ---------------------------------------------------------------------------
+enum int[2][3] HINT_OFF = [[315, 303], [531, 355], [616, 270]];
+
+unittest {
+    auto pro = slPrologue(false, "polygons", &slBackAndLeft, true);
+    slLine("tool.set mesh.edgeSliceTool on");
+    assert(slTool() == "edgeSlice", "(c) edge slice floor: the tool did not arm");
+    const P = slFrontRightChain();
+    int[2][3] px;
+    foreach (k; 0 .. 3)
+        px[k] = slEdgePixel(P[k][0], P[k][1], HINT_OFF[k], format("(c) point %d", k + 1));
+    foreach (k; 0 .. 2) {
+        slClickDown(px[k][0], px[k][1], format("(c) click %d", k + 1));
+        slDragUp(px[k][0], px[k][1], 0, 4, 3, format("(c) drag %d", k + 1));
+    }
+    assert(slChain().pairs.length == 2, "(c) edge slice floor: two points did not latch");
+    const H2 = slHistoryLen();
+    slClickDown(px[2][0], px[2][1], "(c) point 3 press, held");
+    ctrlZ("(c) Ctrl+Z while held");
+    tap(K_RETURN, K_RETURN_SCAN, 0, "(g) Return while held");
+    slDragUp(px[2][0], px[2][1], 0, 4, 3, "(c) point 3 drag + release");
+    const c3 = slChain();
+    assert(slTool() == "edgeSlice" && c3.pairs.length == 3 && slHistoryLen() == H2,
+           format("(c)/(g) C-O5-es: a key reached Edge Slice while its button was held: tool '%s', "
+                  ~ "%d point(s) after the release (expected 3), history %d (expected %d)",
+                  slTool(), c3.pairs.length, slHistoryLen(), H2));
+    ctrlZ("(c) Ctrl+Z after the release");
+    assert(slChain().pairs.length == 2 && slTool() == "edgeSlice",
+           format("(c) positive control: Ctrl+Z after the release did not pop point 3: %d point(s)",
+                  slChain().pairs.length));
+    tap(K_RETURN, K_RETURN_SCAN, 0, "(g) Return after the release");
+    assert(slHistoryLen() == H2 + 1 && slChain().pairs.length == 0,
+           format("(g) positive control: Return after the release did not commit: history %d "
+                  ~ "(expected %d), %d point(s)", slHistoryLen(), H2 + 1, slChain().pairs.length));
+    slLine("tool.set mesh.edgeSliceTool off");
+    cast(void) pro;
 }
 
 // ---------------------------------------------------------------------------

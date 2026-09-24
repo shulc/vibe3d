@@ -18,7 +18,7 @@ unittest { // u1: per-button release — the set empties only when every button 
     h.press(2);                                   // MMB
     assert(h.any && h.bits == 0b011, "M1a u1: LMB+MMB did not set bits 0 and 1");
     h.release(2);
-    assert(h.any && h.bits == 0b001, "M1a u1: MMB up cleared LMB as well");
+    assert(h.any && h.bits == 0b001, "M1a u1: MMB up did not leave exactly LMB held");
     h.release(1);
     assert(!h.any && h.bits == 0, "M1a u1: LMB up did not clear its bit");
     h.press(3);                                   // RMB: any button counts
