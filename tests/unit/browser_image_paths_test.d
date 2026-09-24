@@ -9,7 +9,9 @@
 module tests.unit.browser_image_paths_test;
 
 import std.algorithm : canFind;
-import std.file : exists, getSize, mkdirRecurse, read, rmdirRecurse, tempDir, write;
+import std.conv : octal;
+import std.file : exists, getSize, mkdirRecurse, read, rmdirRecurse, setAttributes,
+                 tempDir, write;
 import std.format : format;
 import std.json : JSONType, parseJSON;
 import std.path : buildNormalizedPath, buildPath;
@@ -212,6 +214,19 @@ unittest {
     mkdirRecurse(d6);
     assert(call([d6, x1]) == "" && call([x1, d6]) == "",
         "R18b: a directory is not a file and collides with nothing");
+
+    // A file that exists at another size but cannot be opened is unreadable:
+    // it collides with nothing, though its stat alone would say "different".
+    const p7 = buildPath(r, "7", "a.png");
+    writeTestBmp(p7, 3, 2);
+    setAttributes(p7, 0);
+    scope (exit) setAttributes(p7, octal!644);
+    assert(getSize(p7) != getSize(x1), "R18b fixture: p7 differs in size from x1");
+    bool opens = true;
+    try read(p7); catch (Exception) opens = false;
+    if (!opens)
+        assert(call([x1, p7]) == "" && call([p7, x1]) == "",
+            "R18b: an unopenable file collides with nothing, got " ~ call([x1, p7]));
 }
 
 // R18d — the cost contract: reads happen only where a byte compare decides.
@@ -299,6 +314,15 @@ unittest {
     lwo.setPath(buildPath(r, "out", "d.lwo"));
     assert(lwo.apply(), "R18c control: a browser LWO export is not checked, reason '"
         ~ lwo.refusalReason() ~ "'");
+    auto obj = new FileSave(diff.activeMesh(), v, EditMode.Vertices, &diff);
+    obj.configure(FileSaveMode.exportSingle, ".obj");
+    obj.setPath(buildPath(r, "out", "d.obj"));
+    // Whether the exporter itself succeeds here is not this cell's question;
+    // only that the name check did not refuse it.
+    try obj.apply(); catch (Exception) {}
+    assert(!obj.refusalReason().canFind("both named"),
+        "R18c control: a browser OBJ export is not checked, reason '"
+        ~ obj.refusalReason() ~ "'");
 
     // The browser `.v3d` save refuses before anything is written or handed off.
     const refused = buildPath(r, "out", "d2.v3d");
