@@ -765,6 +765,16 @@ public:
         // awaiting-first-press state, so a run is started exactly when a
         // preview is built; the fix redefines it.
         root["runStarted"] = JSONValue(built);
+        // Where the Move bank draws its handle — the channel a witness reads
+        // to find the handle instead of the action centre. A never-posed
+        // handler reads NaN and answers null; nothing is initialised here.
+        {
+            import std.math : isNaN;
+            immutable Vec3 g = xfrm.moveGizmoCenter();
+            root["gizmoCentre"] = (isNaN(g.x) || isNaN(g.y) || isNaN(g.z))
+                ? JSONValue(null)
+                : JSONValue([JSONValue(g.x), JSONValue(g.y), JSONValue(g.z)]);
+        }
         return root;
     }
 

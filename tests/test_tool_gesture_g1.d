@@ -926,18 +926,16 @@ unittest {
         },
         {
             auto vp = viewportFromCamera(fetchCamera(BASE));
-            // The click relocated the action centre (the off-gizmo press of
-            // the None/Auto modes), so the anchor is RE-READ, not assumed.
+            // The handle is found where the tool draws it (`gizmoCentre`),
+            // RE-READ after the click rather than assumed.
             Vec3 anchor;
             {
-                bool found;
-                foreach (st; getJ("/api/toolpipe")["stages"].array) {
-                    if (st["id"].str != "actionCenter") continue;
-                    anchor = Vec3(st["attrs"]["cenX"].str.to!float, st["attrs"]["cenY"].str.to!float,
-                                  st["attrs"]["cenZ"].str.to!float);
-                    found = true;
+                auto g = getJ("/api/tool/state")["gizmoCentre"];
+                assert(g.type == JSONType.array, "edge.extend gizmoCentre is not posed: " ~ g.toString);
+                float f(size_t i) {
+                    return g[i].type == JSONType.integer ? cast(float) g[i].integer : cast(float) g[i].floating;
                 }
-                assert(found, "no actionCenter stage in /api/toolpipe");
+                anchor = Vec3(f(0), f(1), f(2));
             }
             enum float R = 0.70710678f;
             Vec3 axis   = Vec3(R, 0.0f, -R);

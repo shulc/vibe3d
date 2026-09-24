@@ -235,14 +235,17 @@ Px frontScreen(double wx, double wy) {
               cast(int) round(cy - (wy - num(c["focus"]["y"])) / wpp));
 }
 
-/// The gizmo centre on screen: the action centre, projected (top view).
-Px gizmoPx() {
-    foreach (st; getJson("/api/toolpipe")["stages"].array) {
-        if (st["id"].str != "actionCenter") continue;
-        return topScreen(st["attrs"]["cenX"].str.to!double, st["attrs"]["cenZ"].str.to!double);
-    }
-    assert(false, "no actionCenter stage in /api/toolpipe");
+/// Where the Edge Extend handle is drawn: the tool's `gizmoCentre` readout
+/// (the Move bank's handler centre), not the action centre — the two part
+/// once a press stops placing the action centre.
+double[3] gizmoCentre() {
+    auto g = toolState()["gizmoCentre"];
+    assert(g.type == JSONType.array, "gizmoCentre is not posed: " ~ g.toString);
+    return [num(g[0]), num(g[1]), num(g[2])];
 }
+
+/// The gizmo centre on screen, projected (top view).
+Px gizmoPx() { auto g = gizmoCentre(); return topScreen(g[0], g[2]); }
 
 /// The Z arm's press pixel in the top view: the gizmo centre plus the same
 /// screen offset file 1's block A presses (the arm points screen-down).

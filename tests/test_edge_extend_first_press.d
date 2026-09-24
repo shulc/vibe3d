@@ -182,3 +182,39 @@ unittest { // (S) under symmetry the first press starts a zero-length ring on bo
                vertexCount(), faceCount(), nv));
     cmd("tool.set edge.extend off");
 }
+
+// (Cp) law Q-pose (gap 245): the handle stays at the edge. The front-camera
+// variant of this file's rig (the one edge (7,8), Auto): a press on empty
+// space neither moves the handle nor places it; a second press at the same
+// point is a haul again, and afterwards the handle sits at edge + offset.
+// Last in the file, so its fix switches on nothing below it.
+unittest {
+    rigNoArm(kEdge, true, 0.3, 0.55);
+    enum double pX = 0.5, pY = 1.35;
+    immutable Px p = frontScreen(pX, pY);
+    immutable int[3] bg = probe(p);
+    keyArm();
+    click(p);
+    assert(moveOffGizmo() && built() && vertexCount() == 11,
+        format("rig: the first click did not start the run: moveOffGizmo %s, built %s, %d v",
+               moveOffGizmo(), built(), vertexCount()));
+    auto g = gizmoCentre();
+    assert(abs(g[0] - 1) <= 0.02 && abs(g[1] - 0.5) <= 0.02 && abs(g[2]) <= 0.02,
+        format("the first press moved the Edge Extend handle off the edge (reference: it stays at the edge, "
+             ~ "Q-pose, gap 245): gizmoCentre %s, edge midpoint (1, 0.5, 0)", g));
+    immutable int[3] now = probe(p);
+    assert(sameColour(now, bg), format("the Edge Extend handle is drawn at the click point (Q-pose): pixel %s "
+        ~ "was %s, now %s", p, bg, now));
+    press(p);
+    assert(moveOffGizmo(), format("a repeated press at the click point grabbed the handle (reference: a haul, "
+        ~ "Q-pose): moveOffGizmo %s, dragAxis %d", moveOffGizmo(), grabbedAxis()));
+    assertAnchorAt(pX, pY, "a repeated press at the click point grabbed the handle (reference: a haul, Q-pose)");
+    Px end;
+    increments(p, kIncrementPx, kIncrementPx, 10, end);
+    release(end);
+    auto o = offset();
+    g = gizmoCentre();
+    assert(abs(g[0] - (1 + o.x)) <= 0.02 && abs(g[1] - (0.5 + o.y)) <= 0.02 && abs(g[2] - o.z) <= 0.02,
+        format("the handle did not follow edge + offset (C2-zo): gizmoCentre %s, offset %s", g, o));
+    cmd("tool.set edge.extend off");
+}
