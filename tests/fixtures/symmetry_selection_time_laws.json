@@ -6,7 +6,7 @@
   "method": "gui-gesture",
   "captured_utc": "2026-09-24",
   "harness": "toolcards/symmetry_selection/harness (private)",
-  "task": "7145, 7146",
+  "task": "7145, 7146, 7147",
   "notes": "GUI worker, fresh boot per cell, selections by real pointer input except the script/command doors; numeric transforms applied as one scripted block while no tool session was live; drags by relative pointer increments; every cell journal passed the session gate with 0 in-session reads"
  },
  "index_map": {
@@ -24,7 +24,7 @@
   "authoring_side": "each operand vertex on the AUTHORING side A takes the transform T; each operand vertex on the other side takes its mirror M T M. The side is a latched state: every press (on or off the handle) sets it to the press side, it survives a tool drop and re-arm, and a fresh session starts at -X (so a numeric apply with no earlier press authors on -X). A selected pair therefore stays mirror-symmetric; a lone vertex off A moves by the mirrored delta",
   "weights": "numeric door: falloff weights of a pair are read at its +X member (and a lone vertex uses its own position); the action centre handle sits on the +X member. Drag-door weights under a linear falloff are NOT measured (see notes)",
   "on_plane": "an on-plane vertex keeps its plane coordinate",
-  "authoring_side_latch": "the side is latched wherever an action centre is placed: a tool ACTIVATION latches the handle's side (the handle sits at the +X half of the selection); every press latches the press side (move, rotate, edge extend alike, with symmetry on or off); switching an action-centre tool on latches that centre's side (the origin gave -X). The side is global (one value across presets and tools), survives symmetry off/on and an axis change, and is not part of undo; undoing after a drop re-activates the tool, which re-latches",
+  "authoring_side_latch": "the side is latched wherever an action centre is placed: a tool ACTIVATION latches the handle's side (the handle sits at the +X half of the selection); every press latches the press side (move, rotate, edge extend alike, with symmetry on or off) only when the press PLACES the centre (a pinned selection centre is not moved by a press, and that press leaves the side at the centre's side); a selection change while a transform is armed re-activates it and so latches the re-centred handle's side; switching an action-centre tool on latches that centre's side (the origin gave -X). The side is global (one value across presets and tools), survives symmetry off/on and an axis change, and is not part of undo; undoing after a drop re-activates the tool, which re-latches",
   "off_side_evaluation": "an operand vertex off the authoring side is evaluated as M K(M p) with the whole transform K, pivot included; the one-block numeric door evaluates no action centre, so its pivot is the world origin"
  },
  "cells": {
@@ -1225,12 +1225,151 @@
     ]
    ],
    "status": "dropped from the gate: a panel-typed offset before any press does not apply, and inside the tool every operation starts with a re-latching press; this scripted-block reading is kept as data only"
+  },
+  "C-press-pinned": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API); move preset armed and activated (handle at the vertex, -X) with the SELECTION action centre switched on in the same block; press OFF the handle at +X, haul 10 x 8 px right; the handle stays on the moved vertex (not at the press point); dropped with a key; numeric TX 0.4",
+   "haul": {
+    "before": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "after": [
+     -0.25,
+     0.53,
+     0.5
+    ]
+   },
+   "numeric": {
+    "before": [
+     -0.25,
+     0.53,
+     0.5
+    ],
+    "after": [
+     0.15,
+     0.53,
+     0.5
+    ],
+    "dx": 0.4
+   },
+   "pipe_after_drop": "on",
+   "twin_pipe_cleared": {
+    "note": "same, then Escape (clears the pipe: the selection centre reads off) and the vertex re-selected before the numeric step",
+    "haul_after": [
+     -0.25,
+     0.53,
+     0.5
+    ],
+    "numeric": {
+     "before": [
+      -0.25,
+      0.53,
+      0.5
+     ],
+     "after": [
+      0.15,
+      0.53,
+      0.5
+     ],
+     "dx": 0.4
+    }
+   },
+   "control_relocating_centre": {
+    "note": "same rig without the selection centre: the handle jumps to the press point",
+    "haul_after": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "numeric": {
+     "before": [
+      -0.74,
+      0.58,
+      0.5
+     ],
+     "after": [
+      -1.14,
+      0.58,
+      0.5
+     ],
+     "dx": -0.4
+    },
+    "numeric_escape_readout": {
+     "before": [
+      -0.74,
+      0.58,
+      0.5
+     ],
+     "after": [
+      -1.14,
+      0.58,
+      0.5
+     ],
+     "dx": -0.4
+    }
+   },
+   "verdict": "P-acen: a press whose action centre is pinned does not latch the press side; the vertex follows the hand during the haul (own delta) and the side read afterwards is the pinned centre's (-X). With a relocating centre the same press latches +X"
+  },
+  "C-latch-sel": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API); move preset armed and activated (handle at the vertex, -X); while the tool is armed, a selection key: connected (all 8) or invert (the other 7); the handle re-centres on the +X half, (0.5,0,0); the journal shows a tool re-activation right after the selection command; dropped with a key; only (-0.5,0.5,0.5) re-selected (scripting API); numeric TX 0.4",
+   "selection_after_key": {
+    "connected": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7
+    ],
+    "invert": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6
+    ]
+   },
+   "numeric": {
+    "before": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "after": [
+     -0.9,
+     0.5,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "twin_invert": {
+    "numeric": {
+     "before": [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     "after": [
+      -0.9,
+      0.5,
+      0.5
+     ],
+     "dx": -0.4
+    }
+   },
+   "verdict": "S-latch: a selection change while a transform is armed re-activates the tool, and the activation latches the side of the re-centred handle (+X)"
   }
  },
  "notes": [
   "Linear falloff with a DRAG cannot be driven here: the press re-fits the falloff to the symmetry-halved selection box (start = end), zeroing every weight; so the pair weight side on the drag door is open.",
   "7146: the handle-press latch of 7145 (C-handle) is not separated from the activation latch: the activation had just latched the same side. Every other press cell pressed on the side opposite its activation.",
   "7146: C-latch-u's committed-undo door and C-latch-r's first readout are confounded (re-activation; an action-centre switch in the readout block) and are kept only as notes; the live-undo twin and C-latch-r3 carry the verdicts.",
+  "7147: whether a press under a pinned centre re-latches the centre's side or latches nothing cannot be separated: every path to such a press has just activated the tool, which latched the same centre's side.",
   "C-lasso's outline was a triangle enclosing one vertex; a closed rectangle path returning to its start selected nothing (kept as raw/C-lasso-r1-closedpath)."
  ]
 }
