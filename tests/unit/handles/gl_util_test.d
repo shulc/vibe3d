@@ -103,9 +103,12 @@ unittest {
     }
 
     // Rotate: the gate is the viewport TYPE, so a perspective cell keeps every
-    // ring however it is aimed — including the two that are exactly edge-on.
+    // ring however it is aimed — including the two that are exactly edge-on,
+    // and even when the cell carries an axis-preset flag (projection first).
     {
         auto vp = perspAt(Vec3(0, 0, 10));
+        vp.axisPreset = true;
+        assert(!isAxisView(vp), "a perspective projection is never an axis view");
         assert(!rotateRingHidden(Vec3(1, 0, 0), Vec3(0, 0, 0), vp));
         assert(!rotateRingHidden(Vec3(0, 1, 0), Vec3(0, 0, 0), vp));
         assert(!rotateRingHidden(Vec3(0, 0, 1), Vec3(0, 0, 0), vp));
