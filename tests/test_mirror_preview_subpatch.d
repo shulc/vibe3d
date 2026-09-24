@@ -14,7 +14,8 @@
 // Blocks, in the order the law needs them: A (time: nothing before the press),
 // B (press = live edit; refusal; drop; one undo step), C (item space), D (the
 // first Ctrl+Z drops the live copy and keeps the tool); task 7116 adds E (a
-// press on a handle also starts the edit) and F (a tool switch commits it).
+// press on a handle also starts the edit), F (a tool switch commits it) and G
+// (a switch from an untouched tool records nothing).
 // Each block opens with its rig floor, so a red below it cannot be a rig that
 // never happened.
 
@@ -90,6 +91,14 @@ double[3][] modelVerts() {
         r ~= [a[0].floating, a[1].floating, a[2].floating];
     }
     return r;
+}
+
+/// Edit records on the undo stack; tool lifecycle rows (flag bit 10) share it.
+string[] editLabels() {
+    string[] edits;
+    foreach (e; getJson("/api/history")["undo"].array)
+        if ((e["flags"].integer & (1L << 10)) == 0) edits ~= e["label"].str;
+    return edits;
 }
 
 string activeTool() {
@@ -234,6 +243,11 @@ unittest {
         format("7115 mirror copy drawn before the first viewport press: %s, was %s",
                armed, empty));
     cmd("tool.set " ~ TOOL ~ " off");
+    settle();
+    // Task 7116: an untouched drop commits nothing.
+    assert(faceCount() == 6 && editLabels().length == 0,
+        format("7116 untouched mirror drop recorded an edit: %d polygons, edits %s",
+               faceCount(), editLabels()));
 }
 
 // ---- B: the press is a live edit; apply refused; the drop commits ----------
@@ -412,12 +426,24 @@ unittest {
         format("7116 tool switch changed the live mirror result: %d polygons, "
              ~ "%d vertices", faceCount(), vertexCount()));
     cmd("tool.set move off");
-    // Edit records only: tool lifecycle rows (flag bit 10) share the stack.
-    string[] edits;
-    foreach (e; getJson("/api/history")["undo"].array)
-        if ((e["flags"].integer & (1L << 10)) == 0) edits ~= e["label"].str;
+    auto edits = editLabels();
     assert(edits == ["Mirror"],
         format("7116 tool switch did not commit the mirror as one edit record: %s",
                edits));
+    cmd("viewport.view Perspective");
+}
+
+// ---- G (task 7116): switching away from an UNTOUCHED mirror records nothing -
+unittest {
+    subpatchCube();
+    orthoCamera("Front", [1.5, 0, 0], 6.0);
+    armAtOrigin();
+    cmd("tool.set move");
+    settle();
+    assert(activeTool() == "move", "7116 G rig: the switch did not arm move");
+    cmd("tool.set move off");
+    assert(faceCount() == 6 && editLabels().length == 0,
+        format("7116 switch from an untouched mirror recorded an edit: %d polygons, "
+             ~ "edits %s", faceCount(), editLabels()));
     cmd("viewport.view Perspective");
 }
