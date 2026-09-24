@@ -255,12 +255,20 @@ unittest {
 
     static struct Case { string file, expected; string[] cells; }
     const Case[2] cases = [
-        Case("case_v3d.mjs", `[[ $v3d_cells != "C0 C1 C2 C3 C4 C4b C5 C6 C7 C8 " ]]`,
+        Case("case_v3d.mjs",
+             "\n    if [[ $v3d_cells != \"C0 C1 C2 C3 C4 C4b C5 C6 C7 C8 \" ]]; then\n"
+             ~ "        echo \"WEB-FILE-IO mode=$mode: expected cells C0 C1 C2 C3 C4 C4b C5 C6 C7 C8"
+             ~ " once each, got: $v3d_cells\" >&2\n        exit 1\n    fi\n",
              ["C0", "C1", "C2", "C3", "C4", "C4b", "C5", "C6", "C7", "C8"]),
-        Case("case_images.mjs", `[[ $img_cells != "I0 I1 I2 I3 I4 I5 I6 " ]]`,
+        Case("case_images.mjs",
+             "\n    if [[ $img_cells != \"I0 I1 I2 I3 I4 I5 I6 \" ]]; then\n"
+             ~ "        echo \"WEB-FILE-IO-IMG mode=$mode: expected cells I0 I1 I2 I3 I4 I5 I6"
+             ~ " once each, got: $img_cells\" >&2\n        exit 1\n    fi\n",
              ["I0", "I1", "I2", "I3", "I4", "I5", "I6"]),
     ];
     foreach (c; cases) {
+        // The check is pinned as the WHOLE if-block through `exit 1` and `fi`:
+        // a condition pin alone stays green when `exit 1` becomes `true`.
         // The WHOLE call line, so a `true || ` in front cannot keep a pin green.
         const call = "\n    timeout 240 node \"$repo_root/tools/web_file_io/" ~ c.file ~ "\" \\\n";
         const at = lane.countUntil(call);

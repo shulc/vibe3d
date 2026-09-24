@@ -208,7 +208,11 @@ unittest {
 
     // The lane counts the cells that PRINTED ok, per mode, against the full
     // list; a summary the case writes about itself cannot see a disabled cell.
-    const expectedCells = `[[ $lwo_cells != "L0 L1 L2 L2r L3 L3b L4 L5 " ]]`;
+    // The WHOLE if-block through `exit 1` and `fi`: a condition pin alone stays
+    // green when `exit 1` becomes `true`.
+    const expectedCells = "\n    if [[ $lwo_cells != \"L0 L1 L2 L2r L3 L3b L4 L5 \" ]]; then\n"
+        ~ "        echo \"WEB-FILE-IO-LWO mode=$mode: expected cells L0 L1 L2 L2r L3 L3b L4 L5"
+        ~ " once each, got: $lwo_cells\" >&2\n        exit 1\n    fi\n";
     const check = lane.countUntil(expectedCells);
     assert(lane.count(expectedCells) == 1 && check > at && lane[at .. check].count("\ndone") == 0,
         "7440 census: tools/test_web_file_io.sh must check the eight LWO cell lines inside the mode loop");
