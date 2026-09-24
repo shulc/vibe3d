@@ -1165,7 +1165,8 @@ private:
     // edge (a click on any chord the tool made, primary or mirror).
     void assignBase(ref ChainPoint p) {
         if (!chainBefore_.filled) return;
-        locateBase(chainBefore_, chainPointPos(p), p.facePoint);
+        locateBase(chainBefore_.vertices, chainBefore_.edges, chainBefore_.faces,
+                   chainPointPos(p), p.facePoint);
     }
 
     // The BASE-mesh polygons point `q` lies in: the faces of the base edge it
@@ -1173,13 +1174,12 @@ private:
     // polygon it is inside (`facePoint`). Tolerances are relative to the edge
     // or polygon size; a polygon is tested in its Newell plane, so a point on
     // a chord of a WARPED polygon is still inside it.
-    static uint[] locateBase(ref const MeshSnapshot base, Vec3 q, out bool facePoint) {
+    static uint[] locateBase(const Vec3[] vs, const uint[2][] es, const uint[][] fs,
+                             Vec3 q, out bool facePoint) {
         import std.math : abs, sqrt;
         facePoint = false;
-        const vs = base.vertices;
-        const fs = base.faces;
         uint[] faces;
-        foreach (e; base.edges) {
+        foreach (e; es) {
             const a = vs[e[0]], b = vs[e[1]];
             const ab = b - a;
             const len2 = dot(ab, ab);
@@ -1494,7 +1494,7 @@ private:
             }
             const q = lerpVec3(work.vertices[pts[i].v0], work.vertices[pts[i].v1],
                                effectiveT(pts[i].t));
-            faces[i] = locateBase(baseline, q, isFace[i]);
+            faces[i] = locateBase(baseline.vertices, baseline.edges, baseline.faces, q, isFace[i]);
         }
         locate(0);
         size_t n;
