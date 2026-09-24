@@ -267,9 +267,11 @@ private void rig(Instance instance, string panel) {
 /// Drag the field at (x0, y0) by `steps` increments of 20 px, asserting
 /// after each increment and before release that the channel grew and the
 /// viewport followed. `label` names the surface in the red line.
-private void dragFollows(Instance instance, int x0, int y0, string label) {
+/// Returns the silhouette column before the drag, for the undo cell.
+private int dragFollows(Instance instance, int x0, int y0, string label) {
     enum int steps = 10;
     int column = rightSilhouette(instance);
+    const startColumn = column;
     assert(column > 0, "7125 " ~ label ~ " floor: the item outline is on row "
         ~ kRow.to!string);
     play(instance, [motion(x0, y0, 0), motion(x0, y0, 0),
@@ -300,6 +302,7 @@ private void dragFollows(Instance instance, int x0, int y0, string label) {
     assert(value > 0.19 && value < 0.21, format(
         "7125 %s floor: ten increments of 0.02 should reach 0.2, got %.4f",
         label, value));
+    return startColumn;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +336,19 @@ unittest {
     auto instance = launch("properties");
     scope(exit) stop(instance);
     rig(instance, "ui.layerList show");
-    dragFollows(instance, 715, 135, "properties slider");
+    const startColumn = dragFollows(instance, 715, 135, "properties slider");
+    // Undo with no tool: the revert is the only publication that can dirty
+    // the cell, so the view must return to the pre-drag column on its own.
+    const dragged = rightSilhouette(instance);
+    assert(dragged > startColumn, "7125 undo floor: the drag moved the view");
+    command(instance, "history.undo");
+    assert(channel(instance, "pos.x") == 0.0,
+        "7125 undo floor: one undo reverts the coalesced drag to pos.x 0");
+    const undone = columnAfter(instance, dragged);
+    assert(undone == startColumn, format(
+        "viewport did not follow the undo of the channel drag: right "
+        ~ "silhouette column %d, expected the pre-drag %d (dragged %d)",
+        undone, startColumn, dragged));
 }
 
 // ---------------------------------------------------------------------------
@@ -343,5 +358,5 @@ unittest {
     auto instance = launch("channels");
     scope(exit) stop(instance);
     rig(instance, "ui.channels show");
-    dragFollows(instance, 715, 128, "channels row");
+    cast(void)dragFollows(instance, 715, 128, "channels row");
 }
