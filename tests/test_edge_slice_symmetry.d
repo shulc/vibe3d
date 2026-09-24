@@ -203,3 +203,63 @@ void thirdOnCutEdge(int side) {
 
 unittest { thirdOnCutEdge(0); }
 unittest { thirdOnCutEdge(1); }
+
+/// Index of the model vertex at `p` (+-1e-3), or -1.
+long vertexAt(double[3] p) {
+    foreach (i, v; getJson("/api/model")["vertices"].array) {
+        auto a = v.array;
+        if (dist3([a[0].floating, a[1].floating, a[2].floating], p) <= 1e-3) return cast(long)i;
+    }
+    return -1;
+}
+
+// The mirror chain's vertex ranges follow a PARAMETER re-bake, not only a
+// click. Split OFF, two clicks two rows apart (2 new vertices per side); Split
+// ON re-bakes through the parameter path and adds each side's crossing vertex
+// at z = 1, so the mirror chain's range moves. A third click on the mirror
+// chord's upper piece (z 1..2, ending at the second point's image) must still
+// join the mirror chain: the result is closed under the mirror. (The lower
+// piece is not used: a segment from the second point across the z = 1 row
+// takes a face path that is not mirror-equivariant, a separate limit.) Reading the range from before the parameter change takes the
+// chord's crossing vertex for a primary one and bakes a plane-crossing chain.
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    slLine("tool.attr mesh.edgeSliceTool split false");
+    foreach (k; 0 .. 2) {
+        const double z = 2 * k;
+        const pr = gridPair(1, z, 2, z);
+        const p = pixelOf(1.5, 0, z);
+        hoverFloor(p, pr[0], pr[1], format("split-off click %d", k + 1));
+        slClickDown(p[0], p[1], format("split-off click %d", k + 1));
+        slPlay(slButton(20, false, 1, p[0], p[1]), format("split-off release %d", k + 1));
+    }
+    const off = verticesFrom(GRID_VERTS);
+    assert(off.length == 4, "split-off chain: expected 2 points per side: " ~ p3s(off));
+    slLine("tool.attr mesh.edgeSliceTool split true");
+    const on = verticesFrom(GRID_VERTS);
+    assert(on.length == 6 && mirrorClosed(on),
+           "split-on re-bake: expected 3 vertices per side, mirrored: " ~ p3s(on));
+    double[3] lo = [0, 0, 0], mid = [0, 0, 0];
+    foreach (v; on) if (v[0] < 0 && v[2] > 1.5) lo = v; else if (v[0] < 0 && v[2] > 0.5 && v[2] < 1.5) mid = v;
+    const a = vertexAt(lo), b = vertexAt(mid);
+    assert(lo[0] < 0 && mid[0] < 0 && a >= GRID_VERTS && b >= GRID_VERTS,
+           "mirror chord ends not found: " ~ p3s(on));
+    const px = pixelOf((lo[0] + mid[0]) / 2, 0, (lo[2] + mid[2]) / 2);
+    hoverFloor(px, a, b, "mirror chord after the split re-bake");
+    slClickDown(px[0], px[1], "press 3");
+    slPlay(slButton(20, false, 1, px[0], px[1]), "release 3");
+    auto st = getJson("/api/tool/state");
+    const segs = st["bakedSegments"].integer, msegs = st["mirrorBakedSegments"].integer;
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    writeln("third on mirror chord after a split re-bake: ", mesh, " segments ", segs, "/",
+            msegs, " new ", p3s(born));
+    assert(segs == 2 && msegs == 2 && mesh.verts == 33 && mesh.faces == 20
+           && born.length == 8 && mirrorClosed(born),
+           format("mirror chord click after a parameter re-bake is not mirrored: segments "
+                  ~ "%d/%d, mesh %s, new vertices %s", segs, msegs, mesh.toString, p3s(born)));
+}
