@@ -56,3 +56,61 @@ unittest { // singular fit: every point on z = x, a plane through the world orig
     double[3][] q = [[1.0, 0, 1.5], [2.0, 1, 2], [0.0, 2, 0], [2.0, 2, 2]];
     assert(planeFitNormal(q, n), "an off-plane point must make the fit regular");
 }
+
+// Cells below pin the decoded steps one at a time. Every expectation was
+// produced by the decode's own replica of the reference arithmetic (the
+// private capture's skew_sim.py: hull_cw / major_axis / amax), not by ours.
+
+unittest { // AxisMaxExtent tie rules
+    assert(axisMaxExtent([1.0, 1, 0]) == 1, "x == y > z: y wins");
+    assert(axisMaxExtent([1.0, 1, 1]) == 2, "x == y == z: z wins");
+    assert(axisMaxExtent([1.0, 0, 1]) == 2, "x == z: z wins");
+    assert(axisMaxExtent([1.0, 0, 0.5]) == 0, "x strictly largest");
+    assert(axisMaxExtent([0.0, 1, 1]) == 2, "y == z: z wins");
+    assert(axisMaxExtent([-2.0, 1, 2]) == 2, "|x| == |z|: z wins");
+}
+
+private void hullIs(double[2][] pts, double[2][] want, string what) {
+    auto h = hullReferenceOrder(pts);
+    assert(h.length == want.length, what ~ ": hull population differs from the decode");
+    foreach (i; 0 .. want.length)
+        assert(h[i] == want[i], what ~ ": hull list order differs from the decode");
+}
+
+unittest { // hull list order: start, ties, collinear drops, reversal
+    // p0 tie (two lowest-v points): highest u starts; the list is reversed.
+    hullIs([[0.0, 0], [2.0, 0], [2.0, 1], [0.0, 1]],
+           [[0.0, 0], [0.0, 1], [2.0, 1], [2.0, 0]], "2x1 rectangle");
+    // A point collinear with p0 in the FIRST direction must be dropped by the
+    // collinear rule, or the scan pops below two points and stops.
+    hullIs([[2.0, 0], [2.0, 0.5], [2.0, 1], [0.0, 1], [0.0, 0]],
+           [[0.0, 0], [0.0, 1], [2.0, 1], [2.0, 0]], "collinear with p0");
+    // A point on a hull edge away from p0: strict left turns drop it.
+    hullIs([[0.0, 0], [2.0, 0], [2.0, 1], [1.0, 1], [0.0, 1]],
+           [[0.0, 0], [0.0, 1], [2.0, 1], [2.0, 0]], "point on an edge");
+}
+
+unittest { // major axis: first strict diameter, strict area, the longer side
+    // Equal diagonals and four equal-area candidates: the FIRST wins.
+    auto a = hullMajorAxis(hullReferenceOrder([[0.0, 0], [2.0, 0], [2.0, 1], [0.0, 1]]));
+    assert(a[0] == -1 && a[1] == 0, "2x1 rectangle: the decode gives (-1, 0)");
+    // The winning rectangle's longer side is perpendicular to its edge.
+    auto b = hullMajorAxis(hullReferenceOrder([[0.0, 0], [1.0, 0], [1.0, 3], [0.0, 3]]));
+    assert(b[0] == 0 && b[1] == 1, "1x3 rectangle: the decode gives (0, 1)");
+    // Two candidates of equal area with different directions: only a
+    // STRICTLY smaller area replaces, so the earlier one stands.
+    auto c = hullMajorAxis(hullReferenceOrder([[0.0, 2], [3.0, 4], [4.0, 4], [4.0, 1]]));
+    const r17 = 1 / sqrt(17.0);
+    assert(abs(c[0] + 4 * r17) < 1e-12 && abs(c[1] - r17) < 1e-12,
+        "equal-area candidates: the decode keeps (-4, 1)/sqrt(17)");
+}
+
+unittest { // exact duplicate endpoints are merged before the fit
+    import math : Vec3;
+    Vec3[] four = [Vec3(1, -0.5f, -0.2f), Vec3(2, -0.5f, -1.2f), Vec3(2, 0.5f, -0.2f), Vec3(1, 0.5f, -1.2f)];
+    Vec3[] five = four ~ Vec3(2, 0.5f, -0.2f);
+    Vec3 x4, y4, z4, x5, y5, z5;
+    assert(skewEdgePairFrame(four, x4, y4, z4) == SkewFit.ok, "four points must fit");
+    assert(skewEdgePairFrame(five, x5, y5, z5) == SkewFit.ok, "five points must fit");
+    assert(x4 == x5 && y4 == y5 && z4 == z5, "a duplicated endpoint must not weight the fit");
+}

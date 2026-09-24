@@ -311,6 +311,19 @@ unittest { // 3 (task 7120). skew rigs: each its own mesh, the decoded rule's he
     int eb = edgeOf(sm, vertexAt(sm, sv[3], "S"), vertexAt(sm, sv[4], "S"), "S");
     ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, ea, eb)));
     assert(!alignSel(), "workplane from coplanar-through-origin skew edges did not refuse");
+
+    // (S') the same, with inexact coordinates: the plane 0.3x + 0.5y - 0.7z = 0
+    // through the origin, so the determinant is round-off, not an exact 0 —
+    // the RELATIVE threshold must still see it as singular.
+    ok(commandBody("scene.reset"));
+    double zOf(double x, double y) { return (0.3 * x + 0.5 * y) / 0.7; }
+    double[3][] rv = [[0.3, 1.1, zOf(0.3, 1.1)], [1.7, 0.2, zOf(1.7, 0.2)], [0.9, 0.4, 2.5],
+                      [-1.3, 0.7, zOf(-1.3, 0.7)], [0.6, -1.9, zOf(0.6, -1.9)], [-0.5, -0.8, 3.1]];
+    auto rm = loadMesh(rv, parseJSON("[[0,1,2],[3,4,5]]"));
+    int ra = edgeOf(rm, vertexAt(rm, rv[0], "S'"), vertexAt(rm, rv[1], "S'"), "S'");
+    int rb = edgeOf(rm, vertexAt(rm, rv[3], "S'"), vertexAt(rm, rv[4], "S'"), "S'");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, ra, rb)));
+    assert(!alignSel(), "workplane from inexact coplanar-through-origin skew edges did not refuse");
 }
 
 unittest { // refusals: shapes the capture did not cover (task 7120; gap rows 185/186)
@@ -345,7 +358,29 @@ unittest { // refusals: shapes the capture did not cover (task 7120; gap rows 18
     int a2 = edgeOf(am, vertexAt(am, av[3], "A"), vertexAt(am, av[4], "A"), "A");
     ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, a1, a2)));
     expectRefusal("skew edges whose fitted normal is opposite its dominant axis");
-    assert(refused == 4, format("refusal cells: %d, expected 4", refused));
+    // Degenerate frames (plan: zero normal, collinear triple -> refuse).
+    // Three collinear vertices: no plane normal.
+    ok(commandBody("scene.reset"));
+    double[3][] cv = [[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0], [2.0, 1, 0], [0.0, 1, 0]];
+    auto cm = loadMesh(cv, parseJSON("[[0,1,2,3,4]]"));
+    ok(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d,%d,%d]}`,
+        vertexAt(cm, cv[0], "C"), vertexAt(cm, cv[1], "C"), vertexAt(cm, cv[2], "C"))));
+    expectRefusal("three collinear vertices");
+    // Two vertices whose normals cancel (two triangles facing away).
+    ok(commandBody("scene.reset"));
+    double[3][] ov = [[0.0, 0, 0], [1.0, 0, 0], [0.0, 1, 0], [3.0, 0, 0], [3.0, 1, 0], [4.0, 0, 0]];
+    auto om = loadMesh(ov, parseJSON("[[0,1,2],[3,4,5]]"));
+    ok(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d,%d]}`,
+        vertexAt(om, ov[0], "O"), vertexAt(om, ov[3], "O"))));
+    expectRefusal("two vertices whose normals cancel");
+    // Two vertices along their shared normal: X has no in-plane component.
+    ok(commandBody("scene.reset"));
+    double[3][] pv = [[0.0, 0, 0], [1.0, 0, 0], [0.0, 1, 0], [0.0, 0, 1], [1.0, 0, 1], [0.0, 1, 1]];
+    auto pm = loadMesh(pv, parseJSON("[[0,1,2],[3,4,5]]"));
+    ok(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d,%d]}`,
+        vertexAt(pm, pv[0], "P"), vertexAt(pm, pv[3], "P"))));
+    expectRefusal("two vertices stacked along their normal");
+    assert(refused == 7, format("refusal cells: %d, expected 7", refused));
 }
 
 unittest { // 5. the typed plane's Euler order: B = Rz * Rx * Ry
