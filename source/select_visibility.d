@@ -28,7 +28,7 @@ import display_state : DrawPlan;
 // CONSUMED TODAY — `occlusionTerm` by the ID-buffer picker
 // (`gpu_select.renderMode` runs its face depth pre-pass only when the term is
 // set) for hover, click and paint, and by the lasso's independent geometric
-// occlusion probe; `facingTerm` by the lasso's polygon cull (task 7130).
+// occlusion probe; `facingTerm` by the lasso's polygon cull.
 // ---------------------------------------------------------------------------
 
 /// The five values of the selection-visibility rule.
@@ -58,7 +58,7 @@ struct SelectVisibilityTerms {
     /// Cull geometry turned away from the eye.
     ///
     /// CONSUMED by the lasso's polygon cull only (`frontFacing` in
-    /// `InputRouter`'s lasso block, both branches, task 7130). Its one other
+    /// `InputRouter`'s lasso block, both branches). Its one other
     /// LAWFUL future consumer is snap (`snap.d`), which still carries its own
     /// unconditional facing rule. It MUST NEVER be wired into the click/hover path: that path is
     /// MEASURED to have no facing term at all (`CLAUDE.md` §Measured laws,
