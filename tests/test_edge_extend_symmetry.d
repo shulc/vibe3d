@@ -32,7 +32,8 @@
 // cells start their run with a motionless click there and only then take the
 // arm (an arm press continues the run and keeps the side). Below (d): (e) and
 // (e-m) select by a real symmetric click in the front camera and press on the
-// +X / -X side (outward / inward), (g) presses +X on the top rig.
+// +X / -X side (outward / inward), (e-f) repeats (e) with the arm key and
+// the press in one frame, (g) presses +X on the top rig.
 
 import edge_extend_gesture_helpers;
 import std.algorithm : sort;
@@ -220,12 +221,33 @@ void frontControl() {
 }
 
 /// (e)/(e-m): the symmetric click selects both edges, the haul presses at `px`.
-void pressSideCell(double px, bool outward, string msg) {
+/// `oneFrame`: the key arm and the haul press are ONE playback at one
+/// timestamp, so they land in one frame and no frame update of the freshly
+/// armed tool runs between them — the press's own read of the symmetry
+/// packet is then the only one before the drag (the drag's frames do not
+/// re-read it).
+void pressSideCell(double px, bool outward, string msg, bool oneFrame = false) {
     frontControl();
     immutable double want = outward ? 1 + ctlFront.x : 1 - ctlFront.x;
     symSelRig();
-    keyArm();
-    frontHaul(px, 1.35, kIncrementPx, kIncrementPx, 10);
+    if (!oneFrame) {
+        keyArm();
+        frontHaul(px, 1.35, kIncrementPx, kIncrementPx, 10);
+    } else {
+        assert(toolId() != "edgeExtend", msg ~ ": rig: Edge Extend armed before the one-frame playback");
+        Px p = frontScreen(px, 1.35);
+        play(format(`{"t":50.000,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":0,"repeat":0}` ~ "\n"
+                  ~ `{"t":50.000,"type":"SDL_KEYUP","sym":%d,"scan":0,"mod":0,"repeat":0}` ~ "\n"
+                  ~ `{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
+                  ~ `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+                    kExtendKey, kExtendKey, p.x, p.y, p.x, p.y));
+        assert(toolId() == "edgeExtend", msg ~ ": rig: the key in the one-frame playback did not arm Edge Extend");
+        assert(moveOffGizmo(), msg ~ ": rig: the one-frame press was not an off-handle haul");
+        assertAnchorAt(px, 1.35, msg ~ ": rig");
+        Px end;
+        increments(p, kIncrementPx, kIncrementPx, 10, end);
+        release(end);
+    }
     assert(px > 0 ? pressAnchor()[0] > 0.05 : pressAnchor()[0] < -0.05,
         msg ~ ": the press was not on its side (rig): " ~ pressAnchor().to!string);
     assert(vertexCount() == 13, msg ~ ": " ~ vertexCount().to!string ~ " v, expected 13");
@@ -245,6 +267,10 @@ unittest { // (e) C2-sym-sel: +X press, outward
 
 unittest { // (e-m) C2-sym-sel-m: -X press, inward
     pressSideCell(-0.5, false, "extend under symmetry ignored the press side (-X press, inward)");
+}
+
+unittest { // (e-f) (e) with the arm and the press in one frame: the press reads symmetry itself
+    pressSideCell(0.5, true, "extend under symmetry: a press in the arming frame did not read symmetry (+X press, outward)", true);
 }
 
 unittest { // (g) +X press on the top rig (+X ridge, symmetry after the selection)
