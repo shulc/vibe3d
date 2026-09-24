@@ -227,7 +227,7 @@ string resolveStoredPath(string stored, string docPath = null) {
     return here;   // best effort: definite, and `missing` will say it is gone
 }
 
-/// The browser-file-model resolution (task 7430, plan §3.8 rule 2): an image
+/// The browser-file-model resolution (plan §3.8 rule 2): an image
 /// is looked up ONLY in the document's own folder `dir`. Under this model the
 /// parent of `dir` is the MEMFS root holding every earlier pick, so a parent
 /// anchor, or a `..` that normalises out of `dir`, would silently find a stale
@@ -256,7 +256,7 @@ private string resolveInDocumentFolder(string stored, string dir) {
 }
 
 /// The first file name shared by two images that a flat, name-only save
-/// cannot tell apart (task 7430, plan §3.8 rule 3, owner Q7), or "" when
+/// cannot tell apart (plan §3.8 rule 3, owner Q7), or "" when
 /// there is none. Two entries collide when their paths differ, their file
 /// names are equal, and both files are readable with DIFFERENT bytes. The same
 /// path twice, or equal bytes, is not a collision: the reopened document gets
