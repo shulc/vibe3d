@@ -283,11 +283,10 @@ string firstCollidingImageName(const(string)[] resolvedPaths,
     foreach (i, a; resolvedPaths) {
         const name = baseName(a);
         const(ubyte)[] bytesA;
-        bool triedA, okA;
         foreach (b; resolvedPaths[i + 1 .. $]) {
-            if (b == a || baseName(b) != name) continue;
-            if (!triedA) { okA = bytesOf(a, bytesA); triedA = true; }
-            if (!okA) break;                    // `a` unreadable: collides with nothing
+            // The same path twice needs no rule: its bytes are equal.
+            if (baseName(b) != name) continue;
+            if (!bytesOf(a, bytesA)) break;     // `a` unreadable: collides with nothing
             const(ubyte)[] bytesB;
             if (!bytesOf(b, bytesB)) continue;
             if (bytesA != bytesB) return name;
