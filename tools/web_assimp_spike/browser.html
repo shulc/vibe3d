@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Separate Assimp and D wasm proof</title>
+<pre id="result">RUNNING</pre>
+<script src="assimp_module.js"></script>
+<script src="d_consumer.js"></script>
+<script>
+(async () => {
+  const check = (ok, message) => { if (!ok) throw new Error(message); };
+  const a = await createAssimp();
+  const d = await createDConsumer();
+  check(a._vibe_eh_probe() === 7, 'C++ exception');
+  check(d._vibe_d_eh_probe() === 11, 'D exception');
+  check(a.HEAPU8.buffer !== d.HEAPU8.buffer, 'wasm memories must differ');
+  const file = new Uint8Array(await (await fetch('fixture.glb')).arrayBuffer());
+  const p = a._malloc(file.length);
+  a.HEAPU8.set(file, p);
+  check(a._vibe_import_glb(p, file.length) === 1,
+    'import: ' + a.UTF8ToString(a._vibe_error()));
+  a._free(p);
+  const n = a._vibe_result_len();
+  const wire = Uint8Array.from(a.HEAPU8.subarray(a._vibe_result_ptr(), a._vibe_result_ptr() + n));
+  const q = d._malloc(n);
+  d.HEAPU8.set(wire, q);
+  check(d._vibe_consume_scene(q, n) === 1, 'D wire decode');
+  const counts = [d._vibe_d_parts(), d._vibe_d_vertices(), d._vibe_d_faces()];
+  check(counts.every(x => x > 0), 'empty scene');
+  d.HEAPU8[q] ^= 0xff;
+  check(d._vibe_consume_scene(q, n) === 0, 'corrupt wire accepted');
+  d._free(q);
+  document.getElementById('result').textContent =
+    `PASS source=${file.length} wire=${n} parts=${counts[0]} vertices=${counts[1]} faces=${counts[2]}`;
+})().catch(e => {
+  document.getElementById('result').textContent = 'FAIL ' + (e.stack || e);
+});
+</script>
