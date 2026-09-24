@@ -309,7 +309,8 @@ unittest {
     // edges (mirrored) once the chain has two points; 9 new vertices in all
     // (P0, P1, P2 and P3 mirrored, P4 alone: its edge has no mirror edge).
     assert(first && firstImage && born.length == 9,
-           format("the first point's edge split is missing: first %s, image %s, new vertices %s",
+           format("the non-cutting steps' edge splits are wrong (P0 %s, its image %s, 9 in all): "
+                  ~ "new vertices %s",
                   first, firstImage, p3s(born)));
     assert(image && !stray,
            format("a mirror-made sub-edge point is not at its click and image: image %s, "
@@ -365,7 +366,7 @@ void clickXZ(double x, double z, double[3] a, double[3] b, string what) {
 /// vertices (ours land 0.005 off on the prologue edges: matched to 0.02).
 /// Measured before the law (ours): a 42/29, b 35/22, c 38/27, d 33/20 v/f.
 void symOwnCell(string cell, void delegate() taps, long wantV, long wantE,
-                const double[3][] want) {
+                const double[3][] want, long wantF = 18) {
     gridRig(false);
     symmetryX(true);
     scope (exit) symmetryX(false);
@@ -373,8 +374,11 @@ void symOwnCell(string cell, void delegate() taps, long wantV, long wantE,
     clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], cell ~ " P1");
     clickXZ(1.5, 1, [1, 0, 1], [2, 0, 1], cell ~ " P2");
     assert(slMesh().verts == 29, cell ~ ": the prologue is not the 29 v mirrored chord");
+    const missed0 = getJson("/api/changes")["missedPublishers"].integer;
     taps();
     slLine("tool.set mesh.edgeSliceTool off");
+    // A split-only step writes through its own publisher (the bus contract).
+    const missed = getJson("/api/changes")["missedPublishers"].integer - missed0;
     const mesh = slMesh();
     const ec = edgeCounts();
     const born = verticesFrom(GRID_VERTS);
@@ -386,10 +390,11 @@ void symOwnCell(string cell, void delegate() taps, long wantV, long wantE,
     }
     writeln("sym-own ", cell, ": ", mesh, " edges ", ec[0], " crossing ", ec[1],
             " new ", p3s(born));
-    assert(mesh.verts == wantV && mesh.faces == 18 && ec[1] == 0 && setOk
+    assert(missed == 0, format("sym-own %s: %d unpublished mesh write(s)", cell, missed));
+    assert(mesh.verts == wantV && mesh.faces == wantF && ec[1] == 0 && setOk
            && (wantE < 0 || ec[0] == wantE),
-           format("sym-own %s: expected %d v / 18 f / %s e, no crossing edge, new %s; got %s, "
-                  ~ "%d e, %d crossing, new %s", cell, wantV, wantE, p3s(want),
+           format("sym-own %s: expected %d v / %d f / %s e, no crossing edge, new %s; got %s, "
+                  ~ "%d e, %d crossing, new %s", cell, wantV, wantF, wantE, p3s(want),
                   mesh.toString, ec[0], ec[1], p3s(born)));
 }
 
@@ -430,4 +435,18 @@ unittest {
         clickXZ(1.5, 2, [1, 0, 2], [2, 0, 2], "b P4");
     }, 33, -1, [[1.5, 0, 0], [1.5, 0, 1], [1.5, 0, 0.5], [1.5, 0, 2],
                 [-1.5, 0, 0], [-1.5, 0, 1], [-1.5, 0, 0.5], [-1.5, 0, 2]]);
+}
+
+// NOT a captured cell — the law applied where no step materialised the start:
+// cell d's face point Q (unmaterialised, its step crossed the plane), then a
+// point on Q's own base polygon's boundary (-2, z0.5). The step shares that
+// polygon, so it cuts from Q itself (no seed vertex to continue from), on both
+// sides: 33 v / 20 f, no crossing edge. Before the no-seed arm this step
+// indexed the missing seed.
+unittest {
+    symOwnCell("d-shared", () {
+        clickXZ(-1.5, 0.5, [-1.5, 0, 0], [-1.5, 0, 1], "d-shared Q");
+        clickXZ(-2, 0.5, [-2, 0, 0], [-2, 0, 1], "d-shared R");
+    }, 33, -1, [[1.5, 0, 0], [1.5, 0, 1], [-1.5, 0, 0], [-1.5, 0, 1], [1.5, 0, 0.5],
+                [-1.5, 0, 0.5], [2, 0, 0.5], [-2, 0, 0.5]], 20);
 }
