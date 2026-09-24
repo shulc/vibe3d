@@ -1158,15 +1158,13 @@ private:
     }
 
     // An edge the mirror chain made in the current preview: an endpoint in a
-    // mirror span, and every endpoint either there or in the baseline.
+    // mirror span. An edge joining a primary-made and a mirror-made vertex
+    // (only where the chains meet across the plane) reads as mirror-made; no
+    // cell separates that choice.
     bool mirrorMade(uint a, uint b) const {
-        bool inSpan(uint v) {
-            foreach (sp; mirrorSpans_) if (v >= sp[0] && v < sp[1]) return true;
-            return false;
-        }
-        const base = chainBefore_.vertices.length;
-        const ia = inSpan(a), ib = inSpan(b);
-        return (ia || ib) && (ia || a < base) && (ib || b < base);
+        foreach (sp; mirrorSpans_)
+            if ((a >= sp[0] && a < sp[1]) || (b >= sp[0] && b < sp[1])) return true;
+        return false;
     }
 
     // Deterministic chain driver (task 0295, F2, objection 2): reads

@@ -215,7 +215,7 @@ long vertexAt(double[3] p) {
 
 // The mirror chain's vertex ranges follow a PARAMETER re-bake, not only a
 // click. Split OFF, two clicks two rows apart (2 new vertices per side); Split
-// ON re-bakes through the parameter path and adds each side's crossing vertex
+// ON re-bakes the live chain (tool.attr) and adds each side's crossing vertex
 // at z = 1, so the mirror chain's range moves. A third click on the mirror
 // chord's upper piece (z 1..2, ending at the second point's image) must still
 // join the mirror chain: the result is closed under the mirror. (The lower
