@@ -1056,8 +1056,8 @@ unittest {
     assert(measured.sessionCaps == recorded.sessionCaps
            && measured.sessionBranches == recorded.sessionBranches
            && measured.toolCasts == recorded.toolCasts,
-           format("tool census: session-special debt fell (capabilities %s->%s, branches %s->%s, "
-                  ~ "tool casts %s->%s): lower the ledger rows",
+           format("tool census: session-special debt changed (capabilities %s->%s, branches %s->%s, "
+                  ~ "tool casts %s->%s): a fall is recorded by lowering the ledger rows",
                   recorded.sessionCaps, measured.sessionCaps, recorded.sessionBranches,
                   measured.sessionBranches, recorded.toolCasts, measured.toolCasts));
 
