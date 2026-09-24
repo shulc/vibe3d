@@ -143,7 +143,9 @@ unittest {
     }
 
     const lane = readText(buildPath(repoRoot, "tools", "test_web_file_io.sh"));
-    const call = `node "$repo_root/tools/web_file_io/case_lwo.mjs"`;
+    // The WHOLE line, from its indentation: a prefix such as `true || ` in front
+    // of the node call would keep a substring pin green while the case never runs.
+    const call = "\n    timeout 240 node \"$repo_root/tools/web_file_io/case_lwo.mjs\" \\\n";
     assert(lane.count(call) == 1,
         "7440 census: tools/test_web_file_io.sh must run case_lwo.mjs exactly once");
     const loop = lane.countUntil("for mode in normal spreset; do");
