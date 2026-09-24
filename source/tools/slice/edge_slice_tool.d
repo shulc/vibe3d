@@ -544,11 +544,17 @@ public:
         scope(failure) context.discard();
         auto owner = PreparedEdgeSliceDeactivateOwner.prepare(this, layer);
         bool ok = owner !is null;
+        // Under a live subpatch preview the cage upload is suppressed and a
+        // prepared upload without origin maps is REFUSED
+        // (`GpuUploadOwner.beginPreparedUpload`), which refused the whole
+        // tool switch and left the chain live under later rows (task 7114,
+        // item 8). There the display follows the delivery of the installed
+        // mesh image instead, as the legacy commit's `refreshDisplay` did.
         if (ok && owner.appliesMesh)
             ok = owner.deliveryFlags != 0 && uploadOwner !is null && uploadOwner.owns(gpu) &&
                 context.prepareStampedMeshImage(layer, owner.candidate,
                     owner.deliveryFlags, owner.deliveryDomains) &&
-                context.prepareUpload(uploadOwner, owner.candidate);
+                (gpu.suppressCageUpload || context.prepareUpload(uploadOwner, owner.candidate));
         bool historyPrepared;
         if (ok && owner.historyEligible) {
             auto cmd = cast(MeshSessionEdit)gestureFactory();
