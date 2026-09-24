@@ -288,8 +288,9 @@ unittest {
     // The probe dispatch door and the notice/guard witnesses.
     assert(literalHits(raw, "WEB-NOTICE text=").length == 1
         && literalHits(raw, "WEB-GUARD verdict=").length == 1
-        && literalHits(raw, "WEB-PROBE-DISPATCH id=").length == 1,
-        "census: one WEB-NOTICE, WEB-GUARD and WEB-PROBE-DISPATCH literal each");
+        && literalHits(raw, "WEB-PROBE-DISPATCH id=").length == 1
+        && literalHits(raw, "WEB-PICK-QUEUE parked=").length == 1,
+        "census: one WEB-NOTICE, WEB-GUARD, WEB-PROBE-DISPATCH and WEB-PICK-QUEUE literal each");
     assert(countOccurrences(code, "commandBinding.dispatchUi(webProbeDispatchId, ") == 1,
         "census: the probe dispatch goes through the UI button door");
 }

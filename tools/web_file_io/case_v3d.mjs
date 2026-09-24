@@ -53,9 +53,12 @@ try {
   let mark = b.lines.length;
   const ch1 = await openChooser();
   if (ch1.mode !== 'selectMultiple') fail('C1', `chooser mode ${ch1.mode}`);
+  // The command is parked while the chooser is open (floor for C7's parked=0).
+  await b.waitFor(/^WEB-PICK-QUEUE parked=1$/, DEADLINE, mark);
   await b.choose(ch1, [two]);
   const c1re = new RegExp(`^WEB-DOC-STATE layers=2 verts=${V} faces=${F} images=0 docPath=/work/\\d+/two_layers\\.v3d dirty=0 undo=${u0 + 1} title=two_layers\\.v3d - Vibe3d`);
   const c1 = (await b.waitFor(c1re, DEADLINE, mark)).line;
+  await b.waitFor(/^WEB-PICK-QUEUE parked=0$/, DEADLINE, mark);
   ok('C1', c1);
 
   // C2 undo: back to the cube.
@@ -102,6 +105,8 @@ try {
   if (b.since(mark, /^WEB-NOTICE /).length) fail('C7', `notice: ${b.since(mark, /^WEB-NOTICE /)}`);
   if (b.since(mark, /^WEB-DOC-STATE /).length) fail('C7', `state changed: ${b.since(mark, /^WEB-DOC-STATE /)}`);
   if (lastState() !== before7) fail('C7', 'state changed');
+  const queue7 = [...b.lines].reverse().find(l => l.startsWith('WEB-PICK-QUEUE '));
+  if (queue7 !== 'WEB-PICK-QUEUE parked=0') fail('C7', `the cancelled pick is still parked: ${queue7}`);
   ok('C7', cancel);
 
   // C5 broken file: a notice carrying the reader's sentence; state unchanged.

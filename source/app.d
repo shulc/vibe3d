@@ -3271,6 +3271,7 @@ void main(string[] args) {
     string lastWindowTitle;
     version (web) string webLastDocState;   // last WEB-DOC-STATE printed
     version (web) string webLastWorkDirs;   // last WEB-WORK-DIRS printed
+    version (web) string webLastPickQueue;  // last WEB-PICK-QUEUE printed
     version (web) {
     } else {
     string ai3dPickedImagePath;
@@ -6308,6 +6309,12 @@ void main(string[] args) {
                 if (dirs != webLastWorkDirs) {
                     writeln(dirs);
                     webLastWorkDirs = dirs;
+                }
+                import io.browser_pick_resume : pickResumes;
+                const parked = format("WEB-PICK-QUEUE parked=%d", pickResumes().length);
+                if (parked != webLastPickQueue) {
+                    writeln(parked);
+                    webLastPickQueue = parked;
                 }
             }
         }
