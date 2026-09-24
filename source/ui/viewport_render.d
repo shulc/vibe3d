@@ -43,7 +43,7 @@ import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadiu
 import shader                : Shader, LitShader, CheckerShader, GridShader;
 import pipe_gizmo_host       : PipeGizmoHost;
 import tools.slice.loop_slice_tool : LoopSliceTool;
-import tools.slice.edge_slice_tool : EdgeSliceTool;
+import hover_state : TargetHighlightKeeper;
 import tools.transform.transform   : TransformTool;
 
 // The copilot ghost overlay at the tail of the scene pass; compiled out of
@@ -778,7 +778,7 @@ public:
             if (activeTool !is null) {
                 const keepEdgeSliceTarget = activeTool.hasUncommittedEdit()
                     && !activeTool.isDragging()
-                    && cast(EdgeSliceTool) activeTool !is null;
+                    && cast(TargetHighlightKeeper) activeTool !is null;
                 if ((activeTool.isDragging() || activeTool.hasUncommittedEdit())
                         && !keepEdgeSliceTarget)
                     hovForDraw = -1;

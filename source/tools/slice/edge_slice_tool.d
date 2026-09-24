@@ -17,7 +17,7 @@ import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, TargetHighlightKeeper;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -247,7 +247,7 @@ bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
 // 0430): the survivesEditCancel / tryUndoStepInSession overrides below are
 // the interfaces' implementations (EditSession discovers them by cast).
 final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo,
-                            SessionFirstGesture,
+                            SessionFirstGesture, TargetHighlightKeeper,
                             PreparedToolDoorClient, PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:

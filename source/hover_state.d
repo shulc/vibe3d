@@ -24,6 +24,12 @@ __gshared int g_hoveredFace   = -1;
 /// tests/unit/hover_stale_writer_census_test.d pins the writers).
 __gshared bool g_hoverIndexSpaceStale = false;
 
+/// A tool whose target-edge highlight stays drawn through its live edit
+/// outside a drag; the viewport otherwise hides the hover while the tool has an
+/// uncommitted edit. A display capability, discovered by cast (Edge Slice:
+/// a measured law; the rationale sits at its one reader, ui/viewport_render.d).
+interface TargetHighlightKeeper {}
+
 /// The ITEM under the cursor, as a `Document.layers` index (task 0647).
 ///
 /// A different KIND of value from the three above and deliberately in the same
