@@ -52,13 +52,13 @@ struct ValueDragLaw {
         return l;
     }
 
+    // No guard here: `steppedDragPixel` refuses a non-positive or NaN step
+    // and a detent that is not > 0, at the one place that consumes them.
     static ValueDragLaw stepped(double step, double detent,
             int holdPx = kValueDragDetentHoldPx) nothrow @nogc {
         ValueDragLaw l;
         l.quantiser = ValueDragQuantiser.Stepped;
-        l.step   = (isFinite(step) && step > 0) ? step : 0;
-        l.detent = (isFinite(detent) && detent > 0) ? detent : 0;
-        l.holdPx = holdPx > 0 ? holdPx : 0;
+        l.step = step; l.detent = detent; l.holdPx = holdPx;
         return l;
     }
 }
@@ -68,7 +68,7 @@ struct ValueDragLaw {
 double steppedDragPixel(double v, int dir, double step, double detent,
         int holdPx, ref int hold, ref int lastDir) nothrow @nogc {
     if (dir != lastDir) { hold = 0; lastDir = dir; }
-    if (!(step > 0)) return v;
+    if (!(step > 0) || !isFinite(step)) return v;
     if (hold > 0) { --hold; return v; }
     v = (round(v / step) + dir) * step;
     if (detent > 0 && v == round(v / detent) * detent) hold = holdPx;
@@ -79,7 +79,6 @@ double steppedDragPixel(double v, int dir, double step, double detent,
 /// returns the pixels actually stepped.
 int steppedDragEvent(ref double v, int dx, double step, double detent,
         int holdPx, ref int hold, ref int lastDir) nothrow @nogc {
-    if (dx == 0) return 0;
     const int dir = dx > 0 ? 1 : -1;
     const long mag = dx > 0 ? cast(long) dx : -cast(long) dx;
     const int n = mag > MAX_VALUE_DRAG_PX_PER_EVENT

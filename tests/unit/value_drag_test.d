@@ -144,7 +144,11 @@ unittest { // the per-event kernel cap
     // A degenerate law steps nothing and stays finite.
     ValueDrag d;
     d.press(0, 0.25, ValueDragLaw.stepped(double.nan, 0.0));
-    assert(d.motion(40) == 0.25, "a non-finite step must not move the value");
+    assert(d.motion(40) == 0.25, "a NaN step must not move the value");
+    d.press(0, 0.25, ValueDragLaw.stepped(double.infinity, 0.0));
+    assert(d.motion(40) == 0.25, "an infinite step must not move the value");
+    d.press(0, 0.25, ValueDragLaw.stepped(-0.5, 0.0));
+    assert(d.motion(40) == 0.25, "a negative step must not move the value");
     d.press(0, 0.25, ValueDragLaw.linear(double.infinity, false));
     assert(d.motion(40) == 0.25, "a non-finite gain must not move the value");
 }

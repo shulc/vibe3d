@@ -382,9 +382,9 @@ public:
         if (!active || !dragging) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragging = false;
-        // §26: the value kept after release is max(0, last).
+        // §26: the value kept after release is max(0, last). No rebuild: a
+        // negative value already previewed as zero (`kernelEpsSq`).
         dist_ = cast(float) valueDrag_.release();
-        rebuildPreview();
         return true;
     }
 
