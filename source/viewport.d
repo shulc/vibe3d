@@ -1160,8 +1160,10 @@ final class ViewportManager {
     /// by `View.effectiveOrientation` from its own projection and preset at
     /// render time. On a USER edit the focus of each link group moves once, by
     /// the captured rule (C4-oa / C4-oc / C4-of: the plane-local focus NUMBERS
-    /// are kept), and only when every member of the group is orthographic: a
-    /// group with a perspective member keeps its world focus (C4-quad). The
+    /// are kept), and only when every member of the group is an ortho PRESET
+    /// cell (`View.turnsWithPlane`): a group with a perspective member keeps
+    /// its world focus (C4-quad), and so does one with a non-preset ortho cell,
+    /// which does not turn (our extension; the reference has no such cell). The
     /// focus stays stored WORLD; a load or reset publication (`userEdit`
     /// false) restores the view as saved.
     void applyPlaneFrame(in WorkplanePacket before, in WorkplanePacket after,
@@ -1176,7 +1178,8 @@ final class ViewportManager {
             if (focusOwner(o) != o) continue;
             bool allOrtho = true;
             foreach (j; 0 .. cellCount)
-                if (focusOwner(j) == o && !views[j].isOrtho()) allOrtho = false;
+                if (focusOwner(j) == o && !views[j].camera.turnsWithPlane())
+                    allOrtho = false;
             if (!allOrtho) continue;
             views[o].camera.focus = keepPlaneLocal(views[o].camera.focus, before, after);
         }

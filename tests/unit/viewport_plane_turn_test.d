@@ -220,8 +220,26 @@ unittest { // L11 — the stage publishes every effective-frame change, flagged 
     st.reset();                                   // no change: no publication
     st.edit(nan, nan, nan, 10.0f, 0.0f, 0.0f);    // pin again: user
     st.resetByUser();                             // `workplane.reset`: user
-    assert(user == [true, true, false, true, true] && pinned == [true, true, false, true, false],
+    // The `tool.pipe.attr workplane …` door (the statusline worldX/Y/Z
+    // popover) is a user edit too.
+    assert(st.setAttr("rotX", "30"), "rig: the stage refused attr rotX");
+    assert(user == [true, true, false, true, true, true]
+        && pinned == [true, true, false, true, false, true],
         format("work-plane publications differ: user %s pinned %s (expected user "
-             ~ "[true, true, false, true, true], pinned [true, true, false, true, false])",
-               user, pinned));
+             ~ "[true, true, false, true, true, true], pinned "
+             ~ "[true, true, false, true, false, true])", user, pinned));
+}
+
+unittest { // L12 — a non-preset ortho member does not turn, so its group keeps world focus
+    auto m = quad();
+    auto c2 = m.views[2].camera;
+    c2.projKind = ProjKind.Ortho;
+    c2.viewPreset = ViewPreset.Camera;   // ortho, but no preset basis
+    assert(m.views[2].isOrtho() && !c2.turnsWithPlane(), "rig: cell 2 is not a non-preset ortho");
+    m.focusOwnerCamera(0).focus = Vec3(0.3f, 0.2f, -0.1f);
+    immutable Vec3 before = m.resolvedSnapshot(0).focus;
+    m.applyPlaneFrame(WorkplanePacket.init, obliquePlane(), true);
+    assert(near(m.resolvedSnapshot(0).focus, before, 1e-7f),
+        format("a group with a non-turning (non-preset) ortho member moved its world "
+             ~ "focus: %s -> %s", s(before), s(m.resolvedSnapshot(0).focus)));
 }

@@ -203,6 +203,15 @@ class View {
     private Vec3[3] planeAxes_ = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
     private bool    planeTurned_;
 
+    /// True when this camera's view turns with a pinned plane: an ortho cell
+    /// on an axis preset. An ortho cell on the free Perspective/Camera preset
+    /// has no preset basis, does not turn, and so counts with perspective for
+    /// the focus transition (task 7139; no such cell exists at the reference).
+    bool turnsWithPlane() const {
+        Vec3 r, u;
+        return projKind == ProjKind.Ortho && presetBasis(viewPreset, r, u);
+    }
+
     /// Express the ortho presets in a pinned plane's frame (`on`), or in the
     /// world frame again. `x`, `y`, `z` are the plane's world axes.
     void setPlaneTurn(bool on, Vec3 x, Vec3 y, Vec3 z) {

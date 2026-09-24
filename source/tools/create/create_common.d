@@ -332,10 +332,10 @@ void workplaneCursorRay(in WorkplaneFrame frame, const ref Viewport vp,
                         float sx, float sy,
                         out Vec3 orgLocal, out Vec3 dirLocal)
 {
-    Vec3 o, d;
-    screenPointToRay(sx, sy, vp, o, d);
-    orgLocal = transformPoint(frame.toLocal, o);
-    dirLocal = transformDir (frame.toLocal, d);
+    // Through the one plane-local conversion (task 7139): the ray of the
+    // plane-local view IS the local ray, in both projection arms.
+    Viewport l = planeLocalViewport(vp, frame);
+    screenPointToRay(sx, sy, l, orgLocal, dirLocal);
 }
 
 /// Intersect the cursor ray at pixel (sx, sy) with a plane stated in `frame`'s
