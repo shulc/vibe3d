@@ -14,8 +14,9 @@
 // Blocks, in the order the law needs them: A (time: nothing before the press),
 // B (press = live edit; refusal; drop; one undo step), C (item space), D (the
 // first Ctrl+Z drops the live copy and keeps the tool); task 7116 adds E (a
-// press on a handle also starts the edit), F (a tool switch commits it) and G
-// (a switch from an untouched tool records nothing).
+// press on a handle also starts the edit), F (a tool switch commits it), G
+// (a switch from an untouched tool records nothing); the review added H (the
+// base is taken at the first press) and I (the weld distance is a world length).
 // Each block opens with its rig floor, so a red below it cannot be a rig that
 // never happened.
 
@@ -383,6 +384,12 @@ unittest {
     auto after = probe(c, copyPts);
     assert(after == empty,
         format("7116 ctrl+z left the mirror copy drawn: %s, was %s", after, empty));
+    // A press at the same spot (now ON the centre handle, which the first press
+    // placed there) starts a FRESH live edit with the same parameters.
+    pressAt(c, [1.5, 0, 0]);
+    assert(faceCount() == 12,
+        format("7116 re-press after ctrl+z did not start a fresh live edit: "
+             ~ "%d polygons", faceCount()));
     cmd("tool.set " ~ TOOL ~ " off");
     cmd("viewport.view Perspective");
 }
@@ -446,4 +453,65 @@ unittest {
         format("7116 switch from an untouched mirror recorded an edit: %d polygons, "
              ~ "edits %s", faceCount(), editLabels()));
     cmd("viewport.view Perspective");
+}
+
+// ---- H (task 7116 review): the base is taken at the FIRST PRESS, not at arm -
+// A `tool.doApply` between arm and the first press is part of the base the
+// live edit starts from: the press mirrors the applied mesh's SELECTED copies
+// (12 + 6 = 18; a base taken at arm gives 12), and one undo removes only the
+// live edit (12), leaving the Apply record (a stale base leaves 6). The live
+// plane is x = 4, clear of both cubes.
+unittest {
+    subpatchCube();
+    auto c = orthoCamera("Front", [1.5, 0, 0], 6.0);
+    armAtOrigin();
+    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    attrCenter(1.5, 0, 0);
+    cmd(`{"id":"tool.doApply"}`);
+    settle();
+    assert(faceCount() == 12, format("7116 H rig: doApply left %d polygons", faceCount()));
+    // The apply selects its six copies (faces 6..11), so the face mask taken
+    // at the press is those six — a mask taken at ARM would be the 6-face
+    // cube's, whose length no longer matches and mirrors nothing.
+    auto sel = getJson("/api/selection")["selectedFaces"].array;
+    assert(sel.length == 6 && sel[0].integer == 6,
+        format("7116 H rig: the apply did not select its copies: %s", sel));
+    // Off both handles (centre box at x = 1.5 now), still world x > 1.5.
+    pressAt(c, [2.0, -1.0, 0]);
+    attrCenter(4, 0, 0);
+    settle();
+    assert(faceCount() == 18,
+        format("7116 press after doApply mirrored a stale base: %d polygons, "
+             ~ "expected 18", faceCount()));
+    cmd("tool.set " ~ TOOL ~ " off");
+    settle();
+    cmdId("history.undo");
+    settle();
+    assert(faceCount() == 12,
+        format("7116 one undo after doApply + live mirror left %d polygons, "
+             ~ "expected 12 (the applied copy survives)", faceCount()));
+    cmd("viewport.view Perspective");
+}
+
+// ---- I (task 7116 review): the weld distance is a WORLD length -------------
+// Item scale 2: the cube spans world x in [-1, 1]. A plane at world x = 1.05
+// puts the copy's near face 0.1 world units from the original's. A weld of
+// 0.08 world units must NOT merge them; carried unscaled into local space
+// (where the gap is 0.05) it would.
+unittest {
+    subpatchCube();
+    foreach (a; ["x", "y", "z"]) cmd("layer.attr 0 scl." ~ a ~ " 2");
+    settle();
+    cmd("tool.set " ~ TOOL);
+    cmd("tool.attr " ~ TOOL ~ " axis X");
+    cmd("tool.attr " ~ TOOL ~ " mergeVerts true");
+    cmd("tool.attr " ~ TOOL ~ " distance 0.08");
+    attrCenter(1.05, 0, 0);
+    cmd(`{"id":"tool.doApply"}`);
+    settle();
+    assert(faceCount() == 12, format("7116 I rig: doApply left %d polygons", faceCount()));
+    assert(vertexCount() == 16,
+        format("7116 weld distance applied in local units: %d vertices, expected "
+             ~ "16 (a 0.1 world gap is wider than a 0.08 world weld)", vertexCount()));
+    cmd("tool.set " ~ TOOL ~ " off");
 }

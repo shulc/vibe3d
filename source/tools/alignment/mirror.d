@@ -68,9 +68,10 @@ struct PreparedMirrorDeactivateImage {
 // mirrors (`Mesh.mirrorFacesPlane` APPENDS).
 //
 // The plane (`params_.center`, `toolNormal`) is WORLD-space (gap 190); `space`
-// carries it into the mesh's local frame. Exact for a similarity item
+// carries it into the mesh's local frame, and the weld distance (a world
+// length) is divided by the item's scale. Exact for a similarity item
 // transform; under a non-uniform scale the reflection is about the carried
-// plane, a recorded divergence.
+// plane and the weld uses the X-axis scale — a recorded divergence (gap 315).
 // ---------------------------------------------------------------------------
 size_t rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh target,
                             in bool[] baseMask, in MirrorParams params_,
@@ -86,7 +87,9 @@ size_t rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh target,
 size_t mirrorInPlace(ref Mesh target, in bool[] mask, in MirrorParams params_,
                      in ModelSpace space)
 {
-    float weld = params_.mergeVerts ? params_.distance : 0.0f;
+    // World length -> local length: the local image of a world unit vector.
+    float weld = params_.mergeVerts
+        ? params_.distance * space.toLocalDir(Vec3(1, 0, 0)).length : 0.0f;
     size_t inserted = target.mirrorFacesPlane(mask,
         space.toLocalPoint(params_.center),
         space.toLocalNormal(toolNormal(params_)), weld, params_.invertPolys);
@@ -763,6 +766,19 @@ public:
         glEnable(GL_DEPTH_TEST);
     }
 
+    // The untouched -> engaged transition: the base the live edit restores to
+    // and the face mask it mirrors are taken from the mesh AS IT IS AT THE
+    // PRESS, not at arm — a `tool.doApply` or a selection change between arm
+    // and the first press must survive into the base.
+    // No-op once engaged, so a drag's own steps never move the base.
+    private void engage() {
+        if (engaged) return;
+        baseSnap = MeshSnapshot.capture(*mesh);
+        baseMask = buildMaskFromSelection();
+        liveApplied = false;
+        engaged = true;
+    }
+
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
@@ -791,7 +807,7 @@ public:
             Vec3 hitPt;
             if (rayPlaneIntersect(origin, dir, params_.center, planeN, hitPt)) {
                 params_.center = hitPt;
-                engaged = true;
+                engage();
                 evaluate();
                 return true;
             }
@@ -802,7 +818,7 @@ public:
         moverDragAxis = hit;
         moverLastMX   = e.x;
         moverLastMY   = e.y;
-        engaged = true;
+        engage();
         evaluate();
         return true;
     }
@@ -847,7 +863,7 @@ public:
             if (!skip && arm > 1e-6f) {
                 float d = dot(delta, tangent);   // signed world length along tangent
                 params_.angle += (d / arm) * (180.0f / PI);
-                engaged = true;
+                engage();
                 evaluate();
             }
             moverLastMX = e.x;
@@ -862,7 +878,7 @@ public:
                                     moverDragAxis, mover.center, cachedVp, skip);
         if (!skip) {
             params_.center += delta;
-            engaged = true;
+            engage();
             evaluate();
         }
         moverLastMX = e.x;

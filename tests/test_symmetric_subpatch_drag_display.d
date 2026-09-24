@@ -18,11 +18,15 @@
 // Moment: every held-frame read happens after the SECOND motion log and two
 // completed frames, before the release log is played.
 //
-// Measured on the pre-fix tree (task 7115): this file is GREEN there — no
-// cage fill and no stale side in the held frame, also under an empty
-// selection, a script selection and a sampled per-poll read during the second
-// log. It stays as the regression pin for the captured law; the card records
-// the non-reproduction.
+// NOT A WITNESS OF THE REPORTED BUG. The owner's item 11 was NOT reproduced
+// (task 7115): this file is green on the pre-fix tree, also under an empty
+// selection, a script selection and a per-poll read during the second log,
+// and NONE of four display-path mutations reddens it (cage-upload
+// suppression off in `uploadSelectedVertices` and in `upload`, the display
+// matrix fold off, the symmetry partner dropped from the upload set — task
+// 7116's table). It pins only the OUTCOME of the captured law (both sides
+// smoothed, no cage fill, the pair symmetric after release); it says nothing
+// about a cause.
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;

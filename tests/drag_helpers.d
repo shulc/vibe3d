@@ -342,3 +342,19 @@ void setCameraAtPivot(double px, double py, double pz,
         px+3.0, py+1.0, pz+2.0, px, py, pz);
     post(baseUrl ~ "/api/camera", body_);
 }
+
+/// Task 7116: one left press + release, no motion, 150 px right of the active
+/// viewport's centre — off every handle of a tool armed at the origin. Used to
+/// ENGAGE a tool whose law is "nothing is evaluated before the first viewport
+/// press" (the Mirror tool): a parameter write alone no longer does it.
+void engageByPress(string baseUrl = testBaseUrl()) {
+    auto c = fetchCamera(baseUrl);
+    immutable int x = c.vpX + c.width / 2 + 150, y = c.vpY + c.height / 2;
+    playAndWait(format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":60.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":90.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        c.vpX, c.vpY, c.width, c.height, x, y, x, y, x, y), baseUrl);
+    Thread.sleep(dur!"msecs"(250));
+}

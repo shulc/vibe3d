@@ -4,6 +4,7 @@
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
+import drag_helpers : engageByPress;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.file : exists, remove, write;
@@ -74,26 +75,6 @@ void armEngagedMirror() {
     engageByPress();
 }
 
-/// Engage the armed mirror tool the way a user does: one viewport press off
-/// both handles (task 7116 — a parameter write alone no longer engages; the
-/// copy is a live document edit from the first press). The press lands 150 px
-/// right of the viewport centre, where click-to-place moves the plane; with
-/// `mergeVerts false` the copy is still the unwelded 16/24/12 mirror.
-void engageByPress() {
-    import drag_helpers : fetchCamera, playAndWait;
-    import std.format : format;
-    auto c = fetchCamera();
-    immutable int x = c.vpX + c.width / 2 + 150, y = c.vpY + c.height / 2;
-    playAndWait(format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
-        `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
-        `{"t":60.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
-        `{"t":90.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        c.vpX, c.vpY, c.width, c.height, x, y, x, y, x, y));
-    import core.thread : Thread;
-    import core.time : msecs;
-    Thread.sleep(250.msecs);
-}
 
 void dropMirror() {
     cmd("tool.set", `{"_positional":["` ~ TOOL ~ `","off"]}`);
