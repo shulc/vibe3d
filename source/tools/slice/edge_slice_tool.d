@@ -47,10 +47,12 @@ import handler : BoxHandlerBatchResourceOwner;
 // (m0, m1): the point's mirror edge under the symmetry that was live when it
 // latched (`mirrorEdgePoint`), or ~0u, in the mesh edge's stored order like
 // (v0, v1); `mflip` when that order reverses the mirror of (v0, v1), so the
-// mirror point sits at `1 - t` along it.
+// mirror point sits at `1 - t` along it. `onMirror`: the click landed on an
+// edge the MIRROR chain made, so the point belongs to that chain and its image
+// (m0, m1) is the primary's — both chains stay each other's reflection.
 private struct EdgeSliceChainPoint {
     uint v0, v1; float t;
-    uint m0 = ~0u, m1 = ~0u; bool mflip;
+    uint m0 = ~0u, m1 = ~0u; bool mflip, onMirror;
 }
 
 // The session's first point, carried by EditSession across the undo of the
@@ -99,13 +101,14 @@ struct PreparedEdgeSliceParamImage {
     SessionMeshKey nextArmedKey; float nextProxy;
     uint[] nextEdges, nextPointVerts; float[] nextPointT;
     private EdgeSliceChainPoint[] nextChainPoints;
+    private uint[2][] nextMirrorSpans; private size_t nextMirrorSegments;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         valid = recognized = appliesState = appliesMesh = invalidateRedo = false;
         pname = null;
         expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
         nextEdges = null; nextPointVerts = null; nextPointT = null;
-        nextChainPoints = null;
+        nextChainPoints = null; nextMirrorSpans = null; nextMirrorSegments = 0;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
@@ -241,6 +244,8 @@ private:
     // resets never differ from it (a tool is built fresh per activation), so
     // they do not write it (task 7114).
     size_t       lastBakedSegments_;
+    size_t       lastMirrorSegments_;   // the mirror chain's count, same bake
+    uint[2][]    mirrorSpans_;          // [from, to) vertex ranges the mirror chain made
     int          dragPart_ = -1;
     // IDENTITY guard, asked between mouse events: "is the baseline I armed
     // still on the mesh I armed it on?". It keys on TOPOLOGY + address + the
@@ -402,6 +407,7 @@ public:
         root["scrubbing"] = JSONValue(scrubbing_);
         // A counter, unlike `chainSegments`: what the last bake returned.
         root["bakedSegments"] = JSONValue(cast(long)lastBakedSegments_);
+        root["mirrorBakedSegments"] = JSONValue(cast(long)lastMirrorSegments_);
         return root;
     }
 
@@ -695,6 +701,8 @@ public:
         scrubbing_     = false;
         built_         = false;
         lastBakedSegments_ = 0;
+        lastMirrorSegments_ = 0;
+        mirrorSpans_ = null;
         phase_         = Phase.Idle;
         latchedPoints_ = [];
         edgesParam_    = [];
@@ -751,6 +759,8 @@ public:
         image.nextPointVerts = image.expectedPointVerts.dup;
         image.nextPointT = image.expectedPointT.dup;
         image.nextChainPoints = latchedPoints_.dup;
+        image.nextMirrorSpans = mirrorSpans_.dup;
+        image.nextMirrorSegments = lastMirrorSegments_;
         if (!image.recognized || pname == "show") return image;
 
         if (pname == "activePoint") {
@@ -797,7 +807,8 @@ public:
 
         image.candidate = detachedPreparedMesh(live);
         auto shadow = beginPreparedShadow(image.candidate);
-        const n = bakeChainInto(image.candidate, baseline, nextPoints);
+        const n = bakeChainInto(image.candidate, baseline, nextPoints,
+            image.nextMirrorSegments, image.nextMirrorSpans);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
         image.appliesState = true; image.appliesMesh = true;
@@ -841,6 +852,8 @@ public:
         armedKey_ = image.nextArmedKey;
         pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
         latchedPoints_ = image.nextChainPoints;
+        mirrorSpans_ = image.nextMirrorSpans;
+        lastMirrorSegments_ = image.nextMirrorSegments;
         if (image.pname == "chainArm" && image.appliesMesh)
             chainBefore_ = image.expectedLive;
         image.clear();
@@ -1115,6 +1128,7 @@ private:
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         assignMirror(p, sym);
+        p.onMirror = p.m0 != ~0u && mirrorMade(p.v0, p.v1);
         latchedPoints_ ~= p;
         edgesParam_    ~= cast(uint)h;
         armed_     = true;
@@ -1136,10 +1150,23 @@ private:
         if (sym !is null && mirrorEdgePoint(*mesh, *sym, p.v0, p.v1, m0, m1)) {
             // The kernel reads `t` along the edge's STORED direction.
             const e = mesh.edgeIndex(m0, m1);
+            if (e == ~0u) return;
             p.mflip = mesh.edges[e][0] != m0;
             p.m0 = p.mflip ? m1 : m0;
             p.m1 = p.mflip ? m0 : m1;
         }
+    }
+
+    // An edge the mirror chain made in the current preview: an endpoint in a
+    // mirror span, and every endpoint either there or in the baseline.
+    bool mirrorMade(uint a, uint b) const {
+        bool inSpan(uint v) {
+            foreach (sp; mirrorSpans_) if (v >= sp[0] && v < sp[1]) return true;
+            return false;
+        }
+        const base = chainBefore_.vertices.length;
+        const ia = inSpan(a), ib = inSpan(b);
+        return (ia || ib) && (ia || a < base) && (ib || b < base);
     }
 
     // Deterministic chain driver (task 0295, F2, objection 2): reads
@@ -1335,59 +1362,92 @@ private:
     // on pointsFromEdgesParam/pickSeedSubEdge — or fails to reach).
     // -------------------------------------------------------------------
     size_t bakeChainFrom(ref MeshSnapshot baseline, const ChainPoint[] pts) {
-        return bakeChainInto(*mesh, baseline, pts);
+        return bakeChainInto(*mesh, baseline, pts, lastMirrorSegments_, mirrorSpans_);
     }
 
-    // Restores `baseline`, bakes `pts`, then — when every point has a mirror
-    // edge — the mirror chain over the result, in the same mesh: one baseline,
-    // one history row for both sides. Returns the PRIMARY chain's count.
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
             const ChainPoint[] pts) {
+        size_t mirrorN;
+        uint[2][] spans;
+        return bakeChainInto(work, baseline, pts, mirrorN, spans);
+    }
+
+    // Restores `baseline`, bakes `pts` and — when every point has a mirror
+    // edge — the mirror chain, in the same mesh: one baseline, one history
+    // row for both sides. Returns the PRIMARY chain's count; `mirrorN` the
+    // mirror's. The two chains are baked INTERLEAVED, segment k of each side
+    // before segment k+1 of either, so the preview's vertex numbering is
+    // append-only per point: a point latched on a cut-made edge (primary OR
+    // mirror side, captured rule C1-3b) names vertices that the re-bake
+    // recreates at the same indices before the segment that needs them. A
+    // side-by-side order (all primary, then all mirror) shifts every mirror
+    // vertex when the primary grows (witnesses: tests/test_edge_slice_symmetry.d).
+    // `mirrorSpans`: the vertex ranges the mirror segments appended, which is
+    // how a later click tells a mirror-made edge (`onMirror`) apart.
+    size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
+            const ChainPoint[] pts, out size_t mirrorN, out uint[2][] mirrorSpans) {
         baseline.restore(work);
         if (pts.length < 2) return 0;
-        const n = bakeSegmentsInto(work, pts);
-        ChainPoint[] mirror;
+        ChainPoint[] primary, mirror;
         foreach (p; pts) {
             if (p.m0 == ~0u || p.m1 == ~0u) { mirror = null; break; }
-            mirror ~= ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t);
+            const mt = p.mflip ? 1.0f - effectiveT(p.t) : p.t;
+            mirror ~= p.onMirror ? ChainPoint(p.v0, p.v1, p.t) : ChainPoint(p.m0, p.m1, mt);
         }
-        if (n > 0 && mirror.length == pts.length) bakeSegmentsInto(work, mirror);
+        foreach (i, p; pts)
+            primary ~= (p.onMirror && mirror.length == pts.length)
+                ? ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t) : p;
+        size_t n;
+        uint seedP = ~0u, seedM = ~0u;
+        bool liveP = true, liveM = mirror.length == pts.length;
+        foreach (k; 0 .. pts.length - 1) {
+            if (liveP && bakeSegmentInto(work, primary, k, seedP)) n = k + 1;
+            else liveP = false;
+            // The mirror side only follows a primary that has baked at least
+            // its first segment (the pre-interleave contract: `n > 0`).
+            const from = cast(uint)work.vertices.length;
+            if (liveM && n > 0 && bakeSegmentInto(work, mirror, k, seedM)) {
+                mirrorN = k + 1;
+                mirrorSpans ~= [from, cast(uint)work.vertices.length];
+            } else liveM = false;
+            if (!liveP && !liveM) break;
+        }
         return n;
     }
 
-    size_t bakeSegmentsInto(ref Mesh work, const ChainPoint[] pts) {
-        uint seed = ~0u;   // no seed for segment 0 — origin resolves via pts[0]
-        foreach (k; 0 .. pts.length - 1) {
-            uint eB = work.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
-            if (eB == ~0u) return k;   // destination not a live baseline edge
+    // Segment k of `pts` (from point k to point k+1); `seed` threads the
+    // kernel-returned cut vertex into the next segment (no position scanning).
+    // False when the segment does not resolve or does not reach.
+    bool bakeSegmentInto(ref Mesh work, const ChainPoint[] pts, size_t k, ref uint seed) {
+        uint eB = work.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
+        if (eB == ~0u) return false;   // destination not a live baseline edge
 
-            EdgeSliceResult r;
-            if (k == 0) {
-                uint eA = work.edgeIndexOf(pts[0].v0, pts[0].v1);
-                if (eA == ~0u) return k;
-                r = work.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
-            } else {
-                uint sub = pickSeedSubEdgeIn(work, seed, eB);
-                if (sub == ~0u) return k;
-                float endT = (work.edges[sub][0] == seed) ? 0.0f : 1.0f;
-                r = work.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
-            }
-            // S4 (mesh-robustness batch: gate on `!r.meshChanged`, not
-            // `facesSplit==0`): in split mode, facesSplit==0 can be a KEPT
-            // insert (meshChanged==true — a legitimate chain that
-            // degenerated to a plain edge-split) that CONTINUES the chain,
-            // not only a dead-end signal. This check is effectively inert
-            // whenever split_==false — edgeSliceEx's points-only branch
-            // (mesh.d) reports facesSplit=2/meshChanged=true as a bare
-            // SUCCESS MARKER for any distinct, in-range edge pair (no
-            // face-path/connectivity requirement at all in that mode), so
-            // meshChanged is always true there. It only bites when
-            // split_==true and the whole segment truly resolved to nothing
-            // (no path AND no vertex spliced in).
-            if (!r.meshChanged) return k;
-            seed = r.cutVertB;   // NEXT segment's exact seed — no position scanning
+        EdgeSliceResult r;
+        if (k == 0) {
+            uint eA = work.edgeIndexOf(pts[0].v0, pts[0].v1);
+            if (eA == ~0u) return false;
+            r = work.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
+        } else {
+            uint sub = pickSeedSubEdgeIn(work, seed, eB);
+            if (sub == ~0u) return false;
+            float endT = (work.edges[sub][0] == seed) ? 0.0f : 1.0f;
+            r = work.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
         }
-        return pts.length - 1;
+        // S4 (mesh-robustness batch: gate on `!r.meshChanged`, not
+        // `facesSplit==0`): in split mode, facesSplit==0 can be a KEPT
+        // insert (meshChanged==true — a legitimate chain that
+        // degenerated to a plain edge-split) that CONTINUES the chain,
+        // not only a dead-end signal. This check is effectively inert
+        // whenever split_==false — edgeSliceEx's points-only branch
+        // (mesh.d) reports facesSplit=2/meshChanged=true as a bare
+        // SUCCESS MARKER for any distinct, in-range edge pair (no
+        // face-path/connectivity requirement at all in that mode), so
+        // meshChanged is always true there. It only bites when
+        // split_==true and the whole segment truly resolved to nothing
+        // (no path AND no vertex spliced in).
+        if (!r.meshChanged) return false;
+        seed = r.cutVertB;
+        return true;
     }
 
     // Continuation sub-edge choice (task 0295, F2, decision #2 — the

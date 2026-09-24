@@ -126,3 +126,80 @@ unittest {
                   ~ "expected %s", mesh.toString, p3s(born), p3s(want)));
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// Z-direction edges, symmetry ON — the other orientation branch. The grid's
+// edges through (1,0,0.3) and (2,0,0.3) are stored in the opposite order to
+// their mirror images', so the mirror point sits at `1 - t` along the stored
+// mirror edge; reading `t` there unflipped lands it at z = 1 - 0.3.
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    const double[2] xs = [1.0, 2.0];
+    foreach (k; 0 .. 2) {
+        const pr = gridPair(xs[k], 0, xs[k], 1);
+        const p = pixelOf(xs[k], 0, 0.3);
+        hoverFloor(p, pr[0], pr[1], format("z click %d", k + 1));
+        slClickDown(p[0], p[1], format("z click %d", k + 1));
+        slPlay(slButton(20, false, 1, p[0], p[1]), format("z release %d", k + 1));
+    }
+    const pts = latchedPositions();
+    assert(pts.length == 2 && pts[0][2] > 0.2 && pts[0][2] < 0.4,
+           "z-edge chain input: " ~ p3s(pts));
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    const want = pts ~ [mirrorX(pts[0]), mirrorX(pts[1])];
+    writeln("z edges (symmetry on): ", mesh, " points ", p3s(pts), " new ", p3s(born),
+            " expected ", p3s(want));
+    assert(mesh.verts == 29 && sameSet(born, want),
+           format("z-edge mirror not at the mirror of the point: mesh %s, new vertices %s, "
+                  ~ "expected %s", mesh.toString, p3s(born), p3s(want)));
+    slLine("tool.set mesh.edgeSliceTool off");
+}
+
+/// Every vertex in `vs` has its X mirror in `vs` (+-1e-5).
+bool mirrorClosed(const double[3][] vs) {
+    foreach (v; vs) {
+        bool hit;
+        foreach (w; vs) if (dist3(w, mirrorX(v)) <= 1e-5) hit = true;
+        if (!hit) return false;
+    }
+    return true;
+}
+
+/// A third click on a CUT-MADE edge (accepted: captured rule C1-3b) — the
+/// primary cut's new chord (`side` 0) or its mirror image's (`side` 1). Both
+/// sides must get the third point: six new vertices closed under the mirror,
+/// two segments on each chain, 31 v / 18 f (measured; a click on either
+/// chord gives the same mesh). Before the fix: side 0 left the mirror without
+/// its third point, side 1 committed a stray cut (33 v / 22 f).
+void thirdOnCutEdge(int side) {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    const pts = twoClicks(1.5, 1.5);
+    const born2 = verticesFrom(GRID_VERTS);
+    assert(born2.length == 4 && born2[0][0] > 0 && born2[2][0] < 0,
+           "cut-edge rig: the two-point preview is not primary-then-mirror: " ~ p3s(born2));
+    const a = GRID_VERTS + 2 * side, b = a + 1;
+    const mid = pixelOf((born2[2 * side][0] + born2[2 * side + 1][0]) / 2, 0,
+                        (born2[2 * side][2] + born2[2 * side + 1][2]) / 2);
+    hoverFloor(mid, a, b, format("side %d cut chord", side));
+    slClickDown(mid[0], mid[1], "press 3");
+    slPlay(slButton(20, false, 1, mid[0], mid[1]), "release 3");
+    auto st = getJson("/api/tool/state");
+    const segs = st["bakedSegments"].integer, msegs = st["mirrorBakedSegments"].integer;
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    writeln("third on cut edge, side ", side, ": ", mesh, " segments ", segs, "/", msegs,
+            " new ", p3s(born));
+    assert(segs == 2 && msegs == 2 && mesh.verts == 31 && mesh.faces == 18
+           && born.length == 6 && mirrorClosed(born),
+           format("third point on a cut-made edge (side %d) is not mirrored: segments %d/%d, "
+                  ~ "mesh %s, new vertices %s", side, segs, msegs, mesh.toString, p3s(born)));
+}
+
+unittest { thirdOnCutEdge(0); }
+unittest { thirdOnCutEdge(1); }
