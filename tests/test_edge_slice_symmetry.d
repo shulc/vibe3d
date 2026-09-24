@@ -291,17 +291,26 @@ unittest {
     assert(st3["latchedFacePoint"].toString == "[false,false,false,false]",
            "alias rig: a sub-edge click is not a base edge point: "
            ~ st3["latchedFacePoint"].toString);
-    const p3 = latchedPositions()[3];
+    const lp = latchedPositions();
+    const p3 = lp[3];
     click(0.5, 1, vertexAt([0, 0, 1]), vertexAt([1, 0, 1]), "P4 on-plane edge");
     slLine("tool.set mesh.edgeSliceTool off");
     const born = verticesFrom(GRID_VERTS);
-    bool image, stray;
+    bool image, stray, first, firstImage;
     foreach (v; born) {
         if (dist3(v, mirrorX(p3)) <= 1e-3) image = true;
+        if (dist3(v, lp[0]) <= 1e-3) first = true;
+        if (dist3(v, mirrorX(lp[0])) <= 1e-3) firstImage = true;
         if (v[0] < -1.99 && v[2] > 0.1 && v[2] < 0.4) stray = true;
     }
     writeln("mirror point after the mirror chain drops: ", slMesh(), " P3 ", p3s([p3]),
             " new ", p3s(born));
+    // P0 -> P1 share no base polygon: no cut, but both points split their
+    // edges (mirrored) once the chain has two points; 9 new vertices in all
+    // (P0, P1, P2 and P3 mirrored, P4 alone: its edge has no mirror edge).
+    assert(first && firstImage && born.length == 9,
+           format("the first point's edge split is missing: first %s, image %s, new vertices %s",
+                  first, firstImage, p3s(born)));
     assert(image && !stray,
            format("a mirror-made sub-edge point is not at its click and image: image %s, "
                   ~ "stray on x = -2 %s, new vertices %s", image, stray, p3s(born)));
