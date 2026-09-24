@@ -169,11 +169,11 @@ bool mirrorClosed(const double[3][] vs) {
 }
 
 /// A third click on a CUT-MADE edge (accepted: captured rule C1-3b) — the
-/// primary cut's new chord (`side` 0) or its mirror image's (`side` 1). Both
-/// sides must get the third point: six new vertices closed under the mirror,
-/// two segments on each chain, 31 v / 18 f (measured; a click on either
-/// chord gives the same mesh). Before the fix: side 0 left the mirror without
-/// its third point, side 1 committed a stray cut (33 v / 22 f).
+/// primary cut's new chord (`side` 0) or its mirror image's (`side` 1). A
+/// chord click is a FACE point of the base polygon on either side (captured
+/// law C1-sym-own). Side 0 is the reference's cell b step 3 (31 v / 18 f,
+/// both chords get the point); side 1 is cell a's step 3, where the point
+/// shares no base polygon with the previous one and makes nothing (29 v).
 void thirdOnCutEdge(int side) {
     gridRig(false);
     symmetryX(true);
@@ -190,17 +190,18 @@ void thirdOnCutEdge(int side) {
     slPlay(slButton(20, false, 1, mid[0], mid[1]), "release 3");
     auto st = getJson("/api/tool/state");
     const segs = st["bakedSegments"].integer, msegs = st["mirrorBakedSegments"].integer;
-    const onMirror = st["latchedOnMirror"].toString;
-    assert(onMirror == (side ? "[false,false,true]" : "[false,false,false]"),
-           format("side %d: the third point's chain is not the clicked edge's maker: "
-                  ~ "latchedOnMirror %s", side, onMirror));
+    const facePt = st["latchedFacePoint"].toString;
+    assert(facePt == "[false,false,true]",
+           format("side %d: a chord click is not a base face point: latchedFacePoint %s",
+                  side, facePt));
     slLine("tool.set mesh.edgeSliceTool off");
     const mesh = slMesh();
     const born = verticesFrom(GRID_VERTS);
     writeln("third on cut edge, side ", side, ": ", mesh, " segments ", segs, "/", msegs,
             " new ", p3s(born));
-    assert(segs == 2 && msegs == 2 && mesh.verts == 31 && mesh.faces == 18
-           && born.length == 6 && mirrorClosed(born),
+    const wantV = side ? 29 : 31, wantSeg = side ? 1 : 2;
+    assert(segs == wantSeg && msegs == wantSeg && mesh.verts == wantV && mesh.faces == 18
+           && born.length == wantV - GRID_VERTS && mirrorClosed(born),
            format("third point on a cut-made edge (side %d) is not mirrored: segments %d/%d, "
                   ~ "mesh %s, new vertices %s", side, segs, msegs, mesh.toString, p3s(born)));
 }
@@ -217,62 +218,10 @@ long vertexAt(double[3] p) {
     return -1;
 }
 
-// The mirror chain's vertex ranges follow a PARAMETER re-bake, not only a
-// click. Split OFF, two clicks two rows apart (2 new vertices per side); Split
-// ON re-bakes the live chain (tool.attr) and adds each side's crossing vertex
-// at z = 1, so the mirror chain's range moves. A third click on the mirror
-// chord's upper piece (z 1..2, ending at the second point's image) must still
-// join the mirror chain: the result is closed under the mirror. (The lower
-// piece is not used: a segment from the second point across the z = 1 row
-// takes a face path that is not mirror-equivariant, a separate limit.) Reading the range from before the parameter change takes the
-// chord's crossing vertex for a primary one and bakes a plane-crossing chain.
-unittest {
-    gridRig(false);
-    symmetryX(true);
-    scope (exit) symmetryX(false);
-    slLine("tool.set mesh.edgeSliceTool on");
-    slLine("tool.attr mesh.edgeSliceTool split false");
-    foreach (k; 0 .. 2) {
-        const double z = 2 * k;
-        const pr = gridPair(1, z, 2, z);
-        const p = pixelOf(1.5, 0, z);
-        hoverFloor(p, pr[0], pr[1], format("split-off click %d", k + 1));
-        slClickDown(p[0], p[1], format("split-off click %d", k + 1));
-        slPlay(slButton(20, false, 1, p[0], p[1]), format("split-off release %d", k + 1));
-    }
-    const off = verticesFrom(GRID_VERTS);
-    assert(off.length == 4, "split-off chain: expected 2 points per side: " ~ p3s(off));
-    slLine("tool.attr mesh.edgeSliceTool split true");
-    const on = verticesFrom(GRID_VERTS);
-    assert(on.length == 6 && mirrorClosed(on),
-           "split-on re-bake: expected 3 vertices per side, mirrored: " ~ p3s(on));
-    double[3] lo = [0, 0, 0], mid = [0, 0, 0];
-    foreach (v; on) if (v[0] < 0 && v[2] > 1.5) lo = v; else if (v[0] < 0 && v[2] > 0.5 && v[2] < 1.5) mid = v;
-    const a = vertexAt(lo), b = vertexAt(mid);
-    assert(lo[0] < 0 && mid[0] < 0 && a >= GRID_VERTS && b >= GRID_VERTS,
-           "mirror chord ends not found: " ~ p3s(on));
-    const px = pixelOf((lo[0] + mid[0]) / 2, 0, (lo[2] + mid[2]) / 2);
-    hoverFloor(px, a, b, "mirror chord after the split re-bake");
-    slClickDown(px[0], px[1], "press 3");
-    slPlay(slButton(20, false, 1, px[0], px[1]), "release 3");
-    auto st = getJson("/api/tool/state");
-    const segs = st["bakedSegments"].integer, msegs = st["mirrorBakedSegments"].integer;
-    slLine("tool.set mesh.edgeSliceTool off");
-    const mesh = slMesh();
-    const born = verticesFrom(GRID_VERTS);
-    writeln("third on mirror chord after a split re-bake: ", mesh, " segments ", segs, "/",
-            msegs, " new ", p3s(born));
-    assert(segs == 2 && msegs == 2 && mesh.verts == 33 && mesh.faces == 20
-           && born.length == 8 && mirrorClosed(born),
-           format("mirror chord click after a parameter re-bake is not mirrored: segments "
-                  ~ "%d/%d, mesh %s, new vertices %s", segs, msegs, mesh.toString, p3s(born)));
-}
-
-// The mirror chain's vertex ranges belong to ONE session. Apply a mirrored
-// cut with Shift+click (its -X chord is now ordinary geometry at the indices
-// the ranges named), then click that chord second in the re-armed session: it is a plain point, not a
-// mirror-chain one. Ranges carried over from the dropped session read it as
-// mirror-made.
+// Base terms belong to ONE session. Apply a mirrored cut with Shift+click (its
+// -X chord is now base geometry of the re-armed session), then click that
+// chord second: it is a base EDGE point, not a face point. Base terms read
+// against the dropped session's baseline would call it a chord (face point).
 unittest {
     gridRig(false);
     symmetryX(true);
@@ -302,21 +251,20 @@ unittest {
     hoverFloor(p2, a, b, "session 2 click 2 (committed -X chord)");
     slClickDown(p2[0], p2[1], "session 2 click 2");
     slPlay(slButton(20, false, 1, p2[0], p2[1]), "session 2 release 2");
-    const onMirror = getJson("/api/tool/state")["latchedOnMirror"].toString;
-    writeln("session 2 on a committed mirror chord: latchedOnMirror ", onMirror);
-    assert(onMirror == "[false,false]",
-           "a new session read a committed chord as mirror-made: latchedOnMirror " ~ onMirror);
+    const facePt = getJson("/api/tool/state")["latchedFacePoint"].toString;
+    writeln("session 2 on a committed mirror chord: latchedFacePoint ", facePt);
+    assert(facePt == "[false,false]",
+           "a new session read a committed chord as a face point: latchedFacePoint " ~ facePt);
     slLine("tool.set mesh.edgeSliceTool off");
 }
 
-// A mirror-chain point keeps its PRIMARY image when a later click drops the
-// mirror chain. Split OFF: P0/P1 on +X, P2 on the -X column edge (a mirrored
-// chain), P3 on a MIRROR-made sub-edge (onMirror), then P4 on an edge with an
-// on-plane endpoint, which has no mirror edge, so only the primary chain is
-// re-baked. P3 must bake at its image on the primary side (both of its sub-edge's
-// vertices are primary-made there); falling back to its raw mirror-made
-// indices names a primary-made sub-edge in that re-bake, and the commit
-// carries a stray vertex on the x = -2 column while P3 is lost.
+// A point on a MIRROR-made sub-edge, followed by a point with no mirror edge.
+// Split OFF: P0/P1 on +X, P2 on the -X column edge, P3 on the sub-edge the
+// mirror of P0's split made, then P4 on an edge with an on-plane endpoint
+// (no mirror edge). P3 is a base EDGE point and must stay where it was
+// clicked, with its image on +X. Under the former two-chain bake the mirror
+// chain dropped at P4 and P3's raw mirror-made indices named a primary-made
+// sub-edge: a stray vertex on the x = -2 column, P3 lost.
 unittest {
     gridRig(false);
     symmetryX(true);
@@ -340,8 +288,9 @@ unittest {
     assert(m0 >= 0 && sub >= GRID_VERTS, "alias rig: the mirror sub-edge is not there");
     click(-1.75, 0, m0, sub, "P3 mirror sub-edge");
     auto st3 = getJson("/api/tool/state");
-    assert(st3["latchedOnMirror"].toString == "[false,false,false,true]",
-           "alias rig: P3 did not latch on the mirror chain: " ~ st3["latchedOnMirror"].toString);
+    assert(st3["latchedFacePoint"].toString == "[false,false,false,false]",
+           "alias rig: a sub-edge click is not a base edge point: "
+           ~ st3["latchedFacePoint"].toString);
     const p3 = latchedPositions()[3];
     click(0.5, 1, vertexAt([0, 0, 1]), vertexAt([1, 0, 1]), "P4 on-plane edge");
     slLine("tool.set mesh.edgeSliceTool off");
@@ -354,6 +303,122 @@ unittest {
     writeln("mirror point after the mirror chain drops: ", slMesh(), " P3 ", p3s([p3]),
             " new ", p3s(born));
     assert(image && !stray,
-           format("a mirror-chain point fell back to its mirror-made indices: image %s, "
+           format("a mirror-made sub-edge point is not at its click and image: image %s, "
                   ~ "stray on x = -2 %s, new vertices %s", image, stray, p3s(born)));
+}
+
+/// Unique undirected edges over the face loops, and how many join a vertex
+/// with x > 0 to one with x < 0 (a cut ACROSS the symmetry plane).
+long[2] edgeCounts() {
+    auto m = getJson("/api/model");
+    auto vs = m["vertices"].array;
+    bool[ulong] seen;
+    long cross;
+    foreach (f; m["faces"].array) {
+        auto a = f.array;
+        foreach (i; 0 .. a.length) {
+            const u = cast(ulong)a[i].integer, w = cast(ulong)a[(i + 1) % a.length].integer;
+            const k = u < w ? (u << 32) | w : (w << 32) | u;
+            if (k in seen) continue;
+            seen[k] = true;
+            const xu = vs[u].array[0].floating, xw = vs[w].array[0].floating;
+            if ((xu > 1e-4 && xw < -1e-4) || (xu < -1e-4 && xw > 1e-4)) ++cross;
+        }
+    }
+    return [cast(long)seen.length, cross];
+}
+
+/// Index of the model vertex within 0.02 of `p` (the prologue's cut points
+/// land 0.005 off the grid parameter), or -1.
+long vertexNear(double[3] p) {
+    foreach (i, v; getJson("/api/model")["vertices"].array) {
+        auto a = v.array;
+        if (dist3([a[0].floating, a[1].floating, a[2].floating], p) <= 2e-2) return cast(long)i;
+    }
+    return -1;
+}
+
+void clickXZ(double x, double z, double[3] a, double[3] b, string what) {
+    const va = vertexNear(a), vb = vertexNear(b);
+    assert(va >= 0 && vb >= 0, what ~ ": the edge's ends are not in the mesh");
+    const p = pixelOf(x, 0, z);
+    hoverFloor(p, va, vb, what);
+    slClickDown(p[0], p[1], what);
+    slPlay(slButton(20, false, 1, p[0], p[1]), what ~ " release");
+}
+
+/// Chain ownership under symmetry (captured law C1-sym-own, gap row 290;
+/// raw `toolcards/bugfix_w17_slice_tools/raw/C1-sym-own-<cell>/` in the
+/// private tree). Prologue P1 (+1.5, z0), P2 (+1.5, z1), then the cell's taps;
+/// a point is owned where clicked, in BASE-mesh terms, and a segment cuts only
+/// inside a base polygon both of its points share, so a chain that crosses
+/// the plane makes no cut across it. `want`: the reference's final new
+/// vertices (ours land 0.005 off on the prologue edges: matched to 0.02).
+/// Measured before the law (ours): a 42/29, b 35/22, c 38/27, d 33/20 v/f.
+void symOwnCell(string cell, void delegate() taps, long wantV, long wantE,
+                const double[3][] want) {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], cell ~ " P1");
+    clickXZ(1.5, 1, [1, 0, 1], [2, 0, 1], cell ~ " P2");
+    assert(slMesh().verts == 29, cell ~ ": the prologue is not the 29 v mirrored chord");
+    taps();
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const ec = edgeCounts();
+    const born = verticesFrom(GRID_VERTS);
+    bool setOk = born.length == want.length;
+    foreach (w; want) {
+        bool hit;
+        foreach (g; born) if (dist3(g, w) <= 2e-2) hit = true;
+        setOk = setOk && hit;
+    }
+    writeln("sym-own ", cell, ": ", mesh, " edges ", ec[0], " crossing ", ec[1],
+            " new ", p3s(born));
+    assert(mesh.verts == wantV && mesh.faces == 18 && ec[1] == 0 && setOk
+           && (wantE < 0 || ec[0] == wantE),
+           format("sym-own %s: expected %d v / 18 f / %s e, no crossing edge, new %s; got %s, "
+                  ~ "%d e, %d crossing, new %s", cell, wantV, wantE, p3s(want),
+                  mesh.toString, ec[0], ec[1], p3s(born)));
+}
+
+// Cell c: tap 3 on the -X baseline edge (-1.5, z2). P2 -> P3 crosses the plane:
+// NO cut; P3 splits its edge, mirrored. Reference 31 v / 18 f / 48 e.
+unittest {
+    symOwnCell("c", () {
+        clickXZ(-1.5, 2, [-2, 0, 2], [-1, 0, 2], "c P3");
+    }, 31, 48, [[1.5, 0, 0], [1.5, 0, 1], [1.5, 0, 2], [-1.5, 0, 0], [-1.5, 0, 1], [-1.5, 0, 2]]);
+}
+
+// Cell d: tap 3 on the MIRROR chord (-1.5, z0.5) — a face point of the -X base
+// polygon, no vertex; tap 4 on the +X boundary (2, z0.5): no cut from the face
+// point, and none from P2 either though P2 and it share a base polygon (not
+// consecutive). Reference 31 v / 18 f / 48 e.
+unittest {
+    symOwnCell("d", () {
+        clickXZ(-1.5, 0.5, [-1.5, 0, 0], [-1.5, 0, 1], "d Q");
+        clickXZ(2, 0.5, [2, 0, 0], [2, 0, 1], "d R");
+    }, 31, 48, [[1.5, 0, 0], [1.5, 0, 1], [-1.5, 0, 0], [-1.5, 0, 1], [2, 0, 0.5], [-2, 0, 0.5]]);
+}
+
+// Cell a: the mirror chord again, then (-1.5, z2). Reference 31 v / 18 f / 48 e.
+unittest {
+    symOwnCell("a", () {
+        clickXZ(-1.5, 0.5, [-1.5, 0, 0], [-1.5, 0, 1], "a Q");
+        clickXZ(-1.5, 2, [-2, 0, 2], [-1, 0, 2], "a P4");
+    }, 31, 48, [[1.5, 0, 0], [1.5, 0, 1], [1.5, 0, 2], [-1.5, 0, 0], [-1.5, 0, 1], [-1.5, 0, 2]]);
+}
+
+// Cell b (same-side control): the PRIMARY chord (+1.5, z0.5), then (+1.5, z2).
+// Reference 33 v / 18 f; its edge count (48) is NOT pinned: there the two chord
+// points are vertices in no polygon, where ours splice them into the chords
+// (50 e) — a recorded divergence, not this law.
+unittest {
+    symOwnCell("b", () {
+        clickXZ(1.5, 0.5, [1.5, 0, 0], [1.5, 0, 1], "b Q");
+        clickXZ(1.5, 2, [1, 0, 2], [2, 0, 2], "b P4");
+    }, 33, -1, [[1.5, 0, 0], [1.5, 0, 1], [1.5, 0, 0.5], [1.5, 0, 2],
+                [-1.5, 0, 0], [-1.5, 0, 1], [-1.5, 0, 0.5], [-1.5, 0, 2]]);
 }

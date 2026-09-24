@@ -41,18 +41,22 @@ import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
 import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import symmetry : mirrorEdgePoint;
+import mesh_edit_delta : MeshEditScope;
 import toolpipe.packets : SymmetryPacket;
 import handler : BoxHandlerBatchResourceOwner;
 
 // (m0, m1): the point's mirror edge under the symmetry that was live when it
 // latched (`mirrorEdgePoint`), or ~0u, in the mesh edge's stored order like
 // (v0, v1); `mflip` when that order reverses the mirror of (v0, v1), so the
-// mirror point sits at `1 - t` along it. `onMirror`: the click landed on an
-// edge the MIRROR chain made, so the point belongs to that chain and its image
-// (m0, m1) is the primary's — both chains stay each other's reflection.
+// mirror point sits at `1 - t` along it. Base terms (set only when symmetry was
+// live at the latch, `baseKnown`): the BASE-mesh polygons the point lies in —
+// the faces of its base edge, or the one polygon a chord click lands inside
+// (`facePoint`). Measured ownership law (C1-sym-own, gap row 290): a point is
+// owned where it was CLICKED, in base-mesh terms, whichever side made the edge.
 private struct EdgeSliceChainPoint {
     uint v0, v1; float t;
-    uint m0 = ~0u, m1 = ~0u; bool mflip, onMirror;
+    uint m0 = ~0u, m1 = ~0u; bool mflip;
+    uint[] baseFaces; bool baseKnown, facePoint;
 }
 
 // The session's first point, carried by EditSession across the undo of the
@@ -101,14 +105,14 @@ struct PreparedEdgeSliceParamImage {
     SessionMeshKey nextArmedKey; float nextProxy;
     uint[] nextEdges, nextPointVerts; float[] nextPointT;
     private EdgeSliceChainPoint[] nextChainPoints;
-    private uint[2][] nextMirrorSpans; private size_t nextMirrorSegments;
+    private size_t nextMirrorSegments;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         valid = recognized = appliesState = appliesMesh = invalidateRedo = false;
         pname = null;
         expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
         nextEdges = null; nextPointVerts = null; nextPointT = null;
-        nextChainPoints = null; nextMirrorSpans = null; nextMirrorSegments = 0;
+        nextChainPoints = null; nextMirrorSegments = 0;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
@@ -245,7 +249,6 @@ private:
     // they do not write it (task 7114).
     size_t       lastBakedSegments_;
     size_t       lastMirrorSegments_;   // the mirror chain's count, same bake
-    uint[2][]    mirrorSpans_;          // [from, to) vertex ranges the mirror chain made
     int          dragPart_ = -1;
     // IDENTITY guard, asked between mouse events: "is the baseline I armed
     // still on the mesh I armed it on?". It keys on TOPOLOGY + address + the
@@ -408,9 +411,9 @@ public:
         // A counter, unlike `chainSegments`: what the last bake returned.
         root["bakedSegments"] = JSONValue(cast(long)lastBakedSegments_);
         root["mirrorBakedSegments"] = JSONValue(cast(long)lastMirrorSegments_);
-        auto om = JSONValue.emptyArray;
-        foreach (p; latchedPoints_) om.array ~= JSONValue(p.onMirror);
-        root["latchedOnMirror"] = om;
+        auto fp = JSONValue.emptyArray;
+        foreach (p; latchedPoints_) fp.array ~= JSONValue(p.facePoint);
+        root["latchedFacePoint"] = fp;
         return root;
     }
 
@@ -761,7 +764,6 @@ public:
         image.nextPointVerts = image.expectedPointVerts.dup;
         image.nextPointT = image.expectedPointT.dup;
         image.nextChainPoints = latchedPoints_.dup;
-        image.nextMirrorSpans = mirrorSpans_.dup;
         image.nextMirrorSegments = lastMirrorSegments_;
         if (!image.recognized || pname == "show") return image;
 
@@ -810,7 +812,7 @@ public:
         image.candidate = detachedPreparedMesh(live);
         auto shadow = beginPreparedShadow(image.candidate);
         const n = bakeChainInto(image.candidate, baseline, nextPoints,
-            image.nextMirrorSegments, image.nextMirrorSpans);
+            image.nextMirrorSegments);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
         image.appliesState = true; image.appliesMesh = true;
@@ -854,7 +856,6 @@ public:
         armedKey_ = image.nextArmedKey;
         pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
         latchedPoints_ = image.nextChainPoints;
-        mirrorSpans_ = image.nextMirrorSpans;
         lastMirrorSegments_ = image.nextMirrorSegments;
         if (image.pname == "chainArm" && image.appliesMesh)
             chainBefore_ = image.expectedLive;
@@ -1097,6 +1098,8 @@ private:
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         assignMirror(p, sym);
         seatFirstPoint(p, cast(uint)h);
+        // The first point's base IS the mesh `seatFirstPoint` just captured.
+        assignBase(latchedPoints_[0], sym);
         scrubbing_ = true;
         dragPart_  = 0;
     }
@@ -1105,9 +1108,6 @@ private:
     // starting the scrub — shared with the redo replay (task 7137).
     void seatFirstPoint(ChainPoint p, uint h) {
         chainBefore_ = MeshSnapshot.capture(*mesh);
-        // Every session opens here (click, redo replay); the tool's end paths
-        // are several, so the spans are cleared at the start, not the end.
-        mirrorSpans_ = null;
         latchedPoints_ = [p];
         edgesParam_    = [h];
         phase_     = Phase.EdgeA;
@@ -1133,7 +1133,7 @@ private:
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         assignMirror(p, sym);
-        p.onMirror = p.m0 != ~0u && mirrorMade(p.v0, p.v1);
+        assignBase(p, sym);
         latchedPoints_ ~= p;
         edgesParam_    ~= cast(uint)h;
         armed_     = true;
@@ -1162,13 +1162,64 @@ private:
         }
     }
 
-    // An edge the mirror chain made in the current preview: an endpoint in a
-    // mirror span. An edge joining a primary-made and a mirror-made vertex
-    // (only where the chains meet across the plane) reads as mirror-made; no
-    // cell separates that choice.
-    bool mirrorMade(uint a, uint b) const {
-        foreach (sp; mirrorSpans_)
-            if ((a >= sp[0] && a < sp[1]) || (b >= sp[0] && b < sp[1])) return true;
+    // The point's BASE terms under live symmetry (measured law C1-sym-own,
+    // gap row 290): located by POSITION against the session baseline
+    // `chainBefore_` — on a base edge (its faces; a base vertex's faces at an
+    // endpoint), else inside one base polygon (`facePoint`: a click on any
+    // chord the tool made, primary or mirror). Fixed at the latch; a scrub
+    // slides the point along the edge it latched on, which stays inside the
+    // same base edge or polygon.
+    void assignBase(ref ChainPoint p, const SymmetryPacket* sym) {
+        if (sym is null || !sym.enabled || sym.axisIndex < 0 || !chainBefore_.filled) return;
+        p.baseKnown = true;
+        p.baseFaces = null;
+        p.facePoint = false;
+        const q = chainPointPos(p);
+        const vs = chainBefore_.vertices;
+        const fs = chainBefore_.faces;
+        foreach (e; chainBefore_.edges) {
+            const a = vs[e[0]], b = vs[e[1]];
+            const ab = b - a;
+            const len2 = dot(ab, ab);
+            if (len2 <= 1e-12f) continue;
+            float s = dot(q - a, ab) / len2;
+            if (s < -1e-4f || s > 1.0f + 1e-4f) continue;
+            if ((a + ab * s - q).length() > 1e-4f * (1.0f + len2)) continue;
+            const atA = s <= 1e-4f, atB = s >= 1.0f - 1e-4f;
+            foreach (fi, f; fs) {
+                bool hasA, hasB;
+                foreach (v; f) { if (v == e[0]) hasA = true; if (v == e[1]) hasB = true; }
+                if ((atA && hasA) || (atB && hasB) || (hasA && hasB)) p.baseFaces ~= cast(uint)fi;
+            }
+            return;
+        }
+        p.facePoint = true;
+        foreach (fi, f; fs) {
+            if (f.length < 3) continue;
+            foreach (k; 1 .. f.length - 1)
+                if (pointInTriangle(q, vs[f[0]], vs[f[k]], vs[f[k + 1]])) {
+                    p.baseFaces = [cast(uint)fi];
+                    return;
+                }
+        }
+    }
+
+    // `q` on triangle (a, b, c): within the plane and inside, with tolerance.
+    static bool pointInTriangle(Vec3 q, Vec3 a, Vec3 b, Vec3 c) {
+        const n = cross(b - a, c - a);
+        const n2 = dot(n, n);
+        if (n2 <= 1e-12f) return false;
+        if (dot(q - a, n) * dot(q - a, n) > 1e-8f * n2) return false;
+        const u = dot(cross(c - b, q - b), n) / n2;
+        const v = dot(cross(a - c, q - c), n) / n2;
+        const w = 1.0f - u - v;
+        return u >= -1e-4f && v >= -1e-4f && w >= -1e-4f;
+    }
+
+    // Do points `a` and `b` lie in one common base polygon?
+    static bool sharesBaseFace(const ChainPoint a, const ChainPoint b) {
+        foreach (f; a.baseFaces)
+            foreach (g; b.baseFaces) if (f == g) return true;
         return false;
     }
 
@@ -1365,61 +1416,99 @@ private:
     // on pointsFromEdgesParam/pickSeedSubEdge — or fails to reach).
     // -------------------------------------------------------------------
     size_t bakeChainFrom(ref MeshSnapshot baseline, const ChainPoint[] pts) {
-        return bakeChainInto(*mesh, baseline, pts, lastMirrorSegments_, mirrorSpans_);
+        return bakeChainInto(*mesh, baseline, pts, lastMirrorSegments_);
     }
 
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
             const ChainPoint[] pts) {
         size_t mirrorN;
-        uint[2][] spans;
-        return bakeChainInto(work, baseline, pts, mirrorN, spans);
+        return bakeChainInto(work, baseline, pts, mirrorN);
     }
 
-    // Restores `baseline`, bakes `pts` and — when every point has a mirror
-    // edge — the mirror chain, in the same mesh: one baseline, one history
-    // row for both sides. Returns the PRIMARY chain's count; `mirrorN` the
-    // mirror's. The two chains are baked INTERLEAVED, segment k of each side
-    // before segment k+1 of either, so the preview's vertex numbering is
-    // append-only per point: a point latched on a cut-made edge (primary OR
-    // mirror side, captured rule C1-3b) names vertices that the re-bake
-    // recreates at the same indices before the segment that needs them. A
-    // side-by-side order (all primary, then all mirror) shifts every mirror
-    // vertex when the primary grows (witnesses: tests/test_edge_slice_symmetry.d).
-    // `mirrorSpans`: the vertex ranges the mirror segments appended, which is
-    // how a later click tells a mirror-made edge (`onMirror`) apart.
+    // Restores `baseline` and bakes `pts`. Returns the chain steps that wrote
+    // the mesh; `mirrorN` the mirror side's (symmetric chains only).
+    //
+    // A chain latched under live symmetry (every point `baseKnown`) follows
+    // the measured ownership law (C1-sym-own, gap row 290,
+    // tests/test_edge_slice_symmetry.d): the chain is ONE ordered list of
+    // clicked points that crosses the plane freely; segment k cuts only when
+    // points k and k+1 share a BASE polygon, so a crossing segment makes
+    // nothing; an edge point on a non-cutting step still splits its edge (the
+    // first point too, once the chain has two); each cut and split is baked
+    // again at the points' mirror images. Each step bakes its primary part,
+    // then its mirror part, so the preview's numbering is append-only per
+    // point and a point latched on a cut-made edge (C1-3b) names vertices the
+    // re-bake recreates before the step that needs them.
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
-            const ChainPoint[] pts, out size_t mirrorN, out uint[2][] mirrorSpans) {
+            const ChainPoint[] pts, out size_t mirrorN) {
         baseline.restore(work);
         if (pts.length < 2) return 0;
-        ChainPoint[] primary, mirror;
-        foreach (p; pts) {
-            if (p.m0 == ~0u || p.m1 == ~0u) { mirror = null; break; }
-            const mt = p.mflip ? 1.0f - effectiveT(p.t) : p.t;
-            mirror ~= p.onMirror ? ChainPoint(p.v0, p.v1, p.t) : ChainPoint(p.m0, p.m1, mt);
-        }
-        // An onMirror point bakes at its IMAGE on the primary side even when
-        // the mirror chain is dropped (a later point with no mirror edge): its
-        // raw indices are mirror-made, and in a primary-only re-bake they name
-        // a primary-made sub-edge, a stray cut. The image's are primary-made.
-        foreach (i, p; pts)
-            primary ~= p.onMirror
-                ? ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t) : p;
+        bool symmetric = true;
+        foreach (p; pts) if (!p.baseKnown) symmetric = false;
+        if (symmetric) return bakeSymmetricInto(work, pts, mirrorN);
         size_t n;
-        uint seedP = ~0u, seedM = ~0u;
-        bool liveP = true, liveM = mirror.length == pts.length;
+        uint seed = ~0u;
         foreach (k; 0 .. pts.length - 1) {
-            if (liveP && bakeSegmentInto(work, primary, k, seedP)) n = k + 1;
-            else liveP = false;
-            // The mirror side only follows a primary that has baked at least
-            // its first segment (the pre-interleave contract: `n > 0`).
-            const from = cast(uint)work.vertices.length;
-            if (liveM && n > 0 && bakeSegmentInto(work, mirror, k, seedM)) {
-                mirrorN = k + 1;
-                mirrorSpans ~= [from, cast(uint)work.vertices.length];
-            } else liveM = false;
-            if (!liveP && !liveM) break;
+            if (!bakeSegmentInto(work, pts, k, seed)) break;
+            n = k + 1;
         }
         return n;
+    }
+
+    size_t bakeSymmetricInto(ref Mesh work, const ChainPoint[] pts, out size_t mirrorN) {
+        auto img = new ChainPoint[pts.length];
+        auto hasImg = new bool[pts.length];
+        foreach (i, p; pts) {
+            if (p.m0 == ~0u || p.m1 == ~0u) continue;
+            img[i] = ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t);
+            img[i].facePoint = p.facePoint;   // the image of a face point is one too
+            hasImg[i] = true;
+        }
+        size_t n;
+        uint seedP = ~0u, seedM = ~0u;
+        foreach (k; 0 .. pts.length - 1) {
+            if (sharesBaseFace(pts[k], pts[k + 1])) {
+                if (bakeSegmentInto(work, pts, k, seedP)) ++n;
+                else seedP = ~0u;
+                if (hasImg[k] && hasImg[k + 1] && bakeSegmentInto(work, img, k, seedM)) ++mirrorN;
+                else seedM = ~0u;
+                continue;
+            }
+            // No shared base polygon: no cut; the step's edge points split.
+            uint unused;
+            bool wrote = k == 0 && splitPointInto(work, pts[0], unused);
+            wrote = splitPointInto(work, pts[k + 1], seedP) || wrote;
+            if (wrote) ++n;
+            bool wroteM = k == 0 && hasImg[0] && splitPointInto(work, img[0], unused);
+            if (hasImg[k + 1]) wroteM = splitPointInto(work, img[k + 1], seedM) || wroteM;
+            else seedM = ~0u;
+            if (wroteM) ++mirrorN;
+        }
+        return n;
+    }
+
+    // Split `p`'s edge at its `t` (an edge point that no segment reached).
+    // `v`: the vertex now at the point (a reused corner at t = 0/1), or ~0u
+    // for a face point or an unresolved edge. True when the mesh changed.
+    bool splitPointInto(ref Mesh work, const ChainPoint p, out uint v) {
+        v = ~0u;
+        if (p.facePoint) return false;
+        const e = work.edgeIndexOf(p.v0, p.v1);
+        if (e == ~0u) return false;
+        float t = effectiveT(p.t);
+        if (work.edges[e][0] != p.v0) t = 1.0f - t;
+        if (t <= 1e-5f) { v = work.edges[e][0]; return false; }
+        if (t >= 1.0f - 1e-5f) { v = work.edges[e][1]; return false; }
+        const vi = work.addEdgePoint(e, t);
+        if (vi == uint.max) return false;
+        // The finalize tail `edgeSliceEx`'s points-only arm runs around the
+        // same splice (`addEdgePoint` already re-derived edges and loops).
+        work.clearFaceSelectionResize();
+        work.clearEdgeSelectionResize();
+        work.syncSelection();
+        work.commitChange(MeshEditScope.Geometry);
+        v = vi;
+        return true;
     }
 
     // Segment k of `pts` (from point k to point k+1); `seed` threads the
@@ -1430,10 +1519,12 @@ private:
         if (eB == ~0u) return false;   // destination not a live baseline edge
 
         EdgeSliceResult r;
-        if (k == 0) {
-            uint eA = work.edgeIndexOf(pts[0].v0, pts[0].v1);
+        // No seed: the first segment, or (symmetric chains) a segment whose
+        // start no earlier step materialised — cut from the point itself.
+        if (k == 0 || seed == ~0u) {
+            uint eA = work.edgeIndexOf(pts[k].v0, pts[k].v1);
             if (eA == ~0u) return false;
-            r = work.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
+            r = work.edgeSliceEx(eA, eB, effectiveT(pts[k].t), effectiveT(pts[k + 1].t), split_);
         } else {
             uint sub = pickSeedSubEdgeIn(work, seed, eB);
             if (sub == ~0u) return false;
