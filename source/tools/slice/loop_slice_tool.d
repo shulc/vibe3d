@@ -1945,8 +1945,12 @@ private:
 
     // The arm's latch and its first cut, shared by the arming press and the
     // redo re-arm (`replayFirstGesture`). Trusted key: this IS the mesh we
-    // arm against, all synchronous within the caller.
+    // arm against, all synchronous within the caller. An arm opens a fresh
+    // session: a prepared param update can install `armed_ = false` (its
+    // shadow disarmed on a key mismatch) without clearing the steps, so they
+    // are dropped here or they leak in and hide the activation pop.
     void seatArm(uint[] seeds, uint[] selFaces) {
+        gestureStack_ = null;
         seeds_ = seeds;
         armedSelFaces_ = selFaces;
         refreshSeedRail();

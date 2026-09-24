@@ -18,6 +18,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import mesh_gpu : GpuMesh;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 import tools.slice.loop_slice_tool;
@@ -169,4 +170,59 @@ unittest {
         assert(js["tool"].str == "loopSlice",
             "a settled mesh must produce the ordinary tool-state payload");
     }
+}
+
+// ---------------------------------------------------------------------------
+// A prepared param update whose shadow DISARMS on a key mismatch installs
+// `armed_ = false` through `installPreparedParamUpdate`, which leaves the
+// session-step stack alone. The next arming press must still open a FRESH
+// session: `seatArm` clears the stack, so the arm is the session's only step
+// and `soleFirstGesture` (the activation pop) is reachable. Without that
+// clear the old session's step leaks in and the pop answers null.
+// The GPU never draws here: `suppressCageUpload` routes every upload to the
+// bus publisher, so no GL context is needed.
+// ---------------------------------------------------------------------------
+unittest {
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    m.selectEdge(0);
+    EditMode em = EditMode.Edges;
+    GpuMesh gpu;
+    gpu.suppressCageUpload = true;
+    g_hoveredEdge = -1;
+
+    auto tool = new LoopSliceTool(() => &m, &gpu, &em, null);
+    tool.activate();
+    VectorStack vts;
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+
+    // Arm (motionless: no step), then one motionless re-scrub: one step.
+    assert(tool.onMouseButtonDown(e, vts), "setup: the arming press did not arm");
+    assert(tool.onMouseButtonUp(e, vts));
+    assert(tool.onMouseButtonDown(e, vts) && tool.onMouseButtonUp(e, vts),
+        "setup: the re-scrub press was not taken");
+    assert(tool.soleFirstGesture() is null,
+        "setup: a pushed step must hide the activation pop");
+
+    // Change the live topology behind the armed key, then a prepared Count
+    // update: its shadow's rebuildCut sees the mismatch and disarms.
+    m.addVertex(Vec3(9, 9, 9));
+    auto image = tool.buildPreparedParamUpdate("count", m);
+    assert(image.valid && !image.next.armed && !image.appliesMesh,
+        "setup: the shadow did not disarm on the key mismatch");
+    tool.installPreparedParamUpdate(image);
+
+    // Re-arm on a settled mesh with a selected edge.
+    m.buildLoops();
+    m.resetSelection();
+    m.selectEdge(0);
+    assert(tool.onMouseButtonDown(e, vts), "setup: the re-arming press did not arm");
+    assert(tool.soleFirstGesture() !is null,
+        "loop slice: a re-arm after a prepared key-mismatch disarm inherited the "
+        ~ "old session's steps (seatArm must clear the gesture stack)");
 }
