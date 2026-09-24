@@ -250,6 +250,7 @@ tests.unit.event_delivery_owner_test
 tests.unit.event_key_stamp_test
 tests.unit.eventlog_parser_test
 tests.unit.eventlog_test
+tests.unit.extend_offset_mirror_test
 tests.unit.face_reindex_arming_test
 tests.unit.facing_mirror_determinant_test
 tests.unit.facing_predicate_test

@@ -2482,6 +2482,21 @@ size_t extrudeVerticesByMask(ref MeshEditBatch ed, in bool[] maskIn, float shift
     return processed;
 }
 
+/// Edge Extend's offset under symmetry (task 7118; capture law gap 172/209,
+/// C2-sym-*, C2-sym-0, C2-sym-sel M-press). No mirrored copies are made: a
+/// ring vertex whose SOURCE vertex lies on the side the activating press
+/// latched (`pressSide`, +1/-1 against `planeNormal`) takes the offset as is,
+/// one on the other side takes it reflected about the plane, and one exactly
+/// ON the plane takes it with the normal component zeroed. The comparisons
+/// are strict with no band (cells at x = +-1e-4 already obey the sign law).
+/// `.init` (disabled) is the pre-symmetry kernel, byte for byte.
+struct ExtendOffsetMirror {
+    bool enabled;
+    Vec3 planePoint  = Vec3(0, 0, 0);
+    Vec3 planeNormal = Vec3(1, 0, 0);
+    int  pressSide   = -1;
+}
+
 /// Edge Extend: ADDITIVE, non-manifold. Per selected edge (with ≥1 adjacent
 /// face) adds 2 ridge verts + 1 bridge quad; the source mesh is NOT modified
 /// (the source edge becomes 3-face non-manifold; ring adjacency at that edge is
@@ -2549,7 +2564,8 @@ size_t extrudeVerticesByMask(ref MeshEditBatch ed, in bool[] maskIn, float shift
 size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
                          float inset, float shift,
                          Vec3 offset, Vec3 rotateDeg, Vec3 scale,
-                         int segments, Vec3 pivot = Vec3(0, 0, 0)) {
+                         int segments, Vec3 pivot = Vec3(0, 0, 0),
+                         ExtendOffsetMirror mirror = ExtendOffsetMirror.init) {
     const mask = ed.maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
     import math : Vec3, cross, dot, normalize;
     import std.math : sin, cos, abs, PI;
@@ -2909,6 +2925,17 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
     //     ringVert_k(v) = (k/N)·offset + insetShiftDelta(v) + applyRS(E_src,k/N).
     //     N=1 ⇒ one ring, t=1, fully reproducing the pre-segments law.
     const int N = segments;
+    // The offset a ring vertex takes, by its SOURCE vertex's side of the
+    // symmetry plane (ExtendOffsetMirror above). Ring 0 is the clean cage,
+    // so the side is stable for the whole drag.
+    Vec3 ringOffset(uint v) {
+        if (!mirror.enabled) return offset;
+        immutable Vec3 n = mirror.planeNormal;
+        immutable float d = dot(ed.vertices[v] - mirror.planePoint, n);
+        if (d == 0) return offset - n * dot(offset, n);
+        if ((d > 0 ? 1 : -1) == mirror.pressSide) return offset;
+        return offset - n * (2.0f * dot(offset, n));
+    }
     // ringVertOf[k] maps source vertex → its index in `vertices` for ring k.
     // ring 0 = identity map onto the source vertex (no new geometry); rings
     // 1..N hold the appended new verts.
@@ -2922,7 +2949,7 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
             // (the default / command path) this is exactly applyRS(E_src) —
             // byte-unchanged. Offset + inset/shift are pivot-agnostic.
             Vec3 pos = pivot + applyRS(ed.vertices[v] - pivot, t)
-                     + insetShiftOf[v] + offset * t;
+                     + insetShiftOf[v] + ringOffset(v) * t;
             ringVertOf[k][v] = ed.addVertex(pos);
         }
         foreach (ref e; exEdges) { makeRingVert(e.va); makeRingVert(e.vb); }
