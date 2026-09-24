@@ -291,17 +291,19 @@ unittest {
         "census: the ports are built once at init, not per frame");
     const args = splitArgs(balancedSpan(code, ctors[0] + "PickDrainPorts".length, '(', ')'));
     assert(args.length == 6, "census: PickDrainPorts takes six ports, got " ~ args.to!string);
-    const string[] expectedPorts = [
-        "(string dir) => listDirNames(dir)",
-        "(Command c, RecordMode m, string id) => commandBinding.invokeUiCommand(c, m, id)",
-        "(string text) => raiseNotice(text)",
-        "() => changeBus.docRevision()",
-        "(Command c) => stillBoundTo(c, &sessionOwner.editMesh(), editMode)",
-        "() => guardController.pending",
-    ];
-    foreach (i, a; args)
-        assert(normWs(a) == expectedPorts[i],
-            format("census: port %d is `%s`, expected `%s`", i, normWs(a), expectedPorts[i]));
+    // Each port's whole text, whitespace-normalised: a changed body reddens.
+    assert(normWs(args[0]) == "(string dir) => listDirNames(dir)",
+        "census: listDir port " ~ normWs(args[0]));
+    assert(normWs(args[1]) == "(Command c, RecordMode m, string id) => commandBinding.invokeUiCommand(c, m, id)",
+        "census: invoke port " ~ normWs(args[1]));
+    assert(normWs(args[2]) == "(string text) => raiseNotice(text)",
+        "census: notice port " ~ normWs(args[2]));
+    assert(normWs(args[3]) == "() => changeBus.docRevision()",
+        "census: revision port " ~ normWs(args[3]));
+    assert(normWs(args[4]) == "(Command c) => stillBoundTo(c, &sessionOwner.editMesh(), editMode)",
+        "census: stillBound port " ~ normWs(args[4]));
+    assert(normWs(args[5]) == "() => guardController.pending",
+        "census: guardBusy port " ~ normWs(args[5]));
 
     // The probe dispatch door and the notice/guard witnesses.
     assert(literalHits(raw, "WEB-NOTICE text=").length == 1
