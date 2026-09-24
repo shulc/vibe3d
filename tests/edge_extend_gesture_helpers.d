@@ -462,9 +462,9 @@ size_t[] rigNoArm(int[2][] pairs, bool front, double focusX, double focusY = 0,
 
 /// The capture's symmetric-click rig (C2-sym-sel): front camera, symmetry X
 /// on, edge mode, and ONE real click on the midpoint of the +X ridge edge
-/// (7,8) at world (1.0, 0.5) — under symmetry the click selects the mirror
-/// edge too (S-both). No tool is armed.
-void symSelRig(double focusX = 0.0, double focusY = 0.55) {
+/// (7,8) at world (1.0, 0.5) — or wherever (clickX, clickY) says — under
+/// symmetry the click selects the mirror edge too (S-both). No tool is armed.
+void symSelRig(double focusX = 0.0, double focusY = 0.55, double clickX = 1.0, double clickY = 0.5) {
     auto r = postJson("/api/command", `{"id":"scene.reset"}`);
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     loadPlaneRig();
@@ -478,7 +478,7 @@ void symSelRig(double focusX = 0.0, double focusY = 0.55) {
     setSymmetryX(true);
     tapKey(50);   // '2' — edge mode
     assert(getJson("/api/selection")["mode"].str == "edges", "rig: edge mode did not take");
-    click(frontScreen(1.0, 0.5));
+    click(frontScreen(clickX, clickY));
     assert(selectedEdgeList().length == 2, "symmetric click did not select the mirror edge: "
         ~ getJson("/api/selection")["selectedEdges"].toString);
     cmd("history.clear");
@@ -504,4 +504,67 @@ Offset[] frontHaul(double wx, double wy, int dx, int dy, int n, string rigMsg = 
     auto tr = increments(p, dx, dy, n, end);
     release(end);
     return tr;
+}
+
+// --- the handle pose (Q-pose, gap 245) -------------------------------------
+
+/// The frozen handle origin (world x, y) of a `handle_pose_*` fixture cell
+/// at `frame` (e.g. "h1_released").
+double[2] fixturePose(string cell, string frame) {
+    import std.file : readText;
+    import std.json : parseJSON;
+    auto j = parseJSON(readText("tests/fixtures/edge_extend_gesture_laws.json"));
+    auto p = j["cells"][cell]["handle_origin_world_xy"][frame];
+    assert(p.type == JSONType.array, format("fixture: %s.%s is not a pose: %s", cell, frame, p));
+    return [num(p[0]), num(p[1])];
+}
+
+/// |gizmoCentre - (wx, wy, 0)| <= tol, else `msg` with both points.
+void assertHandleAt(double wx, double wy, double tol, string msg) {
+    auto g = gizmoCentre();
+    assert(abs(g[0] - wx) <= tol && abs(g[1] - wy) <= tol && abs(g[2]) <= tol,
+        format("%s: gizmoCentre %s, expected (%s, %s, 0)", msg, g, wx, wy));
+}
+
+/// The front-view pixel of the handle's X arm (screen right of the centre,
+/// on the shaft) and its two row neighbours, for a probe that must see the
+/// handle rather than a ridge that may run through the centre.
+Px[3] xArmPx(double wx, double wy) {
+    Px c = frontScreen(wx, wy);
+    return [Px(c.x + 60, c.y - 1), Px(c.x + 60, c.y), Px(c.x + 60, c.y + 1)];
+}
+
+/// Edge mode by the key, then real clicks at the given world points (front
+/// view): the first plain, the rest with Shift (selection add).
+void clickSelectFront(double[2][] pts) {
+    tapKey(50);   // '2' — edge mode
+    assert(getJson("/api/selection")["mode"].str == "edges", "rig: edge mode did not take");
+    foreach (i, q; pts) click(frontScreen(q[0], q[1]), 1, i ? KMOD_LSHIFT : 0);
+}
+
+/// Reset, rig, symmetry off, the front camera at `kFrontWpp` focused on
+/// (focusX, focusY); no selection, no tool.
+void frontRigNoSel(double focusX, double focusY) {
+    auto r = postJson("/api/command", `{"id":"scene.reset"}`);
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    loadPlaneRig();
+    setSymmetryX(false);
+    cmd("viewport.view Front");
+    auto c0 = getJson("/api/camera");
+    immutable double dist = kFrontWpp * cast(double) c0["height"].integer / (2.0 * tan(PI / 8));
+    r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":%s,"z":0},"distance":%s,"roll":0}`,
+                                       focusX, focusY, dist));
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+}
+
+/// Floor: every world point lands inside the active cell (front view).
+void assertOnScreen(double[2][] pts) {
+    auto c = getJson("/api/camera");
+    immutable long x0 = c["vpX"].integer, y0 = c["vpY"].integer;
+    immutable long w = c["width"].integer, h = c["height"].integer;
+    foreach (q; pts) {
+        Px p = frontScreen(q[0], q[1]);
+        assert(p.x > x0 + 4 && p.x < x0 + w - 4 && p.y > y0 + 4 && p.y < y0 + h - 4,
+            format("rig: world point %s projects off the cell (%s in %sx%s at %s,%s)", q, p, w, h, x0, y0));
+    }
 }

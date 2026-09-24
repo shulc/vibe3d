@@ -2646,6 +2646,16 @@ public:
     // and (in 4b) as the action-center pivot.
     public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
 
+    // A host that draws its own handle pose (Edge Extend, Q-pose, gap 245)
+    // sets it here every tick; the idle pose then ignores the action centre.
+    // Nobody else calls it, so every other tool's pose is untouched.
+    private bool hostCentreActive_;
+    private Vec3 hostCentre_;
+    final void setHostGizmoCentre(Vec3 c) nothrow @nogc {
+        hostCentre_ = c;
+        hostCentreActive_ = true;
+    }
+
     // Test seam — the Move bank's live drag axis (0/1/2 axis, 3 center-box / most-
     // facing plane, 4/5/6 plane circles, -1 idle). Lets the gesture-chain test
     // confirm a center-box grab actually engaged dragAxis==3 (the basis-free path

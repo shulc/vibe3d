@@ -259,6 +259,14 @@ private:
     // test readout `pressAnchor`. Not the handle centre: a press never moves
     // the handle (Q-pose).
     Vec3 pressPoint_ = Vec3(0, 0, 0);
+
+    // The handle is drawn at base + the RAW offset, never at a press point
+    // and never at the action centre (Q-pose; capture C2-handle-pose, verdict
+    // HB-sel HS-plus HP-tool, gap 245). The base is taken at every press that
+    // opens an operation (extendHandleBase); before the first press nothing
+    // is drawn, so the placeholder written at init is never seen.
+    Vec3 handleBase_ = Vec3(0, 0, 0);
+    Vec3 handleCentre() const { return handleBase_ + offsetVec(); }
     bool moveOffGizmo_;            // the Move bank's lastClickWasOffGizmo, same moment
 
     // Symmetry (task 7118, gap 172/209/212/216): the side of the plane whose
@@ -464,6 +472,7 @@ public:
             ref PreparedEdgeExtendToolActivationImage image) nothrow @nogc {
         built = false; dragBank = DragBank.None; preview_.reset();
         image.baseline.moveInto(before); initPivot_ = image.pivot;
+        handleBase_ = initPivot_;
         awaitingFirstPress_ = true;   // gap 217: the production arm door
         image.valid = false;
     }
@@ -586,6 +595,7 @@ public:
         // law is about the selection, and forking a second implementation of
         // "mid of the box" to cover it would cost more than the case is worth.
         initPivot_ = mesh.selectionBBoxCenterEdges();
+        handleBase_ = initPivot_;
         symMirror_.pressSide = -1;
         gestureSteps_.length = 0;
     }
@@ -930,6 +940,7 @@ public:
     override void update(ref VectorStack vts) {
         if (!active) return;
         if (dragBank == DragBank.None) readSymmetry(vts);
+        xfrm.setHostGizmoCentre(handleCentre());
         xfrm.update(vts);
     }
 
@@ -944,6 +955,7 @@ public:
             return PreparedXfrmUpdateEffect(preparedToolStateOwner,
                 PreparedXfrmUpdateKind.None, false);
         }
+        xfrm.setHostGizmoCentre(handleCentre());
         auto inner = xfrm.prepareUpdate(vts, context, layer, uploadOwner);
         return PreparedXfrmUpdateEffect(preparedToolStateOwner,
             inner.kind, inner.accepted);
@@ -1086,6 +1098,7 @@ public:
         // restore, or after a Shift/middle commit. It is always off the
         // handle (there is none yet, gap 217).
         immutable bool first = !runStarted();
+        if (first) handleBase_ = extendHandleBase(vts);
 
         // Bank dispatch — same try-in-order priority the wrapper uses (T→R→S).
         // A bank "owns" the drag only when it consumed the click AND landed on a
@@ -1298,6 +1311,7 @@ public:
         // No handle before the first press (gap 217) — in the owner cell and
         // in every replica, which come through this same draw.
         if (!runStarted()) return;
+        xfrm.setHostGizmoCentre(handleCentre());
         // The embedded wrapper renders the gizmo banks + runs the shared arbiter
         // (hover highlight) at the tool's handle pose (Q-pose, gap 245).
         xfrm.draw(shader, vp, vts, plan);
@@ -1322,6 +1336,33 @@ private:
         if (gestureSteps_.length >= MAX_EDGE_EXTEND_GESTURE_STEPS)
             gestureSteps_ = gestureSteps_[1 .. $];   // drop the OLDEST
         gestureSteps_ ~= a;
+    }
+
+    // The handle base (verdict `C2-handle-pose`: HB-sel HS-plus): the mid of
+    // the bounding box of the selected edges' vertices — under symmetry, of
+    // those on the plane's + side (the side does not follow the latch; none
+    // there = no narrowing). The selection here is the operation's source:
+    // the committed ridge after a Shift/middle commit.
+    Vec3 extendHandleBase(ref VectorStack vts) {
+        const(SymmetryPacket)* sym = vts.get!SymmetryPacket();
+        if (sym !is null && sym.enabled) {
+            immutable bool any = mesh.hasAnySelectedEdges();
+            Vec3 mn, mx;
+            bool seen;
+            foreach (i, edge; mesh.edges) {
+                if (any && !mesh.isEdgeSelected(i)) continue;
+                foreach (vi; edge) {
+                    immutable Vec3 v = mesh.vertices[vi];
+                    if (dot(v - sym.planePoint, sym.planeNormal) < 0) continue;
+                    if (!seen) { mn = mx = v; seen = true; continue; }
+                    if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                    if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                    if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                }
+            }
+            if (seen) return (mn + mx) * 0.5f;
+        }
+        return mesh.selectionBBoxCenterEdges();
     }
 
     // The symmetry plane, when an AXIS plane is on (a workplane plane's

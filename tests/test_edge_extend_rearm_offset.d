@@ -18,10 +18,9 @@
 //
 // Blocks top to bottom: (k) (c1) (c2) (c3) (f) — green on HEAD; (s-pm) (s-mp)
 // (s-c) — the side re-latch, RED on HEAD at (s-pm)'s floor "first off-handle
-// press did not latch +X" (HEAD does not reflect at all). The L-latch cell
-// (h) of the plan is not built: on this code the handle is drawn at the last
-// off-handle press point, so it can never sit on the side opposite the latch
-// (recorded in the task card).
+// press did not latch +X" (HEAD does not reflect at all); (h) the L-latch,
+// built once the handle stays at the edge (Q-pose, gap 245): the fixture's
+// `gizmo_plus_side` form puts the handle on the +X side after a -X haul.
 
 import edge_extend_gesture_helpers;
 import http_client : getJson, postJson;
@@ -238,4 +237,32 @@ unittest { // (s-c) a motionless press on the other side flips at the press
         foreach (k; 0 .. 3)
             assert(abs(committed[i][k] - preview[i][k]) <= 1e-6,
                 format("committed extend differs from the preview after a side re-latch: %s vs %s", committed, preview));
+}
+
+unittest { // (h) L-latch: a press ON the handle keeps the latched side (gap 212)
+    symSelRig();
+    keyArm();
+    // gizmo_plus_side: the haul at (-0.5, 1.35) latches -X (S = -1).
+    frontHaul(-0.5, 1.35, kIncrementPx, kIncrementPx, 10);
+    assert(pressAnchor()[0] < -0.05, "rig: the latching haul was not on the -X side: " ~ pressAnchor().to!string);
+    immutable Offset oH = offset();
+    // The Y (green) arm: 60 px above the handle centre, on the 120 px shaft.
+    auto g = gizmoCentre();
+    Px c = frontScreen(g[0], g[1]);
+    Px p = Px(c.x, c.y - 60);
+    press(p);
+    assert(toolState()["dragBank"].str == "move" && grabbedAxis() == 1,
+        format("rig: the press at %s did not grab the Y arm (dragAxis %d)", p, grabbedAxis()));
+    immutable double ax = pressAnchor()[0];
+    assert(ax > 0.05, format("handle press not on the side opposite the latch (rig): press x %s, latch -X, "
+        ~ "handle %s", ax, g));
+    Px end;
+    increments(p, kIncrementPx, kIncrementPx, 10, end);
+    release(end);
+    immutable Offset o = offset();
+    assert(abs(o.x - oH.x) <= 1e-6, format("handle press did not grab the Y arm: offset x %s -> %s", oH.x, o.x));
+    assert(vertexCount() == 13, "rig: the handle drag started another ring: " ~ vertexCount().to!string ~ " v");
+    assertRidges(1 - o.x, "extend under symmetry: a handle press changed the latched side (reference keeps it, "
+        ~ "gap 212)");
+    cmd("tool.set edge.extend off");
 }

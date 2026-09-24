@@ -218,3 +218,68 @@ unittest {
         format("the handle did not follow edge + offset (C2-zo): gizmoCentre %s, offset %s", g, o));
     cmd("tool.set edge.extend off");
 }
+
+// The handle pose beyond one edge (capture C2-handle-pose, verdict
+// `HB-sel HS-plus HP-tool`; fixture cells `handle_pose_*`; gap 245): the base
+// is the selected edges' bbox mid — under symmetry, of the +X half — and the
+// action centre does not move it. Each block: the key, then ONE haul from P,
+// and the pose read after the release against the frozen h1 pose.
+
+enum double kPX = 0.5, kPY = 1.35;
+
+unittest { // (Cs) HP-3: symmetry X, the -X edge (2,1) clicked -> the base is the +X half
+    symSelRig(0.0, 0.55, -1.0, 0.5);
+    immutable double[2] want = fixturePose("handle_pose_symmetry_minus_click", "h1_released");
+    immutable Px[3] arm = xArmPx(want[0], want[1]);
+    int[3][3] bg;
+    foreach (i; 0 .. 3) bg[i] = probe(arm[i]);
+    keyArm();
+    frontHaul(kPX, kPY, kIncrementPx, kIncrementPx, 10);
+    assertHandleAt(want[0], want[1], 0.02,
+        "the Edge Extend handle under symmetry is not where the reference draws it (C2-handle-pose, gap 245)");
+    bool drawn;
+    foreach (i; 0 .. 3) if (!sameColour(probe(arm[i]), bg[i])) drawn = true;
+    assert(drawn, format("no handle drawn at the reference pose: X-arm pixels %s unchanged from %s", arm, bg));
+    cmd("tool.set edge.extend off");
+}
+
+unittest { // (Ca) HP-4: action centre Origin -> the pose is the tool's, not the centre's
+    rigNoArm(kEdge, true, 0.3, 0.55);
+    cmd("actr.origin");
+    scope(exit) cmd("actr.auto");
+    keyArm();
+    frontHaul(kPX, kPY, kIncrementPx, kIncrementPx, 10);
+    immutable double[2] want = fixturePose("handle_pose_acen_origin", "h1_released");
+    assertHandleAt(want[0], want[1], 0.02, "the Edge Extend handle followed the action centre (C2-handle-pose)");
+    cmd("tool.set edge.extend off");
+}
+
+unittest { // (Co) HP-1: click (0,1), Shift+click (7,8) -> the base is the whole selection's bbox mid
+    frontRigNoSel(0.15, 0.425);
+    assertOnScreen([[-1.0, -0.5], [1.0, 0.5], [kPX, kPY], [0.125, -0.125]]);
+    clickSelectFront([[-1.0, -0.5], [1.0, 0.5]]);
+    assert(selectedEdgeList().length == 2, "rig: the two clicks did not select two edges: "
+        ~ getJson("/api/selection")["selectedEdges"].toString);
+    cmd("history.clear");
+    settle(250);
+    keyArm();
+    frontHaul(kPX, kPY, kIncrementPx, kIncrementPx, 10);
+    immutable double[2] want = fixturePose("handle_pose_order_a", "h1_released");
+    assertHandleAt(want[0], want[1], 0.02,
+        "the Edge Extend handle is not at the selection's bbox mid + offset (C2-handle-pose HP-1, gap 245)");
+    cmd("tool.set edge.extend off");
+}
+
+unittest { // (Csh) a Shift press opens an operation on the committed ridge: the handle re-bases there
+    rigNoArm(kEdge, true, 0.3, 0.55);
+    keyArm();
+    frontHaul(kPX, kPY, kIncrementPx, kIncrementPx, 10);
+    immutable Offset o1 = offset();
+    assert(vertexCount() == 11 && abs(o1.x) > 0.05, format("rig: the prologue haul did not build a ring: %d v, %s",
+        vertexCount(), o1));
+    click(frontScreen(kPX, kPY), 1, KMOD_LSHIFT);
+    assert(vertexCount() == 13 && zeroOffset(), format("rig: the Shift press did not open a new operation "
+        ~ "(gap 222): %d v, offset %s", vertexCount(), offset()));
+    assertHandleAt(1 + o1.x, 0.5 + o1.y, 0.02, "a Shift press did not re-base the handle on the committed ridge");
+    cmd("tool.set edge.extend off");
+}

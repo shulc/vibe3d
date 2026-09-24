@@ -22,6 +22,7 @@ module tools.transform.xfrm_handles;
 mixin template XfrmHandlesImpl() {
     /// Idle T-only handles follow the translated run centre (task 6207).
     private Vec3 idleHandleCentre(ref VectorStack vts) {
+        if (hostCentreActive_) return hostCentre_;
         immutable Vec3 acen = queryActionCenter(vts);
         if (!flagT || !runFrameValid) return acen;
         return runFrameOrigin
