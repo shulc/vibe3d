@@ -39,7 +39,7 @@ double queryInset() {
     return r["value"].floating;
 }
 
-unittest { // an upward haul drives `inset` positive through the motion path
+unittest { // a rightward haul drives `inset` positive through the motion path
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -52,8 +52,8 @@ unittest { // an upward haul drives `inset` positive through the motion path
         "a freshly armed inset tool should start at 0");
 
     // Press anywhere inside the viewport — the tool has no handle to hit and
-    // anchors the haul at the selection centroid regardless of where the
-    // press landed. 60 px RIGHT is the whole gesture.
+    // its step comes from the view's pixel size, whatever the press point.
+    // 60 px RIGHT is the whole gesture.
     auto cam = fetchCamera(BASE);
     int cx = cam.vpX + cam.width  / 2;
     int cy = cam.vpY + cam.height / 2;

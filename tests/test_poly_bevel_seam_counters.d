@@ -558,8 +558,8 @@ unittest {   // the Poly BEVEL tool's drag — the PreviewRebuild shape
 unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
     // NO HANDLE HERE, and that is why this block does not reuse
     // `handleScreen`: the inset tool draws none — any qualifying click in
-    // polygon mode begins the haul, anchored at the selected faces' centroid
-    // (the shape `tests/test_poly_inset_drag.d` already drives). So the press
+    // polygon mode begins the haul, its gain the view's pixel size (the shape
+    // `tests/test_poly_inset_drag.d` already drives). So the press
     // point is arbitrary and only the HORIZONTAL travel carries meaning (law
     // §27; rightward since task 7122).
     enum int kFrames = 12;

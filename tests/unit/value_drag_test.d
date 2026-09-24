@@ -159,6 +159,35 @@ unittest { // the layer-unit conversion divides the world law (task 0645)
         "inset step/detent are not converted into layer units");
 }
 
+unittest { // the detent test is EXACT double equality, not a tolerance
+    // Provenance: static read of measured_laws §27, C5-i-round — "a pixel that
+    // lands EXACTLY (double ==) on a detent multiple". No live cell separates
+    // it; this does: from 0 at step 0.0002, the 150th step is
+    // 0.030000000000000002, which != round(v/0.01)*0.01 == 0.03, so it must
+    // NOT hold, while 0.01 and 0.02 (the 50th/100th steps) land exactly and do.
+    int hold, lastDir;
+    double v = 0.0;
+    int landed01, landed02, steps;
+    bool reached03;
+    while (steps < 400 && !reached03) {
+        v = steppedDragPixel(v, +1, 0.0002, 0.01, 36, hold, lastDir);
+        ++steps;
+        if (hold == 36 && v == 0.01) ++landed01;
+        if (hold == 36 && v == 0.02) ++landed02;
+        if (abs(v - 0.03) < 1e-9 && hold == 0 && lastDir == 1) reached03 = true;
+        else if (abs(v - 0.03) < 1e-9) {
+            assert(false, format("the inexact 0.03 (%.17g) armed a detent hold of %d: "
+                ~ "the detent test must be double ==, not a tolerance", v, hold));
+        }
+    }
+    assert(landed01 == 1 && landed02 == 1,
+        format("rig: 0.01 / 0.02 did not land exactly with a 36-px hold (%d, %d)",
+               landed01, landed02));
+    assert(reached03 && v != 0.03 && steps == 150 + 2 * 36,
+        format("rig: reached 0.03 after %d pixels (want %d), v %.17g",
+               steps, 150 + 2 * 36, v));
+}
+
 unittest { // only a POSITIVE detent holds
     int hold, lastDir;
     double v = 0.0;

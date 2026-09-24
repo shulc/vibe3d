@@ -109,8 +109,8 @@ unittest { // a rightward haul at a framing where `dist` can actually reach a ne
     immutable size_t v0           = vertexCount();
     immutable double before       = queryDist();
 
-    // Press anywhere in the viewport — no handle to hit, the haul anchors at
-    // the selection centroid. 400 px RIGHT is the whole gesture.
+    // Press anywhere in the viewport — no handle to hit; the gain is the
+    // view's pixel size, not an anchor's. 400 px RIGHT is the whole gesture.
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width  / 2;
     immutable int cy = cam.vpY + cam.height / 2;
