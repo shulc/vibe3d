@@ -17,6 +17,7 @@
 // press": HEAD draws the gizmo the moment the key arms the tool.
 
 import edge_extend_gesture_helpers;
+import http_client : getJson;
 import std.algorithm : sort;
 import std.conv : to;
 import std.format : format;
