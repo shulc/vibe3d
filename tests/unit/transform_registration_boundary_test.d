@@ -203,15 +203,17 @@ unittest {
     // what must not move without review is `transform`; W15-C adds the
     // build-selected subpatch backend to every mesh-bearing closure, taking
     // both this closure and the broad control up by one.
+    // Task 7120's pure plane-fit module (workplane_fit, reached through
+    // commands.workplane) takes the broad control from 515 to 516.
     //
     // Both of those slices bumped this literal from 512 to 513 in their own
     // lanes, independently. Two lanes each incrementing the same counter write
     // the SAME text, so git merges them without a conflict and the file then
     // states 513 where the truth is 514. The gate on the REBASED sha is what
     // catches that; a gate taken before the rebase cannot.
-    assert(transform.queue.length == 252 && positive.queue.length == 515,
+    assert(transform.queue.length == 252 && positive.queue.length == 516,
         format("6506 import closure census changed: transform=%d/252 "
-            ~ "registration=%d/515", transform.queue.length,
+            ~ "registration=%d/516", transform.queue.length,
             positive.queue.length));
 }
 
