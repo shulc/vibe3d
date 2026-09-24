@@ -132,6 +132,16 @@ unittest { // ExtendOffsetMirror.init is the pre-symmetry kernel, bit for bit
     auto without = extendNew(b, mask.dup, ExtendOffsetMirror.init, false);
     assert(withInit.length == 5 && without.length == 5,
         format("init rig: %d / %d new vertices", withInit.length, without.length));
+    // Absolute, not only relative: both calls reach the same kernel, so the
+    // comparison alone cannot see a mirror that ignores `enabled`.
+    size_t plusRidge;
+    foreach (v; withInit)
+        if (v.x > 0) {
+            ++plusRidge;
+            assert(abs(v.x - (1 + kO)) <= 1e-6f,
+                format("ExtendOffsetMirror.init mirrored the +X ridge: x %.7f", v.x));
+        }
+    assert(plusRidge == 3, format("init rig: %d +X ridge vertices", plusRidge));
     assert(withInit == without, "ExtendOffsetMirror.init changed the kernel's output");
     assert(a.vertices == b.vertices && a.faces == b.faces,
         "ExtendOffsetMirror.init changed the mesh");
