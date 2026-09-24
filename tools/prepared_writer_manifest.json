@@ -536,14 +536,14 @@
     {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
-      "semantic_sha256": "84af0a782532126b277d0a15bffae69dc09a70ac0ffc061cdfde5951333b4984",
+      "semantic_sha256": "3759bb849f91440ea3db1854cc50994cb82f2b2907512041bec51a2bd12ca4c2",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
-      "semantic_sha256": "6522ff516b49d73107a433b56c09adcabfcec7c547703e063cd262b53cde1c3b",
+      "semantic_sha256": "37a0c5df090c7086b888ebfef3169a035a68658548102999fb41c87ffe305664",
       "signature": "void()",
       "symbol": "deactivate"
     },

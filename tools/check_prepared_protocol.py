@@ -5836,14 +5836,18 @@ for target, old, new, label in (
 
 mirror_activation_owner = prepared_module_source("prepared_mirror_activation")
 mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
-def mirror_activation_gate(owner, context, tool, gpu):
-    gpu_block = from_text_anchor(gpu, "final class GpuCreateUploadOwner")
+def mirror_activation_gate(owner, context, tool):
+    # Task 7116: the activation image is baseline + mask + params only; no
+    # detached preview mesh and no GPU arm (the copy is a live edit of the
+    # document mesh from the first press, so nothing is evaluated at arm).
     activation_block = before_declaration(
         owner, "struct", "PreparedMirrorDeactivateToken")
     if activation_block is None:
         return False
     tool_activation_block = before_text_anchor(
         tool, "final PreparedMirrorDeactivateImage buildPreparedDeactivateState")
+    if tool_activation_block is None:
+        return False
     return (has_prepared_token_pair(owner, "MirrorActivation") and
         has_final_class(owner, "PreparedMirrorActivationOwner") and
         "target.classinfo !is MirrorTool.classinfo" in activation_block and
@@ -5855,32 +5859,26 @@ def mirror_activation_gate(owner, context, tool, gpu):
         "image.baseline = MeshSnapshot.capture(*source);" in tool and
         "image.mask = source.operandFaceMask();" in tool and
         "image.params = params_;" in tool and
-        "rebuildMirrorPreview(image.baseline, image.preview" in tool and
+        "rebuildMirrorPreview(image." not in tool and
         "image.left = derivedLeft(image.params);" in tool and
         "image.up = derivedUp(image.params);" in tool and
         "image.baseline.moveInto(baseSnap);" in tool and
         "baseMask = image.mask; image.mask = null;" in tool and
-        "previewMesh = image.preview; image.preview = Mesh.init;" in tool and
         "params_.left = image.left; params_.up = image.up;" in tool and
-        "engaged = false; moverDragAxis = -1; toolHandles.clearHaul();" in tool and
-        "cachedAxis = image.params.axis; cachedCenter = image.params.center;" in tool and
-        "cachedDistance = image.params.distance; cachedAngle = image.params.angle;" in tool and
-        "havePreviewCache = true; image.valid = false;" in tool and
+        "engaged = false; liveApplied = false;" in tool_activation_block and
+        "moverDragAxis = -1; toolHandles.clearHaul();" in tool_activation_block and
+        "havePreviewCache = false; image.valid = false;" in tool and
         "context.prepareMirrorActivation(stateOwner)" in tool and
-        "context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh)" in tool and
-        tool_activation_block.find("context.prepareMirrorActivation(stateOwner)") <
-            tool_activation_block.find("context.prepareCreateUpload(uploadOwner") <
-            tool_activation_block.find("context.markNoHistoryInstall()",
-                tool_activation_block.find("context.prepareCreateUpload(uploadOwner")) and
-        "uploadOwner.replacesLikeLegacyInit()" in tool and
+        "prepareCreateUpload" not in tool_activation_block and
+        0 <= tool_activation_block.find("context.prepareMirrorActivation(stateOwner)") <
+            tool_activation_block.find("context.markNoHistoryInstall()") and
         "PreparedActivateKind.Mirror, ok);" in tool and
         "MirrorActivationState" in context and
         "e.mirrorActivation.validate();" in context and
         "e.mirrorActivation.install();" in context and
-        "e.mirrorActivation.abort();" in context and
-        "peekGpuMeshNames(*target) != expectedTarget" in gpu_block)
+        "e.mirrorActivation.abort();" in context)
 if not mirror_activation_gate(mirror_activation_owner, record_context,
-                              mirror_activation_tool, mesh_gpu):
+                              mirror_activation_tool):
     fail("Mirror activation prepared contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo !is MirrorTool.classinfo", "false", "broaden product"),
@@ -5890,18 +5888,17 @@ for target, old, new, label in (
     ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
     ("tool", "image.baseline = MeshSnapshot.capture(*source);", "", "drop baseline"),
     ("tool", "image.mask = source.operandFaceMask();", "", "drop operand mask"),
-    ("tool", "rebuildMirrorPreview(image.baseline, image.preview", "false /*", "drop detached preview"),
+    ("tool", "image.params = params_;", "image.params = params_; rebuildMirrorPreview(image.baseline, image.preview, image.mask, image.params);", "reintroduce detached preview"),
     ("tool", "image.left = derivedLeft(image.params);", "", "drop derived left"),
     ("tool", "image.up = derivedUp(image.params);", "", "drop derived up"),
     ("tool", "image.baseline.moveInto(baseSnap);", "", "drop baseline transfer"),
     ("tool", "baseMask = image.mask; image.mask = null;", "baseMask = image.mask;", "retain mask payload"),
-    ("tool", "previewMesh = image.preview; image.preview = Mesh.init;", "previewMesh = image.preview;", "retain preview payload"),
     ("tool", "params_.left = image.left; params_.up = image.up;", "", "drop derived readout install"),
-    ("tool", "engaged = false; moverDragAxis = -1; toolHandles.clearHaul();", "engaged = false;", "drop interaction reset"),
-    ("tool", "cachedAxis = image.params.axis; cachedCenter = image.params.center;", "", "drop axis/center cache"),
-    ("tool", "cachedDistance = image.params.distance; cachedAngle = image.params.angle;", "", "drop distance/angle cache"),
+    ("tool", "engaged = false; liveApplied = false;", "engaged = false;", "drop live-edit reset"),
+    ("tool", "moverDragAxis = -1; toolHandles.clearHaul();", "", "drop interaction reset"),
+    ("tool", "havePreviewCache = false; image.valid = false;", "image.valid = false;", "drop cache reset"),
     ("tool", "context.prepareMirrorActivation(stateOwner)", "true", "drop CPU arm"),
-    ("tool", "context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh)", "true", "drop GPU arm"),
+    ("tool", "ok = ok && context.markNoHistoryInstall();", "ok = ok && context.prepareCreateUpload(null, null) && context.markNoHistoryInstall();", "reintroduce GPU arm"),
     ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
     ("context", "e.mirrorActivation.validate();", "true;", "drop context validation"),
     ("context", "e.mirrorActivation.install();", "", "drop context install"),
@@ -5911,7 +5908,7 @@ for target, old, new, label in (
     if target == "owner": o = o.replace(old, new, 1)
     elif target == "context": c = c.replace(old, new, 1)
     else: t = t.replace(old, new, 1)
-    if mirror_activation_gate(o, c, t, mesh_gpu):
+    if mirror_activation_gate(o, c, t):
         fail(f"Mirror activation mutation did not RED: {label}")
 
 def mirror_deactivate_state_gate(owner, context, tool):
@@ -5928,7 +5925,7 @@ def mirror_deactivate_state_gate(owner, context, tool):
         "return PreparedMirrorDeactivateImage(true, engaged, havePreviewCache);" in tool and
         "engaged == image.expectedEngaged" in tool and
         "havePreviewCache == image.expectedPreviewCache" in tool and
-        "engaged = false; havePreviewCache = false; image.clear();" in tool and
+        "engaged = false; liveApplied = false; havePreviewCache = false;" in tool and
         "MirrorDeactivateState" in context and
         "e.mirrorDeactivate.validate();" in context and
         "e.mirrorDeactivate.install();" in context and
@@ -5943,7 +5940,8 @@ for target, old, new, label in (
     ("owner", "target_.installPreparedDeactivateState(image_); consume();", "consume();", "drop install"),
     ("owner", "image_.clear(); target_ = null;", "target_ = null;", "drop scrub"),
     ("tool", "return PreparedMirrorDeactivateImage(true, engaged, havePreviewCache);", "return PreparedMirrorDeactivateImage.init;", "drop projection"),
-    ("tool", "engaged = false; havePreviewCache = false; image.clear();", "engaged = false; image.clear();", "drop cache reset"),
+    ("tool", "engaged = false; liveApplied = false; havePreviewCache = false;", "engaged = false; liveApplied = false;", "drop cache reset"),
+    ("tool", "engaged = false; liveApplied = false; havePreviewCache = false;", "engaged = false; havePreviewCache = false;", "drop live-edit reset"),
     ("context", "e.mirrorDeactivate.validate();", "true;", "drop context validation"),
     ("context", "e.mirrorDeactivate.install();", "", "drop context install"),
     ("context", "e.mirrorDeactivate.abort();", "", "drop context abort"),
@@ -6386,6 +6384,9 @@ for target, old, new, label in (
 
 mirror_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def mirror_deactivate_producer_gate(tool, effect):
+    # Task 7116: the drop commits what the live edit already wrote — base
+    # snapshot -> current mesh — with no second mirror, no mesh image and no
+    # upload; an untouched tool records nothing.
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
     end = tool.find("override void deactivate()", start)
     body = tool[start:end]
@@ -6396,23 +6397,17 @@ def mirror_deactivate_producer_gate(tool, effect):
         "scope(failure) context.discard();" in body and
         "PreparedMirrorDeactivateOwner.prepare(this)" in body and
         "&layer.meshRef() is mesh" in body and
-        "ownsPreparedPreviewDestroy(previewDestroy)" in body and
-        "buildPreparedDeactivateCandidate(candidate, pre," in body and
-        "beginPreparedShadow(candidate)" in tool and
-        "candidate.mirrorFacesPlane(candidate.operandFaceMask()," in tool and
-        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in tool and
-        "ownsPreparedMainUpload(mainUpload)" in body and
-        "context.prepareStampedMeshImage(layer, candidate," in body and
-        "context.prepareUpload(mainUpload, candidate)" in body and
-        "context.prepareDestroy(previewDestroy)" in body and
-        "cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), \"Mirror\");" in body and
+        "engaged && liveApplied && history !is null" in body and
+        "cmd.setSnapshots(baseSnap, MeshSnapshot.capture(*mesh), \"Mirror\");" in body and
+        "mirrorFacesPlane" not in body and
+        "prepareStampedMeshImage" not in body and
+        "prepareUpload(" not in body and
+        "prepareDestroy(" not in body and
         "context.prepareGestureCarrierMismatch()" in body and
         "context.markHistoryInstall()" in body and
         "context.markNoHistoryInstall()" in body and
         "context.prepareMirrorDeactivate(stateOwner)" in body and
-        body.find("context.prepareStampedMeshImage(layer, candidate,") <
-            body.find("context.prepareUpload(mainUpload, candidate)") <
-            body.find("context.prepareDestroy(previewDestroy)") <
+        0 <= body.find("cmd.setSnapshots(baseSnap,") <
             body.find("context.markHistoryInstall()") <
             body.find("context.prepareMirrorDeactivate(stateOwner)") and
         "PreparedDeactivateKind.Mirror, historyPrepared, ok);" in body)
@@ -6422,13 +6417,10 @@ if not mirror_deactivate_producer_gate(mirror_activation_tool,
 for target, old, new, label in (
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
-    ("tool", "ownsPreparedPreviewDestroy(previewDestroy)", "true", "drop preview identity"),
-    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
-    ("tool", "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);", "", "drop delivery capture"),
-    ("tool", "ownsPreparedMainUpload(mainUpload)", "true", "drop main GPU identity"),
-    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* dropped mesh enlist */ (", "drop mesh enlist"),
-    ("tool", "context.prepareUpload(mainUpload, candidate)", "true", "drop GPU upload"),
-    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop preview destroy"),
+    ("tool", "engaged && liveApplied && history !is null", "history !is null", "drop live-edit guard"),
+    ("tool", "cmd.setSnapshots(baseSnap,", "cmd.setSnapshots(MeshSnapshot.capture(*mesh),", "drop base pre-image"),
+    ("tool", "bool historyPrepared;", "bool historyPrepared; mesh.mirrorFacesPlane(baseMask, params_.center, toolNormal(params_), 0, true);", "reintroduce second mirror"),
+    ("tool", "bool historyPrepared;", "bool historyPrepared; context.prepareUpload(null, *mesh);", "reintroduce upload"),
     ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
     ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
     ("tool", "context.markNoHistoryInstall()", "true", "drop no-history marker"),
@@ -8772,11 +8764,12 @@ resource_lifecycle_door_clients = {
         "new GpuCreateOwner(&previewGpu_, threadIdentity,"),
 }
 alignment_door_clients = {
+    # Task 7116: no GPU owner at either door — the copy is a live edit of
+    # the document mesh, uploaded by the ordinary display path.
     "source/tools/alignment/mirror.d": (
-        "class MirrorTool : Tool, PreparedToolDoorClient",
-        "new GpuCreateUploadOwner(&previewGpu, threadIdentity,",
-        "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
-        "new GpuResourceOwner(&previewGpu, threadIdentity,"),
+        "class MirrorTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "return prepareActivate(context).accepted;",
+        "return prepareDeactivate(context, layer).resourceAccepted;"),
     "source/tools/alignment/radial_array_tool.d": (
         "class RadialArrayTool : Tool, PreparedToolDoorClient",
         "return prepareActivate(context).accepted;",
@@ -8892,8 +8885,8 @@ def p10c_door_capability_gate(context, sources, xfrm):
             return False
     mirror = sources["source/tools/alignment/mirror.d"]
     sweep = sources["source/tools/alignment/radial_sweep_tool.d"]
-    if "contextIdentity, true);" not in mirror or \
-            "prepareDeactivate(context, layer, upload, destroy).resourceAccepted" not in mirror:
+    if "GpuCreateUploadOwner" in mirror or "GpuResourceOwner" in mirror or \
+            "GpuUploadOwner" in mirror:
         return False
     if "contextIdentity, true);" not in sweep or not all(x in sweep for x in (
             "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
@@ -9002,9 +8995,9 @@ for target, old, new, label in (
      "new GpuCreateOwner(null, threadIdentity,",
      "drop Tack activation GPU identity"),
     ("source/tools/alignment/mirror.d",
-     "new GpuResourceOwner(&previewGpu, threadIdentity,",
-     "new GpuResourceOwner(null, threadIdentity,",
-     "drop Mirror preview GPU identity"),
+     "return prepareDeactivate(context, layer).resourceAccepted;",
+     "return true;",
+     "drop Mirror deactivation producer"),
     ("source/tools/alignment/radial_array_tool.d",
      "return prepareSessionDeactivate(context).accepted;",
      "return true;",
