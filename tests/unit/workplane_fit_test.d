@@ -30,6 +30,16 @@ unittest { // tie, axis-aligned square: the bbox is square and equal to the side
     assert(d[0] == 0 && d[1] == 1, "axis-aligned square: tie branch must return (0, 1)");
 }
 
+unittest { // tie, bbox square and equal to the rectangle side: (0, 1) even where
+             // the rectangle direction is (-1, 0), which the swap arm alone
+             // would turn into (0, -1). Found by search over small integer hulls.
+    double[2][] pts = [[0.0, 3.0], [3.0, 3.0], [2.0, 1.0], [0.0, 0.0]];
+    auto h = hullReferenceOrder(pts);
+    assert(h.length == 4, "kite hull must keep its four points");
+    auto d = hullMajorAxis(h);
+    assert(d[0] == 0 && d[1] == 1, "square-bbox tie: the bbox arm must return (0, 1)");
+}
+
 unittest { // tie, square turned 30 deg: bbox not square-equal -> swap when |du| > |dv|
     auto h = hullReferenceOrder(square(30));
     assert(h.length == 4, "turned square hull must keep its four corners");
