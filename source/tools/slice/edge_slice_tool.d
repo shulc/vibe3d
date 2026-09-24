@@ -237,7 +237,7 @@ private:
     // Segments the LAST interactive bake produced (test introspection,
     // `bakedSegments`), so a silently dropped segment shows as fewer than
     // `latchedPoints_.length - 1`. Written by `rebuildPreview` and `armChain`,
-    // cleared by `dropArmedPreview`; the prepared paths and the activation
+    // cleared when the armed preview is dropped; the prepared paths and the activation
     // resets never differ from it (a tool is built fresh per activation), so
     // they do not write it (task 7114).
     size_t       lastBakedSegments_;
