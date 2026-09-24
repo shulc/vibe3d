@@ -27,6 +27,9 @@ import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
 import overlay_space : OverlaySpace;
 import tools.slice.edge_slice_tool;
+import command : Command, CmdFlags;
+import view : View;
+import mesh_edit_delta : MeshEditScope;
 
 unittest {
     assert(edgeSliceHudLabel(0.25f) == "25.00 %");
@@ -66,4 +69,44 @@ unittest {
     assert(held.onMouseButtonDown(e, vts), "stale hover: the press was not absorbed");
     assert(held.toolStateJson()["latchedPairs"].array.length == 0,
            "edge slice latched a point from a stale hover index space");
+}
+
+// Task 7114 (item 8): Shift+click's in-place apply reports whether it recorded
+// by the IDENTITY of the top history entry, not the stack length — at the
+// depth cap the length does not grow, and a length compare would answer
+// "nothing committed" for a chain it just committed. The rig fills the
+// history PAST the cap (60 records into a 50-deep stack), then applies an
+// armed two-point chain.
+private final class CapFillerCommand : Command {
+    this(Mesh* m, View v) { super(m, v, EditMode.Edges); }
+    override string name()  const { return "probe.cap_filler"; }
+    override string label() const { return "Cap Filler"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect | CmdFlags.UndoForce; }
+    protected override bool applyImpl()  { return true; }
+    protected override void revertImpl() {}
+}
+
+unittest {
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto v = new View(0, 0, 800, 600);
+    auto h = new CommandHistory();
+    foreach (_; 0 .. 60) h.record(new CapFillerCommand(&m, v));
+    assert(h.undoEntries().length == 50,
+           "history cap floor: 60 records did not saturate a 50-deep stack");
+
+    EditMode em = EditMode.Edges;
+    auto t = new EdgeSliceTool(() => &m, null, &em, LitShader.init);
+    t.setGestureBindings(h, () => cast(Command) new MeshSessionEdit(&m, v, EditMode.Edges,
+        "mesh.edgeSliceTool", "Edge Slice", MeshEditScope.Geometry));
+    t.activate();
+    t.seedPreparedDeactivateForTest(m);   // arms a two-point chain, no GL refresh
+    assert(t.hasUncommittedEdit() && m.vertices.length > 8,
+           "history cap floor: the seeded chain is not armed and baked");
+
+    const committed = t.commitUncommittedEdit();
+    const ue = h.undoEntries();
+    assert(ue.length == 50 && ue[$ - 1].cmd.label() == "Edge Slice" && !t.hasUncommittedEdit(),
+           "history cap floor: the chain was not recorded as the top entry");
+    assert(committed, "edge slice apply at the history cap reported nothing committed");
 }

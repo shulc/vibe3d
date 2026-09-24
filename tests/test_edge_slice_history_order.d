@@ -129,8 +129,17 @@ unittest {
     assert(getJson("/api/tool/state")["hoveredEdge"].integer == -1,
            "block A floor: the face pixel hovers an edge");
     armTwo("A", false);
+    // The bake of point 2 clears the edge selection, and an empty selection
+    // cannot show a click that reached the selection path (clearing nothing
+    // and picking nothing leaves it empty): select the far edge again, by
+    // position, so S0 is non-empty.
+    const m2 = getJson("/api/model");
+    const Es2 = slEdgeOf(m2, gridVert(m2, -2, 2), gridVert(m2, -1, 2));
+    selectEdge(Es2);
     const L0 = slHistoryLabels();
     const S0 = selEdges();
+    assert(S0 == [Es2] && slChain().pairs.length == 2,
+           format("block A floor: selection %s, not [%d], or the chain dropped", S0, Es2));
     const P0 = slChain().pairs;
     writeln("block A: L0 ", L0, " S0 ", S0, " pairs ", slPairsStr(P0));
     foreach (k, px; [pxEmpty(), pxFace()]) {
