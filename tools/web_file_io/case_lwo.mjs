@@ -20,9 +20,15 @@ const V = 562, F = 582;
 const parts = join(fixtures, 'two_parts.lwo');
 const truncated = join(fixtures, 'truncated.lwo');
 const exportSha = sha256File(join(fixtures, 'two_parts.export.lwo'));
+const partsSha = sha256File(parts);
+// Desktop export of the default cube after the import is undone (L3b).
+const cubeSha = sha256File(join(fixtures, 'cube.export.lwo'));
 
 const DEADLINE = 20000;
-const ok = (cell, detail) => console.log(`WEB-FILE-IO-CELL ${cell} ok ${detail}`);
+// The cells that actually passed, in order: the summary is built from them,
+// and tools/test_web_file_io.sh requires each expected cell line exactly once.
+const ran = [];
+const ok = (cell, detail) => { ran.push(cell); console.log(`WEB-FILE-IO-CELL ${cell} ok ${detail}`); };
 const fail = (cell, why) => { throw new Error(`WEB-FILE-IO-CELL ${cell} FAILED: ${why}`); };
 
 // One page per probe-dispatch id: F9 dispatches the id the URL names.
@@ -68,9 +74,9 @@ await page('file.export.lwo', async b => {
 
   // L4 broken .lwo (the first 60 bytes of two_parts.lwo), on the CLEAN cube so
   // no unsaved-changes guard stands between the choice and the load: the
-  // reader rejects it, and the refusal is SILENT as on the desktop (the oracle pins an empty
-  // refusal reason) — no notice, no state change, the pick drained and its
-  // MEMFS directory removed.
+  // reader rejects it, and the refusal is SILENT as on the desktop (the oracle
+  // pins an empty refusal reason; a pinned KNOWN DEFECT, backlog 7303) — no
+  // notice, no state change, the pick drained and its MEMFS directory removed.
   let mark = b.lines.length;
   const before4 = lastOf(b, 'WEB-DOC-STATE ');
   const dirs4 = lastOf(b, 'WEB-WORK-DIRS ');
@@ -81,7 +87,9 @@ await page('file.export.lwo', async b => {
   const reject = (await b.waitFor(/^\[io\] LWO: reject: no usable geometry$/, DEADLINE, mark)).line;
   await b.waitFor(/^WEB-PICK-QUEUE parked=0$/, DEADLINE, mark);
   await b.sleep(1000);
-  if (b.since(mark, /^WEB-NOTICE /).length) fail('L4', `notice: ${b.since(mark, /^WEB-NOTICE /)}`);
+  if (b.since(mark, /^WEB-NOTICE /).length)
+    fail('L4', `pinned KNOWN DEFECT (backlog 7303): silent LWO refusal — the refusal now `
+      + `posts a notice (${b.since(mark, /^WEB-NOTICE /)}); update this cell and the desktop oracle together`);
   // The title alone may still move (a startup `[building subpatch preview...]`
   // suffix clears on its own); every other field must stand.
   const changed4 = b.since(mark, /^WEB-DOC-STATE /).filter(l => core(l) !== core(before4));
@@ -125,6 +133,27 @@ await page('file.export.lwo', async b => {
   const l2 = (await b.waitFor(new RegExp(`^WEB-DOC-STATE layers=1 verts=8 faces=6 images=0 docPath= .* undo=${u0} `), DEADLINE, mark)).line;
   ok('L2', l2);
 
+  // L3b Export > LWO again, now of the LIVE document (the cube the undo
+  // restored): the download must equal the desktop export of that cube and
+  // differ from two_parts.lwo, so an export that wrote the scene as LOADED
+  // (L3 alone cannot tell: two_parts.lwo and its re-export are the same bytes)
+  // reddens here.
+  mark = b.lines.length;
+  const known3b = new Set(b.downloads.keys());
+  await f9();
+  await b.waitFor(/^WEB-PROBE-DISPATCH id=file\.export\.lwo$/, DEADLINE, mark);
+  const d3b = await b.waitDownload(known3b, DEADLINE);
+  if (d3b.name !== 'Untitled.lwo') fail('L3b', `download named ${d3b.name}`);
+  if (d3b.sha256 === partsSha)
+    fail('L3b', `the export after the undo wrote two_parts.lwo (${partsSha}), not the live cube`);
+  if (d3b.sha256 !== cubeSha)
+    fail('L3b', `sha256 ${d3b.sha256} != cube.export.lwo ${cubeSha} (${d3b.bytes.length} bytes)`);
+  await b.sleep(1000);
+  if (b.since(mark, /^WEB-NOTICE /).length) fail('L3b', `notice: ${b.since(mark, /^WEB-NOTICE /)}`);
+  if (core(lastOf(b, 'WEB-DOC-STATE ')) !== core(l2))
+    fail('L3b', `the export changed the document state: ${lastOf(b, 'WEB-DOC-STATE ')}`);
+  ok('L3b', `name=${d3b.name} bytes=${d3b.bytes.length} sha256=${d3b.sha256}`);
+
   // L2r redo: the two layers again, the undo depth of L1.
   mark = b.lines.length;
   await ctrlShiftZ();
@@ -148,4 +177,4 @@ await page('file.import.lwo', async b => {
   ok('L5', l5);
 });
 
-console.log(`WEB-FILE-IO-LWO mode=${mode} cells=L0..L5,L2r ok`);
+console.log(`WEB-FILE-IO-LWO mode=${mode} cells=${ran.join(',')} ok`);

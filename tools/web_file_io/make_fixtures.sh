@@ -9,6 +9,11 @@
 # `file.load` and exported again (the FileLoad -> FileSave path the browser
 # takes for an interchange import followed by Export > LWO); truncated.lwo is
 # the first 60 bytes of two_parts.lwo, a header whose first PNTS chunk is cut.
+# cube.export.lwo is the export after that import is UNDONE (the live cube,
+# not the scene as loaded: two_parts.lwo and its re-export are equal bytes);
+# the cube is made subpatch first because the browser probe page starts from a
+# subpatch cube (app.d's `webFirstFrameProbe` marks every face), so its PTCH
+# chunk is what the browser download carries.
 #
 # usage: tools/web_file_io/make_fixtures.sh [--http-port N]   (default 8520)
 set -euo pipefail
@@ -63,13 +68,17 @@ cmd file.load "{\"path\":\"$scratch/two_layers.v3d\"}"
 cmd file.save "{\"path\":\"$scratch/two_layers.resave.v3d\"}"
 cmd file.export.lwo "{\"path\":\"$scratch/two_parts.lwo\"}"
 cmd scene.reset
+cmd mesh.subpatch_toggle
 cmd file.load "{\"path\":\"$scratch/two_parts.lwo\"}"
 cmd file.export.lwo "{\"path\":\"$scratch/two_parts.export.lwo\"}"
+cmd history.undo
+cmd file.export.lwo "{\"path\":\"$scratch/cube.export.lwo\"}"
 
 cp "$scratch/two_layers.v3d" "$out/two_layers.v3d"
 cp "$scratch/two_layers.resave.v3d" "$out/two_layers.resave.v3d"
 head -c 200 "$out/two_layers.v3d" >"$out/truncated.v3d"
 cp "$scratch/two_parts.lwo" "$out/two_parts.lwo"
 cp "$scratch/two_parts.export.lwo" "$out/two_parts.export.lwo"
+cp "$scratch/cube.export.lwo" "$out/cube.export.lwo"
 head -c 60 "$out/two_parts.lwo" >"$out/truncated.lwo"
 sha256sum "$out"/*.v3d "$out"/*.lwo

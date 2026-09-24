@@ -41,6 +41,14 @@ for mode in normal spreset; do
         "$repo_root/tests/fixtures/web_io" "$mode"
     timeout 240 node "$repo_root/tools/web_file_io/case_lwo.mjs" \
         "$chromium" "http://127.0.0.1:$port" "$scratch" \
-        "$repo_root/tests/fixtures/web_io" "$mode"
+        "$repo_root/tests/fixtures/web_io" "$mode" | tee "$scratch/lwo-$mode.log"
+    # The cells that PRINTED ok, not a summary the case writes about itself: a
+    # disabled cell drops its line and reddens here.
+    lwo_cells=$(grep -E '^WEB-FILE-IO-CELL (L0|L1|L2|L2r|L3|L3b|L4|L5) ok ' "$scratch/lwo-$mode.log" \
+        | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')
+    if [[ $lwo_cells != "L0 L1 L2 L2r L3 L3b L4 L5 " ]]; then
+        echo "WEB-FILE-IO-LWO mode=$mode: expected cells L0 L1 L2 L2r L3 L3b L4 L5 once each, got: $lwo_cells" >&2
+        exit 1
+    fi
 done
 cp "$scratch/vibe3d-normal.js" "$repo_root/.build/web-editor/vibe3d.js"

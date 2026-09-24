@@ -1,7 +1,8 @@
 // Task 7440 (web file I/O S3): the desktop oracle of the browser lane's LWO
 // fixtures. The REAL `file.load` and `file.export.lwo` factories (the FileLoad
 // -> FileSave path the browser drives) re-derive `two_parts.export.lwo` from
-// `two_parts.lwo` on every run, so the bytes the browser download is compared
+// `two_parts.lwo`, `cube.export.lwo` from its undo and `two_parts.lwo` from
+// `two_layers.v3d` on every run, so the bytes the browser download is compared
 // with (cell L3 of tools/web_file_io/case_lwo.mjs) are checked by production
 // commands; the counts the lane waits for (`const V = …, F = …`) are this
 // load's; undo/redo of the import and the broken-file refusal are pinned here
@@ -33,6 +34,8 @@ unittest {
     const source = buildPath(fixtures, "two_parts.lwo");
     const exported = buildPath(fixtures, "two_parts.export.lwo");
     const broken = buildPath(fixtures, "truncated.lwo");
+    const cubeExported = buildPath(fixtures, "cube.export.lwo");
+    const layersV3d = buildPath(fixtures, "two_layers.v3d");
     const scratch = buildPath(tempDir(), format("vibe3d_7440_fixture_%d", thisProcessID()));
     if (exists(scratch)) rmdirRecurse(scratch);
     mkdirRecurse(scratch);
@@ -58,6 +61,17 @@ unittest {
                 faces += m.faces.length;
             }
         return [session.document.layers.length, verts, faces];
+    }
+    // The browser probe page starts from a SUBPATCH cube (app.d marks every
+    // face under `webFirstFrameProbe`), and cube.export.lwo is that cube's
+    // export (a PTCH chunk), so the oracle starts from the same marking.
+    // (syncSelection first: a fresh makeCube has no face marks to set yet.)
+    {
+        auto cube = session.document.layers[0].meshOrNull();
+        cube.syncSelection();
+        foreach (fi; 0 .. cube.faces.length) cube.setSubpatch(fi, true);
+        assert(cube.isFaceSubpatch(0) && cube.isFaceSubpatch(5),
+            "7440 oracle: the start cube did not take the subpatch marks");
     }
     const start = counts();
     assert(start == [1, 8, 6], format("7440 oracle: the start is not the default cube: %s", start));
@@ -101,6 +115,26 @@ unittest {
     assert(load.revert(), "7440 oracle: the LWO import did not revert");
     assert(counts() == start,
         format("7440 oracle: undo of the LWO import gives %s, not the cube %s", counts(), start));
+
+    // Export > LWO of the LIVE document after the undo (cell L3b): the cube,
+    // byte-equal to cube.export.lwo and NOT two_parts.lwo — an export that wrote
+    // the scene as loaded would pass the L3 comparison above, since two_parts.lwo
+    // and its re-export are the same bytes.
+    const cubePath = buildPath(scratch, "Untitled.cube.lwo");
+    auto saveCube = cast(FileSave) reg.makeCommand("file.export.lwo");
+    saveCube.setPath(cubePath);
+    assert(saveCube.apply(), "7440 oracle: file.export.lwo of the cube refused: "
+        ~ saveCube.refusalReason());
+    const cubeWritten = cast(const(ubyte)[]) read(cubePath);
+    const cubeExpected = cast(const(ubyte)[]) read(cubeExported);
+    assert(cubeExpected != cast(const(ubyte)[]) read(source),
+        "7440 oracle: cube.export.lwo equals two_parts.lwo, so cell L3b cannot tell the live "
+        ~ "document from the scene as loaded");
+    assert(cubeWritten == cubeExpected,
+        format("7440 oracle: undo -> file.export.lwo wrote %d bytes that differ from "
+             ~ "tests/fixtures/web_io/cube.export.lwo (%d bytes); regenerate with "
+             ~ "tools/web_file_io/make_fixtures.sh and read the diff",
+               cubeWritten.length, cubeExpected.length));
     assert(load.apply(), "7440 oracle: redo of the LWO import refused: " ~ load.refusalReason());
     assert(counts() == loaded,
         format("7440 oracle: redo of the LWO import gives %s, not %s", counts(), loaded));
@@ -119,10 +153,29 @@ unittest {
     bad.setPath(broken);
     assert(!bad.apply(), "7440 oracle: file.load accepted truncated.lwo");
     assert(bad.refusalReason() == "",
-        format("7440 oracle: the LWO refusal now speaks (%s); the browser cell L4 asserts "
-             ~ "no WEB-NOTICE — update both", bad.refusalReason()));
+        format("7440 oracle: pinned KNOWN DEFECT (backlog 7303): silent LWO refusal — the "
+             ~ "refusal now speaks (%s); the browser cell L4 asserts no WEB-NOTICE — update "
+             ~ "both", bad.refusalReason()));
     assert(counts() == loaded,
         format("7440 oracle: a refused LWO load changed the document: %s", counts()));
+
+    // The link from the .v3d fixture to the LWO one: two_layers.v3d loaded and
+    // exported with file.export.lwo re-derives two_parts.lwo byte for byte.
+    auto loadV3d = cast(FileLoad) reg.makeCommand("file.load");
+    loadV3d.setPath(layersV3d);
+    assert(loadV3d.apply(), "7440 oracle: file.load of two_layers.v3d refused: "
+        ~ loadV3d.refusalReason());
+    const partsPath = buildPath(scratch, "two_parts.lwo");
+    auto saveParts = cast(FileSave) reg.makeCommand("file.export.lwo");
+    saveParts.setPath(partsPath);
+    assert(saveParts.apply(), "7440 oracle: file.export.lwo of two_layers.v3d refused: "
+        ~ saveParts.refusalReason());
+    const partsWritten = cast(const(ubyte)[]) read(partsPath);
+    assert(partsWritten == whole,
+        format("7440 oracle: two_layers.v3d -> file.export.lwo wrote %d bytes that differ from "
+             ~ "tests/fixtures/web_io/two_parts.lwo (%d bytes); regenerate with "
+             ~ "tools/web_file_io/make_fixtures.sh and read the diff",
+               partsWritten.length, whole.length));
 }
 
 // Census (plan S3 item 4): the probe door the browser cells use stands in for
@@ -152,4 +205,14 @@ unittest {
     const at = lane.countUntil(call);
     assert(loop >= 0 && at > loop && lane[loop .. at].count("\ndone") == 0,
         "7440 census: case_lwo.mjs must run inside the `for mode in normal spreset` loop");
+
+    // The lane counts the cells that PRINTED ok, per mode, against the full
+    // list; a summary the case writes about itself cannot see a disabled cell.
+    const expectedCells = `[[ $lwo_cells != "L0 L1 L2 L2r L3 L3b L4 L5 " ]]`;
+    const check = lane.countUntil(expectedCells);
+    assert(lane.count(expectedCells) == 1 && check > at && lane[at .. check].count("\ndone") == 0,
+        "7440 census: tools/test_web_file_io.sh must check the eight LWO cell lines inside the mode loop");
+    foreach (cell; ["L0", "L1", "L2", "L2r", "L3", "L3b", "L4", "L5"])
+        assert(cases.count("ok('" ~ cell ~ "', ") == 1,
+            "7440 census: case_lwo.mjs must report cell " ~ cell ~ " exactly once");
 }
