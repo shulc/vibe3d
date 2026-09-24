@@ -2252,6 +2252,10 @@ void main(string[] args) {
     // (`source/app.d`, the `if (testMode) { … } else { … }` a few dozen lines
     // below this block).
     ulong fboSelEpoch = 0;
+    // The LAYER channel's display consumer, the same shape as `fboSelEpoch`:
+    // every document-level item change (`noteLayerChange` → flush) advances
+    // it, and `DirtyKey.layerEpoch` re-renders the cells from it.
+    ulong fboLayerEpoch = 0;
     {
         import change_bus : changeBus;
         // Task 1906 stage 0 — the mesh channel carries the subject's address
@@ -2314,6 +2318,9 @@ void main(string[] args) {
         // resolution note rest on. Naming it would suggest a reader.
         changeBus.onSelectionChanged((uint) {
             ++fboSelEpoch;
+        });
+        changeBus.onLayerChanged((uint) {
+            ++fboLayerEpoch;
         });
 
         // Bulk transition (change-notification bus, Stage 1; MOVED here at
@@ -7921,6 +7928,7 @@ void main(string[] args) {
                         // `gpuUploadVer` (the VBO is re-uploaded) and `toolMat`.
                         _newKey.meshMutVer = mesh.mutationVersion;
                         _newKey.selEpoch   = fboSelEpoch;
+                        _newKey.layerEpoch = fboLayerEpoch;
                         _newKey.editMode_k = cast(int)editMode;
                         // Hover state only matters in the hovered cell.
                         _newKey.hovV       = _hovK ? ifs.hoveredVertex : -1;

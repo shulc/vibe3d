@@ -153,6 +153,13 @@ struct DirtyKey {
     // `gpuUploadVer` is a VBO generation.
     ulong     meshMutVer;
     ulong     selEpoch;   // bumped on every selection-mark change (Marks class)
+    // Document-level item state (a layer's transform, visibility, order,
+    // membership): bumped on every change-bus LAYER delivery. The item
+    // matrix is read fresh at the draw sites and moves no mesh counter, so
+    // without this term a Properties/Channels write with no tool active
+    // left the cached cell frozen until an unrelated term moved
+    // (`tests/test_channels_live_update.d`).
+    ulong     layerEpoch;
     int       editMode_k;
     int       hovV, hovE, hovF;
     int       fboW,  fboH;
