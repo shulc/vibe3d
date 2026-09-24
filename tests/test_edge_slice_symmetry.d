@@ -633,3 +633,9 @@ unittest { parkCell(true, 1.1, -1.5, [-2, 0, 0], [-1.1, 0, 0], "sym"); }
 // base polygon than the click's. Parked as well (before: it rode the chord and
 // split it at (0.75, 0, 0.5), 27 v / 17 f). Ours, not captured.
 unittest { parkCell(false, 1.2, 1.07, [1, 0, 0], [1.2, 0, 0], "off"); }
+
+// And a rail that is simply GONE at in-range indices: P2 on the sub-edge
+// (1.2..2, z0); after the re-bake vertex 25 is P1's cut and (25, (2,0,0)) is
+// no edge. Parked by the bake (an index-range check alone would draw it
+// between two unrelated vertices).
+unittest { parkCell(false, 1.2, 1.6, [1.2, 0, 0], [2, 0, 0], "off-gone"); }
