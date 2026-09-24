@@ -6246,7 +6246,7 @@ void main(string[] args) {
                 import io.image_path : resolveStoredPath;
                 drainPickResumes(pickDrainPorts);
                 string[] docImagePaths;
-                foreach (l; sessionOwner.documentPtr().layers)
+                foreach (l; document.layers)
                     if (auto img = l.imageOrNull())
                         docImagePaths ~= resolveStoredPath(img.storedPath);
                 sweepPickDirsOnOpen(browserFileModel(), currentDocPath(),
@@ -6278,11 +6278,10 @@ void main(string[] args) {
             version (web) if (webFirstFrameProbe) {
                 import std.format : format;
                 import io.image_path : resolveStoredPath;
-                const Document* doc = sessionOwner.documentPtr();
                 size_t verts, faces, images, undoModel, undoUi;
                 history.undoDepthCounts(undoModel, undoUi);
                 string imageLines;
-                foreach (l; doc.layers) {
+                foreach (l; document.layers) {
                     if (auto m = l.meshOrNull()) {
                         verts += m.vertices.length;
                         faces += m.faces.length;
@@ -6295,7 +6294,7 @@ void main(string[] args) {
                     }
                 }
                 const state = format("WEB-DOC-STATE layers=%d verts=%d faces=%d images=%d docPath=%s dirty=%d undo=%d title=%s",
-                    doc.layers.length, verts, faces, images, p,
+                    document.layers.length, verts, faces, images, p,
                     docDirty() ? 1 : 0, undoModel, title)
                     ~ imageLines;
                 if (state != webLastDocState) {
