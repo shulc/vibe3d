@@ -317,6 +317,27 @@ unittest { // (ms) middle under symmetry X (middle_press_after_haul_symmetry_oth
     cmd("tool.set edge.extend off");
 }
 
+// (ms+) instance of the C-relatch law (gap 223); this rig was not driven: the
+// mirror image of (ms) — the latch is -X and the middle press lands on +X.
+// (ms) alone cannot see a clone that skips the re-latch: the commit's re-arm
+// resets the side to -1 before the press, which IS (ms)'s press side.
+unittest {
+    symSelRig();
+    keyArm();
+    frontHaul(MX, PY, kIncrementPx, kIncrementPx, 10);
+    assert(pressAnchor()[0] < -0.05, "rig: the first press was not on the -X side");
+    immutable Offset o1 = offset();
+    assertSymRidges(1 - o1.x, "first off-handle press did not latch -X");
+    Px m = frontScreen(PX, PY);
+    press(m, 2);
+    assert(pressAnchor()[0] > 0.05, "rig: the middle press was not on the +X side: " ~ pressAnchor().to!string);
+    assert(vertexCount() == 17, "rig: the middle press did not open a second ring: " ~ vertexCount().to!string ~ " v");
+    assertSymRidges(1 - o1.x + o1.x, "instance of the C-relatch law (gap 223): a middle press on +X after a -X "
+        ~ "latch did not re-latch the side at the press");
+    release(m, 2);
+    cmd("tool.set edge.extend off");
+}
+
 // --- the undo walk after a Shift / middle press (R14) -------------------------
 
 /// (ua)/(ub) body: the second gesture was a motionless click with `btn`/`mod`.
