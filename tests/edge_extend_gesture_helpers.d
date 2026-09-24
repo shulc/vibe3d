@@ -531,7 +531,7 @@ void assertHandleAt(double wx, double wy, double tol, string msg) {
 /// handle rather than a ridge that may run through the centre.
 Px[3] xArmPx(double wx, double wy) {
     Px c = frontScreen(wx, wy);
-    return [Px(c.x + 60, c.y - 1), Px(c.x + 60, c.y), Px(c.x + 60, c.y + 1)];
+    return [Px(c.x + 40, c.y - 1), Px(c.x + 40, c.y), Px(c.x + 40, c.y + 1)];
 }
 
 /// Edge mode by the key, then real clicks at the given world points (front
@@ -550,11 +550,18 @@ void frontRigNoSel(double focusX, double focusY) {
     loadPlaneRig();
     setSymmetryX(false);
     cmd("viewport.view Front");
+    frontFocus(focusX, focusY);
+}
+
+/// Re-aim the front camera (same `kFrontWpp` scale) at (focusX, focusY) — the
+/// cell is too small to hold a far selection click and the haul at once.
+void frontFocus(double focusX, double focusY) {
     auto c0 = getJson("/api/camera");
     immutable double dist = kFrontWpp * cast(double) c0["height"].integer / (2.0 * tan(PI / 8));
-    r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":%s,"z":0},"distance":%s,"roll":0}`,
-                                       focusX, focusY, dist));
+    auto r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":%s,"z":0},"distance":%s,"roll":0}`,
+                                            focusX, focusY, dist));
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    settle();
 }
 
 /// Floor: every world point lands inside the active cell (front view).
@@ -567,4 +574,11 @@ void assertOnScreen(double[2][] pts) {
         assert(p.x > x0 + 4 && p.x < x0 + w - 4 && p.y > y0 + 4 && p.y < y0 + h - 4,
             format("rig: world point %s projects off the cell (%s in %sx%s at %s,%s)", q, p, w, h, x0, y0));
     }
+}
+
+/// The action-centre stage's `userPlaced` pin, as the stage reports it.
+bool acenUserPlaced() {
+    foreach (st; getJson("/api/toolpipe")["stages"].array)
+        if (st["id"].str == "actionCenter") return st["attrs"]["userPlaced"].str == "true";
+    assert(false, "no actionCenter stage in /api/toolpipe");
 }

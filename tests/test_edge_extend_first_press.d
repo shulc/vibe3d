@@ -217,6 +217,9 @@ unittest {
     g = gizmoCentre();
     assert(abs(g[0] - (1 + o.x)) <= 0.02 && abs(g[1] - (0.5 + o.y)) <= 0.02 && abs(g[2] - o.z) <= 0.02,
         format("the handle did not follow edge + offset (C2-zo): gizmoCentre %s, offset %s", g, o));
+    // Neither press wrote the action centre (Q-pose): a later tool starts
+    // from the selection, not from the point of an Edge Extend haul.
+    assert(!acenUserPlaced(), "an Edge Extend press placed the action centre (Q-pose, gap 245)");
     cmd("tool.set edge.extend off");
 }
 
@@ -230,7 +233,9 @@ enum double kPX = 0.5, kPY = 1.35;
 
 unittest { // (Cs) HP-3: symmetry X, the -X edge (2,1) clicked -> the base is the +X half
     symSelRig(0.0, 0.55, -1.0, 0.5);
+    frontFocus(0.3, 0.55);
     immutable double[2] want = fixturePose("handle_pose_symmetry_minus_click", "h1_released");
+    assertOnScreen([[kPX, kPY], [want[0] + 0.15, want[1]]]);
     immutable Px[3] arm = xArmPx(want[0], want[1]);
     int[3][3] bg;
     foreach (i; 0 .. 3) bg[i] = probe(arm[i]);
@@ -256,11 +261,13 @@ unittest { // (Ca) HP-4: action centre Origin -> the pose is the tool's, not the
 }
 
 unittest { // (Co) HP-1: click (0,1), Shift+click (7,8) -> the base is the whole selection's bbox mid
-    frontRigNoSel(0.15, 0.425);
-    assertOnScreen([[-1.0, -0.5], [1.0, 0.5], [kPX, kPY], [0.125, -0.125]]);
+    frontRigNoSel(0.0, 0.0);
+    assertOnScreen([[-1.0, -0.5], [1.0, 0.5]]);
     clickSelectFront([[-1.0, -0.5], [1.0, 0.5]]);
     assert(selectedEdgeList().length == 2, "rig: the two clicks did not select two edges: "
         ~ getJson("/api/selection")["selectedEdges"].toString);
+    frontFocus(0.3, 0.55);
+    assertOnScreen([[kPX, kPY], [0.125, -0.125]]);
     cmd("history.clear");
     settle(250);
     keyArm();
