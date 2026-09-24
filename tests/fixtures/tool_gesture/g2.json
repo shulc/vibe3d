@@ -3,163 +3,40 @@
   "parameters": {
     "schema": 1,
     "state": "recorded",
-    "derived_from": "hand",
+    "derived_from": "generator",
     "cells": [
-      {
-        "cell": "mirror/centre-box-haul",
-        "drove": [
-          {
-            "op": "tool.set mesh.mirrorTool",
-            "values": {
-              "on": true
-            }
-          },
-          {
-            "op": "gesture.drag",
-            "values": {
-              "drag_px": 60,
-              "steps": 16,
-              "button": 1,
-              "mod": 0,
-              "hover": false
-            }
-          },
-          {
-            "op": "tool.set mesh.mirrorTool",
-            "values": {
-              "off": true
-            }
-          }
-        ]
-      },
-      {
-        "cell": "radial.sweep/start-angle-haul",
-        "drove": [
-          {
-            "op": "tool.set mesh.radialSweepTool",
-            "values": {
-              "on": true
-            }
-          },
-          {
-            "op": "gesture.drag",
-            "values": {
-              "drag_px": 80,
-              "steps": 16,
-              "button": 1,
-              "mod": 0,
-              "hover": false
-            }
-          },
-          {
-            "op": "tool.set mesh.radialSweepTool",
-            "values": {
-              "off": true
-            }
-          }
-        ]
-      },
-      {
-        "cell": "radial.array/offset-arrow-haul",
-        "drove": [
-          {
-            "op": "tool.set mesh.radialArrayTool",
-            "values": {
-              "on": true
-            }
-          },
-          {
-            "op": "gesture.drag",
-            "values": {
-              "drag_px": 80,
-              "steps": 16,
-              "button": 1,
-              "mod": 0,
-              "hover": false
-            }
-          },
-          {
-            "op": "tool.set mesh.radialArrayTool",
-            "values": {
-              "off": true
-            }
-          }
-        ]
-      },
-      {
-        "cell": "array/centre-haul",
-        "drove": [
-          {
-            "op": "tool.set mesh.arrayTool",
-            "values": {
-              "on": true
-            }
-          },
-          {
-            "op": "gesture.drag",
-            "values": {
-              "dx_px": 70,
-              "dy_px": -40,
-              "steps": 12,
-              "button": 1,
-              "mod": 0,
-              "hover": false
-            }
-          },
-          {
-            "op": "tool.set mesh.arrayTool",
-            "values": {
-              "off": true
-            }
-          }
-        ]
-      },
-      {
-        "cell": "clone/centre-haul",
-        "drove": [
-          {
-            "op": "tool.set mesh.clone",
-            "values": {
-              "on": true
-            }
-          },
-          {
-            "op": "gesture.drag",
-            "values": {
-              "dx_px": 70,
-              "dy_px": -40,
-              "steps": 12,
-              "button": 1,
-              "mod": 0,
-              "hover": false
-            }
-          },
-          {
-            "op": "tool.set mesh.clone",
-            "values": {
-              "off": true
-            }
-          }
-        ]
-      }
+      {"cell": "mirror/centre-box-haul", "drove": [{"op": "tool.set mesh.mirrorTool", "values": {"on": true}}, {"op": "gesture.drag", "values": {"drag_px": 60, "steps": 16, "button": 1, "mod": 0, "hover": false}}, {"op": "tool.set mesh.mirrorTool", "values": {"off": true}}]},
+      {"cell": "radial.sweep/start-angle-haul", "drove": [{"op": "tool.set mesh.radialSweepTool", "values": {"on": true}}, {"op": "gesture.drag", "values": {"drag_px": 80, "steps": 16, "button": 1, "mod": 0, "hover": false}}, {"op": "tool.set mesh.radialSweepTool", "values": {"off": true}}]},
+      {"cell": "radial.array/offset-arrow-haul", "drove": [{"op": "tool.set mesh.radialArrayTool", "values": {"on": true}}, {"op": "gesture.drag", "values": {"drag_px": 80, "steps": 16, "button": 1, "mod": 0, "hover": false}}, {"op": "tool.set mesh.radialArrayTool", "values": {"off": true}}]},
+      {"cell": "array/centre-haul", "drove": [{"op": "tool.set mesh.arrayTool", "values": {"on": true}}, {"op": "gesture.drag", "values": {"dx_px": 70, "dy_px": -40, "steps": 12, "button": 1, "mod": 0, "hover": false}}, {"op": "tool.set mesh.arrayTool", "values": {"off": true}}]},
+      {"cell": "clone/centre-haul", "drove": [{"op": "tool.set mesh.clone", "values": {"on": true}}, {"op": "gesture.drag", "values": {"dx_px": 70, "dy_px": -40, "steps": 12, "button": 1, "mod": 0, "hover": false}}, {"op": "tool.set mesh.clone", "values": {"off": true}}]}
     ],
-    "notes": "drive record read from tests/test_tool_gesture_g2.d:687-815; PRODUCER: tests/test_tool_gesture_g2.d (its own capture arm, VIBE3D_TOOL_GESTURE_CAPTURE_G2). `drag_px` is dragAlongProjectedAxis's `pixels` argument (:570) -- the drag LENGTH along the screen projection of a world axis, so only the magnitude is a literal and dx/dy are resolved at run time. dragPixels steps default 16 (:560). The `tool.attr mesh.mirrorTool center ?` in the mirror cell is a READ (trailing `?`), not a write, and is not recorded. resetCube, selectMode, setOrbitCamera and history.clear are STAND."
+    "notes": "collected live by this producer's own runCell/cmd() instrumentation (task 3091): tool.set/tool.attr values are parsed off the wire argstring cmd() actually sent; gesture magnitudes are recorded at their own driving call site"
   },
   "writtenBy": "tests/test_tool_gesture_g2.d",
-  "producedBy": "fb626df7",
+  "producedBy": "41a50472",
   "stand": "per-cell; see each cell's drive in the producer",
   "recipe": "stand -> gesture (/api/play-events) -> drop -> undo -> redo",
-  "provenance": {"schema": 1, "source": "simulated", "reference": "vibe3d-selfgen", "method": "self-drive", "captured_utc": "2026-08-28T14:12:03Z", "harness": "tests/test_tool_gesture_g*.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (see the file's own `recipe`)", "task": "1905", "notes": "captured_utc is the commit date of this file's own top-level `producedBy` SHA, read from git."},
+  "provenance": {
+    "schema": 1,
+    "source": "simulated",
+    "reference": "vibe3d-selfgen",
+    "method": "self-drive",
+    "captured_utc": "2026-09-24T15:20:25Z",
+    "harness": "tests/test_tool_gesture_g2.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
+    "task": "1905",
+    "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
+  },
   "cells": [
     {
       "name": "mirror/centre-box-haul", "tool": "mesh.mirrorTool",
       "recordSite": "source/tools/alignment/mirror.d MirrorTool.commitMirrorEdit (from deactivate)", "mode": "Plain", "payload": "MeshSessionEdit",
-      "previewSubject": "its OWN previewMesh (mirror.d rebuildMirrorPreview) — BOTH bus channels filter it out",
+      "previewSubject": "the DOCUMENT mesh (live edit from the first press, §24) — both channels see the drag",
       "liveEntryNames": [],
       "entryNames": ["mesh.bevel_edit"],
       "undoDelta": 1,
-      "dragUnbatched": 0, "dragDeliveries": 0,
-      "dropUnbatched": 2, "dropDeliveries": 1,
+      "dragUnbatched": 39, "dragDeliveries": 158,
+      "dropUnbatched": 0, "dropDeliveries": 0,
       "undoResidual": [],
       "redoResidual": [],
       "preOp": {"provenance": {"producedBy": "", "path": "", "family": "", "stand": ""}, "counts": {"vertices": 8, "edges": 12, "faces": 6}, "vertices": [[-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]], "faces": [[0, 3, 2, 1], [4, 5, 6, 7], [0, 4, 7, 3], [1, 2, 6, 5], [3, 7, 6, 2], [0, 1, 5, 4]], "vertexMarks": [0, 0, 0, 0, 0, 0, 0, 0], "faceMarks": [0, 0, 0, 0, 0, 0], "vertexSelectionOrder": [0, 0, 0, 0, 0, 0, 0, 0], "faceSelectionOrder": [0, 0, 0, 0, 0, 0], "selectionOrderCounters": {"vertex": 0, "edge": 0, "face": 0}, "edgePlanes": [{"ends": [0, 1], "marks": 0, "order": 0}, {"ends": [0, 3], "marks": 0, "order": 0}, {"ends": [0, 4], "marks": 0, "order": 0}, {"ends": [1, 2], "marks": 0, "order": 0}, {"ends": [1, 5], "marks": 0, "order": 0}, {"ends": [2, 3], "marks": 0, "order": 0}, {"ends": [2, 6], "marks": 0, "order": 0}, {"ends": [3, 7], "marks": 0, "order": 0}, {"ends": [4, 5], "marks": 0, "order": 0}, {"ends": [4, 7], "marks": 0, "order": 0}, {"ends": [5, 6], "marks": 0, "order": 0}, {"ends": [6, 7], "marks": 0, "order": 0}], "faceMaterial": [0, 0, 0, 0, 0, 0], "facePart": [0, 0, 0, 0, 0, 0], "surfaces": [], "vertexSetNames": [], "vertexSetMask": [0, 0, 0, 0, 0, 0, 0, 0], "polygonSetNames": [], "faceSetMask": [0, 0, 0, 0, 0, 0], "edgeSetNames": [], "edgeSetMask": [], "meshMaps": []},

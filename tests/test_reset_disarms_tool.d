@@ -10,7 +10,7 @@
 //
 //     /api/reset                                  -> v=8  e=12 f=6
 //     tool.set  mesh.mirrorTool
-//     tool.attr mesh.mirrorTool mergeVerts false  (engages the tool)
+//     tool.attr mesh.mirrorTool mergeVerts false  (engaged the tool then)
 //     /api/reset                                  -> v=16 e=24 f=12   <-- !
 //     /api/history  undo: [..., "Mirror", "Reset to cube"]            <-- !
 //
@@ -43,9 +43,9 @@
 // centre, so with welding ON the copy lands on top of the original and the
 // vertex count does not move (8 -> 8; only the face count doubles). Turning
 // welding off makes the commit UNAMBIGUOUS in the count the card reports:
-// 8 -> 16 vertices. It also engages the tool — `MirrorTool.onParamChanged`
-// sets `engaged = true` — which is why no drag is needed and this file is
-// deterministic without an event log.
+// 8 -> 16 vertices. Since task 7116 the attr write no longer engages the tool
+// (captured law: nothing is evaluated before the first viewport press), so
+// the arm ends with one replayed press (`engageByPress`).
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -118,6 +118,28 @@ void resetToCube(string why) {
 void armEngagedMirror() {
     cmd("tool.set " ~ TOOL);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    engageByPress();
+}
+
+/// Engage the armed mirror tool the way a user does: one viewport press off
+/// both handles (task 7116 — a parameter write alone no longer engages; the
+/// copy is a live document edit from the first press). The press lands 150 px
+/// right of the viewport centre, where click-to-place moves the plane; with
+/// `mergeVerts false` the copy is still the unwelded 16/24/12 mirror.
+void engageByPress() {
+    import drag_helpers : fetchCamera, playAndWait;
+    import std.format : format;
+    auto c = fetchCamera();
+    immutable int x = c.vpX + c.width / 2 + 150, y = c.vpY + c.height / 2;
+    playAndWait(format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":60.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":90.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        c.vpX, c.vpY, c.width, c.height, x, y, x, y, x, y));
+    import core.thread : Thread;
+    import core.time : msecs;
+    Thread.sleep(250.msecs);
 }
 
 enum Counts kCube   = Counts(8, 12, 6);
@@ -125,8 +147,8 @@ enum Counts kMirror = Counts(16, 24, 12);
 
 /// Post-`/api/play-events` drain guard (CLAUDE.md flake note #3: `/status`
 /// reports `finished` once events are POSTED to the SDL queue, not processed).
-/// Only block 6 replays events; the mirror blocks are command-only and need it
-/// nowhere.
+/// Block 6 replays a drag; the mirror blocks replay one press
+/// (`engageByPress`, which waits on its own).
 void settle() {
     import core.thread : Thread;
     import core.time   : dur;
@@ -157,9 +179,9 @@ unittest {
         "block 1 baseline is not a plain cube: got " ~ counts().toString);
 
     armEngagedMirror();
-    assert(counts() == kCube,
-        "MirrorTool must not touch the document mesh DURING interaction "
-        ~ "(it previews into its own mesh); got " ~ counts().toString);
+    assert(counts() == kMirror,
+        "MirrorTool's copy must be a live edit of the document mesh from the "
+        ~ "first press (task 7116, captured law); got " ~ counts().toString);
 
     // The ordinary end of a session: drop the tool with its mesh intact.
     cmd("tool.set " ~ TOOL ~ " off");

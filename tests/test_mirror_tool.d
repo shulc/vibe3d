@@ -2,12 +2,15 @@
 //
 // Modelled on tests/test_primitive_box_interactive.d (interactive tool via
 // tool.set/tool.attr) and tests/test_mesh_mirror.d (assertions on the
-// resulting mesh). Mirror is a generator tool (BoxTool template) wrapping
-// the existing, tested Mesh.mirrorFaces (source/mesh.d:4172) — the aim of
-// these cases is PARITY with the mesh.mirror command for equal params, plus
-// the interactive-tool-specific concerns (commit-on-deactivate, the
-// `engaged` no-accidental-mirror guard, headless one-shot not double
-// applying).
+// resulting mesh). Mirror wraps the existing, tested Mesh.mirrorFaces — the
+// aim of these cases is PARITY with the mesh.mirror command for equal params,
+// plus the interactive-tool-specific concerns (the no-accidental-mirror
+// guard, headless one-shot not double applying).
+//
+// Task 7116: a panel/attr write before the first viewport press evaluates
+// nothing (captured law), so the attr-driven cases apply through
+// `tool.doApply` before dropping the tool; the live, press-driven path is
+// tests/test_mirror_preview_subpatch.d.
 
 import http_client : testBaseUrl, postJson;
 import http_command_helpers : commandBody;
@@ -86,6 +89,7 @@ unittest { // interactive tool with equal params matches the command exactly
     attrVec3(TOOL, "center", 1, 0, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys true");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
     auto actual = getModel();
 
@@ -123,6 +127,7 @@ unittest { // No selection, no attr writes beyond center ⇒ mirrors the whole
     toolSet(TOOL);
     attrVec3(TOOL, "center", 1, 0, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
     auto m = getModel();
@@ -146,6 +151,7 @@ unittest {
     attrVec3(TOOL, "center", 0.5, 0, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts true");
     cmd("tool.attr " ~ TOOL ~ " distance 0.001");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
     auto m = getModel();
@@ -170,6 +176,7 @@ unittest {
     attrVec3(TOOL, "center", 0, 0, 1);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys false");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
     auto m = getModel();
@@ -188,7 +195,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Undo restores the pre-mirror cube — one entry only.
+// 5. Undo restores the pre-mirror cube — one entry only (the doApply one).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -196,6 +203,7 @@ unittest {
     toolSet(TOOL);
     attrVec3(TOOL, "center", 1, 0, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
     auto post_ = getModel();
@@ -254,25 +262,24 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Non-cumulative preview (M3) — repeated center edits during the SAME
-// session must not accumulate mirrors. The preview itself is `!testMode`
-// visual (no GPU asserts here — see the module unittest in
-// source/tools/mirror.d for the CPU-only preview-rebuild proof); this case
-// asserts on the COMMITTED count after `off`, matching the plan's case 6.
+// 8. Non-cumulative — repeated center edits during the SAME session must not
+// accumulate mirrors (the CPU-only rebuild proof is the module unittest in
+// tests/unit/tools/alignment/mirror_test.d); this case asserts on the
+// APPLIED count.
 // ---------------------------------------------------------------------------
 
 unittest {
     resetCube();
     toolSet(TOOL);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
-    // Five successive center edits — each one re-evaluates the (own) preview
-    // internally; only the FINAL value should ever land in the committed
-    // mesh, once, on deactivate.
+    // Five successive center edits; only the FINAL value may land in the
+    // mesh, once, at the apply.
     attrVec3(TOOL, "center", 0.2, 0, 0);
     attrVec3(TOOL, "center", 0.4, 0, 0);
     attrVec3(TOOL, "center", 0.6, 0, 0);
     attrVec3(TOOL, "center", 0.8, 0, 0);
     attrVec3(TOOL, "center", 1.0, 0, 0);
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
 
     auto m = getModel();
@@ -312,6 +319,7 @@ unittest {
     attrVec3(TOOL, "center", 0, 0.5, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys true");
+    cmd(`{"id":"tool.doApply"}`);
     toolOff(TOOL);
     auto actual = getModel();
 

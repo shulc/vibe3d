@@ -16,7 +16,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import editmode : EditMode;
-import shader : Shader, LitShader, drawLitPreview;
+import shader : Shader, LitShader;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
@@ -27,11 +27,10 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolParamDoorClient;
 import prepared_mirror_activation : PreparedMirrorActivationOwner,
     PreparedMirrorDeactivateOwner;
-import mesh_gpu : GpuCreateUploadOwner, GpuUploadOwner, GpuResourceOwner;
-import document : Layer;
-import change_bus : MeshEditScope;
+import document : Layer, primaryModelSpace;
 import command_history : PreparedHistoryKind;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import display_sync : refreshDisplay;
+import edit_session : KeepAliveOnCancel;
 
 version (unittest) import std.conv : to;
 private struct MirrorPreparedState {
@@ -43,12 +42,11 @@ struct PreparedMirrorActivationImage {
     bool valid;
     MeshSnapshot baseline;
     bool[] mask;
-    Mesh preview;
     MirrorParams params;
     Vec3 left, up;
     void clear() nothrow @nogc {
         valid = false; baseline = MeshSnapshot.init; mask = null;
-        preview = Mesh.init; params = MirrorParams.init;
+        params = MirrorParams.init;
         left = up = Vec3.init;
     }
 }
@@ -60,25 +58,40 @@ struct PreparedMirrorDeactivateImage {
 }
 
 // ---------------------------------------------------------------------------
-// rebuildMirrorPreview — the non-cumulative preview recompute (impl plan
-// §2.2). Free function (not a method) so a module unittest can exercise it
-// directly against a plain `Mesh`, without constructing a MirrorTool (whose
-// constructor builds GL-backed handlers via MoveHandler/Arrow/BoxHandler —
-// unsafe outside a live GL context).
+// rebuildMirrorPreview — the non-cumulative mirror recompute. Since task 7116
+// its target is the DOCUMENT mesh while the tool is engaged (the copy is a
+// live edit from the first viewport press, measured law §24); a module
+// unittest still drives it against a plain `Mesh`.
 //
-// `baseSnap.restore(previewMesh)` fully overwrites `previewMesh` with the
-// pristine base (deep-copied geometry) EVERY call — this is the guarantee
-// that N successive calls never accumulate N mirrors
-// (`Mesh.mirrorFacesPlane` APPENDS).
+// `baseSnap.restore(target)` fully overwrites `target` with the pristine base
+// EVERY call — the guarantee that N successive calls never accumulate N
+// mirrors (`Mesh.mirrorFacesPlane` APPENDS).
+//
+// The plane (`params_.center`, `toolNormal`) is WORLD-space (gap 190); `space`
+// carries it into the mesh's local frame. Exact for a similarity item
+// transform; under a non-uniform scale the reflection is about the carried
+// plane, a recorded divergence.
 // ---------------------------------------------------------------------------
-void rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
-                         in bool[] baseMask, in MirrorParams params_)
+size_t rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh target,
+                            in bool[] baseMask, in MirrorParams params_,
+                            in ModelSpace space = ModelSpace.world())
 {
-    baseSnap.restore(previewMesh);
+    baseSnap.restore(target);
+    return mirrorInPlace(target, baseMask, params_, space);
+}
+
+/// One mirror of `mask` about the WORLD plane of `params_`, appended to
+/// `target` in its own local frame `space`. The one kernel call shared by the
+/// live edit and the headless apply.
+size_t mirrorInPlace(ref Mesh target, in bool[] mask, in MirrorParams params_,
+                     in ModelSpace space)
+{
     float weld = params_.mergeVerts ? params_.distance : 0.0f;
-    previewMesh.mirrorFacesPlane(baseMask, params_.center, toolNormal(params_),
-                                 weld, params_.invertPolys);
-    previewMesh.buildLoops();
+    size_t inserted = target.mirrorFacesPlane(mask,
+        space.toLocalPoint(params_.center),
+        space.toLocalNormal(toolNormal(params_)), weld, params_.invertPolys);
+    if (inserted > 0) target.buildLoops();
+    return inserted;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,9 +187,11 @@ Vec3 derivedLeft(in MirrorParams p) {
 }
 
 // ---------------------------------------------------------------------------
-// MirrorTool — interactive generator tool wrapping Mesh.mirrorFacesPlane
-// (source/mesh.d, task 0230). Modelled on BoxTool (source/tools/box.d): the
-// document mesh is never mutated during interaction, only in deactivate().
+// MirrorTool — interactive tool wrapping Mesh.mirrorFacesPlane (source/mesh.d,
+// task 0230). Since task 7116 it is an ordinary live edit of the DOCUMENT mesh
+// (the CloneTool shape): nothing is evaluated until the first viewport press;
+// from then on every change restores `baseSnap` and mirrors again, drawn by
+// the ordinary mesh path; the drop commits base -> current as one step.
 //
 // v2 (task 0230) = ORIENTED plane (Axis + Angle + Center all live; Left/Up
 // derived readouts; Mode greyed to Axis). Two box handles: `mover.centerBox`
@@ -184,7 +199,8 @@ Vec3 derivedLeft(in MirrorParams p) {
 // `rotateBox` (small — drags `angle`, tilting the plane about the fixed
 // `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
-class MirrorTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class MirrorTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+        PreparedToolParamDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -195,21 +211,16 @@ private:
     MirrorParams params_;
 
     // Base state captured at activate() — the pristine mesh + face mask the
-    // preview/commit mirror from. Mask rule matches the mesh.mirror command
-    // (commands/mesh/mirror.d:74-84): empty face selection ⇒ whole mesh.
+    // live edit mirrors from. Mask rule matches the mesh.mirror command:
+    // empty face selection ⇒ whole mesh.
     MeshSnapshot baseSnap;
     bool[]       baseMask;
-
-    // Own preview mesh (M3, §2 of the impl plan) — the document mesh is
-    // NEVER mutated during interaction; only deactivate() writes it.
-    Mesh    previewMesh;
-    GpuMesh previewGpu;
 
     // Dirty guard (fold #3): property_panel.d calls evaluate() every frame
     // the panel is open, and evaluate() is also called on every handle-drag
     // motion event — without this cache a full snapshot-restore +
-    // mirrorFaces + buildLoops + GPU upload would run every such call even
-    // when nothing changed. Caches the last-evaluated param snapshot;
+    // mirrorFaces + buildLoops + display refresh would run every such call
+    // even when nothing changed. Caches the last-evaluated param snapshot;
     // evaluate() early-returns when unchanged.
     bool  havePreviewCache;
     int   cachedAxis;
@@ -222,10 +233,15 @@ private:
                          // invalidate the cache, or the preview silently
                          // no-ops on orientation changes.
 
-    // Commit guard (§4.2 of the impl plan): true once the user has actually
-    // interacted (handle drag / param edit / headless attr write). Prevents
-    // an accidental mirror when the tool is picked and dropped untouched.
+    // Set ONLY by the first viewport press (either branch of
+    // onMouseButtonDown) — a panel/attr write before it only stores the
+    // value (capture C3-m s1-s2). Prevents a mirror when the tool
+    // is picked and dropped untouched.
     bool engaged;
+    // The document mesh currently holds the live copy (a restore from
+    // `baseSnap` is owed on cancel, a commit on drop). A flag, not a version
+    // key: the identity question is "did WE write it", nothing else.
+    bool liveApplied;
 
     // ----- Center handle (M2) — reuse MoveHandler exactly as BoxTool does
     // (box.d:1857/1896), with the three plane-corner circles AND the three
@@ -276,19 +292,8 @@ public:
         if (axisLineVao  != 0) { glDeleteVertexArrays(1, &axisLineVao);  glDeleteBuffers(1, &axisLineVbo); }
     }
 
-    /// CPU-only preview rebuild (fold #2) — no GL calls, so it can be driven
-    /// directly by a module unittest. Non-cumulative: delegates to the free
-    /// `rebuildMirrorPreview` (module scope) which restores the pristine
-    /// base snapshot before every `mirrorFaces` call.
-    void rebuildPreviewMesh() {
-        rebuildMirrorPreview(baseSnap, previewMesh, baseMask, params_);
-    }
-
     override string name() const { return "Mirror"; }
 
-    override ulong previewUploadVersion() const nothrow @nogc {
-        return previewGpu.uploadVersion;
-    }
     override int previewHotPart() const nothrow @nogc {
         return toolHandles.hot;
     }
@@ -297,11 +302,11 @@ public:
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();
         engaged  = false;
+        liveApplied = false;
         moverDragAxis = -1;
         toolHandles.clearHaul();
-        previewGpu.init();
         havePreviewCache = false;
-        evaluate();   // show the preview immediately (§2.2 of the impl plan)
+        updateReadouts();
     }
 
     final PreparedMirrorActivationImage buildPreparedActivation(out Mesh* source) {
@@ -312,7 +317,6 @@ public:
         image.baseline = MeshSnapshot.capture(*source);
         image.mask = source.operandFaceMask();
         image.params = params_;
-        rebuildMirrorPreview(image.baseline, image.preview, image.mask, image.params);
         image.left = derivedLeft(image.params);
         image.up = derivedUp(image.params);
         image.valid = true;
@@ -330,52 +334,42 @@ public:
             params_.mode == expected.mode && params_.left == expected.left &&
             params_.up == expected.up;
     }
-    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
     final void installPreparedActivation(ref PreparedMirrorActivationImage image)
             nothrow @nogc {
         image.baseline.moveInto(baseSnap);
         baseMask = image.mask; image.mask = null;
-        previewMesh = image.preview; image.preview = Mesh.init;
         params_.left = image.left; params_.up = image.up;
-        engaged = false; moverDragAxis = -1; toolHandles.clearHaul();
-        cachedAxis = image.params.axis; cachedCenter = image.params.center;
-        cachedInvert = image.params.invertPolys;
-        cachedMerge = image.params.mergeVerts;
-        cachedDistance = image.params.distance; cachedAngle = image.params.angle;
-        havePreviewCache = true; image.valid = false;
+        engaged = false; liveApplied = false;
+        moverDragAxis = -1; toolHandles.clearHaul();
+        havePreviewCache = false; image.valid = false;
     }
-    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
-            GpuCreateUploadOwner uploadOwner) {
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
         if (context is null) return PreparedSessionActivateEffect(
             preparedToolStateOwner, PreparedActivateKind.Mirror, false);
         scope(failure) context.discard();
         auto stateOwner = PreparedMirrorActivationOwner.prepare(this);
         bool ok = stateOwner !is null && context.prepareMirrorActivation(stateOwner);
-        ok = ok && uploadOwner !is null && uploadOwner.replacesLikeLegacyInit() &&
-            uploadOwner.owns(&previewGpu) &&
-            context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh);
         ok = ok && context.markNoHistoryInstall();
         if (!ok) context.discard();
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Mirror, ok);
     }
     override bool prepareDoorActivate(PreparedRecordContext context, Layer,
-            ulong threadIdentity, ulong contextIdentity) {
-        auto owner = new GpuCreateUploadOwner(&previewGpu, threadIdentity,
-            contextIdentity, true);
-        return prepareActivate(context, owner).accepted;
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
     version(unittest) final void seedPreparedActivationForTest() {
-        baseMask = [true, false]; engaged = true; moverDragAxis = 4;
-        havePreviewCache = false; cachedAxis = 99; cachedDistance = -1;
+        baseMask = [true, false]; engaged = true; liveApplied = true;
+        moverDragAxis = 4; havePreviewCache = true; cachedAxis = 99;
+        cachedDistance = -1;
     }
     version(unittest) final void setPreparedAxisForTest(int value) nothrow @nogc {
         params_.axis = value;
     }
     version(unittest) final bool preparedActivationInstalledForTest() const {
         return baseSnap.filled && baseMask.length > 0 && !engaged &&
-            moverDragAxis == -1 && havePreviewCache &&
+            !liveApplied && moverDragAxis == -1 && !havePreviewCache &&
             params_.left == derivedLeft(params_) && params_.up == derivedUp(params_);
     }
     version(unittest) final size_t preparedMaskSelectedForTest() const nothrow @nogc {
@@ -395,63 +389,46 @@ public:
     }
     final void installPreparedDeactivateState(
             ref PreparedMirrorDeactivateImage image) nothrow @nogc {
-        engaged = false; havePreviewCache = false; image.clear();
+        engaged = false; liveApplied = false; havePreviewCache = false;
+        image.clear();
     }
     version(unittest) final void seedPreparedDeactivateStateForTest()
             nothrow @nogc {
         engaged = true; havePreviewCache = true;
     }
+    /// A live edit as the first press leaves it: base captured from the
+    /// CURRENT mesh, engaged, the copy owed. The caller then writes the copy
+    /// into the mesh itself (no display in a unit test).
+    version(unittest) final void seedLiveEditForTest() {
+        baseSnap = MeshSnapshot.capture(*mesh);
+        baseMask = buildMaskFromSelection();
+        engaged = true; liveApplied = true; havePreviewCache = true;
+    }
     version(unittest) final bool preparedDeactivateStateInstalledForTest()
             const nothrow @nogc {
-        return !engaged && !havePreviewCache;
+        return !engaged && !liveApplied && !havePreviewCache;
     }
     version(unittest) final void installPreparedDeactivateStateForTest()
             nothrow @nogc {
         engaged = false;
     }
-    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
-        return owner !is null && owner.owns(gpu);
-    }
-    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
-        return owner !is null && owner.owns(&previewGpu);
-    }
-    private size_t buildPreparedDeactivateCandidate(out Mesh candidate,
-            out MeshSnapshot pre, out uint deliveryFlags,
-            out uint deliveryDomains) {
-        if (!engaged || mesh is null) return 0;
-        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
-        auto shadow = beginPreparedShadow(candidate);
-        float weld = params_.mergeVerts ? params_.distance : 0.0f;
-        size_t inserted = candidate.mirrorFacesPlane(candidate.operandFaceMask(),
-            params_.center, toolNormal(params_), weld, params_.invertPolys);
-        if (inserted > 0) candidate.buildLoops();
-        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
-        shadow.close(); return inserted;
-    }
+    // The drop commits what the live edit already wrote (the CloneTool
+    // shape): base -> current mesh, no second mirror, no mesh image, no
+    // upload — the ordinary display path uploaded the copy at the press.
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
-            Layer layer, GpuUploadOwner mainUpload,
-            GpuResourceOwner previewDestroy) {
+            Layer layer) {
         if (context is null) return PreparedDeactivateEffect(
             preparedToolStateOwner, PreparedDeactivateKind.Mirror, false, false);
         scope(failure) context.discard();
         auto stateOwner = PreparedMirrorDeactivateOwner.prepare(this);
         bool ok = stateOwner !is null && layer !is null &&
-            &layer.meshRef() is mesh && ownsPreparedPreviewDestroy(previewDestroy);
-        Mesh candidate; MeshSnapshot pre;
-        size_t inserted; uint deliveryFlags, deliveryDomains;
-        if (ok) inserted = buildPreparedDeactivateCandidate(candidate, pre,
-            deliveryFlags, deliveryDomains);
-        if (ok && inserted > 0)
-            ok = ownsPreparedMainUpload(mainUpload) &&
-                context.prepareStampedMeshImage(layer, candidate,
-                    deliveryFlags, deliveryDomains) &&
-                context.prepareUpload(mainUpload, candidate);
-        if (ok) ok = context.prepareDestroy(previewDestroy);
+            &layer.meshRef() is mesh;
         bool historyPrepared;
-        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+        if (ok && engaged && liveApplied && history !is null &&
+                gestureFactory !is null) {
             auto cmd = cast(MeshSessionEdit)gestureFactory();
             if (cmd !is null) {
-                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Mirror");
+                cmd.setSnapshots(baseSnap, MeshSnapshot.capture(*mesh), "Mirror");
                 historyPrepared = context.prepare(cmd,
                     PreparedHistoryKind.Plain).accepted;
                 ok = historyPrepared;
@@ -465,57 +442,48 @@ public:
             PreparedDeactivateKind.Mirror, historyPrepared, ok);
     }
     override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
-            ulong threadIdentity, ulong contextIdentity) {
-        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
-        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
-            contextIdentity);
-        return prepareDeactivate(context, layer, upload, destroy).resourceAccepted;
+            ulong, ulong) {
+        return prepareDeactivate(context, layer).resourceAccepted;
     }
 
     override void deactivate() {
-        bool willCommit = engaged;
-        MeshSnapshot pre;
-        if (willCommit) pre = MeshSnapshot.capture(*mesh);
-
-        size_t inserted = 0;
-        if (willCommit) {
-            float weld = params_.mergeVerts ? params_.distance : 0.0f;
-            inserted = mesh.mirrorFacesPlane(commitMask(), params_.center,
-                                             toolNormal(params_), weld, params_.invertPolys);
-            if (inserted > 0) {
-                mesh.buildLoops();
-                gpu.upload(*mesh);
-            }
-        }
-
-        previewGpu.destroy();
-        if (willCommit && inserted > 0) commitMirrorEdit(pre);
+        if (engaged && liveApplied) commitMirrorEdit(baseSnap);
         engaged = false;
+        liveApplied = false;
         havePreviewCache = false;
     }
 
     // ----- History-coordination hooks (mirror BoxTool's, box.d:1963-1988) --
 
-    public override bool hasUncommittedEdit() const { return engaged; }
-
-    public override void cancelUncommittedEdit() {
-        // The document mesh was never touched during interaction (own
-        // preview mesh) — nothing to revert, just drop the guard. The
-        // preview keeps showing whatever params_ currently holds (there is
-        // no "unstarted" state for an axis-aligned generator — defaults
-        // already describe a valid plane).
-        engaged = false;
+    public override bool hasUncommittedEdit() const {
+        return engaged && liveApplied;
     }
 
+    // The first Ctrl+Z drops the live copy and keeps the tool armed (owner's
+    // law, CLAUDE.md "Undo / redo"); the next press starts a fresh live edit
+    // from the same base. The shared cancel-then-drop default is opted out of
+    // through the existing KeepAliveOnCancel capability, as the create family
+    // and the slice tools do.
+    public override bool survivesEditCancel() const { return true; }
+
+    public override void cancelUncommittedEdit() {
+        if (liveApplied) {
+            baseSnap.restore(*mesh);
+            refreshDisplay(mesh, gpu);
+        }
+        engaged = false;
+        liveApplied = false;
+        havePreviewCache = false;
+    }
+
+    // External undo/redo moved geometry beneath the tool — re-base against
+    // the current mesh; nothing is evaluated until the next press.
     public override void resyncSession() {
-        // External undo/redo moved geometry beneath the tool — re-base
-        // against the current mesh and force the preview to rebuild from
-        // the new baseline (dirty guard would otherwise skip it since
-        // params_ itself didn't change).
         baseSnap = MeshSnapshot.capture(*mesh);
         baseMask = buildMaskFromSelection();
+        engaged = false;
+        liveApplied = false;
         havePreviewCache = false;
-        evaluate();
     }
 
     // ----- Mask (fold #4: interactive commit + applyHeadless must build the
@@ -527,17 +495,12 @@ public:
         return mesh.operandFaceMask();
     }
 
-    /// The mask used at commit time — re-derived from the LIVE selection
-    /// (identical rule to buildMaskFromSelection; the doc mesh is untouched
-    /// during interaction so this matches what was captured at activate()).
-    private bool[] commitMask() const { return buildMaskFromSelection(); }
-
     // Records through the base seam (task 1905 phase C, group G2). The
     // trigger is NOT moved: this body is still reached from `deactivate()`,
     // which is why the cell's `liveEntryNames` is empty and its `entryNames`
-    // only fills at the drop. The preview this commit closes is written into
-    // the tool's OWN `previewMesh`, so neither change-bus channel sees it —
-    // see `tests/test_tool_gesture_g2.d`'s two-span band.
+    // only fills at the drop. The edit it closes lives in the
+    // DOCUMENT mesh from the first press, so both change-bus channels see the
+    // drag — see `tests/test_tool_gesture_g2.d`.
     private void commitMirrorEdit(MeshSnapshot pre) {
         if (history is null || gestureFactory is null) return;
         auto cmd = cast(MeshSessionEdit) gestureFactory();
@@ -607,10 +570,13 @@ private:
         handle = MirrorPreparedState(prepared.boolValue, true);
         return true;
     }
+    // A parameter write never engages: before the first press
+    // the value is only stored; after it, the live copy is owed a rebuild,
+    // which the attr path's own evaluate() then performs.
     void installLegacyPreparedState(ref MirrorPreparedState handle) nothrow @nogc {
         if (!handle.consumable) return;
         handle.consumable = false;
-        engaged = handle.engaged;
+        if (engaged) havePreviewCache = false;
     }
 public:
 
@@ -618,23 +584,26 @@ public:
     // mesh — ToolHeadlessCommand never calls activate(), so baseMask/baseSnap
     // are never populated on that throwaway instance). ----------------------
 
+    // Refused while a live edit is on the mesh ("the tool is already
+    // interactive", capture C3-m s4): the refusal reaches `tool.doApply` as
+    // status:error with no record.
     override bool applyHeadless() {
-        bool[] mask = buildMaskFromSelection();
-        float weld  = params_.mergeVerts ? params_.distance : 0.0f;
-        size_t inserted = mesh.mirrorFacesPlane(mask, params_.center,
-                                                toolNormal(params_), weld, params_.invertPolys);
-        if (inserted == 0) return false;
-        mesh.buildLoops();
+        if (engaged && liveApplied) return false;
+        if (mirrorInPlace(*mesh, buildMaskFromSelection(), params_,
+                          primaryModelSpace()) == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
 
-    // ----- Live preview (M3, §2.2-2.3 of the impl plan) ---------------------
+    // ----- Live edit ---------------------------------------------------------
     //
-    // Re-apply the preview after a parameter change or handle drag. Guarded
-    // (fold #3) so property_panel.d's per-frame call (property_panel.d:72)
-    // and every drag-motion call are cheap no-ops once the params settle.
+    // Before the first press only the readouts move. Once engaged, re-apply
+    // the copy to the DOCUMENT mesh after a parameter change or handle drag,
+    // through the ordinary display refresh. Guarded (fold #3) so the panel's
+    // per-frame call and every drag-motion call are cheap no-ops once the
+    // params settle.
     override void evaluate() {
+        if (!engaged) { updateReadouts(); return; }
         if (havePreviewCache
             && cachedAxis     == params_.axis
             && cachedCenter   == params_.center
@@ -644,14 +613,10 @@ public:
             && cachedAngle    == params_.angle)
             return;
 
-        rebuildPreviewMesh();
-        previewGpu.upload(previewMesh);
-
-        // Derived Left/Up readouts (task 0230 M5) — recomputed alongside the
-        // preview since both are pure functions of axis+angle, the exact
-        // fields this dirty guard already keys on.
-        params_.left = derivedLeft(params_);
-        params_.up   = derivedUp(params_);
+        liveApplied = rebuildMirrorPreview(baseSnap, *mesh, baseMask, params_,
+                                           primaryModelSpace()) > 0;
+        refreshDisplay(mesh, gpu);
+        updateReadouts();
 
         cachedAxis       = params_.axis;
         cachedCenter     = params_.center;
@@ -662,18 +627,22 @@ public:
         havePreviewCache = true;
     }
 
-    // ----- Center handle (M2) + preview draw (M3) ---------------------------
+    // Derived Left/Up readouts (task 0230 M5) — pure functions of axis+angle.
+    private void updateReadouts() {
+        params_.left = derivedLeft(params_);
+        params_.up   = derivedUp(params_);
+    }
+
+    // ----- Center handle (M2) + plane draw (M3) -----------------------------
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
                        const ref DrawPlan plan, bool visualOnly = false) {
         // `visualOnly` is the non-interactive replica draw in an inactive
         // Quad cell (tool.d:132 contract) — skip the cachedVp write and the
-        // ToolHandles register/hit cycle there, but still draw the preview +
-        // handle so they appear (reprojected) in every cell — mirrors
-        // BoxTool's draw() (box.d:2438).
+        // ToolHandles register/hit cycle there, but still draw the plane +
+        // handles so they appear (reprojected) in every cell. The copy itself
+        // is document geometry and draws with the mesh.
         if (!visualOnly) cachedVp = vp;
-
-        drawLitPreview(litShader, shader, vp, previewGpu, plan);
 
         mover.setPosition(params_.center);
         mover.setOrientation(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
@@ -828,9 +797,13 @@ public:
             }
             return false;
         }
+        // A press on a handle is also the first press: the copy appears now,
+        // not at the first drag step (C3-m s3).
         moverDragAxis = hit;
         moverLastMX   = e.x;
         moverLastMY   = e.y;
+        engaged = true;
+        evaluate();
         return true;
     }
 
@@ -925,17 +898,20 @@ public:
 unittest {
     Mesh owned;
     auto tool = new MirrorTool(() => &owned, null, LitShader.init);
-    tool.engaged = false;
+    tool.engaged = false; tool.havePreviewCache = true;
     auto prepared = tool.prepareParamState("axis");
     assert(!tool.engaged);
     assert(prepared.boolValue); // using the original false state instead REDs
     MirrorPreparedState handle;
     assert(tool.validatePreparedState(prepared, handle));
     tool.installLegacyPreparedState(handle);
-    assert(tool.engaged); // installed state == legacy assignment
-    tool.engaged = false;
+    // A parameter write before the first press never engages.
+    assert(!tool.engaged && tool.havePreviewCache);
+    tool.engaged = true;
+    assert(tool.validatePreparedState(prepared, handle));
     tool.installLegacyPreparedState(handle);
-    assert(!tool.engaged);
+    // After it: still engaged, and the live copy is owed a rebuild.
+    assert(tool.engaged && !tool.havePreviewCache);
 }
 
 static assert(!__traits(compiles, { MirrorPreparedState a; MirrorPreparedState b = a; }));

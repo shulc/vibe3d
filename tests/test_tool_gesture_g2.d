@@ -41,13 +41,14 @@
 // REALLY reaches the tool's record site.
 //
 // THE PREVIEW WITNESS, AND A CORRECTION TO PLAN §5.3. G2 carries FOUR of the
-// eight batchless previews. Three of them rebuild on the DOCUMENT mesh
-// (`array_tool.d rebuildPreview`, `clone_tool.d rebuildPreview`,
-// `radial_array_tool.d rebuildPreview`) and therefore DO tick
-// `changeBus.unbatchedGeometryCommits`. The fourth, `mirror.d`'s free function
-// `rebuildMirrorPreview`, writes the tool's OWN `previewMesh`, and plan §5.3
-// says the counter cannot see it because the counter is filtered to the
-// document mesh — true — and prescribes "a delivery-count band instead".
+// eight batchless previews, and since task 7116 all four rebuild on the
+// DOCUMENT mesh (`array_tool.d rebuildPreview`, `clone_tool.d rebuildPreview`,
+// `radial_array_tool.d rebuildPreview`, and `mirror.d rebuildMirrorPreview`,
+// which became a live edit of the document mesh from the first press) and
+// therefore DO tick `changeBus.unbatchedGeometryCommits`. The one cell with
+// its OWN preview mesh is radialSweep; plan §5.3 says the counter cannot see
+// such a mesh because the counter is filtered to the document mesh — true —
+// and prescribes "a delivery-count band instead".
 //
 // MEASURED HERE: **the delivery channel is filtered by the SAME predicate.**
 // `Mesh.deliverPending`'s first line is `if (!deliverySubjectAccepted(&this))
@@ -60,7 +61,7 @@
 // read AGAINST THE DOCUMENT MESH across two spans of the same gesture:
 //
 //                            drag: ubgc / deliveries    drop: ubgc / deliveries
-//     mirror (own preview)        0 / 0                      2 / 1
+//     mirror (doc mesh)          39 / 158                    0 / 0
 //     radialSweep (own preview)   0 / 0                      2 / 1
 //     radialArray (doc mesh)     32 / 432                    0 / 0
 //     array (doc mesh)           24 /  84                    0 / 0
@@ -804,9 +805,9 @@ unittest {
         "CONTROL: the " ~ kBatchlessControlCommand ~ " sequence delivered "
       ~ ctrlDeliveries.to!string ~ " change(s), expected more than zero. "
       ~ "`deliveryCount` is the SECOND channel every cell's preview witness "
-      ~ "reads, and the two own-preview cells (mirror, radialSweep) assert it "
-      ~ "at exactly 0 across their drag. A dead delivery counter satisfies "
-      ~ "those zeroes for free");
+      ~ "reads, and the own-preview cell (radialSweep) asserts it at exactly 0 "
+      ~ "across its drag. A dead delivery counter satisfies that zero for "
+      ~ "free");
 
     // Now the plane and history channels, with a command of no group here.
     auto r = postJ("/api/command", `{"id":"mesh.clone"}`);
@@ -857,7 +858,8 @@ unittest {
     Cell[] cells;
 
     // --- (a) MirrorTool. Commits from `deactivate()`, so `liveEntryNames` is
-    //     EMPTY and the whole geometry appears at the DROP. The gesture is the
+    //     EMPTY; since task 7116 the copy is already in the document mesh from
+    //     the press, and the drop only records it. The gesture is the
     //     centre-box haul — the same drive `tests/test_mirror_tool_drag.d`'s
     //     second block runs, whose only assertion is the `center` attribute.
     //     No face selection: Mirror's mask rule is `operandFaceMask()`, so an
@@ -866,7 +868,7 @@ unittest {
     cells ~= runCell("mirror/centre-box-haul", "mesh.mirrorTool",
         "source/tools/alignment/mirror.d MirrorTool.commitMirrorEdit (from deactivate)",
         "Plain", "MeshSessionEdit",
-        "its OWN previewMesh (mirror.d rebuildMirrorPreview) — BOTH bus channels filter it out",
+        "the DOCUMENT mesh (live edit from the first press, §24) — both channels see the drag",
         { resetCube(); cmd("history.clear"); setOrbitCamera();
           cmd("tool.set mesh.mirrorTool on"); settle(250); },
         {
@@ -993,6 +995,21 @@ unittest {
               ~ "exit and `built` stayed false, so the mouse-up records nothing");
         },
         { cmd("tool.set mesh.clone off"); });
+
+    // The own-preview population the control above speaks of: exactly one
+    // cell previews on its OWN mesh, and it reads zero on both channels across
+    // its drag (task 7116 moved mirror onto the document mesh).
+    size_t nOwnPreview;
+    foreach (ref c; cells)
+        if (c.previewSubject.canFind("OWN previewMesh")) {
+            ++nOwnPreview;
+            assert(c.dragUnbatched == 0 && c.dragDeliveries == 0,
+                c.name ~ ": an own-preview cell moved the document-mesh "
+              ~ "channels during its drag");
+        }
+    assert(nOwnPreview == 1,
+        format("g2: %d own-preview cell(s), expected exactly 1 (radialSweep)",
+               nOwnPreview));
 
     freezeOrCompare(cells);
 }
