@@ -244,6 +244,7 @@ string[string] buildSeeds() {
     const obj  = mk("file.export.obj",  ".obj");
     const lwo  = mk("file.export.lwo",  ".lwo");
     const gltf = mk("file.export.gltf", ".gltf");
+    const glb  = mk("file.export.glb",  ".glb");
     const fbx  = mk("file.export.fbx",  ".fbx");
     string[string] seeds;
     seeds["file.load"]        = `{"path":"` ~ v3d  ~ `"}`;
@@ -251,6 +252,7 @@ string[string] buildSeeds() {
     seeds["file.import.obj"]  = `{"path":"` ~ obj  ~ `"}`;
     seeds["file.import.lwo"]  = `{"path":"` ~ lwo  ~ `"}`;
     seeds["file.import.gltf"] = `{"path":"` ~ gltf ~ `"}`;
+    seeds["file.import.glb"]  = `{"path":"` ~ glb  ~ `"}`;
     seeds["file.import.fbx"]  = `{"path":"` ~ fbx  ~ `"}`;
     return seeds;
 }
