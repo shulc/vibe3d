@@ -361,7 +361,23 @@ unittest {
     ac.notePlacement();
     ac.resetTransient();
     assert(!ac.placementPending(), "(u5b)(ix) the deferred placement survived a drop under a user lock"); ++rows;
-    assert(rows == 9, "(u5b) row population changed");
+    // (x) a fresh session drops a pending placement too.
+    ac.notePlacement();
+    ac.reset();
+    assert(!ac.placementPending(), "(u5b)(x) reset() left a deferred placement pending"); ++rows;
+    // (xi) the eager centre is the PUBLISHED one: a pair's centroid lies on
+    // the plane, the published handle is its +X member (gap 318), so
+    // switching the selection centre on latches +X, not the on-plane -X.
+    m.clearVertexSelection();
+    m.selectVertex(0);
+    m.selectVertex(1);
+    eval();
+    ac.notePlacementAt(Vec3(-0.4f, 0, 0));
+    assert(sy.authoringSide() == -1, "(u5b)(xi) rig: the pre-state must be -X");
+    assert(ac.setAttr("mode", "select"));
+    assert(sy.authoringSide() == 1,
+           "(u5b)(xi) switching the centre on latched the unrestricted pair centroid (on the plane)"); ++rows;
+    assert(rows == 11, "(u5b) row population changed");
 }
 
 // (u6) CENSUS of the WIRING — the production call sites, which (u2)/(u5)/(u5b)

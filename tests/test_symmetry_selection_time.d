@@ -765,6 +765,15 @@ void blockEM() {
             format("element pick on %s did not move the pair: v6 ΔY %.4f v7 ΔY %.4f (captured: both %.2f)",
                    pick[0] < 0 ? "-X" : "+X", d6, d7,
                    vec(c[pick[0] < 0 ? "press_neg_x" : "press_pos_x"]["moved"]["6"]["after"])[1] - 0.5));
+        // The pick PLACES the action centre (the picked element), so it
+        // latches the authoring side there (W3; P-acen extended to the pick —
+        // gap label, Element Move presses were not captured for the latch).
+        if (pick[0] > 0) {
+            sideFloor(1, "EM: the +X pick latched +X");
+            immutable double edx = readDx(7);
+            law(abs(edx + 0.4) <= 1e-3,
+                format("an element pick on +X did not latch the side: dx %.4f, expected -0.4", edx));
+        }
     }
 }
 
@@ -790,6 +799,6 @@ unittest {
     blockK();
     blockEM();
     cmd("tool.pipe.attr symmetry enabled false");
-    lawSummary("test_symmetry_selection_time", 57);
-    sideFloorSummary("test_symmetry_selection_time", 28);
+    lawSummary("test_symmetry_selection_time", 58);
+    sideFloorSummary("test_symmetry_selection_time", 29);
 }
