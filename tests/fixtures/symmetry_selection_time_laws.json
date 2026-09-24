@@ -6,7 +6,7 @@
   "method": "gui-gesture",
   "captured_utc": "2026-09-24",
   "harness": "toolcards/symmetry_selection/harness (private)",
-  "task": "7145",
+  "task": "7145, 7146",
   "notes": "GUI worker, fresh boot per cell, selections by real pointer input except the script/command doors; numeric transforms applied as one scripted block while no tool session was live; drags by relative pointer increments; every cell journal passed the session gate with 0 in-session reads"
  },
  "index_map": {
@@ -23,7 +23,9 @@
   "pairing_doors": "pointer gestures pair (click, shift-click, ctrl-click deselect, region, double-click loop, in vertex/edge/polygon modes); script and command doors do not (the index selection command in set and add mode, the scripting API, expand); turning symmetry on does not widen an existing selection",
   "authoring_side": "each operand vertex on the AUTHORING side A takes the transform T; each operand vertex on the other side takes its mirror M T M. The side is a latched state: every press (on or off the handle) sets it to the press side, it survives a tool drop and re-arm, and a fresh session starts at -X (so a numeric apply with no earlier press authors on -X). A selected pair therefore stays mirror-symmetric; a lone vertex off A moves by the mirrored delta",
   "weights": "numeric door: falloff weights of a pair are read at its +X member (and a lone vertex uses its own position); the action centre handle sits on the +X member. Drag-door weights under a linear falloff are NOT measured (see notes)",
-  "on_plane": "an on-plane vertex keeps its plane coordinate"
+  "on_plane": "an on-plane vertex keeps its plane coordinate",
+  "authoring_side_latch": "the side is latched wherever an action centre is placed: a tool ACTIVATION latches the handle's side (the handle sits at the +X half of the selection); every press latches the press side (move, rotate, edge extend alike, with symmetry on or off); switching an action-centre tool on latches that centre's side (the origin gave -X). The side is global (one value across presets and tools), survives symmetry off/on and an axis change, and is not part of undo; undoing after a drop re-activates the tool, which re-latches",
+  "off_side_evaluation": "an operand vertex off the authoring side is evaluated as M K(M p) with the whole transform K, pivot included; the one-block numeric door evaluates no action centre, so its pivot is the world origin"
  },
  "cells": {
   "C-order": {
@@ -851,10 +853,384 @@
     0.5
    ],
    "verdict": "P-persist: the side latched by the press survives the tool drop and re-arm; the numeric step moved the +X vertex by +0.4 (a fresh boot's numeric step moves it by -0.4)"
+  },
+  "C-rot-self": {
+   "rig": "symmetry X; only (0.5,0.5,0.5) selected (scripting API); rotate preset armed and activated (handle read: centred on the vertex), dropped; numeric RY 45 in one scripted block",
+   "selected_after": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "partner_after": [
+    -0.5,
+    0.5,
+    0.5
+   ],
+   "twins": {
+    "pair_same_side_after_activation": {
+     "note": "(0.5,0.5,0.5)+(0.5,0.5,-0.5); handle at (0.5,0.5,0); activation latched +X so both are on the authoring side",
+     "a_after": [
+      0.853553,
+      0.5,
+      0.353553
+     ],
+     "b_after": [
+      0.146447,
+      0.5,
+      -0.353553
+     ]
+    },
+    "pair_same_side_no_activation": {
+     "note": "same selection, numeric block only (authoring side -X)",
+     "a_after": [
+      0.0,
+      0.5,
+      0.707107
+     ],
+     "b_after": [
+      0.707107,
+      0.5,
+      0.0
+     ]
+    },
+    "lone_no_activation": {
+     "selected_after": [
+      0.0,
+      0.5,
+      0.707107
+     ]
+    },
+    "lone_on_authoring_side_no_activation": {
+     "note": "(-0.5,0.5,0.5) alone, numeric block only",
+     "selected_after": [
+      -0.0,
+      0.5,
+      0.707107
+     ]
+    },
+    "mixed_sides_after_activation": {
+     "note": "(0.5,0.5,0.5), (0.5,0.5,-0.5), (-0.5,0.5,-0.5); handle at (0.5,0.5,0) = centroid of the +X half; authoring side +X",
+     "pos_a_after": [
+      0.853553,
+      0.5,
+      0.353553
+     ],
+     "pos_b_after": [
+      0.146447,
+      0.5,
+      -0.353553
+     ],
+     "neg_after": [
+      -0.146447,
+      0.5,
+      -0.353553
+     ]
+    }
+   },
+   "verdict": "Cj-affine: an operand vertex off the authoring side is evaluated as M K(M p) with the WHOLE transform K, pivot included (mixed cell: the -X vertex lands at M of its image's rotation about (0.5,0.5,0); Cj-linear would give (0.1464,0.5,-1.0607)). The self cell alone cannot show it: the activation latched +X, putting the vertex on the authoring side at its own pivot"
+  },
+  "C-scale-self": {
+   "rig": "as C-rot-self with the scale preset and numeric SX 2",
+   "selected_after": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "twins": {
+    "two_segment_after_activation": {
+     "note": "(0.5,0.5,0.5)+(0,0.5,0.5); handle at (0.25,0.5,0.5); +X authoring",
+     "pos_after": [
+      0.75,
+      0.5,
+      0.5
+     ]
+    },
+    "two_segment_no_activation": {
+     "note": "same selection, numeric block only: pivot at the origin",
+     "pos_after": [
+      1.0,
+      0.5,
+      0.5
+     ]
+    },
+    "mixed_sides_after_activation": {
+     "note": "4 X segments; (0.5,0.5,0.5), (0.25,0.5,0.5), (-0.5,0.5,-0.5); +X-half centroid x 0.375; +X authoring",
+     "a_after": [
+      0.625,
+      0.5,
+      0.5
+     ],
+     "b_after": [
+      0.125,
+      0.5,
+      0.5
+     ],
+     "neg_after": [
+      -0.625,
+      0.5,
+      -0.5
+     ]
+    }
+   },
+   "verdict": "Cj-affine (mixed cell: the -X vertex to x -0.625 = 2p + c; Cj-linear -1.375)"
+  },
+  "numeric_door_pivot": {
+   "rig": "numeric transform applied in one scripted block, tool never activated",
+   "lone_on_authoring_side_rotate_45": [
+    -0.0,
+    0.5,
+    0.707107
+   ],
+   "verdict": "no action centre is evaluated on this door: every vertex pivots on the world origin (own side: RY45 about the origin; off side: the conjugate about the origin)"
+  },
+  "C-activation": {
+   "rig": "lone vertex selected; move preset armed and ACTIVATED (handle at the vertex), dropped with a key; numeric TX 0.4",
+   "pos_x_vertex_after": [
+    0.9,
+    0.5,
+    0.5
+   ],
+   "neg_x_vertex_after": [
+    -0.1,
+    0.5,
+    0.5
+   ],
+   "verdict": "activation latches the authoring side to the handle's side (+X vertex: +0.4 own; -X vertex: +0.4 own)"
+  },
+  "C-latch-p": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; numeric TX 0.4 through the combined T+R+S preset",
+   "numeric": {
+    "before": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "after": [
+     -1.14,
+     0.58,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "control_fresh_combined_preset": {
+    "note": "fresh boot, (0.5,0.5,0.5), numeric TX 0.4 through the combined preset",
+    "after": [
+     0.1,
+     0.5,
+     0.5
+    ]
+   },
+   "verdict": "Lp-global: the side latched under one preset is used by another"
+  },
+  "C-latch-t": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; symmetry off, symmetry X; numeric TX 0.4",
+   "numeric": {
+    "before": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "after": [
+     -1.14,
+     0.58,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "verdict": "T-keep: toggling symmetry off and on keeps the side"
+  },
+  "C-latch-a": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; symmetry axis Z, then X; numeric TX 0.4",
+   "numeric": {
+    "before": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "after": [
+     -1.14,
+     0.58,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "verdict": "A-keep: an axis change and back keeps the side"
+  },
+  "C-latch-t-off": {
+   "rig": "symmetry OFF during the activation and the +X press (own drag); then symmetry X; numeric TX 0.4",
+   "numeric": {
+    "before": [
+     -0.26,
+     0.58,
+     0.5
+    ],
+    "after": [
+     -0.66,
+     0.58,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "verdict": "Toff-latch: a press made with symmetry off still latches"
+  },
+  "C-latch-u": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; numeric TX 0.4 after an undo",
+   "undo_live": {
+    "note": "undo taken while the tool is still armed (no re-activation in the journal)",
+    "undone": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "after": [
+     -0.9,
+     0.5,
+     0.5
+    ]
+   },
+   "undo_after_drop": {
+    "note": "undo after the drop: the journal shows the undo re-activating the tool with its handle back at -X; the -X reading is consistent with that activation re-latching, so this door does not separate keep from revert",
+    "undone": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "after": [
+     -0.1,
+     0.5,
+     0.5
+    ]
+   },
+   "verdict": "U-keep: the side is not part of the undo history (live undo: -0.4). After a drop, undo re-activates the tool and the activation re-latches the handle's side, which here reads like U-revert"
+  },
+  "C-latch-x": {
+   "rig": "edge mode; the -X bottom edge selected (scripting API); edge-extend tool by its key; press OFF its handle at +X, haul right (offset +0.24 wrote the new edge at x -0.74: authored on +X); dropped; vertex mode; (-0.5,0.5,0.5) selected; numeric move TX 0.4",
+   "extend_new_vertices": [
+    [
+     -0.74,
+     -0.42,
+     0.5
+    ],
+    [
+     -0.74,
+     -0.42,
+     -0.5
+    ]
+   ],
+   "numeric": {
+    "before": [
+     -0.5,
+     0.5,
+     0.5
+    ],
+    "after": [
+     -0.9,
+     0.5,
+     0.5
+    ],
+    "dx": -0.4
+   },
+   "verdict": "X-shared: an extend press sets the same side the transform reads"
+  },
+  "C-latch-r": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), activation -X; rotate preset; press OFF the ring at +X, haul 10 x 8 px right; tool dropped with a key; numeric TX 0.4 through the move preset",
+   "numeric": {
+    "before": [
+     -0.959368,
+     0.597125,
+     0.555426
+    ],
+    "after": [
+     -1.359368,
+     0.597125,
+     0.555426
+    ],
+    "dx": -0.4
+   },
+   "twin_press_neg_x": {
+    "note": "(0.5,0.5,0.5) selected (activation +X), rotate press off the ring at -X; numeric TX 0.4",
+    "numeric": {
+     "before": [
+      0.151075,
+      0.283457,
+      -0.118294
+     ],
+     "after": [
+      -0.248925,
+      0.283457,
+      -0.118294
+     ],
+     "dx": -0.4
+    }
+   },
+   "void_first_readout": {
+    "note": "the first run read the side after a block that switched the origin action centre on, which re-latches -X (see C-latch-o); not scored",
+    "numeric": {
+     "before": [
+      -0.28563,
+      0.597125,
+      1.071121
+     ],
+     "after": [
+      0.11437,
+      0.597125,
+      1.071121
+     ],
+     "dx": 0.4
+    }
+   },
+   "verdict": "R-latch: a rotate press latches the press side like a move press"
+  },
+  "C-latch-o": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; one block: move preset + origin action centre switched on, TX 0.4",
+   "numeric": {
+    "before": [
+     -0.74,
+     0.58,
+     0.5
+    ],
+    "after": [
+     -0.34,
+     0.58,
+     0.5
+    ],
+    "dx": 0.4
+   },
+   "verdict": "placing an action centre re-latches the side: the origin centre gave -X (own +0.4)"
+  },
+  "C-latch-xp": {
+   "rig": "(-0.5,0.5,0.5) selected (scripting API), so the activation latches -X; move preset; press OFF the handle at +X, haul 10 x 8 px right (the vertex takes the mirrored drag: the press latched +X); tool dropped with a key; edge mode; +X bottom edge (scripting API); edge extend applied in one scripted block, offX 0.2, no press",
+   "new_vertices": [
+    [
+     0.7,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.7,
+     -0.5,
+     0.5
+    ]
+   ],
+   "control_fresh": [
+    [
+     0.3,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.3,
+     -0.5,
+     0.5
+    ]
+   ],
+   "status": "dropped from the gate: a panel-typed offset before any press does not apply, and inside the tool every operation starts with a re-latching press; this scripted-block reading is kept as data only"
   }
  },
  "notes": [
   "Linear falloff with a DRAG cannot be driven here: the press re-fits the falloff to the symmetry-halved selection box (start = end), zeroing every weight; so the pair weight side on the drag door is open.",
+  "7146: the handle-press latch of 7145 (C-handle) is not separated from the activation latch: the activation had just latched the same side. Every other press cell pressed on the side opposite its activation.",
+  "7146: C-latch-u's committed-undo door and C-latch-r's first readout are confounded (re-activation; an action-centre switch in the readout block) and are kept only as notes; the live-undo twin and C-latch-r3 carry the verdicts.",
   "C-lasso's outline was a triangle enclosing one vertex; a closed rectangle path returning to its start selected nothing (kept as raw/C-lasso-r1-closedpath)."
  ]
 }
