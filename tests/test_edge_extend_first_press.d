@@ -49,7 +49,7 @@ bool zeroOffset() {
 
 unittest { // (h0) no handle before the first press — the red line on HEAD
     freshRig();
-    immutable Px px0 = zArmPx();
+    immutable Px px0 = unarmedZArmPx();
     immutable int[3] bg = probe(px0);
     keyArm();
     immutable Px px1 = zArmPx();
@@ -64,7 +64,7 @@ unittest { // (h0) no handle before the first press — the red line on HEAD
 
 unittest { // (C) the first motionless click: offset 0, a zero-length ring
     freshRig();
-    immutable int[3] bg = probe(zArmPx());
+    immutable int[3] bg = probe(unarmedZArmPx());
     keyArm();
     auto before = model();
     immutable long h = undoLen();

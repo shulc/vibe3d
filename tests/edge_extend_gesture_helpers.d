@@ -251,6 +251,19 @@ Px gizmoPx() { auto g = gizmoCentre(); return topScreen(g[0], g[2]); }
 /// screen offset file 1's block A presses (the arm points screen-down).
 Px zArmPx() { auto g = gizmoPx(); return Px(g.x, g.y + kArmPressPx); }
 
+/// The Z arm's pixel BEFORE any tool is armed, for a background sample:
+/// there is no handle and no `gizmoCentre` yet, so the pixel comes from the
+/// action centre the armed handle will first be posed at. A witness compares
+/// it with zArmPx() after arming, so a parting of the two channels shows.
+Px unarmedZArmPx() {
+    foreach (st; getJson("/api/toolpipe")["stages"].array) {
+        if (st["id"].str != "actionCenter") continue;
+        auto g = topScreen(st["attrs"]["cenX"].str.to!double, st["attrs"]["cenZ"].str.to!double);
+        return Px(g.x, g.y + kArmPressPx);
+    }
+    assert(false, "no actionCenter stage in /api/toolpipe");
+}
+
 Px haulPx()  { auto c = viewCentre(); return Px(c.x + kHaulDx,  c.y + kHaulDy); }
 Px clickPx() { auto c = viewCentre(); return Px(c.x + kClickDx, c.y + kClickDy); }
 Px thirdPx() { auto c = viewCentre(); return Px(c.x + kThirdDx, c.y + kThirdDy); }
