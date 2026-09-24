@@ -134,6 +134,39 @@ unittest { // a direction change inside a hold clears it
         format("direction change did not clear the detent hold: %.12g", v));
 }
 
+unittest { // every press starts a fresh detent state (a hold never leaks into the next drag)
+    const law = ValueDragLaw.stepped(0.0005, 0.05);
+    ValueDrag d;
+    d.press(0, 0.0, law);
+    const double landed = d.motion(100);
+    assert(abs(landed - 0.05) <= 1e-15 && d.hold == 36,
+        "rig: 100 px must land on the 0.05 detent and arm the hold");
+    d.release();
+    d.press(500, landed, law);
+    const double next = d.motion(501);
+    assert(abs(next - 0.0505) <= 1e-15,
+        format("a new press inherited the previous drag's detent hold: %.12g", next));
+}
+
+unittest { // the layer-unit conversion divides the world law (task 0645)
+    const double P = 0.0021959837925048056;
+    const m1 = mergeValueDragLaw(P, 1.0), m2 = mergeValueDragLaw(P, 2.0);
+    assert(abs(m2.gain * 2.0 - m1.gain) <= 1e-18 && m1.gain > 0,
+        "merge gain is not converted into layer units");
+    const i1 = insetValueDragLaw(P, 1.0), i2 = insetValueDragLaw(P, 2.0);
+    assert(abs(i2.step * 2.0 - i1.step) <= 1e-18 && abs(i2.detent * 2.0 - i1.detent) <= 1e-18
+        && i1.step > 0 && i1.detent > 0,
+        "inset step/detent are not converted into layer units");
+}
+
+unittest { // only a POSITIVE detent holds
+    int hold, lastDir;
+    double v = 0.0;
+    foreach (i; 0 .. 100) v = steppedDragPixel(v, +1, 0.0005, -0.05, 36, hold, lastDir);
+    assert(hold == 0 && abs(v - 0.05) <= 1e-15,
+        format("a negative detent armed a hold (hold %d, v %.12g)", hold, v));
+}
+
 unittest { // the per-event kernel cap
     double v = 0;
     int hold, lastDir;
