@@ -335,6 +335,28 @@ unittest {
         assert(q.length == 0 && !exists(pickDir(t)),
             "R5: the stale record and its files are gone");
     }
+    // R5g — the base is taken BEFORE the guard gate: a first drain that meets
+    // a busy guard still fixes the base, so a revision that moves while the
+    // guard is busy is seen as stale once it frees.
+    {
+        PickResumeQueue q;
+        FakeDrain d;
+        d.rev = 5;
+        d.busy = true;
+        const t = q.start(ctx, kDocFilters, true);
+        dropDoc(t);
+        q.complete(t, 1);
+        q.drain(d.ports());                       // base := 5, guard busy
+        assert(d.invokes == 0 && q.length == 1, "R5g: a busy guard defers the resume");
+        d.rev = 6;
+        d.busy = false;
+        q.drain(d.ports());
+        assert(d.invokes == 0,
+            "R5g: the base must be taken before the guard gate; a revision moved "
+            ~ "under a busy guard resumed, invokes " ~ d.invokes.to!string);
+        assert(d.notices.length == 1 && d.notices[0].canFind("document changed"),
+            "R5g: the user is told why");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +404,8 @@ unittest {
     assert(selectPrimary(["A.V3D"], kDocFilters, why) == 0, "R6: case-insensitive");
     assert(pickIsMultiple(kDocFilters), "R6: document picks are multiple");
     assert(!pickIsMultiple(kImageFilters), "R6: image picks take one file");
+    // `file.import.lwo` reaches an lwo-only chooser (`singleFilterSpecs("lwo")`).
+    assert(pickIsMultiple([FilterSpec("LWO", "lwo")]), "R6: an lwo-only chooser is multiple");
     assert(selectPrimary(["README", "a."], kDocFilters, why) == -1
         && why == "no supported file among: README, a.", "R6: extensionless names, got '"
         ~ why ~ "'");
@@ -794,12 +818,13 @@ auto i = "/workplane";
 auto j = '"';
 auto k = "\"/work\"";
 auto o = r"a\" ~ "/work/z";
+auto p = '\''; auto w = "/work/w";
 // auto l = "/work";
 /* auto m = "/work"; */
 /+ /+ nested +/ auto n = "/work"; +/
 SAMPLE";
-    assert(workLiteralCount(sample) == 7,
-        "R19 lexer control: seven spellings of the root, none of the rest; got "
+    assert(workLiteralCount(sample) == 8,
+        "R19 lexer control: eight spellings of the root, none of the rest; got "
         ~ workLiteralCount(sample).to!string);
     assert(workLiteralCount(`x = "/workshop";`) == 0, "R19 lexer control: a prefix is not the root");
 }
