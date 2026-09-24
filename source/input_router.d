@@ -1815,10 +1815,12 @@ struct InputRouter {
             else if (ifs.hoveredEdge >= 0) { ifs.hoveredFace = -1; }
         }
         publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
-        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
+            g_hoverIndexSpaceStale;
         g_hoveredVertex = ifs.hoveredVertex;
         g_hoveredEdge   = ifs.hoveredEdge;
         g_hoveredFace   = ifs.hoveredFace;
+        g_hoverIndexSpaceStale = ifs.previewIndexSpaceStale();
     }
 
     void pieFireSlot(string menuId, int slot) {

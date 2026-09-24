@@ -14,6 +14,16 @@ __gshared int g_hoveredVertex = -1;
 __gshared int g_hoveredEdge   = -1;
 __gshared int g_hoveredFace   = -1;
 
+/// True when the three indices above were HELD from an earlier frame because
+/// the live subpatch preview's index space is stale
+/// (`InputFrameState.previewIndexSpaceStale`): they then index the mesh as it
+/// was before the last edit, not the current one. Written beside
+/// `g_hoveredEdge` by exactly the two publishers of it (`FrameRunner.
+/// resolveHover`, `InputRouter.refreshHoverPickAt`); a consumer that indexes
+/// the current mesh with a held id must not act on it (task 7114;
+/// tests/unit/hover_stale_writer_census_test.d pins the writers).
+__gshared bool g_hoverIndexSpaceStale = false;
+
 /// The ITEM under the cursor, as a `Document.layers` index (task 0647).
 ///
 /// A different KIND of value from the three above and deliberately in the same

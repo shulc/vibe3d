@@ -10,7 +10,8 @@ import edit_session : EditSession;
 import editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
 import eventlog : queryMouse;
-import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace,
+    g_hoverIndexSpaceStale;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
@@ -270,6 +271,7 @@ final class FrameRunner {
         g_hoveredVertex = ifs_.hoveredVertex;
         g_hoveredEdge = ifs_.hoveredEdge;
         g_hoveredFace = ifs_.hoveredFace;
+        g_hoverIndexSpaceStale = ifs_.previewIndexSpaceStale();
 
         HoverDrawState result;
         result.vertex = editMode == EditMode.Vertices

@@ -17,7 +17,7 @@ import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -86,7 +86,6 @@ struct PreparedEdgeSliceParamImage {
     uint[] expectedEdges, expectedPointVerts; float[] expectedPointT;
     MeshSnapshot expectedLive, expectedBefore;
     bool nextArmed, nextScrubbing, nextBuilt;
-    size_t nextBakedSegments;
     int nextPhase, nextDragPart, nextActivePoint;
     SessionMeshKey nextArmedKey; float nextProxy;
     uint[] nextEdges, nextPointVerts; float[] nextPointT;
@@ -226,9 +225,12 @@ private:
     bool         armed_;       // >=2 points latched -> a standing preview sits on the real mesh
     bool         scrubbing_;   // the last latched point's `t` is being dragged
     bool         built_;       // true once the last bake actually produced a cut
-    // Segments the LAST bake produced (test introspection, `bakedSegments`);
-    // written wherever `built_` is, so a silently dropped segment shows as
-    // fewer than `latchedPoints_.length - 1`.
+    // Segments the LAST interactive bake produced (test introspection,
+    // `bakedSegments`), so a silently dropped segment shows as fewer than
+    // `latchedPoints_.length - 1`. Written by `rebuildPreview` and `armChain`,
+    // cleared by `dropArmedPreview`; the prepared paths and the activation
+    // resets never differ from it (a tool is built fresh per activation), so
+    // they do not write it (task 7114).
     size_t       lastBakedSegments_;
     int          dragPart_ = -1;
     // IDENTITY guard, asked between mouse events: "is the baseline I armed
@@ -392,12 +394,6 @@ public:
         root["scrubbing"] = JSONValue(scrubbing_);
         // A counter, unlike `chainSegments`: what the last bake returned.
         root["bakedSegments"] = JSONValue(cast(long)lastBakedSegments_);
-        // Per point, the chain segment whose own cut the point lies on, or -1
-        // for a point on an edge of the chain's baseline. Every point is
-        // stored on a baseline edge pair here, so every entry is -1.
-        auto chord = JSONValue.emptyArray;
-        foreach (p; latchedPoints_) chord.array ~= JSONValue(-1);
-        root["latchedChord"] = chord;
         return root;
     }
 
@@ -420,7 +416,6 @@ public:
             ref PreparedEdgeSliceActivationImage image) nothrow @nogc {
         if (!image.valid) return;
         active = true; armed_ = false; scrubbing_ = false; built_ = false;
-        lastBakedSegments_ = 0;
         phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];
         dragPart_ = -1; activePoint_ = -1;
         armedKey_ = SessionMeshKey.init; chainBefore_ = MeshSnapshot.init;
@@ -443,7 +438,6 @@ public:
         armed_      = false;
         scrubbing_  = false;
         built_      = false;
-        lastBakedSegments_ = 0;
         phase_      = Phase.Idle;
         latchedPoints_ = [];
         edgesParam_    = [];
@@ -537,7 +531,6 @@ public:
             ref PreparedEdgeSliceDeactivateImage image) nothrow @nogc {
         if (!image.valid) return;
         active = false; armed_ = false; scrubbing_ = false; built_ = false;
-        lastBakedSegments_ = 0;
         phase_ = Phase.Idle; latchedPoints_ = null; edgesParam_ = null;
         dragPart_ = -1; activePoint_ = -1; armedKey_ = SessionMeshKey.init;
         chainBefore_ = MeshSnapshot.init; handles_ = null; image.clear();
@@ -720,7 +713,6 @@ public:
         storePreparedPoints(image.expectedPointVerts, image.expectedPointT, latchedPoints_);
         image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = chainBefore_;
         image.nextArmed = armed_; image.nextScrubbing = scrubbing_; image.nextBuilt = built_;
-        image.nextBakedSegments = lastBakedSegments_;
         image.nextPhase = cast(int)phase_; image.nextDragPart = dragPart_;
         image.nextActivePoint = activePoint_; image.nextArmedKey = armedKey_;
         image.nextProxy = pointProxy_;
@@ -760,7 +752,7 @@ public:
             if (!chainBefore_.filled || nextPoints.length == 0) return image;
             if (!armedKey_.matches(live)) {
                 image.nextArmed = false; image.nextScrubbing = false;
-                image.nextBuilt = false; image.nextBakedSegments = 0;
+                image.nextBuilt = false;
                 image.nextPhase = cast(int)Phase.Idle;
                 image.nextPointVerts = null; image.nextPointT = null;
                 image.nextChainPoints = null;
@@ -780,7 +772,6 @@ public:
         image.appliesState = true; image.appliesMesh = true;
         image.invalidateRedo = history !is null;
         image.nextBuilt = n > 0;
-        image.nextBakedSegments = n;
         image.nextArmedKey.stampAs(image.candidate, cast(size_t)mesh);
         storePreparedPoints(image.nextPointVerts, image.nextPointT, nextPoints);
         image.nextChainPoints = nextPoints;
@@ -815,7 +806,6 @@ public:
         if (!image.appliesState) { image.clear(); return; }
         armed_ = image.nextArmed; scrubbing_ = image.nextScrubbing;
         built_ = image.nextBuilt; phase_ = cast(Phase)image.nextPhase;
-        lastBakedSegments_ = image.nextBakedSegments;
         dragPart_ = image.nextDragPart; activePoint_ = image.nextActivePoint;
         armedKey_ = image.nextArmedKey;
         pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
@@ -937,6 +927,11 @@ public:
             }
         }
 
+        // A hover HELD over a stale subpatch-preview index space names an edge
+        // of the mesh before the last bake, not of this one: absorb the click
+        // without latching; the user clicks again once the build lands (task
+        // 7114, item 22 hypothesis (e), measured live in the task's evidence).
+        if (g_hoverIndexSpaceStale) return true;
         int h = g_hoveredEdge;
         if (h < 0 || h >= cast(int)mesh.edges.length) return false;
 

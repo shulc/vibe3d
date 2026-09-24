@@ -15,7 +15,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
-import hover_state : g_hoveredEdge;
+import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -33,4 +33,37 @@ unittest {
     assert(edgeSliceHudLabel(0.5f)  == "50.00 %");
     assert(edgeSliceHudLabel(0.0f)  == "0.00 %");
     assert(edgeSliceHudLabel(1.0f)  == "100.00 %");
+}
+
+// Task 7114 (item 22, hypothesis (e)): a hover HELD over a stale subpatch
+// preview index space names an edge of the mesh before the last bake. The
+// click is absorbed and latches nothing. Two fresh tools, the same press and
+// the same hovered edge; only the flag differs. The control latches first,
+// so the needle below it cannot pass by the press never reaching the latch.
+// The flag's production writers are pinned by
+// tests/unit/hover_stale_writer_census_test.d (this cell sets it itself).
+unittest {
+    loadSDL();
+    SDL_SetModState(cast(SDL_Keymod)0);
+    Mesh m = makeCube();
+    EditMode em = EditMode.Edges;
+    VectorStack vts;
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+    scope(exit) { g_hoveredEdge = -1; g_hoverIndexSpaceStale = false; }
+    g_hoveredEdge = 0;
+
+    g_hoverIndexSpaceStale = false;
+    auto control = new EdgeSliceTool(() => &m, null, &em, LitShader.init);
+    control.activate();
+    assert(control.onMouseButtonDown(e, vts)
+           && control.toolStateJson()["latchedPairs"].array.length == 1,
+           "stale hover control: a fresh press on a current hover did not latch");
+
+    g_hoverIndexSpaceStale = true;
+    auto held = new EdgeSliceTool(() => &m, null, &em, LitShader.init);
+    held.activate();
+    assert(held.onMouseButtonDown(e, vts), "stale hover: the press was not absorbed");
+    assert(held.toolStateJson()["latchedPairs"].array.length == 0,
+           "edge slice latched a point from a stale hover index space");
 }
