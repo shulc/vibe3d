@@ -351,11 +351,10 @@ unittest { // SYMMETRY under routing: BOTH sides land in the map and NEITHER
            // lands in the base -- the user-visible contract.
            //
            // What this case does NOT pin, measured rather than assumed: the
-           // routed mirror OVERLOADS. With the symmetry stage enabled the
-           // stage adds the mirror partner to the moving set, so the fold
+           // routed mirror OVERLOADS. The pair is in the operand, so the fold
            // kernel routes the partner's write directly; deleting the mirror
            // call outright leaves this case GREEN (verified by running exactly
-           // that mutation). The overloads are pinned where they can be driven
+           // that mutation before task 7144). The overloads are pinned where they can be driven
            // to order, in tests/unit/morph_route_test.d.
            //
            // What this case DOES pin is the property objection 2c is about: a
@@ -374,7 +373,9 @@ unittest { // SYMMETRY under routing: BOTH sides land in the map and NEITHER
     cmd("tool.pipe.attr symmetry enabled 1");
     cmd("tool.pipe.attr symmetry axis x");
 
-    postSelect("vertices", [6]);
+    // The PAIR is selected explicitly: a command door never pairs, and a
+    // transform writes only its operand (task 7144, gap 315/316).
+    postSelect("vertices", [6, 7]);
     cmd("tool.set move");
     cmd("tool.attr move TX 0.0");
     cmd("tool.attr move TY 0.0");

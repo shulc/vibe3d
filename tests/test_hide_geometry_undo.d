@@ -176,44 +176,60 @@ unittest {
 // T-R3b — the symmetric-selection auto-add cannot select a hidden mirror
 // ---------------------------------------------------------------------------
 //
-// NO CODE CHANGE backs this row: `commands/mesh/select.d`'s auto-add goes
-// through `mesh.selectVertex`, which is a §3.1 writer, so the mirror is
-// refused by the same guard T-R1 measures. It is pinned because the auto-add
-// is the one selection path that selects an element the user never named — if
-// it is ever moved onto a raw mark write (the shape `patchSelection` already
-// has, §4.1c′) the refusal disappears silently.
+// NO CODE CHANGE backs this row: the auto-add goes through
+// `mesh.selectVertex`, which is a §3.1 writer, so the mirror is refused by the
+// same guard T-R1 measures. Since task 7144 the only auto-add is the POINTER
+// gesture (`symmetry_pick.d`; a command door never pairs — gap 315), so the row
+// drives a real click. It is pinned because the auto-add is the one selection
+// path that selects an element the user never named.
 //
-// ORDERING NOTE, and it is load-bearing: the hide runs BEFORE symmetry is
-// enabled. With symmetry already on, selecting v0 to hide from would auto-add
-// v1 and the hide would take BOTH corners — leaving no visible partner to
-// drive the measurement with.
-//
-// The control row is what makes the hidden row mean anything: it proves the
-// auto-add is live in this fixture AND pins which vertex is v1's mirror.
-// Without it the hidden row's [1] would also pass a build with symmetry off.
+// Rig: the +X top-front corner v6 is clicked; its mirror v7 is the one hidden
+// (hiding v7's corner hides the top and front faces, but v6 stays visible on
+// the +X face, so the click still lands on it). The hide runs BEFORE symmetry
+// is enabled. The control row proves the auto-add is live in this rig.
+
+void clickVertex(double x, double y, double z) {
+    import std.math : round;
+    auto c  = fetchCamera();
+    auto vp = viewportFromCamera(c);
+    float fx, fy;
+    assert(projectToWindow(Vec3(cast(float)x, cast(float)y, cast(float)z), vp, fx, fy),
+           "rig: the clicked vertex does not project");
+    immutable int px = cast(int)round(fx), py = cast(int)round(fy);
+    playAndWait(format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
+        ~ `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
+        ~ `{"t":60.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n"
+        ~ `{"t":90.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        c.vpX, c.vpY, c.width, c.height, px, py, px, py, px, py));
+    Thread.sleep(200.msecs);
+}
 
 unittest {
-    // CONTROL — symmetry on, nothing hidden. Selecting v1 must auto-add v0.
+    // CONTROL — symmetry on, nothing hidden. Clicking v6 must auto-add v7.
     resetCube();
+    selectMode("vertices", []);
     cmd("tool.pipe.attr symmetry enabled true");
-    selectMode("vertices", [1]);
+    clickVertex(0.5, 0.5, 0.5);
     auto ctrl = selectedList("selectedVertices");
-    assert(ctrl == [0, 1],
-        "control: with symmetry on and nothing hidden, selecting v1 must "
-        ~ "auto-add its X-mirror v0, got " ~ ctrl.to!string
-        ~ " — if this row does not read [0, 1] the fixture has no live "
+    assert(ctrl == [6, 7],
+        "control: with symmetry on and nothing hidden, clicking v6 must "
+        ~ "auto-add its X-mirror v7, got " ~ ctrl.to!string
+        ~ " — if this row does not read [6, 7] the fixture has no live "
         ~ "auto-add and the hidden row below measures nothing");
     cmd("tool.pipe.attr symmetry enabled false");
 
-    // MEASUREMENT — hide v0 first, THEN enable symmetry, then select v1.
+    // MEASUREMENT — hide v7's corner first, THEN enable symmetry, then click v6.
     resetCube();
-    hideCornerV0();
+    selectMode("vertices", [7]);
+    cmdId("mesh.hide");
+    assert(hiddenList("vertexHidden") == [7], "fixture: hiding from v7 must derive exactly v7 hidden");
+    selectMode("vertices", []);
     cmd("tool.pipe.attr symmetry enabled true");
-    selectMode("vertices", [1]);
+    clickVertex(0.5, 0.5, 0.5);
     auto got = selectedList("selectedVertices");
-    assert(got == [1],
-        "T-R3b: the symmetry auto-add must not select the HIDDEN mirror v0, "
-        ~ "got " ~ got.to!string ~ " — [0, 1] means the auto-add reaches "
+    assert(got == [6],
+        "T-R3b: the symmetry auto-add must not select the HIDDEN mirror v7, "
+        ~ "got " ~ got.to!string ~ " — [6, 7] means the auto-add reaches "
         ~ "geometry the user cannot see, and a following drag would deform it");
     cmd("tool.pipe.attr symmetry enabled false");
 }

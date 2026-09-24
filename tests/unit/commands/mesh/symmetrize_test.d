@@ -53,3 +53,44 @@ unittest {
     assert(abs(m.vertices[0].x) < 1e-6f,
         "on-plane vert should be projected onto X=0 plane");
 }
+
+// M3b-7 (task 7144) — the pair write rule refuses a HIDDEN partner even when
+// every vertex is in the operand (Symmetrize's own mask "all"): the +X member
+// would copy onto the -X one, but a hidden partner is not written (task 0613
+// R3, kept inside `mirrorStepFor`). The control row proves the copy is live.
+unittest {
+    Mesh mk() {
+        Mesh m;
+        m.addVertex(Vec3( 0.0f, 0.0f, 0.0f));   // 0 seam
+        m.addVertex(Vec3( 0.0f, 1.0f, 0.0f));   // 1 seam
+        m.addVertex(Vec3( 0.6f, 0.5f, 0.0f));   // 2 +X (drifted off 0.5)
+        m.addVertex(Vec3(-0.5f, 0.5f, 0.0f));   // 3 -X partner
+        m.addFace([0u, 2u, 1u]);
+        m.addFace([0u, 1u, 3u]);
+        m.buildLoops();
+        m.syncSelection();
+        return m;
+    }
+    SymmetryPacket sp;
+    sp.enabled = true; sp.axisIndex = 0; sp.epsilonWorld = 0.2f; sp.baseSide = +1;
+    sp.planeNormal = Vec3(1, 0, 0); sp.planePoint = Vec3(0, 0, 0);
+    {
+        auto m = mk();
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+        assert(sp.pairOf[2] == 3, "rig: v2 must pair with v3");
+        auto sel = new bool[](4); sel[] = true;
+        auto t = new bool[](4);
+        applySymmetryMirror(&m, sp, sel, t);
+        assert(m.vertices[3].x < -0.55f, "control: the +X member's copy must reach the partner");
+    }
+    {
+        auto m = mk();
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+        m.setFaceHidden(1, true);
+        assert(m.isVertexHidden(3) && !m.isVertexHidden(2), "rig: v3 hidden, v2 visible");
+        auto sel = new bool[](4); sel[] = true;
+        auto t = new bool[](4);
+        applySymmetryMirror(&m, sp, sel, t);
+        assert(m.vertices[3].x == -0.5f && !t[3], "symmetrize wrote a HIDDEN partner");
+    }
+}

@@ -282,8 +282,9 @@ unittest { // pairOf empty when disabled
 
 // -------------------------------------------------------------------------
 // 7.6b: `mesh.symmetrize`-style move via /api/transform translate.
-// MeshTransform consults the SYMM packet — selecting vert 0 and translating
-// (0, 1, 0) should also translate vert 1 (its X-mirror).
+// MeshTransform consults the SYMM packet. Task 7144: a command door never
+// pairs and a transform writes only its operand, so the PAIR is selected
+// explicitly; it moves as an exact mirror, copied from its +X member.
 // -------------------------------------------------------------------------
 
 bool approxEq(double a, double b) {
@@ -297,12 +298,12 @@ double[3] vertexAt(int idx) {
     return [v[0].floating, v[1].floating, v[2].floating];
 }
 
-unittest { // translate one corner with X-symm → mirror also moves
+unittest { // translate a selected pair with X-symm → both move, mirrored
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    // Select vert 0 = (-0.5, -0.5, -0.5) only.
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    // Select vert 0 = (-0.5, -0.5, -0.5) and its mirror vert 1.
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
     postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,1,0]}`));
 
     auto v0 = vertexAt(0);
@@ -328,11 +329,12 @@ unittest { // translate one corner with X-symm → mirror also moves
 // AWAY from the plane symmetrically.
 // -------------------------------------------------------------------------
 
-unittest { // translate along the X axis with X-symm → mirror moves opposite
+unittest { // translate a pair along the X axis with X-symm → mirror moves opposite
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    // Fresh session: the authoring side is -X, so v0 takes the delta itself.
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
     postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[-1,0,0]}`));
     auto v0 = vertexAt(0);
     auto v1 = vertexAt(1);
@@ -344,15 +346,14 @@ unittest { // translate along the X axis with X-symm → mirror moves opposite
 }
 
 // -------------------------------------------------------------------------
-// 7.6b: revert restores both the moved vert AND its mirror counterpart.
-// MeshTransform extends touchedIdx with the mirror so /api/undo unwinds it.
+// 7.6b: revert restores both members of a moved pair.
 // -------------------------------------------------------------------------
 
 unittest { // undo restores mirror
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
     postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,2,0]}`));
     // sanity
     auto preUndo = vertexAt(1);
@@ -394,8 +395,9 @@ unittest { // on-plane vertex projected
 }
 
 // -------------------------------------------------------------------------
-// 7.6c: symmetric selection — picking one vertex / edge / face also
-// selects its mirror counterpart when symmetry is on.
+// 7.6c → task 7144: a COMMAND door (`mesh.select`) never pairs, symmetry on
+// or off (captured law gap 315, C-script S-single); only a pointer gesture
+// pairs — witnessed in tests/test_symmetry_selection_doors.d.
 // -------------------------------------------------------------------------
 
 JSONValue getSelection() {
@@ -431,15 +433,15 @@ bool selContains(int[] sel, int idx) {
     return false;
 }
 
-unittest { // vertex pick adds mirror with symmetry on
+unittest { // vertex command select does not add the mirror, symmetry on
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     auto sel = vertexSelection();
     assert(selContains(sel, 0), "v0 missing from selection");
-    assert(selContains(sel, 1),
-        "v1 (X-mirror of v0) should be auto-selected; got " ~ sel.to!string);
+    assert(!selContains(sel, 1),
+        "v1 (X-mirror of v0) must NOT be auto-selected by a command door; got " ~ sel.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("scene.reset"));
 }
@@ -455,12 +457,12 @@ unittest { // vertex pick: no mirror when symmetry is off
     postJson("/api/command", commandBody("scene.reset"));
 }
 
-unittest { // edge pick adds mirror edge
+unittest { // edge command select does not add the mirror edge
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Cube edge 0 = (0,3): both verts on -X side → mirror edge is (1,2)
-    // (both on +X). Pick edge 0; mirror should auto-add.
+    // (both on +X). Select edge 0 by command; the mirror must NOT join.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     auto edges = edgeSelection();
     assert(selContains(edges, 0), "edge 0 missing from selection");
@@ -475,24 +477,24 @@ unittest { // edge pick adds mirror edge
         if (hits12) { mirrorEi = cast(int)i; break; }
     }
     assert(mirrorEi >= 0, "couldn't locate mirror edge in mesh");
-    assert(selContains(edges, mirrorEi),
+    assert(!selContains(edges, mirrorEi),
         "mirror edge (verts 1↔2) idx=" ~ mirrorEi.to!string
-        ~ " should be auto-selected; got " ~ edges.to!string);
+        ~ " must NOT be auto-selected by a command door; got " ~ edges.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("scene.reset"));
 }
 
-unittest { // face pick adds mirror face
+unittest { // face command select does not add the mirror face
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Cube face 2 = -X face (vertex set {0,3,7,4}); X-mirror is face 3
-    // = +X face (vertex set {1,2,6,5}). Pick face 2; auto-select 3.
+    // = +X face (vertex set {1,2,6,5}). Select face 2 by command: alone.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2]}`));
     auto faces = faceSelection();
     assert(selContains(faces, 2), "face 2 missing from selection");
-    assert(selContains(faces, 3),
-        "face 3 (mirror of -X face) should be auto-selected; got "
+    assert(!selContains(faces, 3),
+        "face 3 (mirror of -X face) must NOT be auto-selected by a command door; got "
         ~ faces.to!string);
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("scene.reset"));
@@ -516,24 +518,45 @@ unittest { // face pick: a face symmetric to itself doesn't double-select
 }
 
 // -------------------------------------------------------------------------
-// 7.6 (BaseSide): clicking a polygon on the +X side and translating
-// PERPENDICULARLY to the symmetry plane gives symmetric expansion —
-// both sides end up further from the plane by the same amount. Before
-// the BaseSide drive rule, the lower-index side drove and a +X
-// translate would push v0 across the plane, breaking the geometry.
+// Task 7144 — ONE AUTHORING FRAME for a selected pair of faces, translated
+// PERPENDICULARLY to the plane. The pair moves as an exact mirror copied from
+// its +X member; the +X member takes the delta itself on the authoring side
+// and its conjugate off it. The two blocks differ ONLY in the authoring side:
+// a fresh session is -X (the faces cross to ∓0.5); a typed action centre on
+// +X places it there (symmetric expansion to ±1.5).
 // -------------------------------------------------------------------------
 
-unittest { // pick +X face, translate +X → symmetric expansion
+unittest { // face pair, fresh session (A = -X), translate +X → the faces cross
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    // face 3 = +X face ({1,2,6,5}). Auto-symmetry adds face 2 = -X
-    // face ({0,4,7,3}). BaseSide should anchor on +X (face 3's centroid).
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
+    assert(getJson("/api/toolpipe/eval")["symmetry"]["authoringSide"].integer == -1,
+        "rig: authoringSide before the numeric step, expected -1");
     postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
-    // Expected (cube of half-extent 0.5 + +1 translate driven from +X):
-    //   +X face verts (1,2,5,6) at x = +0.5 + 1 = +1.5
-    //   -X face verts (0,3,4,7) at x = -(+1.5) = -1.5 (mirror write)
+    foreach (i; [1, 2, 5, 6]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0], -0.5),
+            "v" ~ i.to!string ~ " (+X face, off A: conjugate delta): expected -0.5, got " ~ v[0].to!string);
+    }
+    foreach (i; [0, 3, 4, 7]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0], 0.5),
+            "v" ~ i.to!string ~ " (-X face, copied from +X): expected +0.5, got " ~ v[0].to!string);
+    }
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/command", commandBody("scene.reset"));
+}
+
+unittest { // face pair, typed centre on +X (A = +X), translate +X → symmetric expansion
+    postJson("/api/command", commandBody("scene.reset"));
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 1");
+    assert(getJson("/api/toolpipe/eval")["symmetry"]["authoringSide"].integer == 1,
+        "rig: authoringSide before the numeric step, expected 1");
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
     foreach (i; [1, 2, 5, 6]) {
         auto v = vertexAt(i);
         assert(approxEq(v[0],  1.5),
@@ -544,32 +567,7 @@ unittest { // pick +X face, translate +X → symmetric expansion
         assert(approxEq(v[0], -1.5),
             "v" ~ i.to!string ~ ".x expected -1.5 (mirror), got " ~ v[0].to!string);
     }
-    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
-    postJson("/api/command", commandBody("scene.reset"));
-}
-
-unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
-    postJson("/api/command", commandBody("scene.reset"));
-    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
-    postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    // face 2 = -X face ({0,4,7,3}). Auto-symmetry adds face 3 = +X face.
-    // BaseSide anchors on -X (face 2's centroid). User drags +X by 1
-    // (TOWARD the plane and beyond), face 2 moves +X, face 3 follows
-    // with mirrored delta (-X): both cross to the OTHER side at ±0.5.
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2]}`));
-    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
-    foreach (i; [0, 3, 4, 7]) {
-        auto v = vertexAt(i);
-        assert(approxEq(v[0],  0.5),
-            "v" ~ i.to!string ~ " (-X face, base side, dragged +X): expected +0.5, got "
-            ~ v[0].to!string);
-    }
-    foreach (i; [1, 2, 5, 6]) {
-        auto v = vertexAt(i);
-        assert(approxEq(v[0], -0.5),
-            "v" ~ i.to!string ~ " (+X face, mirror): expected -0.5, got "
-            ~ v[0].to!string);
-    }
+    postJson("/api/command", "tool.pipe.attr actionCenter mode none");
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/command", commandBody("scene.reset"));
 }
@@ -584,8 +582,7 @@ unittest { // pick face3 w/ symm, disable symm, translate → both faces move to
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
-    // Selection should be both face 2 and face 3 at this point.
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
     assert(faceSelection().length == 2);
     // Turn off symmetry. Selection survives.
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
@@ -670,9 +667,10 @@ unittest { // rotate +X face around Y axis with X-symm → mirror rotates the ot
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    // Pick face 3 (+X face) only — selectedFaces becomes [2, 3] via
-    // symm auto-add. baseSide = +1 (face 3's centroid).
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
+    // The pair of faces 2/3, and the authoring side placed on +X by a typed
+    // centre, so face 3 takes the rotation itself (task 7144).
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 1");
     // Rotate by 90° around Y, pivot at +X face centroid (+0.5, 0, 0).
     import std.math : PI;
     auto resp = postJson("/api/command", commandBody("mesh.transform", `{"kind":"rotate","axis":[0,1,0],"angle":` ~ (PI / 2.0).to!string
@@ -708,7 +706,8 @@ unittest { // scale +X face along Y with X-symm → mirror scales too
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 1");
     // Scale Y by 2× around pivot (+0.5, 0, 0).
     auto resp = postJson("/api/command", commandBody("mesh.transform", `{"kind":"scale","factor":[1,2,1],"pivot":[0.5,0,0]}`));
     assert(resp["status"].str == "ok", "scale failed: " ~ resp.toString);
@@ -725,19 +724,23 @@ unittest { // scale +X face along Y with X-symm → mirror scales too
     postJson("/api/command", commandBody("scene.reset"));
 }
 
-unittest { // baseSide reflects pick anchor
+unittest { // baseSide is FIXED at +1; a selection moves neither it nor the authoring side
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
     auto j = getJson("/api/toolpipe/eval");
     auto bs = j["symmetry"]["baseSide"].integer;
-    assert(bs == 1, "+X pick should set baseSide=+1, got " ~ bs.to!string);
+    assert(bs == 1, "+X pick: baseSide expected +1, got " ~ bs.to!string);
 
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2]}`));
     j = getJson("/api/toolpipe/eval");
     bs = j["symmetry"]["baseSide"].integer;
-    assert(bs == -1, "-X pick should set baseSide=-1, got " ~ bs.to!string);
+    assert(bs == 1, "-X pick must leave baseSide +1 (the pair is led by its +X member, gap 318), got "
+        ~ bs.to!string);
+    assert(j["symmetry"]["authoringSide"].integer == -1,
+        "a selection is not a placement: the authoring side moved to "
+        ~ j["symmetry"]["authoringSide"].integer.to!string);
 
     auto vs = j["symmetry"]["vertSign"].array;
     assert(vs.length == 8, "vertSign should be 8 long");

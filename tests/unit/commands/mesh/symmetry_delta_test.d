@@ -165,106 +165,66 @@ private bool namesIndex(const(MeshEditDelta)* d, uint vi) {
 }
 
 // ---------------------------------------------------------------------------
-// W-b1 — THE DISCRIMINATING CELL, and the reason L0-b is a group of its own.
+// W-b1′ — THE DISCRIMINATING CELL for the pass-2 recorder (task 7144 re-rig).
 //
-// symmetry ON, the mirror partner OUTSIDE the selection. After the translate:
-// the op-log's SetPos index set contains BOTH driver and partner; after the
-// revert the partner's position is BIT-identical to pre-op.
+// Since task 7144 a transform writes ONLY its operand (gap 316): a partner
+// outside the selection is never written, so the pre-7144 stand (partner
+// unselected) now exercises nothing. The recorder's only remaining job is the
+// copy WITHIN a selected pair: pass 2 overwrites the pair's -X member with the
+// mirror of its +X member, a raw write that pass 1 did not make.
 //
-// Mutation: restrict `recordPositionDiff` to the driver set, or delete the
-// `ed.recordPositionDiff(preMirror)` statement in `transform.d`'s pass 2. The
-// partner comes back at its POST-op position and the assert names the vertex.
-// Every other check in this repo stays green under that mutation: the forward
-// geometry is unchanged, `countRawPositionWrites(transform.d)` is still 0,
-// `armed()` is still true (pass 1 recorded), and the tracker-OFF revert still
-// restores the partner off `touchedPrev`.
+// Stand: BOTH pair members selected, the +X driver drifted by 5e-5 (inside the
+// pairing epsilon, so it still pairs, but its mirror is NOT the partner's
+// position), and a rotate about a ZERO axis — pass 1's documented no-op arm,
+// so pass 1 writes nothing and the ONLY write is pass 2's copy. Then: (1) the
+// floors; (2) exactly one pair member changed and it is the NON-driver (the
+// pair is led by its `baseSide` (+X) member, gap 318); (3) the command armed a
+// delta; (4) the revert is bit-exact.
+//
+// Mutation: delete `ed.recordPositionDiff(preMirror)` in `transform.d`'s pass
+// 2 → (3) reddens: pass 1 recorded nothing, so nothing is armed.
 // ---------------------------------------------------------------------------
 unittest {
-
-    auto m  = twoQuadStand(0.0f);
+    auto m  = twoQuadStand(5e-5f);
     auto v  = standView();
     auto em = EditMode.Vertices;
     installSymmetry(m, &em);
     scope(exit) g_pipeCtx = null;
 
-    auto c = mkTranslate(m, v, &em);
+    m.selectVertex(kDriver);
+    m.selectVertex(kPartner);
+    auto c = new MeshTransform(m, v, em);
+    c.setKind("rotate");
+    c.setAxis(Vec3(0, 0, 0));
 
-    // ---- NON-VACUITY, ASSERTED FIRST -------------------------------------
-    assert(m.isVertexSelected(kDriver),
-        "the stand did not select the driver — the transform's operand mask "
-      ~ "would be empty and `mesh.selectedVertexIndices*` would fall back to "
-      ~ "the WHOLE MESH, putting the partner inside the moving set and making "
-      ~ "every assertion below green under a deleted recorder.");
-    assert(!m.isVertexSelected(kPartner),
-        format("vertex %d (the mirror partner) IS selected. A stand where both "
-             ~ "sides are selected cannot pin this: pass 1 writes the partner "
-             ~ "through `ed.setVertexPositions`, which records it, so deleting "
-             ~ "the pass-2 recorder reddens nothing.", kPartner));
-
+    // (1) floors
+    assert(m.isVertexSelected(kDriver) && m.isVertexSelected(kPartner),
+        "W-b1′ rig: both pair members must be selected");
     immutable pre = planes(m);
     const Vec3 preDriver  = m.vertices[kDriver];
     const Vec3 prePartner = m.vertices[kPartner];
-
     assert(c.apply(), "mesh.transform: the forward must apply on this stand");
 
-    assert(m.vertices[kDriver] != preDriver,
-        "the forward did not move the DRIVER — the operand mask is empty and "
-      ~ "this cell is measuring nothing.");
+    // (2) exactly one pair member changed, and it is not the +X driver
+    assert(m.vertices[kDriver] == preDriver,
+        "W-b1′: the +X driver moved — the zero-axis rotate is no longer pass 1's no-op");
     assert(m.vertices[kPartner] != prePartner,
-        format("the forward did not move the PARTNER (vertex %d). Symmetry is "
-             ~ "not active on this stand: either the SymmetryStage did not "
-             ~ "register into `g_pipeCtx`, or the spatial pairing did not find "
-             ~ "v%d from v%d's mirror. With no mirror write there is nothing "
-             ~ "for the pass-2 recorder to record and the whole cell is "
-             ~ "vacuous.", kPartner, kPartner, kDriver));
+        format("W-b1′: the pair's -X member (vertex %d) did not change — no pass-2 copy "
+             ~ "happened, so the recorder has nothing to record and this cell is vacuous",
+               kPartner));
 
-    // ---- THE OP-LOG HALF --------------------------------------------------
+    // (3) the command armed a delta, and it names the partner
     assert(armedOf(c),
-        "mesh.transform recorded NO delta and fell back to its legacy revert. "
-      ~ "The legacy path already covers both passes, so the forward and the "
-      ~ "undo are both still correct — this is the assert that sees past it.");
-    auto d = recordedOf(c);
-    foreach (i, ref e; d.log)
-        assert(e.kind == MeshOpEntry.Kind.SetPos,
-            format("mesh.transform: op-log entry %d is `%s`, expected SetPos. "
-                 ~ "Any other kind makes `indexSpaceStable` answer false and "
-                 ~ "the undo takes the SLOW finalize path.", i, e.kind));
-    assert(namesIndex(d, kDriver),
-        format("the op-log does not name the DRIVER (vertex %d); it names %s. "
-             ~ "Pass 1 (the kind switch) is not recording.",
-               kDriver, setPosIndices(d)));
-    assert(namesIndex(d, kPartner),
-        format("THE OP-LOG DOES NOT NAME THE MIRROR PARTNER (vertex %d); it "
-             ~ "names %s. `applySymmetryMirror` wrote that vertex RAW — under "
-             ~ "`alias mesh this` a raw `mesh.vertices[mi] = …` compiles inside "
-             ~ "a recording batch and produces no op-log entry — so pass 2's "
-             ~ "`ed.recordPositionDiff(preMirror)` is the only thing that can "
-             ~ "put it in the delta. The forward mesh is CORRECT either way; "
-             ~ "the census row for transform.d is 0 either way.",
-               kPartner, setPosIndices(d)));
+        "W-b1′: mesh.transform recorded NO delta — pass 1 wrote nothing on this stand, "
+      ~ "so the pass-2 recorder (`ed.recordPositionDiff(preMirror)`) is the only "
+      ~ "thing that can arm it");
+    assert(namesIndex(recordedOf(c), kPartner),
+        format("W-b1′: the op-log does not name the partner (vertex %d); it names %s",
+               kPartner, setPosIndices(recordedOf(c))));
 
-    // ---- THE ARMED-REVERT HALF, which is the plane a forward check misses --
+    // (4) the revert is bit-exact
     assert(c.revert(), "mesh.transform: the delta revert must answer true");
-    assert(m.vertices[kPartner] == prePartner,
-        format("THE MIRROR PARTNER (vertex %d) CAME BACK AT ITS POST-OP "
-             ~ "POSITION: %s, expected %s. Two causes reach this line and the "
-             ~ "assert above tells them apart: if the op-log did NOT name the "
-             ~ "partner it never got here, so the delta is SHORT — it carries "
-             ~ "what the command wrote and not what `symmetry.d` wrote on its "
-             ~ "behalf; if it DID name it, the entry is INVERTED — "
-             ~ "`recordPositionDiff` handed `recordSetPos` its before and "
-             ~ "after the wrong way round, and the revert is replaying the "
-             ~ "post-op value. Both were observed red here.",
-               kPartner, m.vertices[kPartner], prePartner));
-    // Bit-identity, not `==`: `sameBits` is the predicate both the recorder and
-    // `setVertexPositions` skip on, so a `-0.0`/`+0.0` divergence between the
-    // two paths is exactly what a float compare would wave through.
-    immutable back = planes(m);
-    assert(back == pre,
-        "mesh.transform: the recorded undo did not restore the pre-op planes. "
-      ~ "`/api/mesh/planes` is plane-COMPLETE and prints `%.9g`, so it carries "
-      ~ "the sign of a zero.\n  pre : " ~ pre[0 .. pre.length > 400 ? 400 : pre.length]
-      ~ "\n  back: " ~ back[0 .. back.length > 400 ? 400 : back.length]);
+    assert(planes(m) == pre, "W-b1′: the recorded undo did not restore the pre-op planes");
 }
 
 // ---------------------------------------------------------------------------

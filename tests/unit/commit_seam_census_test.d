@@ -3938,8 +3938,8 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     static immutable string[2][] kAllowedSymmetryWrites = [
         // --- the four PRODUCTION writes, the ones L0-b's deltas depend on ---
         ["mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);", "2"],
-        ["mesh.vertices[mi] = mirrorPosition(sp, mesh.vertices[i]);", "1"],
-        ["mesh.vertices[mi] = baseline[mi] + mirrorDirection(sp, delta);", "1"],
+        ["mesh.vertices[st.partner] = mirrorPosition(sp, mesh.vertices[i]);", "1"],
+        ["mesh.vertices[st.partner] = baseline[st.partner] + mirrorDirection(sp, delta);", "1"],
         // --- the seven unittest-FIXTURE writes, a local mesh with no batch ---
         ["m.vertices[2] = baseline[2] + delta;", "2"],
         ["m.vertices[4] = baseline[4];", "1"],

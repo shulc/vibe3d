@@ -2,11 +2,15 @@
 //
 // Three discriminators:
 //
-// Test 1 — topology=true, deformed base: select vertex A (index 2) on a mesh
-//   whose -X partner D (index 4) is NOT at A's spatial mirror. Translate A by
-//   delta=(0.5,0.3,0.1). D must move by mirrorDirection(delta)=(−0.5,0.3,0.1)
-//   relative to its OWN base position. D must NOT end up at the spatial mirror
-//   of A's final position.
+// Test 1 — topology=true, deformed base: select the PAIR A (index 2) and D
+//   (index 4, NOT at A's spatial mirror) and translate by delta=(0.5,0.3,0.1)
+//   through `mesh.transform` in a fresh session (authoring side A = −X, task
+//   7144). The +X member A is off the authoring side, so it takes the
+//   conjugate delta M·delta = (−0.5,0.3,0.1): A → (1.5,0.8,0.1). D is the
+//   pair's −X member and takes mirrorDirection(A's edit) relative to its OWN
+//   base: D → (−0.8+0.5, −0.3+0.3, 0.1) = (−0.3,0.0,0.1) — NOT the spatial
+//   mirror of A's final position. A lone A (the second row) writes nothing
+//   else: a transform writes only its operand (gap 316).
 //
 // Test 2 — topology=false, same deformed mesh: the spatial builder finds no
 //   pair for A (deformed away from its mirror locus), so D stays put.
@@ -85,28 +89,28 @@ unittest { // topology ON: D gets delta-mirror, NOT absolute-mirror of A_final
     reset();
     loadMesh(DEFORMED_MESH);
     setSymmetry(true, true);
-    selectVertices([2]);   // select A
+    selectVertices([2, 4]);   // the pair A, D
 
     auto pre = getJson("/api/model");
     auto preD = vertexPos(pre, 4);  // D's baseline position
+    auto side = postJson("/api/toolpipe/eval", "")["symmetry"]["authoringSide"].integer;
+    assert(side == -1, "rig: authoringSide " ~ side.to!string ~ " before the numeric step, expected -1");
 
-    // Translate A by delta = (0.5, 0.3, 0.1)
     auto tr = translate(0.5, 0.3, 0.1);
     assert(tr["status"].str == "ok", "translate failed: " ~ tr.toString);
 
     auto post_ = getJson("/api/model");
-    auto postA = vertexPos(post_, 2);   // A's new position
-    auto postD = vertexPos(post_, 4);   // D's new position
+    auto postA = vertexPos(post_, 2);
+    auto postD = vertexPos(post_, 4);
 
-    // A moved by delta: A_new.x ≈ 2.0 + 0.5 = 2.5
-    assert(approx(postA[0], 2.5),
-        "A.x expected ~2.5 after translate, got " ~ postA[0].to!string);
+    // A is off the authoring side: the conjugate delta (−0.5,0.3,0.1).
+    assert(approx(postA[0], 1.5) && approx(postA[1], 0.8) && approx(postA[2], 0.1),
+        format("A expected (1.5,0.8,0.1) after translate (off A: conjugate delta), got %s", postA));
 
-    // mirrorDirection(delta=(0.5,0.3,0.1)) across X plane = (−0.5, 0.3, 0.1)
-    // D_expected = D_base + mirrorDirection(delta) = (−0.8−0.5, −0.3+0.3, 0+0.1) = (−1.3, 0.0, 0.1)
-    double expectedDx = preD[0] + (-0.5);   // −1.3
-    double expectedDy = preD[1] + ( 0.3);   //  0.0
-    double expectedDz = preD[2] + ( 0.1);   //  0.1
+    // D = D_base + mirrorDirection(A's edit (−0.5,0.3,0.1)) = D_base + (0.5,0.3,0.1)
+    double expectedDx = preD[0] + 0.5;      // −0.3
+    double expectedDy = preD[1] + 0.3;      //  0.0
+    double expectedDz = preD[2] + 0.1;      //  0.1
     assert(approx(postD[0], expectedDx, 1e-3),
         "topology=true: D.x expected " ~ expectedDx.to!string ~ " got " ~ postD[0].to!string);
     assert(approx(postD[1], expectedDy, 1e-3),
@@ -115,11 +119,25 @@ unittest { // topology ON: D gets delta-mirror, NOT absolute-mirror of A_final
         "topology=true: D.z expected " ~ expectedDz.to!string ~ " got " ~ postD[2].to!string);
 
     // Discriminator: D must NOT be at the absolute spatial mirror of A's final position.
-    // abs-mirror(A_final=(2.5,0.8,0.1)) = (−2.5,0.8,0.1) — which is NOT (−1.3,0.0,0.1).
-    double wrongDx = -postA[0];  // −2.5
+    double wrongDx = -postA[0];  // −1.5
     assert(!approx(postD[0], wrongDx, 0.1),
         "topology=true: D.x should NOT be the absolute spatial mirror of A_final ("
         ~ wrongDx.to!string ~ "); got " ~ postD[0].to!string);
+}
+
+unittest { // topology ON, lone A: its unselected partner D is never written
+    reset();
+    loadMesh(DEFORMED_MESH);
+    setSymmetry(true, true);
+    selectVertices([2]);
+    auto preD = vertexPos(getJson("/api/model"), 4);
+    auto tr = translate(0.5, 0.3, 0.1);
+    assert(tr["status"].str == "ok", "translate failed: " ~ tr.toString);
+    auto post_ = getJson("/api/model");
+    assert(approx(vertexPos(post_, 2)[0], 1.5), "lone A: expected x 1.5 (conjugate delta)");
+    auto postD = vertexPos(post_, 4);
+    assert(approx(postD[0], preD[0]) && approx(postD[1], preD[1]) && approx(postD[2], preD[2]),
+        format("lone A wrote its unselected partner D: %s, expected %s", postD, preD));
 }
 
 // ---------------------------------------------------------------------------

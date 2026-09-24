@@ -104,15 +104,21 @@ void assertTwoMirrorClusters() {
 }
 
 // ---------------------------------------------------------------------------
-// (translate) Per-cluster TRANSLATE under ACEN.Local + X symmetry. The +X
-// cluster drives along its fwd to x=+1.5; fixed-base position-copy reflects the
-// driver's final positions onto the −X cluster (x=−1.5). Result: +X verts →
-// x=+1.5, −X verts → x=−1.5, cloud symmetric about X=0. The per-vid x=±1.5
-// equality is the STRONG witness that the −X side follows the +X driver.
+// (translate) Per-cluster TRANSLATE under ACEN.Local + X symmetry, in ONE
+// authoring frame (task 7144). Switching ACEN.Local on PLACES the action
+// centre at the first cluster's centre, (-1,0.5,0.5), so the authoring side A
+// is -X (pinned by the floor below). The -X cluster is on A; the +X cluster is
+// off A and takes the conjugate M·K(M·p) — its own cluster's fwd (+X) mirrored,
+// i.e. INWARD to x=+0.5; the pair write rule then copies each +X member's
+// result onto its -X partner (x=-0.5), so the cloud stays symmetric. The
+// per-cluster frame is the vertex's own cluster (composition, not captured —
+// gap label in card 7144). The per-vid x=±0.5 equality is the STRONG witness.
 // ---------------------------------------------------------------------------
 unittest {
     setupLocalSymmScene("move");
     assertTwoMirrorClusters();
+    auto side = postJson("/api/toolpipe/eval", "")["symmetry"]["authoringSide"].integer;
+    assert(side == -1, "rig: authoringSide " ~ side.to!string ~ " before the numeric step, expected -1");
     auto before = dumpVerts();
 
     cmd("tool.attr move TZ 0.5");             // along each cluster's fwd
@@ -121,24 +127,22 @@ unittest {
     auto after = dumpVerts();
     assert(after.length == before.length, "vert count changed");
 
-    // +X cluster verts (11,13,16,17) move to x=+1.5 along +X (their fwd).
+    // +X cluster verts (11,13,16,17): off A, the conjugate of +0.5 along +X.
     foreach (vi; [11, 13, 16, 17]) {
-        assert(approxEq(after[vi][0], 1.5),
-            "+X cluster vert " ~ vi.to!string ~ " must reach x=+1.5 "
-            ~ "(driver, fwd=+X, |Δ|=0.5); got " ~ after[vi][0].to!string);
-        // Y/Z untouched by a fwd-only translate.
+        assert(approxEq(after[vi][0], 0.5),
+            "+X cluster vert " ~ vi.to!string ~ " must reach x=+0.5 "
+            ~ "(off the authoring side: the conjugate of fwd=+X, |Δ|=0.5); got "
+            ~ after[vi][0].to!string);
         assert(approxEq(after[vi][1], before[vi][1])
             && approxEq(after[vi][2], before[vi][2]),
             "+X cluster vert " ~ vi.to!string ~ " Y/Z must not move");
     }
-    // −X cluster verts (2,5,6,8) are the REFLECTION of the +X cluster's final
-    // positions: they reach x=−1.5 under fixed-base position-copy (the +X side
-    // drives, its x=+1.5 reflects to x=−1.5).
+    // −X cluster verts (2,5,6,8): each is a pair's -X member, copied from its
+    // +X member's final position.
     foreach (vi; [2, 5, 6, 8]) {
-        assert(approxEq(after[vi][0], -1.5),
-            "−X mirror cluster vert " ~ vi.to!string ~ " must reach x=−1.5 "
-            ~ "(fixed-base position-copy of the +X DRIVER cluster's final "
-            ~ "position). got " ~ after[vi][0].to!string);
+        assert(approxEq(after[vi][0], -0.5),
+            "−X mirror cluster vert " ~ vi.to!string ~ " must reach x=−0.5 "
+            ~ "(the pair copied from its +X member). got " ~ after[vi][0].to!string);
         assert(approxEq(after[vi][1], before[vi][1])
             && approxEq(after[vi][2], before[vi][2]),
             "−X mirror cluster vert " ~ vi.to!string ~ " Y/Z must not move");

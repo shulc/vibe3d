@@ -7875,10 +7875,10 @@ unittest {
         "prepared wrapper replay must own a detached changed candidate");
     assert(replayTool.preparedReplayMatches(regrade, replayMesh));
     // Task 7144: the authoring side is compared beside the config.
-    replayTool.dragSymmetry.authoringSide = +1;
+    regrade.expectedSymmetry.authoringSide = +1;
     assert(!replayTool.preparedReplayMatches(regrade, replayMesh),
         "prepared wrapper replay accepted a stale authoring side");
-    replayTool.dragSymmetry.authoringSide = -1;
+    regrade.expectedSymmetry.authoringSide = -1;
     replayMesh.vertices[0].x += 1;
     assert(!replayTool.preparedReplayMatches(regrade, replayMesh),
         "prepared wrapper replay accepted a stale live mesh");

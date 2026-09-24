@@ -46,6 +46,9 @@ private SymmetryPacket packetX() {
     sp.onPlane     = [false, false, true];
     sp.vertSign    = [+1, -1, 0];
     sp.baseSide    = +1;
+    // These cells are about morph ROUTING, not the authoring frame: the
+    // stand fixes A so no number depends on its default (task 7144).
+    sp.authoringSide = +1;
     return sp;
 }
 
@@ -92,8 +95,11 @@ unittest {
     map.setEntry(0, Vec3(0, 0, 0.4f));
 
     Vec3[] baseBefore = m.vertices.dup;
+    assert(route.runPos[1].z > 0.249f && route.runPos[1].z < 0.251f,
+        "rig: the partner must start at its base z");
 
-    bool[] selected = [true, false, false];
+    // The pair is in the operand: the partner is written only then (task 7144).
+    bool[] selected = [true, true, false];
     bool[] touched;  touched.length = 3;
     applySymmetryMirrorRouted(&m, sp, selected, touched, route);
 
@@ -202,7 +208,8 @@ unittest { // the DELTA twin (topological symmetry) preserves the partner's
     map.setEntry(0, Vec3(0, 0, 0.4f));
     Vec3[] baseBefore = m.vertices.dup;
 
-    bool[] selected = [true, false, false];
+    // The pair is in the operand: the partner is written only then (task 7144).
+    bool[] selected = [true, true, false];
     bool[] touched;  touched.length = 3;
     Vec3[] baseline = m.vertices.dup;   // the unrouted twin's parameter
     applySymmetryMirrorDeltaRouted(&m, sp, baseline, selected, touched, route);
@@ -242,7 +249,8 @@ unittest { // with no target bound the routed overloads ARE the unrouted ones
 
     // Move the driver in the BASE, the way an unrouted gesture would.
     m.vertices[0] = Vec3(1, 0.5f, 0.65f);
-    bool[] selected = [true, false, false];
+    // The pair is in the operand: the partner is written only then (task 7144).
+    bool[] selected = [true, true, false];
     bool[] touched;  touched.length = 3;
     applySymmetryMirrorRouted(&m, sp, selected, touched, inert);
 

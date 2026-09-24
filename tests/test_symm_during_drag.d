@@ -1,9 +1,12 @@
 // Symmetry-during-drag test (Stage B2 of doc/test_coverage_plan.md).
 //
-// Enables X-axis symmetry, selects v6 (the +X+Y+Z corner whose mirror
-// is v7 at -X+Y+Z), and drags v6's X-arrow. The pin:
-//   • selecting only v6 — the symmetry pair v7 must move by the mirror
-//     of v6's delta (no explicit selection bleed).
+// Enables X-axis symmetry, selects the pair v6 (the +X+Y+Z corner) and its
+// mirror v7 (-X+Y+Z), and drags the X-arrow of the handle (at the pair's +X
+// member, gap 318). The pin:
+//   • the -X member moves by the mirror of the +X member's delta. (A lone
+//     v6 would move alone: a transform writes only its operand — task 7144,
+//     gap 316 — so the pair is selected explicitly; a command door never
+//     pairs, gap 315.)
 //   • the X-axis drag direction is REFLECTED across the YZ plane —
 //     v6.x grows by Δ, v7.x shrinks by Δ.
 //   • after the drag, v7 = mirror(v6) still holds (verts haven't drifted
@@ -25,15 +28,19 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 unittest { // X-symm: drag v6.x → v6.x grows, v7.x shrinks by same Δ
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
-    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
+    // Symmetry BEFORE the arm: the activation latches the authoring side at
+    // the handle, which symmetry puts on the pair's +X member (task 7144, gap
+    // 318/330) — so the +X arrow drag authors on +X. Armed with symmetry off,
+    // the handle is the pair's centroid ON the plane, which latches -X.
     string script =
-        "tool.set move\n" ~
         "tool.pipe.attr symmetry enabled true\n" ~
         "tool.pipe.attr symmetry axis x\n" ~
-        "tool.pipe.attr symmetry offset 0\n";
+        "tool.pipe.attr symmetry offset 0\n" ~
+        "tool.set move\n";
     auto setResp = post(testBaseUrl() ~ "/api/script", script);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
         "tool.set + symmetry config failed: " ~ cast(string)setResp);
