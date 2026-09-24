@@ -71,7 +71,7 @@ struct PreparedMirrorDeactivateImage {
 // carries it into the mesh's local frame, and the weld distance (a world
 // length) is divided by the item's scale. Exact for a similarity item
 // transform; under a non-uniform scale the reflection is about the carried
-// plane and the weld uses the X-axis scale — a recorded divergence (gap 315).
+// plane and the weld uses the X-axis scale — a recorded divergence (gap 321).
 // ---------------------------------------------------------------------------
 size_t rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh target,
                             in bool[] baseMask, in MirrorParams params_,
