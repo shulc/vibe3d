@@ -601,7 +601,6 @@ public:
         // "mid of the box" to cover it would cost more than the case is worth.
         initPivot_ = mesh.selectionBBoxCenterEdges();
         handleBase_ = initPivot_;
-        symMirror_.pressSide = -1;
         gestureSteps_.length = 0;
     }
 
@@ -1169,13 +1168,18 @@ public:
         // Symmetry side (gap 212/216): every OFF-HANDLE press re-latches it
         // from the press point and, on a built run, rebuilds at the press; a
         // handle press keeps it.
+        //
+        // W4 of the authoring-side latch (task 7144): the off-handle press
+        // PLACES the action centre at the press point, which latches the ONE
+        // authoring side A the transform tools read too (C-latch-x X-shared;
+        // no gate on symmetry being on — a placement made with symmetry off
+        // still latches). `symMirror_.pressSide` is only a COPY of A.
         readSymmetry(vts);
         immutable bool offHandlePress =
             (picked == DragBank.Move && mv.lastClickWasOffGizmo) || totalMiss;
-        if (offHandlePress && symMirror_.enabled) {
-            immutable Vec3 p = pressPoint_;
-            immutable int side =
-                dot(p - symMirror_.planePoint, symMirror_.planeNormal) > 0 ? +1 : -1;
+        if (offHandlePress) {
+            if (auto ac = liveAcenStage()) ac.notePlacementAt(pressPoint_);
+            immutable int side = liveAuthoringSide();
             if (side != symMirror_.pressSide) {
                 symMirror_.pressSide = side;
                 if (built) rebuildPreview();
@@ -1379,6 +1383,24 @@ private:
             symMirror_.planePoint  = sp.planePoint;
             symMirror_.planeNormal = sp.planeNormal;
         }
+        symMirror_.pressSide = liveAuthoringSide();
+    }
+
+    /// The live authoring side A (task 7144) — the one value every tool
+    /// reads; −1 with no symmetry stage. `symMirror_.pressSide` is its copy,
+    /// refreshed before each read (`readSymmetry`, `rebuildPreview`).
+    private static auto liveAcenStage() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stage : TaskCode;
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        if (g_pipeCtx is null) return null;
+        return cast(ActionCenterStage) g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+    }
+
+    private int liveAuthoringSide() {
+        import toolpipe.stages.symmetry : liveSymmetryStage;
+        auto sy = liveSymmetryStage();
+        return sy is null ? -1 : sy.authoringSide();
     }
 
     // Pivot fed to the kernel for every INTERACTIVE evaluation — a bank drag
@@ -1432,6 +1454,7 @@ private:
     // current params. This is the per-tick re-evaluate (§4.2): WRITE params +
     // RE-RUN, never vertex-transform the post-extend ridge.
     void rebuildPreview() {
+        symMirror_.pressSide = liveAuthoringSide();
         if (!active) return;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies

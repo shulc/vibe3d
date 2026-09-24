@@ -66,7 +66,8 @@ import mesh    : Mesh, MeshMap, MapKind, isMorphKind;
 import mesh_morph : morphApply, morphRoutedStore;
 import toolpipe.packets : SymmetryPacket;
 import symmetry : mirrorPosition, mirrorDirection, projectOnPlane,
-                  applySymmetryMirror, applySymmetryMirrorDelta;
+                  applySymmetryMirror, applySymmetryMirrorDelta,
+                  mirrorStepFor, MirrorStep, SelfStep, partnerHidden;
 
 /// Everything the routed write needs, resolved once per apply.
 ///
@@ -186,22 +187,16 @@ void applySymmetryMirrorRouted(Mesh* mesh, const ref SymmetryPacket sp,
     bool wrote = false;
     foreach (i; 0 .. mesh.vertices.length) {
         if (i >= selected.length || !selected[i]) continue;
-        if (sp.onPlane[i]) {
+        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
+        if (st.self == SelfStep.project) {
             // Project the DRAWN point and store the projection — never touch
             // mesh.vertices, and never project the base.
             wrote |= storeRouted(map, route, i,
                                  projectOnPlane(sp, routedDisplayPos(map, route, i)));
             continue;
         }
-        int mi = sp.pairOf[i];
-        if (mi < 0 || mi == cast(int) i) continue;
-        if (mesh.isVertexHidden(mi)) continue;   // R3 (task 0613), same placement
-        bool mirrorAlsoSelected =
-            (mi < cast(int) selected.length) && selected[mi];
-        if (mirrorAlsoSelected) {
-            int iSign = (i < sp.vertSign.length) ? sp.vertSign[i] : 0;
-            if (iSign != sp.baseSide) continue;
-        }
+        if (!st.copyToPartner) continue;
+        immutable int mi = st.partner;
         wrote |= storeRouted(map, route, mi,
                              mirrorPosition(sp, routedDisplayPos(map, route, i)));
         if (mi < cast(int) outAlsoTouched.length)
@@ -340,20 +335,14 @@ void applySymmetryMirrorDeltaRouted(Mesh* mesh, const ref SymmetryPacket sp,
     bool wrote = false;
     foreach (i; 0 .. mesh.vertices.length) {
         if (i >= selected.length || !selected[i]) continue;
-        if (sp.onPlane[i]) {
+        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
+        if (st.self == SelfStep.project) {
             wrote |= storeRouted(map, route, i,
                                  projectOnPlane(sp, routedDisplayPos(map, route, i)));
             continue;
         }
-        int mi = sp.pairOf[i];
-        if (mi < 0 || mi == cast(int) i) continue;
-        if (mesh.isVertexHidden(mi)) continue;
-        bool mirrorAlsoSelected =
-            (mi < cast(int) selected.length) && selected[mi];
-        if (mirrorAlsoSelected) {
-            int iSign = (i < sp.vertSign.length) ? sp.vertSign[i] : 0;
-            if (iSign != sp.baseSide) continue;
-        }
+        if (!st.copyToPartner) continue;
+        immutable int mi = st.partner;
         // The driver's edit displacement, measured on the DRAWN surface:
         // routed position now, minus where it sat at run start.
         const Vec3 delta = routedDisplayPos(map, route, i) - route.runPos[i];

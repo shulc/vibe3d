@@ -109,7 +109,6 @@ import shader;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
                     currentThreadId, markMainLoopThread;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
-import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import item_pick : ItemHit;   // ItemRayPicker: constructed by InputFrameState now (task 0781)
 import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,

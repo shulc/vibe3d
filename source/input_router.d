@@ -968,6 +968,7 @@ struct InputRouter {
                 new SelectLoop(&app.mesh(), app.cameraView, app.editMode).apply();
             else
                 new SelectConnect(&app.mesh(), app.cameraView, app.editMode).apply();
+            closeSelectionUnderMirror(&app.mesh(), app.editMode);
             commitInteractiveSelEdit();
             return;
         }
@@ -2083,5 +2084,50 @@ void applyWindowMetrics(ref Layout layout, ViewportManager vpm, int w, int h) {
     foreach (k; 0 .. vpm.cellCount) {
         vpm.views[k].winX = _rxs[k]; vpm.views[k].winY = _rys[k];
         vpm.views[k].winW = _rws[k]; vpm.views[k].winH = _rhs[k];
+    }
+}
+
+/// The double-click is a POINTER gesture, so under symmetry its result is
+/// closed under the mirror (task 7144; C-loop Lp-pair, gap 315): every
+/// selected element of the current mode gets its partner
+/// (`symmetry.mirrorElement`). The loop / connect COMMANDS themselves stay
+/// unpaired (C-expand X-single) — the closure lives at the gesture.
+private void closeSelectionUnderMirror(M)(M* m, EditMode k) {
+    import toolpipe.stages.symmetry : liveSymmetryStage;
+    import symmetry : mirrorElement;
+    auto sy = liveSymmetryStage();
+    if (sy is null || !sy.enabled) return;
+    auto sp = sy.publishedPacket();
+    final switch (k) {
+        case EditMode.Vertices: {
+            uint[] add;
+            foreach (i; 0 .. m.vertices.length)
+                if (m.isVertexSelected(i)) {
+                    immutable uint p = mirrorElement(*m, *sp, k, cast(uint)i);
+                    if (p != ~0u) add ~= p;
+                }
+            foreach (p; add) m.selectVertex(cast(int)p);
+            break;
+        }
+        case EditMode.Edges: {
+            uint[] add;
+            foreach (i; 0 .. m.edges.length)
+                if (m.isEdgeSelected(i)) {
+                    immutable uint p = mirrorElement(*m, *sp, k, cast(uint)i);
+                    if (p != ~0u) add ~= p;
+                }
+            foreach (p; add) m.selectEdge(cast(int)p);
+            break;
+        }
+        case EditMode.Polygons: {
+            uint[] add;
+            foreach (i; 0 .. m.faces.length)
+                if (m.isFaceSelected(i)) {
+                    immutable uint p = mirrorElement(*m, *sp, k, cast(uint)i);
+                    if (p != ~0u) add ~= p;
+                }
+            foreach (p; add) m.selectFace(cast(int)p);
+            break;
+        }
     }
 }

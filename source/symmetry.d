@@ -5,6 +5,7 @@ import std.math      : abs;
 
 import math : Vec3, dot;
 import mesh : Mesh;
+import editmode : EditMode;
 import toolpipe.packets : SymmetryPacket;
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,104 @@ uint mirrorFace(const ref Mesh m, const ref SymmetryPacket sp, uint fi)
     return ~0u;
 }
 
+/// The mirror partner of one element of kind `k` (task 7144, law gap 315):
+/// a vertex through `pairOf`, an edge through `mirrorEdge`, a face through
+/// `mirrorFace`; `~0u` when there is none. THE ONE place a partner joins a
+/// selection: only POINTER gestures call it (click / paint / region pick in
+/// `symmetry_pick.d`, the double-click loop in `input_router.d`, the Element
+/// Move pick in `xfrm_transform.d`); script and command doors never pair.
+/// Pinned by the census in tests/unit/symmetry_test.d.
+uint mirrorElement(const ref Mesh m, const ref SymmetryPacket sp, EditMode k, uint idx) {
+    if (!sp.enabled) return ~0u;
+    final switch (k) {
+        case EditMode.Vertices: {
+            if (sp.pairOf.length != m.vertices.length || idx >= sp.pairOf.length) return ~0u;
+            immutable int mi = sp.pairOf[idx];
+            return (mi < 0 || mi == cast(int)idx) ? ~0u : cast(uint)mi;
+        }
+        case EditMode.Edges: {
+            immutable uint me = mirrorEdge(m, sp, idx);
+            return me == idx ? ~0u : me;
+        }
+        case EditMode.Polygons: {
+            immutable uint mf = mirrorFace(m, sp, idx);
+            return mf == idx ? ~0u : mf;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE AUTHORING FRAME (task 7144; captured law gap rows 316/317/328,
+// toolcards/symmetry_selection, doc/measured_laws.md §24a). Every operand
+// vertex is computed in ONE frame: on the authoring side A it takes the
+// transform K itself, off A it takes M·K(M·p) — the WHOLE affine conjugated,
+// pivot included (Cj-affine: a rotation about c becomes the mirrored rotation
+// about M·c). A vertex ON the plane is never "off". The caller computes the
+// vertex weight BEFORE `authored`, from the vertex's own ORIGINAL position:
+// the weight is its own (C-fall), only the point is conjugated.
+// ---------------------------------------------------------------------------
+
+/// True iff vertex `vi` lies on the side opposite the authoring side A.
+bool offAuthoringSide(const ref SymmetryPacket sp, size_t vi) pure nothrow @nogc @safe {
+    return sp.enabled && vi < sp.vertSign.length && sp.vertSign[vi] == -sp.authoringSide;
+}
+
+/// The one authoring-frame evaluation: `kernel(p)` on A, `M·kernel(M·p)` off A.
+Vec3 authored(K)(const ref SymmetryPacket sp, size_t vi, Vec3 p, scope K kernel) {
+    if (!offAuthoringSide(sp, vi)) return kernel(p);
+    return mirrorPosition(sp, kernel(mirrorPosition(sp, p)));
+}
+
+// ---------------------------------------------------------------------------
+// THE PAIR WRITE RULE (task 7144; gap rows 73/316/318, C-plane P-proj). ONE
+// rule for the four mirror passes (`applySymmetryMirror`,
+// `applySymmetryMirrorDelta`, and their morph-routed twins in
+// `tools/transform/morph_route.d`), in this order:
+//   1. an on-plane operand vertex is projected back onto the plane;
+//   2. a vertex whose visible partner is ALSO in the operand: the member on
+//      `sp.baseSide` (the live stage keeps +1; Symmetrize passes its own
+//      side) keeps its own result and its partner is written as its exact
+//      mirror — the pair's weight and result are its +X member's; the other
+//      member yields (the copy overwrites it);
+//   3. otherwise the vertex keeps its own result — the kernel already put it
+//      in the authoring frame, and a partner OUTSIDE the operand is never
+//      written (gap 316). A hidden partner counts as outside (task 0613 R3:
+//      it must not win the drive nor be written).
+// ---------------------------------------------------------------------------
+
+/// Is vertex `i`'s pair partner hidden? Computed once per vertex by each
+/// mirror pass and handed to `mirrorStepFor` (task 0613 R3's guard).
+bool partnerHidden(const ref Mesh mesh, const ref SymmetryPacket sp, size_t i) {
+    immutable int pi = i < sp.pairOf.length ? sp.pairOf[i] : -1;
+    return pi >= 0 && mesh.isVertexHidden(pi);
+}
+
+enum SelfStep : ubyte { own, project, yield }
+
+struct MirrorStep {
+    SelfStep self;
+    bool     copyToPartner;
+    int      partner = -1;
+}
+
+MirrorStep mirrorStepFor(const ref SymmetryPacket sp, const(bool)[] operand,
+                         size_t i, bool partnerHidden) pure nothrow @nogc @safe
+{
+    MirrorStep st;
+    if (i < sp.onPlane.length && sp.onPlane[i]) { st.self = SelfStep.project; return st; }
+    immutable int mi = i < sp.pairOf.length ? sp.pairOf[i] : -1;
+    if (mi >= 0 && mi != cast(int)i && !partnerHidden
+        && mi < cast(int)operand.length && operand[mi]) {
+        st.partner = mi;
+        immutable int iSign = i < sp.vertSign.length ? sp.vertSign[i] : 0;
+        if (iSign == sp.baseSide) { st.self = SelfStep.own; st.copyToPartner = true; }
+        else                      st.self = SelfStep.yield;
+        return st;
+    }
+    st.self = SelfStep.own;
+    return st;
+}
+
 /// Build the per-vertex pairing table for `mesh` under the plane in
 /// `sp` (uses `sp.planePoint`, `sp.planeNormal`, `sp.epsilonWorld`,
 /// `sp.axisIndex`). Writes results into `outPairOf`, `outOnPlane`, and
@@ -296,32 +395,12 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 }
 
 // ---------------------------------------------------------------------------
-// applySymmetryMirror — copy mirrored positions from each selected
-// vertex `vi` into its mirror `mi`, then snap any on-plane selected
-// vertex back onto the plane.
-//
-// Convention: `selected[]` is a per-vertex bool mask of "verts the
-// caller already moved". For each such `vi`:
-//   • if `onPlane[vi]`: project `mesh.vertices[vi]` back onto the plane.
-//   • else if `pairOf[vi] = mi` and `mi != vi`: set
-//     `mesh.vertices[mi] = mirrorPosition(mesh.vertices[vi])`.
-//
-// `outAlsoTouched` is OR-ed with `mi` for each mirror write — callers
-// use it to extend GPU upload / undo snapshot sets to cover the verts
-// the mirror pass touched. Caller MUST size it to `mesh.vertices.length`
-// before the call.
-//
-// **BaseSide drive rule.** When both `vi` and its mirror `mi` are in
-// `selected[]` (the user picked both sides — e.g. via 7.6c's symmetric
-// auto-add, or by shift-click), the side matching `sp.baseSide`
-// (`-1`/`+1`) drives. The non-base side is skipped on its own
-// iteration so its mirror write happens exactly once and from the
-// user-anchored side. This matters when a perpendicular translate
-// would otherwise push the lower-index vertex across the plane and
-// flip the implicit drive direction.
-//
-// For lone-selected verts (mirror is NOT in `selected[]`), `vi`
-// always drives — there's no ambiguity.
+// applySymmetryMirror — the pair write rule (`mirrorStepFor`) over the
+// operand mask `selected[]` (the vertices the caller already computed):
+// on-plane operand vertices are projected; a pair inside the operand is made
+// an exact mirror of its `baseSide` member; nothing outside the operand is
+// written. `outAlsoTouched` (mesh-length) is OR-ed with every partner the
+// pass wrote, for GPU upload / undo snapshot sets.
 // ---------------------------------------------------------------------------
 void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
                          const(bool)[] selected,
@@ -331,35 +410,15 @@ void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
     if (sp.pairOf.length != mesh.vertices.length) return;
     foreach (i; 0 .. mesh.vertices.length) {
         if (i >= selected.length || !selected[i]) continue;
-        if (sp.onPlane[i]) {
+        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
+        if (st.self == SelfStep.project) {
             mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);
             continue;
         }
-        int mi = sp.pairOf[i];
-        if (mi < 0 || mi == cast(int)i) continue;
-        // R3 (task 0613, doc/hide_geometry_plan.md §3.4). `pairOf` is derived
-        // from POSITIONS, not from any mark, so the partner enters the operand
-        // set without being selected (R1 never sees it) and without being in
-        // any mask (R2's funnel never sees it) — this is the only place the
-        // guard can go. Placed BEFORE the base-side arbitration deliberately:
-        // a hidden partner must not be able to win the drive and write back
-        // into the visible side. A hidden partner cannot be selected (§3.1),
-        // so the both-sides ambiguity the arbitration resolves cannot arise
-        // for it; `i` simply drives and its write is dropped.
-        if (mesh.isVertexHidden(mi)) continue;
-        bool mirrorAlsoSelected =
-            (mi < cast(int)selected.length) && selected[mi];
-        if (mirrorAlsoSelected) {
-            // Both sides selected — only the base-side vertex drives.
-            // `vertSign[i]` is the PRE-translate side, so the rule
-            // stays stable through a perpendicular drag that crosses
-            // the plane.
-            int iSign = (i < sp.vertSign.length) ? sp.vertSign[i] : 0;
-            if (iSign != sp.baseSide) continue;
-        }
-        mesh.vertices[mi] = mirrorPosition(sp, mesh.vertices[i]);
-        if (mi < cast(int)outAlsoTouched.length)
-            outAlsoTouched[mi] = true;
+        if (!st.copyToPartner) continue;
+        mesh.vertices[st.partner] = mirrorPosition(sp, mesh.vertices[i]);
+        if (st.partner < cast(int)outAlsoTouched.length)
+            outAlsoTouched[st.partner] = true;
     }
 }
 
@@ -394,12 +453,10 @@ Vec3 mirrorDirection(const ref SymmetryPacket sp, Vec3 dir) pure nothrow @nogc @
 // proof in doc/topological_symmetry_plan.md Risk 1).
 // ---------------------------------------------------------------------------
 
-/// Delta-mirror apply. For each selected driver vertex `i`:
-///   - on-plane:  project mesh.vertices[i] onto the plane.
-///   - off-plane: mesh.vertices[mi] = baseline[mi] + mirrorDirection(sp, delta)
-///                where delta = mesh.vertices[i] − baseline[i].
-/// `baseline` must be mesh-length (same sizing contract as `outAlsoTouched`).
-/// No-ops safely when lengths don't match.
+/// Delta-mirror apply: the pair write rule (`mirrorStepFor`) with the copy
+/// written as `baseline[partner] + mirrorDirection(sp, vertices[i] − baseline[i])`
+/// — the partner keeps its own pre-existing deformation and takes the mirrored
+/// EDIT. `baseline` must be mesh-length; no-ops safely when lengths differ.
 void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
                               const(Vec3)[] baseline,
                               const(bool)[] selected,
@@ -410,26 +467,16 @@ void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
     if (baseline.length  != mesh.vertices.length) return;
     foreach (i; 0 .. mesh.vertices.length) {
         if (i >= selected.length || !selected[i]) continue;
-        if (sp.onPlane[i]) {
+        immutable MirrorStep st = mirrorStepFor(sp, selected, i, partnerHidden(*mesh, sp, i));
+        if (st.self == SelfStep.project) {
             mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);
             continue;
         }
-        int mi = sp.pairOf[i];
-        if (mi < 0 || mi == cast(int)i) continue;
-        // R3 (task 0613) — the delta twin has the identical hole; see the
-        // guard's full reasoning in applySymmetryMirror above. Same placement:
-        // before the base-side arbitration.
-        if (mesh.isVertexHidden(mi)) continue;
-        bool mirrorAlsoSelected =
-            (mi < cast(int)selected.length) && selected[mi];
-        if (mirrorAlsoSelected) {
-            int iSign = (i < sp.vertSign.length) ? sp.vertSign[i] : 0;
-            if (iSign != sp.baseSide) continue;
-        }
+        if (!st.copyToPartner) continue;
         Vec3 delta = mesh.vertices[i] - baseline[i];
-        mesh.vertices[mi] = baseline[mi] + mirrorDirection(sp, delta);
-        if (mi < cast(int)outAlsoTouched.length)
-            outAlsoTouched[mi] = true;
+        mesh.vertices[st.partner] = baseline[st.partner] + mirrorDirection(sp, delta);
+        if (st.partner < cast(int)outAlsoTouched.length)
+            outAlsoTouched[st.partner] = true;
     }
 }
 

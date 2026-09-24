@@ -4,35 +4,29 @@ import math    : Vec3, Viewport;
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype  : SelType;
-import toolpipe.pipeline      : g_pipeCtx;
 import toolpipe.packets       : SubjectPacket, SymmetryPacket;
-import toolpipe.stage         : TaskCode;
-import toolpipe.stages.symmetry : SymmetryStage;
+import toolpipe.stages.symmetry : SymmetryStage, liveSymmetryStage;
 import toolpipe.subject        : evaluateSubject, SubjectSource;
-import symmetry               : mirrorEdge, mirrorFace;
+import symmetry               : mirrorElement;
 import operator               : VectorStack;
 
 // ---------------------------------------------------------------------------
-// Symmetry-aware interactive pick helpers — phase 7.6c interactive flow.
-//
-// `MeshSelect` already wraps `/api/select` with symmetric auto-add + anchor
-// baseSide. The interactive picking paths in `app.d` (lasso, click, etc.)
-// call `mesh.selectVertex/Edge/Face` directly to stay tight; these helpers
-// wrap each direct call so the editor's mouse-click picks behave the same
-// as the headless HTTP path.
+// Symmetry-aware interactive pick helpers — the POINTER-gesture door of the
+// selection law (task 7144, gap 315): a click, paint stroke or region pick
+// selects the element AND its mirror partner (`symmetry.mirrorElement`);
+// deselecting drops the partner too. Script and command doors do not come
+// through here and never pair. These helpers do NOT touch the authoring side
+// or the pair's base side (the handle and the pair weight are fixed at the +X
+// member, gap 318).
 //
 // Returns silently when:
 //   * toolpipe / SymmetryStage isn't registered (unit tests),
 //   * symmetry is currently disabled,
 //   * the pair table isn't yet built (first evaluate after enable).
-//
-// For deselect, the mirror counterpart is also deselected so the
-// click-twice-to-toggle UX is consistent across both sides.
 // ---------------------------------------------------------------------------
 
 /// Select (or deselect when `deselect == true`) vertex `vi` and its
-/// symmetric counterpart. Anchors `baseSide` on the user-picked vertex
-/// on select.
+/// symmetric counterpart.
 void symmetricSelectVertex(Mesh* mesh, Viewport vp, EditMode em,
                            int vi, bool deselect)
 {
@@ -61,21 +55,17 @@ void symmetricSelectVertex(Mesh* mesh, Viewport vp, EditMode em,
     SymmetryPacket pkt;
     SymmetryStage  sym;
     if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
-    if (pkt.pairOf.length != mesh.vertices.length) return;
     if (vi < 0 || vi >= cast(int)mesh.vertices.length) return;
 
-    int mi = pkt.pairOf[vi];
-    if (mi >= 0 && mi != vi) {
-        if (deselect) mesh.deselectVertex(mi);
-        else          mesh.selectVertex(mi);
+    immutable uint mi = mirrorElement(*mesh, pkt, EditMode.Vertices, cast(uint)vi);
+    if (mi != ~0u) {
+        if (deselect) mesh.deselectVertex(cast(int)mi);
+        else          mesh.selectVertex(cast(int)mi);
     }
-    if (!deselect)
-        sym.anchorAt(mesh.vertices[vi]);
 }
 
 /// Select (or deselect when `deselect == true`) edge `ei` and its
-/// symmetric counterpart, anchoring `baseSide` on the user-picked
-/// edge's midpoint on select.
+/// symmetric counterpart.
 void symmetricSelectEdge(Mesh* mesh, Viewport vp, EditMode em,
                          int ei, bool deselect)
 {
@@ -90,21 +80,15 @@ void symmetricSelectEdge(Mesh* mesh, Viewport vp, EditMode em,
     if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
     if (ei < 0 || ei >= cast(int)mesh.edges.length) return;
 
-    uint me = mirrorEdge(*mesh, pkt, cast(uint)ei);
-    if (me != ~0u && me != cast(uint)ei) {
+    immutable uint me = mirrorElement(*mesh, pkt, EditMode.Edges, cast(uint)ei);
+    if (me != ~0u) {
         if (deselect) mesh.deselectEdge(cast(int)me);
         else          mesh.selectEdge(cast(int)me);
-    }
-    if (!deselect) {
-        auto e = mesh.edges[ei];
-        Vec3 anchor = (mesh.vertices[e[0]] + mesh.vertices[e[1]]) * 0.5f;
-        sym.anchorAt(anchor);
     }
 }
 
 /// Select (or deselect when `deselect == true`) face `fi` and its
-/// symmetric counterpart, anchoring `baseSide` on the user-picked
-/// face's centroid on select.
+/// symmetric counterpart.
 void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
                          int fi, bool deselect)
 {
@@ -119,17 +103,10 @@ void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
     if (!captureLiveSymmetry(mesh, vp, em, pkt, sym)) return;
     if (fi < 0 || fi >= cast(int)mesh.faces.length) return;
 
-    uint mf = mirrorFace(*mesh, pkt, cast(uint)fi);
-    if (mf != ~0u && mf != cast(uint)fi) {
+    immutable uint mf = mirrorElement(*mesh, pkt, EditMode.Polygons, cast(uint)fi);
+    if (mf != ~0u) {
         if (deselect) mesh.deselectFace(cast(int)mf);
         else          mesh.selectFace(cast(int)mf);
-    }
-    if (!deselect) {
-        auto f = mesh.faces[fi];
-        if (f.length == 0) return;
-        Vec3 sum = Vec3(0, 0, 0);
-        foreach (vi; f) sum = sum + mesh.vertices[vi];
-        sym.anchorAt(sum * (1.0f / cast(float)f.length));
     }
 }
 
@@ -140,18 +117,9 @@ void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
 // caches the upstream workplane normal on every fire), so we skip the
 // call when symmetry is off.
 //
-// Task 1904 Stage 2: this used to be three copies of the same function —
-// this one, `commands/mesh/select.d :: MeshSelect.captureSymmetryPacket`
-// and the inline block in `commands/mesh/transform.d :: MeshTransform.
-// evaluate` — same findByTask(TaskCode.Symm) + stage.enabled gate, same
-// R3 comment, same "selType left at its default (Vertex)" note, same
-// `get!SymmetryPacket` copy. Collapsed here (the widest signature — it
-// hands back the stage too, which the interactive `symmetricSelectVertex`/
-// `symmetricSelectEdge`/`symmetricSelectFace` helpers below need for
-// `anchorAt`; `MeshSelect` ignores the returned stage and does its own
-// `findByTask` lookup for `anchorAt` instead) and made non-private so both
-// command sites call it instead of rebuilding it. Their only real
-// difference was the viewport expression, so that stays a parameter.
+// Task 1904 Stage 2: one shared capture for `MeshTransform` and the three
+// pointer helpers above (the stage lookup is `liveSymmetryStage()`, task 7144).
+// It only READS the packet — the gate on `enabled` is a reader's gate.
 //
 // `vp` is `lazy`: callers build it from `effectiveViewport()`, which is
 // cheap to call but not side-effect-free to call unconditionally — on a
@@ -167,9 +135,7 @@ void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
 public bool captureLiveSymmetry(Mesh* mesh, lazy Viewport vp, EditMode em,
                                 out SymmetryPacket pkt, out SymmetryStage stage)
 {
-    if (g_pipeCtx is null) return false;
-    stage = cast(SymmetryStage)
-            g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+    stage = liveSymmetryStage();
     if (stage is null || !stage.enabled) return false;
 
     // selType left at its default (Vertex): symmetry pairing is a

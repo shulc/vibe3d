@@ -13,8 +13,9 @@
 // built before the gesture started.
 //
 // The claim is true at the three sites that make it today, and it was checked
-// by hand at each: the transform tools pass `movingVertexIndices` (the
-// processed verts UNION their symmetry partners) to `snapCursor` as
+// by hand at each: the transform tools pass the processed operand
+// (`vertexIndicesToProcess`; under symmetry the mirror pass writes only
+// partners inside it, task 7144) to `snapCursor` as
 // `excludeVerts`, and `snap.kindExcluded` drops an element if ANY incident
 // vertex is in that set — so "moves with this gesture" and "excluded from this
 // query" are the same predicate.
@@ -167,7 +168,7 @@ private static immutable LedgerRow[] kSites = [
 
     LedgerRow("XfrmApplyImpl.applyTRSLegacyPowPath|publishConfinedChange", 1,
         "the legacy pow-path tail. Exclusion: the tool passes "
-      ~ "`movingVertexIndices` to `snapCursor` as `excludeVerts`, and "
+      ~ "`vertexIndicesToProcess` to `snapCursor` as `excludeVerts`, and "
       ~ "`kindExcluded` drops any element with an incident moving vertex"),
     LedgerRow("XfrmApplyImpl.applyFold|publishConfinedChange", 1,
         "the applyFold tail. Same exclusion, same tool"),

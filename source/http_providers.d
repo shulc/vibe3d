@@ -61,7 +61,6 @@ import view;
 import shader;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
-import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
 import tools.transform.move;
@@ -1896,11 +1895,12 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             buf.put(`,"clusterFwd":`);    putVec3List(axis.clusterFwd);
             buf.put(`},"symmetry":{"enabled":`);
             buf.put(symm.enabled ? "true" : "false");
-            buf.put(format(`,"axisIndex":%d,"useWorkplane":%s,"topology":%s,"baseSide":%d`,
+            buf.put(format(`,"axisIndex":%d,"useWorkplane":%s,"topology":%s,"baseSide":%d,"authoringSide":%d`,
                            symm.axisIndex,
                            symm.useWorkplane ? "true" : "false",
                            symm.topology     ? "true" : "false",
-                           symm.baseSide));
+                           symm.baseSide,
+                           symm.authoringSide));
             buf.put(`,"planePoint":`);  putVec3(symm.planePoint);
             buf.put(`,"planeNormal":`); putVec3(symm.planeNormal);
             buf.put(`,"pairOf":[`);

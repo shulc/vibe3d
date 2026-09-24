@@ -27,7 +27,7 @@ import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
 import mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
-import symmetry : applySymmetryMirror;
+import symmetry : applySymmetryMirror, authored;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;
 import perf_probe : g_perf, Cat;
@@ -100,22 +100,13 @@ void applyTranslateIncremental(
     bool[] toProcess)
 {
     auto zKernel = g_perf.scope_(Cat.kernelApply);
-    if (!dragFalloff.enabled) {
-        foreach (vi; indices) {
-            mesh.vertices[vi].x += delta.x;
-            mesh.vertices[vi].y += delta.y;
-            mesh.vertices[vi].z += delta.z;
-        }
-    } else {
-        foreach (vi; indices) {
-            float w = evaluateFalloff(dragFalloff,
-                                       mesh.vertices[vi],
-                                       cast(int)vi, vp);
-            if (w == 0.0f) continue;
-            mesh.vertices[vi].x += delta.x * w;
-            mesh.vertices[vi].y += delta.y * w;
-            mesh.vertices[vi].z += delta.z * w;
-        }
+    foreach (vi; indices) {
+        float w = dragFalloff.enabled
+            ? evaluateFalloff(dragFalloff, mesh.vertices[vi], cast(int)vi, vp)
+            : 1.0f;
+        if (w == 0.0f) continue;
+        mesh.vertices[vi] = authored(dragSymmetry, vi, mesh.vertices[vi],
+            (Vec3 q) => Vec3(q.x + delta.x * w, q.y + delta.y * w, q.z + delta.z * w));
     }
     mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
                    cast(long)indices.length, dragFalloff.enabled);
@@ -259,7 +250,8 @@ void applyRotateIncremental(
                               cast(int)vi, vp)
             : 1.0f;
         if (w == 0.0f) continue;
-        mesh.vertices[vi] = rotateVecLerp(mesh.vertices[vi], pivot, ax, angleRad, w);
+        mesh.vertices[vi] = authored(dragSymmetry, vi, mesh.vertices[vi],
+            (Vec3 q) => rotateVecLerp(q, pivot, ax, angleRad, w));
     }
     mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
                    cast(long)indices.length, dragFalloff.enabled);
@@ -309,10 +301,12 @@ void applyRotateFromOrig(
             ? evaluateFalloff(dragFalloff, origVerts[i], cast(int)i, vp)
             : 1.0f;
         if (w == 0.0f) { mesh.vertices[i] = v; continue; }
-        if (angleAccum.x != 0) v = rotateVecLerp(v, pivot, axX, angleAccum.x, w);
-        if (angleAccum.y != 0) v = rotateVecLerp(v, pivot, axY, angleAccum.y, w);
-        if (angleAccum.z != 0) v = rotateVecLerp(v, pivot, axZ, angleAccum.z, w);
-        mesh.vertices[i] = v;
+        mesh.vertices[i] = authored(dragSymmetry, i, v, (Vec3 q) {
+            if (angleAccum.x != 0) q = rotateVecLerp(q, pivot, axX, angleAccum.x, w);
+            if (angleAccum.y != 0) q = rotateVecLerp(q, pivot, axY, angleAccum.y, w);
+            if (angleAccum.z != 0) q = rotateVecLerp(q, pivot, axZ, angleAccum.z, w);
+            return q;
+        });
     }
     if (dragSymmetry.enabled
         && dragSymmetry.pairOf.length == mesh.vertices.length)
@@ -401,8 +395,8 @@ void applyScaleFromActivation(
             if (sy > 0) sy = pow(sy, passes);
             if (sz > 0) sz = pow(sz, passes);
         }
-        mesh.vertices[vi] = scaleAlongBasis(activationVerts[vi], pivot,
-                                             ax, ay, az, sx, sy, sz);
+        mesh.vertices[vi] = authored(dragSymmetry, vi, activationVerts[vi],
+            (Vec3 q) => scaleAlongBasis(q, pivot, ax, ay, az, sx, sy, sz));
     }
     mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
                    cast(long)indices.length, dragFalloff.enabled);
@@ -658,13 +652,19 @@ void applyXformMatrix(
             if (vi >= mesh.vertices.length) continue;
             if (i >= baseline.length) continue;
             const Vec3 base = baseline[i];
-            immutable double dx = cast(double)base.x - u_ax;
-            immutable double dy = cast(double)base.y - u_ay;
-            immutable double dz = cast(double)base.z - u_az;
-            const Vec3 moved = Vec3(
-                cast(float)(u_ax + u_m00*dx + u_m01*dy + u_m02*dz + u_off0),
-                cast(float)(u_ay + u_m10*dx + u_m11*dy + u_m12*dz + u_off1),
-                cast(float)(u_az + u_m20*dx + u_m21*dy + u_m22*dz + u_off2));
+            // The authoring frame (task 7144): on A — and with symmetry
+            // off — the same operations in the same order as before, bit for
+            // bit; off A the kernel runs on the mirror image of the point and
+            // its result is mirrored back (one hoisted set serves both).
+            const Vec3 moved = authored(dragSymmetry, vi, base, (Vec3 q) {
+                immutable double dx = cast(double)q.x - u_ax;
+                immutable double dy = cast(double)q.y - u_ay;
+                immutable double dz = cast(double)q.z - u_az;
+                return Vec3(
+                    cast(float)(u_ax + u_m00*dx + u_m01*dy + u_m02*dz + u_off0),
+                    cast(float)(u_ay + u_m10*dx + u_m11*dy + u_m12*dz + u_off1),
+                    cast(float)(u_az + u_m20*dx + u_m21*dy + u_m22*dz + u_off2));
+            });
             if (routeMap !is null) routeWrote |= storeRouted(routeMap, route, vi, moved);
             else                   mesh.vertices[vi] = moved;
         }
@@ -719,15 +719,19 @@ void applyXformMatrix(
             double off0 = m00*cpx + m01*cpy + m02*cpz - cpx + tf0;
             double off1 = m10*cpx + m11*cpy + m12*cpz - cpy + tf1;
             double off2 = m20*cpx + m21*cpy + m22*cpz - cpz + tf2;
-            // d = base - anchor (exact, both geometry-scale)
-            double dx = cast(double)base.x - cast(double)anchor.x;
-            double dy = cast(double)base.y - cast(double)anchor.y;
-            double dz = cast(double)base.z - cast(double)anchor.z;
-            // v' = anchor + M_lin*d + off
-            const Vec3 moved = Vec3(
-                cast(float)(cast(double)anchor.x + m00*dx + m01*dy + m02*dz + off0),
-                cast(float)(cast(double)anchor.y + m10*dx + m11*dy + m12*dz + off1),
-                cast(float)(cast(double)anchor.z + m20*dx + m21*dy + m22*dz + off2));
+            // d = base - anchor (exact, both geometry-scale); v' = anchor +
+            // M_lin*d + off — evaluated in the authoring frame (task 7144):
+            // the weight above is the vertex's own, from its original
+            // position; only the point is conjugated off A.
+            const Vec3 moved = authored(dragSymmetry, vi, base, (Vec3 q) {
+                double dx = cast(double)q.x - cast(double)anchor.x;
+                double dy = cast(double)q.y - cast(double)anchor.y;
+                double dz = cast(double)q.z - cast(double)anchor.z;
+                return Vec3(
+                    cast(float)(cast(double)anchor.x + m00*dx + m01*dy + m02*dz + off0),
+                    cast(float)(cast(double)anchor.y + m10*dx + m11*dy + m12*dz + off1),
+                    cast(float)(cast(double)anchor.z + m20*dx + m21*dy + m22*dz + off2));
+            });
             if (routeMap !is null) {
                 // ROUTED: the map receives the store and `mesh.vertices` is
                 // left EXACTLY as it was (law L2). Note the store subtracts
@@ -752,16 +756,11 @@ tail:
         import mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);
     }
-    // NOTE (doc/symmetry_deform_plan.md Stage 2): the GLOBAL-fold symmetry
-    // mirror tail that used to live here was DELETED. The live unified fold
-    // (XfrmTransformTool.applyFold) now owns the mirror as an explicit second
-    // pass (Pass B: M'=Slin·M·Slin about S·pivot for distance falloffs,
-    // position-copy for membership falloffs) and calls this kernel with a
-    // DISABLED `dragSymmetry`, so no mirror runs in-kernel. The fold therefore
-    // carries exactly ONE symmetry model. The dormant legacy pow-scale chain +
-    // per-cluster path retain their own position-copy mirror at their call
-    // sites (Stage 2b / Stage 4 scope). `dragSymmetry` / `toProcess` stay in
-    // the signature: callers still pass them, and the kernel ignores symmetry.
+    // NOTE: the kernel reads `dragSymmetry` ONLY for the authoring frame
+    // (`authored`, task 7144). The pair mirror is its caller's: the live fold
+    // (XfrmTransformTool.applyFold) runs the position-copy pass after this
+    // call, and the dormant legacy chain runs its own at its call sites, so
+    // there is exactly one mirror and it is not in here.
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -1067,6 +1067,11 @@ public:
         clearFrame();                 // COMMIT B — fresh session re-derives the basis
     }
 
+    /// Set by `prepareActivate` (a transform-preset arm, which owns W1): the
+    /// re-arms W5a/W5b latch the authoring side only for such a tool, never
+    /// for an xfrm embedded in another tool's session (task 7144).
+    private bool ownsActivationLatch_;
+
     final PreparedXfrmActivationEffect prepareActivate(
             PreparedRecordContext context) {
         const ubyte flags = preparedActivationFlags();
@@ -1080,6 +1085,13 @@ public:
         }
         scope(failure) context.discard();
         auto owner = PreparedXfrmActivationSessionOwner.prepare(this);
+        if (owner !is null) {
+            owner.placeActionCentreOnInstall(activeAcenStage());
+            // A transform PRESET arm owns the activation latch, so its re-arms
+            // (W5a/W5b) latch too; an xfrm embedded in another tool (Edge
+            // Extend's host) is armed elsewhere and never places (L345).
+            ownsActivationLatch_ = true;
+        }
         bool ok = owner !is null && context.prepareXfrmActivationPre(owner);
         ulong runId;
         if (ok && context.hasHistory()) {
@@ -1490,6 +1502,10 @@ public:
         // the post-command mesh so the foreign-mutation guard cannot close the
         // boundary a second time.
         resetTransientState(false);
+        // W5a of the authoring-side latch (task 7144): the re-arm after a
+        // foreign edit is an activation — the re-centred handle's side is
+        // latched at the next evaluation. (Element returned above: no re-arm.)
+        if (ac !is null && ownsActivationLatch_) ac.notePlacement();
         lastSelectionHash   = computeSelectionHash();
         // Construction-held stamp: the foreign edit has already landed, so
         // this write prevents the idle guard from inventing another boundary.
@@ -1661,6 +1677,15 @@ public:
                  && curHash != lastSelectionHash) {
                     clearAcenSoftPlaced();
                     clearFrame();       // COMMIT B — one lifecycle with the center pin
+                    // W5b of the authoring-side latch (task 7144; C-latch-sel,
+                    // gap 334): a selection change under an armed transform is
+                    // a re-arm — the handle re-centres, and that placement
+                    // latches A at the next evaluation. Not in Element mode,
+                    // which does not re-arm (the pick owns its centre).
+                    if (auto acW5 = activeAcenStage())
+                        if (ownsActivationLatch_
+                         && acW5.mode != ActionCenterStage.Mode.Element)
+                            acW5.notePlacement();
                 }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
@@ -5702,6 +5727,7 @@ public:
             !falloffPacketsEqual(dragFalloff, image.expectedFalloff) ||
             !snapPacketsEqual(dragSnap, image.expectedSnap) ||
             !symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) ||
+            dragSymmetry.authoringSide != image.expectedSymmetry.authoringSide ||
             !elementWeightCachesEqual(elementWeightCache_,
                                       image.expectedElementWeights) ||
             itemTargets.length != image.itemTargets.length ||
@@ -5790,6 +5816,7 @@ public:
             falloffPacketsEqual(refirePreFalloff, image.expectedPreFalloff) &&
             snapPacketsEqual(refirePreSnap, image.expectedPreSnap) &&
             symmetryPacketsEqual(refirePreSym, image.expectedPreSymmetry) &&
+            refirePreSym.authoringSide == image.expectedPreSymmetry.authoringSide &&
             lastMutationVersion == image.expectedLastMutation &&
             lastAppliedGestureMutationVersion == image.expectedGestureMutation &&
             armedUndoEpoch == image.expectedUndoEpoch;
@@ -6571,15 +6598,34 @@ private:
         ++pickSerial_;
         elementPickAnchor_ = anchor;
         elementPickValid_ = true;
+        notePressPlacement(anchor);   // W3: the pick places the centre (task 7144)
         if (acenHoldsElementPin(anchor)) return;   // equal write skipped
         notifyAcenUserPlaced(anchor);
         notifyAcenElementPin(anchor);
     }
 
+    /// The Element Move pick is a POINTER gesture, so under symmetry the
+    /// picked element's mirror partner joins its anchor ring (weight 1): the
+    /// pair moves on a pick of either side (C-elm Em-mirror; task 7144, the
+    /// one pairing door `symmetry.mirrorElement`).
+    private uint[] withMirrorElement(EditMode k, uint idx, uint[] ring) {
+        import toolpipe.stages.symmetry : liveSymmetryStage;
+        import symmetry : mirrorElement;
+        auto sy = liveSymmetryStage();
+        if (sy is null || !sy.enabled) return ring;
+        immutable uint m = mirrorElement(*mesh, *sy.publishedPacket(), k, idx);
+        if (m == ~0u) return ring;
+        final switch (k) {
+            case EditMode.Vertices: return ring ~ m;
+            case EditMode.Edges:    return ring ~ [cast(uint)mesh.edges[m][0], cast(uint)mesh.edges[m][1]];
+            case EditMode.Polygons: return ring ~ mesh.faces[m].dup;
+        }
+    }
+
     bool takeVert(FalloffStage stage, int vi) {
         writeElementAnchor(mesh.vertices[vi]);
         if (stage !is null) {
-            stage.anchorRing = [cast(uint)vi];
+            stage.anchorRing = withMirrorElement(EditMode.Vertices, cast(uint)vi, [cast(uint)vi]);
             updateConnectMask(stage, vi);
         }
         return true;
@@ -6594,7 +6640,8 @@ private:
         // free function does not — hence `(*mesh).`.
         writeElementAnchor((*mesh).edgeCentroid(cast(uint)ei));
         if (stage !is null) {
-            stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
+            stage.anchorRing = withMirrorElement(EditMode.Edges, cast(uint)ei,
+                                                 [cast(uint)edge[0], cast(uint)edge[1]]);
             updateConnectMask(stage, cast(int)edge[0]);
         }
         return true;
@@ -6605,7 +6652,7 @@ private:
         writeElementAnchor(mesh.faceCentroid(cast(uint)fi));
         auto face = mesh.faces[fi];
         if (stage !is null) {
-            stage.anchorRing = face.dup;
+            stage.anchorRing = withMirrorElement(EditMode.Polygons, cast(uint)fi, face.dup);
             if (face.length > 0)
                 updateConnectMask(stage, cast(int)face[0]);
         }
@@ -7827,6 +7874,11 @@ unittest {
         regrade.candidate.vertices != replayMesh.vertices,
         "prepared wrapper replay must own a detached changed candidate");
     assert(replayTool.preparedReplayMatches(regrade, replayMesh));
+    // Task 7144: the authoring side is compared beside the config.
+    replayTool.dragSymmetry.authoringSide = +1;
+    assert(!replayTool.preparedReplayMatches(regrade, replayMesh),
+        "prepared wrapper replay accepted a stale authoring side");
+    replayTool.dragSymmetry.authoringSide = -1;
     replayMesh.vertices[0].x += 1;
     assert(!replayTool.preparedReplayMatches(regrade, replayMesh),
         "prepared wrapper replay accepted a stale live mesh");

@@ -210,61 +210,6 @@ version (unittest) unittest {
     assert(gpu.uploadVersion == 1);
 }
 
-// ---------------------------------------------------------------------------
-// Every vertex index a drag MOVES — which is exactly the set snapping must
-// refuse to offer that drag as a candidate (`snap.d`'s `kindExcluded`, and the
-// exclusion `move.d:applySnapToDelta` builds from it).
-//
-// It is NOT `vertexIndicesToProcess`. With a SYMM stage live, the apply's
-// mirror pass writes the `pairOf` PARTNER of every processed vert, and those
-// indices lie OUTSIDE the processed list by construction — `applyTRS`'s own
-// prologue says so in as many words, which is why it restores the whole
-// baseline instead of just the processed slice.
-//
-// Two things follow from a partner left out of the exclusion, and they are the
-// same two the exclusion exists to prevent:
-//
-//   1. SELF-REFERENCE. The partner moves with the gesture, so it — and every
-//      edge / face centre it drags along — chases the cursor at the mirrored
-//      rate. On a symmetric mesh the partner is often the nearest candidate
-//      there is.
-//   2. A STALE GRID. `snap.d`'s candidate grid is keyed on
-//      `mesh.mutationVersion`, which an interactive drag deliberately does not
-//      bump, so it is built once at drag start and reused for the whole
-//      gesture. That is sound for one reason only: every vertex whose cached
-//      projection goes stale is one the query drops before the caller sees it.
-//      A moving vertex that is not excluded is stale AND returned — the query
-//      answers with where the partner WAS at drag start.
-//
-// UNION, not the mirror pass's driver rule. The pass skips writing a partner
-// that is itself processed (each side then drives from its own base-side
-// vertex), so taking the union of processed ∪ partners costs nothing in
-// accuracy: a skipped partner was already in the list. Duplicates are left in
-// rather than filtered — `snap.d`'s `excludeMembership` sets and clears bits
-// idempotently, and de-duplicating would cost a vertex-count-sized mask on
-// every motion event to buy nothing.
-//
-// `pairOf[i] == -1` means "no mirror" and is dropped; `pairOf[i] == i` is an
-// on-plane vertex, which the pass projects in place and which is already in
-// the list.
-uint[] movingVertexIndices(const(int)[] processed, const ref SymmetryPacket sp,
-                           size_t vertCount)
-{
-    uint[] moving;
-    immutable bool mirrors = sp.enabled && sp.pairOf.length == vertCount;
-    moving.reserve(mirrors ? processed.length * 2 : processed.length);
-    foreach (vi; processed)
-        if (vi >= 0) moving ~= cast(uint)vi;
-    if (!mirrors) return moving;
-    foreach (vi; processed) {
-        if (vi < 0 || vi >= cast(int)sp.pairOf.length) continue;
-        immutable int mi = sp.pairOf[vi];
-        if (mi < 0 || mi == vi) continue;
-        moving ~= cast(uint)mi;
-    }
-    return moving;
-}
-
 class TransformTool : Tool {
 public:
     struct PreparedScalarDeactivateImage {
@@ -1231,6 +1176,25 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    // W3 of the authoring-side latch (task 7144; law gap 331/332): a press
+    // that PLACES the action centre — an off-gizmo relocate in a relocating
+    // mode, or an element pick — latches the authoring side A at the placed
+    // point. A press under a PINNED centre places nothing and latches nothing
+    // (C-press-pinned P-acen), which is why this is called from the placing
+    // branches and not at the top of the press handler. NOT called by the
+    // end-of-drag pin follow or `restageActionCenterPin` (they re-stage a pin,
+    // they do not place a centre).
+    void notePressPlacement(Vec3 worldPoint) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.notePlacementAt(worldPoint);
+    }
+
     // Task 1530 — FREEZE Mode.Element's pivot at the picked element's anchor
     // point. Paired with notifyAcenUserPlaced from the wrapper's click-pick
     // (takeVert/takeEdge/takeFace): the pin is a POINT, and from the write on
@@ -1541,6 +1505,10 @@ protected:
     bool captureSymmetryForDrag(ref VectorStack vts) {
         if (auto sp = vts.get!SymmetryPacket()) dragSymmetry = *sp;
         else                                    dragSymmetry = SymmetryPacket.init;
+        // The authoring side A — from the stage, its one owner (task 7144):
+        // a press may have latched it after this `vts` was evaluated.
+        import toolpipe.stages.symmetry : liveSymmetryStage;
+        if (auto st = liveSymmetryStage()) dragSymmetry.authoringSide = st.authoringSide();
         return dragSymmetry.enabled;
     }
 

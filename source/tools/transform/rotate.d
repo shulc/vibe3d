@@ -555,6 +555,7 @@ public:
                 handler.setPosition(hit);
                 centerManual = true;
                 notifyAcenUserPlaced(hit);
+                notePressPlacement(hit);    // W3 (task 7144)
                 gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
                 lastClickWasRelocate = true;
             } else if (beforePinnedHaul !is null) {

@@ -866,8 +866,10 @@ public:
         // pre-refactor.
         handler.setPosition(hit);
         centerManual = true;
-        if (notifyAcen)
+        if (notifyAcen) {
             notifyAcenUserPlaced(hit);
+            notePressPlacement(hit);        // W3 (task 7144)
+        }
         dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = mx; lastMY = my;
         // The relocate has just moved the gizmo to `hit`; that relocated pivot
@@ -959,20 +961,19 @@ public:
         }
 
         // Exclude verts the drag is moving. Otherwise a single-vert drag
-        // always snaps to its own (zero-distance) projected pixel.
-        //
-        // The set is NOT `vertexIndicesToProcess` alone: with symmetry live the
-        // apply's mirror pass writes the partner of every processed vert, and
-        // those indices lie outside the processed list. `movingVertexIndices`
-        // is the union — see its contract for the two things a missing partner
-        // costs (a mirrored candidate that chases the drag, and a candidate
-        // grid answering with where the partner was at drag start).
+        // always snaps to its own (zero-distance) projected pixel. The moving
+        // set IS the processed operand (task 7144): the mirror pass writes a
+        // partner only when that partner is itself in the operand, so no
+        // vertex outside `vertexIndicesToProcess` moves — a moving vertex left
+        // un-excluded would chase the cursor and answer from a stale grid.
         immutable int nProc = vertexProcessCount
                             < cast(int)vertexIndicesToProcess.length
                             ? vertexProcessCount
                             : cast(int)vertexIndicesToProcess.length;
-        uint[] exclude = movingVertexIndices(vertexIndicesToProcess[0 .. nProc],
-                                             dragSymmetry, mesh.vertices.length);
+        uint[] exclude;
+        exclude.reserve(nProc);
+        foreach (vi; vertexIndicesToProcess[0 .. nProc])
+            if (vi >= 0) exclude ~= cast(uint)vi;
 
         Vec3 desired = gizmoCenter + worldDelta;
         SnapResult sr = snapCursor(desired, sx, sy, cachedVp,

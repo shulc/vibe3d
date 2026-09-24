@@ -770,6 +770,14 @@ struct SymmetryPacket {
     bool[3]      axisFlags;
     Vec3         pivot = Vec3(0, 0, 0);
 
+    /// The authoring side A (task 7144): +1 or -1, the side of the plane on
+    /// which an operand vertex takes the transform itself; off A it takes the
+    /// conjugate M·K(M·p). Runtime state OUTSIDE `config` on purpose — it is
+    /// not a preset, an attr or an undo step, and `symmetryPacketsEqual`
+    /// (config only) must not refire on it. Written only by `SymmetryStage`
+    /// (publication) and by a capture copying the stage's value.
+    int          authoringSide = -1;
+
     /// Deep owned copy for prepared effects; pairing arrays are stage-cache
     /// views in a live packet and must not alias the next evaluation.
     SymmetryPacket ownedDup() const {
@@ -782,6 +790,7 @@ struct SymmetryPacket {
         p.vertSign = vertSign.dup;
         p.axisFlags = axisFlags;
         p.pivot = pivot;
+        p.authoringSide = authoringSide;
         return p;
     }
 }

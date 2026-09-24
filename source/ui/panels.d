@@ -68,7 +68,6 @@ import ui.action_menu : ActionMenuRoles, dispatchAction, firstCheckedLabel,
     popupItemChecked, popupWidgetId, renderButtonPopups, selectButtonVariant;
 import ui.history_panel : HistoryPanelState, HistoryPanelRead,
     HistoryPanelActions, HistoryPanelController, HistoryMacroStatus;
-import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
 import tools.transform.move;

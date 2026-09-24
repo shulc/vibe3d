@@ -1773,7 +1773,7 @@ shared static this() {
 // grids store the generation. Per SLOT and not per (slot, kind) because one
 // `snapCursor` call queries several kinds with the SAME exclusion, and — more
 // importantly — because the slots genuinely differ: slot 0 is the active layer
-// and passes the drag's `movingVertexIndices`, while every background slot
+// and passes the drag's moving set (`vertexIndicesToProcess`), while every background slot
 // passes `null` (`walkSource(*src, i+1, null)`). A single global snapshot
 // would flip between the two on every query and rebuild every background grid
 // each time.
@@ -1795,7 +1795,7 @@ shared static this() {
 // two orderings of the same indices read as two different generations. That is
 // the safe direction — a spurious rebuild, never a missed one — and it costs
 // nothing in practice because the producer is deterministic:
-// `movingVertexIndices` is built the same way on every step of a gesture. An
+// the moving set is built the same way on every step of a gesture. An
 // exact compare also keeps "same set" a fact rather than a probability, which
 // a hash could not.
 private struct SlotExclusion {

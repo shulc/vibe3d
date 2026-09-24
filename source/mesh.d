@@ -2245,8 +2245,8 @@ struct Mesh {
     /// WHO MAY CALL IT: the three interactive-transform apply sites, and
     /// nothing else. What makes the claim TRUE at those three is that the same
     /// tool hands the same set to its consumers as an exclusion —
-    /// `MoveTool.applySnapToDelta` passes `movingVertexIndices` (the processed
-    /// verts UNION their symmetry partners) to `snapCursor` as `excludeVerts`.
+    /// `MoveTool.applySnapToDelta` passes the processed operand
+    /// (`vertexIndicesToProcess`) to `snapCursor` as `excludeVerts`.
     /// A caller that cannot name the consumer-side exclusion its claim rests on
     /// wants `publishChange`.
     ///

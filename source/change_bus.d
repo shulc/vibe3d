@@ -584,8 +584,8 @@ struct ChangeBus {
     // drag step (task 1906 stage 1, a measured law). The vertices it moved are
     // the tool's moving set, and the tool hands that SAME set to every
     // consumer that could be embarrassed by it — `snapCursor`'s `excludeVerts`
-    // is `movingVertexIndices`, the union of the processed verts and their
-    // symmetry partners. A cache that already refuses to answer about that set
+    // is the processed operand (`vertexIndicesToProcess`; under symmetry the
+    // mirror pass writes only partners inside it, task 7144). A cache that already refuses to answer about that set
     // is not made wrong by the change; it is only made to rebuild.
     //
     // WHY IT IS A DELIVERY ATTRIBUTE AND NOT A CLASS. The CLASS is right: the

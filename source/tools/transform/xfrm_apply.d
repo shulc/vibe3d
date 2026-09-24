@@ -783,11 +783,11 @@ mixin template XfrmApplyImpl() {
         // the single per-frame vertex-cloud apply for the live drag. No-op
         // in the default build.
         auto zFramesTool = g_frames.phase(Phase.tool);
-        // DRIVER pass. Transforms exactly the original selection with each
-        // driver's own falloff weight + matrix M. `dragSymmetry` is passed
-        // DISABLED so the in-kernel position-copy tail never runs here: the
-        // symmetry mirror is owned by the single position-copy call below.
-        SymmetryPacket noSym;   // enabled == false
+        // DRIVER pass. Transforms exactly the operand with each vertex's own
+        // falloff weight + matrix M. The packet is passed for the AUTHORING
+        // FRAME only (task 7144: off the authoring side a vertex takes
+        // M·K(M·p)); the kernel has no mirror tail — the pair mirror is the
+        // single position-copy call below.
         // ROTATE-ONLY fold blend guard. When `!hasT && !hasS && flagR` the composed
         // matrix M == run.r is an origin-fixed PURE rotation (the pivot is applied
         // OUTSIDE M by applyXformMatrix as `pivot + M*(v - pivot)`), so
@@ -820,20 +820,16 @@ mixin template XfrmApplyImpl() {
             applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                              lastFoldAnchor,
                              foldMode, dragFalloff, dragAimSpace(), cp, ap,
-                             clusterM, noSym, toProcess,
+                             clusterM, dragSymmetry, toProcess,
                              /*weightVerts=*/ weightFrom,
                              /*route=*/ route);
 
-        // MIRROR pass — fixed-base position-copy symmetry. The fold carries
-        // exactly ONE symmetry model: the positive-axis side drives and is
-        // reflected onto the other side, copying each driver's FINAL position
-        // (the position the DRIVER pass just wrote into mesh.vertices). The
-        // fixed base side is `sp.baseSide` (default +1, the positive axis), so
-        // the result is symmetric about the plane regardless of which side the
-        // falloff sits on — an asymmetric falloff on the non-base side is
-        // discarded; the base side's weight drives both halves. This is
-        // cluster-agnostic: it copies the per-cluster (ACEN.Local) final
-        // positions the driver pass produced just as it copies the global ones.
+        // MIRROR pass — the pair write rule (`symmetry.mirrorStepFor`): a
+        // pair in the operand is copied from its +X member's FINAL position
+        // (its weight and result drive both halves — gap 73/318), every
+        // vertex having been authored in A by the driver pass; a partner
+        // outside the operand is never written (gap 316). Cluster-agnostic:
+        // it copies the per-cluster (ACEN.Local) final positions too.
         if (!skipElementDriver && dragSymmetry.enabled
             && dragSymmetry.pairOf.length == mesh.vertices.length) {
             import tools.transform.morph_route :
@@ -894,7 +890,7 @@ mixin template XfrmApplyImpl() {
         //
         // Task 2000 — CONFINED, and this is the site the whole marker exists
         // for: it is the one a plain gizmo drag reaches on every step. The
-        // vertices it moved are `movingVertexIndices`, the same set the drag
+        // vertices it moved are `vertexIndicesToProcess`, the same set the drag
         // hands `snapCursor` as `excludeVerts`. See
         // `Mesh.publishConfinedChange`.
         mesh.publishConfinedChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);

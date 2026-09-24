@@ -4,6 +4,7 @@ import core.atomic : atomicOp;
 import tools.transform.xfrm_transform : XfrmTransformTool,
     PreparedXfrmActivationResetImage;
 import tools.transform.move : MoveTool;
+import toolpipe.stages.actcenter : ActionCenterStage;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
 import prepared_transform_product_activation :
@@ -52,6 +53,7 @@ private:
     PreparedXfrmActivationPostToken post_;
     ValidatedXfrmActivationPreToken validatedPre_;
     ValidatedXfrmActivationPostToken validatedPost_;
+    ActionCenterStage placementAcen_;   // W1 (task 7144): the activation's latch
 public:
     @disable this();
 
@@ -143,7 +145,17 @@ public:
             validatedPost_.owner != owner_ ||
             validatedPost_.generation != generation_) return;
         target_.installPreparedActivationResetPost(reset_);
+        // W1 — a transform ACTIVATION places the action centre (the handle),
+        // so it latches the authoring side there. Deferred: the centre is the
+        // next ACEN evaluation's (C-activation, gap 330; task 7144).
+        if (placementAcen_ !is null) placementAcen_.notePlacement();
         consume();
+    }
+
+    /// Arm W1: the installed activation will note a placement on `acen`.
+    /// Called ONLY by `XfrmTransformTool.prepareActivate`.
+    void placeActionCentreOnInstall(ActionCenterStage acen) nothrow @nogc {
+        placementAcen_ = acen;
     }
 
     void abort() nothrow @nogc {
@@ -188,7 +200,7 @@ private:
         return target_ !is null && reset_.valid &&
             target_.preparedActivationShape(flags_, move_, rotate_, scale_);
     }
-    void scrub() nothrow @nogc { reset_.clear(); }
+    void scrub() nothrow @nogc { reset_.clear(); placementAcen_ = null; }
     void consume() nothrow @nogc {
         scrub(); preBegun_ = postBegun_ = validated_ = preInstalled_ = false;
         consumed_ = true; target_ = null; move_ = null; rotate_ = null; scale_ = null;

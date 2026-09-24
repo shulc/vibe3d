@@ -13,6 +13,7 @@ import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient,
 import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
+import toolpipe.stages.symmetry : liveSymmetryStage;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath, installPreparedStatePath;
 import document          : Layer;
@@ -178,18 +179,15 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient, PresetClaimable 
         // `centerIsSelectionCentroid`. The six-mode list used to be written
         // out inline right here AND again in `settlePinHonored`, two
         // hand-maintained spellings of one set.
-        if (auto sym = vts.get!SymmetryPacket()) {
-            if (sym.enabled
-             && sym.vertSign.length == sym.pairOf.length
-             && sym.vertSign.length > 0
-             && !userPin.placed
-             && subjType != SelType.Item
-             && centerIsSelectionCentroid(mode))
-            {
-                Vec3 baseCen;
-                if (baseSideCentroid(*sym, baseCen))
-                    pkt.center = baseCen;
-            }
+        pkt.center = restrictToBaseSide(pkt.center, vts.get!SymmetryPacket(), subjType);
+
+        // THE AUTHORING-SIDE EVENT, deferred half (task 7144): an activation
+        // (W1) knows only that a centre is being placed, not where — the
+        // centre is this evaluation's. Consumed AFTER the final `pkt.center`
+        // and writes nothing into `pkt` (the pivot is bit-for-bit what it was).
+        if (placementPending_) {
+            placementPending_ = false;
+            if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(pkt.center);
         }
 
         pkt.isAuto = (mode == Mode.Auto && !userPin.placed);
@@ -572,6 +570,7 @@ public:
         cancelSnap       = Pin.init;
         cancelElementSnap = Pin.init;
         softPin          = Pin.init;
+        placementPending_ = false;
         invalidateClusterCache();
         publishState();
     }
@@ -609,6 +608,11 @@ public:
     /// all — so before this carry the two arming routes disagreed. Now both
     /// keep the point.) `reset()` still wipes it: an explicit full reset must.
     override void resetTransient() {
+        // A tool drop is not a placement: a deferred activation latch that no
+        // evaluation consumed dies with the tool, BEFORE the lock check — a
+        // user-locked centre must not keep it alive for some later caller's
+        // evaluation (opponent R25, condition 2; task 7144).
+        placementPending_ = false;
         if (userLocked) return;
         auto keepElementPin = elementPin;
         reset();
@@ -2094,6 +2098,66 @@ private:
         return true;
     }
 
+    /// The base-side restriction of a selection-centroid centre (the one
+    /// rule `evaluate` applies to its published centre and `placementCentre`
+    /// applies to an eager placement — one helper, so the two cannot drift).
+    /// Under an enabled symmetry packet with a pair table, a centre that IS the
+    /// selection centroid is restricted to the +X (`baseSide`) half: the handle
+    /// sits on the pair's +X member (gap 318, C-base B-fixed; mixed selections
+    /// gap 328). A user pin, an item subject or a non-centroid mode is left alone.
+    private Vec3 restrictToBaseSide(Vec3 centre, const(SymmetryPacket)* sym,
+                                    SelType subjType) const
+    {
+        if (sym is null) return centre;
+        if (sym.enabled
+         && sym.vertSign.length == sym.pairOf.length
+         && sym.vertSign.length > 0
+         && !userPin.placed
+         && subjType != SelType.Item
+         && centerIsSelectionCentroid(mode))
+        {
+            Vec3 baseCen;
+            if (baseSideCentroid(*sym, baseCen)) return baseCen;
+        }
+        return centre;
+    }
+
+    /// The centre an evaluation would publish now, for the live selection and
+    /// the live symmetry stage's last published packet — what an EAGER
+    /// placement (W2: switching an action centre on, typing a manual centre)
+    /// latches, so it cannot pick up a later selection's centre at some
+    /// unrelated evaluation (opponent R25, condition 1).
+    public Vec3 placementCentre() {
+        immutable SelType st = liveSelType();
+        const Vec3 c = computeCenter(st);
+        auto sy = liveSymmetryStage();
+        return restrictToBaseSide(c, (sy !is null && sy.enabled) ? sy.publishedPacket() : null, st);
+    }
+
+    // ------------------------------------------------------------------
+    // THE AUTHORING-SIDE EVENT (task 7144; law gap rows 330/331/332/334,
+    // toolcards/symmetry_selection, doc/measured_laws.md §24a). The authoring
+    // side A is latched wherever an action centre is PLACED; the STATE is the
+    // symmetry stage's base point, the EVENT is here, and this stage is the
+    // only caller of `placeAuthoringBase` — `notePlacementAt` (the point is
+    // known now: a press, an eager centre switch) and the `evaluate` consumer
+    // of `notePlacement` (the centre is known only at the next evaluation: a
+    // transform activation). Writers W0–W5 are pinned exactly by the census
+    // in tests/unit/symmetry_test.d.
+    // ------------------------------------------------------------------
+    private bool placementPending_;
+
+    /// Deferred placement: the next evaluation's centre becomes A's base.
+    public void notePlacement() nothrow @nogc { placementPending_ = true; }
+
+    /// Immediate placement at a known world point.
+    public void notePlacementAt(Vec3 worldPoint) {
+        if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(worldPoint);
+    }
+
+    /// True while a deferred placement waits for an evaluation (unit cells).
+    public bool placementPending() const nothrow @nogc { return placementPending_; }
+
     // Strict selection centroid — falls back to all-geometry only if
     // there genuinely is no selection AND no geometry (empty mesh).
     // Sub-mode picks one of the 7 bbox positions in WORLD axis-aligned
@@ -2176,6 +2240,10 @@ private:
         userPin.placed = false;
         softPin = Pin.init;
         ++slotEpoch;
+        // W2 on the ARM path: a preset's own action centre is placed by the
+        // activation it rides on, so it takes the activation's deferred latch
+        // (`nothrow` here, and the tool is armed by construction).
+        notePlacement();
         installPreparedStatePath("actionCenter/mode", ownedWire);
     }
 
@@ -2197,6 +2265,9 @@ private:
                 // is owned by the picking click, and nothing about a mode
                 // change says the user un-picked.
                 softPin        = Pin.init;
+                // W2: switching an action centre on PLACES it — latch A now,
+                // at the centre this mode publishes (C-latch-o, gap 330).
+                notePlacementAt(placementCentre());
                 return true;
             }
             case "cenX": case "cenY": case "cenZ": {
@@ -2212,6 +2283,8 @@ private:
                 // Setting a coord component implies the user wants a
                 // sticky pin — promote to Manual unless already there.
                 if (mode != Mode.Manual) mode = Mode.Manual;
+                // W2: a typed centre is a placement (label L346).
+                notePlacementAt(placementCentre());
                 return true;
             }
             case "userPlacedCenter": {

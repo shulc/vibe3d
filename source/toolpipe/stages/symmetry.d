@@ -153,10 +153,54 @@ class SymmetryStage : Stage, Operator {
         pkt.axisFlags[1] = enabled && axisIndex == 1;
         pkt.axisFlags[2] = enabled && axisIndex == 2;
         pkt.pivot        = pkt.planePoint;
+        pkt.authoringSide = sideOfBase(pkt.planePoint, pkt.planeNormal);
 
         _publishedPacket = pkt;
         vts.put(&_publishedPacket);
         return true;
+    }
+
+    // ---------------------------------------------------------------------
+    // THE AUTHORING SIDE A — STATE (task 7144; law: gap rows 317/330/331,
+    // toolcards/symmetry_selection, doc/measured_laws.md §24a). A is ONE base
+    // POINT, placed wherever an action centre is placed; the side is that
+    // point tested against the CURRENT plane. A point rather than a sign is
+    // what makes a symmetry toggle, an axis round trip and a placement made
+    // with symmetry off all keep the side with no rule of their own. The only
+    // writer is `placeAuthoringBase`, and its only callers are in
+    // `ActionCenterStage` (the event half) — pinned by a census in
+    // tests/unit/symmetry_test.d. This stage is NOT `ToolSwitchTransient`:
+    // A outlives a tool drop by construction; `reset()` (a fresh session)
+    // unplaces it, which reads as -X.
+    // ---------------------------------------------------------------------
+    private Vec3 authoringBase_;
+    private bool authoringBasePlaced_;
+
+    /// Place the authoring base at `worldPoint`. No gate on `enabled`: a
+    /// placement made with symmetry off still latches (Toff-latch).
+    void placeAuthoringBase(Vec3 worldPoint) nothrow @nogc {
+        authoringBase_ = worldPoint;
+        authoringBasePlaced_ = true;
+        if (enabled)
+            _publishedPacket.authoringSide =
+                sideOfBase(_publishedPacket.planePoint, _publishedPacket.planeNormal);
+    }
+
+    /// The last packet this stage published (valid after an enabled
+    /// evaluation; its pair table is the stage's cache).
+    const(SymmetryPacket)* publishedPacket() const nothrow @nogc { return &_publishedPacket; }
+
+    /// The published authoring side (+1 / -1).
+    int authoringSide() const nothrow @nogc {
+        if (!authoringBasePlaced_) return -1;
+        Vec3 pp, pn;
+        currentPlaneConst(pp, pn);
+        return sideOfBase(pp, pn);
+    }
+
+    /// Strict: a base ON the plane, or no base at all, reads -1.
+    private int sideOfBase(Vec3 pp, Vec3 pn) const pure nothrow @nogc {
+        return authoringBasePlaced_ && dot(authoringBase_ - pp, pn) > 0 ? +1 : -1;
     }
 
     /// The stage's user-facing config — the SAME seven fields
@@ -244,6 +288,8 @@ public:
         cachedVertSign_.length = 0;
         cachedTopology_        = false;
         cachedReady_           = false;
+        authoringBasePlaced_   = false;   // W0: a fresh session reads -X
+        _publishedPacket.authoringSide = -1;
         publishState();
     }
 
@@ -301,53 +347,12 @@ public:
     // (`reset`, `restoreConfigFromPacket`) do it directly, where the reason is
     // visible.
 
-    /// Update `baseSide` from an anchor point **in the same space as
-    /// `mesh.vertices[]`** — i.e. LOCAL to the layer, not world — typically
-    /// the centroid of the element the user
-    /// just clicked while symmetry was active. Off-plane anchors set
-    /// `baseSide` to the side they land on; on-plane anchors leave the
-    /// existing `baseSide` untouched (the user clicked something
-    /// straddling the plane; previous anchor stays canonical).
-    ///
-    /// **Task 0619 — this comment used to say "world-space anchor point",
-    /// and that was wrong.** It was inventoried as a defect to fix (convert
-    /// the three `symmetry_pick.d` call sites with `ms.toWorldPoint`) and the
-    /// investigation refuted it: `baseSide` is only ever compared against
-    /// `SymmetryPacket.vertSign` (`symmetry.d` `applySymmetryMirror` and its
-    /// sibling), and `vertSign` is computed in `rebuildPairing` /
-    /// `rebuildPairingTopological` from raw `mesh.vertices[i]` against this
-    /// same plane. The whole symmetry subsystem — the pairing search,
-    /// `mirrorPosition`, `isOnPlane`, the appliers — is `ItemXform`-unaware,
-    /// so the plane is de facto LAYER-LOCAL. Converting the anchor alone
-    /// would compare a world point against a local plane and invert the
-    /// mirror pairs on any layer whose transform moves geometry across it.
-    ///
-    /// If item-transform-aware symmetry is ever wanted, the seam is the
-    /// PLANE (`currentPlane` / `evaluate`), not the anchor, and it moves the
-    /// whole subsystem at once. Do not "fix" this call site in isolation.
-    void anchorAt(Vec3 pos) {
-        // Resolve the current plane the same way `evaluate` does so a
-        // caller invoking `anchorAt` between evaluates picks up the
-        // live axis / offset / workplane state.
-        Vec3 planePt, planeN;
-        currentPlane(planePt, planeN);
-        float d = dot(pos - planePt, planeN);
-        if (d >  epsilonWorld) baseSide = +1;
-        else if (d < -epsilonWorld) baseSide = -1;
-        // |d| <= epsilon ⇒ leave baseSide unchanged.
-        publishState();
-    }
-
-    /// Resolve `(planePoint, planeNormal)` from the stage's current
-    /// axis / offset / workplane state. Mirrors the head of `evaluate`
-    /// — split out so `anchorAt` can compute the plane without
-    /// requiring a full pipeline pass first.
-    private void currentPlane(out Vec3 planePt, out Vec3 planeN) {
+    /// Resolve `(planePoint, planeNormal)` from the stage's current axis /
+    /// offset / workplane state, without a pipeline pass — the head of
+    /// `evaluate`. A workplane plane falls back to the last evaluated plane
+    /// (world XZ before the first). Read by `authoringSide()`.
+    private void currentPlaneConst(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
         if (enabled && useWorkplane) {
-            // Without a fresh pipeline pass we can't reach the
-            // upstream WorkplaneStage. Fall back to the cached
-            // workplane snapshot from the last `evaluate`; if there
-            // was none, default to world XZ.
             if (cachedReady_) {
                 planePt = cachedPlanePoint_;
                 planeN  = cachedPlaneNormal_;
@@ -522,7 +527,7 @@ private:
         }
     }
 
-    static Vec3 axisVec(int ax) {
+    static Vec3 axisVec(int ax) pure nothrow @nogc {
         switch (ax) {
             case 0:  return Vec3(1, 0, 0);
             case 1:  return Vec3(0, 1, 0);
@@ -539,4 +544,13 @@ private:
             default: return "x";
         }
     }
+}
+
+/// The live pipeline's symmetry stage, or null (task 7144). The ONE finder
+/// for the authoring side: `ActionCenterStage`, `symmetry_pick.captureLiveSymmetry`,
+/// `TransformTool.captureSymmetryForDrag` and Edge Extend all read it here.
+SymmetryStage liveSymmetryStage() {
+    import toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return null;
+    return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
 }

@@ -10,7 +10,8 @@ import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
 import change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
-import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane;
+import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane,
+                           authored;
 import symmetry_pick     : captureLiveSymmetry;
 import operator          : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import params            : Param, wireArgs;
@@ -121,15 +122,17 @@ class MeshTransform : Command, Operator {
         // the first delta. The kernel is a function of the params, the
         // restored pre-op mesh, the selection and the live symmetry packet, so
         // the replay lands where the first run landed and the delta's
-        // `posBefore` still inverts it exactly.
+        // `posBefore` still inverts it exactly — and the authoring side A,
+        // the one input that changes OUTSIDE history, is the one recorded at
+        // the first application (`appliedAuthoringSide_`, task 7144).
         if (undo_.armed()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed);
+            const ok = applyKernel(ed, true);
             ed.close();
             return ok;
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-        const ok = applyKernel(ed);
+        const ok = applyKernel(ed, false);
         undo_.arm(this, ed.close());
         if (!ok) { undo_.disarm(this); return false; }
         return true;
@@ -161,7 +164,13 @@ class MeshTransform : Command, Operator {
     // Both index sets are repeat-free, which is памятка 30's condition:
     // pass 1's is the vmask enumeration, pass 2's is a diff over the array.
     // -----------------------------------------------------------------------
-    private bool applyKernel(ref MeshEditBatch ed) {
+    /// The authoring side A read at the FIRST application, replayed on redo
+    /// (task 7144): a press between do and redo may move the live A, and the
+    /// replay must land where the first run landed. A stored input, like
+    /// `delta` / `pivot` — not a latch.
+    private int appliedAuthoringSide_ = -1;
+
+    private bool applyKernel(ref MeshEditBatch ed, bool redo) {
         // Build affected-vertex mask from selection + edit mode.
         //
         // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
@@ -223,18 +232,13 @@ class MeshTransform : Command, Operator {
             symmActive = symm.enabled
                       && symm.pairOf.length == mesh.vertices.length;
         }
+        if (redo) symm.authoringSide = appliedAuthoringSide_;
+        else      appliedAuthoringSide_ = symm.authoringSide;
 
-        // Snapshot the touched verts only. The EMPTY-DELTA arm of `revert()`
-        // restores them. With symmetry active we also capture each selected
-        // vert's mirror counterpart so that revert undoes the mirror write too.
-        //
-        // NOTE FOR ANYONE MEASURING THIS FILE: that partner capture is why a
-        // migration of this command was invisible to every result-shaped check.
-        // These two arrays were already complete over both passes, so deleting
-        // the pass-2 recorder leaves the forward correct and the census row at
-        // 0. Only the op-log and the ARMED revert can see it (task 1903 §L0-b,
-        // W-b1). Until Stage N the same arrays also served the hatch's
-        // tracker-off revert, which made that blindness total.
+        // Snapshot the touched verts only — the operand. A transform under
+        // symmetry writes ONLY its operand (task 7144, gap 316): pass 2 writes
+        // a partner only when it is itself in the operand, so this set is
+        // complete over both passes.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
         foreach (i; 0 .. mesh.vertices.length) {
@@ -243,27 +247,12 @@ class MeshTransform : Command, Operator {
                 touchedPrev ~= mesh.vertices[i];
             }
         }
-        // The prefix of `touchedIdx` that pass 1 writes: everything appended
-        // by the loop above, i.e. exactly the vmask set, in enumeration order.
-        // Read BEFORE the partner append below extends the array.
         const size_t nSel = touchedIdx.length;
-        if (symmActive) {
-            foreach (vi; 0 .. mesh.vertices.length) {
-                if (!vmask[vi]) continue;
-                if (symm.onPlane[vi]) continue;
-                int mi = symm.pairOf[vi];
-                if (mi < 0 || mi == cast(int)vi) continue;
-                if (vmask[mi]) continue;
-                touchedIdx  ~= cast(uint)mi;
-                touchedPrev ~= mesh.vertices[mi];
-            }
-        }
 
-        // Snapshot baseline for the topological-symmetry delta-mirror path.
-        // Taken AFTER the touched-set capture (which reads mesh.vertices) so
-        // the snapshot and the touched-prev array are consistent.
+        // Baseline for the delta-mirror copy (reads `baseline[partner]`), at
+        // any live symmetry: the partner's own pre-op position.
         Vec3[] baseAll;
-        if (symmActive && symm.topology) baseAll = mesh.vertices.dup;
+        if (symmActive) baseAll = mesh.vertices.dup;
 
         // ---- PASS 1: the kind switch, shape (A) ---------------------------
         // `touchedPrev[k]` IS `mesh.vertices[touchedIdx[k]]` for k < nSel — it
@@ -276,11 +265,12 @@ class MeshTransform : Command, Operator {
             case "translate":
                 newPos.reserve(nSel);
                 foreach (k; 0 .. nSel) {
-                    Vec3 p = touchedPrev[k];
-                    p.x += delta.x;
-                    p.y += delta.y;
-                    p.z += delta.z;
-                    newPos ~= p;
+                    newPos ~= authored(symm, touchedIdx[k], touchedPrev[k], (Vec3 p) {
+                        p.x += delta.x;
+                        p.y += delta.y;
+                        p.z += delta.z;
+                        return p;
+                    });
                 }
                 wrote = true;
                 break;
@@ -299,11 +289,10 @@ class MeshTransform : Command, Operator {
                     auto mrot = pivotRotationMatrix(pivot, axis / axisLen, angle);
                     newPos.reserve(nSel);
                     foreach (k; 0 .. nSel) {
-                        auto v0 = Vec4(touchedPrev[k].x,
-                                       touchedPrev[k].y,
-                                       touchedPrev[k].z, 1.0f);
-                        auto v1 = mulMV(mrot, v0);
-                        newPos ~= Vec3(v1.x, v1.y, v1.z);
+                        newPos ~= authored(symm, touchedIdx[k], touchedPrev[k], (Vec3 q) {
+                            auto v1 = mulMV(mrot, Vec4(q.x, q.y, q.z, 1.0f));
+                            return Vec3(v1.x, v1.y, v1.z);
+                        });
                     }
                     wrote = true;
                 }
@@ -312,11 +301,10 @@ class MeshTransform : Command, Operator {
                 auto msc = pivotScaleMatrix(pivot, factor.x, factor.y, factor.z);
                 newPos.reserve(nSel);
                 foreach (k; 0 .. nSel) {
-                    auto v0 = Vec4(touchedPrev[k].x,
-                                   touchedPrev[k].y,
-                                   touchedPrev[k].z, 1.0f);
-                    auto v1 = mulMV(msc, v0);
-                    newPos ~= Vec3(v1.x, v1.y, v1.z);
+                    newPos ~= authored(symm, touchedIdx[k], touchedPrev[k], (Vec3 q) {
+                        auto v1 = mulMV(msc, Vec4(q.x, q.y, q.z, 1.0f));
+                        return Vec3(v1.x, v1.y, v1.z);
+                    });
                 }
                 wrote = true;
                 break;
@@ -332,9 +320,10 @@ class MeshTransform : Command, Operator {
         if (wrote) ed.setVertexPositions(touchedIdx[0 .. nSel], newPos);
 
         // ---- PASS 2: the symmetry mirror, shape (D) -----------------------
-        // Uses the pair table captured BEFORE the switch above; mirrors each
-        // selected vertex's new position into its plane-counterpart, and
-        // projects on-plane selected verts back onto the plane.
+        // Uses the pair table captured BEFORE the switch above: the pair write
+        // rule (`mirrorStepFor`) — a pair inside the operand is copied from its
+        // +X member, on-plane operand verts are projected; nothing outside the
+        // operand is written.
         if (symmActive) {
             // The `.dup` is guarded, not unconditional: on the REDO arm the
             // batch records nothing and this whole image would be built only

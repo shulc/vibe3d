@@ -659,6 +659,7 @@ public:
             handler.setPosition(center);
             centerManual = true;
             notifyAcenUserPlaced(center);
+            notePressPlacement(center);     // W3 (task 7144)
             lastClickWasRelocate = true;
         } else {
             // PINNED (or a relocate ray that missed its plane). Nothing about
