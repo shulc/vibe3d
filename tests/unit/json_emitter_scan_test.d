@@ -504,6 +504,7 @@ unittest {
     // against a later run. `%f` is six decimal places, so two genuinely
     // different floats can print identically and a dropped plane carry would
     // compare equal to the plane that carried; `%.9g` round-trips a `float`.
+    // Task 7139 raised it to 112: GET /api/camera's view/proj matrices.
     static immutable LedgerRow[] kFrozen = [
         LedgerRow("meshToJsonDetailed|%f", 10, "detailed mesh JSON"),
         LedgerRow("meshPlanesJson|%.9g", 11, "lossless mesh-plane JSON"),
@@ -524,6 +525,9 @@ unittest {
           ~ "`toolMatrix`)"),
         LedgerRow("wireViewportProviders.setGpuSurfaceProvider|%.6f", 3,
             "GPU surface scalars"),
+        LedgerRow("wireViewportProviders.setCameraDataProvider.mat|%.9g", 1,
+            "camera view/proj matrices from the resolved snapshot (task 7139): "
+          ~ "a turned ortho view is only visible here, `focus` stays world"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.planJson|%.6f", 8,
             "viewport draw plan"),
         LedgerRow("wireViewportProviders.setViewportDisplayProvider.stateJson|%.6f", 1,
@@ -566,13 +570,14 @@ unittest {
     size_t   total;
     foreach (e; kFrozen) total += e.count;
 
-    assert(total == 111, format("the frozen table must add up to the 111 "
+    assert(total == 112, format("the frozen table must add up to the 112 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
-                              ~ "1903 Stage B), got %d", total));
+                              ~ "1903 Stage B, plus the camera matrices from "
+                              ~ "task 7139), got %d", total));
     string drift = reconcile(kFrozen, censusHits);
-    if (censusHits.length != 111)
-        drift ~= format("\n    specifier population — recorded 111, scanner "
+    if (censusHits.length != 112)
+        drift ~= format("\n    specifier population — recorded 112, scanner "
                       ~ "found %d", censusHits.length);
     assert(drift.length == 0,
         "the per-symbol specifier census moved. This is the ONLY check that can "

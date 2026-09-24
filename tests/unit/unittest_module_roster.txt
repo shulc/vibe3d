@@ -584,6 +584,7 @@ tests.unit.vertex_dot_arm_census_test
 tests.unit.vertex_extrude_apex_law_test
 tests.unit.view_test
 tests.unit.viewgrid_test
+tests.unit.viewport_plane_turn_test
 tests.unit.viewport_scheme_test
 tests.unit.viewport_test
 tests.unit.vmap_policy_law_test

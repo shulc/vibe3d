@@ -12,6 +12,7 @@ import select_visibility : SelectVisibility, SelectVisibilityTerms,
 import image_cache   : imagePixelCache;
 // Task 1970 — DirtyKey's camera pose term (see the struct field below).
 import camera_stamp  : CameraStamp;
+import toolpipe.packets : WorkplanePacket;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -1148,6 +1149,13 @@ final class ViewportManager {
 
     /// Resolved snapshot for the currently active cell.
     Viewport activeSnapshot() { return resolvedSnapshot(activeId); }
+
+    /// Task 7139: a work-plane change reaches the cells here (gap 187 / 219).
+    /// Commit-1 seam only: the witnesses compile against it and stay red.
+    void applyPlaneFrame(in WorkplanePacket before, in WorkplanePacket after,
+                         bool userEdit) {
+    }
+
 
     /// The selection-visibility terms cell `id`'s display style resolves to.
     ///

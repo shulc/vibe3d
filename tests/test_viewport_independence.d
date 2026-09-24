@@ -124,56 +124,54 @@ CamState getCam(int id) {
 }
 
 // --------------------------------------------------------------------------
-// Flow C — coupled PAN: a drag in a default-follower ortho cell (Quad cell 0,
-// Top preset) must (a) use ITS OWN ortho basis for the screen-space delta
-// (proven by focus.y staying put — the master's PERSPECTIVE basis would move
-// it) and (b) write that delta into the LINKAGE OWNER (the group master,
-// cell 3) — the field `resolveFollow` actually reads — so every linked
-// follower (cells 0/1/2) observes the same new center (task 0217).
+// Flow C — coupled PAN, by LINK GROUP (task 7139, gap 219; C4-quad): the three
+// ortho cells of the shipped Quad are ONE group, the perspective cell is its
+// own. A drag in cell 0 (Top) (a) uses ITS OWN ortho basis for the screen
+// delta (focus.y stays put) and (b) moves cells 0, 1 and 2 together while the
+// perspective cell 3 stays where it was.
 // --------------------------------------------------------------------------
 
 bool testFlowC() {
-    writeln("  [C] Coupled pan: Quad ortho follower drags the group center...");
+    writeln("  [C] Coupled pan: a Quad ortho cell drags its ortho group only...");
     resetApp();
     postCommand("viewport.layout", "Quad");
 
     auto cam0 = getCam(0);
-    auto before3 = getCam(3);
+    CamState[4] before;
+    foreach (id; 0 .. 4) before[id] = getCam(id);
 
     int cx = cast(int)(cam0.vpX + cam0.w * 0.5);
     int cy = cast(int)(cam0.vpY + cam0.h * 0.5);
     // dx=+50 (rightward), dy=-30 (upward) — nonzero on both drag axes so a
-    // basis mismatch (master's spherical basis vs. cell 0's own Top basis)
-    // would show up as an unexpected focus.y move.
+    // basis mismatch (another cell's basis vs. cell 0's own Top basis) would
+    // show up as an unexpected focus.y move.
     playEvents(dragLog(cx, cy, cx + 50, cy - 30, MOD_PAN));
 
-    auto after3 = getCam(3);
     double speed = cam0.distance * 0.001;
     double expDx = -50.0 * speed;         // right=(1,0,0): focus.x += -dx*speed
     double expDz =  30.0 * speed;         // up=(0,0,-1):  focus.z += dy*speed*(-1), dy=-30
 
-    enforce(isClose(after3.fx - before3.fx, expDx, 1e-2, 1e-4),
-        format("Flow C: master focus.x delta = %.6f, expected %.6f (Top-basis pan not coupled to master)",
-               after3.fx - before3.fx, expDx));
-    enforce(isClose(after3.fz - before3.fz, expDz, 1e-2, 1e-4),
-        format("Flow C: master focus.z delta = %.6f, expected %.6f",
-               after3.fz - before3.fz, expDz));
-    enforce(isClose(after3.fy, before3.fy, 1e-4, 1e-4),
-        "Flow C: master focus.y must NOT move — a Top-ortho pan must use ITS OWN " ~
-        "axis-locked basis, not the master's perspective spherical basis");
-    writefln("    C1 PASS: master (cell 3) focus moved by (%.4f, ~0, %.4f) from cell 0's own Top-basis drag",
-        after3.fx - before3.fx, after3.fz - before3.fz);
-
-    // Every other default follower (cells 0/1/2) must resolve to the SAME
-    // new center — "coupled" means the WHOLE linked group moves together.
     foreach (id; [0, 1, 2]) {
         auto c = getCam(id);
-        enforce(isClose(c.fx, after3.fx, 1e-3) && isClose(c.fz, after3.fz, 1e-3),
-            format("Flow C: follower cell %d must track the new group center " ~
-                   "(master=(%.4f,%.4f), cell %d=(%.4f,%.4f))",
-                   id, after3.fx, after3.fz, id, c.fx, c.fz));
+        enforce(isClose(c.fx - before[id].fx, expDx, 1e-2, 1e-4)
+             && isClose(c.fz - before[id].fz, expDz, 1e-2, 1e-4)
+             && isClose(c.fy, before[id].fy, 1e-4, 1e-4),
+            format("Flow C: ortho cell %d focus moved by (%.6f, %.6f, %.6f), expected " ~
+                   "(%.6f, 0, %.6f) from cell 0's own Top-basis drag", id,
+                   c.fx - before[id].fx, c.fy - before[id].fy, c.fz - before[id].fz,
+                   expDx, expDz));
     }
-    writeln("    C2 PASS: cells 0/1/2 all resolve to the new group center");
+    writeln("    C1 PASS: cells 0/1/2 moved together by cell 0's Top-basis delta");
+
+    auto after3 = getCam(3);
+    enforce(isClose(after3.fx, before[3].fx, 1e-4, 1e-4)
+         && isClose(after3.fy, before[3].fy, 1e-4, 1e-4)
+         && isClose(after3.fz, before[3].fz, 1e-4, 1e-4),
+        format("Flow C: ortho pan moved the perspective cell (reference link groups: " ~
+               "ortho cells linked among themselves, gap 219): cell 3 (%.4f, %.4f, %.4f) " ~
+               "-> (%.4f, %.4f, %.4f)", before[3].fx, before[3].fy, before[3].fz,
+               after3.fx, after3.fy, after3.fz));
+    writeln("    C2 PASS: the perspective cell 3 did not move");
 
     return true;
 }

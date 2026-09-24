@@ -842,8 +842,18 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // and its own unittests already pin to the base shape.
             string presetName = to!string(vpm.views[_idx].camera.viewPreset);
             string projName   = to!string(vpm.views[_idx].camera.projKind);
+            // Task 7139: the matrices the cell RENDERS with, from the same
+            // follow-resolved `viewportWith` — a turned ortho view (gap 187)
+            // is visible here, while `focus` stays world.
+            Viewport rv = vpm.resolvedSnapshot(_idx);
+            string mat(in float[16] m) {
+                string s = "[";
+                foreach (i, v; m) s ~= (i ? "," : "") ~ jsonNum(v, "%.9g");
+                return s ~ "]";
+            }
             return base[0 .. $ - 1] ~ `,"viewPreset":"` ~ presetName ~
-                `","projKind":"` ~ projName ~ `"}`;
+                `","projKind":"` ~ projName ~ `","viewMatrix":` ~ mat(rv.view) ~
+                `,"projMatrix":` ~ mat(rv.proj) ~ `}`;
         });
 
         // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main

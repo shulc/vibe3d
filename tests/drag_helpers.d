@@ -118,6 +118,62 @@ Viewport viewportFromCamera(CameraState c) {
     return vp;
 }
 
+/// The Viewport the cell RENDERS with, read from GET /api/camera's
+/// `viewMatrix`/`projMatrix` (task 7139). Unlike `viewportFromCamera` it does
+/// not rebuild the view from eye/focus with a world-up hint, so it holds for
+/// an ortho view turned with a pinned work plane (gap 187). `eye` is the
+/// published eye.
+Viewport viewportFromCameraMatrices(string baseUrl = testBaseUrl()) {
+    auto j = parseJSON(cast(string)get(baseUrl ~ "/api/camera"));
+    assert("viewMatrix" in j && "projMatrix" in j,
+        "GET /api/camera carries no viewMatrix/projMatrix");
+    Viewport vp;
+    foreach (i; 0 .. 16) {
+        vp.view[i] = cast(float)jnum(j["viewMatrix"].array[i]);
+        vp.proj[i] = cast(float)jnum(j["projMatrix"].array[i]);
+    }
+    vp.width  = cast(int)j["width"].integer;
+    vp.height = cast(int)j["height"].integer;
+    vp.x      = cast(int)j["vpX"].integer;
+    vp.y      = cast(int)j["vpY"].integer;
+    vp.eye    = Vec3(cast(float)jnum(j["eye"]["x"]), cast(float)jnum(j["eye"]["y"]),
+                     cast(float)jnum(j["eye"]["z"]));
+    return vp;
+}
+
+/// The cursor ray of window pixel (sx, sy) under `vp` — the same two arms as
+/// source/math.d's `screenPointToRay`: one apex (the eye) in perspective,
+/// parallel rays starting on the image plane in ortho. `dir` is unit.
+void pixelRay(float sx, float sy, const ref Viewport vp, out Vec3 org, out Vec3 dir) {
+    float nx = ((sx - vp.x) / vp.width)  * 2.0f - 1.0f;
+    float ny = 1.0f - ((sy - vp.y) / vp.height) * 2.0f;
+    float vx = nx / vp.proj[0], vy = ny / vp.proj[5];
+    Vec3 right = Vec3(vp.view[0], vp.view[4], vp.view[8]);
+    Vec3 up    = Vec3(vp.view[1], vp.view[5], vp.view[9]);
+    Vec3 back  = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    if (vp.proj[15] != 0.0f) {                     // orthographic
+        org = vp.eye + right * vx + up * vy;
+        dir = back * -1.0f;
+    } else {
+        org = vp.eye;
+        dir = normalize(right * vx + up * vy - back);
+    }
+}
+
+/// Distance from `p` to the ray (org, unit dir) — the placement witnesses'
+/// d_perp.
+double rayDistance(Vec3 p, Vec3 org, Vec3 dir) {
+    Vec3 d = p - org;
+    float t = dot(d, dir);
+    Vec3 q = d - dir * t;
+    return sqrt(cast(double)dot(q, q));
+}
+
+private double jnum(JSONValue v) {
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
+}
+
 // World → window pixel projection (matches source/math.d:projectToWindow,
 // but returns floats directly and doesn't reject off-screen points — same
 // behaviour as projectToWindowFull, which is what the hit-test path uses).
