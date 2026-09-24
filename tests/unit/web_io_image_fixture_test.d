@@ -2,7 +2,8 @@
 // the desktop half of the browser image cells in tools/web_file_io/case_images.mjs.
 // (1) The fixture oracle: magenta8.png is the 8x8 magenta the pixel cell counts,
 // plane_scene.v3d stores it by its bare FILE NAME, and the REAL `file.load` ->
-// `file.save` of the pair re-derives the committed bytes. (2) `image.replace`,
+// `file.save` of the pair writes the committed bytes back (a fixed point: it
+// pins the reader and writer on this file, not how the file was generated). (2) `image.replace`,
 // which no browser door can reach (no UI row dispatches it and the probe door
 // sends `{}`, so its `index` is missing), parks and resumes through the SAME
 // UI door and queue as `image.load`. (3) Census of the lane: each case reports
@@ -86,9 +87,17 @@ unittest {
     assert(planes.length == 1 && planes[0]["links"].array.length == 1
         && planes[0]["links"][0]["slot"].str == "image",
         "7450 oracle: plane_scene.v3d must carry one image plane linked to its image");
+    // The I3 pixel floor was measured on THIS plane size (make_fixtures.sh sets
+    // it); the load -> save below is a fixed point of any committed bytes, so it
+    // cannot see a changed fixture — this literal does.
+    const pixelSize = planes[0]["channels"]["pixelSize"].floating;
+    assert(pixelSize > 0.2999 && pixelSize < 0.3001,
+        format("7450 oracle: the plane's pixelSize is %s, the pixel floor in case_images.mjs "
+             ~ "was measured at 0.3 (re-measure with tools/web_file_io/measure_plane_pixels.sh)",
+               pixelSize));
 
-    // The REAL load -> save of the pair, both in one folder, re-derives the
-    // committed bytes; the same file ALONE in another folder loads missing (I4).
+    // The REAL load -> save of the pair, both in one folder, writes the
+    // committed bytes back; the same file ALONE in another folder loads missing (I4).
     const scratch = freshDir("fixture");
     scope (exit) {
         if (exists(scratch)) rmdirRecurse(scratch);
@@ -224,8 +233,7 @@ unittest {
     drain.revision = () => 0UL;
     drain.stillBound = (Command c) => true;
     drain.guardBusy = () => false;
-    drainPickResumes(drain);   // takes the base revision
-    drainPickResumes(drain);   // resumes
+    drainPickResumes(drain);
     assert(invokes == 1 && texts.length == 0 && pickResumes().length == 0,
         format("7450 replace: the pick resumed once without a notice (invokes %d, notices %s)",
                invokes, texts));
