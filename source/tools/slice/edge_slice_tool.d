@@ -41,7 +41,6 @@ import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
 import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import symmetry : mirrorEdgePoint;
-import mesh_edit_delta : MeshEditScope;
 import toolpipe.packets : SymmetryPacket;
 import handler : BoxHandlerBatchResourceOwner;
 
@@ -1501,12 +1500,12 @@ private:
         if (t >= 1.0f - 1e-5f) { v = work.edges[e][1]; return false; }
         const vi = work.addEdgePoint(e, t);
         if (vi == uint.max) return false;
-        // The finalize tail `edgeSliceEx`'s points-only arm runs around the
-        // same splice (`addEdgePoint` already re-derived edges and loops).
+        // `addEdgePoint` leaves the selection to its caller: the same drop and
+        // grow `edgeSliceEx`'s points-only arm runs around this splice. The
+        // splice publishes itself (the bus witness in the symmetry cells).
         work.clearFaceSelectionResize();
         work.clearEdgeSelectionResize();
         work.syncSelection();
-        work.commitChange(MeshEditScope.Geometry);
         v = vi;
         return true;
     }
