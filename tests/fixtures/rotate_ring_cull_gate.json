@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "GUI worker, one fresh boot per cell; ring visibility read at the draw site under a debugger and cross-checked by root-frame pixel counts",
+  "captured_utc": "2026-09-25",
+  "harness": "toolcards/gizmo_view_cull_plane/harness",
+  "task": "cap-gizmo-cull-plane, for 7139"
+ },
  "schema": 1,
  "method": "gui-gesture",
  "notes": "Rotate gizmo ring cull. Gate: the cell's orthographic PRESET type only (no camera test); then a ring is hidden iff |ring normal . eye| < 0.087. The gizmo axes are the item's local frame; the plane, when pinned, is rotX 30 rotY 40 (B = Rx*Ry) and turns the front preset so it looks along B*(0,0,-1). Cell K3 (an orbited preset) is unreachable and omitted.",
