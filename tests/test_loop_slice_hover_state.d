@@ -367,3 +367,55 @@ unittest { // hover-vs-active-drag: the ring highlight is a PRE-ARM affordance
     cmd("tool.set mesh.loopSliceTool off");
     settle();
 }
+
+unittest { // armed Loop Slice keeps its single-edge hover SUPPRESSED (control for Edge Slice's exception)
+    // Task 7114. The single-edge hover suppression under an uncommitted edit
+    // (tasks 0231/0232) got ONE exception: Edge Slice outside a drag keeps the
+    // target-edge highlight (its measured law). Loop Slice keeps the
+    // suppression — this cell is the control that the exception is scoped to
+    // Edge Slice: an armed Loop Slice, hovering an edge off its ring, submits
+    // exactly as many edge draws as with the cursor off the mesh.
+    resetCube();
+    scope(exit) restoreSharedApp();
+    cmd("select.typeFrom edge");
+    cmd("tool.set mesh.loopSliceTool on");
+    settle();
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    float sx, sy;
+    assert(projectToWindow(Vec3(0.5f, 0.0f, 0.5f), vp, sx, sy), "seed midpoint should be on-camera");
+    playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height, cast(int)sx, cast(int)sy));
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int)sx, cast(int)sy, cast(int)sx + 8, cast(int)sy, 6));
+    settle();
+    auto arm = getToolState();
+    assert(arm["armed"].type == JSONType.true_ && arm["dragging"].type == JSONType.false_,
+        "armed loop slice floor: the click-drag did not leave a released standing preview: "
+        ~ arm.toString);
+
+    // Cursor off the mesh: the reference count.
+    playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height, cam.vpX + 8, cam.vpY + 8));
+    settle();
+    assert(getToolState()["hoveredEdge"].integer == -1,
+        "armed loop slice floor: the off-mesh pixel hovers an edge");
+    immutable long offCalls = edgeCalls();
+
+    // Cursor on the top-front edge, which the belt cut does not cross.
+    float tx, ty;
+    assert(projectToWindow(Vec3(0.0f, 0.5f, 0.5f), vp, tx, ty), "top-front edge should be on-camera");
+    playAndWait(hoverLog(cam.vpX, cam.vpY, cam.width, cam.height, cast(int)tx, cast(int)ty));
+    settle();
+    auto hov = getToolState();
+    immutable long hovEdge = hov["hoveredEdge"].integer;
+    assert(hovEdge >= 0 && hov["armed"].type == JSONType.true_,
+        "armed loop slice floor: the top-front edge is not hovered, or the preview dropped: "
+        ~ hov.toString);
+    int[] ring = dedupSorted(hov["sliceRing"]);
+    immutable long onCalls = edgeCalls();
+    writefln("[armed-loop-hover] hoveredEdge=%d ring=%s edge calls off=%d on=%d",
+             hovEdge, ring, offCalls, onCalls);
+    assert(onCalls == offCalls,
+        format("armed loop slice drew a single-edge hover: edge calls %d with edge %d "
+             ~ "hovered, %d with the cursor off the mesh", onCalls, hovEdge, offCalls));
+}

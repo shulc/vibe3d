@@ -18,6 +18,9 @@
 //   B — the press alone bakes the cut (8 -> 10 vertices);
 //   D — after one click, hovering the next edge draws no pending chord (the
 //       red line) and no pending handle (its own red run: the task card).
+//       Around it: H0 (before the click, a probe on the displayed target edge
+//       sees the hover highlight — the capability) and H (the same probe
+//       with the chain live: the highlight is still drawn).
 
 import slice_leak_helpers;
 import http_client : getJson;
@@ -35,6 +38,8 @@ void main() {}
 // pending chord is `toolPathLine`, a hovered handle is `handleActive`.
 private enum float[3] kChordRgb = [0.90f, 0.92f, 0.98f];
 private enum float[3] kHandleActRgb = [1.00f, 0.90f, 0.40f];
+// The hovered edge's highlight, `preHighlight`.
+private enum float[3] kPreHiRgb = [0.549f, 0.710f, 0.780f];
 
 private struct Px {
     int r, g, b;
@@ -131,16 +136,28 @@ private long hoverId(int[2] p) {
     return getJson("/api/tool/state")["hoveredEdge"].integer;
 }
 
-/// Prologue (subpatch ON), Edge Slice armed, point 1 latched on edge
-/// `P[first]` with a click (press + release, no drag). Returns the chain edges.
-private long[2][] armWithFirstPoint(size_t first, int[2] hint) {
+/// Prologue (subpatch ON) and Edge Slice armed, no point yet. Returns the
+/// chain edges.
+private long[2][] armNoPoint() {
     slPrologue(true, "polygons", &slBackAndLeft, true);
     const base = slMesh();
     assert(base.verts == 8 && base.faces == 4,
            "slice floor: the prologue is not the 8v/4f open box: " ~ base.toString);
     slLine("tool.set mesh.edgeSliceTool on");
     assert(slTool() == "edgeSlice", "slice floor: Edge Slice did not activate");
-    const P = slFrontRightChain();
+    return slFrontRightChain().dup;
+}
+
+/// Prologue (subpatch ON), Edge Slice armed, point 1 latched on edge
+/// `P[first]` with a click (press + release, no drag). Returns the chain edges.
+private long[2][] armWithFirstPoint(size_t first, int[2] hint) {
+    const P = armNoPoint();
+    clickFirst(P, first, hint);
+    return P.dup;
+}
+
+/// Latch point 1 on edge `P[first]` with a click (press + release, no drag).
+private void clickFirst(const long[2][] P, size_t first, int[2] hint) {
     const p1 = slEdgePixel(P[first][0], P[first][1], hint, "point 1");
     slClickDown(p1[0], p1[1], "click 1");
     slPlay(slButton(20, false, 1, p1[0], p1[1]), "release 1");
@@ -148,7 +165,6 @@ private long[2][] armWithFirstPoint(size_t first, int[2] hint) {
     assert(slNorm(c.pairs) == slNorm([P[first]]) && slMesh().verts == 8,
            format("slice floor: point 1 did not latch alone: pairs %s, mesh %s",
                   slPairsStr(c.pairs), slMesh().toString));
-    return P.dup;
 }
 
 // Blocks P and B — green on HEAD (the pick and the press-bake are already ours).
@@ -192,8 +208,9 @@ unittest {
 
 // Block D — the needle. Point 1 on the front-right vertical (P[1]); hover the
 // front-left vertical (P[0]) at a pixel within 3 px of its cage projection.
+// H0 runs before the click of point 1, H after the two lines of D.
 unittest {
-    const P = armWithFirstPoint(1, [507, 326]);
+    const P = armNoPoint();
     const eT = slEdgeOf(getJson("/api/model"), P[0][0], P[0][1]);
     const se = screenEdge(P[0][0], P[0][1]);
     int[2] cur;
@@ -206,6 +223,37 @@ unittest {
     }
     assert(found, "block D rig: no pixel within 3 px of the target edge's cage "
                   ~ "projection hovers it");
+
+    // H0 — X on the DISPLAYED (smoothed) curve of the target edge: the middle
+    // of the pixel band that hovers it, walked along the cage edge's screen
+    // normal 16 px along the edge from the cursor's foot (the pick radius is
+    // symmetric, so the band's middle is the curve). A 3x3 block around X.
+    const tCur = ((cur[0] - se.ax) * se.dx + (cur[1] - se.ay) * se.dy) / (se.len * se.len);
+    const tX = tCur + 16.0 / se.len;
+    int[] band;
+    foreach (d; -40 .. 41)
+        if (hoverId(along(se, tX, d)) == eT) band ~= d;
+    assert(band.length > 0, format("block H0 rig: no pixel at t = %.3f hovers the target edge", tX));
+    const int[2] X = along(se, tX, band[band.length / 2]);
+    const dX = sqrt(cast(double)((X[0] - cur[0]) * (X[0] - cur[0]) + (X[1] - cur[1]) * (X[1] - cur[1])));
+    assert(dX >= 8, format("block H0 rig: X (%d,%d) is %.1f px from the cursor", X[0], X[1], dX));
+    const hiPts = block3(X);
+    bool seesHi(const Px[] px) {
+        foreach (p; px) if (near(p, asPx(kPreHiRgb), 2)) return true;
+        return false;
+    }
+    slHover(cur[0], cur[1]);
+    settle();
+    assert(slChain().pairs.length == 0
+           && getJson("/api/tool/state")["hoveredEdge"].integer == eT,
+           "block H0 floor: a point is latched or the cursor lost the target edge");
+    auto hi0 = probeWin(hiPts);
+    writeln(format("block H0: edge %.1f px on screen, cursor foot t=%.3f, band d=%d..%d at "
+                   ~ "t=%.3f, X (%d,%d), %.1f px from the cursor;", se.len, tCur,
+                   band[0], band[$ - 1], tX, X[0], X[1], dX), blockStr(hiPts, hi0));
+    assert(seesHi(hi0), "hover highlight probe cannot see the target edge (no chain)");
+
+    clickFirst(P, 1, [507, 326]);
     // Hover only (motion, no button) and let two frames render.
     slHover(cur[0], cur[1]);
     settle();
@@ -248,4 +296,9 @@ unittest {
     auto handlePx = probeWin(handlePts);
     writeln(format("block D: handle probe (%d,%d);", hp[0], hp[1]), blockStr(handlePts, handlePx));
     assert(!near(handlePx[4], asPx(kHandleActRgb)), "pending point handle drawn before the click");
+
+    // H — the same X with the chain live (the cursor is still on the target).
+    auto hi1 = probeWin(hiPts);
+    writeln("block H: live chain;", blockStr(hiPts, hi1));
+    assert(seesHi(hi1), "target edge highlight missing during a live chain");
 }
