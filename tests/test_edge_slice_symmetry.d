@@ -450,3 +450,23 @@ unittest {
     }, 33, -1, [[1.5, 0, 0], [1.5, 0, 1], [-1.5, 0, 0], [-1.5, 0, 1], [1.5, 0, 0.5],
                 [-1.5, 0, 0.5], [2, 0, 0.5], [-2, 0, 0.5]], 20);
 }
+
+// Scope control — symmetry OFF (after a symmetry-ON session): two points that
+// share no base polygon still cut the strip between them. The ownership law
+// above was captured only under symmetry, so the tool applies it only to a
+// chain latched with symmetry live; whether the reference cuts this strip
+// with symmetry off is NOT captured (task card). Under the law this would be
+// two edge splits (27 v / 16 f).
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], "off P1");
+    clickXZ(1.5, 2, [1, 0, 2], [2, 0, 2], "off P2");
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    writeln("symmetry off, no shared base polygon: ", mesh, " new ", p3s(verticesFrom(GRID_VERTS)));
+    assert(mesh.faces > GRID_FACES && mesh.verts > GRID_VERTS + 2,
+           "symmetry off: a chain across two cells was not cut: " ~ mesh.toString);
+}
