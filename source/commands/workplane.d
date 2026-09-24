@@ -328,8 +328,8 @@ private:
     // Sign convention of a direction the capture fixes only up to sign:
     // the largest-magnitude component positive.
     static Vec3 largestPositive(Vec3 v) {
-        import workplane_fit : axisMaxExtent;
-        const k = axisMaxExtent([v.x, v.y, v.z]);
+        import workplane_fit : dominantAxis;
+        const k = dominantAxis([v.x, v.y, v.z]);
         const c = k == 0 ? v.x : k == 1 ? v.y : v.z;
         return c < 0 ? v * -1.0f : v;
     }
@@ -431,6 +431,11 @@ private:
                 case SkewFit.antiparallel:
                     stderr.writeln("align to selection: skew edges fit a normal opposite its"
                                  ~ " dominant axis (reference behaviour not captured)");
+                    return false;
+                case SkewFit.zeroNormal:
+                    stderr.writeln("align to selection: skew edges' endpoints centre on the"
+                                 ~ " world origin, the fitted normal vanishes (reference"
+                                 ~ " behaviour not captured)");
                     return false;
                 case SkewFit.degenerate:
                     return false;

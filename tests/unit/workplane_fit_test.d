@@ -52,22 +52,22 @@ unittest { // tie, square turned 30 deg: bbox not square-equal -> swap when |du|
 unittest { // singular fit: every point on z = x, a plane through the world origin
     double[3][] p = [[1, 0, 1], [2, 1, 2], [0, 2, 0], [2, 2, 2]];
     double[3] n;
-    assert(!planeFitNormal(p, n), "points on a plane through the origin must be singular");
+    assert(planeFitNormal(p, n) == SkewFit.singular, "points on a plane through the origin must be singular");
     double[3][] q = [[1.0, 0, 1.5], [2.0, 1, 2], [0.0, 2, 0], [2.0, 2, 2]];
-    assert(planeFitNormal(q, n), "an off-plane point must make the fit regular");
+    assert(planeFitNormal(q, n) == SkewFit.ok, "an off-plane point must make the fit regular");
 }
 
 // Cells below pin the decoded steps one at a time. Every expectation was
 // produced by the decode's own replica of the reference arithmetic (the
-// private capture's skew_sim.py: hull_cw / major_axis / amax), not by ours.
+// private capture harness), not by ours.
 
-unittest { // AxisMaxExtent tie rules
-    assert(axisMaxExtent([1.0, 1, 0]) == 1, "x == y > z: y wins");
-    assert(axisMaxExtent([1.0, 1, 1]) == 2, "x == y == z: z wins");
-    assert(axisMaxExtent([1.0, 0, 1]) == 2, "x == z: z wins");
-    assert(axisMaxExtent([1.0, 0, 0.5]) == 0, "x strictly largest");
-    assert(axisMaxExtent([0.0, 1, 1]) == 2, "y == z: z wins");
-    assert(axisMaxExtent([-2.0, 1, 2]) == 2, "|x| == |z|: z wins");
+unittest { // dominant-axis tie rules
+    assert(dominantAxis([1.0, 1, 0]) == 1, "x == y > z: y wins");
+    assert(dominantAxis([1.0, 1, 1]) == 2, "x == y == z: z wins");
+    assert(dominantAxis([1.0, 0, 1]) == 2, "x == z: z wins");
+    assert(dominantAxis([1.0, 0, 0.5]) == 0, "x strictly largest");
+    assert(dominantAxis([0.0, 1, 1]) == 2, "y == z: z wins");
+    assert(dominantAxis([-2.0, 1, 2]) == 2, "|x| == |z|: z wins");
 }
 
 private void hullIs(double[2][] pts, double[2][] want, string what) {
@@ -127,4 +127,17 @@ unittest { // the refusals name their arm (the HTTP cells only see "refused")
     Vec3[] sing = [Vec3(1, 0, 1), Vec3(2, 1, 2), Vec3(0, 2, 0), Vec3(2, 2, 2)];
     assert(skewEdgePairFrame(sing, x, y, z) == SkewFit.singular,
         "endpoints on a plane through the origin must refuse as singular");
+}
+
+unittest { // endpoints centred on the world origin: A is regular but sum p = 0,
+           // so n = A^-1 * 0 has no direction -- refuse, not a made-up plane
+    import math : Vec3;
+    double[3][] p = [[1.0, 0, 0], [0.0, 1, 0], [-1.0, 0, 1], [0.0, -1, -1]];
+    double[3] n;
+    assert(planeFitNormal(p, n) == SkewFit.zeroNormal,
+        "a zero endpoint sum must refuse as zeroNormal, not as singular or ok");
+    Vec3 x, y, z;
+    Vec3[] v = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(-1, 0, 1), Vec3(0, -1, -1)];
+    assert(skewEdgePairFrame(v, x, y, z) == SkewFit.zeroNormal,
+        "the frame must pass the zeroNormal verdict through");
 }

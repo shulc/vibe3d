@@ -339,9 +339,11 @@ unittest { // refusals: shapes the capture did not cover (task 7120; gap rows 18
     ok(commandBody("mesh.select", `{"mode":"edges","indices":[0,1,2]}`));
     expectRefusal("three edges");
     // A NON-parallel pair on one polygon (trapezoid legs): only the parallel
-    // pair on a polygon was captured.
+    // pair on a polygon was captured. Off z = 0 (the plane z = 1.5 misses the
+    // origin), so the fitted-plane rule WOULD align it: this refusal is the
+    // dispatch keying on the shared polygon, not the singular arm.
     ok(commandBody("scene.reset"));
-    double[3][] tv = [[0.0, 0, 0], [2.0, 0, 0], [1.5, 1, 0], [0.5, 1, 0]];
+    double[3][] tv = [[0.3, 0.2, 1.5], [2.3, 0.2, 1.5], [1.8, 1.2, 1.5], [0.8, 1.2, 1.5]];
     auto t = loadMesh(tv, parseJSON("[[0,1,2,3]]"));
     int l1 = edgeOf(t, vertexAt(t, tv[1], "T"), vertexAt(t, tv[2], "T"), "T");
     int l2 = edgeOf(t, vertexAt(t, tv[3], "T"), vertexAt(t, tv[0], "T"), "T");
@@ -380,7 +382,41 @@ unittest { // refusals: shapes the capture did not cover (task 7120; gap rows 18
     ok(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d,%d]}`,
         vertexAt(pm, pv[0], "P"), vertexAt(pm, pv[3], "P"))));
     expectRefusal("two vertices stacked along their normal");
-    assert(refused == 7, format("refusal cells: %d, expected 7", refused));
+    // Endpoints centred on the world origin (two triangles, no shared
+    // polygon): the fit's system is regular but its right-hand side is zero,
+    // so the normal has no direction.
+    ok(commandBody("scene.reset"));
+    double[3][] zv = [[1.0, 0, 0], [0.0, 1, 0], [0.5, 0.5, 1], [-1.0, 0, 1], [0.0, -1, -1], [-0.5, -0.5, -2]];
+    auto zm = loadMesh(zv, parseJSON("[[0,1,2],[3,4,5]]"));
+    int z1 = edgeOf(zm, vertexAt(zm, zv[0], "Z0"), vertexAt(zm, zv[1], "Z0"), "Z0");
+    int z2 = edgeOf(zm, vertexAt(zm, zv[3], "Z0"), vertexAt(zm, zv[4], "Z0"), "Z0");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, z1, z2)));
+    expectRefusal("skew edges whose endpoints centre on the world origin");
+    assert(refused == 8, format("refusal cells: %d, expected 8", refused));
+}
+
+unittest { // the two-edge DISPATCH (review of 7120): a PARALLEL pair on no common
+           // polygon takes the fitted-plane rule, not the parallel-pair row.
+    // DECODE, not capture: the expectation is the decoded rule's replica in the
+    // private capture harness run on this rig (never driven on the reference).
+    // The parallel-pair row would give Y ~ (0, -0.137, 0.991), X = +-X.
+    ok(commandBody("scene.reset"));
+    double[3][] pv = [[1.0, 0.0, 2.0], [2.0, 0.0, 2.0], [1.3, 0.7, 2.4],
+                      [1.2, 1.0, 3.1], [2.7, 1.0, 3.1], [1.5, 1.8, 2.9]];
+    auto m = loadMesh(pv, parseJSON("[[0,1,2],[3,4,5]]"));
+    int e1 = edgeOf(m, vertexAt(m, pv[0], "PAR"), vertexAt(m, pv[1], "PAR"), "PAR");
+    int e2 = edgeOf(m, vertexAt(m, pv[3], "PAR"), vertexAt(m, pv[4], "PAR"), "PAR");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, e1, e2)));
+    assert(alignSel(), "workplane from a parallel pair on no common polygon refused (decode aligns)");
+    auto got = readPlane();
+    double[3] wo = [1.85, 0.5, 2.55];
+    double[3] wx = [0.0, -0.6726728, -0.7399400];
+    double[3] wy = [0.0, 0.7399400, -0.6726728];
+    double[3] wz = [1.0, 0.0, 0.0];
+    assert(near(got.o, wo, 1e-5), "parallel pair on no polygon: origin — got " ~ fmt(got.o));
+    assert(near(got.y, wy, 2e-5), "parallel pair on no polygon: Y differs from the decode — got " ~ fmt(got.y));
+    assert(near(got.x, wx, 2e-5), "parallel pair on no polygon: X differs from the decode — got " ~ fmt(got.x));
+    assert(near(got.z, wz, 2e-5), "parallel pair on no polygon: Z differs from the decode — got " ~ fmt(got.z));
 }
 
 unittest { // 5. the typed plane's Euler order: B = Rz * Rx * Ry

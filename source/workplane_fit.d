@@ -29,10 +29,14 @@ enum SkewFit {
     /// The fitted normal is exactly opposite its dominant axis, where the
     /// shortest-arc rotation is undefined (reference branch not decoded).
     antiparallel,
+    /// The endpoints' sum is zero (their centroid is the world origin), so
+    /// `n = A^-1 * 0` has no direction (reference branch not decoded).
+    zeroNormal,
 }
 
-/// `AxisMaxExtent` with the reference's tie rules.
-int axisMaxExtent(D3 v) pure nothrow @nogc @safe {
+/// Index of the largest-magnitude component, with the decoded tie rules
+/// (y beats x on a tie, z beats both).
+int dominantAxis(D3 v) pure nothrow @nogc @safe {
     const a = abs(v[0]), b = abs(v[1]), c = abs(v[2]);
     if (a > b && a > c) return 0;
     if (b >= a && b > c) return 1;
@@ -40,9 +44,9 @@ int axisMaxExtent(D3 v) pure nothrow @nogc @safe {
 }
 
 /// Least-squares plane `n . p = 1` through `pts`: `n = (sum p p^T)^-1 (sum p)`,
-/// flipped so `mean(p) . n >= 0`, normalised. False when the system is
-/// singular, `|det| <= 1e-12 * trace^3`.
-bool planeFitNormal(const D3[] pts, out D3 n) pure nothrow @nogc @safe {
+/// flipped so `mean(p) . n >= 0`, normalised. `singular` when
+/// `|det| <= 1e-12 * trace^3`; `zeroNormal` when `sum p` is zero.
+SkewFit planeFitNormal(const D3[] pts, out D3 n) pure nothrow @nogc @safe {
     double[3][3] m = 0;
     D3 s = 0;
     foreach (p; pts)
@@ -54,7 +58,7 @@ bool planeFitNormal(const D3[] pts, out D3 n) pure nothrow @nogc @safe {
               - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
               + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
     const tr = m[0][0] + m[1][1] + m[2][2];
-    if (!(abs(det) > 1e-12 * tr * tr * tr)) return false;
+    if (!(abs(det) > 1e-12 * tr * tr * tr)) return SkewFit.singular;
     // Cramer's rule.
     foreach (c; 0 .. 3) {
         double[3][3] t = m;
@@ -65,8 +69,9 @@ bool planeFitNormal(const D3[] pts, out D3 n) pure nothrow @nogc @safe {
     }
     if (s[0] * n[0] + s[1] * n[1] + s[2] * n[2] < 0) n[] = -n[];
     const l = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (!(l > 0)) return SkewFit.zeroNormal;
     n[] /= l;
-    return true;
+    return SkewFit.ok;
 }
 
 private double cross2(D2 o, D2 a, D2 b) pure nothrow @nogc @safe {
@@ -204,8 +209,9 @@ SkewFit skewEdgePairFrame(const Vec3[] pts, out Vec3 axisX, out Vec3 normal,
         if (!dup) p ~= q;
     }
     D3 n;
-    if (!planeFitNormal(p, n)) return SkewFit.singular;
-    const k = axisMaxExtent(n);
+    const fit = planeFitNormal(p, n);
+    if (fit != SkewFit.ok) return fit;
+    const k = dominantAxis(n);
     // M: the shortest-arc rotation taking n onto e_k (M = R^T, R e_k = n).
     double[3][3] M = [[1.0, 0, 0], [0.0, 1, 0], [0.0, 0, 1]];
     D3 e = 0; e[k] = 1;
@@ -246,7 +252,7 @@ SkewFit skewEdgePairFrame(const Vec3[] pts, out Vec3 axisX, out Vec3 normal,
         d3[i] = M[0][i] * local[0] + M[1][i] * local[1] + M[2][i] * local[2];
         y[i]  = M[k][i];
     }
-    if (y[axisMaxExtent(y)] < 0) y[] = -y[];
+    if (y[dominantAxis(y)] < 0) y[] = -y[];
     D3 x = [y[1] * d3[2] - y[2] * d3[1], y[2] * d3[0] - y[0] * d3[2], y[0] * d3[1] - y[1] * d3[0]];
     const xl = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
     if (!(xl > 1e-12)) return SkewFit.degenerate;

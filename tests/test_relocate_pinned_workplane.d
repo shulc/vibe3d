@@ -8,7 +8,7 @@
 // THE BUG THIS GUARDS AGAINST. The click-relocate plane law was ported from
 // a reference whose pinned work-plane state is one principal-axis INDEX plus
 // one SCALAR offset along it. vibe3d's is a full frame: `WorkplaneStage`
-// carries `rotation` as extrinsic-XYZ Euler degrees and `center` as a full
+// carries `rotation` as Euler degrees (B = Rz·Rx·Ry) and `center` as a full
 // Vec3, both reachable from shipped commands (`workplane.edit rotX/Y/Z`,
 // `workplane.rotate`, `workplane.offset`, `workplane.alignToSelection`).
 // Routing our frame through the reference's lock arm collapsed it to

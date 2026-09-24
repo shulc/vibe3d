@@ -119,7 +119,7 @@ struct RelocatePlanePrefs {
     ///     two free user preferences, and the structure has no rotation and no
     ///     other origin component anywhere;
     ///   * ours is a full frame — `WorkplaneStage` carries `rotation` as
-    ///     extrinsic-XYZ Euler degrees and `center` as a full `Vec3`, both
+    ///     Euler degrees (B = Rz·Rx·Ry) and `center` as a full `Vec3`, both
     ///     reachable from shipped commands.
     ///
     /// Mapping the frame onto the pair would discard the rotation and two

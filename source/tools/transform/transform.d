@@ -1916,7 +1916,7 @@ protected:
                 // law, and the reason is a mismatch of representable state,
                 // not a shortcut. A pinned plane here is an arbitrary
                 // orientation plus an arbitrary point: WorkplaneStage carries
-                // `rotation` as extrinsic-XYZ Euler degrees and `center` as a
+                // `rotation` as Euler degrees (B = Rz·Rx·Ry) and `center` as a
                 // full Vec3, both reachable from shipped commands
                 // (`workplane.edit rotX/Y/Z`, `workplane.rotate`,
                 // `workplane.offset`, `workplane.alignToSelection`).
