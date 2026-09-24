@@ -55,10 +55,11 @@ BrowserPickResult pickOpenPath(FilterSpec[] filters, string startDir = null) {
 
 version (web) {
     // The JS library `web/lib/file_bridge.js` (task 7420, plan §3.1/§3.2).
-    // It exists only on a wasm target; the `web` seam compiled NATIVELY (the
-    // census probes link it with dmd) gets stubs that refuse like a missing
-    // bridge: the pick fails with a notice, the download is not handed over.
-    version (WebAssembly) {
+    // It exists only in an Emscripten link (the same split as app.d's main
+    // loop); the `web` seam compiled NATIVELY (the census probes link it with
+    // dmd) gets stubs that refuse like a missing bridge: the pick fails with a
+    // notice, the download is not handed over.
+    version (Emscripten) {
         extern (C) void vibe3d_web_pick_open(const(char)* accept, int multiple,
                                              uint token, const(char)* dir) nothrow @nogc;
         extern (C) int vibe3d_web_offer_download(const(char)* path) nothrow @nogc;
