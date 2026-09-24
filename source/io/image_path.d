@@ -66,6 +66,7 @@ import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
 
 import document       : ImageData;
+import io.file_dialog  : browserFileModel;
 import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
 import log            : logWarn;
 
@@ -159,6 +160,17 @@ string storePathFor(string absolute, string docPath) {
     const abs = normAbs(absolute);
     if (docPath.length == 0) return toPortableSeparators(abs);
 
+    // Browser file model (task 7430, doc/web_file_io_plan_2026-09-23.md §3.8):
+    // a saved document carries ONLY the file name, because the user downloads
+    // one `.v3d` and reopens it by picking it together with its images — a
+    // flat set. Directory anchors would name MEMFS pick folders, not the
+    // user's disk. The panel reads this same function, so it shows the name
+    // that goes into the file.
+    if (browserFileModel()) {
+        import std.path : baseName;
+        return baseName(abs);
+    }
+
     const dir = dirName(normAbs(docPath));
     string rel;
     if (relativeUnder(abs, dir, rel))
@@ -198,6 +210,8 @@ string storePathFor(string absolute, string docPath) {
 /// resolve.
 string resolveStoredPath(string stored, string docPath = null) {
     if (stored.length == 0) return stored;
+    if (docPath.length > 0 && browserFileModel())
+        return resolveInDocumentFolder(stored, dirName(normAbs(docPath)));
     if (isAbsolute(stored)) return buildNormalizedPath(stored);
     if (docPath.length == 0) return stored;      // no anchor: CWD-relative, as Ph5
 
@@ -211,6 +225,74 @@ string resolveStoredPath(string stored, string docPath = null) {
         if (exists(above)) return above;
     }
     return here;   // best effort: definite, and `missing` will say it is gone
+}
+
+/// The browser-file-model resolution (task 7430, plan §3.8 rule 2): an image
+/// is looked up ONLY in the document's own folder `dir`. Under this model the
+/// parent of `dir` is the MEMFS root holding every earlier pick, so a parent
+/// anchor, or a `..` that normalises out of `dir`, would silently find a stale
+/// copy from another pick. Steps: (a) the stored relative form, only if it
+/// stays inside `dir` and exists; an existing ABSOLUTE form answers itself
+/// (opponent R2 #1); (b) `dir/<file name>` if it exists — which opens a `.v3d`
+/// written on the desktop with `tex/a.png`, `../a.png` or an absolute path
+/// once the image was picked beside it; (c) otherwise that same `dir/<file
+/// name>`: a definite path inside `dir`, and `missing` reports the absence
+/// (the §Q4 contract above). A stored form with no file name (`.`, `..`)
+/// yields `dir` itself, which is never readable as an image.
+private string resolveInDocumentFolder(string stored, string dir) {
+    import std.path : baseName;
+    if (isAbsolute(stored)) {
+        const abs = buildNormalizedPath(stored);
+        if (exists(abs)) return abs;
+    } else {
+        const here = buildNormalizedPath(dir, stored);
+        string rel;
+        if (relativeUnder(here, dir, rel) && exists(here)) return here;
+    }
+    const name = baseName(stored);
+    if (name.length == 0 || name == "." || name == "..") return dir;
+    return buildNormalizedPath(dir, name);
+}
+
+/// The first file name shared by two images that a flat, name-only save
+/// cannot tell apart (task 7430, plan §3.8 rule 3, owner Q7), or "" when
+/// there is none. Two entries collide when their paths differ, their file
+/// names are equal, and both files are readable with DIFFERENT bytes. The same
+/// path twice, or equal bytes, is not a collision: the reopened document gets
+/// the right pixels either way.
+///
+/// Never throws (opponent R2 #2): an EMPTY entry names no file and an
+/// UNREADABLE one (missing, oversized, a directory) has no bytes to compare,
+/// so neither collides. The unreadable case is the realistic one — a `.v3d`
+/// opened without its picture, then the picture loaded again from a new pick
+/// — and saving there must succeed, since the name then points both items at
+/// the file the user just supplied.
+string firstCollidingImageName(const(string)[] resolvedPaths) nothrow {
+    import std.path : baseName;
+    bool bytesOf(string p, out const(ubyte)[] bytes) nothrow {
+        try {
+            if (getSize(p) > MAX_IMAGE_FILE_BYTES) return false;
+            bytes = cast(const(ubyte)[]) read(p);
+            return true;
+        } catch (Exception) {
+            return false;
+        }
+    }
+    foreach (i, a; resolvedPaths) {
+        if (a.length == 0) continue;
+        const name = baseName(a);
+        const(ubyte)[] bytesA;
+        bool triedA, okA;
+        foreach (b; resolvedPaths[i + 1 .. $]) {
+            if (b.length == 0 || b == a || baseName(b) != name) continue;
+            if (!triedA) { okA = bytesOf(a, bytesA); triedA = true; }
+            if (!okA) break;                    // `a` unreadable: collides with nothing
+            const(ubyte)[] bytesB;
+            if (!bytesOf(b, bytesB)) continue;
+            if (bytesA != bytesB) return name;
+        }
+    }
+    return "";
 }
 
 /// Re-read the header of the file `img` names and refresh its four derived

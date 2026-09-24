@@ -14,7 +14,9 @@ import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
 import io.native : writeV3d;
 import io.formats;
-import io.file_dialog : pickSavePath, PickResult, PickOutcome, deliverSavedFile;
+import io.file_dialog : pickSavePath, PickResult, PickOutcome, deliverSavedFile,
+                        browserFileModel;
+import io.image_path : firstCollidingImageName, resolveStoredPath;
 import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
@@ -28,6 +30,18 @@ import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 ///   exportSingle — Export ▸ X: one-format dialog (set via configure);
 ///                  never changes the current document path.
 enum FileSaveMode { save, saveAs, exportSingle }
+
+/// The in-memory (absolute) path of every image item's file, in item order;
+/// an item with no payload contributes "".
+private string[] imagePathsOf(ref Document doc) {
+    string[] paths;
+    foreach (l; doc.layers) {
+        if (!l.hasImage) continue;
+        auto img = l.imageOrNull();
+        paths ~= img is null ? "" : resolveStoredPath(img.storedPath);
+    }
+    return paths;
+}
 
 class FileSave : Command {
     private Document*    document;       // layered source of truth for native .v3d
@@ -129,6 +143,18 @@ class FileSave : Command {
         // rows (obj/gltf/glb/fbx) take the registry's exporter id.
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
+        // Task 7430 (plan §3.8 rule 3, owner Q7): under the browser file model
+        // a `.v3d` stores image FILE NAMES only, so two different pictures
+        // sharing a name cannot survive the write — refuse before writing.
+        if (browserFileModel() && ext == ".v3d") {
+            const clash = firstCollidingImageName(imagePathsOf(*document));
+            if (clash.length) {
+                refusal_ = "two images are both named '" ~ clash ~ "' — the saved "
+                    ~ "document could not tell them apart; rename one file and "
+                    ~ "load it again";
+                return false;
+            }
+        }
         // Whether the write covered the WHOLE document. Gates the dirty-flag
         // rebaseline below: a partial write means the on-disk file no longer
         // matches the in-memory document, so the document must NOT be marked
