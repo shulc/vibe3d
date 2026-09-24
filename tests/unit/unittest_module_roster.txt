@@ -587,6 +587,7 @@ tests.unit.web_editor_page_test
 tests.unit.web_file_io_page_test
 tests.unit.web_gl_loader_test
 tests.unit.web_io_fixture_test
+tests.unit.web_io_image_fixture_test
 tests.unit.web_io_lwo_fixture_test
 tests.unit.web_seam_key_census_test
 tests.unit.web_width32_compile_test

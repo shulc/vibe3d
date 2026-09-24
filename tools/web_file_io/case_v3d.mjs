@@ -24,7 +24,11 @@ const url = `${baseUrl}/?probe=w17-file-io-${mode}&dispatch=mesh.subdivide`;
 const b = await launch({ chromium, url, profile: join(scratch, `profile-io-${mode}`), downloadDir });
 
 const DEADLINE = 20000;
-const ok = (cell, detail) => console.log(`WEB-FILE-IO-CELL ${cell} ok ${detail}`);
+// The cells that actually passed, in order (task 7450): the summary is built
+// from them, and tools/test_web_file_io.sh requires each expected cell line
+// exactly once, so a disabled cell cannot hide behind a fixed summary.
+const ran = [];
+const ok = (cell, detail) => { ran.push(cell); console.log(`WEB-FILE-IO-CELL ${cell} ok ${detail}`); };
 const fail = (cell, why) => { throw new Error(`WEB-FILE-IO-CELL ${cell} FAILED: ${why}`); };
 const ctrlO = () => b.chord('o', 'KeyO', 79, 2);
 const ctrlS = () => b.chord('s', 'KeyS', 83, 2);
@@ -154,7 +158,7 @@ try {
   if (prompts.length !== 1) fail('C6', `prompts: ${JSON.stringify(prompts)}`);
   ok('C6', `${early[0]} | ${prompts[0]}`);
 
-  console.log(`WEB-FILE-IO mode=${mode} cells=C0..C8,C4b ok`);
+  console.log(`WEB-FILE-IO mode=${mode} cells=${ran.join(',')} ok`);
 } catch (e) {
   console.log(b.lines.slice(-40).join("\n"));
   console.log("CHOOSERS " + JSON.stringify(b.choosers));

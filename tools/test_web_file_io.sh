@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Browser lane for web file I/O (task 7420): builds and stages the optimized
 # web editor exactly as tools/test_web_editor.sh does, then drives the real
-# page in headless Chromium through tools/web_file_io/case_v3d.mjs and (task
-# 7440) case_lwo.mjs in both the normal and the reset-stack (spreset) artifact.
+# page in headless Chromium through tools/web_file_io/case_v3d.mjs, (task
+# 7440) case_lwo.mjs and (task 7450) case_images.mjs in both the normal and the
+# reset-stack (spreset) artifact.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -38,7 +39,14 @@ for mode in normal spreset; do
     fi
     timeout 240 node "$repo_root/tools/web_file_io/case_v3d.mjs" \
         "$chromium" "http://127.0.0.1:$port" "$scratch" \
-        "$repo_root/tests/fixtures/web_io" "$mode"
+        "$repo_root/tests/fixtures/web_io" "$mode" | tee "$scratch/v3d-$mode.log"
+    # Task 7450: the .v3d cells are counted the same way as the LWO cells below.
+    v3d_cells=$(grep -E '^WEB-FILE-IO-CELL (C0|C1|C2|C3|C4|C4b|C5|C6|C7|C8) ok ' "$scratch/v3d-$mode.log" \
+        | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')
+    if [[ $v3d_cells != "C0 C1 C2 C3 C4 C4b C5 C6 C7 C8 " ]]; then
+        echo "WEB-FILE-IO mode=$mode: expected cells C0 C1 C2 C3 C4 C4b C5 C6 C7 C8 once each, got: $v3d_cells" >&2
+        exit 1
+    fi
     timeout 240 node "$repo_root/tools/web_file_io/case_lwo.mjs" \
         "$chromium" "http://127.0.0.1:$port" "$scratch" \
         "$repo_root/tests/fixtures/web_io" "$mode" | tee "$scratch/lwo-$mode.log"
@@ -48,6 +56,15 @@ for mode in normal spreset; do
         | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')
     if [[ $lwo_cells != "L0 L1 L2 L2r L3 L3b L4 L5 " ]]; then
         echo "WEB-FILE-IO-LWO mode=$mode: expected cells L0 L1 L2 L2r L3 L3b L4 L5 once each, got: $lwo_cells" >&2
+        exit 1
+    fi
+    timeout 240 node "$repo_root/tools/web_file_io/case_images.mjs" \
+        "$chromium" "http://127.0.0.1:$port" "$scratch" \
+        "$repo_root/tests/fixtures/web_io" "$mode" | tee "$scratch/img-$mode.log"
+    img_cells=$(grep -E '^WEB-FILE-IO-CELL (I0|I1|I2|I3|I4|I5|I6) ok ' "$scratch/img-$mode.log" \
+        | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')
+    if [[ $img_cells != "I0 I1 I2 I3 I4 I5 I6 " ]]; then
+        echo "WEB-FILE-IO-IMG mode=$mode: expected cells I0 I1 I2 I3 I4 I5 I6 once each, got: $img_cells" >&2
         exit 1
     fi
 done

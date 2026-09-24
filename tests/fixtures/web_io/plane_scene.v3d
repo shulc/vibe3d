@@ -1,0 +1,175 @@
+{
+    "focusedItem": 2,
+    "formatVersion": 8,
+    "layers": [
+        {
+            "channels": {
+                "name": "Layer 1",
+                "pivot.x": 0.0,
+                "pivot.y": 0.0,
+                "pivot.z": 0.0,
+                "pos.x": 0.0,
+                "pos.y": 0.0,
+                "pos.z": 0.0,
+                "rot.x": 0.0,
+                "rot.y": 0.0,
+                "rot.z": 0.0,
+                "scl.x": 1.0,
+                "scl.y": 1.0,
+                "scl.z": 1.0,
+                "visible": true
+            },
+            "mesh": {
+                "faceMaterial": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                "faceSubpatch": [
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                ],
+                "faces": [
+                    [
+                        0,
+                        3,
+                        2,
+                        1
+                    ],
+                    [
+                        4,
+                        5,
+                        6,
+                        7
+                    ],
+                    [
+                        0,
+                        4,
+                        7,
+                        3
+                    ],
+                    [
+                        1,
+                        2,
+                        6,
+                        5
+                    ],
+                    [
+                        3,
+                        7,
+                        6,
+                        2
+                    ],
+                    [
+                        0,
+                        1,
+                        5,
+                        4
+                    ]
+                ],
+                "surfaces": [],
+                "vertices": [
+                    [
+                        -0.5,
+                        -0.5,
+                        -0.5
+                    ],
+                    [
+                        0.5,
+                        -0.5,
+                        -0.5
+                    ],
+                    [
+                        0.5,
+                        0.5,
+                        -0.5
+                    ],
+                    [
+                        -0.5,
+                        0.5,
+                        -0.5
+                    ],
+                    [
+                        -0.5,
+                        -0.5,
+                        0.5
+                    ],
+                    [
+                        0.5,
+                        -0.5,
+                        0.5
+                    ],
+                    [
+                        0.5,
+                        0.5,
+                        0.5
+                    ],
+                    [
+                        -0.5,
+                        0.5,
+                        0.5
+                    ]
+                ]
+            },
+            "selected": false,
+            "type": "mesh"
+        },
+        {
+            "channels": {
+                "colorspace": "(default)",
+                "name": "magenta8",
+                "useAlpha": true,
+                "visible": true
+            },
+            "image": {
+                "filename": "magenta8.png"
+            },
+            "selected": false,
+            "type": "image"
+        },
+        {
+            "channels": {
+                "brightness": 0.0,
+                "contrast": 0.0,
+                "flipHorizontal": false,
+                "invert": false,
+                "keepAspect": true,
+                "name": "Plane 1",
+                "pivot.x": 0.0,
+                "pivot.y": 0.0,
+                "pivot.z": 0.0,
+                "pixelSize": 0.300000011920928955,
+                "pos.x": 0.0,
+                "pos.y": 0.0,
+                "pos.z": 0.0,
+                "projection": "front",
+                "rot.x": 0.0,
+                "rot.y": 0.0,
+                "rot.z": 0.0,
+                "scl.x": 1.0,
+                "scl.y": 1.0,
+                "scl.z": 1.0,
+                "showInPerspective": true,
+                "smooth": false,
+                "transparency": 0.0,
+                "visible": true
+            },
+            "links": [
+                {
+                    "slot": "image",
+                    "target": 1
+                }
+            ],
+            "selected": true,
+            "type": "imagePlane"
+        }
+    ],
+    "primaryLayer": 0
+}

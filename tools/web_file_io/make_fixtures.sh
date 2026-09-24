@@ -14,6 +14,13 @@
 # the cube is made subpatch first because the browser probe page starts from a
 # subpatch cube (app.d's `webFirstFrameProbe` marks every face), so its PTCH
 # chunk is what the browser download carries.
+# The image pair (task 7450): magenta8.png is an 8x8 RGB (255,0,255) PNG written
+# by python, and plane_scene.v3d is a reference-image plane showing it, authored
+# with `image.load` / `imagePlane.add` / `imagePlane.setImage` and saved with
+# `file.save` INTO THE PNG'S OWN FOLDER, so the stored image path is the bare
+# file name `magenta8.png` (the relative form a picked-together pair resolves).
+# Its pixelSize 0.3 makes the 8-pixel image a 2.4 m quad, wider than the unit
+# cube in front of it, so the browser's pixel oracle has magenta to count.
 #
 # usage: tools/web_file_io/make_fixtures.sh [--http-port N]   (default 8520)
 set -euo pipefail
@@ -74,6 +81,14 @@ cmd file.export.lwo "{\"path\":\"$scratch/two_parts.export.lwo\"}"
 cmd history.undo
 cmd file.export.lwo "{\"path\":\"$scratch/cube.export.lwo\"}"
 
+python3 -c "from PIL import Image; Image.new('RGB', (8, 8), (255, 0, 255)).save('$scratch/magenta8.png')"
+cmd scene.reset
+cmd image.load "{\"path\":\"$scratch/magenta8.png\"}"
+cmd imagePlane.add
+cmd imagePlane.setImage '{"index":2,"image":1}'
+cmd layer.attr '{"index":"2","attr":"pixelSize","value":0.3}'
+cmd file.save "{\"path\":\"$scratch/plane_scene.v3d\"}"
+
 cp "$scratch/two_layers.v3d" "$out/two_layers.v3d"
 cp "$scratch/two_layers.resave.v3d" "$out/two_layers.resave.v3d"
 head -c 200 "$out/two_layers.v3d" >"$out/truncated.v3d"
@@ -81,4 +96,6 @@ cp "$scratch/two_parts.lwo" "$out/two_parts.lwo"
 cp "$scratch/two_parts.export.lwo" "$out/two_parts.export.lwo"
 cp "$scratch/cube.export.lwo" "$out/cube.export.lwo"
 head -c 60 "$out/two_parts.lwo" >"$out/truncated.lwo"
-sha256sum "$out"/*.v3d "$out"/*.lwo
+cp "$scratch/magenta8.png" "$out/magenta8.png"
+cp "$scratch/plane_scene.v3d" "$out/plane_scene.v3d"
+sha256sum "$out"/*.v3d "$out"/*.lwo "$out"/*.png
