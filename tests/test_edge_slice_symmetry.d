@@ -190,6 +190,10 @@ void thirdOnCutEdge(int side) {
     slPlay(slButton(20, false, 1, mid[0], mid[1]), "release 3");
     auto st = getJson("/api/tool/state");
     const segs = st["bakedSegments"].integer, msegs = st["mirrorBakedSegments"].integer;
+    const onMirror = st["latchedOnMirror"].toString;
+    assert(onMirror == (side ? "[false,false,true]" : "[false,false,false]"),
+           format("side %d: the third point's chain is not the clicked edge's maker: "
+                  ~ "latchedOnMirror %s", side, onMirror));
     slLine("tool.set mesh.edgeSliceTool off");
     const mesh = slMesh();
     const born = verticesFrom(GRID_VERTS);
@@ -262,4 +266,37 @@ unittest {
            && born.length == 8 && mirrorClosed(born),
            format("mirror chord click after a parameter re-bake is not mirrored: segments "
                   ~ "%d/%d, mesh %s, new vertices %s", segs, msegs, mesh.toString, p3s(born)));
+}
+
+// The mirror chain's vertex ranges belong to ONE session. Commit a mirrored
+// cut (its -X chord is now ordinary geometry at the indices the ranges named),
+// open a new session and click that chord second: it is a plain point, not a
+// mirror-chain one. Ranges carried over from the dropped session read it as
+// mirror-made.
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    twoClicks(1.5, 1.5);
+    slLine("tool.set mesh.edgeSliceTool off");
+    const committed = verticesFrom(GRID_VERTS);
+    assert(slMesh().verts == 29 && committed.length == 4 && committed[2][0] < 0,
+           "session-1 commit: expected the mirrored 29 v cut: " ~ p3s(committed));
+    slLine("tool.set mesh.edgeSliceTool on");
+    const p1 = pixelOf(1.5, 0, 2);
+    const pr1 = gridPair(1, 2, 2, 2);
+    hoverFloor(p1, pr1[0], pr1[1], "session 2 click 1");
+    slClickDown(p1[0], p1[1], "session 2 click 1");
+    slPlay(slButton(20, false, 1, p1[0], p1[1]), "session 2 release 1");
+    const a = GRID_VERTS + 2, b = GRID_VERTS + 3;
+    const p2 = pixelOf((committed[2][0] + committed[3][0]) / 2, 0,
+                       (committed[2][2] + committed[3][2]) / 2);
+    hoverFloor(p2, a, b, "session 2 click 2 (committed -X chord)");
+    slClickDown(p2[0], p2[1], "session 2 click 2");
+    slPlay(slButton(20, false, 1, p2[0], p2[1]), "session 2 release 2");
+    const onMirror = getJson("/api/tool/state")["latchedOnMirror"].toString;
+    writeln("session 2 on a committed mirror chord: latchedOnMirror ", onMirror);
+    assert(onMirror == "[false,false]",
+           "a new session read a committed chord as mirror-made: latchedOnMirror " ~ onMirror);
+    slLine("tool.set mesh.edgeSliceTool off");
 }

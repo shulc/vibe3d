@@ -408,6 +408,9 @@ public:
         // A counter, unlike `chainSegments`: what the last bake returned.
         root["bakedSegments"] = JSONValue(cast(long)lastBakedSegments_);
         root["mirrorBakedSegments"] = JSONValue(cast(long)lastMirrorSegments_);
+        auto om = JSONValue.emptyArray;
+        foreach (p; latchedPoints_) om.array ~= JSONValue(p.onMirror);
+        root["latchedOnMirror"] = om;
         return root;
     }
 
@@ -702,7 +705,6 @@ public:
         built_         = false;
         lastBakedSegments_ = 0;
         lastMirrorSegments_ = 0;
-        mirrorSpans_ = null;
         phase_         = Phase.Idle;
         latchedPoints_ = [];
         edgesParam_    = [];
@@ -1103,6 +1105,9 @@ private:
     // starting the scrub — shared with the redo replay (task 7137).
     void seatFirstPoint(ChainPoint p, uint h) {
         chainBefore_ = MeshSnapshot.capture(*mesh);
+        // Every session opens here (click, redo replay); the tool's end paths
+        // are several, so the spans are cleared at the start, not the end.
+        mirrorSpans_ = null;
         latchedPoints_ = [p];
         edgesParam_    = [h];
         phase_     = Phase.EdgeA;
