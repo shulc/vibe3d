@@ -51,11 +51,14 @@ import handler : BoxHandlerBatchResourceOwner;
 // ownership law (C1-sym-own / C1-own-off, gap rows 290 and 314): a point is
 // owned where it was CLICKED, in BASE-mesh terms, whichever side made the edge;
 // its base polygons are located at every bake from its effective position
-// (`locateBase`). `facePoint` is the latch-time answer, for introspection only.
+// (`locateBase`). `facePoint` / `latchFaces` are the latch-time answer: the
+// first for introspection, the second to park a point whose indices a re-bake
+// re-used for something else (see `pointRail`).
 private struct EdgeSliceChainPoint {
     uint v0, v1; float t;
     uint m0 = ~0u, m1 = ~0u; bool mflip;
     bool facePoint;
+    uint[] latchFaces;
 }
 
 // The session's first point, carried by EditSession across the undo of the
@@ -104,14 +107,14 @@ struct PreparedEdgeSliceParamImage {
     SessionMeshKey nextArmedKey; float nextProxy;
     uint[] nextEdges, nextPointVerts; float[] nextPointT;
     private EdgeSliceChainPoint[] nextChainPoints;
-    private size_t nextMirrorSegments;
+    private size_t nextMirrorSegments; private bool[] nextParked;
     Mesh candidate; uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc {
         valid = recognized = appliesState = appliesMesh = invalidateRedo = false;
         pname = null;
         expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
         nextEdges = null; nextPointVerts = null; nextPointT = null;
-        nextChainPoints = null; nextMirrorSegments = 0;
+        nextChainPoints = null; nextMirrorSegments = 0; nextParked = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
@@ -248,6 +251,7 @@ private:
     // they do not write it (task 7114).
     size_t       lastBakedSegments_;
     size_t       lastMirrorSegments_;   // the mirror chain's count, same bake
+    bool[]       parked_;               // per point, same bake: its rail was not remade (`pointRail`)
     int          dragPart_ = -1;
     // IDENTITY guard, asked between mouse events: "is the baseline I armed
     // still on the mesh I armed it on?". It keys on TOPOLOGY + address + the
@@ -410,9 +414,14 @@ public:
         // A counter, unlike `chainSegments`: what the last bake returned.
         root["bakedSegments"] = JSONValue(cast(long)lastBakedSegments_);
         root["mirrorBakedSegments"] = JSONValue(cast(long)lastMirrorSegments_);
-        auto fp = JSONValue.emptyArray;
-        foreach (p; latchedPoints_) fp.array ~= JSONValue(p.facePoint);
+        auto fp = JSONValue.emptyArray, pk = JSONValue.emptyArray;
+        foreach (i, p; latchedPoints_) {
+            Vec3 ra, rb;
+            fp.array ~= JSONValue(p.facePoint);
+            pk.array ~= JSONValue(!liveRail(i, ra, rb));
+        }
         root["latchedFacePoint"] = fp;
+        root["latchedParked"] = pk;
         return root;
     }
 
@@ -707,6 +716,7 @@ public:
         built_         = false;
         lastBakedSegments_ = 0;
         lastMirrorSegments_ = 0;
+        parked_ = null;
         phase_         = Phase.Idle;
         latchedPoints_ = [];
         edgesParam_    = [];
@@ -764,6 +774,7 @@ public:
         image.nextPointT = image.expectedPointT.dup;
         image.nextChainPoints = latchedPoints_.dup;
         image.nextMirrorSegments = lastMirrorSegments_;
+        image.nextParked = parked_.dup;
         if (!image.recognized || pname == "show") return image;
 
         if (pname == "activePoint") {
@@ -811,7 +822,7 @@ public:
         image.candidate = detachedPreparedMesh(live);
         auto shadow = beginPreparedShadow(image.candidate);
         const n = bakeChainInto(image.candidate, baseline, nextPoints,
-            image.nextMirrorSegments);
+            image.nextMirrorSegments, image.nextParked);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains); shadow.close();
         image.appliesState = true; image.appliesMesh = true;
@@ -856,6 +867,7 @@ public:
         pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
         latchedPoints_ = image.nextChainPoints;
         lastMirrorSegments_ = image.nextMirrorSegments;
+        parked_ = image.nextParked;
         if (image.pname == "chainArm" && image.appliesMesh)
             chainBefore_ = image.expectedLive;
         image.clear();
@@ -1016,9 +1028,9 @@ public:
         // `activePoint_` — set to the tail by latchFirstPoint/appendPoint/
         // armChain, or to a re-picked earlier point by onMouseButtonDown.
         if (activePoint_ < 0 || activePoint_ >= cast(int)latchedPoints_.length) return false;
-        auto p = latchedPoints_[activePoint_];
-        latchedPoints_[activePoint_].t = tFromLocalRailClick(
-            mesh.vertices[p.v0], mesh.vertices[p.v1],
+        Vec3 ra, rb;
+        if (!liveRail(activePoint_, ra, rb)) return true;  // parked
+        latchedPoints_[activePoint_].t = tFromLocalRailClick(ra, rb,
             cast(float)e.x, cast(float)e.y);
         syncProxy();
         if (armed_) rebuildPreview();
@@ -1052,9 +1064,17 @@ public:
         if (!visualOnly) vpWorld_ = vp;
         if (!active || latchedPoints_.length == 0) return;
 
+        // Parked points (see `pointRail`) are skipped: no marker, no handle;
+        // each handle's part id stays its point's index.
         Vec3[] positions;
-        positions.length = latchedPoints_.length;
-        foreach (i, p; latchedPoints_) positions[i] = chainPointPos(p);
+        int[] partOf;
+        foreach (i; 0 .. latchedPoints_.length) {
+            Vec3 q;
+            if (!chainPointPos(i, q)) continue;
+            positions ~= q;
+            partOf ~= cast(int)i;
+        }
+        if (positions.length == 0) return;
 
         // Nothing is drawn for a point that has not been clicked: before the
         // press the display is the target-edge highlight alone (drawn by the
@@ -1076,7 +1096,7 @@ public:
             const Vec3 posW  = os.pos(pos);
             handles_[i].pos  = posW;
             handles_[i].size = gizmoSize(posW, vp, handleScale);
-            toolHandles_.add(handles_[i], cast(int)i);
+            toolHandles_.add(handles_[i], partOf[i]);
         }
         toolHandles_.setHaul(dragPart_);
         int mx, my;
@@ -1085,7 +1105,7 @@ public:
 
         foreach (hd; handles_) hd.draw(shader, vp);
 
-        if (show_ == Show.Position)
+        if (show_ == Show.Position && partOf[$ - 1] == cast(int)latchedPoints_.length - 1)
             drawHud(vp, positions[$ - 1], effectiveT(latchedPoints_[$ - 1].t));
     }
 
@@ -1164,9 +1184,10 @@ private:
     // Records, for introspection, whether the point landed off every base
     // edge (a click on any chord the tool made, primary or mirror).
     void assignBase(ref ChainPoint p) {
-        if (!chainBefore_.filled) return;
-        locateBase(chainBefore_.vertices, chainBefore_.edges, chainBefore_.faces,
-                   chainPointPos(p), p.facePoint);
+        Vec3 ra, rb;   // at the latch the clicked edge is live
+        if (!chainBefore_.filled || !pointRail(*mesh, p, ra, rb)) return;
+        p.latchFaces = locateBase(chainBefore_.vertices, chainBefore_.edges, chainBefore_.faces,
+                                  lerpVec3(ra, rb, effectiveT(p.t)), p.facePoint);
     }
 
     // The BASE-mesh polygons point `q` lies in: the faces of the base edge it
@@ -1400,8 +1421,37 @@ private:
         return effectiveT(raw);
     }
 
-    Vec3 chainPointPos(ChainPoint p) const {
-        return lerpVec3(mesh.vertices[p.v0], mesh.vertices[p.v1], effectiveT(p.t));
+    // A point's rail in the mesh a bake is BUILDING, read when its step starts:
+    // false — the point is PARKED — when (v0, v1) is not an edge there, because
+    // a re-bake under other parameters (a snap, Split Polygons) did not remake
+    // the cut-made vertices it latched on (and in-range indices may then name
+    // unrelated ones). A parked point owns nothing and splits nothing; the bake
+    // reports it (`parked_`) and `liveRail` hides it from every other reader.
+    static bool pointRail(ref Mesh m, const ChainPoint p, out Vec3 a, out Vec3 b) {
+        if (p.v0 >= m.vertices.length || p.v1 >= m.vertices.length) return false;
+        if (m.edgeIndexOf(p.v0, p.v1) == ~0u) return false;
+        a = m.vertices[p.v0];
+        b = m.vertices[p.v1];
+        return true;
+    }
+
+    // THE reader of latched point `i`'s rail on the live mesh — draw, handles,
+    // HUD, a scrub, introspection: false for a point the last bake parked (it
+    // is not drawn and has no handle), or whose indices are out of range.
+    bool liveRail(size_t i, out Vec3 a, out Vec3 b) const {
+        if (i >= latchedPoints_.length || (i < parked_.length && parked_[i])) return false;
+        const p = latchedPoints_[i];
+        if (p.v0 >= mesh.vertices.length || p.v1 >= mesh.vertices.length) return false;
+        a = mesh.vertices[p.v0];
+        b = mesh.vertices[p.v1];
+        return true;
+    }
+
+    bool chainPointPos(size_t i, out Vec3 pos) const {
+        Vec3 a, b;
+        if (!liveRail(i, a, b)) return false;
+        pos = lerpVec3(a, b, effectiveT(latchedPoints_[i].t));
+        return true;
     }
 
     // AIMING KIND: **Pixel** (task 0619 §1.1) — `anchor` is a LOCAL point
@@ -1445,13 +1495,14 @@ private:
     // on pointsFromEdgesParam/pickSeedSubEdge — or fails to reach).
     // -------------------------------------------------------------------
     size_t bakeChainFrom(ref MeshSnapshot baseline, const ChainPoint[] pts) {
-        return bakeChainInto(*mesh, baseline, pts, lastMirrorSegments_);
+        return bakeChainInto(*mesh, baseline, pts, lastMirrorSegments_, parked_);
     }
 
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
             const ChainPoint[] pts) {
         size_t mirrorN;
-        return bakeChainInto(work, baseline, pts, mirrorN);
+        bool[] parked;
+        return bakeChainInto(work, baseline, pts, mirrorN, parked);
     }
 
     // Restores `baseline` and bakes `pts`. Returns the chain steps that wrote
@@ -1469,8 +1520,9 @@ private:
     // point and a point latched on a cut-made edge (C1-3b) names vertices the
     // re-bake recreates before the step that needs them.
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
-            const ChainPoint[] pts, out size_t mirrorN) {
+            const ChainPoint[] pts, out size_t mirrorN, out bool[] parked) {
         baseline.restore(work);
+        parked = new bool[pts.length];
         if (pts.length < 2) return 0;
         auto img = new ChainPoint[pts.length];
         auto hasImg = new bool[pts.length];
@@ -1485,16 +1537,24 @@ private:
         auto faces = new uint[][pts.length];
         auto isFace = new bool[pts.length];
         void locate(size_t i) {
-            // A re-bake under other parameters may not have made the vertices
-            // this point latched on: it then owns nothing and splits nothing.
-            if (pts[i].v0 >= work.vertices.length || pts[i].v1 >= work.vertices.length) {
+            // A parked point (see `pointRail`) owns nothing and splits nothing.
+            Vec3 ra, rb;
+            if (!pointRail(work, pts[i], ra, rb)) {
                 faces[i] = null;
                 isFace[i] = true;
+                parked[i] = true;
                 return;
             }
-            const q = lerpVec3(work.vertices[pts[i].v0], work.vertices[pts[i].v1],
-                               effectiveT(pts[i].t));
+            const q = lerpVec3(ra, rb, effectiveT(pts[i].t));
             faces[i] = locateBase(baseline.vertices, baseline.edges, baseline.faces, q, isFace[i]);
+            // Live indices naming an edge that is not where the point was
+            // clicked (no base polygon in common with the latch) are parked
+            // too; a snap onto a base vertex keeps the edge's polygons.
+            if (pts[i].latchFaces.length && !sharesFace(pts[i].latchFaces, faces[i])) {
+                faces[i] = null;
+                isFace[i] = true;
+                parked[i] = true;
+            }
         }
         locate(0);
         size_t n;

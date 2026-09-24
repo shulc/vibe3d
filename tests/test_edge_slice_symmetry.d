@@ -577,3 +577,59 @@ unittest {
            format("a chord point in a warped base polygon is not a face point of it: face %s, "
                   ~ "mesh %s, new vertices %s", facePt, mesh.toString, p3s(born)));
 }
+
+// A point PARKED by a parameter re-bake. P0 x = 1.1 on (1..2, z0) and P1
+// x = 0.5 on (0..1, z1) share no base polygon (four splits, mirrored); P2
+// lands on the MIRROR sub-edge (-2..-1.1, z0), whose vertices only that split
+// made. Snap 50 % then puts P0 on the base vertex (1, 0, 0): the step cuts
+// instead, (-1.1, 0, 0) is never made, and P2's rail is gone. It must be
+// parked — owns nothing, drawn nowhere, no handle — and the next frame must
+// not read its vanished vertex (before: `ArrayIndexError … [27] … length 27`,
+// the app died). Retroactive parameters re-baking earlier points are OUR
+// behaviour, not captured.
+void parkCell(bool sym, double p0x, double p2x, double[3] a2, double[3] b2, string tag) {
+    gridRig(false);
+    symmetryX(sym);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    clickXZ(p0x, 0, [1, 0, 0], [2, 0, 0], tag ~ " P0");
+    clickXZ(0.5, 1, [0, 0, 1], [1, 0, 1], tag ~ " P1");
+    clickXZ(p2x, 0, a2, b2, tag ~ " P2");
+    slLine("tool.attr mesh.edgeSliceTool snap 50");
+    // Several frames under the re-baked preview (draw, handles, HUD).
+    foreach (k; 0 .. 3) slHover(pixelOf(0, 0, -1.5)[0], pixelOf(0, 0, -1.5)[1]);
+    auto st = getJson("/api/tool/state");
+    const parked = st["latchedParked"].toString;
+    const handles = getJson("/api/tool/handles");
+    long[] parts;
+    foreach (h; handles["handles"]["parts"].array) parts ~= h["part"].integer;
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    slLine("tool.set mesh.edgeSliceTool on");
+    slLine("tool.attr mesh.edgeSliceTool snap 0.5");
+    slLine("tool.set mesh.edgeSliceTool off");
+    writeln("parked ", tag, ": parked ", parked, " handles ", handles.toString, " committed ",
+            mesh, " new ", p3s(born));
+    if (sym)
+        assert(parked == "[false,false,true]" && parts == [0L, 1L] && mesh.verts == 27
+               && mesh.faces == 18 && mirrorClosed(born),
+               format("parked %s: expected P2 parked (no handle) and the 27 v / 18 f mirrored cut; "
+                      ~ "parked %s, handle parts %s, mesh %s, new %s", tag, parked, parts,
+                      mesh.toString, p3s(born)));
+    else
+        assert(parked == "[false,false,true]" && parts == [0L, 1L] && mesh.verts == 26
+               && mesh.faces == 17,
+               format("parked %s: P2's indices re-used for the new chord must park it (26 v / "
+                      ~ "17 f, P1's cut only); parked %s, handle parts %s, mesh %s, new %s", tag,
+                      parked, parts, mesh.toString, p3s(born)));
+}
+
+unittest { parkCell(true, 1.1, -1.5, [-2, 0, 0], [-1.1, 0, 0], "sym"); }
+
+// The same sequence with symmetry OFF, P0 at x = 1.2 and P2 on the sub-edge
+// (1..1.2, z0) P0's split made: after the re-bake vertex 25 is P1's cut, so
+// P2's indices name the new chord (1,0,0)-(0.5,0,1) — a LIVE edge in another
+// base polygon than the click's. Parked as well (before: it rode the chord and
+// split it at (0.75, 0, 0.5), 27 v / 17 f). Ours, not captured.
+unittest { parkCell(false, 1.2, 1.07, [1, 0, 0], [1.2, 0, 0], "off"); }
