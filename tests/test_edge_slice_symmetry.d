@@ -258,13 +258,14 @@ unittest {
     slLine("tool.set mesh.edgeSliceTool off");
 }
 
-// A point on a MIRROR-made sub-edge, followed by a point with no mirror edge.
-// Split OFF: P0/P1 on +X, P2 on the -X column edge, P3 on the sub-edge the
-// mirror of P0's split made, then P4 on an edge with an on-plane endpoint
-// (no mirror edge). P3 is a base EDGE point and must stay where it was
-// clicked, with its image on +X. Under the former two-chain bake the mirror
-// chain dropped at P4 and P3's raw mirror-made indices named a primary-made
-// sub-edge: a stray vertex on the x = -2 column, P3 lost.
+// A point on a MIRROR-made sub-edge, then a point on an edge with an on-plane
+// endpoint. Split OFF: P0/P1 on +X, P2 on the -X column edge, P3 on the
+// sub-edge the mirror of P0's split made, then P4 on (0..1, z1). P3 is a base
+// EDGE point and must stay where it was clicked, with its image on +X. Under
+// the former two-chain bake P4 had no mirror edge, the mirror chain dropped
+// there and P3's raw mirror-made indices named a primary-made sub-edge: a
+// stray vertex on the x = -2 column, P3 lost. An on-plane endpoint is its own
+// image, so P4 is mirrored too and the result is mirror-closed.
 unittest {
     gridRig(false);
     symmetryX(true);
@@ -306,12 +307,12 @@ unittest {
     writeln("mirror point after the mirror chain drops: ", slMesh(), " P3 ", p3s([p3]),
             " new ", p3s(born));
     // P0 -> P1 share no base polygon: no cut, but both points split their
-    // edges (mirrored) once the chain has two points; 9 new vertices in all
-    // (P0, P1, P2 and P3 mirrored, P4 alone: its edge has no mirror edge).
-    assert(first && firstImage && born.length == 9,
-           format("the non-cutting steps' edge splits are wrong (P0 %s, its image %s, 9 in all): "
-                  ~ "new vertices %s",
-                  first, firstImage, p3s(born)));
+    // edges (mirrored) once the chain has two points; 10 new vertices in all
+    // (P0..P4, each mirrored), closed under the mirror.
+    assert(first && firstImage && born.length == 10 && mirrorClosed(born),
+           format("the non-cutting steps' edge splits are wrong (P0 %s, its image %s, 10 in "
+                  ~ "all, mirror-closed %s): new vertices %s",
+                  first, firstImage, mirrorClosed(born), p3s(born)));
     assert(image && !stray,
            format("a mirror-made sub-edge point is not at its click and image: image %s, "
                   ~ "stray on x = -2 %s, new vertices %s", image, stray, p3s(born)));
@@ -469,4 +470,83 @@ unittest {
     writeln("symmetry off, no shared base polygon: ", mesh, " new ", p3s(verticesFrom(GRID_VERTS)));
     assert(mesh.faces > GRID_FACES && mesh.verts > GRID_VERTS + 2,
            "symmetry off: a chain across two cells was not cut: " ~ mesh.toString);
+}
+
+// A PARAMETER re-bake keeps the law: cell c, then Split Polygons off and on
+// again (each `tool.attr` re-bakes the live chain from the baseline). Still
+// 31 v / 18 f / 48 e, mirror-closed, no crossing edge.
+unittest {
+    symOwnCell("c-rebake", () {
+        clickXZ(-1.5, 2, [-2, 0, 2], [-1, 0, 2], "c-rebake P3");
+        slLine("tool.attr mesh.edgeSliceTool split false");
+        slLine("tool.attr mesh.edgeSliceTool split true");
+    }, 31, 48, [[1.5, 0, 0], [1.5, 0, 1], [1.5, 0, 2], [-1.5, 0, 0], [-1.5, 0, 1], [-1.5, 0, 2]]);
+}
+
+// Base polygons follow the EFFECTIVE position. P1 at x = 1.1 on (1..2, z0) and
+// P2 at x = 0.5 on (0..1, z1) share no base polygon (29 v / 16 f: four splits).
+// Snap 50 % then rounds P1 onto the base vertex (1, 0, 0), a corner of the
+// (0..1, 0..1) cell P2 is on: the step now cuts, mirrored — 27 v / 18 f with
+// only (+-0.5, 0, 1) new. Polygons frozen at the latch keep 16 faces.
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    clickXZ(1.1, 0, [1, 0, 0], [2, 0, 0], "snap P1");
+    clickXZ(0.5, 1, [0, 0, 1], [1, 0, 1], "snap P2");
+    const before = slMesh();
+    assert(before.verts == 29 && before.faces == 16,
+           "snap rig: the unsnapped chain is not four edge splits: " ~ before.toString);
+    slLine("tool.attr mesh.edgeSliceTool snap 50");
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    const ec = edgeCounts();
+    // The snap is a sticky panel value: put the default back for later cells.
+    slLine("tool.set mesh.edgeSliceTool on");
+    slLine("tool.attr mesh.edgeSliceTool snap 0.5");
+    slLine("tool.set mesh.edgeSliceTool off");
+    writeln("snap onto a base vertex: ", mesh, " crossing ", ec[1], " new ", p3s(born));
+    assert(mesh.verts == 27 && mesh.faces == 18 && ec[1] == 0 && mirrorClosed(born),
+           format("a point snapped onto a base vertex did not take that vertex's polygons: "
+                  ~ "mesh %s, new vertices %s", mesh.toString, p3s(born)));
+}
+
+// A WARPED base polygon: (2, 0, 1) and its mirror raised to y = 0.6, so the
+// (1..2, 0..1) cell is not planar. A click on the prologue's chord lands
+// inside that cell's Newell outline but on neither of its fan triangles; it
+// must still be a face point of the cell, sharing it with P2 (cell b's step 3:
+// 31 v / 18 f, the chord point on both chords).
+unittest {
+    gridRig(false);
+    foreach (x; [2.0, -2.0])
+        slCmd("mesh.move_vertex", format(`{"from":[%s,0,1],"to":[%s,0.6,1]}`, x, x));
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    void click3(double[3] at, double[3] a, double[3] b, string what) {
+        const va = vertexNear(a), vb = vertexNear(b);
+        assert(va >= 0 && vb >= 0, what ~ ": the edge's ends are not in the mesh");
+        const p = pixelOf(at[0], at[1], at[2]);
+        hoverFloor(p, va, vb, what);
+        slClickDown(p[0], p[1], what);
+        slPlay(slButton(20, false, 1, p[0], p[1]), what ~ " release");
+    }
+    click3([1.5, 0, 0], [1, 0, 0], [2, 0, 0], "warp P1");
+    click3([1.5, 0.3, 1], [1, 0, 1], [2, 0.6, 1], "warp P2");
+    const lp = latchedPositions();
+    assert(lp.length == 2 && slMesh().verts == 29, "warp rig: the prologue chord is not there");
+    const double[3] mid = [(lp[0][0] + lp[1][0]) / 2, (lp[0][1] + lp[1][1]) / 2,
+                           (lp[0][2] + lp[1][2]) / 2];
+    click3(mid, lp[0], lp[1], "warp Q on the chord");
+    const facePt = getJson("/api/tool/state")["latchedFacePoint"].toString;
+    slLine("tool.set mesh.edgeSliceTool off");
+    const mesh = slMesh();
+    const born = verticesFrom(GRID_VERTS);
+    writeln("chord point in a warped polygon: ", mesh, " face ", facePt, " new ", p3s(born));
+    assert(facePt == "[false,false,true]" && mesh.verts == 31 && mesh.faces == 18
+           && mirrorClosed(born),
+           format("a chord point in a warped base polygon is not a face point of it: face %s, "
+                  ~ "mesh %s, new vertices %s", facePt, mesh.toString, p3s(born)));
 }

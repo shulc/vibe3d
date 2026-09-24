@@ -14,8 +14,8 @@ import symmetry;
 
 // mirrorEdgePoint (Edge Slice's mirrored chain): the image edge of (v0, v1) is
 // (pairOf[v0], pairOf[v1]) when the images are joined, and there is none for
-// an unjoined pair, a self-mirroring edge, an on-plane endpoint, or symmetry
-// off. Hand-built X-symmetric mesh:
+// an unjoined pair, a self-mirroring edge, an unpaired endpoint, or symmetry
+// off; an on-plane endpoint is its own image. Hand-built X-symmetric mesh:
 //   0 (1,0,0) <-> 2 (-1,0,0),  1 (2,0,0) <-> 3 (-2,0,0),  5 (1,0,1) <-> 6 (-1,0,1),
 //   4 (0,0,0) on the plane,    7 (-1.5,0,1) unpaired.
 // Faces [0,1,5], [3,2,7], [4,0,2]: (2,3) exists, (2,6) does not.
@@ -46,9 +46,10 @@ unittest {
     // Self-mirror: (0,2) maps onto itself.
     assert(!mirrorEdgePoint(m, sp, 0, 2, m0, m1),
            "mirrorEdgePoint: a self-mirroring edge was reported as its own mirror");
-    // On-plane endpoint: (4,0) — vertex 4 has no pair.
-    assert(!mirrorEdgePoint(m, sp, 4, 0, m0, m1),
-           "mirrorEdgePoint: an edge with an on-plane endpoint was mirrored");
+    // On-plane endpoint: (4,0) — vertex 4 is its own image, so (4,2).
+    assert(mirrorEdgePoint(m, sp, 4, 0, m0, m1) && m0 == 4 && m1 == 2,
+           "mirrorEdgePoint: an edge with an on-plane endpoint was not mirrored onto (4,2): "
+           ~ m0.to!string ~ "," ~ m1.to!string);
     // Unpaired endpoint off the plane: (2,7).
     assert(!mirrorEdgePoint(m, sp, 2, 7, m0, m1),
            "mirrorEdgePoint: an edge with an unpaired endpoint was mirrored");

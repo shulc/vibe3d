@@ -89,10 +89,10 @@ uint mirrorEdge(const ref Mesh m, const ref SymmetryPacket sp, uint ei)
 
 /// The mirror of a point on edge (v0, v1) at a parameter `t`: the edge
 /// (m0, m1) = (pairOf[v0], pairOf[v1]) at the SAME `t`, since the pairing maps
-/// each endpoint to its own image. False — no mirror point — when symmetry is
-/// off or has no axis, the pairing is not for this mesh, either endpoint is
-/// unpaired or on the plane (not captured), the images are not joined by an
-/// edge, or the edge is its own mirror. Used by Edge Slice's mirrored chain
+/// each endpoint to its own image (an on-plane endpoint maps to itself). False —
+/// no mirror point — when symmetry is off or has no axis, the pairing is not for
+/// this mesh, an endpoint is unpaired off the plane, the images are not joined
+/// by an edge, or the edge is its own mirror. Used by Edge Slice's mirrored chain
 /// (task 7114; measured law: the cut is mirrored from either side).
 bool mirrorEdgePoint(const ref Mesh m, const ref SymmetryPacket sp, uint v0, uint v1,
                      out uint m0, out uint m1)
@@ -101,7 +101,11 @@ bool mirrorEdgePoint(const ref Mesh m, const ref SymmetryPacket sp, uint v0, uin
     if (!sp.enabled || sp.axisIndex < 0) return false;
     if (sp.pairOf.length != m.vertices.length) return false;
     if (v0 >= m.vertices.length || v1 >= m.vertices.length) return false;
-    const a = sp.pairOf[v0], b = sp.pairOf[v1];
+    int a = sp.pairOf[v0], b = sp.pairOf[v1];
+    // An on-plane endpoint is its own image, as in `mirrorEdge` (the captured
+    // law mirrors every split and cut: C1-sym-own, gap row 290).
+    if (a < 0 && v0 < sp.onPlane.length && sp.onPlane[v0]) a = cast(int)v0;
+    if (b < 0 && v1 < sp.onPlane.length && sp.onPlane[v1]) b = cast(int)v1;
     if (a < 0 || b < 0) return false;
     if ((a == v0 && b == v1) || (a == v1 && b == v0)) return false;   // self
     if (m.edgeIndex(cast(uint)a, cast(uint)b) == ~0u) return false;

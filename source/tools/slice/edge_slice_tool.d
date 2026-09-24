@@ -47,15 +47,16 @@ import handler : BoxHandlerBatchResourceOwner;
 // (m0, m1): the point's mirror edge under the symmetry that was live when it
 // latched (`mirrorEdgePoint`), or ~0u, in the mesh edge's stored order like
 // (v0, v1); `mflip` when that order reverses the mirror of (v0, v1), so the
-// mirror point sits at `1 - t` along it. Base terms (set only when symmetry was
-// live at the latch, `baseKnown`): the BASE-mesh polygons the point lies in —
-// the faces of its base edge, or the one polygon a chord click lands inside
-// (`facePoint`). Measured ownership law (C1-sym-own, gap row 290): a point is
-// owned where it was CLICKED, in base-mesh terms, whichever side made the edge.
+// mirror point sits at `1 - t` along it. `baseKnown`: symmetry was live at the
+// latch, so the chain follows the measured ownership law (C1-sym-own, gap row
+// 290): a point is owned where it was CLICKED, in BASE-mesh terms, whichever
+// side made the edge. Its base polygons are located at every bake, from its
+// effective position (`locateBase`); `facePoint` is the latch-time answer,
+// kept for introspection only.
 private struct EdgeSliceChainPoint {
     uint v0, v1; float t;
     uint m0 = ~0u, m1 = ~0u; bool mflip;
-    uint[] baseFaces; bool baseKnown, facePoint;
+    bool baseKnown, facePoint;
 }
 
 // The session's first point, carried by EditSession across the undo of the
@@ -1161,64 +1162,96 @@ private:
         }
     }
 
-    // The point's BASE terms under live symmetry (measured law C1-sym-own,
-    // gap row 290): located by POSITION against the session baseline
-    // `chainBefore_` — on a base edge (its faces; a base vertex's faces at an
-    // endpoint), else inside one base polygon (`facePoint`: a click on any
-    // chord the tool made, primary or mirror). Fixed at the latch; a scrub
-    // slides the point along the edge it latched on, which stays inside the
-    // same base edge or polygon.
+    // Marks a point latched under live symmetry (measured law C1-sym-own, gap
+    // row 290) and records, for introspection, whether it landed off every
+    // base edge (a click on any chord the tool made, primary or mirror).
     void assignBase(ref ChainPoint p, const SymmetryPacket* sym) {
         if (sym is null || !sym.enabled || sym.axisIndex < 0 || !chainBefore_.filled) return;
         p.baseKnown = true;
-        p.baseFaces = null;
-        p.facePoint = false;
-        const q = chainPointPos(p);
-        const vs = chainBefore_.vertices;
-        const fs = chainBefore_.faces;
-        foreach (e; chainBefore_.edges) {
+        locateBase(chainBefore_, chainPointPos(p), p.facePoint);
+    }
+
+    // The BASE-mesh polygons point `q` lies in: the faces of the base edge it
+    // is on (all faces of a base vertex at an edge end), else the one base
+    // polygon it is inside (`facePoint`). Tolerances are relative to the edge
+    // or polygon size; a polygon is tested in its Newell plane, so a point on
+    // a chord of a WARPED polygon is still inside it.
+    static uint[] locateBase(ref const MeshSnapshot base, Vec3 q, out bool facePoint) {
+        import std.math : abs, sqrt;
+        facePoint = false;
+        const vs = base.vertices;
+        const fs = base.faces;
+        uint[] faces;
+        foreach (e; base.edges) {
             const a = vs[e[0]], b = vs[e[1]];
             const ab = b - a;
             const len2 = dot(ab, ab);
-            if (len2 <= 1e-12f) continue;
-            float s = dot(q - a, ab) / len2;
+            if (len2 <= 1e-20f) continue;
+            const len = sqrt(len2);
+            const s = dot(q - a, ab) / len2;
             if (s < -1e-4f || s > 1.0f + 1e-4f) continue;
-            if ((a + ab * s - q).length() > 1e-4f * (1.0f + len2)) continue;
+            if ((a + ab * s - q).length() > 1e-4f * len) continue;
             const atA = s <= 1e-4f, atB = s >= 1.0f - 1e-4f;
             foreach (fi, f; fs) {
                 bool hasA, hasB;
                 foreach (v; f) { if (v == e[0]) hasA = true; if (v == e[1]) hasB = true; }
-                if ((atA && hasA) || (atB && hasB) || (hasA && hasB)) p.baseFaces ~= cast(uint)fi;
+                if ((atA && hasA) || (atB && hasB) || (hasA && hasB)) faces ~= cast(uint)fi;
             }
-            return;
+            return faces;
         }
-        p.facePoint = true;
+        facePoint = true;
+        float best = float.infinity;
         foreach (fi, f; fs) {
-            if (f.length < 3) continue;
-            foreach (k; 1 .. f.length - 1)
-                if (pointInTriangle(q, vs[f[0]], vs[f[k]], vs[f[k + 1]])) {
-                    p.baseFaces = [cast(uint)fi];
-                    return;
-                }
+            float d;
+            if (pointInPolygon(q, vs, f, d) && d < best) { best = d; faces = [cast(uint)fi]; }
         }
+        return faces;
     }
 
-    // `q` on triangle (a, b, c): within the plane and inside, with tolerance.
-    static bool pointInTriangle(Vec3 q, Vec3 a, Vec3 b, Vec3 c) {
-        const n = cross(b - a, c - a);
-        const n2 = dot(n, n);
-        if (n2 <= 1e-12f) return false;
-        if (dot(q - a, n) * dot(q - a, n) > 1e-8f * n2) return false;
-        const u = dot(cross(c - b, q - b), n) / n2;
-        const v = dot(cross(a - c, q - c), n) / n2;
-        const w = 1.0f - u - v;
-        return u >= -1e-4f && v >= -1e-4f && w >= -1e-4f;
+    // `q` inside polygon `f`, tested in the polygon's Newell plane: within the
+    // polygon's own warp of that plane (plus a size-relative slack), and inside
+    // its outline projected there (crossing number). `dist`: the plane distance.
+    static bool pointInPolygon(Vec3 q, const Vec3[] vs, const uint[] f, out float dist) {
+        import std.math : abs, sqrt;
+        dist = float.infinity;
+        if (f.length < 3) return false;
+        Vec3 n = Vec3(0, 0, 0), c = Vec3(0, 0, 0);
+        float size = 0;
+        foreach (i, vi; f) {
+            const p0 = vs[vi], p1 = vs[f[(i + 1) % f.length]];
+            n.x += (p0.y - p1.y) * (p0.z + p1.z);
+            n.y += (p0.z - p1.z) * (p0.x + p1.x);
+            n.z += (p0.x - p1.x) * (p0.y + p1.y);
+            c = c + p0;
+            const l = (p1 - p0).length();
+            if (l > size) size = l;
+        }
+        const nl = n.length();
+        if (nl <= 1e-20f || size <= 0) return false;
+        n = n * (1.0f / nl);
+        c = c * (1.0f / f.length);
+        float warp = 0;
+        foreach (vi; f) { const w = abs(dot(vs[vi] - c, n)); if (w > warp) warp = w; }
+        dist = abs(dot(q - c, n));
+        if (dist > warp + 1e-4f * size) return false;
+        // A 2D frame in the plane.
+        Vec3 u = abs(n.x) < 0.9f ? cross(n, Vec3(1, 0, 0)) : cross(n, Vec3(0, 1, 0));
+        u = u * (1.0f / u.length());
+        const w = cross(n, u);
+        const qx = dot(q - c, u), qy = dot(q - c, w);
+        bool inside;
+        foreach (i, vi; f) {
+            const a = vs[vi] - c, b = vs[f[(i + 1) % f.length]] - c;
+            const ax = dot(a, u), ay = dot(a, w), bx = dot(b, u), by = dot(b, w);
+            if ((ay > qy) != (by > qy) && qx < ax + (qy - ay) * (bx - ax) / (by - ay))
+                inside = !inside;
+        }
+        return inside;
     }
 
-    // Do points `a` and `b` lie in one common base polygon?
-    static bool sharesBaseFace(const ChainPoint a, const ChainPoint b) {
-        foreach (f; a.baseFaces)
-            foreach (g; b.baseFaces) if (f == g) return true;
+    static bool sharesFace(const uint[] a, const uint[] b) {
+        foreach (f; a)
+            foreach (g; b) if (f == g) return true;
         return false;
     }
 
@@ -1444,7 +1477,7 @@ private:
         if (pts.length < 2) return 0;
         bool symmetric = true;
         foreach (p; pts) if (!p.baseKnown) symmetric = false;
-        if (symmetric) return bakeSymmetricInto(work, pts, mirrorN);
+        if (symmetric) return bakeSymmetricInto(work, baseline, pts, mirrorN);
         size_t n;
         uint seed = ~0u;
         foreach (k; 0 .. pts.length - 1) {
@@ -1454,19 +1487,43 @@ private:
         return n;
     }
 
-    size_t bakeSymmetricInto(ref Mesh work, const ChainPoint[] pts, out size_t mirrorN) {
+    size_t bakeSymmetricInto(ref Mesh work, ref MeshSnapshot baseline,
+            const ChainPoint[] pts, out size_t mirrorN) {
         auto img = new ChainPoint[pts.length];
         auto hasImg = new bool[pts.length];
         foreach (i, p; pts) {
             if (p.m0 == ~0u || p.m1 == ~0u) continue;
             img[i] = ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t);
-            img[i].facePoint = p.facePoint;   // the image of a face point is one too
             hasImg[i] = true;
         }
+        // Base polygons from each point's EFFECTIVE position (a snap can move
+        // it onto a base vertex), located when its step starts: point i's
+        // vertices exist from step i - 1 on (append-only numbering).
+        auto faces = new uint[][pts.length];
+        auto isFace = new bool[pts.length];
+        void locate(size_t i) {
+            // A re-bake under other parameters may not have made the vertices
+            // this point latched on: it then owns nothing and splits nothing.
+            if (pts[i].v0 >= work.vertices.length || pts[i].v1 >= work.vertices.length) {
+                faces[i] = null;
+                isFace[i] = true;
+                return;
+            }
+            const q = lerpVec3(work.vertices[pts[i].v0], work.vertices[pts[i].v1],
+                               effectiveT(pts[i].t));
+            faces[i] = locateBase(baseline, q, isFace[i]);
+        }
+        locate(0);
         size_t n;
         uint seedP = ~0u, seedM = ~0u;
         foreach (k; 0 .. pts.length - 1) {
-            if (sharesBaseFace(pts[k], pts[k + 1])) {
+            locate(k + 1);
+            if (sharesFace(faces[k], faces[k + 1])) {
+                // A start ON a vertex (a snapped end) continues from that
+                // vertex, so the cut leaves through the shared polygon rather
+                // than through the latched edge's own faces.
+                if (seedP == ~0u) seedP = cornerAt(work, pts[k]);
+                if (hasImg[k] && seedM == ~0u) seedM = cornerAt(work, img[k]);
                 if (bakeSegmentInto(work, pts, k, seedP)) ++n;
                 else seedP = ~0u;
                 if (hasImg[k] && hasImg[k + 1] && bakeSegmentInto(work, img, k, seedM)) ++mirrorN;
@@ -1475,23 +1532,35 @@ private:
             }
             // No shared base polygon: no cut; the step's edge points split.
             uint unused;
-            bool wrote = k == 0 && splitPointInto(work, pts[0], unused);
-            wrote = splitPointInto(work, pts[k + 1], seedP) || wrote;
+            bool wrote = k == 0 && splitPointInto(work, pts[0], isFace[0], unused);
+            wrote = splitPointInto(work, pts[k + 1], isFace[k + 1], seedP) || wrote;
             if (wrote) ++n;
-            bool wroteM = k == 0 && hasImg[0] && splitPointInto(work, img[0], unused);
-            if (hasImg[k + 1]) wroteM = splitPointInto(work, img[k + 1], seedM) || wroteM;
+            // The image of a face point is one too.
+            bool wroteM = k == 0 && hasImg[0] && splitPointInto(work, img[0], isFace[0], unused);
+            if (hasImg[k + 1])
+                wroteM = splitPointInto(work, img[k + 1], isFace[k + 1], seedM) || wroteM;
             else seedM = ~0u;
             if (wroteM) ++mirrorN;
         }
         return n;
     }
 
+    // The vertex `p` sits on when its effective `t` is an end of its edge.
+    uint cornerAt(ref Mesh work, const ChainPoint p) {
+        const e = work.edgeIndexOf(p.v0, p.v1);
+        if (e == ~0u) return ~0u;
+        const t = effectiveT(p.t);
+        if (t <= 1e-5f) return p.v0;
+        if (t >= 1.0f - 1e-5f) return p.v1;
+        return ~0u;
+    }
+
     // Split `p`'s edge at its `t` (an edge point that no segment reached).
     // `v`: the vertex now at the point (a reused corner at t = 0/1), or ~0u
     // for a face point or an unresolved edge. True when the mesh changed.
-    bool splitPointInto(ref Mesh work, const ChainPoint p, out uint v) {
+    bool splitPointInto(ref Mesh work, const ChainPoint p, bool facePoint, out uint v) {
         v = ~0u;
-        if (p.facePoint) return false;
+        if (facePoint) return false;
         const e = work.edgeIndexOf(p.v0, p.v1);
         if (e == ~0u) return false;
         float t = effectiveT(p.t);
@@ -1520,7 +1589,7 @@ private:
         EdgeSliceResult r;
         // No seed: the first segment, or (symmetric chains) a segment whose
         // start no earlier step materialised — cut from the point itself.
-        if (k == 0 || seed == ~0u) {
+        if (seed == ~0u) {
             uint eA = work.edgeIndexOf(pts[k].v0, pts[k].v1);
             if (eA == ~0u) return false;
             r = work.edgeSliceEx(eA, eB, effectiveT(pts[k].t), effectiveT(pts[k + 1].t), split_);
