@@ -215,7 +215,12 @@ unittest { // 1. population floor; 2. a-1p control; 4. vertex then edge cells; 3
     assert(polygons == 1, format("polygon control cells: %d, expected 1", polygons));
 
     // 4. vertex cells in fixture order, then edge cells (the skew pair last).
+    // X in full wherever our sign rule is determined: the plan pins only the
+    // line for a-2v* / a-2e-par (the sign is fitted to these cells, not a
+    // law), but the fitted rule must still reproduce the cells it was fitted
+    // to. a-1e* stays a line: its X follows OUR edge storage order.
     static immutable string[] fullX = ["a-1v", "a-1v-p-key", "a-1v-p-btn", "a-3v", "a-2e-adj",
+                                       "a-2v", "a-2v-rev", "a-2v-p-key", "a-2v-t", "a-2e-par",
                                        "a-2e-skew", "a-2e-skew-t"];
     int aligned = 0, skew = 0;
     foreach (pass; 0 .. 3) {
@@ -306,6 +311,41 @@ unittest { // 3 (task 7120). skew rigs: each its own mesh, the decoded rule's he
     int eb = edgeOf(sm, vertexAt(sm, sv[3], "S"), vertexAt(sm, sv[4], "S"), "S");
     ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, ea, eb)));
     assert(!alignSel(), "workplane from coplanar-through-origin skew edges did not refuse");
+}
+
+unittest { // refusals: shapes the capture did not cover (task 7120; gap rows 185/186)
+    int refused = 0;
+    void expectRefusal(string what) {
+        assert(!alignSel(), "workplane from " ~ what ~ " did not refuse (not captured)");
+        ++refused;
+    }
+    // >= 4 vertices and >= 3 edges.
+    auto m = cubeRig([0.0, 0.0, 0.0]);
+    ok(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
+    expectRefusal("four vertices");
+    ok(commandBody("mesh.select", `{"mode":"edges","indices":[0,1,2]}`));
+    expectRefusal("three edges");
+    // A NON-parallel pair on one polygon (trapezoid legs): only the parallel
+    // pair on a polygon was captured.
+    ok(commandBody("scene.reset"));
+    double[3][] tv = [[0.0, 0, 0], [2.0, 0, 0], [1.5, 1, 0], [0.5, 1, 0]];
+    auto t = loadMesh(tv, parseJSON("[[0,1,2,3]]"));
+    int l1 = edgeOf(t, vertexAt(t, tv[1], "T"), vertexAt(t, tv[2], "T"), "T");
+    int l2 = edgeOf(t, vertexAt(t, tv[3], "T"), vertexAt(t, tv[0], "T"), "T");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, l1, l2)));
+    expectRefusal("non-parallel edges on one polygon");
+    // Two skew edges on y = -1: the fitted normal is exactly -Y, where the
+    // shortest-arc rotation onto its dominant axis is undefined and the
+    // reference branch was not decoded.
+    ok(commandBody("scene.reset"));
+    double[3][] av = [[1, -1, 0], [2, -1, 1], [1, 0, 0],
+                      [-1, -1, 2], [-1, -1, 3], [-2, 0, 2]];
+    auto am = loadMesh(av, parseJSON("[[0,1,2],[3,4,5]]"));
+    int a1 = edgeOf(am, vertexAt(am, av[0], "A"), vertexAt(am, av[1], "A"), "A");
+    int a2 = edgeOf(am, vertexAt(am, av[3], "A"), vertexAt(am, av[4], "A"), "A");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, a1, a2)));
+    expectRefusal("skew edges whose fitted normal is opposite its dominant axis");
+    assert(refused == 4, format("refusal cells: %d, expected 4", refused));
 }
 
 unittest { // 5. the typed plane's Euler order: B = Rz * Rx * Ry
