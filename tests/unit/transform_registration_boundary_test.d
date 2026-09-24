@@ -213,8 +213,11 @@ unittest {
     // catches that; a gate taken before the rebase cannot.
     // Browser Assimp transport adds io.assimp_wire to the broad registration
     // closure; the transform-only closure stays at its pinned boundary.
-    assert(transform.queue.length == 252 && positive.queue.length == 517,
-        format("6506 import closure census changed: transform=%d/252 "
+    // Task 7144 (S3b review item 8): the Element Move pick takes its symmetry
+    // packet through `symmetry_pick.captureLiveSymmetry`, like the click
+    // helpers, which adds `symmetry_pick` to the transform closure (+1).
+    assert(transform.queue.length == 253 && positive.queue.length == 517,
+        format("6506 import closure census changed: transform=%d/253 "
             ~ "registration=%d/517", transform.queue.length,
             positive.queue.length));
 }
