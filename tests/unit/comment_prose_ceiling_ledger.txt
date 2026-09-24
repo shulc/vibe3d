@@ -8,8 +8,8 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 574
-task-citation-lines 5292
+source-files 575
+task-citation-lines 5290
 citing-files 446
 long-comment-runs 271
 files-with-long-runs 145
@@ -240,7 +240,7 @@ allow source/imgui_event_gate.d 3
 allow source/imgui_flag_boundary.d 1
 allow source/input_context.d 3
 allow source/input_frame_state.d 36
-allow source/input_router.d 67
+allow source/input_router.d 66
 allow source/input_zones.d 1
 allow source/io/assimp_wire.d 1
 allow source/io/browser_pick_resume.d 2
@@ -341,7 +341,7 @@ allow source/subpatch_worker.d 2
 allow source/subpatch_worker_web.d 1
 allow source/symmetry.d 11
 allow source/symmetry_pick.d 4
-allow source/tool.d 33
+allow source/tool.d 32
 allow source/tool_activation_ownership.d 6
 allow source/tool_disarm.d 2
 allow source/tool_lifecycle_registration.d 1

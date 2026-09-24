@@ -131,7 +131,7 @@ SH";
     // Measured on the current W16 LD+B12 stack at
     // b777bc26e50e45da10f70889fed2d1ada5891237. This is the population floor:
     // successful dmd over fewer (or zero) files must not masquerade as a clean width pass.
-    enum expectedWebModules = 530; // +1: workplane_fit; +1: io.assimp_wire; +1: value_drag
+    enum expectedWebModules = 531; // +1: workplane_fit; +1: io.assimp_wire; +1: value_drag; +1: held_gesture_buttons
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));
