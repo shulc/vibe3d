@@ -308,3 +308,52 @@ unittest {
            "a new session read a committed chord as mirror-made: latchedOnMirror " ~ onMirror);
     slLine("tool.set mesh.edgeSliceTool off");
 }
+
+// A mirror-chain point keeps its PRIMARY image when a later click drops the
+// mirror chain. Split OFF: P0/P1 on +X, P2 on the -X column edge (a mirrored
+// chain), P3 on a MIRROR-made sub-edge (onMirror), then P4 on an edge with an
+// on-plane endpoint, which has no mirror edge, so only the primary chain is
+// re-baked. P3 must bake at its image on the primary side (both of its sub-edge's
+// vertices are primary-made there); falling back to its raw mirror-made
+// indices names a primary-made sub-edge in that re-bake, and the commit
+// carries a stray vertex on the x = -2 column while P3 is lost.
+unittest {
+    gridRig(false);
+    symmetryX(true);
+    scope (exit) symmetryX(false);
+    slLine("tool.set mesh.edgeSliceTool on");
+    slLine("tool.attr mesh.edgeSliceTool split false");
+    void click(double x, double z, long a, long b, string what) {
+        const p = pixelOf(x, 0, z);
+        hoverFloor(p, a, b, what);
+        slClickDown(p[0], p[1], what);
+        slPlay(slButton(20, false, 1, p[0], p[1]), what ~ " release");
+    }
+    click(1.5, 0, vertexAt([1, 0, 0]), vertexAt([2, 0, 0]), "P0");
+    click(1.5, 2, vertexAt([1, 0, 2]), vertexAt([2, 0, 2]), "P1");
+    click(-2, 0.5, vertexAt([-2, 0, 0]), vertexAt([-2, 0, 1]), "P2");
+    // The mirror of P0 splits the (-2..-1, z 0) edge; click its outer piece.
+    const m0 = vertexAt([-2, 0, 0]);
+    long sub = -1;
+    foreach (v; verticesFrom(GRID_VERTS))
+        if (v[0] < -1.4 && v[0] > -1.6 && v[2] < 1e-3 && v[2] > -1e-3) sub = vertexAt(v);
+    assert(m0 >= 0 && sub >= GRID_VERTS, "alias rig: the mirror sub-edge is not there");
+    click(-1.75, 0, m0, sub, "P3 mirror sub-edge");
+    auto st3 = getJson("/api/tool/state");
+    assert(st3["latchedOnMirror"].toString == "[false,false,false,true]",
+           "alias rig: P3 did not latch on the mirror chain: " ~ st3["latchedOnMirror"].toString);
+    const p3 = latchedPositions()[3];
+    click(0.5, 1, vertexAt([0, 0, 1]), vertexAt([1, 0, 1]), "P4 on-plane edge");
+    slLine("tool.set mesh.edgeSliceTool off");
+    const born = verticesFrom(GRID_VERTS);
+    bool image, stray;
+    foreach (v; born) {
+        if (dist3(v, mirrorX(p3)) <= 1e-3) image = true;
+        if (v[0] < -1.99 && v[2] > 0.1 && v[2] < 0.4) stray = true;
+    }
+    writeln("mirror point after the mirror chain drops: ", slMesh(), " P3 ", p3s([p3]),
+            " new ", p3s(born));
+    assert(image && !stray,
+           format("a mirror-chain point fell back to its mirror-made indices: image %s, "
+                  ~ "stray on x = -2 %s, new vertices %s", image, stray, p3s(born)));
+}

@@ -1397,8 +1397,12 @@ private:
             const mt = p.mflip ? 1.0f - effectiveT(p.t) : p.t;
             mirror ~= p.onMirror ? ChainPoint(p.v0, p.v1, p.t) : ChainPoint(p.m0, p.m1, mt);
         }
+        // An onMirror point bakes at its IMAGE on the primary side even when
+        // the mirror chain is dropped (a later point with no mirror edge): its
+        // raw indices are mirror-made, and in a primary-only re-bake they name
+        // a primary-made sub-edge, a stray cut. The image's are primary-made.
         foreach (i, p; pts)
-            primary ~= (p.onMirror && mirror.length == pts.length)
+            primary ~= p.onMirror
                 ? ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t) : p;
         size_t n;
         uint seedP = ~0u, seedM = ~0u;
