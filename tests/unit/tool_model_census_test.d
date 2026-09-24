@@ -22,8 +22,8 @@
 //
 // Order of the checks is part of the contract (a mutation touching several
 // facts reddens at the EARLIEST step): (1) instrument floors, (2) population
-// floors, (3) violator constants, axis 1 then axis 2, (4) row-by-row ledger
-// comparison. On any mismatch the measured ledger is printed whole between
+// floors, (3) violator constants, axis 1 then axis 2, (3b) the session-debt
+// ratchet, (4) row-by-row ledger comparison. On any mismatch the measured ledger is printed whole between
 // `--- tool census ledger ---` markers; copy it from there and READ THE DIFF.
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_model_census_test.d
 module tests.unit.tool_model_census_test;
@@ -84,6 +84,91 @@ private enum size_t kHistorySurface = 62;
 private enum string[] kWriteWrappers = [
     "recordGestureEdit", "recordSnapshotUndo", "recordLiveDragEnd",
 ];
+
+// ---------------------------------------------------------------------------
+// Session-special debt (3b). The general tool-session model
+// (doc/tool_session_model_plan_2026-09-24.md, section 5.1 (d) and slice M7)
+// replaces the per-tool session specials with one model; until it lands these
+// three counts may only FALL. Growth is red with a pointer to the plan; a fall
+// is red too until the ledger row is lowered, in the same commit.
+//   session-capabilities  interfaces declared in the session modules below,
+//                         minus the named non-session ones (from the COMPILER,
+//                         cross-checked against a text scan of the same files)
+//   session-branches      `cast(I)` to one of those interfaces, all of source/
+//   special-tool-casts    `cast(C)` to a concrete tool class outside
+//                         source/tools/ (the shared modules branching per tool)
+// Casts are read from comment-, string- and unittest-blanked text.
+// ---------------------------------------------------------------------------
+private enum string kSessionPlan =
+    "doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)";
+private enum string[] kSessionModuleFiles =
+    ["source/command.d", "source/edit_session.d", "source/tool.d"];
+/// Interfaces of those modules that are not session specials. Each must
+/// still be declared, so a stale entry cannot hide a new special.
+private enum string[] kNonSessionIfaces = ["InputBindable", "RunMergeable"];
+
+/// Every interface the session modules declare, as the compiler sees them.
+private string[] sessionModuleIfaces() {
+    import std.meta : AliasSeq;
+    static import command, edit_session, tool;
+    string[] names;
+    static foreach (M; AliasSeq!(command, edit_session, tool))
+        static foreach (m; __traits(allMembers, M))
+            static if (__traits(compiles, __traits(getMember, M, m)))
+                static if (is(__traits(getMember, M, m) == interface))
+                    names ~= m;
+    return names.sort.array;
+}
+
+/// `interface <Name>` declarations of a blanked code view.
+package string[] interfaceDecls(string code) {
+    string[] names;
+    for (size_t i = 0; i < code.length; ++i) {
+        if (!wordAt(code, i, "interface")) continue;
+        size_t j = i + "interface".length;
+        skipWs(code, j);
+        const nm = identAt(code, j);
+        if (nm.length) names ~= nm;
+    }
+    return names;
+}
+
+/// Per-target counts of `cast(T)` in a blanked code view, for targets in
+/// `targets` (keyed by the last dotted segment; `const` / `immutable` /
+/// `shared` / `inout` qualifiers, with or without parentheses, are skipped).
+package size_t[string] castTargets(string code, const bool[string] targets) {
+    size_t[string] counts;
+    for (size_t i = 0; i < code.length; ++i) {
+        if (!wordAt(code, i, "cast")) continue;
+        size_t j = i + "cast".length;
+        skipWs(code, j);
+        if (j >= code.length || code[j] != '(') continue;
+        ++j;
+        for (bool more = true; more;) {
+            more = false;
+            skipWs(code, j);
+            foreach (q; ["const", "immutable", "shared", "inout"])
+                if (wordAt(code, j, q)) {
+                    j += q.length;
+                    skipWs(code, j);
+                    if (j < code.length && code[j] == '(') ++j;
+                    more = true;
+                    break;
+                }
+        }
+        string nm = identAt(code, j);
+        j += nm.length;
+        while (j < code.length && code[j] == '.' && identAt(code, j + 1).length) {
+            nm = identAt(code, j + 1);
+            j += 1 + nm.length;
+        }
+        if (nm.length && (nm in targets) !is null) counts[nm] += 1;
+    }
+    return counts;
+}
+private size_t[string] castTargetsOf(string src, const bool[string] targets) {
+    return castTargets(blankUnittestBodies(blankNonCode(src)), targets);
+}
 
 private string[] historySurface() {
     string[] names;
@@ -616,6 +701,8 @@ private struct ToolRow {
 
 private struct Ledger {
     size_t axis1 = size_t.max, axis2 = size_t.max;
+    size_t sessionCaps = size_t.max, sessionBranches = size_t.max,
+           toolCasts = size_t.max;
     ToolRow[string] tools;
     size_t[2][string] keys;       // file -> [mck, smk]
     size_t[string][string] writes; // file -> pair -> count
@@ -640,6 +727,9 @@ private Ledger parseLedger(string text) {
         switch (f[0]) {
             case "axis1-violators": l.axis1 = f[1].to!size_t; break;
             case "axis2-violators": l.axis2 = f[1].to!size_t; break;
+            case "session-capabilities": l.sessionCaps = f[1].to!size_t; break;
+            case "session-branches": l.sessionBranches = f[1].to!size_t; break;
+            case "special-tool-casts": l.toolCasts = f[1].to!size_t; break;
             case "tool": {
                 ToolRow r;
                 r.name = f[1];
@@ -678,6 +768,11 @@ private string renderLedger(const Ledger l) {
     o.put("# Axis 2 violator: a `key` file with mck > 0 (a MeshCacheKey FIELD).\n");
     o.put("# Axis 3 (`write` rows) is descriptive: any change reddens until recorded.\n");
     o.put(format("axis1-violators %s\naxis2-violators %s\n\n", l.axis1, l.axis2));
+    o.put("# Session-special debt, only-down (3b; " ~ kSessionPlan ~ "):\n");
+    o.put("# interfaces of the session modules, casts to them in source/, and casts\n");
+    o.put("# to a concrete tool class outside source/tools/.\n");
+    o.put(format("session-capabilities %s\nsession-branches %s\nspecial-tool-casts %s\n\n",
+                 l.sessionCaps, l.sessionBranches, l.toolCasts));
     foreach (n; l.tools.keys.sort) o.put(toolLine(l.tools[n]) ~ "\n");
     o.put("\n");
     foreach (f; l.keys.keys.sort)
@@ -844,6 +939,34 @@ unittest {
     measured.axis1 = v1.length;
     measured.axis2 = v2.length;
 
+    // Session-special debt (3b), measured here so the printed ledger carries it.
+    const ifaceCompiler = sessionModuleIfaces();
+    string[] ifaceText;
+    foreach (f; files)
+        if (kSessionModuleFiles.canFind(f.path))
+            ifaceText ~= interfaceDecls(blankUnittestBodies(blankNonCode(f.src)));
+    ifaceText.sort();
+    bool[string] sessionIfaces;
+    foreach (n; ifaceCompiler) if (!kNonSessionIfaces.canFind(n)) sessionIfaces[n] = true;
+    bool[string] toolClasses;
+    foreach (n; scanned.keys ~ templateTools.keys) toolClasses[n.split(".")[$ - 1]] = true;
+    size_t[string][string] branchSites, toolCastSites;   // file -> target -> n
+    size_t branchTotal, toolCastTotal;
+    foreach (f; files) {
+        foreach (t, n; castTargetsOf(f.src, sessionIfaces)) {
+            branchSites[f.path][t] = n;
+            branchTotal += n;
+        }
+        if (f.path.startsWith("source/tools/")) continue;
+        foreach (t, n; castTargetsOf(f.src, toolClasses)) {
+            toolCastSites[f.path][t] = n;
+            toolCastTotal += n;
+        }
+    }
+    measured.sessionCaps = sessionIfaces.length;
+    measured.sessionBranches = branchTotal;
+    measured.toolCasts = toolCastTotal;
+
     const measuredText = renderLedger(measured);
     if (measuredText != recordedText)
         writeln("tool census: measured ledger differs from ", ledgerPath,
@@ -893,6 +1016,51 @@ unittest {
     assert(recorded.axis2 == v2.length,
            format("tool census: axis 2 violator constant %s, measured %s", recorded.axis2, v2.length));
 
+    // ===== (3b) session-special debt, only-down ===========================
+    // Instrument floors first: the compiler and the text scan see the same
+    // interfaces (a private or version-hidden one would part them), every
+    // named non-session interface is still declared, and the probes the plan
+    // names are in the set.
+    assert(ifaceCompiler == ifaceText,
+           format("tool census: session-module interfaces, compiler %s vs text scan %s",
+                  ifaceCompiler, ifaceText));
+    foreach (n; kNonSessionIfaces)
+        assert(ifaceCompiler.canFind(n),
+               "tool census: named non-session interface " ~ n ~ " no longer declared");
+    foreach (n; ["SessionStepUndo", "KeepAliveOnCancel", "HoldsToolKeysDuringDrag",
+                 "ToolRunRecord"])
+        assert((n in sessionIfaces) !is null,
+               "tool census: session-debt floor: " ~ n ~ " not seen by the census");
+    assert(toolClasses.length == scanned.length + templateTools.length
+           && ("EdgeExtendTool" in toolClasses) !is null,
+           format("tool census: session-debt floor: %s tool class leaf names for %s classes",
+                  toolClasses.length, scanned.length + templateTools.length));
+    string sites(const size_t[string][string] m) {
+        string o;
+        foreach (f; m.keys.sort)
+            foreach (t; m[f].keys.sort) o ~= format("\n    %s cast(%s) x%s", f, t, m[f][t]);
+        return o;
+    }
+    enum grewMsg = ": a new session special. Express it on the general tool-session model "
+        ~ "instead (" ~ kSessionPlan ~ "); a fall is recorded by lowering the ledger row.";
+    assert(measured.sessionCaps <= recorded.sessionCaps,
+           format("tool census: session-capabilities grew: recorded %s, measured %s %s%s",
+                  recorded.sessionCaps, measured.sessionCaps, sessionIfaces.keys.sort, grewMsg));
+    assert(measured.sessionBranches <= recorded.sessionBranches,
+           format("tool census: session-branches grew: recorded %s, measured %s%s%s",
+                  recorded.sessionBranches, measured.sessionBranches, grewMsg,
+                  sites(branchSites)));
+    assert(measured.toolCasts <= recorded.toolCasts,
+           format("tool census: special-tool-casts grew: recorded %s, measured %s%s%s",
+                  recorded.toolCasts, measured.toolCasts, grewMsg, sites(toolCastSites)));
+    assert(measured.sessionCaps == recorded.sessionCaps
+           && measured.sessionBranches == recorded.sessionBranches
+           && measured.toolCasts == recorded.toolCasts,
+           format("tool census: session-special debt fell (capabilities %s->%s, branches %s->%s, "
+                  ~ "tool casts %s->%s): lower the ledger rows",
+                  recorded.sessionCaps, measured.sessionCaps, recorded.sessionBranches,
+                  measured.sessionBranches, recorded.toolCasts, measured.toolCasts));
+
     // ===== (4) row-by-row =================================================
     foreach (n; population) {
         const m = measured.tools[n];
@@ -922,9 +1090,11 @@ unittest {
     assert(measuredText == recordedText,
            "tool census: ledger text differs from the measurement (header or ordering)");
 
-    writeln(format("tool census: |P|=%s |S|=%s |E|=%s axis1=%s axis2=%s",
+    writeln(format("tool census: |P|=%s |S|=%s |E|=%s axis1=%s axis2=%s "
+                   ~ "session-capabilities=%s session-branches=%s special-tool-casts=%s",
                    population.length, scanned.length, kNamedExceptions.length,
-                   v1.length, v2.length));
+                   v1.length, v2.length, measured.sessionCaps, measured.sessionBranches,
+                   measured.toolCasts));
 }
 
 // Scanner cells: a field in an aggregate counts; a local, an import, a
@@ -994,6 +1164,30 @@ void g() {
 }
 void k(CommandHistory h) { h.redo(); }
 EOS", ["undo", "record", "canUndo", "redo"]);
+    // Session-debt scanners: every qualifier spelling and a dotted target
+    // count; a comment, a string, a unittest body, a non-target and a bare
+    // word `cast` do not.
+    const ct = castTargetsOf(q"EOS
+interface SessionProbe {}
+private interface Hidden : SessionProbe {}
+void g(Tool t) {
+    auto a = cast(EdgeExtendTool) t;
+    auto b = cast( const SessionProbe )t;
+    auto c = cast(const(EdgeExtendTool)) t;
+    auto d = cast(tools.edit.edge_extend.EdgeExtendTool) t;
+    auto e = cast(OtherTool) t;
+    // cast(EdgeExtendTool) t
+    auto s = "cast(EdgeExtendTool)";
+    int cast_;
+}
+unittest { auto u = cast(EdgeExtendTool) t; }
+EOS", ["EdgeExtendTool": true, "SessionProbe": true]);
+    assert(ct.get("EdgeExtendTool", 0) == 3 && ct.get("SessionProbe", 0) == 1 && ct.length == 2,
+           format("tool census scanner cell: cast targets %s, expected EdgeExtendTool 3, SessionProbe 1", ct));
+    const idecl = interfaceDecls(blankUnittestBodies(blankNonCode(
+        "interface A {}\nprivate interface B : A {}\n// interface C {}\nunittest { interface D {} }\n")));
+    assert(idecl == ["A", "B"],
+           format("tool census scanner cell: interface declarations %s, expected [A, B]", idecl));
     assert(w.get("fooHistory.undo", 0) == 1 && w.get("history.record", 0) == 1
            && w.get("hist.canUndo", 0) == 1 && w.get("history.undo", 0) == 1
            && w.get("h.redo", 0) == 1

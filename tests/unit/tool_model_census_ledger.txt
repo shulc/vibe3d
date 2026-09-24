@@ -9,6 +9,13 @@
 axis1-violators 1
 axis2-violators 0
 
+# Session-special debt, only-down (3b; doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)):
+# interfaces of the session modules, casts to them in source/, and casts
+# to a concrete tool class outside source/tools/.
+session-capabilities 14
+session-branches 21
+special-tool-casts 27
+
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool step=no keep=no snap=4 live=yes | live array preview built on activation, restored from MeshSnapshot baseline until drop/apply
 tool tools.alignment.clone_tool.CloneTool has=tools.alignment.clone_tool.CloneTool cancel=tools.alignment.clone_tool.CloneTool resync=tools.alignment.clone_tool.CloneTool commit=tools.alignment.clone_tool.CloneTool step=no keep=no snap=3 live=yes | live clone preview over a MeshSnapshot baseline, committed at drop/apply
 tool tools.alignment.linear_align_tool.LinearAlignTool has=tool.Tool cancel=tool.Tool resync=tools.transform.transform.TransformTool commit=tool.Tool step=no keep=no snap=0 live=no | headless-only deform: every apply is a recorded tool.doApply; no interactive gesture holds an edit
