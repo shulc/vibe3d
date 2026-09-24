@@ -221,6 +221,7 @@ unittest {
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
                                    null);
     tool.activate();
+    tool.startRunForTest();   // task 7118: before the first press a panel edit only sets the value
 
     const size_t vertsBefore = rig.mesh.vertices.length;
     setFloatParam(tool, "offsetY", 0.10f);
@@ -255,6 +256,7 @@ unittest {
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
                                    null);
     tool.activate();
+    tool.startRunForTest();   // task 7118: before the first press a panel edit only sets the value
 
     // Sample 1 — the ridge appears. This one IS a topology change and one
     // dispatch here is correct.
@@ -331,6 +333,7 @@ unittest {
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
                                    null);
     tool.activate();
+    tool.startRunForTest();   // task 7118: before the first press a panel edit only sets the value
     setFloatParam(tool, "offsetY", 0.10f);
     rig.frame();
 

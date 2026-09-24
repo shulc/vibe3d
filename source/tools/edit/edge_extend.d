@@ -527,8 +527,13 @@ public:
         return built == builtExpected && xfrm.flagT == moveHandle_ &&
             xfrm.flagR == rotateExpected && xfrm.flagS == scaleHandle_;
     }
-    version(unittest) final void mutatePreparedParamForTest(float value)
-            nothrow @nogc { shift_ = value; }
+    version(unittest) {
+        final void mutatePreparedParamForTest(float value)
+                nothrow @nogc { shift_ = value; }
+        // A unit rig with no viewport cannot press: start the run as the
+        // first press would, so a panel edit rebuilds (gap 220's guard).
+        final void startRunForTest() nothrow @nogc { awaitingFirstPress_ = false; }
+    }
     version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {
         suppressRefreshForTest_ = true; active = true; built = false;
         before = MeshSnapshot.capture(live); inset_ = 0.2f; rebuildPreview();
