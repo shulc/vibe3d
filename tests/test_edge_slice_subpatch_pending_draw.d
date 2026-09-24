@@ -301,4 +301,32 @@ unittest {
     auto hi1 = probeWin(hiPts);
     writeln("block H: live chain;", blockStr(hiPts, hi1));
     assert(seesHi(hi1), "target edge highlight missing during a live chain");
+
+    // G — DURING a drag the single-edge hover stays suppressed (the picker is
+    // frozen while the press re-bakes the edge array, so the held index can
+    // alias another edge). Press point 2 on the target and hold it 2 px along
+    // the edge; the edge submissions then must equal those with the chain
+    // released and the cursor off the mesh (same mesh, nothing hovered).
+    slClickDown(cur[0], cur[1], "press 2 (held)");
+    slPlay(slMotion(20, cur[0] + cast(int)round(se.dx / se.len * 2),
+                    cur[1] + cast(int)round(se.dy / se.len * 2), 1), "hold 2");
+    settle();
+    const st2 = getJson("/api/tool/state");
+    assert(st2["scrubbing"].type == JSONType.true_ && st2["latchedPairs"].array.length == 2,
+           "block G floor: point 2 is not latched and held: " ~ st2.toString);
+    const dragCalls = edgeCalls();
+    auto cam = fetchCamera();
+    slPlay(slButton(20, false, 1, cur[0], cur[1]) ~ "\n" ~ slMotion(40, cam.vpX + 8, cam.vpY + 8, 0),
+           "release 2, cursor off the mesh");
+    settle();
+    assert(getJson("/api/tool/state")["hoveredEdge"].integer == -1,
+           "block G floor: the off-mesh pixel hovers an edge");
+    const offCalls = edgeCalls();
+    writeln(format("block G: edge submissions during the held drag %d, released off the mesh %d",
+                   dragCalls, offCalls));
+    assert(dragCalls == offCalls, "target edge highlight drawn during a drag");
+}
+
+private long edgeCalls() {
+    return getJson("/api/frames/counts")["lastScene"]["pass"]["edges"]["calls"].integer;
 }

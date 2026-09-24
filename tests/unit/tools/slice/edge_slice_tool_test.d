@@ -110,3 +110,30 @@ unittest {
            "history cap floor: the chain was not recorded as the top entry");
     assert(committed, "edge slice apply at the history cap reported nothing committed");
 }
+
+// Task 7114 (item 8), the other half of the same report: when the commit
+// records NOTHING — here the mesh changed under the armed chain, so the
+// identity guard drops it — the apply reports false and the top entry is the
+// one that was there before.
+unittest {
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto v = new View(0, 0, 800, 600);
+    auto h = new CommandHistory();
+    h.record(new CapFillerCommand(&m, v));
+    const top0 = h.undoEntries()[$ - 1].cmd;
+
+    EditMode em = EditMode.Edges;
+    auto t = new EdgeSliceTool(() => &m, null, &em, LitShader.init);
+    t.setGestureBindings(h, () => cast(Command) new MeshSessionEdit(&m, v, EditMode.Edges,
+        "mesh.edgeSliceTool", "Edge Slice", MeshEditScope.Geometry));
+    t.activate();
+    t.seedPreparedDeactivateForTest(m);
+    assert(t.hasUncommittedEdit(), "dropped chain floor: the seeded chain is not armed");
+    m.addVertex(Vec3(9, 9, 9));          // the armed key no longer matches
+
+    const committed = t.commitUncommittedEdit();
+    assert(h.undoEntries().length == 1 && h.undoEntries()[$ - 1].cmd is top0,
+           "dropped chain floor: a chain over a changed mesh was recorded");
+    assert(!committed, "edge slice apply reported a commit it did not record");
+}
