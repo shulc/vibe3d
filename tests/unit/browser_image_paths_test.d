@@ -108,6 +108,9 @@ unittest {
     assert(resolveStoredPath("../5/a.png", doc) == own,
         "R17: the document's own copy once it exists, got "
         ~ resolveStoredPath("../5/a.png", doc));
+    assert(resolveStoredPath("..", doc) == buildPath(r, "9"),
+        "R17: a stored `..` stays in the document folder, got "
+        ~ resolveStoredPath("..", doc));
 }
 
 // R18 — the file-name fallback for a nested stored form.
@@ -146,6 +149,9 @@ unittest {
         "R18a control: the desktop rule returns the absolute path, got "
         ~ resolveStoredPath(gone, doc));
     selectBrowserBackendForTest(true);
+    assert(resolveStoredPath(gone) == gone && resolveStoredPath(gone, "") == gone,
+        "R18a: with no document there is no folder to fall back to, got "
+        ~ resolveStoredPath(gone));
     assert(resolveStoredPath(there, doc) == there,
         "R18a: an existing absolute form answers itself, got "
         ~ resolveStoredPath(there, doc));
@@ -186,6 +192,8 @@ unittest {
         "R18b: a missing file has no bytes and collides with nothing");
     assert(call(["", y2]) == "" && call([y2, ""]) == "",
         "R18b: an empty entry names no file and collides with nothing");
+    assert(firstCollidingImageName([x1, y2], 10) == "",
+        "R18b: a file over the byte bound is not read and collides with nothing");
 }
 
 // R18c — the collision refusal through the real commands.
@@ -222,14 +230,27 @@ unittest {
     assert(savedImageNames(ok) == ["a.png", "a.png"],
         format("R18c control: two items named a.png, got %s", savedImageNames(ok)));
 
-    // Different bytes: refused before anything is written or handed off.
+    // Different bytes. The desktop saves them (its paths keep them apart),
+    // and so does a browser LWO export (the rule is `.v3d`-only).
     clearCurrentDoc();
     selectBrowserBackendForTest(false);
     writeTestBmp(p2, 3, 2);
     auto diff = Document.bootstrap(makeCube());
     loadImage(diff, v, p1);
     loadImage(diff, v, p2);
+    auto desk = new FileSave(diff.activeMesh(), v, EditMode.Vertices, &diff);
+    desk.setPath(buildPath(r, "out", "desk.v3d"));
+    assert(desk.apply(), "R18c control: the desktop saves different bytes, reason '"
+        ~ desk.refusalReason() ~ "'");
+    clearCurrentDoc();
     selectBrowserBackendForTest(true);
+    auto lwo = new FileSave(diff.activeMesh(), v, EditMode.Vertices, &diff);
+    lwo.configure(FileSaveMode.exportSingle, ".lwo");
+    lwo.setPath(buildPath(r, "out", "d.lwo"));
+    assert(lwo.apply(), "R18c control: a browser LWO export is not checked, reason '"
+        ~ lwo.refusalReason() ~ "'");
+
+    // The browser `.v3d` save refuses before anything is written or handed off.
     const refused = buildPath(r, "out", "d2.v3d");
     assert(!exists(refused), "R18c floor: d2.v3d does not exist before");
     const handedBefore = delivered;

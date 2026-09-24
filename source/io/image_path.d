@@ -237,8 +237,9 @@ string resolveStoredPath(string stored, string docPath = null) {
 /// written on the desktop with `tex/a.png`, `../a.png` or an absolute path
 /// once the image was picked beside it; (c) otherwise that same `dir/<file
 /// name>`: a definite path inside `dir`, and `missing` reports the absence
-/// (the §Q4 contract above). A stored form with no file name (`.`, `..`)
-/// yields `dir` itself, which is never readable as an image.
+/// (the §Q4 contract above). A stored form whose last component is `..`
+/// yields `dir` itself, which is never readable as an image (`.` normalises
+/// to `dir` on its own).
 private string resolveInDocumentFolder(string stored, string dir) {
     import std.path : baseName;
     if (isAbsolute(stored)) {
@@ -250,7 +251,7 @@ private string resolveInDocumentFolder(string stored, string dir) {
         if (relativeUnder(here, dir, rel) && exists(here)) return here;
     }
     const name = baseName(stored);
-    if (name.length == 0 || name == "." || name == "..") return dir;
+    if (name == "..") return dir;
     return buildNormalizedPath(dir, name);
 }
 
@@ -261,17 +262,18 @@ private string resolveInDocumentFolder(string stored, string dir) {
 /// path twice, or equal bytes, is not a collision: the reopened document gets
 /// the right pixels either way.
 ///
-/// Never throws (opponent R2 #2): an EMPTY entry names no file and an
-/// UNREADABLE one (missing, oversized, a directory) has no bytes to compare,
-/// so neither collides. The unreadable case is the realistic one — a `.v3d`
+/// Never throws (opponent R2 #2): an UNREADABLE entry — missing, larger than
+/// `maxFileBytes`, a directory, or EMPTY (which names no file, so it cannot
+/// be read either) — has no bytes to compare and collides with nothing. The unreadable case is the realistic one — a `.v3d`
 /// opened without its picture, then the picture loaded again from a new pick
 /// — and saving there must succeed, since the name then points both items at
 /// the file the user just supplied.
-string firstCollidingImageName(const(string)[] resolvedPaths) nothrow {
+string firstCollidingImageName(const(string)[] resolvedPaths,
+                               size_t maxFileBytes = MAX_IMAGE_FILE_BYTES) nothrow {
     import std.path : baseName;
     bool bytesOf(string p, out const(ubyte)[] bytes) nothrow {
         try {
-            if (getSize(p) > MAX_IMAGE_FILE_BYTES) return false;
+            if (getSize(p) > maxFileBytes) return false;
             bytes = cast(const(ubyte)[]) read(p);
             return true;
         } catch (Exception) {
@@ -279,12 +281,11 @@ string firstCollidingImageName(const(string)[] resolvedPaths) nothrow {
         }
     }
     foreach (i, a; resolvedPaths) {
-        if (a.length == 0) continue;
         const name = baseName(a);
         const(ubyte)[] bytesA;
         bool triedA, okA;
         foreach (b; resolvedPaths[i + 1 .. $]) {
-            if (b.length == 0 || b == a || baseName(b) != name) continue;
+            if (b == a || baseName(b) != name) continue;
             if (!triedA) { okA = bytesOf(a, bytesA); triedA = true; }
             if (!okA) break;                    // `a` unreadable: collides with nothing
             const(ubyte)[] bytesB;

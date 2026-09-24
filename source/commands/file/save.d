@@ -31,12 +31,12 @@ import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 ///                  never changes the current document path.
 enum FileSaveMode { save, saveAs, exportSingle }
 
-/// The in-memory (absolute) path of every image item's file, in item order;
-/// an item with no payload contributes "".
+/// The in-memory (absolute) path of every item's image file, in item order;
+/// an item without an image payload contributes "", which names no file and
+/// so collides with nothing.
 private string[] imagePathsOf(ref Document doc) {
     string[] paths;
     foreach (l; doc.layers) {
-        if (!l.hasImage) continue;
         auto img = l.imageOrNull();
         paths ~= img is null ? "" : resolveStoredPath(img.storedPath);
     }
