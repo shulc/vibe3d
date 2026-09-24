@@ -1,0 +1,259 @@
+{
+ "fixture": "lasso_polygon_facing_by_style",
+ "law": "Under the default selection-visibility policy a polygon REGION lasso culls back-facing polygons only under a style that fills faces; under the wireframe style it takes every enclosed polygon, back-facing and occluded ones included.",
+ "view": {
+  "projection": "orthographic",
+  "direction": "eye at +Z looking -Z"
+ },
+ "rig_note": "Open quads, one polygon per entry, in face-index order. ring is the WOUND vertex order (counter-clockwise seen from +Z = front-facing). No closed solid: on one, facing and occlusion coincide and cannot be told apart.",
+ "rig": [
+  {
+   "id": "front_solo",
+   "facing": "front",
+   "occluded": false,
+   "ring": [
+    [
+     -1.4,
+     -1.4,
+     0.0
+    ],
+    [
+     1.4,
+     -1.4,
+     0.0
+    ],
+    [
+     1.4,
+     1.4,
+     0.0
+    ],
+    [
+     -1.4,
+     1.4,
+     0.0
+    ]
+   ]
+  },
+  {
+   "id": "back_solo",
+   "facing": "back",
+   "occluded": false,
+   "ring": [
+    [
+     4.6,
+     1.4,
+     0.0
+    ],
+    [
+     7.4,
+     1.4,
+     0.0
+    ],
+    [
+     7.4,
+     -1.4,
+     0.0
+    ],
+    [
+     4.6,
+     -1.4,
+     0.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_ff.near",
+   "facing": "front",
+   "occluded": false,
+   "ring": [
+    [
+     10.6,
+     -1.4,
+     1.0
+    ],
+    [
+     13.4,
+     -1.4,
+     1.0
+    ],
+    [
+     13.4,
+     1.4,
+     1.0
+    ],
+    [
+     10.6,
+     1.4,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_ff.far",
+   "facing": "front",
+   "occluded": true,
+   "ring": [
+    [
+     11.0,
+     -1.0,
+     -1.0
+    ],
+    [
+     13.0,
+     -1.0,
+     -1.0
+    ],
+    [
+     13.0,
+     1.0,
+     -1.0
+    ],
+    [
+     11.0,
+     1.0,
+     -1.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_fb.near",
+   "facing": "front",
+   "occluded": false,
+   "ring": [
+    [
+     16.6,
+     -1.4,
+     1.0
+    ],
+    [
+     19.4,
+     -1.4,
+     1.0
+    ],
+    [
+     19.4,
+     1.4,
+     1.0
+    ],
+    [
+     16.6,
+     1.4,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_fb.far",
+   "facing": "back",
+   "occluded": true,
+   "ring": [
+    [
+     17.0,
+     1.0,
+     -1.0
+    ],
+    [
+     19.0,
+     1.0,
+     -1.0
+    ],
+    [
+     19.0,
+     -1.0,
+     -1.0
+    ],
+    [
+     17.0,
+     -1.0,
+     -1.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_bf.near",
+   "facing": "back",
+   "occluded": false,
+   "ring": [
+    [
+     22.6,
+     1.4,
+     1.0
+    ],
+    [
+     25.4,
+     1.4,
+     1.0
+    ],
+    [
+     25.4,
+     -1.4,
+     1.0
+    ],
+    [
+     22.6,
+     -1.4,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "occl_bf.far",
+   "facing": "front",
+   "occluded": true,
+   "ring": [
+    [
+     23.0,
+     -1.0,
+     -1.0
+    ],
+    [
+     25.0,
+     -1.0,
+     -1.0
+    ],
+    [
+     25.0,
+     1.0,
+     -1.0
+    ],
+    [
+     23.0,
+     1.0,
+     -1.0
+    ]
+   ]
+  }
+ ],
+ "cells": {
+  "solid": {
+   "selected": [
+    "front_solo",
+    "occl_ff.near",
+    "occl_fb.near",
+    "occl_bf.far"
+   ]
+  },
+  "wireframe": {
+   "selected": [
+    "front_solo",
+    "back_solo",
+    "occl_ff.near",
+    "occl_ff.far",
+    "occl_fb.near",
+    "occl_fb.far",
+    "occl_bf.near",
+    "occl_bf.far"
+   ]
+  }
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "Two polygon region-lasso cells (default policy; solid vs wireframe style) out of a larger selection-visibility grid; the loop enclosed the whole rig. The law was first read statically and the gesture cells served as the cross-check; the solid-style answer was re-driven identically under three further filling styles.",
+  "captured_utc": "2026-08-19",
+  "harness": "tools/local/capture (selection-visibility rig)",
+  "task": "0577"
+ }
+}
