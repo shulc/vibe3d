@@ -49,7 +49,8 @@ export async function launch({ chromium, url, profile, downloadDir }) {
     if (m.method === 'Runtime.consoleAPICalled') {
       const text = m.params.args.map(a => a.value ?? a.description ?? '').join(' ');
       for (const line of text.split('\n'))
-        if (/WEB-|Aborted|Unhandled exception|out of memory/i.test(line)) lines.push(line);
+        // `[io] LWO: ` is the LWO reader's own log line (task 7440).
+        if (/WEB-|^\[io\] LWO: |Aborted|Unhandled exception|out of memory/i.test(line)) lines.push(line);
       return;
     }
     if (m.method === 'Page.fileChooserOpened') { choosers.push(m.params); return; }

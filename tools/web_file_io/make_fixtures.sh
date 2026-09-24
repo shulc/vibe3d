@@ -3,7 +3,12 @@
 # path of a live desktop editor: two_layers.v3d is authored with /api/command,
 # two_layers.resave.v3d is that file opened with `file.load` and saved again
 # with `file.save` (the same FileLoad -> FileSave path the browser takes), and
-# truncated.v3d is the first 200 bytes of the first.
+# truncated.v3d is the first 200 bytes of the first. The LWO pair (task 7440)
+# takes the same route: two_parts.lwo is two_layers.v3d exported with
+# `file.export.lwo`, and two_parts.export.lwo is that file opened with
+# `file.load` and exported again (the FileLoad -> FileSave path the browser
+# takes for an interchange import followed by Export > LWO); truncated.lwo is
+# the first 60 bytes of two_parts.lwo, a header whose first PNTS chunk is cut.
 #
 # usage: tools/web_file_io/make_fixtures.sh [--http-port N]   (default 8520)
 set -euo pipefail
@@ -56,8 +61,15 @@ cmd file.save "{\"path\":\"$scratch/two_layers.v3d\"}"
 cmd scene.reset
 cmd file.load "{\"path\":\"$scratch/two_layers.v3d\"}"
 cmd file.save "{\"path\":\"$scratch/two_layers.resave.v3d\"}"
+cmd file.export.lwo "{\"path\":\"$scratch/two_parts.lwo\"}"
+cmd scene.reset
+cmd file.load "{\"path\":\"$scratch/two_parts.lwo\"}"
+cmd file.export.lwo "{\"path\":\"$scratch/two_parts.export.lwo\"}"
 
 cp "$scratch/two_layers.v3d" "$out/two_layers.v3d"
 cp "$scratch/two_layers.resave.v3d" "$out/two_layers.resave.v3d"
 head -c 200 "$out/two_layers.v3d" >"$out/truncated.v3d"
-sha256sum "$out"/*.v3d
+cp "$scratch/two_parts.lwo" "$out/two_parts.lwo"
+cp "$scratch/two_parts.export.lwo" "$out/two_parts.export.lwo"
+head -c 60 "$out/two_parts.lwo" >"$out/truncated.lwo"
+sha256sum "$out"/*.v3d "$out"/*.lwo

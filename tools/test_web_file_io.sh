@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Browser lane for web file I/O (task 7420): builds and stages the optimized
 # web editor exactly as tools/test_web_editor.sh does, then drives the real
-# page in headless Chromium through tools/web_file_io/case_v3d.mjs in both the
-# normal and the reset-stack (spreset) artifact.
+# page in headless Chromium through tools/web_file_io/case_v3d.mjs and (task
+# 7440) case_lwo.mjs in both the normal and the reset-stack (spreset) artifact.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -37,6 +37,9 @@ for mode in normal spreset; do
             "$repo_root/.build/web-editor/vibe3d.js"
     fi
     timeout 240 node "$repo_root/tools/web_file_io/case_v3d.mjs" \
+        "$chromium" "http://127.0.0.1:$port" "$scratch" \
+        "$repo_root/tests/fixtures/web_io" "$mode"
+    timeout 240 node "$repo_root/tools/web_file_io/case_lwo.mjs" \
         "$chromium" "http://127.0.0.1:$port" "$scratch" \
         "$repo_root/tests/fixtures/web_io" "$mode"
 done
