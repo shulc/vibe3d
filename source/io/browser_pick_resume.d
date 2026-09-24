@@ -214,7 +214,7 @@ private void removePickDir(uint token) nothrow {
 
 /// The bridge's failure code for a pick the user cancelled (the input's
 /// `cancel` event, or a `change` with no file). Silent: no notice, and the
-/// record leaves the queue with its directory (task 7420, owner 2026-09-24).
+/// record leaves the queue with its directory (owner 2026-09-24).
 enum int kPickCancelled = 0;
 
 enum string kStaleResumeText =

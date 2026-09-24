@@ -982,7 +982,7 @@ void main(string[] args) {
     string aiModelCliPath;
     version (web) bool webFirstFrameProbe;
     version (web) string webProbeArgument;
-    // --web-probe-dispatch <id> (task 7420): every F9 press routed through
+    // --web-probe-dispatch <id>: every F9 press routed through
     // the production input router dispatches <id> through the UI button door.
     version (web) string webProbeDispatchId;
 
@@ -3269,8 +3269,8 @@ void main(string[] args) {
     // GuardModalState above. The pending command and its settle state remain
     // application-owned by GuardedActionController (task 5640).
     string lastWindowTitle;
-    version (web) string webLastDocState;   // task 7420: last WEB-DOC-STATE printed
-    version (web) string webLastWorkDirs;   // task 7420: last WEB-WORK-DIRS printed
+    version (web) string webLastDocState;   // last WEB-DOC-STATE printed
+    version (web) string webLastWorkDirs;   // last WEB-WORK-DIRS printed
     version (web) {
     } else {
     string ai3dPickedImagePath;

@@ -44,7 +44,7 @@ BrowserPickResult pickOpenPath(FilterSpec[] filters, string startDir = null) {
     version (web) {
         // The bridge opens a one-shot `<input type=file>`; its files land in
         // the directory D names (JS composes no path) and the answer comes
-        // back through the two exports below (task 7420).
+        // back through the two exports below.
         import std.string : toStringz;
         import io.browser_pick_resume : acceptAttribute, workDirFor;
         vibe3d_web_pick_open(toStringz(acceptAttribute(filters)),
