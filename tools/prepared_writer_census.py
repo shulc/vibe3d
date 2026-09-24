@@ -430,9 +430,10 @@ def scan(root):
         if _derives(classes, product, "LifecycleUndoEmitter"):
             lifecycle_admissions[product] = "LifecycleUndoEmitter"
     # The cutting sessions admitted by id in toolArmEmitsLifecycle (task 7137
-    # added Edge Slice); mirror that id set here, the body digest forces review.
+    # added Edge Slice, then Loop Slice); mirror that id set here, the body digest forces review.
     for factory in factories:
-        if factory["id"] in ("mesh.sliceTool", "mesh.edgeSliceTool"):
+        if factory["id"] in ("mesh.sliceTool", "mesh.edgeSliceTool",
+                             "mesh.loopSliceTool"):
             for product in factory["product_types"]:
                 lifecycle_admissions[product] = "legacy-id:" + factory["id"]
     lifecycle_products = [

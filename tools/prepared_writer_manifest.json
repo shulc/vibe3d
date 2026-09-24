@@ -1208,22 +1208,22 @@
   ],
   "internal_publishers": [
     {
-      "line": 98,
+      "line": 100,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "8ce8b6f1672ab6fe3fe51465df2a096851fc74092639833588367acf1b3df27a",
       "symbol": "prepareArm"
     },
     {
-      "line": 239,
+      "line": 241,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
     }
   ],
   "lifecycle_classifier": {
-    "line": 91,
+    "line": 92,
     "path": "source/prepared_tool_transition.d",
-    "semantic_sha256": "3a4106c621bc7939dac6615686972ae9574562e8fbeaeea23df4ed8c5e7e8458",
+    "semantic_sha256": "80d974d4ce92a172419544eb30e4569d8531b538d63f3e1bb535cfe591ee3356",
     "symbol": "toolArmEmitsLifecycle"
   },
   "lifecycle_products": [
@@ -1232,6 +1232,13 @@
       "aggregate": "EdgeSliceTool",
       "module": "tools.slice.edge_slice_tool",
       "signature": "EdgeSliceTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "legacy-id:mesh.loopSliceTool",
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "signature": "LoopSliceTool",
       "symbol": "lifecycleProduct"
     },
     {
