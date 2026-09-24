@@ -1027,7 +1027,7 @@ unittest {
     foreach (n; kNonSessionIfaces)
         assert(ifaceCompiler.canFind(n),
                "tool census: named non-session interface " ~ n ~ " no longer declared");
-    foreach (n; ["SessionStepUndo", "KeepAliveOnCancel", "HoldsToolKeysDuringDrag",
+    foreach (n; ["SessionStepUndo", "KeepAliveOnCancel", "SessionFirstGesture",
                  "ToolRunRecord"])
         assert((n in sessionIfaces) !is null,
                "tool census: session-debt floor: " ~ n ~ " not seen by the census");

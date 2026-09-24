@@ -850,14 +850,6 @@ static assert(!__traits(compiles, {
 // (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo /
 // LifecycleUndoEmitter), all discovered the same way.
 // ---------------------------------------------------------------------------
-// HoldsToolKeysDuringDrag — optional capability: while it answers true, a
-// tool-switch key is ignored and the drag runs to its end (task 7118, gap
-// 173; captured for Edge Extend only, so only Edge Extend implements it —
-// a capability rather than a `Tool` virtual, per the whitelist above).
-interface HoldsToolKeysDuringDrag {
-    bool holdsToolKeysDuringDrag() const;
-}
-
 interface InputBindable {
     /// Declarative (button, exact modifier combo) -> `ToolAction` table.
     const(InputBinding)[] bindings() const;

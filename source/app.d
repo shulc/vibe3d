@@ -242,6 +242,7 @@ import command_executor : CommandExecutor;
 import command_history : RecordMode;
 import application_command_binding : ApplicationCommandBinding;
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
+import held_gesture_buttons : clearHeldGestureButtonsForAutomation;
 import registry;
 // Task 0415 (campaign 0407 §B.V1 step 1): registerTools/registerCommands
 // host the command/tool factory registration moved out of main() below,
@@ -4811,7 +4812,8 @@ void main(string[] args) {
             &clearLatestAiDebugTraces,
             &parkOverrideMouse,
             &resetPieForAutomation,
-            &clearImGuiInputKeysForAutomation));
+            &clearImGuiInputKeysForAutomation,
+            &clearHeldGestureButtonsForAutomation));
     wireHttpProviders(httpServer, app, ifs, executor, commandHttpAdapter);
 
     // Interactive history-navigation chokepoint (undo/redo migration P0;

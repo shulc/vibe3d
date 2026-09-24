@@ -264,20 +264,6 @@ interface SessionLiveRedo {
 }
 
 // ---------------------------------------------------------------------------
-// SessionGestureCancel — optional capability: a press..release gesture IN
-// FLIGHT that an undo keystroke cancels on its own (the owner's rule
-// "the first Ctrl+Z cancels the LIVE edit, the tool stays"; not captured, gap
-// row 228). navigate() asks it before anything else, so the gesture stack, the
-// session and the history are untouched. SliceTool and LoopSliceTool
-// (gap row 205) implement it.
-// ---------------------------------------------------------------------------
-interface SessionGestureCancel {
-    /// Cancel the gesture in flight, back to the state at its press; false
-    /// (and nothing done) when no gesture is in flight.
-    bool cancelGestureInFlight();
-}
-
-// ---------------------------------------------------------------------------
 // SessionFirstGesture — optional capability of a cutting session whose arm is
 // a history row (Slice, Edge Slice; task 7137, §22; Loop Slice, whose "first
 // gesture" is its arm-time loop, gap row 205): the undo that removes the
@@ -652,8 +638,6 @@ final class EditSession {
             // has already re-armed that row bare.
             pendingGesture_ = null;
             pendingFor_ = null;
-            if (auto gc = cast(SessionGestureCancel) tool_())
-                if (gc.cancelGestureInFlight()) return true;
         }
         // A cutting session's sole first gesture, read BEFORE the step or
         // cancel below destroys it (see endSession_).

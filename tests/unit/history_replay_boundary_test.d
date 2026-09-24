@@ -42,12 +42,14 @@ private size_t clearTraceCalls;
 private size_t parkMouseCalls;
 private size_t closePieCalls;
 private size_t clearInputKeysCalls;
+private size_t clearHeldButtonsCalls;
 
 private void resetUiProbe() { ++resetUiCalls; }
 private void clearTraceProbe() { ++clearTraceCalls; }
 private void parkMouseProbe() { ++parkMouseCalls; }
 private void closePieProbe() { ++closePieCalls; }
 private void clearInputKeysProbe() { ++clearInputKeysCalls; }
+private void clearHeldButtonsProbe() { ++clearHeldButtonsCalls; }
 
 private AutomationResetHook resetHook(void function() hook) {
     static if (is(AutomationResetHook == void function())) return hook;
@@ -394,7 +396,8 @@ private final class Fixture {
                 resetHook(&clearTraceProbe),
                 resetHook(&parkMouseProbe),
                 resetHook(&closePieProbe),
-                resetHook(&clearInputKeysProbe)));
+                resetHook(&clearInputKeysProbe),
+                resetHook(&clearHeldButtonsProbe)));
         commandAdapter.wire();
         if (!withUiHandler) server.setUiCommandHandler(null);
         historyAdapter = new HistoryHttpAdapter(history, session, null);
@@ -451,6 +454,7 @@ private void resetGlobalProbes() {
     parkMouseCalls = 0;
     closePieCalls = 0;
     clearInputKeysCalls = 0;
+    clearHeldButtonsCalls = 0;
 }
 
 unittest { // source wiring closes both production entries over one port
@@ -1021,7 +1025,7 @@ unittest { // replay traverses the adapter-owned automation hooks
     assert(resetUiCalls == 1
         && f.pipeGizmo.preparedCancelCountForTest() == pipeBefore + 1
         && clearTraceCalls == 1 && parkMouseCalls == 1 && closePieCalls == 1
-        && clearInputKeysCalls == 1,
+        && clearInputKeysCalls == 1 && clearHeldButtonsCalls == 1,
         "5820 production policy: replay bypassed an adapter automation hook");
     assert(f.history.undoEntriesVisible().length == historyBefore + 1,
         "5820 automation replay did not record its successful apply");

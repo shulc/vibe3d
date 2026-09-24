@@ -182,7 +182,7 @@ struct PreparedEdgeExtendDeactivateImage {
 // the instance an undone tool switch restores (gap 241).
 // ---------------------------------------------------------------------------
 class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
-                       PreparedToolPoseDoorClient, HoldsToolKeysDuringDrag,
+                       PreparedToolPoseDoorClient,
                        SessionStepUndo, KeepAliveOnCancel,
                        SwitchRestorablePredecessor, SessionLiveRedo {
     mixin PreparedNamedGpuParamDoorClient;
@@ -658,8 +658,8 @@ public:
     }
 
     // ----- Session capabilities (task 7118) ---------------------------------
-    // Tool-switch keys wait for the drag to end (gap 173).
-    bool holdsToolKeysDuringDrag() const { return dragBank != DragBank.None; }
+    // (Tool-switch keys during the drag, gap 173, are the router's held-button
+    // rule since slice M1a, for every tool.)
 
     // Live Ctrl+Z pops ONE gesture of the open operation (gap 215/230); the
     // symmetry side stays latched (U-gesture-latch). With one step left the

@@ -26,6 +26,7 @@ struct AutomationResetContext {
     AutomationResetHook parkMouse;
     AutomationResetHook closePie;
     AutomationResetHook clearImGuiInputKeys;
+    AutomationResetHook clearHeldGestureButtons;
 
     @disable this();
 
@@ -38,7 +39,8 @@ struct AutomationResetContext {
          AutomationResetHook clearAiDebugTraces,
          AutomationResetHook parkMouse,
          AutomationResetHook closePie,
-         AutomationResetHook clearImGuiInputKeys) {
+         AutomationResetHook clearImGuiInputKeys,
+         AutomationResetHook clearHeldGestureButtons) {
         assert(guardController !is null,
             "AutomationResetContext requires guarded-action policy");
         assert(pipeGizmoHost !is null,
@@ -57,6 +59,8 @@ struct AutomationResetContext {
             "AutomationResetContext requires pie reset hook");
         assert(clearImGuiInputKeys !is null,
             "AutomationResetContext requires ImGui input reset hook");
+        assert(clearHeldGestureButtons !is null,
+            "AutomationResetContext requires held-button reset hook");
         this.guardController = guardController;
         this.pipeGizmoHost = pipeGizmoHost;
         this.aiState = aiState;
@@ -67,6 +71,7 @@ struct AutomationResetContext {
         this.parkMouse = parkMouse;
         this.closePie = closePie;
         this.clearImGuiInputKeys = clearImGuiInputKeys;
+        this.clearHeldGestureButtons = clearHeldGestureButtons;
     }
 }
 
@@ -115,6 +120,7 @@ private:
         automation_.parkMouse();
         automation_.closePie();
         automation_.clearImGuiInputKeys();
+        automation_.clearHeldGestureButtons();
         automation_.exploration.discardPending();
         if (automation_.trace !is null) automation_.trace.reset();
     }

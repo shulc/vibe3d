@@ -129,6 +129,7 @@ final class LiveRegistrationRig {
                 &noOpClearTraces,
                 &noOpParkMouse,
                 &noOpClosePie,
+                &noOpClosePie,
                 &noOpClosePie));
 
         host.getActiveTool = () => activeTool;

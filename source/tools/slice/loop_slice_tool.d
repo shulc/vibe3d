@@ -7,7 +7,7 @@ import std.algorithm : sort;
 import operator : VectorStack;
 
 import tool;
-import edit_session : SessionStepUndo, SessionFirstGesture, SessionGestureCancel;
+import edit_session : SessionStepUndo, SessionFirstGesture;
 import log : logWarn;
 import tools.common.session_mesh_key : SessionMeshKey;
 import mesh;
@@ -252,7 +252,7 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // step left ends the tool with its row (no KeepAliveOnCancel since then);
 // the navigate redo re-arms at the arm-time loop.
 final class LoopSliceTool : Tool, SessionStepUndo, SessionFirstGesture,
-                            SessionGestureCancel, PreparedToolDoorClient,
+                            PreparedToolDoorClient,
                             PreparedToolParamDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 public:
@@ -1028,25 +1028,13 @@ public:
     }
 
     // SessionStepUndo (gap row 205): pop the newest session step, restoring
-    // the loop it replaced. Never mid-gesture (SessionGestureCancel owns that).
+    // the loop it replaced. Never mid-gesture: no key reaches a tool while a
+    // button is held (the router's rule, slice M1a).
     override bool tryUndoStepInSession() {
         if (!active || !armed_ || scrubbing_ || gestureStack_.length == 0) return false;
         const st = gestureStack_[$ - 1];
         gestureStack_ = gestureStack_[0 .. $ - 1];
         restoreState(st);
-        return true;
-    }
-
-    // SessionGestureCancel (owner's rule, gap row 205): an undo keystroke
-    // during a press..release cancels that gesture alone, back to the loop at
-    // its press; the tool stays armed. A MOTIONLESS arming press is not a
-    // gesture, so the keystroke then ends the session like a released arm.
-    override bool cancelGestureInFlight() {
-        if (!active || !armed_ || !scrubbing_ || !pressIsRescrub_) return false;
-        if (pressIsArm_ && currentState() == armState_) return false;
-        scrubbing_ = false;
-        pressIsRescrub_ = pressIsArm_ = false;
-        restoreState(prePress_);
         return true;
     }
 
