@@ -2718,7 +2718,7 @@ void main(string[] args) {
     // exists only from there). Null until wired — same pattern as
     // lifecycleRecordHook above; users that can run pre-wiring guard on
     // non-null.
-    import edit_session : EditSession;
+    import edit_session : EditSession, SwitchRestorablePredecessor;
     EditSession session;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
@@ -3819,7 +3819,22 @@ void main(string[] args) {
                 }
             },
             () { dropActiveTool(ToolTransition.replayDrop); }, lifecycleReplay,
-            pipeArmScopeFor(why, id == activeToolId));
+            pipeArmScopeFor(why, id == activeToolId),
+            // The switch-restorable predecessor (task 7118, gap 221/241):
+            // re-armed with the run's values, as a continuation.
+            (string restoreId, JSONValue restoreArgs) {
+                JSONValue a = restoreArgs;
+                try {
+                    armPreparedTool(ToolTransition.replayArm, restoreId, a, true);
+                    if (auto r = cast(SwitchRestorablePredecessor) activeTool)
+                        r.resumeAfterSwitchRestore();
+                }
+                catch (Throwable e) {
+                    logWarn("tool", "lifecycle restore failed for '" ~
+                        restoreId ~ "': " ~ e.msg);
+                    throw e;
+                }
+            });
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");

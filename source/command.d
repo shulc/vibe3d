@@ -158,6 +158,14 @@ bool dropsActiveToolBeforeApply(const Command cmd) {
 // merge mechanism is driven by CommandHistory.recordCoalescing().
 enum CompareResult { Different, Compatible }
 
+// ToolRunRecord — optional capability of a history record: undoing it while
+// its owner tool is active also ends that tool, because the record is the
+// session's first run and the tool's activation is joined to it (Edge Extend,
+// task 7118, gap 218). `Object`, not `Tool`: this module does not import tool.
+interface ToolRunRecord {
+    bool endsToolOnUndo(const Object active) const;
+}
+
 class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }

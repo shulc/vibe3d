@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import std.json : JSONType, JSONValue;
 
 // ---------------------------------------------------------------------------
 // ToolActivationCommand — tool.activate
@@ -26,16 +27,22 @@ interface ToolArmLifecyclePolicy {
 class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private string armedId_;
     private string previousId_;
+    // A switch-restorable predecessor's parameter values (task 7118, gap
+    // 221): undo re-arms it through `onRestore` with them.
+    private JSONValue previousArgs_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
     void delegate() onDeactivate;
+    void delegate(string, JSONValue) onRestore;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         string armedId, string previousId) {
+         string armedId, string previousId,
+         JSONValue previousArgs = JSONValue.init) {
         super(mesh, view, editMode);
         armedId_ = armedId.idup;
         previousId_ = previousId.idup;
+        previousArgs_ = previousArgs;
         // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
         noteUndoRecorded();
@@ -59,6 +66,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     protected override void revertImpl() {
         if (previousId_.length == 0) {
             if (onDeactivate !is null) onDeactivate();
+        } else if (onRestore !is null && previousArgs_.type == JSONType.object) {
+            onRestore(previousId_, previousArgs_);
         } else if (onActivate !is null) {
             onActivate(previousId_);
         }

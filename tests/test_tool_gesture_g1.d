@@ -906,10 +906,15 @@ unittest {
             setOrbitCamera();
             cmd("tool.set edge.extend on");
             settle(250);
+        },
+        {
             // Gap 217 (task 7117): the run starts with a first press, so a
             // motionless click on empty space >= 150 px from the gizmo opens
             // it; the arrow drag below is then the run's second press. The
-            // click writes offset 0 either way.
+            // click writes offset 0 either way. It belongs to the GESTURE,
+            // not the stand (task 7118): the first press builds the run's
+            // zero-length ring, and the stand's end is where `preOp` — the
+            // state the undo must return to — is sampled.
             {
                 int gx, gy;
                 px(Vec3(0.5f, 0.0f, -0.5f), gx, gy);
@@ -923,8 +928,6 @@ unittest {
                 assert(n("offsetX") == 0 && n("offsetY") == 0 && n("offsetZ") == 0,
                     "edge.extend first click wrote a non-zero offset: " ~ st.toString);
             }
-        },
-        {
             auto vp = viewportFromCamera(fetchCamera(BASE));
             // The handle is found where the tool draws it (`gizmoCentre`),
             // RE-READ after the click rather than assumed.

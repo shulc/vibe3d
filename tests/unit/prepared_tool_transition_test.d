@@ -8,9 +8,10 @@ import command_history : CommandHistory, HistoryEntry, HistoryFlags,
                         PreparedHistoryImage;
 import document : PreparedLayerReadScope;
 import record_observer_hub : PreparedRecordObserverImage;
-import edit_session : LifecycleUndoEmitter;
+import edit_session : LifecycleUndoEmitter, SwitchRestorablePredecessor;
 import tool : Tool;
 import registry : PreparedPipeAttrs, ToolFactory;
+import tool_activation_ownership : PipeArmScope;
 import tools.edit.topology_pen.tool : TopologyPenTool;
 import std.algorithm : canFind, endsWith, startsWith;
 
@@ -737,4 +738,118 @@ unittest {
         "second switch undo did not restore the item payload");
     assert(history.redo() && layer.xform == pendingXform,
         "item payload did not survive its local undo/redo round-trip");
+}
+
+// ---------------------------------------------------------------------------
+// The switch-restorable predecessor (task 7118, gap 221). Undoing the arm row
+// of a classified incoming tool restores its predecessor ONLY when that
+// predecessor is an emitter (the old shape, re-armed bare through
+// onActivate) or carries the marker (re-armed through onRestore with the
+// values it gave at the switch). Any other predecessor leaves the row empty.
+// ---------------------------------------------------------------------------
+static assert([__traits(allMembers, SwitchRestorablePredecessor)] ==
+              ["switchRestoreArgs", "resumeAfterSwitchRestore"],
+    "SwitchRestorablePredecessor changed shape");
+
+private class PlainOutgoingDoorTool : Tool, PreparedToolDoorClient {
+    override bool prepareDoorDeactivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+}
+
+private class RestorableOutgoingDoorTool : PlainOutgoingDoorTool,
+                                          SwitchRestorablePredecessor {
+    JSONValue switchRestoreArgs() {
+        auto o = JSONValue.emptyObject;
+        o["offsetX"] = JSONValue(0.25);
+        return o;
+    }
+    void resumeAfterSwitchRestore() {}
+}
+
+private struct SwitchUndoTrace {
+    string previousId;
+    size_t activationRows;
+    string activated, restored;
+    JSONValue restoredArgs;
+    bool deactivated;
+}
+
+// Switch from `outgoing` (registered as `outgoingId`) to a classified
+// emitter candidate, then undo the one activation row the switch recorded.
+private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId) {
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+    auto layer = new Layer;
+    layer.meshRef() = makeCube();
+    EditMode mode = EditMode.Edges;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    VectorStack pose;
+    SubjectPacket subject;
+    subject.mesh = &layer.meshRef();
+    subject.editMode = mode;
+    pose.put(&subject);
+    Pipeline pipeline;
+    pipeline.add(new ActionCenterStage(() => &layer.meshRef(), &mode));
+    pipeline.add(new AxisStage);
+    pipeline.add(new ConstrainStage);
+    pipeline.add(new FalloffStage(() => &layer.meshRef(), &mode));
+    PreparedPipeAttrs attrs;
+    auto host = new PipeGizmoHost;
+    auto observers = new RecordObserverHub;
+    JSONValue args = JSONValue.emptyObject;
+    SwitchUndoTrace tr;
+    size_t calls;
+    ToolFactory factory = () => new TestPreparedDoorTool(false, &calls);
+    PreparedArm arm = prepareArm(factory, "test.incoming", outgoing, history,
+        observers, layer, pipeline, attrs, host, args, pose, 17, 23,
+        &layer.meshRef(), view, mode, outgoingId,
+        (string id) { tr.activated = id; }, () { tr.deactivated = true; },
+        false, PipeArmScope.presetArm,
+        (string id, JSONValue a) { tr.restored = id; tr.restoredArgs = a; });
+    Tool active = outgoing;
+    string activeId = outgoingId;
+    assert(commitPreparedArm(active, activeId, arm), "switch rig did not publish");
+    foreach (e; history.undoEntries())
+        if (auto t = cast(const ToolActivationCommand) e.cmd) {
+            tr.previousId = t.previousId();
+            ++tr.activationRows;
+        }
+    if (tr.activationRows != 1) return tr;
+    assert(history.undo(), "switch rig: the activation row did not undo");
+    return tr;
+}
+
+unittest { // P1: a predecessor without the marker is not restorable
+    auto tr = switchThenUndo(new PlainOutgoingDoorTool, "test.plain");
+    assert(tr.activationRows == 1, "P1 rig: expected one activation row");
+    assert(tr.previousId == "",
+        "a predecessor without the restorable marker became restorable: " ~ tr.previousId);
+    assert(tr.deactivated && tr.activated == "" && tr.restored == "",
+        "P1: undo of a row with no predecessor did not leave the tool empty");
+}
+
+unittest { // P2: a marked predecessor is recorded with its values and restored with them
+    auto tr = switchThenUndo(new RestorableOutgoingDoorTool, "test.restorable");
+    assert(tr.activationRows == 1, "P2 rig: expected one activation row");
+    assert(tr.previousId == "test.restorable" && tr.restored == "test.restorable"
+        && tr.activated == "" && !tr.deactivated
+        && tr.restoredArgs["offsetX"].floating == 0.25,
+        "a restorable predecessor was not recorded with its args");
+}
+
+unittest { // P3: an emitter predecessor keeps the old shape (onActivate, no args)
+    size_t calls;
+    auto tr = switchThenUndo(new TestPreparedDoorTool(false, &calls), "test.emitter");
+    assert(tr.activationRows == 1, "P3 rig: expected one activation row");
+    assert(tr.previousId == "test.emitter" && tr.activated == "test.emitter"
+        && tr.restored == "" && !tr.deactivated,
+        "an emitter predecessor's restore changed shape");
 }

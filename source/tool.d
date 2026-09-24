@@ -579,10 +579,11 @@ public:
     //       (`setSnapshots` / `setDelta` / `setEdit` / a four-argument
     //       constructor) have nothing in common to hoist.
     //   WHEN to record (deactivate / mouse-up / mouse-down / Shift+apply /
-    //       panel edit) — stays per tool. `commitUncommittedEdit` has exactly
-    //       ONE production caller (`edit_session.d`'s apply-and-continue), so
-    //       a seam built on it would have re-plumbed 17 overrides and left
-    //       every real commit exactly where it was.
+    //       panel edit) — stays per tool. `commitUncommittedEdit` has two
+    //       production callers (`edit_session.d`'s apply-and-continue and Edge
+    //       Extend's own middle press, task 7118), so a seam built on it would
+    //       have re-plumbed 17 overrides and left every real commit exactly
+    //       where it was.
     //   HOW to record — THIS. One site, three modes, one refusal belt, two
     //       counters.
     //
@@ -849,6 +850,14 @@ static assert(!__traits(compiles, {
 // (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo /
 // LifecycleUndoEmitter), all discovered the same way.
 // ---------------------------------------------------------------------------
+// HoldsToolKeysDuringDrag — optional capability: while it answers true, a
+// tool-switch key is ignored and the drag runs to its end (task 7118, gap
+// 173; captured for Edge Extend only, so only Edge Extend implements it —
+// a capability rather than a `Tool` virtual, per the whitelist above).
+interface HoldsToolKeysDuringDrag {
+    bool holdsToolKeysDuringDrag() const;
+}
+
 interface InputBindable {
     /// Declarative (button, exact modifier combo) -> `ToolAction` table.
     const(InputBinding)[] bindings() const;

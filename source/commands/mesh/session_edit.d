@@ -56,8 +56,17 @@ enum string kNoSessionReason =
     "no recorded edit session: this command carries a tool session's "
     ~ "before/after snapshots and cannot run on its own";
 
-class MeshSessionEdit : Command, Operator, GesturePayload {
+class MeshSessionEdit : Command, Operator, GesturePayload, ToolRunRecord {
     mixin OperatorActrCommon;
+
+    // The tool class whose session's first run this record is (task 7118,
+    // gap 218); null for every other record. Set by the tool at its commit.
+    private TypeInfo_Class runOwner_;
+    final void markRunOwner(TypeInfo_Class t) { runOwner_ = t; }
+    bool endsToolOnUndo(const Object active) const {
+        return runOwner_ !is null && active !is null &&
+            typeid(cast(Object) active) is runOwner_;
+    }
 
     private MeshSnapshot before;
     private MeshSnapshot after;

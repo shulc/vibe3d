@@ -2978,6 +2978,18 @@ public:
         }
     }
 
+    /// The banks' half of `syncInputViewport`, for a host that drives the
+    /// banks directly and draws nothing before its first press (Edge Extend,
+    /// task 7118, gap 217): the banks' viewport cache is otherwise written
+    /// only by their draw.
+    final void syncBankInputViewports(ref VectorStack vts) {
+        if (auto sp = vts.get!SubjectPacket()) {
+            moveSub.cachedVp   = sp.viewport;
+            rotateSub.cachedVp = sp.viewport;
+            scaleSub.cachedVp  = sp.viewport;
+        }
+    }
+
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         syncInputViewport(vts);
         bool reopenedFromForeignEdit;

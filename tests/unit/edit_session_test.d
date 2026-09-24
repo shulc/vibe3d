@@ -8,6 +8,11 @@ import command         : Command;
 import command_history : CommandHistory;
 import edit_session;
 
+// SessionLiveRedo is one member (task 7118, gap 232): navigate() asks it, and
+// only it, before stepping the redo stack.
+static assert([__traits(allMembers, SessionLiveRedo)] == ["tryRedoLiveInSession"],
+    "SessionLiveRedo changed shape");
+
 // ---------------------------------------------------------------------------
 // Module unittest — phase() classification (no GL / SDL: a bare Tool and a
 // bare CommandHistory both construct headlessly).

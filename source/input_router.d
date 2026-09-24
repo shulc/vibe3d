@@ -527,6 +527,11 @@ struct InputRouter {
                   // the same as falling through; kept so the intent is explicit.
                   if (bnd.kind == BindingKind.unbound) return;
                   if (bnd.kind == BindingKind.tool) {
+                    // A tool key during a drag the tool holds is ignored; the
+                    // drag runs to its end (task 7118, gap 173).
+                    import tool : HoldsToolKeysDuringDrag;
+                    if (auto h = cast(HoldsToolKeysDuringDrag) activeTool)
+                        if (h.holdsToolKeysDuringDrag()) return;
                     activateToolById(bnd.id);
                     return;
                   }

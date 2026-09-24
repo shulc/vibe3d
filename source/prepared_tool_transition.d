@@ -17,7 +17,7 @@ import std.json : JSONType, JSONValue;
 import tool : Tool;
 import view : View;
 import editmode : EditMode;
-import edit_session : LifecycleUndoEmitter;
+import edit_session : LifecycleUndoEmitter, SwitchRestorablePredecessor;
 import tool_presets : prepareStickyToolDefaults;
 import toolpipe.pipeline : Pipeline;
 import tool_activation_ownership : PipeArmScope;
@@ -105,7 +105,8 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         EditMode editMode, string retainedOldId,
         void delegate(string) activateById, void delegate() deactivate,
         bool lifecycleReplay = false,
-        PipeArmScope pipeScope = PipeArmScope.presetArm) {
+        PipeArmScope pipeScope = PipeArmScope.presetArm,
+        void delegate(string, JSONValue) restoreById = null) {
     if (factory is null || id.length == 0 || history is null ||
         observers is null || layer is null || gizmoHost is null)
         throw new Exception("prepared tool arm requires complete owners");
@@ -129,9 +130,18 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
 
     const classifiedIncoming = toolArmEmitsLifecycle(candidate, id);
     string previousId;
-    if (retainedOld !is null &&
-        toolArmEmitsLifecycle(retainedOld, retainedOldId))
-        previousId = retainedOldId;
+    JSONValue previousArgs;
+    if (retainedOld !is null) {
+        if (toolArmEmitsLifecycle(retainedOld, retainedOldId))
+            previousId = retainedOldId;
+        // An unclassified predecessor that is switch-restorable (Edge Extend;
+        // task 7118, gap 221) is restored by the incoming row's undo with its
+        // values, read here, before its door deactivates it.
+        else if (auto r = cast(SwitchRestorablePredecessor)retainedOld) {
+            previousId = retainedOldId;
+            previousArgs = r.switchRestoreArgs();
+        }
+    }
 
     auto sticky = prepareStickyToolDefaults(candidate, id);
     string[] namedNames;
@@ -175,9 +185,10 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
             "' (lifecycleReplay=" ~ (lifecycleReplay ? "true" : "false") ~ ")");
     if (classifiedIncoming) {
         auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
-            id, previousId);
+            id, previousId, previousArgs);
         lifecycle.onActivate = activateById;
         lifecycle.onDeactivate = deactivate;
+        lifecycle.onRestore = restoreById;
         result.incoming_.prepareLifecycle(lifecycle);
     }
 

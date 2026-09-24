@@ -42,7 +42,12 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 
 import std.json : JSONValue;
+import std.typecons : Rebindable;
 import perf_probe : g_perf, Cat;
+import command : Command;
+import edit_session : SessionStepUndo, KeepAliveOnCancel,
+    SwitchRestorablePredecessor, SessionLiveRedo;
+import toolpipe.packets : SymmetryPacket;
 
 struct PreparedEdgeExtendToolActivationImage {
     bool valid;
@@ -165,9 +170,21 @@ struct PreparedEdgeExtendDeactivateImage {
 // <v>; tool.doApply`) drives the SAME kernel through applyHeadless();
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (so applyHeadless
 // MUST NOT snapshot itself).
+//
+// THE SESSION, IN THREE LAYERS (task 7118; gaps 211-241, the captured walks in
+// tests/fixtures/edge_extend_gesture_laws.json). Closed operations are history
+// records (one per commit: a switch, a reset, a Shift or middle press). The
+// OPEN operation is walked gesture by gesture from `gestureSteps_` (the press
+// that opens an operation is its own gesture, gap 240); its last gesture
+// cancels the whole operation. An operation cancelled that way is a one-shot
+// redo stash (`redo_`). Only the session's FIRST run carries the activation
+// (`markRunOwner`); a Shift/middle press opens a CONTINUATION, and so does
+// the instance an undone tool switch restores (gap 241).
 // ---------------------------------------------------------------------------
 class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
-                       PreparedToolPoseDoorClient {
+                       PreparedToolPoseDoorClient, HoldsToolKeysDuringDrag,
+                       SessionStepUndo, KeepAliveOnCancel,
+                       SwitchRestorablePredecessor, SessionLiveRedo {
     mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -241,6 +258,49 @@ private:
     // (after bank selection), i.e. the side a press latched.
     Vec3 pressAnchor_ = Vec3(0, 0, 0);
     bool moveOffGizmo_;            // the Move bank's lastClickWasOffGizmo, same moment
+
+    // Symmetry (task 7118, gap 172/209/212/216): the side of the plane whose
+    // ring takes the offset unreflected is the side of the last OFF-HANDLE
+    // press (re-latched at every such press, at the press; a handle press
+    // keeps it). Filled from the SymmetryPacket; only an axis plane mirrors.
+    ExtendOffsetMirror symMirror_;
+
+    // Live per-gesture undo (task 7118, gap 215/230). A step is the attribute
+    // image BEFORE a gesture; the press that opens an operation is a step
+    // even when nothing moved (gap 240). Kernel cap, not a Param.
+    static struct ExtendAttrs {
+        float offsetX = 0, offsetY = 0, offsetZ = 0, inset = 0, shift = 0;
+        float rotateX = 0, rotateY = 0, rotateZ = 0;
+        float scaleX = 1, scaleY = 1, scaleZ = 1;
+    }
+    enum size_t MAX_EDGE_EXTEND_GESTURE_STEPS = 256;
+    ExtendAttrs   prePress_;
+    ExtendAttrs[] gestureSteps_;
+
+    // No handle before the first press (task 7118, gap 217): each arm builds
+    // a fresh instance with this raised; the first press (moving or not)
+    // starts the run at offset 0 with a zero-length ring. Also raised by an
+    // apply-and-continue commit (gap 222): the next press opens a NEW
+    // operation. Never raised by a history step (resyncSession).
+    bool awaitingFirstPress_;
+    bool runStarted() const { return !awaitingFirstPress_ || built; }
+
+    // The button that owns the drag: a middle press is the clone gesture
+    // (gap 223) and the banks see it as a left one.
+    ubyte dragButton_ = SDL_BUTTON_LEFT;
+    enum PressRole { Continue, Clone }
+
+    // Continuation operations (task 7118, gap 225/229-232): see the header.
+    bool continuedOp_;
+    ExtendAttrs opStart_;
+    bool openedOpAtPress_;
+    static struct LiveRedoStash {
+        bool valid;
+        ExtendAttrs attrs;
+        ExtendAttrs[] steps;
+        Rebindable!(const Command) top;
+    }
+    LiveRedoStash redo_;
 
     // The R/S pivot: the MID of the BOUNDING BOX of the SELECTED vertices,
     // captured once at tool INITIALISATION (reinitSession) and recomputed at
@@ -360,6 +420,7 @@ public:
         // note), and the haul is not gated on the move BANK — so bring it
         // online even when that bank is hidden, which xfrm.activate() did not.
         if (!moveHandle_) xfrm.moveBank().activate();
+        awaitingFirstPress_ = true;   // gap 217: no handle until the first press
         reinitSession();
     }
 
@@ -396,6 +457,7 @@ public:
             ref PreparedEdgeExtendToolActivationImage image) nothrow @nogc {
         built = false; dragBank = DragBank.None; preview_.reset();
         image.baseline.moveInto(before); initPivot_ = image.pivot;
+        awaitingFirstPress_ = true;   // gap 217: the production arm door
         image.valid = false;
     }
     final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
@@ -517,6 +579,8 @@ public:
         // law is about the selection, and forking a second implementation of
         // "mid of the box" to cover it would cost more than the case is worth.
         initPivot_ = mesh.selectionBBoxCenterEdges();
+        symMirror_.pressSide = -1;
+        gestureSteps_.length = 0;
     }
 
     override void deactivate() {
@@ -534,8 +598,20 @@ public:
     public override bool hasUncommittedEdit() const {
         return active && built;
     }
+    // A continuation's cancel (Ctrl+Z on its last gesture, gap 225) keeps the
+    // tool (survivesEditCancel), shows the operation's start value, and
+    // stashes the operation for a live redo (gap 232). The stash is keyed on
+    // the undo top it was taken over; the steps are copied BEFORE
+    // cancelLiveEdit clears them and the attributes BEFORE opStart_ lands.
     public override void cancelUncommittedEdit() {
+        if (!continuedOp_) { cancelLiveEdit(); return; }
+        redo_.attrs = attrs();
+        redo_.steps = gestureSteps_.dup;
+        const ue = history is null ? null : history.undoEntries();
+        redo_.top = ue.length ? ue[$ - 1].cmd : null;
+        redo_.valid = true;
         cancelLiveEdit();
+        setAttrs(opStart_);
     }
     public override void resyncSession() {
         if (!active) return;
@@ -546,9 +622,68 @@ public:
     // edit as its own undo entry, keeping the tool active; the driver follows
     // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
     // guard minus the teardown.
+    //
+    // For Edge Extend the commit OPENS A NEW OPERATION (task 7118, gap 222/
+    // 225): the next press is a first press (offset 0, or the carried offset
+    // of a middle press, and a zero-length ring), and the operation is a
+    // continuation, so only the session's first run is marked as carrying
+    // the activation. The mark is read BEFORE continuedOp_ is raised.
     public override bool commitUncommittedEdit() {
         if (!hasUncommittedEdit()) return false;
-        commitEdit();
+        commitEdit(!continuedOp_);
+        continuedOp_ = true;
+        awaitingFirstPress_ = true;
+        return true;
+    }
+
+    // ----- Session capabilities (task 7118) ---------------------------------
+    // Tool-switch keys wait for the drag to end (gap 173).
+    bool holdsToolKeysDuringDrag() const { return dragBank != DragBank.None; }
+
+    // Live Ctrl+Z pops ONE gesture of the open operation (gap 215/230); the
+    // symmetry side stays latched (U-gesture-latch). With one step left the
+    // navigator cancels the whole operation instead.
+    bool tryUndoStepInSession() {
+        if (!active || dragBank != DragBank.None || gestureSteps_.length < 2)
+            return false;
+        immutable ExtendAttrs top = gestureSteps_[$ - 1];
+        gestureSteps_ = gestureSteps_[0 .. $ - 1];
+        setAttrs(top);
+        rebuildPreview();
+        return true;
+    }
+
+    // A cancelled continuation leaves the tool armed (gap 225); a cancelled
+    // first run ends it with its activation (A-row-joined, gap 218).
+    bool survivesEditCancel() const { return continuedOp_; }
+
+    // Undoing the arm row of the tool that replaced this one re-arms Edge
+    // Extend with the run's values (gap 221), as a continuation (gap 241).
+    JSONValue switchRestoreArgs() {
+        auto o = JSONValue.emptyObject;
+        o["offsetX"] = JSONValue(offsetX_); o["offsetY"] = JSONValue(offsetY_);
+        o["offsetZ"] = JSONValue(offsetZ_); o["inset"]   = JSONValue(inset_);
+        o["shift"]   = JSONValue(shift_);
+        o["rotateX"] = JSONValue(rotateX_); o["rotateY"] = JSONValue(rotateY_);
+        o["rotateZ"] = JSONValue(rotateZ_);
+        o["scaleX"]  = JSONValue(scaleX_);  o["scaleY"]  = JSONValue(scaleY_);
+        o["scaleZ"]  = JSONValue(scaleZ_);
+        return o;
+    }
+    void resumeAfterSwitchRestore() { continuedOp_ = true; }
+
+    // Ctrl+Shift+Z right after a continuation's cancel brings it back LIVE
+    // (gap 232). One-shot: the stash is spent here whatever the answer, and
+    // it refuses when the history moved under it or a panel edit opened an
+    // operation since.
+    bool tryRedoLiveInSession() {
+        if (built || !redo_.valid) return false;
+        const ue = history is null ? null : history.undoEntries();
+        const bool same = ue.length && ue[$ - 1].cmd is redo_.top.get;
+        auto st = redo_; redo_ = LiveRedoStash.init;
+        if (!same) return false;
+        setAttrs(st.attrs); gestureSteps_ = st.steps;
+        rebuildPreview();
         return true;
     }
 
@@ -697,7 +832,10 @@ public:
         // clean cage. Headless `tool.attr ...; tool.doApply` leaves the mesh
         // untouched (applyHeadless owns the single apply), matching the extrude
         // template — otherwise ToolDoApplyCommand's pre-snapshot is poisoned.
-        if (interactiveParamEdit) rebuildPreview();
+        //
+        // Before the first press an interactive edit only writes the attribute
+        // (task 7118, gap 220): the run has not started, no preview is built.
+        if (interactiveParamEdit && runStarted()) rebuildPreview();
     }
     override void evaluate() {}
 
@@ -761,10 +899,10 @@ public:
         root["pressAnchor"]  = JSONValue([JSONValue(pressAnchor_.x),
                                           JSONValue(pressAnchor_.y),
                                           JSONValue(pressAnchor_.z)]);
-        // "The run has started" as a floor readout. This HEAD has no
-        // awaiting-first-press state, so a run is started exactly when a
-        // preview is built; the fix redefines it.
-        root["runStarted"] = JSONValue(built);
+        // "The run has started" (gap 217) and the latched symmetry side
+        // (0 when the offset is not mirrored) — floor readouts.
+        root["runStarted"] = JSONValue(runStarted());
+        root["pressSide"]  = JSONValue(symMirror_.enabled ? symMirror_.pressSide : 0);
         // Where the Move bank draws its handle — the channel a witness reads
         // to find the handle instead of the action centre. A never-posed
         // handler reads NaN and answers null; nothing is initialised here.
@@ -783,6 +921,7 @@ public:
     // selection/action center.
     override void update(ref VectorStack vts) {
         if (!active) return;
+        if (dragBank == DragBank.None) readSymmetry(vts);
         xfrm.update(vts);
     }
 
@@ -827,6 +966,7 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        gestureSteps_.length = 0;
         // This path rebuilds the live mesh behind the seam's back, so the
         // key it remembers no longer describes what is standing.
         preview_.reset();
@@ -895,11 +1035,32 @@ public:
             cancelLiveEdit();
             return true;
         }
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        // Middle press = CLONE (task 7118, gap 223): commit the finished run
+        // as its own record exactly as apply-and-continue does, then open a
+        // new operation that re-applies the previous offset AT the press.
+        // Without an open run it stays ours to refuse (not captured, §8).
+        PressRole role = PressRole.Continue;
+        Vec3 carried;
+        if (e.button == SDL_BUTTON_MIDDLE) {
+            if (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) return false;
+            if (dragBank != DragBank.None) return false;
+            if (*editMode != EditMode.Edges || mesh.edges.length == 0) return false;
+            if (!hasUncommittedEdit()) return false;
+            carried = offsetVec();
+            commitUncommittedEdit();
+            resyncSession();
+            role = PressRole.Clone;
+        }
+        if (e.button != SDL_BUTTON_LEFT && role != PressRole.Clone) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
         if (*editMode != EditMode.Edges) return false;
         if (mesh.edges.length == 0) return false;
+        // The banks reject any button but the left one (and their release
+        // ends the screen-falloff hold only on it), so they see the clone
+        // press as a left press.
+        SDL_MouseButtonEvent le = e;
+        le.button = SDL_BUTTON_LEFT;
 
         // EdgeExtendTool drives these embedded banks DIRECTLY and never enters the
         // wrapper's begin*DragSession path, so the wrapped input-frame channel
@@ -908,6 +1069,15 @@ public:
         MoveTool   mv = xfrm.moveBank();
         RotateTool rt = xfrm.rotateBank();
         ScaleTool  sc = xfrm.scaleBank();
+        // The banks' only viewport cache is written by their draw, and before
+        // the first press nothing is drawn (gap 217) — take this event's
+        // viewport, as XfrmTransformTool.syncInputViewport does.
+        xfrm.syncBankInputViewports(vts);
+
+        // A press that OPENS an operation: the first after an arm, after a
+        // restore, or after a Shift/middle commit. It is always off the
+        // handle (there is none yet, gap 217).
+        immutable bool first = !runStarted();
 
         // Bank dispatch — same try-in-order priority the wrapper uses (T→R→S).
         // A bank "owns" the drag only when it consumed the click AND landed on a
@@ -930,17 +1100,27 @@ public:
         // than three, so the multiple-fire caveat above applies to strictly
         // fewer clicks than it used to — a switched-off bank is never asked.
         DragBank picked = DragBank.None;
-        if (moveHandle_ && mv.onMouseButtonDown(e, vts) && mv.dragAxisPublic() >= 0) {
+        bool totalMiss = false;
+        if (first) {
+            if (moveHandle_ && mv.onMouseButtonDownWithResolvedAxis(le, vts,
+                        MoveTool.kPressOffGizmo) && mv.dragAxisPublic() >= 0)
+                picked = DragBank.Move;
+            else
+                totalMiss = true;
+        } else if (moveHandle_ && mv.onMouseButtonDown(le, vts) && mv.dragAxisPublic() >= 0) {
             picked = DragBank.Move;
-        } else if (rotateHandle_ && rt.onMouseButtonDown(e, vts)
+        } else if (rotateHandle_ && rt.onMouseButtonDown(le, vts)
                    && rt.dragAxisPublic() >= 0 && rt.dragAxisPublic() <= 2) {
             // Principal rings only (0/1/2 → X/Y/Z Euler component). The view-ring
             // (3) maps to no single rotateDeg component; defer it (the command's
             // rotateDeg has no arbitrary-axis slot). Leave it unowned.
             picked = DragBank.Rotate;
-        } else if (scaleHandle_ && sc.onMouseButtonDown(e, vts) && sc.dragAxisPublic() >= 0) {
+        } else if (scaleHandle_ && sc.onMouseButtonDown(le, vts) && sc.dragAxisPublic() >= 0) {
             picked = DragBank.Scale;
         } else {
+            totalMiss = true;
+        }
+        if (totalMiss) {
             // Total miss across every ENABLED bank (or none enabled) → HAUL via
             // the Move bank's screen-plane drag (world-axis Offset), anchored at
             // the gizmo center.
@@ -950,15 +1130,45 @@ public:
             picked = DragBank.Move;
         }
 
+        // Symmetry side (gap 212/216): every OFF-HANDLE press re-latches it
+        // from the press point and, on a built run, rebuilds at the press; a
+        // handle press keeps it.
+        readSymmetry(vts);
+        immutable bool offHandlePress =
+            (picked == DragBank.Move && mv.lastClickWasOffGizmo) || totalMiss;
+        if (offHandlePress && symMirror_.enabled) {
+            immutable Vec3 p = mv.handler.center;
+            immutable int side =
+                dot(p - symMirror_.planePoint, symMirror_.planeNormal) > 0 ? +1 : -1;
+            if (side != symMirror_.pressSide) {
+                symMirror_.pressSide = side;
+                if (built) rebuildPreview();
+            }
+        }
+
+        // The press that opens an operation writes its offset (0; the carried
+        // one for a clone) and builds the zero-length ring (gap 217/220/223).
+        if (first && !built) {
+            const Vec3 w = role == PressRole.Clone ? carried : Vec3(0, 0, 0);
+            offsetX_ = w.x; offsetY_ = w.y; offsetZ_ = w.z;
+            rebuildPreview();
+        }
+        awaitingFirstPress_ = false;
+
         // Begin the host-owned drag. NOTHING about the pivot happens here: it
         // was captured at tool init (initPivot_) and a drag does not re-take
         // it. This line used to read the ACTION CENTRE at drag start, and both
         // halves of that were wrong — see initPivot_'s comment.
         dragBank       = picked;
+        dragButton_    = e.button;
         dragBaseOffset = offsetVec();
         pressAnchor_   = mv.handler.center;
         moveOffGizmo_  = mv.lastClickWasOffGizmo;
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
+        prePress_      = attrs();
+        if (first) opStart_ = attrs();
+        openedOpAtPress_ = first;
+        redo_ = LiveRedoStash.init;       // a new press drops the live redo (gap 231)
         return true;
     }
 
@@ -1043,15 +1253,24 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active || dragBank == DragBank.None) return false;
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        // The release of the button that pressed (a middle clone drag ends
+        // on the middle release, gap 223); the banks see a left one.
+        if (e.button != dragButton_) return false;
+        SDL_MouseButtonEvent le = e;
+        le.button = SDL_BUTTON_LEFT;
         // Forward LMB-up to the bank that owned the drag so it clears its dragAxis.
         final switch (dragBank) {
             case DragBank.None:   break;
-            case DragBank.Move:   xfrm.moveBank().onMouseButtonUp(e, vts);   break;
-            case DragBank.Rotate: xfrm.rotateBank().onMouseButtonUp(e, vts); break;
-            case DragBank.Scale:  xfrm.scaleBank().onMouseButtonUp(e, vts);  break;
+            case DragBank.Move:   xfrm.moveBank().onMouseButtonUp(le, vts);   break;
+            case DragBank.Rotate: xfrm.rotateBank().onMouseButtonUp(le, vts); break;
+            case DragBank.Scale:  xfrm.scaleBank().onMouseButtonUp(le, vts);  break;
         }
         dragBank = DragBank.None;
+        dragButton_ = SDL_BUTTON_LEFT;
+        // A gesture that changed the operation — or opened it (gap 240) — is
+        // one live undo step.
+        if (built && (attrs() != prePress_ || openedOpAtPress_))
+            pushStep(prePress_);
         return true;
     }
 
@@ -1059,6 +1278,9 @@ public:
                        const ref DrawPlan plan, bool visualOnly = false) {
         cachedVp = vp;
         if (!active) return;
+        // No handle before the first press (gap 217) — in the owner cell and
+        // in every replica, which come through this same draw.
+        if (!runStarted()) return;
         // The embedded wrapper renders the gizmo banks + runs the shared arbiter
         // (hover highlight). The Move bank co-locates at the selection/action
         // center the kernel re-selected (the new ridge edges).
@@ -1069,6 +1291,33 @@ private:
     Vec3 offsetVec() const { return Vec3(offsetX_, offsetY_, offsetZ_); }
     Vec3 rotateVec() const { return Vec3(rotateX_, rotateY_, rotateZ_); }
     Vec3 scaleVec()  const { return Vec3(scaleX_,  scaleY_,  scaleZ_); }
+
+    ExtendAttrs attrs() const {
+        return ExtendAttrs(offsetX_, offsetY_, offsetZ_, inset_, shift_,
+                           rotateX_, rotateY_, rotateZ_, scaleX_, scaleY_, scaleZ_);
+    }
+    void setAttrs(in ExtendAttrs a) {
+        offsetX_ = a.offsetX; offsetY_ = a.offsetY; offsetZ_ = a.offsetZ;
+        inset_ = a.inset; shift_ = a.shift;
+        rotateX_ = a.rotateX; rotateY_ = a.rotateY; rotateZ_ = a.rotateZ;
+        scaleX_ = a.scaleX; scaleY_ = a.scaleY; scaleZ_ = a.scaleZ;
+    }
+    void pushStep(ExtendAttrs a) {
+        if (gestureSteps_.length >= MAX_EDGE_EXTEND_GESTURE_STEPS)
+            gestureSteps_ = gestureSteps_[1 .. $];   // drop the OLDEST
+        gestureSteps_ ~= a;
+    }
+
+    // The symmetry plane, when an AXIS plane is on (a workplane plane's
+    // normal sign is arbitrary and not captured — not mirrored).
+    void readSymmetry(ref VectorStack vts) {
+        symMirror_.enabled = false;
+        if (auto sp = vts.get!SymmetryPacket()) {
+            symMirror_.enabled     = sp.enabled && sp.axisIndex >= 0;
+            symMirror_.planePoint  = sp.planePoint;
+            symMirror_.planeNormal = sp.planeNormal;
+        }
+    }
 
     // Pivot fed to the kernel for every INTERACTIVE evaluation — a bank drag
     // and a numeric Tool Properties edit alike. Both are "the tool is armed in
@@ -1113,7 +1362,7 @@ private:
         auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
         immutable r = ed.extendEdgesByMask(target.operandEdgeMask(),
             inset_, shift_, offsetVec(), rotateVec(), scaleVec(),
-            segments_, livePivot());
+            segments_, livePivot(), symMirror_);
         ed.close(); return r;
     }
 
@@ -1160,7 +1409,7 @@ private:
         auto ed = MeshEditBatch(target,
             MeshEditScope.Geometry | MeshEditScope.Marks);
         cast(void)ed.extendEdgesByMask(target.operandEdgeMask(), inset_, shift_,
-            offsetVec(), rotateVec(), scaleVec(), segments_, livePivot());
+            offsetVec(), rotateVec(), scaleVec(), segments_, livePivot(), symMirror_);
         auto delta = ed.close();
         if (!delta.isEmpty) { cmd.setDelta(delta, "Edge Extend"); return true; }
         cmd.setSnapshots(before, MeshSnapshot.capture(target), "Edge Extend");
@@ -1222,6 +1471,9 @@ public:
         if (wantsHistory) {
             cmd = cast(MeshSessionEdit)gestureFactory();
             carrierMismatch = cmd is null;
+            // The switch's commit of the session's FIRST run carries the
+            // activation (gap 218); a continuation's does not (gap 229).
+            if (cmd !is null && !continuedOp_) cmd.markRunOwner(typeid(this));
         }
         auto owner = PreparedEdgeExtendDeactivateOwner.prepare(this, layer, cmd);
         bool ok = owner !is null;
@@ -1256,11 +1508,14 @@ public:
     }
 
 private:
-    void commitEdit() {
+    // `markRun`: this record is the session's first run, undone together
+    // with the activation (gap 218/225). The reset path does not mark.
+    void commitEdit(bool markRun = false) {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
         auto cmd = cast(MeshSessionEdit) gestureFactory();
         if (cmd is null) { noteGestureCarrierMismatch(); return; }
+        if (markRun) cmd.markRunOwner(typeid(this));
 
         // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
         // committed extend self-records an operation-log delta. before.restore
@@ -1309,6 +1564,7 @@ private:
         built       = false;
         dragBank    = DragBank.None;
         accumLocal_ = Vec3(0, 0, 0);
+        gestureSteps_.length = 0;
     }
 }
 

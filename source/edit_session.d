@@ -32,7 +32,8 @@ module edit_session;
 // ---------------------------------------------------------------------------
 
 import tool            : Tool;
-import command         : Command;
+import command         : Command, ToolRunRecord;
+import std.json        : JSONValue;
 import command_history : CommandHistory;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
@@ -204,7 +205,7 @@ interface RefireClient {
 // KeepAliveOnCancel — optional capability (task 0400's interface, renamed in
 // task 0430 when the second implementor family joined): cancelling the
 // tool's open uncommitted edit from history navigation (navigate()'s
-// whole-edit-cancel branch) does not end the tool's life. Two implementor
+// whole-edit-cancel branch) does not end the tool's life. Three implementor
 // families:
 //   * the Edge Slice standing preview (0232 + 0400): its survival covers
 //     only the residual armed-without-points state: a peel that empties its
@@ -213,7 +214,9 @@ interface RefireClient {
 //     interface, so a cancel with no session step left ends them;
 //   * the create family (the PrimitiveCreateTool hierarchy + BoxTool —
 //     task 0430, capture-measured): a cancelled create gesture leaves the
-//     tool armed for a fresh gesture.
+//     tool armed for a fresh gesture;
+//   * Edge Extend while its live operation was opened by apply-and-continue
+//     (task 7118, gap 225).
 // One predicate: whether a cancel ends the tool's session. (The former
 // second predicate — task 0232's redo-cancel hook, "a redo while armed
 // cancels the preview first" — was removed by task 0429: a standing
@@ -241,9 +244,7 @@ interface KeepAliveOnCancel {
 
 // ---------------------------------------------------------------------------
 // SessionStepUndo — optional capability: mid-session per-step undo peel
-// (task 0321). EdgeSliceTool (latched points), SliceTool (its gesture
-// stack, task 7137) and LoopSliceTool (its gesture stack, gap row 205)
-// implement it.
+// (task 0321). Implementors: grep `SessionStepUndo` in `source/tools`.
 // ---------------------------------------------------------------------------
 interface SessionStepUndo {
     // navigate() calls this FIRST, before its whole-edit-cancel branch
@@ -252,6 +253,14 @@ interface SessionStepUndo {
     // ONE of those steps here and report true, so a real undo keystroke
     // un-does one step at a time instead of unwinding the whole live edit.
     bool tryUndoStepInSession();
+}
+
+// SessionLiveRedo — optional capability: a redo keystroke that brings back, LIVE,
+// the open operation the previous undo cancelled (Edge Extend's continued
+// operation; task 7118, gap 232). navigate() asks it before stepping the redo
+// stack; false == the former behaviour.
+interface SessionLiveRedo {
+    bool tryRedoLiveInSession();
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +307,18 @@ interface SessionFirstGesture {
 // only answers the gate used by the transition machinery below.
 // ---------------------------------------------------------------------------
 interface LifecycleUndoEmitter { }
+
+// SwitchRestorablePredecessor — undoing the arm row of the tool that replaced
+// this one re-arms this one with these parameter values; it does not make this
+// tool's own arm a history row (task 7118, gap 221). Edge Extend only.
+interface SwitchRestorablePredecessor {
+    JSONValue switchRestoreArgs();
+    // Called on the instance the restore re-armed, right after the arm: the
+    // session it resumes already holds the committed first run, so the next
+    // operation is a continuation (popped alone, the tool stays; task 7118,
+    // gap 241).
+    void resumeAfterSwitchRestore();
+}
 
 // ---------------------------------------------------------------------------
 // ForeignEditBoundary — optional capability for a tool that can close its own
@@ -673,8 +694,9 @@ final class EditSession {
             // through to the drop branch. (Codifying the stronger claim as
             // an assert aborted the editor on the first box-gesture Ctrl+Z.)
             // Task 0400 + 0430: a KeepAliveOnCancel tool
-            // (survivesEditCancel()==true — EdgeSliceTool, and the create
-            // family PrimitiveCreateTool/BoxTool) is never dropped by this
+            // (survivesEditCancel()==true — EdgeSliceTool, the create
+            // family PrimitiveCreateTool/BoxTool, and Edge Extend in an
+            // apply-and-continue operation, task 7118) is never dropped by this
             // cancel. Every other tool — SliceTool and LoopSliceTool
             // included, whose cancel with no step left ends the tool by the
             // owner's slice law —
@@ -688,6 +710,12 @@ final class EditSession {
             }
             return true;
         }
+        // A redo that brings the cancelled open operation back LIVE (task
+        // 7118, gap 232). pendingGesture_ is always null here: only a cancel
+        // stashes, and every cancel runs in the undo branch that clears it.
+        if (!isUndo)
+            if (auto lr = cast(SessionLiveRedo) tool_())
+                if (lr.tryRedoLiveInSession()) return true;
         // Replay only when the redo head IS the activation row this session
         // popped (identity, read before the redo moves it; see endSession_).
         bool replay;
@@ -696,12 +724,19 @@ final class EditSession {
             replay = pendingGesture_ !is null && re.length > 0
                 && re[0].cmd is pendingFor_.get;
         }
+        // A record that is its tool's first run ends that tool when undone
+        // (task 7118, gap 218). Read BEFORE the step moves it.
+        const(ToolRunRecord) runRec = (isUndo && history_.undoEntries().length)
+            ? cast(const ToolRunRecord) history_.undoEntries()[$ - 1].cmd : null;
         bool ok = isUndo ? history_.undo() : history_.redo();
         if (ok) {
             // Only AFTER a successful stack step, with no open edit remaining:
             // re-sync the still-live tool's baseline to the now-current mesh.
             auto t3 = tool_();
             if (t3 !is null) t3.resyncSession();
+            if (isUndo && runRec !is null && runRec.endsToolOnUndo(t3)
+                && !t3.hasUncommittedEdit())
+                dropTool_();
         }
         if (!isUndo) {
             // AFTER the redo: it is the redo that arms the tool (and its

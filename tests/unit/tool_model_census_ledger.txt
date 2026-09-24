@@ -40,7 +40,7 @@ tool tools.deform.stroke_extrude_tool.StrokeExtrudeTool has=tools.deform.stroke_
 tool tools.edit.bridge_tool.BridgeTool has=tools.edit.bridge_tool.BridgeTool cancel=tools.edit.bridge_tool.BridgeTool resync=tools.edit.bridge_tool.BridgeTool commit=tool.Tool step=no keep=no snap=8 live=yes | engaged bridge preview keyed by SessionMeshKey, committed at drop
 tool tools.edit.drag_weld.DragWeldTool has=tools.edit.drag_weld.DragWeldTool cancel=tools.edit.drag_weld.DragWeldTool resync=tool.Tool commit=tool.Tool step=no keep=no snap=1 live=yes | weld drag in progress (dragging_) is uncommitted until release
 tool tools.edit.edge_bevel.EdgeBevelTool has=tools.edit.edge_bevel.EdgeBevelTool cancel=tools.edit.edge_bevel.EdgeBevelTool resync=tools.edit.edge_bevel.EdgeBevelTool commit=tools.edit.edge_bevel.EdgeBevelTool step=no keep=no snap=3 live=yes | built bevel preview over a MeshSnapshot baseline until drop/apply
-tool tools.edit.edge_extend.EdgeExtendTool has=tools.edit.edge_extend.EdgeExtendTool cancel=tools.edit.edge_extend.EdgeExtendTool resync=tools.edit.edge_extend.EdgeExtendTool commit=tools.edit.edge_extend.EdgeExtendTool step=no keep=no snap=4 live=yes | built extend preview over a MeshSnapshot baseline until drop/apply
+tool tools.edit.edge_extend.EdgeExtendTool has=tools.edit.edge_extend.EdgeExtendTool cancel=tools.edit.edge_extend.EdgeExtendTool resync=tools.edit.edge_extend.EdgeExtendTool commit=tools.edit.edge_extend.EdgeExtendTool step=yes keep=yes snap=4 live=yes | built extend preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.edge_extrude.EdgeExtrudeTool has=tools.edit.edge_extrude.EdgeExtrudeTool cancel=tools.edit.edge_extrude.EdgeExtrudeTool resync=tools.edit.edge_extrude.EdgeExtrudeTool commit=tools.edit.edge_extrude.EdgeExtrudeTool step=no keep=no snap=3 live=yes | built extrude preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.poly_bevel.PolyBevelTool has=tools.edit.poly_bevel.PolyBevelTool cancel=tools.edit.poly_bevel.PolyBevelTool resync=tools.edit.poly_bevel.PolyBevelTool commit=tools.edit.poly_bevel.PolyBevelTool step=no keep=no snap=3 live=yes | built bevel preview over a MeshSnapshot baseline until drop/apply
 tool tools.edit.poly_extrude.PolyExtrudeTool has=tools.edit.poly_extrude.PolyExtrudeTool cancel=tools.edit.poly_extrude.PolyExtrudeTool resync=tools.edit.poly_extrude.PolyExtrudeTool commit=tools.edit.poly_extrude.PolyExtrudeTool step=no keep=no snap=3 live=yes | built extrude preview over a MeshSnapshot baseline until drop/apply
@@ -96,6 +96,7 @@ write source/tools/deform/stroke_extrude_tool.d recordGestureEdit 1
 write source/tools/edit/bridge_tool.d recordGestureEdit 1
 write source/tools/edit/drag_weld.d recordGestureEdit 1
 write source/tools/edit/edge_bevel.d recordGestureEdit 1
+write source/tools/edit/edge_extend.d history.undoEntries 2
 write source/tools/edit/edge_extend.d recordGestureEdit 2
 write source/tools/edit/edge_extrude.d recordGestureEdit 2
 write source/tools/edit/poly_bevel.d recordGestureEdit 1
