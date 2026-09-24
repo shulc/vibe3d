@@ -281,12 +281,174 @@ class WorkplaneAlignToSelectionCommand : Command, Operator {
             return true;
         }
 
-        // Vertex / Edge: not implemented in 7.1 (per phase7_plan.md the
-        // alignToSelection multi-vertex / multi-edge rules will be added
-        // when the feature becomes blocking).
+        // Vertex / edge selections (task 7120): one rule table keyed on the
+        // selection's element type and count, every row a captured cell of
+        // tests/fixtures/workplane_align_and_primitive_placement.json
+        // (`align`, `laws.skew_edge_pair`; measured_laws §23). A shape the
+        // capture did not cover (>= 4 vertices, >= 3 edges, a non-parallel
+        // pair on one polygon, degenerate frames) refuses.
+        if (editMode == EditMode.Vertices) return alignToVertices(wp);
+        if (editMode == EditMode.Edges)    return alignToEdges(wp);
         return false;
     }
 private:
+    // Selected elements in selection order: the smallest positive order
+    // first; elements never ordered by hand follow, by index.
+    static uint[] inSelectionOrder(size_t count, scope bool delegate(size_t) sel,
+                                   const(int)[] order) {
+        import std.algorithm : sort;
+        uint[] ids;
+        foreach (i; 0 .. count) if (sel(i)) ids ~= cast(uint)i;
+        long key(uint i) {
+            const o = i < order.length ? order[i] : 0;
+            return o > 0 ? o : long.max;
+        }
+        ids.sort!((a, b) => key(a) != key(b) ? key(a) < key(b) : a < b);
+        return ids;
+    }
+
+    // Vertex normal: the UNIFORM average of the adjacent faces' unit normals
+    // (unnormalised; callers normalise the sum they need).
+    Vec3 vertexNormalSum(uint v) {
+        Vec3 acc = Vec3(0, 0, 0);
+        foreach (fi, f; mesh.faces)
+            foreach (vi; f)
+                if (vi == v) { acc = acc + mesh.faceNormal(cast(uint)fi); break; }
+        return acc;
+    }
+
+    // `dir` projected off `normal`, normalised; false when it vanishes.
+    static bool inPlane(Vec3 dir, Vec3 normal, out Vec3 x) {
+        Vec3 p = dir - normal * dot(dir, normal);
+        if (lengthSq(p) < 1e-12f) return false;
+        x = normalize(p);
+        return true;
+    }
+
+    // Sign convention of a direction the capture fixes only up to sign:
+    // the largest-magnitude component positive.
+    static Vec3 largestPositive(Vec3 v) {
+        import workplane_fit : axisMaxExtent;
+        const k = axisMaxExtent([v.x, v.y, v.z]);
+        const c = k == 0 ? v.x : k == 1 ? v.y : v.z;
+        return c < 0 ? v * -1.0f : v;
+    }
+
+    // Commit Y = normal, X, Z = X x Y at `origin` (right-handed, the same
+    // column order the polygon branch writes).
+    static bool commit(WorkplaneStage wp, Vec3 x, Vec3 y, Vec3 origin) {
+        wp.setBasis(y, x, cross(x, y), origin);
+        return true;
+    }
+
+    // Three points in selection order: origin s, Y = (a-s) x (b-s), X to a.
+    static bool threePointFrame(WorkplaneStage wp, Vec3 s, Vec3 a, Vec3 b) {
+        Vec3 n = cross(a - s, b - s);
+        if (lengthSq(n) < 1e-12f) return false;
+        Vec3 y = normalize(n), x;
+        if (!inPlane(a - s, y, x)) return false;
+        return commit(wp, x, y, s);
+    }
+
+    bool alignToVertices(WorkplaneStage wp) {
+        auto ids = inSelectionOrder(mesh.vertices.length,
+                                    (size_t i) => mesh.isVertexSelected(i),
+                                    mesh.vertexSelectionOrder);
+        if (ids.length == 1)
+            return commit(wp, Vec3(1, 0, 0), Vec3(0, 1, 0), mesh.vertices[ids[0]]);
+        if (ids.length == 2) {
+            Vec3 v0 = mesh.vertices[ids[0]], v1 = mesh.vertices[ids[1]];
+            Vec3 n = vertexNormalSum(ids[0]) + vertexNormalSum(ids[1]);
+            if (lengthSq(n) < 1e-12f) return false;
+            Vec3 y = normalize(n), x;
+            if (!inPlane(v1 - v0, y, x)) return false;
+            return commit(wp, largestPositive(x), y, v0);
+        }
+        if (ids.length == 3)
+            return threePointFrame(wp, mesh.vertices[ids[0]], mesh.vertices[ids[1]],
+                                   mesh.vertices[ids[2]]);
+        return false;
+    }
+
+    // Does some polygon carry both edges (each as a consecutive pair)?
+    bool sharePolygon(uint[2] e1, uint[2] e2) {
+        bool hasEdge(const(uint)[] f, uint[2] e) {
+            foreach (i; 0 .. f.length) {
+                const a = f[i], b = f[(i + 1) % f.length];
+                if ((a == e[0] && b == e[1]) || (a == e[1] && b == e[0])) return true;
+            }
+            return false;
+        }
+        foreach (f; mesh.faces)
+            if (hasEdge(f, e1) && hasEdge(f, e2)) return true;
+        return false;
+    }
+
+    bool alignToEdges(WorkplaneStage wp) {
+        auto ids = inSelectionOrder(mesh.edges.length,
+                                    (size_t i) => mesh.isEdgeSelected(i),
+                                    mesh.edgeSelectionOrder);
+        if (ids.length == 1) {
+            const e = mesh.edges[ids[0]];
+            Vec3 a = mesh.vertices[e[0]], b = mesh.vertices[e[1]];
+            Vec3 n = vertexNormalSum(e[0]) + vertexNormalSum(e[1]);
+            if (lengthSq(n) < 1e-12f) return false;
+            Vec3 y = normalize(n), x;
+            if (!inPlane(b - a, y, x)) return false;
+            return commit(wp, x, y, (a + b) * 0.5f);
+        }
+        if (ids.length != 2) return false;
+        uint[2] e1 = [mesh.edges[ids[0]][0], mesh.edges[ids[0]][1]];
+        uint[2] e2 = [mesh.edges[ids[1]][0], mesh.edges[ids[1]][1]];
+        // Adjacent pair: the three-vertex frame at the shared vertex, `a` on
+        // the FIRST edge.
+        foreach (i; 0 .. 2) foreach (j; 0 .. 2) if (e1[i] == e2[j])
+            return threePointFrame(wp, mesh.vertices[e1[i]],
+                                   mesh.vertices[e1[1 - i]], mesh.vertices[e2[1 - j]]);
+        uint[4] ends = [e1[0], e1[1], e2[0], e2[1]];
+        Vec3 lo = mesh.vertices[ends[0]], hi = lo;
+        foreach (v; ends) {
+            Vec3 p = mesh.vertices[v];
+            lo = Vec3(p.x < lo.x ? p.x : lo.x, p.y < lo.y ? p.y : lo.y, p.z < lo.z ? p.z : lo.z);
+            hi = Vec3(p.x > hi.x ? p.x : hi.x, p.y > hi.y ? p.y : hi.y, p.z > hi.z ? p.z : hi.z);
+        }
+        Vec3 centre = (lo + hi) * 0.5f;
+        if (!sharePolygon(e1, e2)) {
+            // No shared endpoint, no shared polygon: the fitted-plane rule.
+            import workplane_fit : skewEdgePairFrame, SkewFit;
+            import std.stdio : stderr;
+            Vec3[] pts;
+            foreach (v; ends) pts ~= mesh.vertices[v];
+            Vec3 x, y, z;
+            final switch (skewEdgePairFrame(pts, x, y, z)) {
+                case SkewFit.ok:
+                    wp.setBasis(y, x, z, centre);
+                    return true;
+                case SkewFit.singular:
+                    stderr.writeln("align to selection: skew edges lie on a plane through"
+                                 ~ " the world origin (reference behaviour not captured)");
+                    return false;
+                case SkewFit.antiparallel:
+                    stderr.writeln("align to selection: skew edges fit a normal opposite its"
+                                 ~ " dominant axis (reference behaviour not captured)");
+                    return false;
+                case SkewFit.degenerate:
+                    return false;
+            }
+        }
+        // A pair on one polygon: only the parallel case was captured.
+        Vec3 d1 = mesh.vertices[e1[1]] - mesh.vertices[e1[0]];
+        Vec3 d2 = mesh.vertices[e2[1]] - mesh.vertices[e2[0]];
+        if (lengthSq(d1) < 1e-12f || lengthSq(d2) < 1e-12f) return false;
+        if (lengthSq(cross(normalize(d1), normalize(d2))) >= 1e-12f) return false;
+        Vec3 n = Vec3(0, 0, 0);
+        foreach (v; ends) n = n + vertexNormalSum(v);
+        if (lengthSq(n) < 1e-12f) return false;
+        Vec3 y = normalize(n), x;
+        if (!inPlane(d1, y, x)) return false;
+        return commit(wp, largestPositive(x), y, centre);
+    }
+
     static float abs1(float x) { return x < 0 ? -x : x; }
 
     static float lengthSq(Vec3 v) { return v.x*v.x + v.y*v.y + v.z*v.z; }

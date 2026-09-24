@@ -599,6 +599,7 @@ tests.unit.webgl2_picker_readback_test
 tests.unit.webgl2_shader_sources_test
 tests.unit.weightmap_color_test
 tests.unit.window_metrics_test
+tests.unit.workplane_fit_test
 tests.unit.wrapper_shift_apply_inheritance_test
 tests.unit.zone_registry_test
 tool

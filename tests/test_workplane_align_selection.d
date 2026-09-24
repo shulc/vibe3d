@@ -258,6 +258,56 @@ unittest { // 1. population floor; 2. a-1p control; 4. vertex then edge cells; 3
     assert(skew == 2, format("skew-pair cells: %d, expected 2", skew));
 }
 
+unittest { // 3 (task 7120). skew rigs: each its own mesh, the decoded rule's held-out cells
+    auto rigs = fixture()["skew_rigs"].array;
+    assert(rigs.length == 4, format("skew_rigs population changed: %d, expected 4", rigs.length));
+    int checked = 0;
+    foreach (rig; rigs) {
+        string name = rig["cell"].str;
+        ok(commandBody("scene.reset"));
+        double[3][] vs;
+        foreach (v; rig["vertices"].array) vs ~= vec(v);
+        auto m = loadMesh(vs, rig["polygons"]);
+        int[] ids;
+        int[2][] pairs;
+        foreach (e; rig["edges_in_selection_order"].array) {
+            int a = vertexAt(m, vs[e.array[0].integer], name);
+            int b = vertexAt(m, vs[e.array[1].integer], name);
+            ids ~= edgeOf(m, a, b, name);
+            pairs ~= [a, b];
+        }
+        ok(commandBody("mesh.select", format(`{"mode":"edges","indices":%s}`, ids)));
+        assertOrder("edges", null, pairs, name);
+        assert(alignSel(), "workplane from " ~ name ~ " refused (reference aligns)");
+        auto got = readPlane();
+        auto want = rig["result_plane"];
+        assert(near(got.o, vec(want["origin"]), 1e-5),
+            format("workplane from %s differs from reference: origin — got %s want %s",
+                   name, fmt(got.o), fmt(vec(want["origin"]))));
+        foreach (ax; [["X", "axis_x"], ["Y", "axis_y_normal"], ["Z", "axis_z"]]) {
+            double[3] g = ax[0] == "X" ? got.x : ax[0] == "Y" ? got.y : got.z;
+            auto w = vec(want[ax[1]]);
+            // 8.7e-6 rad (the reference's 0.0005 deg) + 7-digit rounding.
+            assert(near(g, w, 2e-5), format("workplane from %s differs from reference: %s — got %s want %s",
+                                            name, ax[0], fmt(g), fmt(w)));
+        }
+        ++checked;
+    }
+    assert(checked == 4, format("skew rigs checked: %d, expected 4", checked));
+
+    // (S) all four endpoints on z = x, a plane through the world origin:
+    // the least-squares system is singular, the reference arm was not
+    // exercised, and ours refuses (gap 186).
+    ok(commandBody("scene.reset"));
+    double[3][] sv = [[1, 0, 1], [2, 1, 2], [1, 0, 3],
+                      [0, 2, 0], [2, 2, 2], [0, 3, 5]];
+    auto sm = loadMesh(sv, parseJSON("[[0,1,2],[3,4,5]]"));
+    int ea = edgeOf(sm, vertexAt(sm, sv[0], "S"), vertexAt(sm, sv[1], "S"), "S");
+    int eb = edgeOf(sm, vertexAt(sm, sv[3], "S"), vertexAt(sm, sv[4], "S"), "S");
+    ok(commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d]}`, ea, eb)));
+    assert(!alignSel(), "workplane from coplanar-through-origin skew edges did not refuse");
+}
+
 unittest { // 5. the typed plane's Euler order: B = Rz * Rx * Ry
     auto fx = fixture();
     JSONValue want;

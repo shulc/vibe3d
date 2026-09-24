@@ -24,8 +24,9 @@ import popup_state        : setStatePath;
 //                  world plane via pickMostFacingPlane on every evaluate.
 //   - `center`   : translation of the plane origin from the world origin.
 //                  `workplane.edit cenX/Y/Z`.
-//   - `rotation` : Euler angles in DEGREES, applied as extrinsic XYZ
-//                  (R_z * R_y * R_x). `workplane.edit rotX/Y/Z`.
+//   - `rotation` : Euler angles in DEGREES, B = R_z * R_x * R_y (Y
+//                  first, then X, then Z — the measured order, task 7120,
+//                  measured_laws §10/§23). `workplane.edit rotX/Y/Z`.
 //                  rotation = (0,0,0) ↔ XZ plane, normal = +Y.
 //
 // Commands `workplane.reset`, `workplane.edit`, `workplane.rotate`,
@@ -79,7 +80,7 @@ class WorkplaneStage : Stage, Operator {
 
     bool isAuto    = true;
     Vec3 center    = Vec3(0, 0, 0);
-    Vec3 rotation  = Vec3(0, 0, 0);   // degrees, extrinsic XYZ
+    Vec3 rotation  = Vec3(0, 0, 0);   // degrees, B = Rz * Rx * Ry
 
     this() {
         publishState();
@@ -353,8 +354,9 @@ private:
         return "custom";
     }
 
-    // Apply Euler XYZ (degrees, extrinsic) to the world axes (X,Y,Z) and
-    // return the rotated triple as (normal=Y_rot, axis1=X_rot, axis2=Z_rot).
+    // The ONE place a stored rotation becomes a basis: B = Rz * Rx * Ry
+    // (degrees) applied to the world axes, returned as (normal = B*Y,
+    // axis1 = B*X, axis2 = B*Z). Order measured, task 7120 (§10/§23).
     void rotateBasis(Vec3 rotDeg, out Vec3 normal, out Vec3 axis1, out Vec3 axis2) const {
         if (directBasisActive) {
             normal = directNormal;
@@ -365,22 +367,22 @@ private:
         float rx = cast(float)(rotDeg.x * PI / 180.0);
         float ry = cast(float)(rotDeg.y * PI / 180.0);
         float rz = cast(float)(rotDeg.z * PI / 180.0);
-        // R_z * R_y * R_x applied to (1,0,0), (0,1,0), (0,0,1).
-        Vec3 ex = rotateXYZ(Vec3(1, 0, 0), rx, ry, rz);
-        Vec3 ey = rotateXYZ(Vec3(0, 1, 0), rx, ry, rz);
-        Vec3 ez = rotateXYZ(Vec3(0, 0, 1), rx, ry, rz);
+        Vec3 ex = rotateZXY(Vec3(1, 0, 0), rx, ry, rz);
+        Vec3 ey = rotateZXY(Vec3(0, 1, 0), rx, ry, rz);
+        Vec3 ez = rotateZXY(Vec3(0, 0, 1), rx, ry, rz);
         normal = ey;
         axis1  = ex;
         axis2  = ez;
     }
 
-    static Vec3 rotateXYZ(Vec3 v, float rx, float ry, float rz) {
-        // X-rotation
-        float cy0 = cos(rx), sy0 = sin(rx);
-        Vec3 a = Vec3(v.x, cy0 * v.y - sy0 * v.z, sy0 * v.y + cy0 * v.z);
+    // Rz * Rx * Ry * v: the Y rotation first, then X, then Z.
+    static Vec3 rotateZXY(Vec3 v, float rx, float ry, float rz) {
         // Y-rotation
         float cy1 = cos(ry), sy1 = sin(ry);
-        Vec3 b = Vec3(cy1 * a.x + sy1 * a.z, a.y, -sy1 * a.x + cy1 * a.z);
+        Vec3 a = Vec3(cy1 * v.x + sy1 * v.z, v.y, -sy1 * v.x + cy1 * v.z);
+        // X-rotation
+        float cx0 = cos(rx), sx0 = sin(rx);
+        Vec3 b = Vec3(a.x, cx0 * a.y - sx0 * a.z, sx0 * a.y + cx0 * a.z);
         // Z-rotation
         float cz1 = cos(rz), sz1 = sin(rz);
         Vec3 c = Vec3(cz1 * b.x - sz1 * b.y, sz1 * b.x + cz1 * b.y, b.z);

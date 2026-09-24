@@ -465,10 +465,17 @@ unittest { // radial-array click retains the pre-5430 pinned-plane branch
     assert(r["status"].str == "ok", "centre query failed: " ~ r.toString);
     auto val = r["value"].array;
     V3 got = V3(num(val[0]), num(val[1]), num(val[2]));
-    // Frozen from the pre-5430 active-workplane branch on this exact pixel.
-    // The focus-plane rival is (0.900000870,-0.799493074,0.000000000), so the
-    // 0.969656 m depth gap makes this cell discriminate the caller routing.
-    immutable V3 expected = V3(0.900000870, -0.799493074, 0.969656467);
+    // The active-workplane branch on this exact pixel: the orthographic ray
+    // meets the pinned plane. x/y were frozen from the pre-5430 branch; the
+    // depth is the ray's meeting with the plane whose normal the reference
+    // gives for rot 30/40 (fixture workplane_align_and_primitive_placement,
+    // b-cube, B = Rz*Rx*Ry: n = (0, 0.8660254, 0.5)). Task 7120 corrected our
+    // Euler order; the literal 0.969656 frozen before it was the old order's
+    // plane (n = (0.321, 0.866, 0.383)). The focus-plane rival's depth is 0,
+    // so the ~0.153 m gap still makes this cell discriminate the routing.
+    immutable double ey = -0.799493074;
+    immutable double ez = 0.5 - 0.8660254 * (ey - (-1.0)) / 0.5;
+    immutable V3 expected = V3(0.900000870, ey, ez);
     assert((got - expected).len < 1e-5,
         format("radial pinned-plane centre: expected (%.9f,%.9f,%.9f), "
              ~ "actual (%.9f,%.9f,%.9f)",
