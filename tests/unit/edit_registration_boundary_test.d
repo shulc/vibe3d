@@ -252,9 +252,10 @@ unittest {
     // Task 7144 (S3b review item 8): the Element Move pick takes its symmetry
     // packet through `symmetry_pick.captureLiveSymmetry`, like the click
     // helpers, which adds `symmetry_pick` to the transform closure (+1).
-    assert(edit.queue.length == 253 && positive.queue.length == 517,
-        format("6670 import closure census changed: edit=%d/253 "
-            ~ "registration=%d/517", edit.queue.length,
+    // Task 7122: `value_drag`, the shared no-handle value drag (+1 each).
+    assert(edit.queue.length == 254 && positive.queue.length == 518,
+        format("6670 import closure census changed: edit=%d/254 "
+            ~ "registration=%d/518", edit.queue.length,
             positive.queue.length));
 }
 
