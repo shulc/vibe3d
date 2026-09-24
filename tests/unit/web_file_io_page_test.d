@@ -247,7 +247,7 @@ unittest {
         "census: WEB-DOC-STATE must be printed after syncDocRevision( in the same block");
     const probeOpen = enclosingOpen(code, states[0]);
     const probe = code[probeOpen .. states[0]];
-    assert(probe.canFind("sessionOwner.documentPtr()"),
+    assert(probe.canFind("foreach (l; document.layers)"),
         "census: WEB-DOC-STATE must read the live document");
 
     assert(flushes[0] < blockOpen && blockOpen < syncs[0] && syncs[0] < settle,

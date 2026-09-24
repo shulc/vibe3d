@@ -55,9 +55,22 @@ BrowserPickResult pickOpenPath(FilterSpec[] filters, string startDir = null) {
 
 version (web) {
     // The JS library `web/lib/file_bridge.js` (task 7420, plan §3.1/§3.2).
-    extern (C) void vibe3d_web_pick_open(const(char)* accept, int multiple,
-                                         uint token, const(char)* dir) nothrow @nogc;
-    extern (C) int vibe3d_web_offer_download(const(char)* path) nothrow @nogc;
+    // It exists only on a wasm target; the `web` seam compiled NATIVELY (the
+    // census probes link it with dmd) gets stubs that refuse like a missing
+    // bridge: the pick fails with a notice, the download is not handed over.
+    version (WebAssembly) {
+        extern (C) void vibe3d_web_pick_open(const(char)* accept, int multiple,
+                                             uint token, const(char)* dir) nothrow @nogc;
+        extern (C) int vibe3d_web_offer_download(const(char)* path) nothrow @nogc;
+    } else {
+        void vibe3d_web_pick_open(const(char)* accept, int multiple,
+                                  uint token, const(char)* dir) nothrow {
+            vibe3d_web_pick_failed(token, -1);
+        }
+        int vibe3d_web_offer_download(const(char)* path) nothrow @nogc {
+            return 0;
+        }
+    }
 
     /// The browser wrote `fileCount` files for `token` into its directory.
     /// Only marks the queue record; the frame drain does the rest.
