@@ -125,5 +125,12 @@ unittest { // (u2) a motionless click between the hauls is not a gesture
     assert(toolId() == "edgeExtend" && abs(offset().x - o1.x) <= 1e-5,
         format("live undo popped a motionless click (reference: no row): tool %s, offset %s, o1 %s",
                toolId(), toolId() == "edgeExtend" ? offset().to!string : "-", o1));
-    cmd("tool.set edge.extend off");
+    // The click carries the SAME offset as the haul before it, so #1 alone
+    // cannot tell a click step from none; #2 can: with no click step the
+    // first haul is the last step and the whole run goes (9 v).
+    ctrlZ();
+    assert(vertexCount() == 9,
+        format("live undo popped a motionless click (reference: no row): the second undo left %d v "
+             ~ "(a click step would still hold the ring)", vertexCount()));
+    if (toolId() == "edgeExtend") cmd("tool.set edge.extend off");
 }
