@@ -6245,10 +6245,12 @@ void main(string[] args) {
                 import io.file_dialog : browserFileModel;
                 import io.image_path : resolveStoredPath;
                 drainPickResumes(pickDrainPorts);
+                // Only the browser model sweeps, so desktop skips the walk.
                 string[] docImagePaths;
-                foreach (l; document.layers)
-                    if (auto img = l.imageOrNull())
-                        docImagePaths ~= resolveStoredPath(img.storedPath);
+                if (browserFileModel())
+                    foreach (l; document.layers)
+                        if (auto img = l.imageOrNull())
+                            docImagePaths ~= resolveStoredPath(img.storedPath);
                 sweepPickDirsOnOpen(browserFileModel(), currentDocPath(),
                     docImagePaths, guardController.pending);
             }

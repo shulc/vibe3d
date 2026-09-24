@@ -204,6 +204,12 @@ string[] splitArgs(string args) {
     return out_;
 }
 
+/// `s` with every whitespace run collapsed to one space, ends trimmed.
+string normWs(string s) {
+    import std.array : join, split;
+    return s.split().join(" ");
+}
+
 /// Offsets where `needle` sits inside a STRING literal of `raw` (not code,
 /// not a comment).
 size_t[] literalHits(string raw, string needle) {
@@ -263,9 +269,17 @@ unittest {
         "census: one sweepPickDirsOnOpen( after the drain in the settle block");
     const sweepArgs = splitArgs(balancedSpan(code, sweeps[0] + "sweepPickDirsOnOpen".length,
         '(', ')'));
-    assert(sweepArgs.length == 4 && sweepArgs[0] == "browserFileModel()"
-        && sweepArgs[1] == "currentDocPath()" && sweepArgs[3] == "guardController.pending",
-        "census: sweep arguments " ~ sweepArgs.to!string);
+    assert(sweepArgs == ["browserFileModel()", "currentDocPath()", "docImagePaths",
+        "guardController.pending"], "census: sweep arguments " ~ sweepArgs.to!string);
+    // Between the drain and the sweep: the image-path fill, gated on the
+    // browser model (desktop never walks the layers), read from the live
+    // document. Exact comment-stripped text, whitespace-normalised.
+    const fill = normWs(code[drain .. sweeps[0]]);
+    assert(fill == "drainPickResumes(pickDrainPorts); string[] docImagePaths; "
+        ~ "if (browserFileModel()) foreach (l; document.layers) "
+        ~ "if (auto img = l.imageOrNull()) "
+        ~ "docImagePaths ~= resolveStoredPath(img.storedPath);",
+        "census: drain-to-sweep text " ~ fill);
 
     // The ports: ONE construction, before the frame function, six arguments in
     // the struct's field order, each reading the live production object.
@@ -277,13 +291,17 @@ unittest {
         "census: the ports are built once at init, not per frame");
     const args = splitArgs(balancedSpan(code, ctors[0] + "PickDrainPorts".length, '(', ')'));
     assert(args.length == 6, "census: PickDrainPorts takes six ports, got " ~ args.to!string);
-    assert(args[0].canFind("listDirNames("), "census: listDir port " ~ args[0]);
-    assert(args[1].canFind("commandBinding.invokeUiCommand("), "census: invoke port " ~ args[1]);
-    assert(args[2].canFind("raiseNotice("), "census: notice port " ~ args[2]);
-    assert(args[3].canFind("changeBus.docRevision()"), "census: revision port " ~ args[3]);
-    assert(args[4].canFind("stillBoundTo(") && args[4].canFind("&sessionOwner.editMesh()")
-        && args[4].canFind("editMode)"), "census: stillBound port " ~ args[4]);
-    assert(args[5].canFind("guardController.pending"), "census: guardBusy port " ~ args[5]);
+    const string[] expectedPorts = [
+        "(string dir) => listDirNames(dir)",
+        "(Command c, RecordMode m, string id) => commandBinding.invokeUiCommand(c, m, id)",
+        "(string text) => raiseNotice(text)",
+        "() => changeBus.docRevision()",
+        "(Command c) => stillBoundTo(c, &sessionOwner.editMesh(), editMode)",
+        "() => guardController.pending",
+    ];
+    foreach (i, a; args)
+        assert(normWs(a) == expectedPorts[i],
+            format("census: port %d is `%s`, expected `%s`", i, normWs(a), expectedPorts[i]));
 
     // The probe dispatch door and the notice/guard witnesses.
     assert(literalHits(raw, "WEB-NOTICE text=").length == 1
@@ -313,6 +331,12 @@ unittest {
     assert(limText[0 .. limText.indexOf(",")] == "256 * 1024 * 1024"
         && kMaxWebPickBytes == 256UL * 1024 * 1024,
         "census: the JS limit and kMaxWebPickBytes must agree");
+    // ... and the pick refuses a selection whose SUM exceeds it.
+    const sum = js.indexOf("const total = files.reduce((sum, f) => sum + f.size, 0);");
+    const cmp = js.indexOf("if (total > vibe3dMaxPickBytes) { fail(1); return; }");
+    assert(sum >= 0 && cmp > sum
+        && countOccurrences(js, "vibe3dMaxPickBytes") == 3,
+        "census: the byte-limit comparison over the summed selection");
 
     // dub: the library is linked into the web build, and D's callbacks exported.
     string[] dflags;
