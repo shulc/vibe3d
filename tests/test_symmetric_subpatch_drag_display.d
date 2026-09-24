@@ -12,8 +12,9 @@
 // Order (CLAUDE.md "ORDER the asserts"): rig premises and the selection floor,
 // then the held-frame floor (preview live, the drag reached the VBO), then the
 // two named asserts — cage fill first, one-side-stale second — and the
-// release pair. The last block MEASURES the script-selection control for gap
-// row 192 and prints it; it asserts nothing about the rule (plan S3).
+// release pair. The last block prints a script-selection drag for gap row 192;
+// it asserts nothing, and it is NOT the reference's unselected-partner
+// control (see the block).
 //
 // Moment: every held-frame read happens after the SECOND motion log and two
 // completed frames, before the release log is played.
@@ -307,14 +308,18 @@ unittest {
             && abs(after[a][2] - after[b][2]) <= 1e-4,
         format("7115 released pair is not x-symmetric: %s / %s", after[a], after[b]));
 
-    // Gap row 192, OUR side — a measurement, not an assert.
+    // Gap row 192, OUR side — a measurement, not an assert. NOTE: with
+    // symmetry already on, our `mesh.select` of one vertex adds its partner
+    // itself, so this is NOT the reference's "partner unselected" control;
+    // that divergence needs the selection made with symmetry OFF (the S3b
+    // slice owns it). Printed so the log shows the selection it drove.
     rig();
     selectVerts([a]);
+    auto ctlSel = getJson("/api/selection")["selectedVertices"].array;
     drag({});
     auto ctl = modelVerts();
-    writefln("[7115] gap-192 measurement: script-selected (0.5,0.5,0.5) -> %s; "
-           ~ "unselected partner (-0.5,0.5,0.5) -> %s (moved: %s)",
-             ctl[a], ctl[b], abs(ctl[b][0] + 0.5) > 1e-4
-                 || abs(ctl[b][1] - 0.5) > 1e-4);
+    writefln("[7115] gap-192 measurement: mesh.select [%d] under symmetry selected "
+           ~ "%s; (0.5,0.5,0.5) -> %s; partner (-0.5,0.5,0.5) -> %s",
+             a, ctlSel, ctl[a], ctl[b]);
     cmd("tool.pipe.attr symmetry enabled false");
 }
