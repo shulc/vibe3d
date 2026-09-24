@@ -40,9 +40,18 @@ import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
 import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
 import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
+import symmetry : mirrorEdgePoint;
+import toolpipe.packets : SymmetryPacket;
 import handler : BoxHandlerBatchResourceOwner;
 
-private struct EdgeSliceChainPoint { uint v0, v1; float t; }
+// (m0, m1): the point's mirror edge under the symmetry that was live when it
+// latched (`mirrorEdgePoint`), or ~0u, in the mesh edge's stored order like
+// (v0, v1); `mflip` when that order reverses the mirror of (v0, v1), so the
+// mirror point sits at `1 - t` along it.
+private struct EdgeSliceChainPoint {
+    uint v0, v1; float t;
+    uint m0 = ~0u, m1 = ~0u; bool mflip;
+}
 
 // The session's first point, carried by EditSession across the undo of the
 // activation row to the redo that re-arms it (task 7137). The key is sealed
@@ -959,8 +968,9 @@ public:
         int h = g_hoveredEdge;
         if (h < 0 || h >= cast(int)mesh.edges.length) return false;
 
+        const SymmetryPacket* sym = vts.get!SymmetryPacket();
         if (phase_ == Phase.Idle) {
-            latchFirstPoint(h, cast(float)e.x, cast(float)e.y);
+            latchFirstPoint(h, cast(float)e.x, cast(float)e.y, sym);
             return true;
         }
 
@@ -976,7 +986,7 @@ public:
         // wraparound, not stated. Guard the sentinel by name instead.
         uint lastEdge = (*mesh).edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
         if (lastEdge != ~0u && lastEdge == cast(uint)h) return false;
-        appendPoint(h, cast(float)e.x, cast(float)e.y);
+        appendPoint(h, cast(float)e.x, cast(float)e.y, sym);
         return true;
     }
 
@@ -1105,11 +1115,12 @@ public:
     }
 
 private:
-    void latchFirstPoint(int h, float sx, float sy) {
+    void latchFirstPoint(int h, float sx, float sy, const SymmetryPacket* sym) {
         ChainPoint p;
         p.v0 = mesh.edges[h][0];
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        assignMirror(p, sym);
         seatFirstPoint(p, cast(uint)h);
         scrubbing_ = true;
         dragPart_  = 0;
@@ -1138,11 +1149,12 @@ private:
         if (history !is null) history.invalidateRedo();
     }
 
-    void appendPoint(int h, float sx, float sy) {
+    void appendPoint(int h, float sx, float sy, const SymmetryPacket* sym) {
         ChainPoint p;
         p.v0 = mesh.edges[h][0];
         p.v1 = mesh.edges[h][1];
         p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        assignMirror(p, sym);
         latchedPoints_ ~= p;
         edgesParam_    ~= cast(uint)h;
         armed_     = true;
@@ -1153,6 +1165,21 @@ private:
         phase_     = Phase.EdgeB;
         armedKey_.stamp(*mesh);
         rebuildPreview();
+    }
+
+    // The point's mirror edge under the live symmetry (captured law: the cut is
+    // mirrored from EITHER side, no leading side; task 7114 item 6). Stored
+    // with the point, so every re-bake — scrub, commit, the prepared switch —
+    // bakes the same mirror chain without asking the pipe again.
+    void assignMirror(ref ChainPoint p, const SymmetryPacket* sym) {
+        uint m0, m1;
+        if (sym !is null && mirrorEdgePoint(*mesh, *sym, p.v0, p.v1, m0, m1)) {
+            // The kernel reads `t` along the edge's STORED direction.
+            const e = mesh.edgeIndex(m0, m1);
+            p.mflip = mesh.edges[e][0] != m0;
+            p.m0 = p.mflip ? m1 : m0;
+            p.m1 = p.mflip ? m0 : m1;
+        }
     }
 
     // Deterministic chain driver (task 0295, F2, objection 2): reads
@@ -1351,11 +1378,24 @@ private:
         return bakeChainInto(*mesh, baseline, pts);
     }
 
+    // Restores `baseline`, bakes `pts`, then — when every point has a mirror
+    // edge — the mirror chain over the result, in the same mesh: one baseline,
+    // one history row for both sides. Returns the PRIMARY chain's count.
     size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
             const ChainPoint[] pts) {
-        if (pts.length < 2) { baseline.restore(work); return 0; }
         baseline.restore(work);
+        if (pts.length < 2) return 0;
+        const n = bakeSegmentsInto(work, pts);
+        ChainPoint[] mirror;
+        foreach (p; pts) {
+            if (p.m0 == ~0u || p.m1 == ~0u) { mirror = null; break; }
+            mirror ~= ChainPoint(p.m0, p.m1, p.mflip ? 1.0f - effectiveT(p.t) : p.t);
+        }
+        if (n > 0 && mirror.length == pts.length) bakeSegmentsInto(work, mirror);
+        return n;
+    }
 
+    size_t bakeSegmentsInto(ref Mesh work, const ChainPoint[] pts) {
         uint seed = ~0u;   // no seed for segment 0 — origin resolves via pts[0]
         foreach (k; 0 .. pts.length - 1) {
             uint eB = work.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);

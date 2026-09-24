@@ -87,6 +87,29 @@ uint mirrorEdge(const ref Mesh m, const ref SymmetryPacket sp, uint ei)
     return m.edgeIndex(cast(uint)ma, cast(uint)mb);
 }
 
+/// The mirror of a point on edge (v0, v1) at a parameter `t`: the edge
+/// (m0, m1) = (pairOf[v0], pairOf[v1]) at the SAME `t`, since the pairing maps
+/// each endpoint to its own image. False — no mirror point — when symmetry is
+/// off or has no axis, the pairing is not for this mesh, either endpoint is
+/// unpaired or on the plane (not captured), the images are not joined by an
+/// edge, or the edge is its own mirror. Used by Edge Slice's mirrored chain
+/// (task 7114; measured law: the cut is mirrored from either side).
+bool mirrorEdgePoint(const ref Mesh m, const ref SymmetryPacket sp, uint v0, uint v1,
+                     out uint m0, out uint m1)
+{
+    m0 = m1 = ~0u;
+    if (!sp.enabled || sp.axisIndex < 0) return false;
+    if (sp.pairOf.length != m.vertices.length) return false;
+    if (v0 >= m.vertices.length || v1 >= m.vertices.length) return false;
+    const a = sp.pairOf[v0], b = sp.pairOf[v1];
+    if (a < 0 || b < 0) return false;
+    if ((a == v0 && b == v1) || (a == v1 && b == v0)) return false;   // self
+    if (m.edgeIndex(cast(uint)a, cast(uint)b) == ~0u) return false;
+    m0 = cast(uint)a;
+    m1 = cast(uint)b;
+    return true;
+}
+
 /// Per-face mirror lookup. Returns `~0u` when no face has a matching
 /// mirrored vertex set, or when the face is its own mirror (all
 /// vertices on-plane).
