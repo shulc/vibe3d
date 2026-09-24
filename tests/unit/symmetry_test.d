@@ -232,6 +232,14 @@ unittest {
     assert(callers == ["source/input_router.d", "source/symmetry_pick.d",
                        "source/tools/transform/xfrm_transform.d"],
            "(u4)(c) mirrorElement( callers: " ~ callers.to!string);
+    // ...and each helper that holds such a call is itself CALLED at its
+    // gesture: the double-click closure in the double-click branch, the
+    // Element Move ring in the three `take*` picks.
+    const ir = codeOf("source/input_router.d");
+    assert(countOccurrences(ir, "closeSelectionUnderMirror(&app.mesh(), app.editMode);") == 1,
+           "(u4)(c) the double-click branch does not close its result under the mirror");
+    assert(countOccurrences(codeOf("source/tools/transform/xfrm_transform.d"), "= withMirrorElement(") == 3,
+           "(u4)(c) the Element Move picks do not add the mirror element to the ring");
 }
 
 // (u5) SymmetryStage — the STATE of A: a base POINT, its side read against the
@@ -264,8 +272,9 @@ unittest {
     st.axisIndex = 0;
     assert(onX == 1 && onZ == -1 && st.authoringSide() == 1,
            "(u5)(v) the side is not the point against the current plane (a sign, not a point?)"); ++rows;
-    st.enabled = false;
     st.placeAuthoringBase(Vec3(-0.3f, 0, 0));
+    assert(st.authoringSide() == -1, "(u5)(vi) rig: the pre-state must be -X");
+    st.enabled = false;
     st.placeAuthoringBase(Vec3(0.3f, 0, 0));
     st.enabled = true;
     st.evaluate(vts);

@@ -595,8 +595,12 @@ void blockJ() {
         format("a dropped activation latched at a later evaluation: dx %.4f, expected -0.4", dx));
 
     // (J7) inside Edge Extend: apply-and-continue (a Shift press, here on +X
-    // again) and history navigation (a second +X haul popped by Ctrl+Z, the
-    // tool staying) do not reset the side. Our divergence label, not a cell.
+    // again) and history navigation do not reset the side. Our divergence
+    // label, not a cell. The navigation rig pops a COMMITTED operation (the one
+    // a Shift press opened) — the step that re-syncs the tool's session; a live
+    // pop of a gesture never leaves the session. The Shift variant cannot
+    // redden a reset in the re-sync by construction: the Shift press is itself
+    // an off-handle placement (W4) that re-latches its own side.
     rig();
     extendArm();
     haul(PRESS_POS, 8, 0, 10);
@@ -613,10 +617,16 @@ void blockJ() {
     rig();
     extendArm();
     haul(PRESS_POS, 8, 0, 10);
-    haul([0.5, -0.4, 0.3], 8, 0, 10);
+    {
+        auto p = px([0.5, -0.4, 0.3]);
+        clickPx(p[0], p[1], KMOD_LSHIFT);
+    }
+    immutable size_t opened = verts().length;
     tapKey(KEY_Z, KMOD_LCTRL);
     settle();
-    assert(toolId() == "edgeExtend", "rig: the live undo of the second haul ended Edge Extend");
+    assert(toolId() == "edgeExtend" && opened == 12 && verts().length == 10,
+        format("rig: Ctrl+Z did not pop the Shift-opened operation whole with the tool kept "
+             ~ "(tool '%s', %d -> %d vertices, expected 12 -> 10)", toolId(), opened, verts().length));
     dropTool("edge.extend");
     sideFloor(1, "J7 navigation");
     dx = readDx();
