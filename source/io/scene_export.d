@@ -52,9 +52,14 @@ module io.scene_export;
 
 version (web)
 {
-    import document : Document;
+    import document : Document, Layer;
     import log : logWarn;
-    import mesh : Mesh;
+    import mesh : Mesh, detachedPreparedMesh;
+    import io.assimp_wire : encodeAssimpWire;
+    import std.string : toStringz;
+
+    extern(C) int vibe3d_web_assimp_export(const(ubyte)* data, uint length,
+                                           const(char)* formatId, const(char)* path);
 
     /// The browser target deliberately carries no assimp package. These
     /// command-facing stubs preserve the file-command seam and give direct
@@ -62,15 +67,22 @@ version (web)
     /// formats.
     bool exportViaAssimp(ref const Mesh mesh, string path, string formatId)
     {
-        try logWarn("io", "assimp export is unavailable in the web build: " ~ path);
-        catch (Exception) {}
-        return false;
+        Document doc;
+        auto layer = new Layer;
+        layer.name = "Mesh";
+        layer.meshRef() = detachedPreparedMesh(mesh);
+        doc.layers = [layer];
+        return exportDocumentViaAssimp(doc, path, formatId);
     }
 
     bool exportDocumentViaAssimp(ref const Document document, string path,
                                  string formatId)
     {
-        try logWarn("io", "assimp export is unavailable in the web build: " ~ path);
+        auto wire = encodeAssimpWire(document);
+        if (wire.length == 0) return false;
+        if (vibe3d_web_assimp_export(wire.ptr, cast(uint)wire.length,
+                                    formatId.toStringz, path.toStringz)) return true;
+        try logWarn("io", "assimp export failed: " ~ path);
         catch (Exception) {}
         return false;
     }

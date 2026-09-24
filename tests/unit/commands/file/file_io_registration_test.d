@@ -33,8 +33,8 @@ unittest { // every format factory retains its own configure argument
         LiveViewModeRole(cast(LiveView)&liveView,
                              session.editModePtr()));
 
-    assert(reg.commandIds().length == 12,
-        "5790 configure witness population: expected 12 file-I/O ids");
+    assert(reg.commandIds().length == 14,
+        "5790 configure witness population: expected 14 file-I/O ids");
     assert(reg.makeCommand("file.open").name == "file.load",
         "file.open must remain a behavioral alias of file.load");
     auto load = cast(FileLoad)reg.makeCommand("file.load");
@@ -50,10 +50,10 @@ unittest { // every format factory retains its own configure argument
         && saveAs.configuredExtension is null,
         "5790 file.saveAs framing witness: expected saveAs mode with no extension");
 
-    immutable importIds = ["file.import.lwo", "file.import.obj"];
-    immutable importExts = [".lwo", ".obj"];
-    assert(importIds.length == 2 && importExts.length == 2,
-        "5790 import configure population must be exactly two witnesses");
+    immutable importIds = ["file.import.lwo", "file.import.obj", "file.import.glb"];
+    immutable importExts = [".lwo", ".obj", ".glb"];
+    assert(importIds.length == 3 && importExts.length == 3,
+        "5790 import configure population must be exactly three witnesses");
     foreach (i, id; importIds) {
         auto c = cast(FileLoad)reg.makeCommand(id);
         assert(c !is null && c.configuredMode == FileLoadMode.importSingle,
@@ -63,10 +63,10 @@ unittest { // every format factory retains its own configure argument
             ~ " configured " ~ c.configuredExtension);
     }
 
-    immutable exportIds = ["file.export.gltf", "file.export.obj"];
-    immutable exportExts = [".gltf", ".obj"];
-    assert(exportIds.length == 2 && exportExts.length == 2,
-        "5790 export configure population must be exactly two witnesses");
+    immutable exportIds = ["file.export.gltf", "file.export.obj", "file.export.glb"];
+    immutable exportExts = [".gltf", ".obj", ".glb"];
+    assert(exportIds.length == 3 && exportExts.length == 3,
+        "5790 export configure population must be exactly three witnesses");
     foreach (i, id; exportIds) {
         auto c = cast(FileSave)reg.makeCommand(id);
         assert(c !is null && c.configuredMode == FileSaveMode.exportSingle,

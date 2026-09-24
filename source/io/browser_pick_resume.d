@@ -117,7 +117,8 @@ string acceptAttribute(const(FilterSpec)[] fs) {
 bool pickIsMultiple(const(FilterSpec)[] fs) {
     import std.algorithm : canFind;
     auto exts = filterExtensions(fs);
-    return exts.canFind("v3d") || exts.canFind("lwo");
+    return exts.canFind("v3d") || exts.canFind("lwo") ||
+           exts.canFind("obj") || exts.canFind("gltf");
 }
 
 /// Index of the single file in `names` whose extension the filter accepts,

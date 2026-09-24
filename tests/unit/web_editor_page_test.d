@@ -11,8 +11,10 @@ unittest
     const gateRunner = readText("tools/test_web_editor.sh");
     const app = readText("source/app.d");
 
-    assert(page.count("<script src=\"vibe3d.js\"></script>") == 1,
-        "the interactive editor must load staged assets, not inline a capture bundle");
+    assert(page.count("<script src=\"assimp_module.js\"></script>") == 1
+        && page.count("script.src = 'vibe3d.js'") == 1
+        && page.indexOf("createAssimp().then") >= 0,
+        "the interactive editor must load Assimp before the staged editor asset");
     assert(page.indexOf("--web-first-frame-probe") >= 0
         && page.indexOf("query.get('probe')") >= 0,
         "automation probes must be opt-in on the same interactive entry point");

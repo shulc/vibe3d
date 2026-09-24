@@ -15,6 +15,7 @@ panels:
                 - { label: "LWO…",   action: { kind: command, id: "file.import.lwo"  } }
                 - { label: "OBJ…",   action: { kind: command, id: "file.import.obj"  } }
                 - { label: "glTF…",  action: { kind: command, id: "file.import.gltf" } }
+                - { label: "GLB…",   action: { kind: command, id: "file.import.glb"  } }
                 - { label: "FBX…",   action: { kind: command, id: "file.import.fbx"  } }
           - label: "Export ›"
             action:
@@ -23,6 +24,7 @@ panels:
                 - { label: "LWO…",   action: { kind: command, id: "file.export.lwo"  } }
                 - { label: "OBJ…",   action: { kind: command, id: "file.export.obj"  } }
                 - { label: "glTF…",  action: { kind: command, id: "file.export.gltf" } }
+                - { label: "GLB…",   action: { kind: command, id: "file.export.glb"  } }
                 - { label: "FBX…",   action: { kind: command, id: "file.export.fbx"  } }
           - { label: "Generate 3D…", action: { kind: command, id: "ai3d.generate.open" } }
           # Version / build configuration / platform — the facts a bug report

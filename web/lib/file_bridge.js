@@ -41,7 +41,9 @@ mergeInto(LibraryManager.library, {
     const dir = UTF8ToString(dirPtr);
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = accept;
+    // A scene may depend on .mtl, .bin or texture sidecars. Filtering to only
+    // the primary extension prevents the user from choosing those siblings.
+    input.accept = multiple ? '' : accept;
     input.multiple = multiple !== 0;
     input.style.display = 'none';
     let settled = false;
@@ -94,12 +96,63 @@ mergeInto(LibraryManager.library, {
   vibe3d_web_offer_download: function(pathPtr) {
     try {
       const path = UTF8ToString(pathPtr);
-      const bytes = FS.readFile(path);
+      let bytes = FS.readFile(path);
+      let filename = path.substring(path.lastIndexOf('/') + 1);
+      const outputs = window.__vibeAssimpOutputs || [];
+      if (outputs.includes(path) && outputs.length > 1) {
+        // Store-only ZIP keeps .gltf/.bin and .obj/.mtl together in one
+        // browser download; all CRCs and offsets are written explicitly.
+        const enc = new TextEncoder();
+        const chunks = [], entries = [];
+        let offset = 0;
+        const pack = (size, write) => {
+          const b = new Uint8Array(size), v = new DataView(b.buffer);
+          write(v, b); chunks.push(b); offset += size;
+        };
+        const crc = data => {
+          let c = -1;
+          for (const byte of data) {
+            c ^= byte;
+            for (let k=0;k<8;k++) c=(c>>>1)^((c&1)?0xedb88320:0);
+          }
+          return (c^-1)>>>0;
+        };
+        for (const file of outputs) {
+          const name=enc.encode(file.substring(file.lastIndexOf('/')+1));
+          const data=FS.readFile(file), sum=crc(data), start=offset;
+          pack(30+name.length, (v,b) => {
+            v.setUint32(0,0x04034b50,true); v.setUint16(4,20,true);
+            v.setUint32(14,sum,true); v.setUint32(18,data.length,true);
+            v.setUint32(22,data.length,true); v.setUint16(26,name.length,true);
+            b.set(name,30);
+          });
+          chunks.push(data); offset += data.length;
+          entries.push({name,data,sum,start});
+        }
+        const directory=offset;
+        for (const e of entries) pack(46+e.name.length, (v,b) => {
+          v.setUint32(0,0x02014b50,true); v.setUint16(4,20,true);
+          v.setUint16(6,20,true); v.setUint32(16,e.sum,true);
+          v.setUint32(20,e.data.length,true); v.setUint32(24,e.data.length,true);
+          v.setUint16(28,e.name.length,true); v.setUint32(42,e.start,true);
+          b.set(e.name,46);
+        });
+        const directorySize=offset-directory;
+        pack(22, v => {
+          v.setUint32(0,0x06054b50,true);
+          v.setUint16(8,entries.length,true); v.setUint16(10,entries.length,true);
+          v.setUint32(12,directorySize,true); v.setUint32(16,directory,true);
+        });
+        bytes = new Uint8Array(offset);
+        let at=0; for (const c of chunks) { bytes.set(c,at); at+=c.length; }
+        filename += '.zip';
+      }
+      window.__vibeAssimpOutputs = null;
       const url = URL.createObjectURL(
         new Blob([bytes], {type: 'application/octet-stream'}));
       const a = document.createElement('a');
       a.href = url;
-      a.download = path.substring(path.lastIndexOf('/') + 1);
+      a.download = filename;
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();

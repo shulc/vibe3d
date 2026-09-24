@@ -461,6 +461,13 @@ import std.stdio : writefln;
 import tsan_annotate : parallelForWithCompletion;
 import ui.action_menu : popupActionNeedsAssimp;
 import view : View;
+// Host-compiled web probe: model an absent browser Assimp module at the JS
+// boundary. These symbols are supplied by web/lib/assimp_bridge.js in wasm.
+extern(C) int vibe3d_web_assimp_available() nothrow @nogc { return 0; }
+extern(C) int vibe3d_web_assimp_import(const(char)*, void**, uint*) { return 0; }
+extern(C) void vibe3d_web_assimp_free(void*) {}
+extern(C) int vibe3d_web_assimp_export(const(ubyte)*, uint,
+                                      const(char)*, const(char)*) { return 0; }
 void main(string[] args)
 {
     bool[] visited = new bool[](4097);

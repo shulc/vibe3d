@@ -60,16 +60,27 @@ module io.scene_import;
 version (web)
 {
     import io.scene_ir : ImportedScene;
+    import io.assimp_wire : decodeAssimpWire;
+    import std.string : toStringz;
     import log : logWarn;
+
+    extern(C) int vibe3d_web_assimp_import(const(char)* path, void** data, uint* length);
+    extern(C) void vibe3d_web_assimp_free(void* data);
 
     /// The browser target deliberately carries no assimp package. Keep the
     /// command-facing API available so direct file-command calls refuse
     /// cleanly instead of turning this native-only dependency into a web edge.
     bool importViaAssimp(string path, ref ImportedScene scene)
     {
-        try logWarn("io", "assimp import is unavailable in the web build: " ~ path);
-        catch (Exception) {}
-        return false;
+        void* data;
+        uint length;
+        if (!vibe3d_web_assimp_import(path.toStringz, &data, &length)) {
+            try logWarn("io", "assimp import failed: " ~ path);
+            catch (Exception) {}
+            return false;
+        }
+        scope(exit) vibe3d_web_assimp_free(data);
+        return decodeAssimpWire((cast(const(ubyte)*)data)[0 .. length], scene);
     }
 }
 else

@@ -249,9 +249,9 @@ unittest {
         if (forbidden in edit.reached)
             assert(false, "6670 edit_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("edit_tool_registration", forbidden, edit));
-    assert(edit.queue.length == 252 && positive.queue.length == 516,
+    assert(edit.queue.length == 252 && positive.queue.length == 517,
         format("6670 import closure census changed: edit=%d/252 "
-            ~ "registration=%d/516", edit.queue.length,
+            ~ "registration=%d/517", edit.queue.length,
             positive.queue.length));
 }
 

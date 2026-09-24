@@ -204,8 +204,14 @@ class FileLoad : Command {
                 ok = sceneFromLwo(path, sc);
             else {
                 ok = importViaAssimp(path, sc);   // OBJ / glTF / FBX via assimp
-                if (!ok && !isAssimpAvailable())
-                    refusal_ = path ~ " — assimp import is unavailable in this build";
+                if (!ok) {
+                    if (!isAssimpAvailable())
+                        refusal_ = path ~ " — assimp import is unavailable in this build";
+                    version (web) {
+                        if (isAssimpAvailable())
+                            refusal_ = path ~ " — assimp could not read this scene";
+                    }
+                }
             }
             if (!ok) return false;
 

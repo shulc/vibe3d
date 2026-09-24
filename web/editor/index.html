@@ -55,6 +55,22 @@
       }
     };
   </script>
-  <script src="vibe3d.js"></script>
+  <script src="assimp_module.js"></script>
+  <script>
+    const startEditor = () => {
+      const script = document.createElement('script');
+      script.src = 'vibe3d.js';
+      document.body.appendChild(script);
+    };
+    if (typeof createAssimp === 'function') {
+      createAssimp().then(assimp => {
+        window.__vibeAssimp = assimp;
+        startEditor();
+      }).catch(error => {
+        console.error('Assimp module unavailable:', error);
+        startEditor();
+      });
+    } else startEditor();
+  </script>
 </body>
 </html>

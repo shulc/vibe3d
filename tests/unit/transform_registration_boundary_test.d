@@ -211,9 +211,11 @@ unittest {
     // the SAME text, so git merges them without a conflict and the file then
     // states 513 where the truth is 514. The gate on the REBASED sha is what
     // catches that; a gate taken before the rebase cannot.
-    assert(transform.queue.length == 252 && positive.queue.length == 516,
+    // Browser Assimp transport adds io.assimp_wire to the broad registration
+    // closure; the transform-only closure stays at its pinned boundary.
+    assert(transform.queue.length == 252 && positive.queue.length == 517,
         format("6506 import closure census changed: transform=%d/252 "
-            ~ "registration=%d/516", transform.queue.length,
+            ~ "registration=%d/517", transform.queue.length,
             positive.queue.length));
 }
 

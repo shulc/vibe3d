@@ -45,7 +45,7 @@ void registerFileIoCommands(ref Registry reg,
             return cast(Command) c;
         };
     }
-    foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"])
+    foreach (importExt; [".lwo", ".obj", ".gltf", ".glb", ".fbx"])
         reg.registerCommand("file.import" ~ importExt, importFactory(importExt));
 
     CommandFactory exportFactory(string ext) {
@@ -56,6 +56,6 @@ void registerFileIoCommands(ref Registry reg,
             return cast(Command) c;
         };
     }
-    foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"])
+    foreach (exportExt; [".lwo", ".obj", ".gltf", ".glb", ".fbx"])
         reg.registerCommand("file.export" ~ exportExt, exportFactory(exportExt));
 }

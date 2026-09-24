@@ -244,6 +244,8 @@ unittest
         "-Xcc=--preload-file=$PACKAGE_DIR/config@/config",
         "-Xcc=--js-library",
         "-Xcc=$PACKAGE_DIR/web/lib/file_bridge.js",
+        "-Xcc=--js-library",
+        "-Xcc=$PACKAGE_DIR/web/lib/assimp_bridge.js",
         "-Xcc=-sEXPORTED_FUNCTIONS=_main,_vibe3d_web_pick_done,_vibe3d_web_pick_failed",
     ];
     const expectedLflags = [

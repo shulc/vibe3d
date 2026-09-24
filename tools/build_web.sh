@@ -86,6 +86,31 @@ done
 
 "$repo_root/tools/build_web_native_deps.sh"
 
+# Assimp is a separate wasm instance so its C++ exceptions never cross the
+# DRuntime ABI. Keep its build products in this worktree's private build root.
+assimp_source=${VIBE3D_ASSIMP_SOURCE:-}
+if [[ -z $assimp_source ]]; then
+    assimp_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["versions"]["bindbc-assimp6"]["version"])' "$repo_root/dub.selections.json")
+    assimp_source="$shared_dub_packages/bindbc-assimp6/$assimp_version/bindbc-assimp6/extern/assimp"
+    if [[ ! -f $assimp_source/CMakeLists.txt ]]; then
+        assimp_checkout="$repo_root/.build/web-assimp-source"
+        if [[ ! -d $assimp_checkout/.git ]]; then
+            assimp_repo=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["versions"]["bindbc-assimp6"]["repository"].removeprefix("git+"))' "$repo_root/dub.selections.json")
+            git clone --no-checkout "$assimp_repo" "$assimp_checkout"
+        fi
+        git -C "$assimp_checkout" checkout --detach "$assimp_version"
+        git -C "$assimp_checkout" submodule update --init extern/assimp
+        assimp_source="$assimp_checkout/extern/assimp"
+    fi
+fi
+if [[ -z $assimp_source || ! -f $assimp_source/CMakeLists.txt ]]; then
+    echo "Assimp source missing; set VIBE3D_ASSIMP_SOURCE" >&2
+    exit 2
+fi
+"$repo_root/tools/build_web_assimp.sh" "$assimp_source" "$repo_root/.build/web-assimp"
+cmake -E copy "$repo_root/.build/web-assimp/assimp_module.js" "$artifact_root/assimp_module.js"
+cmake -E copy "$repo_root/.build/web-assimp/assimp_module.wasm" "$artifact_root/assimp_module.wasm"
+
 cd "$repo_root"
 cmake -E make_directory "$artifact_root" "$link_root"
 export VIBE3D_WEB_ARTIFACT_ROOT="$artifact_root"

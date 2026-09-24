@@ -191,10 +191,15 @@ class FileSave : Command {
             // today's single flattened-mesh behaviour byte-for-byte.
             if (isFbxFormat(fi.assimpExportId)) {
                 auto flat = flattenDocument(*document);
-                if (!exportViaAssimp(flat, path, fi.assimpExportId)) return false;
-            } else {
-                if (!exportDocumentViaAssimp(*document, path, fi.assimpExportId))
+                if (!exportViaAssimp(flat, path, fi.assimpExportId)) {
+                    version (web) refusal_ = path ~ " — assimp export failed";
                     return false;
+                }
+            } else {
+                if (!exportDocumentViaAssimp(*document, path, fi.assimpExportId)) {
+                    version (web) refusal_ = path ~ " — assimp export failed";
+                    return false;
+                }
             }
         } else {
             // Native .v3d is the layered source of truth: serialize the WHOLE
