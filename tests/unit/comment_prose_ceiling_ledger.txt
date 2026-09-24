@@ -11,8 +11,8 @@
 source-files 574
 task-citation-lines 5288
 citing-files 445
-long-comment-runs 273
-files-with-long-runs 146
+long-comment-runs 272
+files-with-long-runs 145
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -584,7 +584,6 @@ allow-runs source/tools/deform/smooth_shift_tool.d 1
 allow-runs source/tools/deform/stroke_extrude_tool.d 1
 allow-runs source/tools/edit/edge_extend.d 1
 allow-runs source/tools/edit/edge_extrude.d 1
-allow-runs source/tools/edit/poly_inset_tool.d 1
 allow-runs source/tools/edit/preview_rebuild.d 1
 allow-runs source/tools/edit/smooth_relax.d 1
 allow-runs source/tools/edit/topology_pen/snap_guide.d 2

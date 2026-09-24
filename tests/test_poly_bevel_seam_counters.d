@@ -560,7 +560,8 @@ unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
     // `handleScreen`: the inset tool draws none — any qualifying click in
     // polygon mode begins the haul, anchored at the selected faces' centroid
     // (the shape `tests/test_poly_inset_drag.d` already drives). So the press
-    // point is arbitrary and only the VERTICAL travel carries meaning.
+    // point is arbitrary and only the HORIZONTAL travel carries meaning (law
+    // §27; rightward since task 7122).
     enum int kFrames = 12;
     auto rr = postTo("/api/command", commandBody("scene.reset"));
     assert(rr["status"].str == "ok", "reset failed: " ~ rr.toString);
@@ -578,7 +579,7 @@ unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
 
     auto b = changes();
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             cx, cy, cx, cy - 60, kFrames), BASE);
+                             cx, cy, cx + 60, cy, kFrames), BASE);
     settle();
     auto a = changes();
 
@@ -587,7 +588,7 @@ unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
     immutable double insetNow = insetAttr();
     assert(insetNow > 1e-4,
         format("the drag left `inset` at %.6f; the arm leaves it at 0 and a "
-             ~ "60 px UPWARD haul over %d motions drives it positive. An "
+             ~ "60 px RIGHTWARD haul over %d motions drives it positive. An "
              ~ "inset still at 0 means `onMouseMotion` never ran — no preview "
              ~ "frame was rebuilt and every counter delta below would be free "
              ~ "zeroes (task 1903 Stage F2, plan §9).", insetNow, kFrames));

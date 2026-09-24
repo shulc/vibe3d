@@ -899,8 +899,9 @@ unittest {
             auto cam = fetchCamera(BASE);
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
-            dragPixels(cx, cy, cx, cy - 60, 12);
-            gDrove ~= driveDrag(0, -60, 12);
+            // Horizontal since task 7122 (the value law reads screen x only).
+            dragPixels(cx, cy, cx + 60, cy, 12);
+            gDrove ~= driveDrag(60, 0, 12);
             assert(attrOf("mesh.polyInsetTool", "inset") > 1e-4,
                 "mesh.polyInsetTool: the 60 px haul left `inset` at zero — the press "
               ~ "fell outside the viewport the haul is anchored in");

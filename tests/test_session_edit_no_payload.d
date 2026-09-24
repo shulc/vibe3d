@@ -113,7 +113,7 @@ unittest { // C-3 — Re-run of a REAL recorded session refuses, mesh intact
     int cx = cam.vpX + cam.width  / 2;
     int cy = cam.vpY + cam.height / 2;
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             cx, cy, cx, cy - 60, 12), BASE);
+                             cx, cy, cx + 60, cy, 12), BASE);   // §27: horizontal
 
     import core.thread : Thread;
     import core.time   : dur;

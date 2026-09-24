@@ -8,9 +8,10 @@
 // reaches proves nothing. This test makes it reachable.
 //
 // The tool draws no handle — any qualifying click in polygon mode begins the
-// haul, anchored at the selected faces' centroid — so the press point is
-// arbitrary and only the VERTICAL travel carries meaning: dragging UP (screen
-// y decreasing) increases inset.
+// haul — so the press point is arbitrary and only the HORIZONTAL travel
+// carries meaning: dragging RIGHT increases inset (law §27, task 7122, which
+// changed this file's gesture from 60 px UP to 60 px RIGHT with the same
+// assertion; per-increment values: tests/test_poly_inset_drag_value.d).
 
 import http_client : testBaseUrl, postJson;
 import http_command_helpers : commandBody;
@@ -52,12 +53,12 @@ unittest { // an upward haul drives `inset` positive through the motion path
 
     // Press anywhere inside the viewport — the tool has no handle to hit and
     // anchors the haul at the selection centroid regardless of where the
-    // press landed. 60 px UP is the whole gesture.
+    // press landed. 60 px RIGHT is the whole gesture.
     auto cam = fetchCamera(BASE);
     int cx = cam.vpX + cam.width  / 2;
     int cy = cam.vpY + cam.height / 2;
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             cx, cy, cx, cy - 60, 12), BASE);
+                             cx, cy, cx + 60, cy, 12), BASE);
 
     import core.thread : Thread;
     import core.time   : dur;
@@ -65,7 +66,7 @@ unittest { // an upward haul drives `inset` positive through the motion path
 
     double after = queryInset();
     assert(after > 1e-4,
-        "a 60 px upward haul should have driven inset positive, got "
+        "a 60 px rightward haul should have driven inset positive, got "
         ~ after.to!string);
 
     cmd("tool.set " ~ TOOL ~ " off");

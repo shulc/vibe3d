@@ -528,7 +528,7 @@ unittest {
 //
 //    `inset` has no axis, so its conversion is the declared mean of the three
 //    axis gains (`OverlaySpace.meanWorldPerLocal`). Same two stands, same
-//    vertical drag; the world readings must match.
+//    horizontal drag; the world readings must match.
 // --------------------------------------------------------------------------
 unittest {
     enum string TOOL = "mesh.polyInsetTool";
@@ -543,13 +543,13 @@ unittest {
         cmd("tool.set " ~ TOOL ~ " on");
         settle();
         auto cam = fetchCamera();
-        // No handle to hit — any qualifying press starts the haul, anchored at
-        // the selected faces' centroid. Press in the middle of the pane and
-        // drag straight up.
+        // No handle to hit — any qualifying press starts the haul. Press in
+        // the middle of the pane and drag straight RIGHT (§27, task 7122:
+        // the value law reads screen x only).
         int x0 = cam.vpX + cam.width / 2;
         int y0 = cam.vpY + cam.height / 2 + 40;
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                 x0, y0, x0, y0 - 60, 12), BASE);
+                                 x0, y0, x0 + 60, y0, 12), BASE);
         settle();
         double v = attr(TOOL, "inset");
         cmd("tool.set " ~ TOOL ~ " off");

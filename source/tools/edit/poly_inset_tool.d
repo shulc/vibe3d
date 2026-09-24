@@ -13,7 +13,8 @@ import mesh_ops.poly_bevel;
 import math;
 import editmode : EditMode;
 import params : Param;
-import drag : haulWorldPerPixel, gesturePrevPixel;
+import drag : viewWorldPerPixel;
+import value_drag : ValueDrag, insetValueDragLaw;
 import overlay_space : OverlaySpace;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -85,14 +86,10 @@ struct PreparedPolyInsetParamImage {
 //     rails and the smooth-shift tool's Shift use, just without their extra arrow
 //     graphic — see toolcard `gestures[1]`).
 //
-// Drag law (NOT captured — flagged as an open TODO in the toolcard's
-// viewport-drag finding): this implementation maps vertical screen motion
-// (drag UP = increase inset, matching this codebase's other haul tools'
-// "up/out = positive" convention) to world units via the same
-// perspective/zoom-correct `gizmoSize` scale poly_bevel.d uses for its arrow
-// handles, anchored at the selected faces' centroid. If a captured
-// drag-distance→value law ever lands, only `motionHaul`'s scale factor needs
-// to change — the rest of the session/undo plumbing is unaffected.
+// Drag law (measured, §26/§27; task 7122): HORIZONTAL travel only, stepped
+// per pixel on the {1,2,5} ladder of 0.2·P with a detent near 20·P and a
+// 36-px hold, signed, kept after release — the Stepped quantiser of the
+// shared `value_drag.ValueDrag`.
 //
 // Session lifecycle mirrors PolyBevelTool (its closest sibling: one
 // attribute, topology-creating, per-face independent): activate() snapshots
@@ -133,13 +130,11 @@ private:
     Viewport     cachedVp;
 
     // Haul drag state. No drawn handle to hit-test — any LMB press (outside
-    // camera-nav modifiers) begins the haul directly.
-    bool  dragging;
-    int   dragLastMX, dragLastMY;
-    float dragBaseInset;
-    // Frozen at drag-start (see haulAnchor) — the LOCAL length one pixel is
-    // worth at the anchor, item transform included (task 0645).
-    float localPerPixel;
+    // camera-nav modifiers) begins the haul directly. `valueDrag_` carries the
+    // value in double between events (the rule is exact; `inset_` is its
+    // float image) plus the step, detent and hold, all frozen at the press.
+    bool      dragging;
+    ValueDrag valueDrag_;
 
 public:
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
@@ -207,22 +202,24 @@ public:
     }
     version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
         active = false; built = dragging = true; inset_ = 7;
-        dragLastMX = 11; dragLastMY = 12; dragBaseInset = 13;
-        localPerPixel = 14; cachedVp.view[0] = 15;
+        valueDrag_.pressX = 11; valueDrag_.lastX = 12;
+        valueDrag_.value = 13; valueDrag_.law.step = 14;
+        cachedVp.view[0] = 15;
         before = MeshSnapshot.capture(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const nothrow @nogc {
         return !active && built && dragging && inset_ == 7 &&
-            dragLastMX == 11 && dragLastMY == 12 && dragBaseInset == 13 &&
-            localPerPixel == 14 && cachedVp.view[0] == 15;
+            valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
+            valueDrag_.value == 13 && valueDrag_.law.step == 14 &&
+            cachedVp.view[0] == 15;
     }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
         return active && !built && !dragging && inset_ == 0 && before.filled &&
             before.vertices.length == count && count && before.vertices[0] == first &&
-            before.vertices.ptr !is livePtr && dragLastMX == 11 &&
-            dragLastMY == 12 && dragBaseInset == 13 && localPerPixel == 14 &&
-            cachedVp.view[0] == 15;
+            before.vertices.ptr !is livePtr && valueDrag_.pressX == 11 &&
+            valueDrag_.lastX == 12 && valueDrag_.value == 13 &&
+            valueDrag_.law.step == 14 && cachedVp.view[0] == 15;
     }
 
     private void reinitSession() {
@@ -364,20 +361,14 @@ public:
 
         // No drawn handle to hit-test (task 0359 toolcard: confirmed no
         // gizmo graphic at idle/hover/drag) — any qualifying click begins
-        // the generic haul directly, anchored at the selected faces'
-        // centroid (empty selection ⇒ whole-mesh centroid, matching
-        // currentMask's empty-selection convention).
-        dragging       = true;
-        dragLastMX     = e.x;
-        dragLastMY     = e.y;
-        dragBaseInset  = inset_;
-        // Anchored where the geometry is DRAWN, and converted back into the
-        // LOCAL units `insetFacesByMask` means (task 0645). The inset is a
-        // distance with no direction, so the conversion is the declared mean
-        // — see `OverlaySpace.meanWorldPerLocal`.
-        const auto os  = OverlaySpace.ofPrimary();
-        localPerPixel  = haulWorldPerPixel(os.pos(haulAnchor()), cachedVp)
-                       / os.meanWorldPerLocal();
+        // the generic haul directly.
+        dragging = true;
+        // Step and detent come from the VIEW's pixel size (§27: no anchor
+        // term), converted into the LOCAL units `insetFacesByMask` means by
+        // the declared mean (task 0645) — the inset has no direction.
+        const auto os = OverlaySpace.ofPrimary();
+        valueDrag_.press(e.x, inset_,
+            insetValueDragLaw(viewWorldPerPixel(cachedVp), os.meanWorldPerLocal()));
         return true;
     }
 
@@ -385,26 +376,23 @@ public:
         if (!active || !dragging) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragging = false;
+        // §27: the last value is kept, signed.
+        inset_ = cast(float) valueDrag_.release();
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
-        // Vertical screen delta → world inset delta. Drag UP (screen Y
-        // decreases) increases inset. See the class doc-comment for why this
-        // particular law was picked (drag calibration is uncaptured).
-        // The previous pixel comes from the cooked gesture, not from this
-        // tool's own pair. Same integer subtraction, sourced one level up;
-        // `dragLastMX/MY` stay written as the fallback when no gesture is
-        // published and as the other half of the debug agreement check.
-        import toolpipe.packets : GesturePacket;
-        int prevMX, prevMY;
-        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
-                         dragLastMX, dragLastMY, prevMX, prevMY);
-        float dyPixels = cast(float)(prevMY - e.y);
-        inset_ = dragBaseInset + dyPixels * localPerPixel;
-        dragLastMX = e.x;
-        dragLastMY = e.y;
+        // §27: every pixel of HORIZONTAL travel is one stepped pixel of the
+        // shared value drag (vertical travel is not read); the per-event
+        // pixel count is capped inside `value_drag.steppedDragEvent`.
+        const int wanted = e.x - valueDrag_.lastX;
+        inset_ = cast(float) valueDrag_.motion(e.x);
+        if (valueDrag_.lastStepped < (wanted < 0 ? -wanted : wanted)) {
+            import std.stdio : stderr;
+            stderr.writefln("[inset] drag event of %d px clamped to %d",
+                wanted, valueDrag_.lastStepped);
+        }
         rebuildPreview();
         return true;
     }
@@ -422,22 +410,6 @@ private:
     bool[] currentMask() {
         // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
         return mesh.operandFaceMask();
-    }
-
-    // The selected faces' centroid — this tool's anchor for the pixel→world
-    // haul scale. The scale itself is `drag.haulWorldPerPixel` (LAW C of the
-    // conversion seam); only the anchor is ours.
-    Vec3 haulAnchor() {
-        Vec3 anchor = Vec3(0, 0, 0);
-        bool any = mesh.hasAnySelectedFaces();
-        int cnt = 0;
-        foreach (fi; 0 .. mesh.faces.length) {
-            if (any && !mesh.isFaceSelected(fi)) continue;
-            anchor = anchor + mesh.faceCentroid(cast(uint)fi);
-            ++cnt;
-        }
-        if (cnt > 0) anchor = anchor * (1.0f / cast(float)cnt);
-        return anchor;
     }
 
     // Revert to the pre-inset cage + selection, then re-run the kernel from

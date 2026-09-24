@@ -87,15 +87,30 @@ struct HeldDrag {
         const int nx = x + dx, ny = y + dy;
         string log = format(
             `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
-            `{"t":50.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            `{"t":1.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
             vpX, vpY, vpW, vpH, nx, ny, dx, dy);
-        playAndWait(log);
+        playFast(log);
         x = nx; y = ny;
     }
 
     void release() {
         playAndWait(buildDragUpLog(vpX, vpY, vpW, vpH, x, y));
     }
+}
+
+/// `playAndWait` with a 5 ms poll instead of 50 ms: a cell here plays hundreds
+/// of one-event logs, and the poll interval was most of its wall time.
+void playFast(string log) {
+    import std.net.curl : get, post;
+    import http_client : testBaseUrl;
+    auto j = parseJSON(cast(string) post(testBaseUrl() ~ "/api/play-events", log));
+    assert(j["status"].str == "success", "play-events failed: " ~ j.toString);
+    foreach (i; 0 .. 2000) {
+        auto st = parseJSON(cast(string) get(testBaseUrl() ~ "/api/play-events/status"));
+        if (st["finished"].type == JSONType.true_) return;
+        Thread.sleep(dur!"msecs"(5));
+    }
+    assert(false, "play-events did not finish within 10s");
 }
 
 /// A fixture leg list `[["+x", count, px], …]` expanded into per-increment
