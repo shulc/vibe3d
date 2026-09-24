@@ -1085,13 +1085,7 @@ public:
         }
         scope(failure) context.discard();
         auto owner = PreparedXfrmActivationSessionOwner.prepare(this);
-        if (owner !is null) {
-            owner.placeActionCentreOnInstall(activeAcenStage());
-            // A transform PRESET arm owns the activation latch, so its re-arms
-            // (W5a/W5b) latch too; an xfrm embedded in another tool (Edge
-            // Extend's host) is armed elsewhere and never places (L345).
-            ownsActivationLatch_ = true;
-        }
+        if (owner !is null) owner.placeActionCentreOnInstall(activeAcenStage());
         bool ok = owner !is null && context.prepareXfrmActivationPre(owner);
         ulong runId;
         if (ok && context.hasHistory()) {
@@ -1102,6 +1096,11 @@ public:
         }
         if (ok) ok = context.prepareXfrmActivationPost(owner);
         if (!ok) context.discard();
+        // A transform PRESET arm owns the activation latch, so its re-arms
+        // (W5a/W5b) latch too; an xfrm embedded in another tool (Edge Extend's
+        // host) is armed elsewhere and never places (gap row 354). Only a
+        // prepared arm that succeeded claims it.
+        if (ok) ownsActivationLatch_ = true;
         return PreparedXfrmActivationEffect(preparedToolStateOwner, runId,
             flags, ok);
     }
@@ -6609,11 +6608,14 @@ private:
     /// pair moves on a pick of either side (C-elm Em-mirror; task 7144, the
     /// one pairing door `symmetry.mirrorElement`).
     private uint[] withMirrorElement(EditMode k, uint idx, uint[] ring) {
-        import toolpipe.stages.symmetry : liveSymmetryStage;
         import symmetry : mirrorElement;
-        auto sy = liveSymmetryStage();
-        if (sy is null || !sy.enabled) return ring;
-        immutable uint m = mirrorElement(*mesh, *sy.publishedPacket(), k, idx);
+        import symmetry_pick : captureLiveSymmetry;
+        import toolpipe.stages.symmetry : SymmetryStage;
+        // The same packet source as the click helpers (`symmetry_pick`).
+        SymmetryPacket pkt;
+        SymmetryStage  stage;
+        if (!captureLiveSymmetry(mesh, cachedVp, k, pkt, stage)) return ring;
+        immutable uint m = mirrorElement(*mesh, pkt, k, idx);
         if (m == ~0u) return ring;
         final switch (k) {
             case EditMode.Vertices: return ring ~ m;

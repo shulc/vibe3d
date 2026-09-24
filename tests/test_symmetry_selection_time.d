@@ -738,6 +738,46 @@ void blockE2() {
         format("falloff move authored in the wrong frame: v6.x %.4f, expected 0.4", verts()[6][0]));
 }
 
+void blockH4() {
+    // Scale through the one-block door, off A: the conjugate of the WHOLE
+    // affine (Cj-affine, gap 328), pivot included. v6 alone, fresh session
+    // (A = -X), SX 2 about (0.25,0.5,0.5): off A the kernel scales M·p = -0.5
+    // about 0.25 → -1.25 and mirrors back → 1.25 (the vertex's own scale
+    // would give 0.75). `mesh.transform`'s explicit pivot is ours; the frame
+    // rule is the captured one.
+    rig();
+    selectVerts([6]);
+    symmetry(true);
+    sideFloor(-1, "H4: fresh session");
+    cmd(`{"id":"mesh.transform","params":{"kind":"scale","factor":[2,1,1],"pivot":[0.25,0.5,0.5]}}`);
+    auto v = verts();
+    law(near3(v[6], [1.25, 0.5, 0.5]) && near3(v[7], V7),
+        format("scale off A is not the conjugate: v6 %s v7 %s, expected (1.25,0.5,0.5) / %s",
+               fmt(v[6]), fmt(v[7]), fmt(V7)));
+}
+
+void blockLayer() {
+    // The latch is taken in the LAYER's space (the symmetry plane is
+    // layer-local, task 0619). Layer moved +2 in X; v7 (local x -0.5, world
+    // x +1.5) alone; the activation places the handle at v7 — local -X — so
+    // A = -X and a TX 0.4 moves v7 by its own +0.4. A world-space latch would
+    // read +X (world 1.5) and author v7 off A (-0.4).
+    rig();
+    cmd("layer.attr 0 pos.x 2.0");
+    scope(exit) cmd("layer.attr 0 pos.x 0");
+    selectVerts([7]);
+    symmetry(true);
+    cmd("tool.set move on");
+    settle(300);
+    assert(near3(acenCentre(), [1.5, 0.5, 0.5]), "rig: the handle is not at v7's world position (1.5,0.5,0.5): "
+           ~ fmt(acenCentre()));
+    sideFloor(-1, "Layer: activation at local -X");
+    cmd("tool.set move off");
+    immutable double dx = readDx(7);
+    law(abs(dx - 0.4) <= 1e-3,
+        format("the authoring side was latched in world space on a moved layer: dx %.4f, expected +0.4", dx));
+}
+
 void blockK() {
     // A command door does not pair (C-script, S-single).
     rig();
@@ -796,9 +836,11 @@ unittest {
     blockJ();
     blockV();
     blockE2();
+    blockH4();
+    blockLayer();
     blockK();
     blockEM();
     cmd("tool.pipe.attr symmetry enabled false");
-    lawSummary("test_symmetry_selection_time", 58);
-    sideFloorSummary("test_symmetry_selection_time", 29);
+    lawSummary("test_symmetry_selection_time", 60);
+    sideFloorSummary("test_symmetry_selection_time", 31);
 }

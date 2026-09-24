@@ -187,7 +187,7 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient, PresetClaimable 
         // and writes nothing into `pkt` (the pivot is bit-for-bit what it was).
         if (placementPending_) {
             placementPending_ = false;
-            if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(pkt.center);
+            if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(toSymmetrySpace(pkt.center));
         }
 
         pkt.isAuto = (mode == Mode.Auto && !userPin.placed);
@@ -2152,7 +2152,16 @@ private:
 
     /// Immediate placement at a known world point.
     public void notePlacementAt(Vec3 worldPoint) {
-        if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(worldPoint);
+        if (auto sy = liveSymmetryStage()) sy.placeAuthoringBase(toSymmetrySpace(worldPoint));
+    }
+
+    /// Placements arrive in WORLD space (the published centre, a press ray
+    /// hit); the symmetry plane is LAYER-LOCAL (task 0619: pairing, `vertSign`
+    /// and the plane all live in `mesh.vertices`' space). The one conversion
+    /// of the latch, at its one writer.
+    private Vec3 toSymmetrySpace(Vec3 worldPoint) const {
+        const auto ms = itemSpace();
+        return ms.isIdentity ? worldPoint : ms.toLocalPoint(worldPoint);
     }
 
     /// True while a deferred placement waits for an evaluation (unit cells).
@@ -2265,9 +2274,14 @@ private:
                 // is owned by the picking click, and nothing about a mode
                 // change says the user un-picked.
                 softPin        = Pin.init;
-                // W2: switching an action centre on PLACES it — latch A now,
-                // at the centre this mode publishes (C-latch-o, gap 330).
-                notePlacementAt(placementCentre());
+                // W2: switching an action centre ON places it — latch A now,
+                // at the centre this mode publishes (C-latch-o, gap 330). Only
+                // a mode that PINS a centre: switching to Auto (the centre
+                // follows the selection, placed by the next press or
+                // activation) or to None (off) places nothing — only the
+                // on-switch was captured.
+                if (prepared != Mode.None && prepared != Mode.Auto)
+                    notePlacementAt(placementCentre());
                 return true;
             }
             case "cenX": case "cenY": case "cenZ": {

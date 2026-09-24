@@ -236,7 +236,7 @@ unittest {
     // gesture: the double-click closure in the double-click branch, the
     // Element Move ring in the three `take*` picks.
     const ir = codeOf("source/input_router.d");
-    assert(countOccurrences(ir, "closeSelectionUnderMirror(&app.mesh(), app.editMode);") == 1,
+    assert(countOccurrences(ir, "closeSelectionUnderMirror(&app.mesh(), app.vpm.originSnapshot(), app.editMode);") == 1,
            "(u4)(c) the double-click branch does not close its result under the mirror");
     assert(countOccurrences(codeOf("source/tools/transform/xfrm_transform.d"), "= withMirrorElement(") == 3,
            "(u4)(c) the Element Move picks do not add the mirror element to the ring");
@@ -377,7 +377,32 @@ unittest {
     assert(ac.setAttr("mode", "select"));
     assert(sy.authoringSide() == 1,
            "(u5b)(xi) switching the centre on latched the unrestricted pair centroid (on the plane)"); ++rows;
-    assert(rows == 11, "(u5b) row population changed");
+    // (xii) W2 is the ON-switch of a centre that is placed: switching to
+    // Auto or to None places nothing.
+    ac.notePlacementAt(Vec3(0.4f, 0, 0));
+    only(1);
+    assert(ac.setAttr("mode", "auto") && sy.authoringSide() == 1,
+           "(u5b)(xii) switching to Auto latched A");
+    assert(ac.setAttr("mode", "none") && sy.authoringSide() == 1,
+           "(u5b)(xii) switching the centre off latched A"); ++rows;
+    // (xiii) the latch is taken in the LAYER space, not world: with the
+    // primary layer moved +2 in X a world point at x 1.5 is local x -0.5.
+    {
+        import document : primaryModelSpaceResolver;
+        import math : ModelSpace;
+        ModelSpace moved;
+        moved.m    = [1,0,0,0, 0,1,0,0, 0,0,1,0,  2,0,0,1];
+        moved.mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, -2,0,0,1];
+        moved.isIdentity = false;
+        auto savedResolver = primaryModelSpaceResolver;
+        primaryModelSpaceResolver = () => moved;
+        scope(exit) primaryModelSpaceResolver = savedResolver;
+        ac.notePlacementAt(Vec3(1.5f, 0, 0));
+        assert(sy.authoringSide() == -1,
+               "(u5b)(xiii) a world point on a moved layer was latched without the layer transform");
+    }
+    ++rows;
+    assert(rows == 13, "(u5b) row population changed");
 }
 
 // (u6) CENSUS of the WIRING — the production call sites, which (u2)/(u5)/(u5b)
@@ -512,6 +537,18 @@ unittest {
         const gate = upd[(w5 >= 300 ? w5 - 300 : 0) .. w5];
         assert(gate.indexOf("Mode.Element") >= 0 && gate.indexOf("ownsActivationLatch_") >= 0,
                "(u6)(c) W5b lost its Element / preset-arm gate");
+        // W5a is gated like W5b: only a preset-armed transform re-arms.
+        const res = bodyAfter(xf, "override void resumeAfterForeignEdit()");
+        const w5a = res.indexOf("notePlacement()");
+        assert(res.length > 100 && w5a >= 0, "(u6)(c) W5a not in resumeAfterForeignEdit");
+        const w5aStmt = res[(w5a >= 80 ? w5a - 80 : 0) .. w5a];
+        assert(w5aStmt.indexOf("ownsActivationLatch_") >= 0,
+               "(u6)(c) W5a lost its preset-arm gate (an embedded xfrm would re-latch A)");
+        // ...and the claim is set only by a SUCCESSFUL prepared arm.
+        const pa = bodyAfter(xf, "final PreparedXfrmActivationEffect prepareActivate(");
+        assert(countOccurrences(pa, "if (ok) ownsActivationLatch_ = true;") == 1
+               && countOccurrences(xf, "ownsActivationLatch_ = true") == 1,
+               "(u6)(c) ownsActivationLatch_ is not claimed exactly once, after `ok`");
         // captureSymmetryForDrag copies A from the stage.
         const cap = bodyAfter(codeOf("source/tools/transform/transform.d"), "bool captureSymmetryForDrag(");
         // one statement: `dragSymmetry.authoringSide = st.authoringSide();`

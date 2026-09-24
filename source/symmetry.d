@@ -210,6 +210,18 @@ bool offAuthoringSide(const ref SymmetryPacket sp, size_t vi) pure nothrow @nogc
     return sp.enabled && vi < sp.vertSign.length && sp.vertSign[vi] == -sp.authoringSide;
 }
 
+/// The vertex whose per-vertex FRAME (ACEN.Local cluster pivot, axes or
+/// matrix) a kernel reads for vertex `vi`: `vi` itself on A, its pair partner
+/// off A. Off A the kernel evaluates the MIRROR IMAGE of the point, and that
+/// image lies in the partner's cluster — reading `vi`'s own cluster frame
+/// there would mirror a frame that is already a mirror, i.e. twice (review of
+/// task 7144). No partner: `vi`.
+size_t frameSource(const ref SymmetryPacket sp, size_t vi) pure nothrow @nogc @safe {
+    if (!offAuthoringSide(sp, vi) || vi >= sp.pairOf.length) return vi;
+    immutable int mi = sp.pairOf[vi];
+    return mi < 0 ? vi : cast(size_t)mi;
+}
+
 /// The one authoring-frame evaluation: `kernel(p)` on A, `M·kernel(M·p)` off A.
 Vec3 authored(K)(const ref SymmetryPacket sp, size_t vi, Vec3 p, scope K kernel) {
     if (!offAuthoringSide(sp, vi)) return kernel(p);

@@ -27,7 +27,7 @@ import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
 import mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
-import symmetry : applySymmetryMirror, authored;
+import symmetry : applySymmetryMirror, authored, frameSource;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;
 import perf_probe : g_perf, Cat;
@@ -241,9 +241,10 @@ void applyRotateIncremental(
 {
     auto zKernel = g_perf.scope_(Cat.kernelApply);
     foreach (vi; indices) {
-        Vec3 pivot = pivotFor(vi, clusterPivots, pivotFallback);
+        const size_t fv = frameSource(dragSymmetry, vi);
+        Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
         Vec3 ax = (dragAxisIdx >= 0 && dragAxisIdx <= 2)
-            ? axisFor(vi, dragAxisIdx, clusterAxes, clusterPivots, axisFallback)
+            ? axisFor(fv, dragAxisIdx, clusterAxes, clusterPivots, axisFallback)
             : axisFallback;
         float w = dragFalloff.enabled
             ? evaluateFalloff(dragFalloff, mesh.vertices[vi],
@@ -292,10 +293,11 @@ void applyRotateFromOrig(
             mesh.vertices[i] = origVerts[i];
             continue;
         }
-        Vec3 pivot = pivotFor(i, clusterPivots, pivotFallback);
-        Vec3 axX = axisFor(i, 0, clusterAxes, clusterPivots, axisXFallback);
-        Vec3 axY = axisFor(i, 1, clusterAxes, clusterPivots, axisYFallback);
-        Vec3 axZ = axisFor(i, 2, clusterAxes, clusterPivots, axisZFallback);
+        const size_t fv = frameSource(dragSymmetry, i);
+        Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
+        Vec3 axX = axisFor(fv, 0, clusterAxes, clusterPivots, axisXFallback);
+        Vec3 axY = axisFor(fv, 1, clusterAxes, clusterPivots, axisYFallback);
+        Vec3 axZ = axisFor(fv, 2, clusterAxes, clusterPivots, axisZFallback);
         Vec3 v = origVerts[i];
         float w = dragFalloff.enabled
             ? evaluateFalloff(dragFalloff, origVerts[i], cast(int)i, vp)
@@ -372,9 +374,10 @@ void applyScaleFromActivation(
     bool needCompound = fabs(passes - 1.0f) > 1e-4f;
     bool useWeightVerts = (weightVerts.length == activationVerts.length);
     foreach (vi; indices) {
-        Vec3 pivot = pivotFor(vi, clusterPivots, pivotFallback);
+        const size_t fv = frameSource(dragSymmetry, vi);
+        Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
         Vec3 ax = axisXFallback, ay = axisYFallback, az = axisZFallback;
-        axesFor(vi, clusterAxes, clusterPivots, ax, ay, az);
+        axesFor(fv, clusterAxes, clusterPivots, ax, ay, az);
         float w = dragFalloff.enabled
             ? evaluateFalloff(dragFalloff,
                               useWeightVerts ? weightVerts[vi]
@@ -675,15 +678,19 @@ void applyXformMatrix(
         if (vi >= mesh.vertices.length) continue;
         if (i >= baseline.length) continue;
         Vec3 base  = baseline[i];
-        Vec3 pivot = pivotFor(vi, clusterPivots, pivotFallback);
+        // Off the authoring side the cluster frame is the PARTNER's (task
+        // 7144): the kernel runs on the mirror image, which sits in the
+        // partner's cluster — see `symmetry.frameSource`.
+        const size_t fv = frameSource(dragSymmetry, vi);
+        Vec3 pivot = pivotFor(fv, clusterPivots, pivotFallback);
 
         // Per-cluster matrix override (ACEN.Local). When the vert belongs to
         // an active cluster and a per-cluster matrix array is supplied, use
         // that cluster's matrix; otherwise the global M.
         float[16] Mv = M;
         if (clusterM !is null && clusterPivots.active
-            && vi < clusterPivots.clusterOf.length) {
-            int cid = clusterPivots.clusterOf[vi];
+            && fv < clusterPivots.clusterOf.length) {
+            int cid = clusterPivots.clusterOf[fv];
             if (cid >= 0 && cid < cast(int)clusterM.length)
                 Mv = clusterM[cid];
         }

@@ -249,10 +249,11 @@ class MeshTransform : Command, Operator {
         }
         const size_t nSel = touchedIdx.length;
 
-        // Baseline for the delta-mirror copy (reads `baseline[partner]`), at
-        // any live symmetry: the partner's own pre-op position.
+        // Baseline for the topological delta-mirror copy (reads
+        // `baseline[partner]`, the partner's own pre-op position); the
+        // position-copy pass needs none.
         Vec3[] baseAll;
-        if (symmActive) baseAll = mesh.vertices.dup;
+        if (symmActive && symm.topology) baseAll = mesh.vertices.dup;
 
         // ---- PASS 1: the kind switch, shape (A) ---------------------------
         // `touchedPrev[k]` IS `mesh.vertices[touchedIdx[k]]` for k < nSel — it

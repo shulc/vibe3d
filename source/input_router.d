@@ -968,7 +968,7 @@ struct InputRouter {
                 new SelectLoop(&app.mesh(), app.cameraView, app.editMode).apply();
             else
                 new SelectConnect(&app.mesh(), app.cameraView, app.editMode).apply();
-            closeSelectionUnderMirror(&app.mesh(), app.editMode);
+            closeSelectionUnderMirror(&app.mesh(), app.vpm.originSnapshot(), app.editMode);
             commitInteractiveSelEdit();
             return;
         }
@@ -2092,12 +2092,16 @@ void applyWindowMetrics(ref Layout layout, ViewportManager vpm, int w, int h) {
 /// selected element of the current mode gets its partner
 /// (`symmetry.mirrorElement`). The loop / connect COMMANDS themselves stay
 /// unpaired (C-expand X-single) — the closure lives at the gesture.
-private void closeSelectionUnderMirror(M)(M* m, EditMode k) {
-    import toolpipe.stages.symmetry : liveSymmetryStage;
+private void closeSelectionUnderMirror(M)(M* m, Viewport vp, EditMode k) {
     import symmetry : mirrorElement;
-    auto sy = liveSymmetryStage();
-    if (sy is null || !sy.enabled) return;
-    auto sp = sy.publishedPacket();
+    import symmetry_pick : captureLiveSymmetry;
+    import toolpipe.packets : SymmetryPacket;
+    import toolpipe.stages.symmetry : SymmetryStage;
+    // The same packet source as the click helpers (`symmetry_pick`).
+    SymmetryPacket pkt;
+    SymmetryStage  stage;
+    if (!captureLiveSymmetry(m, vp, k, pkt, stage)) return;
+    auto sp = &pkt;
     final switch (k) {
         case EditMode.Vertices: {
             uint[] add;
