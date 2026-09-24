@@ -355,6 +355,12 @@ public:
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
+
+    /// A host that owns its handle pose sets this on its embedded banks; an
+    /// off-gizmo press then hauls about the handle and never places the
+    /// action centre (task 7118, Q-pose, gap 245 — Edge Extend's three banks
+    /// and nothing else). It answers `pressPlacesCenter()` first.
+    bool hostPinsCentre = false;
 protected:
     bool          active;
 
@@ -1745,6 +1751,7 @@ protected:
     /// classify them 260 lines below, in `computeClickRelocateHitRaw`'s `final switch`,
     /// and sailed past this chain without a word.
     bool pressPlacesCenter() {
+        if (hostPinsCentre) return false;
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;

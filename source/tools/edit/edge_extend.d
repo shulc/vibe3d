@@ -47,7 +47,7 @@ import perf_probe : g_perf, Cat;
 import command : Command;
 import edit_session : SessionStepUndo, KeepAliveOnCancel,
     SwitchRestorablePredecessor, SessionLiveRedo;
-import toolpipe.packets : SymmetryPacket;
+import toolpipe.packets : SymmetryPacket, SubjectPacket;
 
 struct PreparedEdgeExtendToolActivationImage {
     bool valid;
@@ -254,9 +254,11 @@ private:
     // offset; each motion sets offset = dragBaseOffset + (move world delta since
     // drag start).
     Vec3 dragBaseOffset;           // `offset` at drag start (Move bank)
-    // Test readout only: the Move bank's handler centre as the press left it
-    // (after bank selection), i.e. the side a press latched.
-    Vec3 pressAnchor_ = Vec3(0, 0, 0);
+    // Where the press landed, on the plane through the handle facing the
+    // eye: the side of the symmetry plane a press latches (F3), and the
+    // test readout `pressAnchor`. Not the handle centre: a press never moves
+    // the handle (Q-pose).
+    Vec3 pressPoint_ = Vec3(0, 0, 0);
     bool moveOffGizmo_;            // the Move bank's lastClickWasOffGizmo, same moment
 
     // Symmetry (task 7118, gap 172/209/212/216): the side of the plane whose
@@ -347,6 +349,11 @@ public:
         // bank switches land immediately, so a tool that is constructed and
         // never activated already reports the right set.
         xfrm = new XfrmTransformTool(meshSrc, gpu, editMode);
+        // Edge Extend owns its handle pose (Q-pose, gap 245): a press of its
+        // banks never places the action centre.
+        xfrm.moveBank().hostPinsCentre = true;
+        xfrm.rotateBank().hostPinsCentre = true;
+        xfrm.scaleBank().hostPinsCentre = true;
         syncBankFlags();
     }
 
@@ -896,9 +903,9 @@ public:
         // bank's handler centre stood after that press: a witness pins that a
         // haul really was an off-handle press, and on which side.
         root["moveOffGizmo"] = JSONValue(moveOffGizmo_);
-        root["pressAnchor"]  = JSONValue([JSONValue(pressAnchor_.x),
-                                          JSONValue(pressAnchor_.y),
-                                          JSONValue(pressAnchor_.z)]);
+        root["pressAnchor"]  = JSONValue([JSONValue(pressPoint_.x),
+                                          JSONValue(pressPoint_.y),
+                                          JSONValue(pressPoint_.z)]);
         // "The run has started" (gap 217) and the latched symmetry side
         // (0 when the offset is not mirrored) — floor readouts.
         root["runStarted"] = JSONValue(runStarted());
@@ -916,9 +923,10 @@ public:
         return root;
     }
 
-    // Keep the embedded gizmo's per-frame state (handler center from ACEN, gizmo
-    // orientation from AXIS) up to date. Forwarded so the banks co-locate at the
-    // selection/action center.
+    // Keep the embedded gizmo's per-frame state (pose, gizmo orientation from
+    // AXIS) up to date. The handle is the TOOL's pose, not a point a press
+    // chose: no press of Edge Extend writes the action centre (Q-pose, gap
+    // 245).
     override void update(ref VectorStack vts) {
         if (!active) return;
         if (dragBank == DragBank.None) readSymmetry(vts);
@@ -1130,6 +1138,16 @@ public:
             picked = DragBank.Move;
         }
 
+        {
+            // The event's viewport — the one the banks just took.
+            Viewport pvp = cachedVp;
+            if (auto sp = vts.get!SubjectPacket()) pvp = sp.viewport;
+            Vec3 ro, rd;
+            screenPointToRay(e.x, e.y, pvp, ro, rd);
+            if (!rayPlaneIntersect(ro, rd, xfrm.moveGizmoCenter(), rd, pressPoint_))
+                pressPoint_ = xfrm.moveGizmoCenter();
+        }
+
         // Symmetry side (gap 212/216): every OFF-HANDLE press re-latches it
         // from the press point and, on a built run, rebuilds at the press; a
         // handle press keeps it.
@@ -1137,7 +1155,7 @@ public:
         immutable bool offHandlePress =
             (picked == DragBank.Move && mv.lastClickWasOffGizmo) || totalMiss;
         if (offHandlePress && symMirror_.enabled) {
-            immutable Vec3 p = mv.handler.center;
+            immutable Vec3 p = pressPoint_;
             immutable int side =
                 dot(p - symMirror_.planePoint, symMirror_.planeNormal) > 0 ? +1 : -1;
             if (side != symMirror_.pressSide) {
@@ -1162,7 +1180,6 @@ public:
         dragBank       = picked;
         dragButton_    = e.button;
         dragBaseOffset = offsetVec();
-        pressAnchor_   = mv.handler.center;
         moveOffGizmo_  = mv.lastClickWasOffGizmo;
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
         prePress_      = attrs();
@@ -1282,8 +1299,7 @@ public:
         // in every replica, which come through this same draw.
         if (!runStarted()) return;
         // The embedded wrapper renders the gizmo banks + runs the shared arbiter
-        // (hover highlight). The Move bank co-locates at the selection/action
-        // center the kernel re-selected (the new ridge edges).
+        // (hover highlight) at the tool's handle pose (Q-pose, gap 245).
         xfrm.draw(shader, vp, vts, plan);
     }
 
