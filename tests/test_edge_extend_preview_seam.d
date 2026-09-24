@@ -110,13 +110,40 @@ void armOnEdgeZero() {
     settle();
 }
 
+/// The run's first press (task 7118, gap 217/220): a panel value written
+/// before it only sets the attribute, and the press itself builds the
+/// zero-length ring — one full rebuild. A motionless click near the cell's
+/// corner, far from the edge; before the first press there is no handle.
+void firstPress() {
+    auto c = getJson("/api/camera");
+    immutable long x = c["vpX"].integer + 30, y = c["vpY"].integer + 30;
+    string ev = format(`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`,
+                       c["vpX"].integer, c["vpY"].integer, c["width"].integer, c["height"].integer) ~ "\n"
+        ~ format(`{"t":20,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}`, x, y) ~ "\n"
+        ~ format(`{"t":40,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n"
+        ~ format(`{"t":60,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`, x, y) ~ "\n";
+    auto r = postTo("/api/play-events", ev);
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
+    foreach (i; 0 .. 200) {
+        if (getJson("/api/play-events/status")["finished"].type == JSONType.true_) break;
+        Thread.sleep(50.msecs);
+    }
+    settle();
+    assert(state()["built"].type == JSONType.true_ && model()["vertexCount"].integer == 10,
+        "rig: the first press did not start the run (zero-length ring): " ~ state().toString);
+}
+
 // ---------------------------------------------------------------------------
 // 1. THE PREVIEW — plan §9's pin, on the third and last `PreviewRebuild` tool.
 // ---------------------------------------------------------------------------
 unittest {
     armOnEdgeZero();
 
+    // Since task 7118 the window opens on the run's FIRST PRESS: it is the
+    // full rebuild (the zero-length ring, gap 217), and the kWrites panel
+    // writes after it are placements — kWrites + 1 rebuilds in all.
     auto b = changes();
+    firstPress();
     foreach (i; 1 .. kWrites + 1)
         interactiveAttr(format("tool.attr edge.extend offsetY %.4f", 0.02 * i));
     auto a = changes();
@@ -154,7 +181,7 @@ unittest {
     // exactly `kWrites`, at every `kWrites`: measured 8/12/20 at N=8/12/20 on
     // this stand.
     immutable long deliveries = counter(b, a, "deliveryCount");
-    assert(deliveries == kWrites,
+    assert(deliveries == kWrites + 1,
         format("the %d interactive preview rebuilds delivered %d change(s), "
              ~ "expected exactly %d — one per rebuild. This is the term that "
              ~ "says the preview ACTUALLY RAN %d times rather than once or "
@@ -162,16 +189,16 @@ unittest {
              ~ "operand for the reason the whole track carries: a `> 0` here "
              ~ "is satisfied by a single rebuild and would leave the op-log "
              ~ "row below measuring one frame (task 1903 Stage M).",
-               kWrites, deliveries, kWrites, kWrites));
+               kWrites + 1, deliveries, kWrites + 1, kWrites + 1));
     immutable long fullRebuilds = counter(b, a, "totalPolygons");
     assert(fullRebuilds == 1,
         format("the scrub took %d full rebuild(s), expected exactly 1. Only "
-             ~ "the FIRST write has no standing topology key; the remaining "
-             ~ "%d keep it and take the placement path onto the private cage. "
+             ~ "the FIRST rebuild (the first press) has no standing topology "
+             ~ "key; the %d writes keep it and take the placement path onto the private cage. "
              ~ "More than one means the declared key is missing a parameter "
              ~ "(`PreviewRebuild.keyMisses`' subject) and the cage frames this "
              ~ "cell is built to cover were never entered.",
-               fullRebuilds, kWrites - 1));
+               fullRebuilds, kWrites));
 
     // THE PIN.
     immutable long opLog = counter(b, a, "opLogEntriesRecorded");
@@ -244,6 +271,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     armOnEdgeZero();
+    firstPress();
     foreach (i; 1 .. kWrites + 1)
         interactiveAttr(format("tool.attr edge.extend offsetY %.4f", 0.02 * i));
     assert(state()["built"].type == JSONType.true_,
