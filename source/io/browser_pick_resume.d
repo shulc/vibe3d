@@ -104,6 +104,14 @@ private string[] filterExtensions(const(FilterSpec)[] fs) {
     return exts;
 }
 
+/// The `accept` attribute of the browser's file input: every filter
+/// extension as `.ext`, comma-separated (`.v3d,.lwo`).
+string acceptAttribute(const(FilterSpec)[] fs) {
+    import std.algorithm : map;
+    import std.array : join;
+    return filterExtensions(fs).map!(e => "." ~ e).join(",");
+}
+
 /// A document chooser (the filter names `v3d` or `lwo`) lets the user pick the
 /// document together with its images; an image chooser takes one file.
 bool pickIsMultiple(const(FilterSpec)[] fs) {
@@ -204,6 +212,11 @@ private void removePickDir(uint token) nothrow {
     catch (Exception) {}
 }
 
+/// The bridge's failure code for a pick the user cancelled (the input's
+/// `cancel` event, or a `change` with no file). Silent: no notice, and the
+/// record leaves the queue with its directory (task 7420, owner 2026-09-24).
+enum int kPickCancelled = 0;
+
 enum string kStaleResumeText =
     "the document changed while the file chooser was open; choose the file again";
 
@@ -244,6 +257,11 @@ struct PickResumeQueue {
     /// The parked command, or null.
     Command pendingCommand() {
         return records_.length ? records_[0].ctx.command : null;
+    }
+
+    /// The MEMFS directory of the parked pick, or null.
+    string parkedDir() const {
+        return records_.length ? workDirFor(records_[0].token) : null;
     }
 
     /// Whether the parked pick lets the user choose several files.
@@ -307,7 +325,7 @@ struct PickResumeQueue {
         if (r.state == PickState.failed) {
             const code = r.failCode;
             dropRecord(0, true);
-            ports.notice(pickFailureText(code));
+            if (code != kPickCancelled) ports.notice(pickFailureText(code));
             return;
         }
         if (rev != r.base || !ports.stillBound(r.ctx.command)) {
@@ -361,9 +379,90 @@ void drainPickResumes(in PickDrainPorts ports) {
     pickResumes().drain(ports);
 }
 
+// ---------------------------------------------------------------------------
+// MEMFS cleanup (task 7420, owner 2026-09-24): pick directories are swept when
+// a NEW document is opened — every directory under `workRoot()` except the
+// open document's own, those holding its images and the parked pick's is
+// deleted. The trigger is the document's directory CHANGING to a pick
+// directory (`<root>/<token>`); a save into `<root>/untitled` or an unchanged
+// directory sweeps nothing, and nothing is swept while a guard prompt is
+// pending (a deferred open still owns its directory). Cancelled, failed,
+// stale and refused picks delete their directory at once, in `drain`.
+// ---------------------------------------------------------------------------
+
+private bool isPickDir(string dir) {
+    import std.path : baseName, dirName;
+    return dir.length && dirName(dir) == workRoot() && baseName(dir) != "untitled";
+}
+
+private size_t removePickDirsExcept(const(string)[] keep) {
+    import std.algorithm : canFind;
+    import std.file : dirEntries, SpanMode;
+    string[] doomed;
+    try {
+        foreach (e; dirEntries(workRoot(), SpanMode.shallow))
+            if (e.isDir && !keep.canFind(e.name)) doomed ~= e.name;
+    } catch (Exception) {
+        return 0;   // no root yet: nothing was ever picked
+    }
+    foreach (d; doomed) removeDirQuietly(d);
+    return doomed.length;
+}
+
+/// Names of the directories directly under `workRoot()`, sorted; empty when
+/// the root does not exist yet.
+string[] pickDirNames() {
+    import std.algorithm : sort;
+    import std.file : dirEntries, SpanMode;
+    import std.path : baseName;
+    string[] names;
+    try {
+        foreach (e; dirEntries(workRoot(), SpanMode.shallow))
+            if (e.isDir) names ~= baseName(e.name);
+    } catch (Exception) {
+        return null;
+    }
+    sort(names);
+    return names;
+}
+
+struct PickDirSweeper {
+    private string lastDir_;
+
+    /// One frame's observation of the open document. Returns the number of
+    /// directories removed.
+    size_t observe(string docPath, const(string)[] imagePaths,
+                   string parkedDir, bool guardBusy) {
+        import std.path : dirName;
+        if (guardBusy) return 0;
+        const dir = docPath.length ? dirName(docPath) : "";
+        if (dir == lastDir_) return 0;
+        lastDir_ = dir;
+        if (!isPickDir(dir)) return 0;
+        string[] keep = [dir];
+        if (parkedDir.length) keep ~= parkedDir;
+        foreach (p; imagePaths)
+            if (p.length) keep ~= dirName(p);
+        return removePickDirsExcept(keep);
+    }
+}
+
+private PickDirSweeper g_pickDirSweeper;
+
+/// The frame's sweep over the process-wide queue. `browserFileModel` is the
+/// caller's `io.file_dialog.browserFileModel()`: off the browser model this
+/// never touches the disk (a desktop `/work` is the user's).
+size_t sweepPickDirsOnOpen(bool browserFileModel, string docPath,
+                           const(string)[] imagePaths, bool guardBusy) {
+    if (!browserFileModel) return 0;
+    return g_pickDirSweeper.observe(docPath, imagePaths,
+        g_pickResumes.parkedDir(), guardBusy);
+}
+
 version (unittest) {
     /// Empty the process-wide queue (its directories are left alone).
     void resetPickResumesForTest() {
         g_pickResumes = PickResumeQueue.init;
+        g_pickDirSweeper = PickDirSweeper.init;
     }
 }

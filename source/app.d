@@ -982,6 +982,9 @@ void main(string[] args) {
     string aiModelCliPath;
     version (web) bool webFirstFrameProbe;
     version (web) string webProbeArgument;
+    // --web-probe-dispatch <id> (task 7420): every F9 press routed through
+    // the production input router dispatches <id> through the UI button door.
+    version (web) string webProbeDispatchId;
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -1040,6 +1043,17 @@ void main(string[] args) {
                 webProbeArgument = args[++i];
             } else {
                 writeln("Error: --web-probe-argument requires --config=web");
+                return;
+            }
+        } else if (args[i] == "--web-probe-dispatch") {
+            version (web) {
+                if (i + 1 >= args.length) {
+                    writeln("Error: --web-probe-dispatch requires a command id");
+                    return;
+                }
+                webProbeDispatchId = args[++i];
+            } else {
+                writeln("Error: --web-probe-dispatch requires --config=web");
                 return;
             }
         } else if (args[i] == "--http-port") {
@@ -3255,6 +3269,8 @@ void main(string[] args) {
     // GuardModalState above. The pending command and its settle state remain
     // application-owned by GuardedActionController (task 5640).
     string lastWindowTitle;
+    version (web) string webLastDocState;   // task 7420: last WEB-DOC-STATE printed
+    version (web) string webLastWorkDirs;   // task 7420: last WEB-WORK-DIRS printed
     version (web) {
     } else {
     string ai3dPickedImagePath;
@@ -4321,6 +4337,10 @@ void main(string[] args) {
         // ALWAYS recorded, so a headless test can read what the user would
         // have been shown (`GET /api/ui/policy`).
         recordUiNotice(text);
+        version (web) if (webFirstFrameProbe) {
+            import std.array : replace;
+            writefln("WEB-NOTICE text=%s", text.replace("\n", "\\n"));
+        }
         // The MODAL is suppressed under --test (task 1520, R3). Before this
         // change no UI-origin refusal could reach a `--test` run at all, so
         // leaving the popup live cost nothing; now `?origin=ui` drives exactly
@@ -4628,7 +4648,12 @@ void main(string[] args) {
         },
         cast(void delegate(Command))&raiseCommandNotice,
         GuardObservationPorts(
-            (record) => recordGuardRequest(record),
+            (record) {
+                version (web) if (webFirstFrameProbe)
+                    writefln("WEB-GUARD verdict=%s discards=%d",
+                        record.verdict, record.discards ? 1 : 0);
+                recordGuardRequest(record);
+            },
             (answer, performed) => recordGuardAnswer(answer, performed),
             (pending) => setGuardPending(pending))));
     commandBinding = new ApplicationCommandBinding(
@@ -4639,6 +4664,21 @@ void main(string[] args) {
     uiCommandDelegate = (string id, string paramsJson) {
         commandBinding.dispatchUi(id, paramsJson);
     };
+
+    // Task 7420: the browser file chooser's resume ports, built ONCE here and
+    // drained every frame after the flush and the guard's settle. Every port
+    // reads live state when called (revision, primary mesh, edit mode, guard),
+    // so nothing here goes stale between frames; the delegates' frame lives in
+    // main's closure, which survives the web main loop's stack resets.
+    import change_bus : changeBus;
+    import io.browser_pick_resume : PickDrainPorts, listDirNames, stillBoundTo;
+    const PickDrainPorts pickDrainPorts = PickDrainPorts(
+        (string dir) => listDirNames(dir),
+        (Command c, RecordMode m, string id) => commandBinding.invokeUiCommand(c, m, id),
+        (string text) => raiseNotice(text),
+        () => changeBus.docRevision(),
+        (Command c) => stillBoundTo(c, &sessionOwner.editMesh(), editMode),
+        () => guardController.pending);
     formsInteractiveDispatch = (string id, string paramsJson) {
         commandBinding.dispatchInteractiveUi(id, paramsJson);
     };
@@ -5234,6 +5274,13 @@ void main(string[] args) {
                                 layout.vpW, layout.vpH);
                             webWindowInputReported = true;
                         }
+                    }
+                    if (webFirstFrameProbe && webProbeDispatchId.length
+                        && eventAccepted && event.type == SDL_KEYDOWN
+                        && event.key.repeat == 0
+                        && event.key.keysym.sym == SDLK_F9) {
+                        writefln("WEB-PROBE-DISPATCH id=%s", webProbeDispatchId);
+                        commandBinding.dispatchUi(webProbeDispatchId, "{}");
                     }
                     if (webFirstFrameProbe && webProbeInputReported
                         && eventAccepted && event.type == SDL_KEYDOWN
@@ -6186,6 +6233,25 @@ void main(string[] args) {
             // Open / Import / Quit), replacing 0434's quit-only `quitAfterSave`.
             guardController.settle();
 
+            // Task 7420: resume a finished browser file pick through the UI
+            // door, AFTER this frame's flush and sync (the queue's base
+            // revision is post-flush) and after the settle (a pending guard
+            // makes the drain wait). Then sweep old pick directories when a
+            // new document has been opened (owner 2026-09-24).
+            {
+                import io.browser_pick_resume : drainPickResumes,
+                    sweepPickDirsOnOpen;
+                import io.file_dialog : browserFileModel;
+                import io.image_path : resolveStoredPath;
+                drainPickResumes(pickDrainPorts);
+                string[] docImagePaths;
+                foreach (l; sessionOwner.documentPtr().layers)
+                    if (auto img = l.imageOrNull())
+                        docImagePaths ~= resolveStoredPath(img.storedPath);
+                sweepPickDirsOnOpen(browserFileModel(), currentDocPath(),
+                    docImagePaths, guardController.pending);
+            }
+
             // Title: "<file> - Vibe3d", leading "*" while dirty, "untitled"
             // when no native document is open. Only touch SDL on change.
             const p     = currentDocPath();
@@ -6202,6 +6268,47 @@ void main(string[] args) {
             if (title != lastWindowTitle) {
                 SDL_SetWindowTitle(window, toStringz(title));
                 lastWindowTitle = title;
+            }
+
+            // Task 7420: the browser lane's witness of the LIVE document,
+            // printed when its text changes. After `syncDocRevision` (so
+            // `dirty` already includes a save's rebaseline) and read from the
+            // document itself, never from a command's report.
+            version (web) if (webFirstFrameProbe) {
+                import std.format : format;
+                import io.image_path : resolveStoredPath;
+                const Document* doc = sessionOwner.documentPtr();
+                size_t verts, faces, images, undoModel, undoUi;
+                history.undoDepthCounts(undoModel, undoUi);
+                string imageLines;
+                foreach (l; doc.layers) {
+                    if (auto m = l.meshOrNull()) {
+                        verts += m.vertices.length;
+                        faces += m.faces.length;
+                    }
+                    if (auto img = l.imageOrNull()) {
+                        ++images;
+                        imageLines ~= format("\nWEB-IMAGE dims=%dx%d missing=%d path=%s",
+                            img.width, img.height, img.missing ? 1 : 0,
+                            resolveStoredPath(img.storedPath));
+                    }
+                }
+                const state = format("WEB-DOC-STATE layers=%d verts=%d faces=%d images=%d docPath=%s dirty=%d undo=%d title=%s",
+                    doc.layers.length, verts, faces, images, p,
+                    docDirty() ? 1 : 0, undoModel, title)
+                    ~ imageLines;
+                if (state != webLastDocState) {
+                    writeln(state);
+                    webLastDocState = state;
+                }
+                // The MEMFS pick directories, so the lane can see the sweep.
+                import std.array : join;
+                import io.browser_pick_resume : pickDirNames;
+                const dirs = "WEB-WORK-DIRS dirs=" ~ pickDirNames().join(",");
+                if (dirs != webLastWorkDirs) {
+                    writeln(dirs);
+                    webLastWorkDirs = dirs;
+                }
             }
         }
 

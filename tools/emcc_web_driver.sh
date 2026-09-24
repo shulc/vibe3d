@@ -29,5 +29,14 @@ if [[ $output == *.wasm ]]; then
         cp "$data_output" "$artifact_root/vibe3d.data"
     fi
 else
-    exec "$emcc" "${args[@]}"
+    # LDC hands every -Xcc flag to its C preprocessing calls as well. emcc
+    # ignores its other link-only flags there but forwards `--js-library` to
+    # clang, which rejects it (measured, task 7420), so drop it before compiling.
+    compile_args=()
+    for ((j = 0; j < ${#args[@]}; ++j)); do
+        if [[ ${args[j]} == --js-library ]]; then ((++j)); continue; fi
+        [[ ${args[j]} == --js-library=* ]] && continue
+        compile_args+=("${args[j]}")
+    done
+    exec "$emcc" "${compile_args[@]}"
 fi

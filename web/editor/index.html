@@ -25,6 +25,8 @@
     const probe = query.get('probe');
     const args = ['--no-http'];
     if (probe) args.push('--web-first-frame-probe', '--web-probe-argument', probe);
+    const dispatch = query.get('dispatch');
+    if (probe && dispatch) args.push('--web-probe-dispatch', dispatch);
     const fail = value => {
       status.className = 'error';
       status.textContent = `Vibe3D stopped:\n${value}`;

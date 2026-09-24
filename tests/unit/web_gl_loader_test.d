@@ -242,6 +242,9 @@ unittest
         "-Xcc=-sMAXIMUM_MEMORY=4GB",
         "-Xcc=-sINCOMING_MODULE_JS_API=arguments,canvas,wasmBinary,print,printErr,onRuntimeInitialized",
         "-Xcc=--preload-file=$PACKAGE_DIR/config@/config",
+        "-Xcc=--js-library",
+        "-Xcc=$PACKAGE_DIR/web/lib/file_bridge.js",
+        "-Xcc=-sEXPORTED_FUNCTIONS=_main,_vibe3d_web_pick_done,_vibe3d_web_pick_failed",
     ];
     const expectedLflags = [
         "-L$PACKAGE_DIR/.build/web-deps/lib",

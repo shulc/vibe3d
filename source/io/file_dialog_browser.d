@@ -39,13 +39,40 @@ BrowserPickResult pickOpenPath(FilterSpec[] filters, string startDir = null) {
         if (p.name == "path") hasPath = true;
     if (!hasPath)
         return BrowserPickResult(BrowserPickOutcome.failed, noPathParamReason);
+    const multiple = pickIsMultiple(filters);
+    const token = pickResumes().start(*ctx, filters, multiple);
     version (web) {
-        // The JS bridge that opens `<input type=file>` lands with slice S2.
-        return BrowserPickResult(BrowserPickOutcome.failed,
-            "browser file bridge is not linked");
-    } else {
-        pickResumes().start(*ctx, filters, pickIsMultiple(filters));
-        return BrowserPickResult(BrowserPickOutcome.started);
+        // The bridge opens a one-shot `<input type=file>`; its files land in
+        // the directory D names (JS composes no path) and the answer comes
+        // back through the two exports below (task 7420).
+        import std.string : toStringz;
+        import io.browser_pick_resume : acceptAttribute, workDirFor;
+        vibe3d_web_pick_open(toStringz(acceptAttribute(filters)),
+            multiple ? 1 : 0, token, toStringz(workDirFor(token)));
+    }
+    return BrowserPickResult(BrowserPickOutcome.started);
+}
+
+version (web) {
+    // The JS library `web/lib/file_bridge.js` (task 7420, plan §3.1/§3.2).
+    extern (C) void vibe3d_web_pick_open(const(char)* accept, int multiple,
+                                         uint token, const(char)* dir) nothrow @nogc;
+    extern (C) int vibe3d_web_offer_download(const(char)* path) nothrow @nogc;
+
+    /// The browser wrote `fileCount` files for `token` into its directory.
+    /// Only marks the queue record; the frame drain does the rest.
+    export extern (C) void vibe3d_web_pick_done(uint token, uint fileCount) nothrow {
+        import io.browser_pick_resume : pickResumes;
+        try pickResumes().complete(token, fileCount);
+        catch (Throwable) {}
+    }
+
+    /// The browser could not deliver the pick for `token` (`code` 0 is a
+    /// cancel; see `io.browser_pick_resume.pickFailureText` for the rest).
+    export extern (C) void vibe3d_web_pick_failed(uint token, int code) nothrow {
+        import io.browser_pick_resume : pickResumes;
+        try pickResumes().fail(token, code);
+        catch (Throwable) {}
     }
 }
 

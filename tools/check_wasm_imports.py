@@ -42,6 +42,27 @@ def imports(blob):
         return out
     return []
 
+def exports(blob):
+    if blob[:8] != b"\0asm\x01\0\0\0": raise ValueError("not wasm v1")
+    pos = 8
+    while pos < len(blob):
+        sid = blob[pos]; pos += 1
+        size, pos = uleb(blob, pos); end = pos + size
+        if sid != 7: pos = end; continue
+        count, pos = uleb(blob, pos); out = []
+        for _ in range(count):
+            field, pos = name(blob, pos)
+            kind = blob[pos]; pos += 1
+            _, pos = uleb(blob, pos)
+            out.append((field, kind))
+        return out
+    return []
+
+# The browser file bridge (task 7420): the JS library's two functions are
+# imported from `env`, and the two D callbacks it wakes are exported functions.
+REQUIRED_IMPORTS = {("env", "vibe3d_web_pick_open"), ("env", "vibe3d_web_offer_download")}
+REQUIRED_EXPORTS = {"vibe3d_web_pick_done", "vibe3d_web_pick_failed"}
+
 def section(payload, sid):
     def enc(n):
         out = bytearray()
@@ -62,4 +83,13 @@ bad = sorted(f"{m}.{f}" for m, f in found if f in FORBIDDEN)
 print(f"WEB-IMPORTS count={len(found)} forbidden={len(bad)} positive-control=dlopen")
 if bad:
     print("forbidden dynamic-loader imports: " + ", ".join(bad), file=sys.stderr)
+    raise SystemExit(1)
+blob = pathlib.Path(sys.argv[1]).read_bytes()
+missing_imports = sorted(f"{m}.{f}" for m, f in REQUIRED_IMPORTS - set(found))
+function_exports = {f for f, kind in exports(blob) if kind == 0}
+missing_exports = sorted(REQUIRED_EXPORTS - function_exports)
+print(f"WEB-FILE-BRIDGE imports={len(REQUIRED_IMPORTS) - len(missing_imports)}/{len(REQUIRED_IMPORTS)}"
+      f" exports={len(REQUIRED_EXPORTS) - len(missing_exports)}/{len(REQUIRED_EXPORTS)}")
+if missing_imports or missing_exports:
+    print("file bridge missing: " + ", ".join(missing_imports + missing_exports), file=sys.stderr)
     raise SystemExit(1)

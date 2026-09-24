@@ -135,9 +135,9 @@ bool deliverSavedFile(string path) {
             return g_deliverSavedFileForTest(path);
     }
     version (web) {
-        // The JS download bridge lands with slice S2; until then a browser
-        // save refuses loudly instead of claiming a hand-off.
-        return false;
+        import std.string : toStringz;
+        import io.file_dialog_browser : vibe3d_web_offer_download;
+        return vibe3d_web_offer_download(toStringz(path)) == 1;
     } else {
         return true;
     }
