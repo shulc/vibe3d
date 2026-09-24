@@ -34,8 +34,13 @@
 // kernel did work, and a collapsed count is that work read off the mesh.
 //
 // The tool draws no handle: any qualifying click in vertex mode begins the haul,
-// anchored at the selected vertices' centroid. Only the vertical travel matters
-// — dragging UP (screen y decreasing) increases the merge distance.
+// and only the HORIZONTAL travel from the press matters — right increases the
+// merge distance by 0.05 x the view's pixel size per pixel (law §26, task 7122;
+// the per-increment values are pinned by tests/test_vert_merge_drag_value.d).
+// Task 7122 changed the gesture from 400 px UP to 400 px RIGHT and the framing
+// from distance 40 to 60 (the gain is now the view's, 0.05·P: at 40 the same
+// haul tops out at 0.98, short of the 1.0 spacing); the assertions are the
+// same ones — a change of law, not a weakening.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -78,7 +83,7 @@ string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
 
-unittest { // an upward haul at a framing where `dist` can actually reach a neighbour
+unittest { // a rightward haul at a framing where `dist` can actually reach a neighbour
     import core.thread : Thread;
     import core.time   : dur;
 
@@ -89,10 +94,10 @@ unittest { // an upward haul at a framing where `dist` can actually reach a neig
     r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
-    // DISTANCE 40, AND THAT NUMBER IS THE FIX. See the header: the same haul on
+    // DISTANCE 60, AND THAT NUMBER IS THE FIX. See the header: the same haul on
     // a close framing raises `dist` and merges nothing, at any length.
     r = postJson("/api/camera",
-        `{"azimuth":0.4,"elevation":1.1,"distance":40.0,`
+        `{"azimuth":0.4,"elevation":1.1,"distance":60.0,`
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
 
@@ -105,17 +110,17 @@ unittest { // an upward haul at a framing where `dist` can actually reach a neig
     immutable double before       = queryDist();
 
     // Press anywhere in the viewport — no handle to hit, the haul anchors at
-    // the selection centroid. 400 px UP is the whole gesture.
+    // the selection centroid. 400 px RIGHT is the whole gesture.
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width  / 2;
     immutable int cy = cam.vpY + cam.height / 2;
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             cx, cy + 200, cx, cy - 200, 16), BASE);
+                             cx - 200, cy, cx + 200, cy, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
     immutable double after = queryDist();
     assert(after > before + 1e-4,
-        "a 400 px upward haul should have raised dist above " ~ before.to!string
+        "a 400 px rightward haul should have raised dist above " ~ before.to!string
         ~ ", got " ~ after.to!string);
 
     // THE CHECK THE OLD FILE DID NOT HAVE, half one: vertices actually MERGED.

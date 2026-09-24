@@ -109,3 +109,34 @@ unittest { // Z — the long leg at twice the pixel size
         "merge distance kept after release is not max(0, last) (zoomed): got %.9g", kept));
     vdCmd("tool.set " ~ TOOL ~ " off");
 }
+
+unittest { // N — held at a NEGATIVE distance the preview welds nothing (7122)
+    // Not a captured cell: the kernel's reading of a signed mid-drag value is
+    // ours (`VertexMergeTool.kernelEpsSq`, max(0, dist)). At P = 0.11 a
+    // 250 px leg reaches |dist| ≈ 1.37, past the selected vertices' 1.0
+    // spacing, so |dist| squared WOULD weld them — the positive leg first
+    // shows that it does (the vertex count is live), the negative leg that the
+    // sign is honoured.
+    import std.conv : to;
+    size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+    enum double P = 0.11;
+    rig(P);
+    const double p = activePixelSize();
+    auto cam = getJson("/api/camera");
+    auto h = HeldDrag.press(cast(int)(cam["vpX"].integer + cam["width"].integer / 2),
+                            cast(int)(cam["vpY"].integer + 60));
+    h.move(250, 0);
+    const double up = vdAttr(TOOL, "dist");
+    assert(abs(up - (0.001 + 0.05 * p * 250)) <= 1e-5 && up > 1.0,
+        "rig: the positive leg did not reach past the vertex spacing: " ~ up.to!string);
+    assert(vertexCount() < 8,
+        "control: dist " ~ up.to!string ~ " welded nothing — the count is not live");
+    h.move(-500, 0);
+    const double dn = vdAttr(TOOL, "dist");
+    assert(abs(dn - (0.001 - 0.05 * p * 250)) <= 1e-5 && dn < -1.0,
+        "rig: the negative leg did not reach -1: " ~ dn.to!string);
+    assert(vertexCount() == 8, "a negative merge distance (" ~ dn.to!string
+        ~ ") welded vertices: the kernel read |dist|, not max(0, dist)");
+    h.release();
+    vdCmd("tool.set " ~ TOOL ~ " off");
+}

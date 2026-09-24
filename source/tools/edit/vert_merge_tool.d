@@ -12,7 +12,8 @@ import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import drag : haulWorldPerPixel, gesturePrevPixel;
+import drag : viewWorldPerPixel;
+import value_drag : ValueDrag, mergeValueDragLaw;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -80,7 +81,8 @@ struct PreparedVertexMergeActivationImage {
 //     confirmed default). NO drawn gizmo/handle at idle/hover/drag — a
 //     plain click+drag ANYWHERE over the viewport hauls the threshold
 //     directly (the SAME undecorated "numeric haul" family as
-//     mesh.polyInsetTool — see that tool's doc-comment).
+//     mesh.polyInsetTool): horizontal, press-relative, gain 0.05·P —
+//     `value_drag.d`, measured law §26, task 7122.
 //   - Threshold law: welds any two (or, transitively, more) SELECTED
 //     vertices whose distance apart is <= dist (inclusive boundary,
 //     confirmed at the exact grid-edge-length boundary of a captured
@@ -125,13 +127,11 @@ private:
 
     // Haul drag state. No drawn handle to hit-test — any LMB press
     // (outside camera-nav modifiers, with a live vertex selection) begins
-    // the haul directly.
-    bool  dragging;
-    int   dragLastMX, dragLastMY;
-    float dragBaseDist;
-    // Frozen at drag-start — the LOCAL length one pixel is worth at the
-    // selection centroid, item transform included (task 0645).
-    float localPerPixel;
+    // the haul directly. The value law is the shared press-relative
+    // horizontal drag (`value_drag`); its gain is frozen at the
+    // press.
+    bool      dragging;
+    ValueDrag valueDrag_;
 
 public:
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
@@ -192,23 +192,26 @@ public:
     version(unittest) final void seedPreparedActivationForTest(
             ref Mesh oldMesh) {
         active = false; built = true; dragging = true; dist_ = 7.0f;
-        dragLastMX = 11; dragLastMY = 12; dragBaseDist = 13;
-        localPerPixel = 14; cachedVp.view[0] = 15;
+        valueDrag_.pressX = 11; valueDrag_.lastX = 12;
+        valueDrag_.pressValue = 13; valueDrag_.law.gain = 14;
+        cachedVp.view[0] = 15;
         before = MeshSnapshot.capture(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const
             nothrow @nogc {
         return !active && built && dragging && dist_ == 7.0f &&
-            dragLastMX == 11 && dragLastMY == 12 && dragBaseDist == 13 &&
-            localPerPixel == 14 && cachedVp.view[0] == 15;
+            valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
+            valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
+            cachedVp.view[0] == 15;
     }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr) const nothrow @nogc {
         return active && !built && !dragging && dist_ == 0.001f &&
             before.filled && before.vertices.length == count && count != 0 &&
             before.vertices[0] == first && before.vertices.ptr !is livePtr &&
-            dragLastMX == 11 && dragLastMY == 12 && dragBaseDist == 13 &&
-            localPerPixel == 14 && cachedVp.view[0] == 15;
+            valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
+            valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
+            cachedVp.view[0] == 15;
     }
 
     private void reinitSession() {
@@ -276,7 +279,7 @@ public:
         if (!image.candidate.hasAnySelectedVertices()) {
             image.nextBuilt = false;
         } else {
-            const double epsSq = cast(double)dist_ * cast(double)dist_;
+            const double epsSq = kernelEpsSq();
             const n = image.candidate.weldVerticesByMask(
                 image.candidate.selectedVertices, epsSq, true);
             image.nextBuilt = (n != 0);
@@ -344,7 +347,7 @@ public:
         }
         if (mesh.vertices.length == 0) return false;
         if (!mesh.hasAnySelectedVertices()) return false;
-        double epsSq = cast(double)dist_ * cast(double)dist_;
+        double epsSq = kernelEpsSq();
         // average:true — survivor at per-cluster centroid, matching the
         // vert.merge command path (source/commands/mesh/vert_merge.d).
         size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
@@ -364,19 +367,14 @@ public:
 
         // No drawn handle to hit-test (task 0360 toolcard: confirmed no
         // gizmo graphic at idle/hover/drag) — any qualifying click begins
-        // the generic haul directly, anchored at the selected vertices'
-        // centroid.
-        dragging      = true;
-        dragLastMX    = e.x;
-        dragLastMY    = e.y;
-        dragBaseDist  = dist_;
-        // Anchored where the geometry is DRAWN, and converted back into the
-        // LOCAL units the merge threshold means (task 0645). A threshold is a
-        // distance with no direction, so the conversion is the declared mean —
-        // see `OverlaySpace.meanWorldPerLocal`.
+        // the generic haul directly.
+        dragging = true;
+        // The gain is the VIEW's pixel size (§26: no anchor term), converted
+        // into the LOCAL units the merge threshold means (task 0645) by the
+        // declared mean — a threshold has no direction.
         const auto os = OverlaySpace.ofPrimary();
-        localPerPixel = haulWorldPerPixel(os.pos(mesh.selectionCentroidVertices()), cachedVp)
-                      / os.meanWorldPerLocal();
+        valueDrag_.press(e.x, dist_,
+            mergeValueDragLaw(viewWorldPerPixel(cachedVp), os.meanWorldPerLocal()));
         return true;
     }
 
@@ -384,28 +382,18 @@ public:
         if (!active || !dragging) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
         dragging = false;
+        // §26: the value kept after release is max(0, last).
+        dist_ = cast(float) valueDrag_.release();
+        rebuildPreview();
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
-        // Vertical screen delta -> world distance delta. Drag UP (screen Y
-        // decreases) increases the threshold, matching this codebase's
-        // other haul tools' "up/out = positive" convention (see
-        // PolyInsetTool's identical drag law + rationale).
-        // The previous pixel comes from the cooked gesture, not from this
-        // tool's own pair. Same integer subtraction, sourced one level up;
-        // `dragLastMX/MY` stay written as the fallback when no gesture is
-        // published and as the other half of the debug agreement check.
-        import toolpipe.packets : GesturePacket;
-        int prevMX, prevMY;
-        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
-                         dragLastMX, dragLastMY, prevMX, prevMY);
-        float dyPixels = cast(float)(prevMY - e.y);
-        dist_ = dragBaseDist + dyPixels * localPerPixel;
-        if (dist_ < 0.0f) dist_ = 0.0f;
-        dragLastMX = e.x;
-        dragLastMY = e.y;
+        // §26: `dist = dist_press + 0.05·P·Δx`, Δx the HORIZONTAL
+        // offset from the press pixel; vertical travel changes nothing, and
+        // the value is signed while the button is held.
+        dist_ = cast(float) valueDrag_.motion(e.x);
         rebuildPreview();
         return true;
     }
@@ -433,7 +421,7 @@ private:
             refreshCaches();
             return;
         }
-        double epsSq = cast(double)dist_ * cast(double)dist_;
+        double epsSq = kernelEpsSq();
         // average:true — survivor at per-cluster centroid, matching the
         // vert.merge command path (source/commands/mesh/vert_merge.d).
         size_t n = mesh.weldVerticesByMask(mesh.selectedVertices, epsSq, true);
@@ -453,6 +441,13 @@ private:
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Merge Vertices");
         recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+
+    // The threshold the weld kernel runs with: a negative drag value (signed
+    // mid-drag, §26) welds what a zero threshold welds, never |dist|.
+    double kernelEpsSq() const nothrow @nogc {
+        const double d = dist_ > 0 ? cast(double) dist_ : 0.0;
+        return d * d;
     }
 
     void cancelLiveEdit() {

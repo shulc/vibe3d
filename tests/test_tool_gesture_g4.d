@@ -1002,14 +1002,16 @@ unittest {
         "source/tools/edit/vert_merge_tool.d VertexMergeTool.commitEdit",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("vertices", [0, 1, 2, 3]); cmd("history.clear");
-          setOrbitCamera(40.0); cmd("tool.set vert.merge on"); settle(250); },
+          setOrbitCamera(60.0); cmd("tool.set vert.merge on"); settle(250); },
         {
             immutable size_t v0 = vertexCount();
             auto cam = fetchCamera(BASE);
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
-            dragPixels(cx, cy + 200, cx, cy - 200, 16);
-            gDrove ~= driveDrag(0, -400, 16);
+            // Horizontal since task 7122 (the value law reads screen x
+            // only, gain 0.05·P — hence distance 60, not 40).
+            dragPixels(cx - 200, cy, cx + 200, cy, 16);
+            gDrove ~= driveDrag(400, 0, 16);
             assert(vertexCount() < v0,
                 "vert.merge: the haul merged nothing (still " ~ v0.to!string
               ~ " vertices) even though `dist` reads "

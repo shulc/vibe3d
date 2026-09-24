@@ -783,10 +783,12 @@ unittest {
         cmd("tool.set " ~ TOOL ~ " on");
         settle();
         auto cam = fetchCamera();
-        int x0 = cam.vpX + cam.width / 2;
+        // Horizontal since task 7122 (§26: screen x only, gain 0.05·P, so
+        // 160 px where the old vertical law took 60).
+        int x0 = cam.vpX + cam.width / 2 - 80;
         int y0 = cam.vpY + cam.height / 2 + 40;
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                                 x0, y0, x0, y0 - 60, 12), BASE);
+                                 x0, y0, x0 + 160, y0, 12), BASE);
         settle();
         double v = attr(TOOL, "dist");
         cmd("tool.set " ~ TOOL ~ " off");
