@@ -239,6 +239,17 @@ unittest {
     const block = balancedSpan(code, blockOpen, '{', '}');
     assert(block.length > 0, "census: the settle block is unbalanced");
     const blockEnd = blockOpen + block.length;
+    // WEB-DOC-STATE: printed once, after the sync, from the document itself
+    // (above the ordering assert so a print moved before the sync reddens HERE).
+    const states = literalHits(raw, "WEB-DOC-STATE layers=");
+    assert(states.length == 1, format("census: one WEB-DOC-STATE literal, got %d", states.length));
+    assert(syncs[0] < states[0] && states[0] < blockEnd,
+        "census: WEB-DOC-STATE must be printed after syncDocRevision( in the same block");
+    const probeOpen = enclosingOpen(code, states[0]);
+    const probe = code[probeOpen .. states[0]];
+    assert(probe.canFind("sessionOwner.documentPtr()"),
+        "census: WEB-DOC-STATE must read the live document");
+
     assert(flushes[0] < blockOpen && blockOpen < syncs[0] && syncs[0] < settle,
         "census: the settle block must follow the flush and sync before settling");
     assert(settle < drain && drain < blockEnd,
@@ -273,16 +284,6 @@ unittest {
     assert(args[4].canFind("stillBoundTo(") && args[4].canFind("&sessionOwner.editMesh()")
         && args[4].canFind("editMode)"), "census: stillBound port " ~ args[4]);
     assert(args[5].canFind("guardController.pending"), "census: guardBusy port " ~ args[5]);
-
-    // WEB-DOC-STATE: printed once, after the sync, from the document itself.
-    const states = literalHits(raw, "WEB-DOC-STATE layers=");
-    assert(states.length == 1, format("census: one WEB-DOC-STATE literal, got %d", states.length));
-    assert(syncs[0] < states[0] && states[0] < blockEnd,
-        "census: WEB-DOC-STATE must be printed after syncDocRevision( in the same block");
-    const probeOpen = enclosingOpen(code, states[0]);
-    const probe = code[probeOpen .. states[0]];
-    assert(probe.canFind("sessionOwner.documentPtr()"),
-        "census: WEB-DOC-STATE must read the live document");
 
     // The probe dispatch door and the notice/guard witnesses.
     assert(literalHits(raw, "WEB-NOTICE text=").length == 1
