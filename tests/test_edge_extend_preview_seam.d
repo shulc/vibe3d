@@ -139,11 +139,22 @@ void firstPress() {
 unittest {
     armOnEdgeZero();
 
-    // Since task 7118 the window opens on the run's FIRST PRESS: it is the
-    // full rebuild (the zero-length ring, gap 217), and the kWrites panel
-    // writes after it are placements — kWrites + 1 rebuilds in all.
-    auto b = changes();
+    // Since task 7118 the run starts at its FIRST PRESS: a panel value written
+    // before it only sets the attribute (gap 220). The press is the ONE full
+    // rebuild (the zero-length ring, gap 217), measured in its own window so
+    // the full-rebuild frame is still covered; every write after it keeps
+    // that topology key and takes the placement path.
+    auto p0 = changes();
     firstPress();
+    auto b = changes();
+    assert(counter(p0, b, "totalPolygons") == 1,
+        format("the first press took %d full rebuild(s), expected exactly 1 (the zero-length ring)",
+               counter(p0, b, "totalPolygons")));
+    assert(counter(p0, b, "opLogEntriesRecorded") == 0
+        && counter(p0, b, "unbatchedGeometryCommits") == 0,
+        format("the first press's full rebuild recorded %d op-log entr(ies) / %d unbatched commit(s); "
+             ~ "the preview path must stay unrecorded (plan §9)",
+               counter(p0, b, "opLogEntriesRecorded"), counter(p0, b, "unbatchedGeometryCommits")));
     foreach (i; 1 .. kWrites + 1)
         interactiveAttr(format("tool.attr edge.extend offsetY %.4f", 0.02 * i));
     auto a = changes();
@@ -179,9 +190,11 @@ unittest {
     // the LIVE mesh — and the first write takes `fullRebuild` instead, which
     // delivers Polygons|Points|Position as ONE delivery. So the count is
     // exactly `kWrites`, at every `kWrites`: measured 8/12/20 at N=8/12/20 on
-    // this stand.
+    // this stand. Since task 7118 the full rebuild is the first press's,
+    // measured above, so this window holds kWrites placements and no full
+    // rebuild.
     immutable long deliveries = counter(b, a, "deliveryCount");
-    assert(deliveries == kWrites + 1,
+    assert(deliveries == kWrites,
         format("the %d interactive preview rebuilds delivered %d change(s), "
              ~ "expected exactly %d — one per rebuild. This is the term that "
              ~ "says the preview ACTUALLY RAN %d times rather than once or "
@@ -189,12 +202,12 @@ unittest {
              ~ "operand for the reason the whole track carries: a `> 0` here "
              ~ "is satisfied by a single rebuild and would leave the op-log "
              ~ "row below measuring one frame (task 1903 Stage M).",
-               kWrites + 1, deliveries, kWrites + 1, kWrites + 1));
+               kWrites, deliveries, kWrites, kWrites));
     immutable long fullRebuilds = counter(b, a, "totalPolygons");
-    assert(fullRebuilds == 1,
-        format("the scrub took %d full rebuild(s), expected exactly 1. Only "
-             ~ "the FIRST rebuild (the first press) has no standing topology "
-             ~ "key; the %d writes keep it and take the placement path onto the private cage. "
+    assert(fullRebuilds == 0,
+        format("the scrub took %d full rebuild(s), expected none. The first "
+             ~ "press built the topology key; the %d writes keep it and take "
+             ~ "the placement path onto the private cage. "
              ~ "More than one means the declared key is missing a parameter "
              ~ "(`PreviewRebuild.keyMisses`' subject) and the cage frames this "
              ~ "cell is built to cover were never entered.",
