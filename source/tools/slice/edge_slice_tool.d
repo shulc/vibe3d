@@ -591,6 +591,24 @@ public:
         cancelLiveEdit();
     }
 
+    // Shift+click = apply the chain and re-arm (EditSession.applyAndContinue;
+    // captured law, task 7114 item 8). A chain of fewer than two points has
+    // nothing to apply and keeps the session. True iff `commitChain` recorded
+    // a row: it may cancel instead (a zero-segment bake), and the TOP ENTRY'S
+    // IDENTITY is compared rather than the stack length, which stops growing
+    // once the history is at its depth cap.
+    public override bool commitUncommittedEdit() {
+        if (!active || latchedPoints_.length < 2 || history is null) return false;
+        const top0 = topHistoryCommand();
+        commitChain();
+        return topHistoryCommand() !is top0;
+    }
+
+    private const(Object) topHistoryCommand() const {
+        const ue = history.undoEntries();
+        return ue.length ? ue[$ - 1].cmd : null;
+    }
+
     // Task 0400 (see the task doc): EdgeSliceTool is a standing preview
     // (armed_ sits on the mesh across arbitrary frames, re-armable after
     // commit/cancel; Loop Slice left this family, gap row 205),
