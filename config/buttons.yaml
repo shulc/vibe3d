@@ -320,11 +320,11 @@ panels:
       # type — so the group lives on this tab next to Grow / Shrink and
       # Topology rather than on a Mesh tab. "Unhide All" is deliberately last
       # and deliberately not conditional on anything: it is the only way back
-      # out of an isolate that emptied the viewport.
+      # out of a Hide Unselected that emptied the viewport.
       - title: Visibility
         buttons:
           - { label: Hide,          action: { kind: command, id: mesh.hide } }
-          - { label: Isolate,       action: { kind: command, id: mesh.hideUnselected } }
+          - { label: "Hide Unselected", action: { kind: command, id: mesh.hideUnselected } }
           - { label: "Invert Hidden", action: { kind: command, id: mesh.hideInvert } }
           - { label: "Unhide All",  action: { kind: command, id: mesh.unhideAll } }
   - title: UV
@@ -350,3 +350,7 @@ panels:
     items:
       - { label: Fit,          action: { kind: command, id: viewport.fit } }
       - { label: Fit Selected, action: { kind: command, id: viewport.fit_selected } }
+      - { label: "Hide Selected",   action: { kind: command, id: mesh.hide } }
+      - { label: "Hide Unselected", action: { kind: command, id: mesh.hideUnselected } }
+      - { label: "Hide Invert",     action: { kind: command, id: mesh.hideInvert } }
+      - { label: "Unhide",          action: { kind: command, id: mesh.unhideAll } }
