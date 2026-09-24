@@ -106,6 +106,8 @@ class WorkplaneStage : Stage, Operator {
     }
 
     override string[2][] listAttrs() const {
+        Vec3 ey, ex, ez;
+        rotateBasis(rotation, ey, ex, ez);
         return [
             ["auto",  isAuto ? "true" : "false"],
             ["cenX",  format("%g", center.x)],
@@ -115,6 +117,13 @@ class WorkplaneStage : Stage, Operator {
             ["rotY",  format("%g", rotation.y)],
             ["rotZ",  format("%g", rotation.z)],
             ["mode",  modeLabel()],
+            // Read-only: the basis a PINNED plane publishes (task 7119), so
+            // a witness reads an aligned plane (whose `rotation` is stale)
+            // and the Euler composition itself, not the typed angles. Auto
+            // mode's camera pick is not reflected. Not in knownAttrs.
+            ["axisXx", format("%.9g", ex.x)], ["axisXy", format("%.9g", ex.y)], ["axisXz", format("%.9g", ex.z)],
+            ["normalX", format("%.9g", ey.x)], ["normalY", format("%.9g", ey.y)], ["normalZ", format("%.9g", ey.z)],
+            ["axisZx", format("%.9g", ez.x)], ["axisZy", format("%.9g", ez.y)], ["axisZz", format("%.9g", ez.z)],
         ];
     }
 
