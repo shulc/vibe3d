@@ -121,6 +121,22 @@ private string[] sessionModuleIfaces() {
     return names.sort.array;
 }
 
+// Slice M7: the composition pin (plan R2.5 "M7", R2.8 item 1). The session
+// modules declare exactly these interfaces — the two non-session ones and the
+// four clients that are not the tool session; a per-tool session special is
+// expressed as `ToolSessionPolicy` data or a `Tool` operation instead. This
+// stops the BUILD; the census rows below still carry their own signal (a
+// mutation build without this pin reddens `session-capabilities`, card M7).
+private enum string[] kPinnedSessionModuleIfaces = [
+    "FrameParameterEvalClient", "InputBindable", "LiveEvalClient", "RefireClient",
+    "RunMergeable", "SlotActivationClient",
+];
+static assert(sessionModuleIfaces() == kPinnedSessionModuleIfaces,
+    "tool census (M7 pin): the session modules declare interfaces ["
+    ~ sessionModuleIfaces().join(", ") ~ "], pinned [" ~ kPinnedSessionModuleIfaces.join(", ")
+    ~ "]: express a per-tool session special on the tool-session model ("
+    ~ kSessionPlan ~ ") instead of a new interface");
+
 /// `interface <Name>` declarations of a blanked code view.
 package string[] interfaceDecls(string code) {
     string[] names;
