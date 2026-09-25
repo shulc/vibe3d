@@ -402,7 +402,11 @@ unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
           ~ "  esac\n"
           ~ "  shift\n"
           ~ "done\n"
-          ~ "cp \"$in\" \"" ~ recordedInput ~ "\"\n"
+          // Copy then RENAME: the test polls for the file's existence and
+          // reads it at once, so a plain cp exposes a half-written OBJ under
+          // load (seen in the parallel module gate, task 7900).
+          ~ "cp \"$in\" \"" ~ recordedInput ~ ".part\" && mv \"" ~ recordedInput
+          ~ ".part\" \"" ~ recordedInput ~ "\"\n"
           ~ "printf 'v 20 0 20\\nv 21 0 20\\nv 21 0 21\\nv 20 0 21\\nf 1 2 3 4\\n' > \"$out\"\n"
           ~ "exit 0\n");
         setAttributes(script, octal!755);
