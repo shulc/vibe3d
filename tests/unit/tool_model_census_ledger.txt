@@ -12,8 +12,8 @@ axis2-violators 0
 # Session-special debt, only-down (3b; doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)):
 # interfaces of the session modules, casts to them in source/, and casts
 # to a concrete tool class outside source/tools/.
-session-capabilities 11
-session-branches 17
+session-capabilities 10
+session-branches 15
 special-tool-casts 27
 
 tool tools.alignment.array_tool.ArrayTool has=tools.alignment.array_tool.ArrayTool cancel=tools.alignment.array_tool.ArrayTool resync=tools.alignment.array_tool.ArrayTool commit=tools.alignment.array_tool.ArrayTool step=no keep=no snap=4 live=yes | live array preview built on activation, restored from MeshSnapshot baseline until drop/apply

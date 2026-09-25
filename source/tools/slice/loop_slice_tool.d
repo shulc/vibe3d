@@ -491,8 +491,12 @@ public:
 
     // Its arm is the activation row the first-gesture undo pops (gap row 205).
     // The id arm of toolArmEmitsLifecycle still names it until slice M3.
+    // A recording command through the UI door closes its live operation first
+    // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { activationRow: true };
+        import tool_activation_ownership : CommandClose;
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor };
         return policy;
     }
 
@@ -921,6 +925,14 @@ public:
         // length_/sliderX_/sliderY_ deliberately NOT reset — see field comment.
         armedKey_.invalidate();
         before_    = MeshSnapshot.capture(*mesh);
+    }
+
+    // The command close (slice M2): the Enter body — the standing preview is
+    // committed as one row — and the tool stays, disarmed.
+    override bool commitOperation() {
+        if (!active) return false;
+        if (armed_) commitEdit();
+        return true;
     }
 
     override void deactivate() {
@@ -1594,7 +1606,7 @@ public:
         switch (e.keysym.sym) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                commitEdit();
+                commitOperation();   // the same body the command close runs
                 return true;
             default:
                 return false;

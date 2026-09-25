@@ -13,6 +13,7 @@
 //     is read off an instance BLITTED from the class initializer, no
 //     constructor run: overrides return static data, and constructing a tool
 //     allocates GL objects.
+//     Slice M2 adds the `commandClose` column and its provenance (CloseProv).
 // (2) Every linked `tools.*` class that answers `activationRow`, exactly.
 // (3) The history wiring: the keyboard/panel doors reach the tool session
 //     through `EditSession.navigate`, and nothing in the input router steps
@@ -33,6 +34,7 @@ import transform_tool_registration;
 
 import prepared_tool_transition : toolArmEmitsLifecycle;
 import tool         : Tool, ToolSessionPolicy;
+import tool_activation_ownership : CommandClose;
 import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
 
@@ -47,85 +49,95 @@ import std.string    : indexOf, startsWith, strip;
 
 private enum Prov { carried, notPorted, noCounterpart, uncertain }
 
+/// Where a row's `commandClose` comes from (slice M2): `carriedScript` = the
+/// UI half captured (C1-h-sel-fam `move`), the SCRIPT half carried from the
+/// task-6250 continuation, not captured (opponent R3 C7); `captured` = the
+/// C1-h-sel / C1-h-sel-fam cells; `inferred` = the in-place family by the
+/// law's wording (R20 gap g5); `notCaptured` = no in-place commit, the old
+/// funnel rules (R20 gap g3).
+private enum CloseProv { carriedScript, captured, inferred, notCaptured }
+
 private struct Row {
     string id;
     string cls;          // unqualified class name the id's factory builds
     bool   activationRow;
     Prov   prov;
+    CommandClose commandClose;   // slice M2
+    CloseProv    closeProv;
 }
 
 /// Measured 2026-09-25 on the M1 tree: 70 ids (48 static + 22 presets).
 private immutable Row[] kTable = [
-    Row("ElementMove", "XfrmTransformTool", true, Prov.carried),
-    Row("Transform", "XfrmTransformTool", true, Prov.carried),
-    Row("TransformMove", "XfrmTransformTool", true, Prov.carried),
-    Row("TransformRotate", "XfrmTransformTool", true, Prov.carried),
-    Row("TransformScale", "XfrmTransformTool", true, Prov.carried),
-    Row("edge.bevel", "EdgeBevelTool", false, Prov.notPorted),
-    Row("edge.extend", "EdgeExtendTool", false, Prov.notPorted),
-    Row("edge.extrude", "EdgeExtrudeTool", false, Prov.notPorted),
-    Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted),
-    Row("mesh.arrayTool", "ArrayTool", false, Prov.notPorted),
-    Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted),
-    Row("mesh.clone", "CloneTool", false, Prov.notPorted),
-    Row("mesh.dragWeld", "DragWeldTool", false, Prov.notPorted),
-    Row("mesh.edgeSliceTool", "EdgeSliceTool", true, Prov.carried),
-    Row("mesh.loopSliceTool", "LoopSliceTool", true, Prov.carried),
-    Row("mesh.mirrorTool", "MirrorTool", false, Prov.notPorted),
-    Row("mesh.polyInsetTool", "PolyInsetTool", false, Prov.notPorted),
-    Row("mesh.radialArrayTool", "RadialArrayTool", false, Prov.notPorted),
-    Row("mesh.radialSweepTool", "RadialSweepTool", false, Prov.uncertain),
-    Row("mesh.reduceTool", "ReductionTool", false, Prov.notPorted),
-    Row("mesh.sliceTool", "SliceTool", true, Prov.carried),
-    Row("mesh.smoothShiftTool", "SmoothShiftTool", false, Prov.notPorted),
-    Row("mesh.tack", "TackTool", false, Prov.noCounterpart),
-    Row("mesh.thickenTool", "SmoothShiftTool", false, Prov.notPorted),
-    Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried),
-    Row("mesh.vertexBevel", "VertexBevelTool", false, Prov.notPorted),
-    Row("mesh.vertexExtrude", "VertexExtrudeTool", false, Prov.notPorted),
-    Row("move", "XfrmTransformTool", true, Prov.carried),
-    Row("move.element", "XfrmTransformTool", true, Prov.carried),
-    Row("pen", "PenTool", false, Prov.notPorted),
-    Row("poly.bevel", "PolyBevelTool", false, Prov.notPorted),
-    Row("poly.extrude", "PolyExtrudeTool", false, Prov.notPorted),
-    Row("prim.arc", "ArcTool", false, Prov.noCounterpart),
-    Row("prim.capsule", "CapsuleTool", false, Prov.notPorted),
-    Row("prim.cone", "ConeTool", false, Prov.notPorted),
-    Row("prim.cube", "BoxTool", false, Prov.notPorted),
-    Row("prim.cylinder", "CylinderTool", false, Prov.notPorted),
-    Row("prim.ellipsoid", "SphereTool", false, Prov.notPorted),
-    Row("prim.sphere", "SphereTool", false, Prov.notPorted),
-    Row("prim.torus", "TorusTool", false, Prov.notPorted),
-    Row("prim.tube", "TubeTool", false, Prov.notPorted),
-    Row("prim.vertex", "VertexTool", false, Prov.notPorted),
-    Row("rotate", "XfrmTransformTool", true, Prov.carried),
-    Row("scale", "XfrmTransformTool", true, Prov.carried),
-    Row("tool.strokeExtrude", "StrokeExtrudeTool", false, Prov.uncertain),
-    Row("vert.merge", "VertexMergeTool", false, Prov.notPorted),
-    Row("xfrm.bend", "BendTool", false, Prov.notPorted),
-    Row("xfrm.bulge", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.elementMove", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.flare", "PushTool", false, Prov.notPorted),
-    Row("xfrm.flex", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.jitter", "XfrmJitterTool", false, Prov.notPorted),
-    Row("xfrm.linearAlignTool", "LinearAlignTool", false, Prov.notPorted),
-    Row("xfrm.magnet", "MagnetTool", false, Prov.notPorted),
-    Row("xfrm.push", "PushTool", false, Prov.notPorted),
-    Row("xfrm.quantize", "XfrmQuantizeTool", false, Prov.notPorted),
-    Row("xfrm.radialAlignTool", "RadialAlignTool", false, Prov.notPorted),
-    Row("xfrm.scaleUniform", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.shear", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.smooth", "XfrmSmoothTool", false, Prov.notPorted),
-    Row("xfrm.softDrag", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.softMove", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.softRotate", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.softScale", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.softTransform", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.swirl", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.taper", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.transform", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.twist", "XfrmTransformTool", true, Prov.carried),
-    Row("xfrm.vortex", "XfrmTransformTool", true, Prov.carried),
+    Row("ElementMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("Transform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("TransformMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("TransformRotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("TransformScale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("edge.bevel", "EdgeBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("edge.extend", "EdgeExtendTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.captured),
+    Row("edge.extrude", "EdgeExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.arrayTool", "ArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.clone", "CloneTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.dragWeld", "DragWeldTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.edgeSliceTool", "EdgeSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
+    Row("mesh.loopSliceTool", "LoopSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
+    Row("mesh.mirrorTool", "MirrorTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.polyInsetTool", "PolyInsetTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.radialArrayTool", "RadialArrayTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.radialSweepTool", "RadialSweepTool", false, Prov.uncertain, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.reduceTool", "ReductionTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.sliceTool", "SliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
+    Row("mesh.smoothShiftTool", "SmoothShiftTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.tack", "TackTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.thickenTool", "SmoothShiftTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.topoPen", "TopologyPenTool", true, Prov.carried, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.vertexBevel", "VertexBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("mesh.vertexExtrude", "VertexExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("pen", "PenTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("poly.bevel", "PolyBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.captured),
+    Row("poly.extrude", "PolyExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("prim.arc", "ArcTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.capsule", "CapsuleTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.cone", "ConeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.cube", "BoxTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.cylinder", "CylinderTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.ellipsoid", "SphereTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.sphere", "SphereTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.torus", "TorusTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.tube", "TubeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("prim.vertex", "VertexTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("rotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("scale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("tool.strokeExtrude", "StrokeExtrudeTool", false, Prov.uncertain, CommandClose.uiDoor, CloseProv.inferred),
+    Row("vert.merge", "VertexMergeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.bend", "BendTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.bulge", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.elementMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.flare", "PushTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.flex", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.jitter", "XfrmJitterTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.linearAlignTool", "LinearAlignTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.magnet", "MagnetTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.push", "PushTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.quantize", "XfrmQuantizeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.radialAlignTool", "RadialAlignTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("xfrm.scaleUniform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.shear", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.smooth", "XfrmSmoothTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
+    Row("xfrm.softDrag", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.softMove", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.softRotate", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.softScale", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.softTransform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.swirl", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.taper", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.transform", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.twist", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
+    Row("xfrm.vortex", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
 ];
 
 /// The classes whose policy answers `activationRow`: the deleted marker's two
@@ -195,6 +207,7 @@ unittest { // (1) id -> policy, over every registered id
                   kTable.length, classOf.length));
 
     size_t falseRows, notPorted;
+    size_t[3] closeCount;
     foreach (row; kTable) {
         auto cls = row.id in classOf;
         assert(cls !is null, "M1 policy table: row " ~ row.id ~ " is not a registered id");
@@ -218,7 +231,20 @@ unittest { // (1) id -> policy, over every registered id
                "M1 policy table: provenance of " ~ row.id ~ " disagrees with its value");
         if (!row.activationRow) ++falseRows;
         if (row.prov == Prov.notPorted) ++notPorted;
+        assert(policy.commandClose == row.commandClose,
+               format("M2 policy table: %s (%s) commandClose %s, table says %s",
+                      row.id, row.cls, policy.commandClose, row.commandClose));
+        // A tool closes on a command only if it can: the transform and the
+        // cutting tools by their own body, every other `uiDoor` tool by the
+        // in-place commit it declares.
+        assert((row.commandClose == CommandClose.none) == (row.closeProv == CloseProv.notCaptured),
+               "M2 policy table: provenance of " ~ row.id ~ " disagrees with its commandClose");
+        ++closeCount[row.commandClose];
     }
+    // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file).
+    assert(closeCount == [22, 24, 24],
+           format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
+                  ~ "22/24/24", closeCount));
     // The M7 ratchet: ids whose arm writes no activation row yet.
     assert(falseRows == 42 && notPorted == 38,
            format("M1 policy table: activationRow=false on %s ids (%s not ported), "

@@ -17,6 +17,7 @@ import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
 import prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
 import display_state : DrawPlan;
 import core.atomic : atomicOp;
+import tool_activation_ownership : CommandClose;
 
 private shared ulong nextPreparedToolOwnerId_;
 private struct ToolPreparedParamHandle {
@@ -186,6 +187,13 @@ struct ToolSessionPolicy {
     /// a later slice): Edge Slice and Slice write the row yet open at the
     /// first press.
     bool activationRow;
+    /// H3: a recording command closes the live operation FIRST, through the
+    /// one routine `EditSession.closeOperation` (slice M2), and on which door
+    /// — `allDoors` (the transform family: the 6250 continuation, carried),
+    /// `uiDoor` (the captured C1-h-sel family law, R20) or `none` (the funnel's
+    /// old drop rules). The UI half is captured; the SCRIPT half of `allDoors`
+    /// is carried from today's behaviour, not captured (opponent R3 C7).
+    CommandClose commandClose;
 }
 
 class Tool : ParamProvider {
@@ -801,6 +809,25 @@ public:
         return ToolSessionPolicy.init;
     }
 
+    // The operation's close before a recording command (slice M2, H3; read
+    // only by `EditSession.closeOperation`, per `sessionPolicy().commandClose`).
+    // True = the operation is closed and the tool stays armed; false = it could
+    // not be closed in place, and the command funnel drops the tool as before.
+    // The default is the in-place commit the INPLACE family already declares
+    // (`commitUncommittedEdit` then `resyncSession`, the pair and order of
+    // `EditSession.applyAndContinue`); a tool whose operation closes some other
+    // way overrides this with its own commit body.
+    bool commitOperation() {
+        if (!commitUncommittedEdit()) return false;
+        resyncSession();
+        return true;
+    }
+
+    // After the command has applied (and recorded), once per close: the tool
+    // re-arms if its law says so. Default: nothing — the tool keeps its tag
+    // with no live operation, and the next gesture opens a new one.
+    void resumeAfterClose() {}
+
     // Edit modes in which this tool makes sense. Side-panel /
     // status-bar buttons auto-disable when the current edit mode is
     // not in this list. Default: every mode (most tools are mode-
@@ -930,6 +957,10 @@ private enum string[] kToolVirtualWhitelist = [
     // and replaces a marker interface. 5 overriders today; the plan's later
     // slices add fields, not virtuals.
     "sessionPolicy",
+    // Slice M2: the one close routine's two tool operations (H3), called by
+    // `EditSession` for every tool whose policy closes on a command — not a
+    // one-tool hook: the default body serves the whole in-place family.
+    "commitOperation", "resumeAfterClose",
     // Middling — 4 to 8 overriders. Fine on the base; listed so the next
     // reader can see where the line currently sits.
     "flags", "isDragging", "onKeyDown",

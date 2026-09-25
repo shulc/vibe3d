@@ -1522,7 +1522,8 @@ if not mutation_rejected(add_bypass_callsite, "activation/lifecycle bypass calls
 def clear_activation_row(root):
     p = root / "source/tools/transform/xfrm_transform.d"
     text = p.read_text()
-    needle = "static immutable ToolSessionPolicy policy = { activationRow: true };"
+    # Slice M2 added the command-close field beside it (one policy literal).
+    needle = "activationRow: true, commandClose: CommandClose.allDoors };"
     if text.count(needle) != 1: fail("P1.0b.0 activationRow mutation anchor vanished")
     p.write_text(text.replace(needle, needle.replace("true", "false"), 1))
 if not mutation_rejected(clear_activation_row, "lifecycle_products symbol mismatch"):
@@ -8955,7 +8956,7 @@ def p10c_door_capability_gate(context, sources, xfrm):
             "return prepareUpdate(vts, context).accepted;")):
         return False
     return ("PreparedToolDoorClient," in xfrm and
-        "PreparedToolPoseDoorClient," in xfrm and
+        "PreparedToolPoseDoorClient {" in xfrm and   # M2: the last base since ForeignEditBoundary left
         "override bool prepareDoorInitialPose(ref VectorStack vts," in xfrm and
         "auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);" in xfrm and
         "return prepareUpdate(vts, context, layer, upload).accepted;" in xfrm and

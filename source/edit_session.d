@@ -39,6 +39,8 @@ import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
 import toolpipe.stage  : Stage;
+import tool_activation_ownership : CloseReason, CommandClose, CommandDoor,
+                                   CloseOutcome;
 
 // Computed classification of the session protocol's current phase. There is
 // deliberately NO stored state machine mirroring this: the truth about an
@@ -295,19 +297,6 @@ interface SwitchRestorablePredecessor {
     // operation is a continuation (popped alone, the tool stays; task 7118,
     // gap 241).
     void resumeAfterSwitchRestore();
-}
-
-// ---------------------------------------------------------------------------
-// ForeignEditBoundary — optional capability for a tool that can close its own
-// run before a foreign mesh edit and settle the session afterward. Task 6250
-// keeps this cast-discovered and deliberately provides no generic Tool
-// fallback: a tool without the capability retains the existing drop behavior.
-// ---------------------------------------------------------------------------
-interface ForeignEditBoundary {
-    /// PRE-apply: commit a pending edit, if any, and close the run boundary.
-    bool commitPendingForForeignEdit();
-    /// POST-apply: follow the tool's live action-centre continuation law.
-    void resumeAfterForeignEdit();
 }
 
 // ---------------------------------------------------------------------------
@@ -627,19 +616,25 @@ final class EditSession {
         return true;
     }
 
-    /// Commit the active tool before a foreign edit only when it explicitly
-    /// implements the task-6250 capability. False tells the caller to drop it.
-    bool commitPendingForForeignEdit() {
-        if (auto boundary = cast(ForeignEditBoundary) tool_())
-            return boundary.commitPendingForForeignEdit();
-        return false;
+    // The operation's close — ONE routine for every reason (slice M2, H3;
+    // doc/tool_session_model_plan_2026-09-24.md R4.2). For `command` the
+    // tool's policy decides on which door it closes, and its own
+    // `commitOperation` whether and how; every other reason's commit belongs
+    // to its door (`deactivate()` / the prepared deactivation), so the session
+    // only keeps its account of it. Returns what the command funnel needs:
+    // whether the tool stays armed across the command.
+    CloseOutcome closeOperation(CloseReason r, CommandDoor door = CommandDoor.ui) {
+        return tools_.close(r, door);
     }
 
-    /// Let the capable active tool settle after the foreign edit has landed.
-    void resumeAfterForeignEdit() {
-        if (auto boundary = cast(ForeignEditBoundary) tool_())
-            boundary.resumeAfterForeignEdit();
-    }
+    // After the door (a drop / switch) or after the command applied: marks the
+    // row the close wrote, and resumes the tool at most once per command close.
+    // Called only from a NON-reentrant frame (opponent R3 C3).
+    void finishClose() { tools_.finishClose(); }
+
+    // The history row the last close WROTE, or null when it wrote none — the
+    // row slice M4 tags with the predecessor token.
+    const(Command) lastClosedRow() const { return tools_.closedRow_.get; }
 
     // Discard the active tool's in-progress edit WITHOUT committing it and
     // WITHOUT touching history (cancel bodies are pure mesh restores). The
@@ -658,9 +653,9 @@ final class EditSession {
 // exactly one, privately; it moves the history-navigation branches out of
 // `EditSession.navigate` with the branch order unchanged, split by direction.
 // It stores no phase (the header's "no stored state machine" still holds):
-// its only state is the held first gesture below. What it will own next —
-// the operation's closing, the gesture steps, the redo stash, the token — is
-// added by the slice that reads it.
+// its state is the held first gesture and the operation's close account
+// (slice M2) below. What it will own next — the gesture steps, the redo
+// stash, the token — is added by the slice that reads it.
 // ---------------------------------------------------------------------------
 private struct ToolSession {
     private Tool delegate() tool_;
@@ -674,6 +669,21 @@ private struct ToolSession {
     // the raw redo doors, which re-arm bare by design.
     private Object pendingGesture_;
     private Rebindable!(const Command) pendingFor_;
+    // The operation's close (slice M2). `topBefore_` is the undo top when the
+    // close began; a row counts as written BY the close only if the top is a
+    // different entry afterwards — identity, never the depth, which stops
+    // moving at the history cap — and that test is the same for every reason
+    // (opponent R3 C2: a command close may commit nothing, e.g. a transform
+    // between gestures, and must then mark nothing). `pendingMark_`: a door
+    // writes the row after `close` returns. `pendingResume_` / `resumeTool_`:
+    // the command close committed, so the tool it closed resumes once after
+    // the command — and only that tool, so a drop during the command (the
+    // tool is gone) or a later tool can never receive it.
+    private Rebindable!(const Command) topBefore_;
+    private Rebindable!(const Command) closedRow_;
+    private bool pendingMark_;
+    private bool pendingResume_;
+    private Tool resumeTool_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool) {
@@ -822,6 +832,56 @@ private struct ToolSession {
         pendingGesture_ = null;
         pendingFor_ = null;
         return ok;
+    }
+
+    // The one close routine (EditSession.closeOperation's body; plan R4.2).
+    CloseOutcome close(CloseReason r, CommandDoor door) {
+        auto t = tool_();
+        if (t is null) return CloseOutcome(false, false);
+        topBefore_ = undoTop_();
+        closedRow_ = null;
+        if (r != CloseReason.command) {
+            // The door commits (or discards, or has nothing left); the
+            // session only accounts for the row it may write.
+            pendingMark_ = r != CloseReason.none;
+            return CloseOutcome(false, false);
+        }
+        const cc = t.sessionPolicy().commandClose;
+        // (2) not this tool's door: the funnel keeps its old rules, untouched.
+        if (cc == CommandClose.none
+            || (door == CommandDoor.script && cc != CommandClose.allDoors))
+            return CloseOutcome(false, false);
+        // (3) an idle covered tool stays armed and is not called (R20 law).
+        if (cc == CommandClose.uiDoor && !t.hasUncommittedEdit())
+            return CloseOutcome(false, true);
+        // (4) the tool closes its own operation; the row (if any) is written
+        // now, synchronously, BEFORE the command applies and records.
+        if (!t.commitOperation()) return CloseOutcome(false, false);
+        markClosedRow_();
+        pendingResume_ = true;
+        resumeTool_ = t;
+        return CloseOutcome(true, true);
+    }
+
+    void finishClose() {
+        if (pendingMark_) { pendingMark_ = false; markClosedRow_(); }
+        if (!pendingResume_) return;
+        pendingResume_ = false;
+        auto t = tool_();
+        auto closed = resumeTool_;
+        resumeTool_ = null;
+        if (t is null || t !is closed) return;   // the closed tool is gone
+        t.resumeAfterClose();
+    }
+
+    private const(Command) undoTop_() {
+        const ue = history_.undoEntries();
+        return ue.length ? ue[$ - 1].cmd : null;
+    }
+
+    private void markClosedRow_() {
+        const top = undoTop_();
+        closedRow_ = (top !is null && top !is topBefore_.get) ? top : null;
     }
 
     // End of a live session whose last gesture the undo just removed (task

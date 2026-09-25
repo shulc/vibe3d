@@ -148,6 +148,26 @@ bool dropsActiveToolBeforeApply(const Command cmd) {
         && cn != "layer.attr";
 }
 
+/// Whether `cmd`, reaching the funnel through the UI door, closes a live tool
+/// operation first (slice M2 of the tool session model; the captured
+/// C1-h-sel family law, doc/editor_bugfix_wave_plan_2026-09-23.md §S2b R20):
+/// any command that records an undo entry, whatever its class — a selection
+/// command and a model command close the same way (P-uniform) — except the
+/// tool's own commands (`tool.*` continue the session), history navigation,
+/// the document lifecycle (`scene.*` / `file.*` have their own disarm policy)
+/// and `layer.attr` (the Layers panel's transform rows continue a
+/// transform run, the same carve-out as `dropsActiveToolBeforeApply`).
+bool endsLiveEditBeforeUiCommand(const Command cmd) {
+    import std.string : startsWith;
+    if (!cmd.isUndoable()) return false;
+    const cn = cmd.name();
+    return !cn.startsWith("tool.")
+        && !cn.startsWith("history.")
+        && !cn.startsWith("scene.")
+        && !cn.startsWith("file.")
+        && cn != "layer.attr";
+}
+
 // Result of comparing a freshly-applied command against the command that
 // currently sits on top of the undo stack. `Compatible` means the new command
 // is a CONTINUATION of the previous one (same logical edit, same targets) and

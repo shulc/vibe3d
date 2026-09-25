@@ -2,7 +2,7 @@ module command_executor;
 
 import command;
 import command_history : CommandHistory, RecordMode;
-import tool_activation_ownership : ToolTransition;
+import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
 
 // Project-owned command/history orchestration. Exact `grep -rl -w` checks for
 // both `CommandExecutor` and `command_executor` in the SDK tree returned zero
@@ -12,23 +12,36 @@ private:
     CommandHistory history;
     bool delegate() activeTool;
     void delegate(ToolTransition) dropActiveTool;
-    bool delegate() commitPendingToolEdit;
-    void delegate() resumeActiveTool;
+    CloseOutcome delegate(CommandDoor) closeForCommand;
+    void delegate() finishClose;
     bool inPreApplyToolHandling_;
+    // Set for the extent of one UI-door invocation (`applyOrRefireFromUi`);
+    // nested invocations inherit it, the outermost clears it.
+    bool uiOrigin_;
 
 public:
     this(CommandHistory history, bool delegate() activeTool,
          void delegate(ToolTransition) dropActiveTool,
-         bool delegate() commitPendingToolEdit = null,
-         void delegate() resumeActiveTool = null) {
+         CloseOutcome delegate(CommandDoor) closeForCommand = null,
+         void delegate() finishClose = null) {
         assert(history !is null, "CommandExecutor requires CommandHistory");
         assert(activeTool !is null, "CommandExecutor requires an armed-tool reader");
         assert(dropActiveTool !is null, "CommandExecutor requires a tool-drop hook");
         this.history = history;
         this.activeTool = activeTool;
         this.dropActiveTool = dropActiveTool;
-        this.commitPendingToolEdit = commitPendingToolEdit;
-        this.resumeActiveTool = resumeActiveTool;
+        this.closeForCommand = closeForCommand;
+        this.finishClose = finishClose;
+    }
+
+    // The UI door (keys, buttons, panels, `?origin=ui`): the same funnel with
+    // the door marked, so a recording command closes a live operation of a
+    // `uiDoor` tool first (slice M2; the captured C1-h-sel family law).
+    bool applyOrRefireFromUi(Command cmd, RecordMode mode, string throwMsg) {
+        const bool outer = !uiOrigin_;
+        uiOrigin_ = true;
+        scope(exit) if (outer) uiOrigin_ = false;
+        return applyOrRefire(cmd, mode, throwMsg);
     }
 
     // Refire/apply-record dispatch helper (task 0183 C4). Folds the
@@ -130,19 +143,32 @@ public:
             return false;
         }
 
-        bool resume = false;
+        // Slice M2 (tool session model, doc/tool_session_model_plan_2026-09-24.md
+        // R4.2): the pre-apply commit above is now ONE close routine,
+        // `EditSession.closeOperation(CloseReason.command, door)`, reached
+        // through `closeForCommand` — for the 6250 command on either door,
+        // and for any recording command (`endsLiveEditBeforeUiCommand`) on the
+        // UI door. The tool's policy and its own `commitOperation` decide;
+        // when it does not stay armed the funnel falls back to exactly the
+        // rules above (drop for the 6250 command and for the drop set; a
+        // UiState command leaves the tool alone). A command refused after the
+        // close has already closed the operation, as the old pre-apply drop
+        // had. The resume is the session's own (`finishClose`, at most once per
+        // close), run from the non-reentrant frame only.
         if (activeTool()) {
-            if (!reentrant && commitsActiveToolEditBeforeApply(cmd)) {
-                if (commitPendingToolEdit !is null && commitPendingToolEdit())
-                    resume = true;
-                else
+            const bool commits = commitsActiveToolEditBeforeApply(cmd);
+            if (!reentrant && (commits
+                    || (uiOrigin_ && endsLiveEditBeforeUiCommand(cmd)))) {
+                const o = closeForCommand !is null
+                    ? closeForCommand(uiOrigin_ ? CommandDoor.ui : CommandDoor.script)
+                    : CloseOutcome.init;
+                if (!o.staysArmed && (commits || dropsActiveToolBeforeApply(cmd)))
                     dropActiveTool(ToolTransition.commandPreApplyDrop);
             } else if (dropsActiveToolBeforeApply(cmd)) {
                 dropActiveTool(ToolTransition.commandPreApplyDrop);
             }
         }
-        scope(exit) if (resume && activeTool() && resumeActiveTool !is null)
-            resumeActiveTool();
+        scope(exit) if (!reentrant && finishClose !is null) finishClose();
         if (cmd.apply()) {
             final switch (mode) {
                 case RecordMode.Record:     history.record(cmd);           break;

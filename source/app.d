@@ -55,7 +55,8 @@ version (web) {
 // HTTP server module
 import http_server;
 import tool_activation_ownership : ToolTransition, ActivationDoor,
-    activationDoorFor, pipeArmScopeFor, armUsesAttrCache;
+    activationDoorFor, pipeArmScopeFor, armUsesAttrCache, CloseReason,
+    CloseOutcome, CommandDoor, closeReasonFor;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import ui.guard_modal_state : GuardModalState;
@@ -2580,6 +2581,10 @@ void main(string[] args) {
                    == ActivationDoor.legacyDeactivate,
                    "shutdownDrop must stay on the legacy door: the GL owner "
                    ~ "is already torn down when this runs");
+            // Its close is the door's `deactivate()` (slice M2: the table row
+            // `drop`, pinned by tests/unit/close_reason_table_test.d). The
+            // session is declared below this guard, so it keeps no account of
+            // this close — nothing outlives shutdown to read one.
             activeTool.deactivate();
             activeTool.destroy();
         }
@@ -2770,6 +2775,11 @@ void main(string[] args) {
         // dropped. This is a single cancel per drop, NOT a per-frame guard.
         pipeGizmoHost.cancelDrag();
         storeDroppedToolNodes();
+        // Slice M2: the session's account of the close comes FIRST (it reads
+        // the undo top the door's commit will move), the commit stays in the
+        // door's `deactivate()` below, and `finishClose` after the door marks
+        // the row the close wrote.
+        if (session !is null) session.closeOperation(closeReasonFor(why));
         // The `final switch` is OUTSIDE `if (activeTool)` deliberately. It used
         // to sit inside it, which made the routing refusal below unreachable on
         // every drop that runs with nothing armed — and those are the majority
@@ -2793,6 +2803,7 @@ void main(string[] args) {
         resetTransientPipeStages();
         activeTool   = null;
         activeToolId = "";
+        if (session !is null) session.finishClose();
         // deactivate() may have added geometry. We no longer syncSelection
         // here (change-notification bus, Stage 2): any geometry a tool appended
         // on deactivate went through mesh primitives that publish a Geometry
@@ -2911,8 +2922,9 @@ void main(string[] args) {
     history = new CommandHistory();
     auto executor = new CommandExecutor(history,
         () => activeTool !is null, &dropActiveTool,
-        () => session !is null && session.commitPendingForForeignEdit(),
-        () { if (session !is null) session.resumeAfterForeignEdit(); });
+        (CommandDoor door) => session is null ? CloseOutcome.init
+            : session.closeOperation(CloseReason.command, door),
+        () { if (session !is null) session.finishClose(); });
     ApplicationCommandBinding commandBinding;
     GuardedActionController guardController;
     auto guardModalState = new GuardModalState();
@@ -3803,6 +3815,10 @@ void main(string[] args) {
         auto factory = reg.toolFactory(id);
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
+        // Slice M2: the retained predecessor's close is accounted before the
+        // transaction's door deactivates it, and finished after the arm.
+        if (session !is null) session.closeOperation(closeReasonFor(why));
+        scope(exit) if (session !is null) session.finishClose();
 
         import prepared_tool_transition : prepareArm, commitPreparedArm;
         import registry : PreparedPipeAttrs;
@@ -4679,7 +4695,7 @@ void main(string[] args) {
     // Both UI apply ports keep throwMsg null: a throw during ImGui authoring
     // terminates the process; refusal is reported by notice policy (task 1520).
     guardController = new GuardedActionController(GuardedActionPorts(
-        (Command c, RecordMode m) => executor.applyOrRefire(c, m, null),
+        (Command c, RecordMode m) => executor.applyOrRefireFromUi(c, m, null),
         () => docDirty(),
         () {
             if (!reg.hasCommand("file.save"))

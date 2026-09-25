@@ -146,6 +146,58 @@ ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
     }
 }
 
+/// Why a live tool operation is being closed (tool session model, slice M2;
+/// doc/tool_session_model_plan_2026-09-24.md R4.2). `command` is the value of
+/// NO transition: it comes only from the command funnel's close branch
+/// (`CommandExecutor.applyOrRefire`). `undoFirstGroup` and `enter` are the
+/// reasons slice M3 routes through the session; nothing produces them yet.
+enum CloseReason : ubyte { none, command, drop, switch_, discard, undoFirstGroup, enter }
+
+/// Which door a command came through: a script (`/api/command`, replay) or
+/// the UI (keys, buttons, panels, `?origin=ui`).
+enum CommandDoor : ubyte { script, ui }
+
+/// A tool's policy for a recording command met while it is armed (the
+/// `commandClose` field of `ToolSessionPolicy`): `none` keeps the command
+/// funnel's old drop rules, `uiDoor` closes the live operation first when the
+/// command came through the UI, `allDoors` does so on either door.
+enum CommandClose : ubyte { none, uiDoor, allDoors }
+
+/// What `EditSession.closeOperation` did: whether it committed a live
+/// operation, and whether the tool stays armed across the command.
+struct CloseOutcome { bool closed; bool staysArmed; }
+
+/// The close reason of every transition, carried from what each transition's
+/// door already does (M2 moves no commit): an arm closes the retained
+/// predecessor (`switch_`), a reset re-arm discards, a replay or an edit-cancel
+/// drop has nothing left to close, and every other drop commits through the
+/// door's `deactivate()` — the command funnel's pre-apply drop included, whose
+/// close is still the door's (R4.2: `commandPreApplyDrop -> drop`).
+CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+            return CloseReason.switch_;
+        case ToolTransition.replayArm:
+        case ToolTransition.replayDrop:
+        case ToolTransition.editCancelDrop:
+            return CloseReason.none;
+        case ToolTransition.resetRearm:
+            return CloseReason.discard;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.panelDrop:
+        case ToolTransition.shutdownDrop:
+            return CloseReason.drop;
+    }
+}
+
 /// Task 5911, "re-arm doors after a break": fresh user arms install every slot
 /// written by the preset. Lifecycle replay installs every unlocked written
 /// slot and yields each user-locked written slot independently; a same-id reset

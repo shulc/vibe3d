@@ -185,6 +185,16 @@ class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient
                        PreparedToolPoseDoorClient,
                        SessionStepUndo, KeepAliveOnCancel,
                        SwitchRestorablePredecessor, SessionLiveRedo {
+    // A recording command through the UI door closes the live edit first —
+    // `Tool.commitOperation`'s in-place default — and the tool stays armed
+    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
+    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        import tool_activation_ownership : CommandClose;
+        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        return policy;
+    }
+
     mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

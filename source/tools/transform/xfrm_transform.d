@@ -116,9 +116,9 @@ import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
 import tool            : ToolFlag, ToolSessionPolicy;
+import tool_activation_ownership : CommandClose;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
-                         ParameterChangeSource, SlotActivationClient,
-                         ForeignEditBoundary;
+                         ParameterChangeSource, SlotActivationClient;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -696,8 +696,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 // (task 0428 marker, carried as data by slice M1).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
-                          PreparedToolPoseDoorClient,
-                          ForeignEditBoundary {
+                          PreparedToolPoseDoorClient {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -1473,7 +1472,10 @@ public:
         image.clear();
     }
 
-    override bool commitPendingForForeignEdit() {
+    // The command close (slice M2; the task-6250 body, carried). Unconditional
+    // on purpose: between gestures the edit is closed but the run is still
+    // open, and the run boundary is what the command must not land inside.
+    override bool commitOperation() {
         if (editIsOpen())
             commitEdit("Move");
         // Task 6250: this boundary is PRE-apply. After the foreign command is
@@ -1484,7 +1486,11 @@ public:
         return true;
     }
 
-    override void resumeAfterForeignEdit() {
+    // Re-arm after the command (captured: C-H1-xfrm-rot/-scl and C-H3-move
+    // re-arm, C-H1-xfrm-elem-b does not — the Element branch below). The law is
+    // per PRESET, and the preset reaches this class only as its action-centre
+    // mode, so it is decided here rather than in the class-static policy.
+    override void resumeAfterClose() {
         auto ac = activeAcenStage();
         if (ac !is null && ac.mode == ActionCenterStage.Mode.Element) {
             // Element keeps the picked pin and displayed channels exactly as
@@ -2948,9 +2954,12 @@ public:
     // stays highlighted, not every element under the moving cursor).
     override bool isDragging() const { return activeDrag !is null; }
 
-    // The arm writes the activation row (see the class comment).
+    // The arm writes the activation row (see the class comment). A recording
+    // command closes the run on BOTH doors (slice M2): the 6250 continuation,
+    // carried; the UI half is the captured C1-h-sel-fam `move` law.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { activationRow: true };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.allDoors };
         return policy;
     }
 
@@ -6931,6 +6940,14 @@ private:
         root["editOpen"]   = JSONValue(editIsOpen());
         root["sessionOpen"] = JSONValue(!foreignEditSessionClosed_);
         root["runOpen"] = JSONValue(history !is null && history.runOpen());
+        // The panel's channels, read from the very fields its TX..SZ params
+        // bind (slice M2: the re-arm resets them; a witness reads them here).
+        auto values = JSONValue.emptyObject;
+        values["t"] = JSONValue([JSONValue(run.t.x), JSONValue(run.t.y), JSONValue(run.t.z)]);
+        values["r"] = JSONValue([JSONValue(headlessRotate.x), JSONValue(headlessRotate.y),
+                                 JSONValue(headlessRotate.z)]);
+        values["s"] = JSONValue([JSONValue(run.s.x), JSONValue(run.s.y), JSONValue(run.s.z)]);
+        root["values"] = values;
         Vec3 pivot = moveGizmoCenter();
         root["pivot"] = JSONValue([JSONValue(pivot.x), JSONValue(pivot.y), JSONValue(pivot.z)]);
         // The relocate-order witness must read the handler that consumed the

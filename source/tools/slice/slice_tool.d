@@ -1041,8 +1041,12 @@ public:
 
     // Its arm is the activation row the first-gesture undo pops (§22).
     // The id arm of toolArmEmitsLifecycle still names it until slice M3.
+    // A recording command through the UI door closes its live operation first
+    // and the tool stays (slice M2; captured C1-h-sel-fam, K-commit).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { activationRow: true };
+        import tool_activation_ownership : CommandClose;
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor };
         return policy;
     }
 
@@ -1231,6 +1235,17 @@ public:
         if (!ok) context.discard();
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Slice, ok);
+    }
+
+    // The command close (slice M2): the drop's commit point (`deactivate`
+    // without `active = false`) — the live slice becomes one row, the preview
+    // and the gesture steps go, and the tool stays armed for a new line.
+    override bool commitOperation() {
+        if (!active) return false;
+        commitCurrentSlice();
+        dropPreview();
+        gestureStack_ = null;
+        return true;
     }
 
     override void deactivate() {

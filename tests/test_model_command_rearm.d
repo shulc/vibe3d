@@ -209,7 +209,7 @@ unittest { // B — re-arm zeroes every transform channel.
         format("6250 B: re-arm retained stale channels; centre=(%.6f,%.6f)", c[0], c[1]));
 }
 
-unittest { // K — an armed tool without ForeignEditBoundary is dropped.
+unittest { // K — the SCRIPT door drops an armed tool whose policy closes on the UI door only.
     resetFixture("K");
     command("tool.set poly.bevel on", "K arm bevel");
     auto before = toolState();
@@ -219,10 +219,14 @@ unittest { // K — an armed tool without ForeignEditBoundary is dropped.
     command("mesh.subpatch_toggle", "K toggle");
     auto after = toolState();
     assert(after.object.length == 0,
-        "6250 K: tool without ForeignEditBoundary stayed armed: " ~ after.toString);
+        "6250 K: a script command kept a tool that closes on the UI door only (commandClose "
+        ~ "uiDoor): " ~ after.toString);
 }
 
-unittest { // Tab also drops an armed tool without ForeignEditBoundary.
+unittest { // K-tab — Tab (the UI door) keeps an IDLE in-place tool armed.
+    // Flipped by slice M2 of the tool session model (R20 law, inferred:
+    // an idle covered tool meeting a recording UI command stays, with nothing
+    // to close). Before M2 the Tab key dropped it (the 0463 pre-apply drop).
     resetFixture("K-tab");
     command("tool.set poly.bevel on", "K-tab arm bevel");
     auto before = toolState();
@@ -235,8 +239,8 @@ unittest { // Tab also drops an armed tool without ForeignEditBoundary.
     waitPlayback();
     assertTogglePopulation("K-tab");
     auto after = toolState();
-    assert(after.object.length == 0,
-        "6250 K-tab: Tab left the non-capable tool armed: " ~ after.toString);
+    assert("tool" in after && after["tool"].str == "polyBevel",
+        "M2 K-tab: Tab dropped an armed in-place tool (bevel keeps its tag): " ~ after.toString);
 }
 
 unittest { // E — an already-completed edit is not recorded twice.

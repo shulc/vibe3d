@@ -169,6 +169,7 @@ tests.unit.byte_size_test
 tests.unit.camera_stamp_test
 tests.unit.census_symbols
 tests.unit.change_bus_test
+tests.unit.close_reason_table_test
 tests.unit.command_apply_anchor_test
 tests.unit.command_bindargs_parity_test
 tests.unit.command_bindargs_test
