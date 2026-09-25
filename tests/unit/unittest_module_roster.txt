@@ -578,6 +578,7 @@ tests.unit.undo_parity_l9_test
 tests.unit.unified_transform_recipe_test
 tests.unit.unittest_census_gate
 tests.unit.unittest_source_ceiling_test
+tests.unit.ut_shard_plan
 tests.unit.uv_island_test
 tests.unit.uv_project_test
 tests.unit.uv_relax_test

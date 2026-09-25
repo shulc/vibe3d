@@ -48,6 +48,10 @@ private enum runnerPath = buildPath(repoRoot, "run_test.d");
 // handshake. The OS closes this descriptor on every exit path.
 private __gshared RunSlot gModuleGateSlot;
 
+/// The slot this gate holds. The parallel runner (tests/unit/ut_runner.d)
+/// hands it to its worker processes as a lease, so N workers are one slot.
+package RunSlot moduleGateSlot() { return gModuleGateSlot; }
+
 private noreturn abortModuleGate(string message)
 {
     stderr.writeln(message);
