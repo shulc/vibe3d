@@ -225,12 +225,17 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 120.0f) {
 // via the standard SDL_BUTTON(x) = 1 << (x-1) convention — lets a caller
 // drive a MIDDLE-button drag (e.g. Shift+MMB Add Loop) through this same
 // helper instead of hand-rolling its own JSON-Lines builder.
+// Every builder below is frame-PACED (card test-sleep-removal): the player
+// delivers one distinct `t` per frame, so the 50 ms gaps keep their meaning
+// ("each lands in its own frame") without being waited out in wall-clock time.
+enum string kPaceLine = `{"t":0.000,"type":"PACE","mode":"frames"}` ~ "\n";
+
 string buildDragLog(int vpX, int vpY, int vpW, int vpH,
                     int x0, int y0, int x1, int y1, int steps = 20,
                     uint mod = 0, ubyte btn = 1)
 {
     string log = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine,
         vpX, vpY, vpW, vpH);
 
     double tDown = 50.0;
@@ -263,7 +268,7 @@ string buildDragDownLog(int vpX, int vpY, int vpW, int vpH,
                         int x0, int y0, uint mod = 0, ubyte btn = 1)
 {
     return format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine ~
         `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
         vpX, vpY, vpW, vpH, btn, x0, y0, mod);
 }
@@ -273,7 +278,7 @@ string buildDragMotionLog(int vpX, int vpY, int vpW, int vpH,
                           uint mod = 0, ubyte btn = 1)
 {
     string log = format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine,
         vpX, vpY, vpW, vpH);
     uint state = 1u << (btn - 1);
     int lastX = x0, lastY = y0;
@@ -292,7 +297,7 @@ string buildDragUpLog(int vpX, int vpY, int vpW, int vpH,
                       int x1, int y1, uint mod = 0, ubyte btn = 1)
 {
     return format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine ~
         `{"t":50.000,"type":"SDL_MOUSEBUTTONUP","btn":%d,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
         vpX, vpY, vpW, vpH, btn, x1, y1, mod);
 }
@@ -402,10 +407,9 @@ void engageByPress(string baseUrl = testBaseUrl()) {
     auto c = fetchCamera(baseUrl);
     immutable int x = c.vpX + c.width / 2 + 150, y = c.vpY + c.height / 2;
     playAndWait(format(
-        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~ kPaceLine ~
         `{"t":30.000,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n" ~
         `{"t":60.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
         `{"t":90.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         c.vpX, c.vpY, c.width, c.height, x, y, x, y, x, y), baseUrl);
-    Thread.sleep(dur!"msecs"(250));
 }

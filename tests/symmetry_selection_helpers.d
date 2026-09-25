@@ -274,7 +274,9 @@ string toolId() {
 
 string vpLine() {
     auto c = fetchCamera();
-    return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+    // PACE: one frame per distinct `t`, no wall-clock wait (card test-sleep-removal).
+    return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
+                  ~ `{"t":0.000,"type":"PACE","mode":"frames"}` ~ "\n",
                   c.vpX, c.vpY, c.width, c.height);
 }
 
