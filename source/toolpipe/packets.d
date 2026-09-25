@@ -472,11 +472,12 @@ struct FalloffConfig {
 
     // Element: spherical falloff around `pickedCenter` (ACEN-owned,
     // NOT config — see struct doc), radius `pickedRadius`. Radius is
-    // the `dist`/Range attr (wire attr name stays `dist`). Default
-    // radius 1.0 — gets relocated by XfrmTransformTool's click-to-pick
-    // (when falloff.element is active) or by the user via
-    // `tool.pipe.attr falloff dist <r>`.
-    float        pickedRadius  = 1.0f;
+    // the `dist`/Range attr (wire attr name stays `dist`). Default 0.0,
+    // the shipped reference default (S-elemdefault, C-elem-range0; gap 372):
+    // at range 0 only the picked element moves (`falloff.elementWeight`).
+    // Set by the user via `tool.pipe.attr falloff dist <r>` or the panel,
+    // and kept per preset by the tool attribute cache.
+    float        pickedRadius  = 0.0f;
     // Element connectivity gate (Stage 14.4). When != Off, the
     // sphere weight is shaped by the connected-component mask
     // (`connectMask`, a BFS over mesh.edges from the picked element).

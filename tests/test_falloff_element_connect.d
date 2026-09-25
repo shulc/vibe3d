@@ -278,8 +278,9 @@ unittest { // reset clears a locked element falloff to a clean slate
         "reset must clear stale connect; got " ~ falloffAttr("connect"));
     assert(falloffAttr("anchorRing") == "",
         "reset must clear stale anchorRing; got " ~ falloffAttr("anchorRing"));
-    assert(falloffAttr("dist") == "1",
-        "reset must restore default dist=1; got " ~ falloffAttr("dist"));
+    // 0 is the shipped Element range default (S-elemdefault, gap 372).
+    assert(falloffAttr("dist") == "0",
+        "reset must restore default dist=0; got " ~ falloffAttr("dist"));
 }
 
 unittest { // same clean-slate guarantee for /api/reset?empty=true

@@ -136,18 +136,12 @@ public:
 
 private:
     bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
-        // `dist` is an EXPLICIT command param (a real spatial radius),
-        // not the interactive tool-pipe's "not yet picked" sentinel.
-        // falloff.d's elementWeight() has a degenerate-radius fallback
-        // (`pickedRadius <= 1e-9f` → return weight=1.0 EVERYWHERE) meant
-        // to keep an in-flight interactive drag from dividing by zero
-        // before ACEN/FalloffStage have placed a real radius — that
-        // fallback must stay in place for the tool-pipe (`hasFalloff_`)
-        // path. But feeding it dist<=0 straight from this command's own
-        // param inverted the meaning: instead of "no local effect", it
-        // became "affect the whole mesh" (task 0318 fuzz report). Reject
-        // it as invalid input instead, mirroring the strength_ guard
-        // above; a genuinely tiny-but-positive dist (e.g. 0.001) still
+        // `dist` is an EXPLICIT command param (a real spatial radius).
+        // falloff.d's elementWeight() gives a zero radius its own meaning —
+        // only the picked element moves (slice M5, gap 372; it used to be
+        // weight 1.0 EVERYWHERE, which made dist<=0 "affect the whole mesh",
+        // task 0318 fuzz report). This command still rejects dist<=0 as
+        // invalid input, mirroring the strength_ guard above; a genuinely tiny-but-positive dist (e.g. 0.001) still
         // falls through to the normal sphere math and correctly no-ops
         // when nothing is within radius. HOISTED to `evaluate` at task 1903
         // L0-d1 (§2.4) together with the `strength_` guard it mirrors — the

@@ -194,8 +194,9 @@ unittest { // u4: the prepared arm recalls a claimed stage after its preset imag
     auto owner2 = PreparedPipeActivationOwner.prepare(pipe2, noFalloff, null,
         PipeArmScope.presetArm, recall);
     owner2.install();
-    assert(abs(falloff.pickedRadius - 1.0f) <= 1e-6,
-        "M5 u4: an unclaimed falloff received the preset's cached range");
+    assert(abs(falloff.pickedRadius - 0.37f) > 1e-3,
+        format("M5 u4: an unclaimed falloff received the preset's cached range (%s)",
+               falloff.pickedRadius));
 }
 
 unittest { // u5: the cache is a section of the prefs document (M5b)

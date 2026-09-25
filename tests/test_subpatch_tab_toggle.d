@@ -263,6 +263,10 @@ unittest { // task 6249: Tab-off/on after a real drag must not resurrect stale l
 
     auto toolOn = postJson("/api/script", "tool.set xfrm.elementMove on");
     assert(toolOn["status"].str == "ok", "element Move activation failed: " ~ toolOn.toString);
+    // The 0.274082 below was measured at Element range 1, the pre-M5 default;
+    // the shipped default is 0 (gap 372), so the range is set explicitly.
+    auto range = postJson("/api/script", "tool.pipe.attr falloff dist 1");
+    assert(range["status"].str == "ok", "element range write failed: " ~ range.toString);
     Thread.sleep(150.msecs);
 
     auto cam = fetchCamera();

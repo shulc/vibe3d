@@ -183,6 +183,8 @@ DragResult runDrag(string toolId, bool subpatch, int[] selectedVerts = null,
 {
     prepareScene(subpatch, selectedVerts, hideOne, toggleOffAfter);
     cmd("tool.set " ~ toolId ~ " on");
+    // Element falloff: range 1 was the pre-M5 default these numbers were measured under; the shipped default is 0 (gap 372).
+    if (toolId == "xfrm.elementMove") cmd("tool.pipe.attr falloff dist 1");
     Thread.sleep(300.msecs);
     auto c = fetchCamera();
 

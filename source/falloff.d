@@ -471,7 +471,11 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
     // pickedCenter drives the falloff sphere; pickedRadius (the
     // `dist` attr) is the radius. Non-anchor verts attenuate from
     // weight = 1 at the centre to 0 at the boundary, shape-mapped.
-    if (cfg.pickedRadius <= 1e-9f) return 1.0f;  // degenerate radius → full
+    // Range 0 (the shipped default) moves ONLY the picked element: the
+    // anchor ring returned 1 above, every other vertex is 0 (C-elem-range0,
+    // gap 372: weight 0 down to 0.05 m). It used to return 1 for EVERY
+    // vertex, which moved the whole mesh.
+    if (cfg.pickedRadius <= 1e-9f) return 0.0f;
     // Distance is measured to the picked element's GEOMETRY (defined
     // by `anchorPos`, the world positions of the picked verts), not to
     // the single centroid `pickedCenter`. A vertex pick (1 anchor) ==

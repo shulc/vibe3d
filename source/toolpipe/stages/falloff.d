@@ -802,7 +802,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
                 ps ~= Param.intEnum_("mode", "Element Mode",
                                      &config.elementMode, elementModeEntries,
                                      cast(int)ElementMode.Auto);
-                ps ~= Param.float_("dist", "Range", &config.pickedRadius, 1.0f).min(1e-6f);
+                ps ~= Param.float_("dist", "Range", &config.pickedRadius, 0.0f).min(0.0f);
                 ps ~= Param.intEnum_("connect", "Connected Elements",
                                      &config.connect, elementConnectEntries,
                                      cast(int)ElementConnect.Ignore);

@@ -150,9 +150,10 @@ unittest {
     commandId("scene.reset");
     armElementMove(cell);
     immutable double fresh = falloffRange();
-    assert(abs(fresh - 1.0) <= 1e-6,
+    // 0 is the shipped Element range default (S-elemdefault, gap 372).
+    assert(abs(fresh) <= 1e-6,
         format("a script scene.reset did not clear the tool attribute cache: range %s "
-             ~ "(default 1)", fresh));
+             ~ "(default 0)", fresh));
     command("tool.set xfrm.elementMove off");
 }
 
@@ -355,7 +356,7 @@ unittest {
 // the replay arm, which reads the cache (armUsesAttrCache(replayArm) == true).
 // The re-arm itself is captured (C-M4-token-switch, M0b: "the undone
 // activation restores Edge Extrude live"); the VALUES the restored predecessor
-// carries are not — gap row 370. Ours follows H6: every arm recalls the cache.
+// carries are not — gap row 373. Ours follows H6: every arm recalls the cache.
 // ---------------------------------------------------------------------------
 
 unittest {

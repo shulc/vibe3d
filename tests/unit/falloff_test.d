@@ -400,24 +400,25 @@ unittest {
                    "Radial with size=(0,0,0) must read 1.0 EVERYWHERE");
     }
 
-    // Element: pickedRadius <= 0 (degenerate sphere) -> full weight everywhere.
+    // Element: pickedRadius <= 0 is NOT a degenerate "full weight" case — it is
+    // the shipped default and moves only the picked element (C-elem-range0,
+    // gap 372; the full-weight reading it replaced is refuted by that capture).
     {
         FalloffPacket p;
         p.enabled      = true;
         p.type         = FalloffType.Element;
         p.shape        = FalloffShape.Linear;
         p.pickedRadius = 0.0f;
+        p.anchorRing   = [0u];
         p.anchorPos    = [Vec3(0, 0, 0)];
-        foreach (pos; [Vec3(0, 0, 0), Vec3(1000, 0, 0)])
-            assert(isClose(evaluateFalloff(p, pos, 0, vp), 1.0f),
-                   "Element with pickedRadius=0 must read 1.0 EVERYWHERE");
-        // A negative radius reads the same as zero (same "<= 1e-9" gate) —
-        // this is the exact shape `tests/test_magnet.d` guards against one
-        // caller away from here.
+        assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f),
+               "Element range 0: the picked vertex must read 1.0");
+        assert(evaluateFalloff(p, Vec3(1000, 0, 0), 1, vp) == 0.0f,
+               "Element range 0: a far vertex must read 0.0");
+        // A negative radius reads the same as zero (same "<= 1e-9" gate).
         p.pickedRadius = -3.0f;
-        assert(isClose(evaluateFalloff(p, Vec3(1000, 0, 0), 0, vp), 1.0f),
-               "Element with a negative pickedRadius must ALSO read 1.0 "
-               ~ "EVERYWHERE, not merely near the anchor");
+        assert(evaluateFalloff(p, Vec3(1000, 0, 0), 1, vp) == 0.0f,
+               "Element with a negative pickedRadius must read 0.0 off the pick");
     }
 
     // Cylinder, size == (0,0,0): BOTH axis and size degenerate -> full weight.
@@ -763,4 +764,41 @@ unittest { // vertexMapWeight: lookup + clamp + degenerate cases
     assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 5, vp), 1.0f));
     // negative vertIdx → full influence
     assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), -1, vp), 1.0f));
+}
+
+unittest { // C-elem-range0 (toolcards/tool_session_model/ M0d; gap 372): the
+    // captured displacement ratios around a picked vertex v3, at the capture's
+    // distances. Range 0 (shipped default): only the pick moves. Range 0.2
+    // (the capture's positive control): w = 1 - d/r, 0.75 at 0.05 m and 0.40 at
+    // 0.12 m, 0 from 0.30 m out.
+    import std.format : format;
+    import std.math : abs;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
+    immutable Vec3 v3 = Vec3(0.5f, 0.5f, 0.5f);
+    immutable double[] dists = [0.05, 0.12, 0.30, 0.70, 1.0];
+    FalloffPacket p;
+    p.enabled    = true;
+    p.type       = FalloffType.Element;
+    p.shape      = FalloffShape.Linear;
+    p.anchorRing = [3u];
+    p.anchorPos  = [v3];
+
+    void check(float range, const double[] want) {
+        p.pickedRadius = range;
+        const pick = evaluateFalloff(p, v3, 3, vp);
+        assert(abs(pick - 1.0f) <= 1e-6,
+            format("C-elem-range0 range %s: the picked vertex read %s, captured 1.0", range, pick));
+        size_t n;
+        foreach (i, d; dists) {
+            const w = evaluateFalloff(p, v3 + Vec3(0, 0, cast(float) d), cast(int)(8 + i), vp);
+            assert(abs(w - want[i]) <= 1e-5,
+                format("C-elem-range0 range %s: weight at %s m read %s, captured %s",
+                       range, d, w, want[i]));
+            ++n;
+        }
+        assert(n == 5, "C-elem-range0: population floor");
+    }
+    check(0.2f, [0.75, 0.40, 0.0, 0.0, 0.0]);    // the control stays green on HEAD
+    check(0.0f, [0.0, 0.0, 0.0, 0.0, 0.0]);      // HEAD read 1.0 everywhere
 }

@@ -73,6 +73,9 @@ unittest { // A freshly armed tool is posed through the same prepared VTS door
            // longer exists, so a headless apply must observe the posed falloff.
     postJson("/api/command", commandBody("scene.reset"));
     cmd("tool.set xfrm.elementMove on");
+    // An explicit range: at the shipped default 0 only a PICKED element
+    // moves (gap 372), and this cell applies without a pick.
+    cmd("tool.pipe.attr falloff dist 1");
     cmd("tool.attr xfrm.elementMove TX 0.3");
     cmd("tool.doApply");
     auto verts = getJson("/api/model")["vertices"].array;
