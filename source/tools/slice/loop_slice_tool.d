@@ -489,6 +489,13 @@ public:
 
     override string name() const { return "Loop Slice"; }
 
+    // Its arm is the activation row the first-gesture undo pops (gap row 205).
+    // The id arm of toolArmEmitsLifecycle still names it until slice M3.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+
     // Edges is the classic activation type; Polygons is the 0245 activation
     // model — a face selection acts on the edge(s) BETWEEN the selected
     // polygons (see `activationSeeds`), so the tool is offered in both modes.

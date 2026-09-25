@@ -1208,22 +1208,22 @@
   ],
   "internal_publishers": [
     {
-      "line": 100,
+      "line": 99,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "3e54974cf99871bd3455ca9eadc23a90bdc4f5e17111b0304bc65529042e4568",
       "symbol": "prepareArm"
     },
     {
-      "line": 252,
+      "line": 251,
       "path": "source/prepared_tool_transition.d",
       "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
     }
   ],
   "lifecycle_classifier": {
-    "line": 92,
+    "line": 91,
     "path": "source/prepared_tool_transition.d",
-    "semantic_sha256": "80d974d4ce92a172419544eb30e4569d8531b538d63f3e1bb535cfe591ee3356",
+    "semantic_sha256": "df43b76fb9b24d0a46a8243faae76a11824567b4bce917e7c820bcb11b74c2f7",
     "symbol": "toolArmEmitsLifecycle"
   },
   "lifecycle_products": [
@@ -1249,14 +1249,14 @@
       "symbol": "lifecycleProduct"
     },
     {
-      "admission": "LifecycleUndoEmitter",
+      "admission": "activationRow",
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
       "signature": "TopologyPenTool",
       "symbol": "lifecycleProduct"
     },
     {
-      "admission": "LifecycleUndoEmitter",
+      "admission": "activationRow",
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
       "signature": "XfrmTransformTool",

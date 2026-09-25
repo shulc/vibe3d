@@ -119,6 +119,27 @@ def _derives(classes, name, base, seen=None):
     return base in bases or any(_derives(classes, parent, base, seen)
                                 for parent in bases)
 
+def _declares_activation_row(class_body):
+    """Whether a class body overrides `sessionPolicy` with `activationRow: true`
+    (tool session model slice M1: the policy field replaced the marker)."""
+    masked = _mask_comments(class_body)
+    m = re.search(r"\boverride\s+ToolSessionPolicy\s+sessionPolicy\s*\([^)]*\)[^{;]*\{",
+                  masked)
+    if not m: return False
+    body = masked[m.end():_balanced(masked, m.end()) - 1]
+    return re.search(r"\bactivationRow\s*:\s*true\b", body) is not None
+
+def _policy_activation_row(classes, name, seen=None):
+    """Whether a product, or the nearest ancestor that overrides the policy,
+    declares the activation row."""
+    if seen is None: seen = set()
+    if name in seen or name not in classes: return False
+    seen.add(name)
+    info = classes[name]
+    if info.get("policy_override"): return info.get("activation_row", False)
+    return any(_policy_activation_row(classes, parent, seen)
+               for parent in info.get("bases", []))
+
 def _calls(body):
     out = []
     scrub = re.sub(r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"])*\"", " ", body,
@@ -364,8 +385,13 @@ def scan(root):
         for cm in re.finditer(r"\bclass\s+(\w+)\s*(?::\s*([^\{]+))?\s*\{", masked):
             end = _balanced(text, cm.end())
             bases = re.findall(r"\b[A-Za-z_]\w*\b", cm.group(2) or "")
+            class_body = text[cm.end():end-1]
             classes[cm.group(1)] = {"bases": bases, "module": module_match.group(1),
-                                    "constructs": re.findall(r"\bnew\s+([A-Za-z_]\w*)\s*\(", text[cm.end():end-1])}
+                                    "constructs": re.findall(r"\bnew\s+([A-Za-z_]\w*)\s*\(", class_body),
+                                    "policy_override": re.search(
+                                        r"\boverride\s+ToolSessionPolicy\s+sessionPolicy\b",
+                                        _mask_comments(class_body)) is not None,
+                                    "activation_row": _declares_activation_row(class_body)}
     by_id = {f["id"]: f for f in factories if not f["id"].startswith("<")}
     preset_text = (root / "config/tool_presets.yaml").read_text()
     preset_bases = sorted(set(re.findall(r"^\s*base:\s*([^\s#]+)", preset_text, re.M)))
@@ -427,8 +453,8 @@ def scan(root):
     lifecycle_admissions = {}
     for product in sorted({product for factory in factories
                            for product in factory["product_types"]}):
-        if _derives(classes, product, "LifecycleUndoEmitter"):
-            lifecycle_admissions[product] = "LifecycleUndoEmitter"
+        if _policy_activation_row(classes, product):
+            lifecycle_admissions[product] = "activationRow"
     # The cutting sessions admitted by id in toolArmEmitsLifecycle (task 7137
     # added Edge Slice, then Loop Slice); mirror that id set here, the body digest forces review.
     for factory in factories:

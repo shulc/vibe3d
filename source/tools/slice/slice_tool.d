@@ -1039,6 +1039,13 @@ public:
 
     override string name() const { return "Slice"; }
 
+    // Its arm is the activation row the first-gesture undo pops (§22).
+    // The id arm of toolArmEmitsLifecycle still names it until slice M3.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+
     // A mesh op — offered in every geometry mode (like the screen/axis slice
     // commands, which are mode-agnostic).
     override EditMode[] supportedModes() const {

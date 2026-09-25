@@ -17,7 +17,7 @@ import std.json : JSONType, JSONValue;
 import tool : Tool;
 import view : View;
 import editmode : EditMode;
-import edit_session : LifecycleUndoEmitter, SwitchRestorablePredecessor;
+import edit_session : SwitchRestorablePredecessor;
 import tool_presets : prepareStickyToolDefaults;
 import toolpipe.pipeline : Pipeline;
 import tool_activation_ownership : PipeArmScope;
@@ -82,15 +82,14 @@ private void abandon(PreparedRecordContext context) nothrow @nogc {
     context.discard();
 }
 
-/// One classification for both sides of a prepared tool boundary. Tools whose
-/// visible arm participates in history opt in through the marker (see
-/// `toolcards/undo_surfaces/`). The cutting sessions Slice, Edge Slice and
-/// Loop Slice are named by id instead: their arm is a row the session's
-/// first-gesture undo pops and its redo re-arms with (§22, task 7137; Loop
-/// Slice's re-arm is its arm-time loop, gap row 205), and the marker would
-/// also move them onto the transform tools' lifecycle path.
+/// One classification for both sides of a prepared tool boundary: the tool's
+/// `sessionPolicy().activationRow` (slice M1 replaced the marker interface;
+/// the surface basis is `toolcards/undo_surfaces/`). The cutting sessions
+/// Slice, Edge Slice and Loop Slice declare the field too, and are still
+/// named by id here: the id arm is REDUNDANT since M1 and is removed by slice
+/// M3 (§22, task 7137; Loop Slice's re-arm is its arm-time loop, gap row 205).
 bool toolArmEmitsLifecycle(Tool candidate, string id) nothrow @nogc {
-    return cast(LifecycleUndoEmitter)candidate !is null ||
+    return (candidate !is null && candidate.sessionPolicy().activationRow) ||
            id == "mesh.sliceTool" || id == "mesh.edgeSliceTool" ||
            id == "mesh.loopSliceTool";
 }

@@ -389,6 +389,13 @@ public:
 
     override string name() const { return "Edge Slice"; }
 
+    // Its arm is the activation row the first-gesture undo pops (§22).
+    // The id arm of toolArmEmitsLifecycle still names it until slice M3.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+
     override EditMode[] supportedModes() const { return [EditMode.Edges]; }
 
     // HoverEdges: needed so app.d's picker keeps writing g_hoveredEdge while

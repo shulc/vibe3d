@@ -169,9 +169,24 @@ private enum string gestureCarrierRefusal(F) =
 // navigation, refire, live re-eval, lifecycle-undo emit) lives in
 // edit_session.d: EditSession is the sole driver, and the narrow per-tool
 // opt-ins are its optional capability interfaces (LiveEvalClient,
-// RefireClient, KeepAliveOnCancel, SessionStepUndo, LifecycleUndoEmitter),
-// discovered by cast on the active tool.
+// RefireClient, KeepAliveOnCancel, SessionStepUndo), discovered by cast on the
+// active tool — or DATA the tool declares in its ToolSessionPolicy below.
 // ---------------------------------------------------------------------------
+
+/// What a tool's session does, as DATA rather than as a marker interface (tool
+/// session model, slice M1; doc/tool_session_model_plan_2026-09-24.md R3.1).
+/// Read through `Tool.sessionPolicy()`, never by cast, so it adds no census
+/// capability. Each field arrives with the slice that READS it; its `.init` is
+/// the answer for every tool that does not override. The id-to-policy table,
+/// with provenance per id, is tests/unit/tool_session_policy_test.d.
+struct ToolSessionPolicy {
+    /// H1: arming writes the activation history row (a ToolActivationCommand)
+    /// — read by `toolArmEmitsLifecycle` for both the incoming tool and the
+    /// retained predecessor. Not WHEN the operation opens (that is `opensAt`,
+    /// a later slice): Edge Slice and Slice write the row yet open at the
+    /// first press.
+    bool activationRow;
+}
 
 class Tool : ParamProvider {
 private:
@@ -780,9 +795,11 @@ public:
     // rendering — preventing duplicate widgets.
     bool renderParamsAsPanel() const { return true; }
 
-    // Lifecycle-undo emit opt-in (ToolActivationCommand on arm) moved to
-    // the LifecycleUndoEmitter marker interface in edit_session.d (task
-    // 0428).
+    // The session policy (struct ToolSessionPolicy above). Overrides return
+    // static data: the prepared arm reads it from `nothrow @nogc` code.
+    ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        return ToolSessionPolicy.init;
+    }
 
     // Edit modes in which this tool makes sense. Side-panel /
     // status-bar buttons auto-disable when the current edit mode is
@@ -846,9 +863,9 @@ static assert(!__traits(compiles, {
 // arm, which returns `false` exactly as the empty-`bindings()` default did in
 // all three phases.
 //
-// Precedent: the five session capabilities in `edit_session.d`
-// (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo /
-// LifecycleUndoEmitter), all discovered the same way.
+// Precedent: the session capabilities in `edit_session.d`
+// (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo),
+// all discovered the same way.
 // ---------------------------------------------------------------------------
 interface InputBindable {
     /// Declarative (button, exact modifier combo) -> `ToolAction` table.
@@ -894,7 +911,7 @@ interface InputBindable {
 // Adding a virtual to `Tool` now fails the BUILD with the message below.
 // Before you add a name here, check the alternative: if fewer than about three
 // tools will override it, it belongs on a capability interface (see
-// `InputBindable` above and the five in `edit_session.d`), not on the base.
+// `InputBindable` above and the ones in `edit_session.d`), not on the base.
 // ---------------------------------------------------------------------------
 private enum string[] kToolVirtualWhitelist = [
     // Wide contracts — dozens of overriders each. These are what a base class
@@ -908,6 +925,11 @@ private enum string[] kToolVirtualWhitelist = [
     // The wide SESSION contract (task 0428) — ~30 overriders each.
     "hasUncommittedEdit", "cancelUncommittedEdit", "resyncSession",
     "commitUncommittedEdit",
+    // The tool session model's policy (slice M1): DATA every tool has by the
+    // captured law H1, read without a cast, so it is on the base by design
+    // and replaces a marker interface. 5 overriders today; the plan's later
+    // slices add fields, not virtuals.
+    "sessionPolicy",
     // Middling — 4 to 8 overriders. Fine on the base; listed so the next
     // reader can see where the line currently sits.
     "flags", "isDragging", "onKeyDown",

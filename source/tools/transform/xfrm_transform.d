@@ -115,10 +115,10 @@ import params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
-import tool            : ToolFlag;
+import tool            : ToolFlag, ToolSessionPolicy;
 import edit_session    : LiveEvalClient, ParameterChangeBatch,
                          ParameterChangeSource, SlotActivationClient,
-                         LifecycleUndoEmitter, ForeignEditBoundary;
+                         ForeignEditBoundary;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -692,12 +692,12 @@ struct PreparedXfrmUpdateBoundaryImage {
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
 // capability — hasLiveEval / hasLiveAttrEval / reEvaluate below are the
 // interface's implementations (EditSession discovers them by cast).
-// LifecycleUndoEmitter (task 0428): marker — this tool records a
-// ToolActivationCommand on arm (undo-cursor lifecycle stepping).
+// Its arm records a ToolActivationCommand: `sessionPolicy().activationRow`
+// (task 0428 marker, carried as data by slice M1).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient,
-                          LifecycleUndoEmitter, ForeignEditBoundary {
+                          ForeignEditBoundary {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -2948,8 +2948,11 @@ public:
     // stays highlighted, not every element under the moving cursor).
     override bool isDragging() const { return activeDrag !is null; }
 
-    // Lifecycle-undo emit opt-in is the LifecycleUndoEmitter marker on the
-    // class declaration (task 0428) — no method needed.
+    // The arm writes the activation row (see the class comment).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
 
     override bool wantsHoverForType(EditMode type) const {
         auto fs = activeFalloffStage();

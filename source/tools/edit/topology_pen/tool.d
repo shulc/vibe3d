@@ -53,7 +53,6 @@ import tools.edit.topology_pen.snap_guide : PenSnapGuide;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
 import bvh_pick              : BvhPick;
 import command_history      : CommandHistory, PreparedHistoryKind;
-import edit_session         : LifecycleUndoEmitter;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
@@ -189,7 +188,7 @@ package enum string[] kGestureArmFields = () {
 /// read its state, including its `private` members, exactly as they did when
 /// their bodies were typed out here.
 class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient,
-                        PreparedToolPoseDoorClient, LifecycleUndoEmitter {
+                        PreparedToolPoseDoorClient {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
@@ -1205,6 +1204,12 @@ public:
     }
 
     override string name() const { return "Topology Pen"; }
+
+    // Its visible arm is a strict-LIFO history row (slice M1 carries the former marker).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
 
     // Add Loop "at the Middle" option schema
     // (doc/tasks/work/0480-topopen-addloop-middle.md) — the FIRST `params()`

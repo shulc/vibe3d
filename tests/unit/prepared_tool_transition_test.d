@@ -8,8 +8,8 @@ import command_history : CommandHistory, HistoryEntry, HistoryFlags,
                         PreparedHistoryImage;
 import document : PreparedLayerReadScope;
 import record_observer_hub : PreparedRecordObserverImage;
-import edit_session : LifecycleUndoEmitter, SwitchRestorablePredecessor;
-import tool : Tool;
+import edit_session : SwitchRestorablePredecessor;
+import tool : Tool, ToolSessionPolicy;
 import registry : PreparedPipeAttrs, ToolFactory;
 import tool_activation_ownership : PipeArmScope;
 import tools.edit.topology_pen.tool : TopologyPenTool;
@@ -132,13 +132,20 @@ private class CountingPreparedTool : Tool {
     ~this() { ++destroyed; }
 }
 
-private class LifecyclePreparedTool : Tool, LifecycleUndoEmitter { }
+/// A tool whose session policy declares the activation row (slice M1: the
+/// field replaced the marker interface).
+private class LifecyclePreparedTool : Tool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+}
 
 unittest {
-    static assert(is(TopologyPenTool : LifecycleUndoEmitter),
+    assert((new TopologyPenTool).sessionPolicy().activationRow,
         "Topology Pen arm must opt into lifecycle history");
     assert(toolArmEmitsLifecycle(new LifecyclePreparedTool, "mesh.marker"),
-        "a lifecycle marker must classify the prepared arm for recording");
+        "the activationRow policy must classify the prepared arm for recording");
     assert(toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.sliceTool"),
         "the Slice compatibility arm lost its lifecycle classification");
     assert(!toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.plain"),
@@ -567,8 +574,11 @@ unittest {
 
 private class NoPreparedDoorTool : Tool { }
 
-private class TestPreparedDoorTool : Tool, PreparedToolDoorClient,
-                                     LifecycleUndoEmitter {
+private class TestPreparedDoorTool : Tool, PreparedToolDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
     bool refuseActivation;
     size_t* activationCalls;
 

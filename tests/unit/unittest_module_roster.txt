@@ -491,6 +491,7 @@ tests.unit.tool_gesture_runopen_test
 tests.unit.tool_input_test
 tests.unit.tool_model_census_test
 tests.unit.tool_presets_test
+tests.unit.tool_session_policy_test
 tests.unit.tool_state_owned_route_test
 tests.unit.toolchain_floor_test
 tests.unit.toolpipe.obbox_test
