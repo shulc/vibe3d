@@ -6,8 +6,13 @@
 //   C-H1-bev   the arm APPLIES the bevel (a zero-width ring: +4 vertices on one
 //              quad); a haul is a step of that operation; Ctrl+Z pops the haul
 //              (tool alive, 0/0, the ring stays); Ctrl+Z again pops the arm's
-//              group with its activation row (UI door): tool off, mesh back.
+//              group with its activation row (UI door): tool off, mesh back;
+//              the navigate redo brings the group back live (H4).
 //                                                   (opensAt=firstPress, m3b-a)
+//   C-H1-door-bev  the same through the SCRIPT door: the arm's group goes and
+//              the tool stays with its own row (gap 300, extrapolated).
+//   doApply    the headless apply replaces the live window; its undo returns
+//              the window's base.
 //   C-H2-bev   two plain hauls are two steps of ONE operation (no new ring);
 //              Ctrl+Z restores the first haul's values and geometry.
 //   C-H5-mmb   a motionless Middle tap after a haul opens a NEW operation that
@@ -46,7 +51,8 @@ bool cell(string id) {
     return only.length == 0 || only == id;
 }
 
-void ctrlZ(string what) { slKey(SL_SDLK_z, SL_KMOD_LCTRL, what); }
+void ctrlZ(string what)      { slKey(SL_SDLK_z, SL_KMOD_LCTRL, what); }
+void ctrlShiftZ(string what) { slKey(SL_SDLK_z, SL_KMOD_LCTRL | SL_KMOD_LSHIFT, what); }
 
 JSONValue st() { return getJson("/api/tool/state"); }
 string tool() {
@@ -138,6 +144,67 @@ unittest {
     assert(tool() == "" && slHistoryLen() == 0 && slMesh().canon == base.canon,
            format("C-H1-bev z2: the second Ctrl+Z must pop the arm with its row: tool '%s', rows %s, "
                   ~ "mesh %s", tool(), slHistoryLabels(), slMesh().toString));
+    // H4: the navigate redo re-arms and brings the arm's group back LIVE.
+    ctrlShiftZ("C-H1-bev Ctrl+Shift+Z");
+    assert(tool() == "polyBevel" && applied() && slHistoryLen() == 1 && slMesh().canon == a0.canon,
+           format("C-H1-bev: the navigate redo must re-arm with the arm's ring live: tool '%s', "
+                  ~ "applied %s, rows %s, mesh %s", tool(), applied(), slHistoryLabels(),
+                  slMesh().toString));
+    slLine("tool.set poly.bevel off");
+}
+
+// ---------------------------------------------------------------------------
+// C-H1-door-bev — the SCRIPT door keeps its own row (gap 300; extrapolated to
+// Bevel from C-H1-door-es-api, as M3 did for Slice).
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("C-H1-door-bev")) return;
+    const base = rig("C-H1-door-bev");
+    slLine("tool.set poly.bevel on");
+    const a0 = slMesh();
+    assert(tool() == "polyBevel" && applied() && a0.verts == 12 && slHistoryLen() == 1,
+           format("C-H1-door-bev: the script arm must apply too and write its own row: tool '%s', "
+                  ~ "applied %s, mesh %s, rows %s", tool(), applied(), a0.toString,
+                  slHistoryLabels()));
+    haul(0, -40, "C-H1-door-bev h1");
+    ctrlZ("C-H1-door-bev Ctrl+Z 1");
+    assert(applied() && slMesh().canon == a0.canon,
+           format("C-H1-door-bev z1: the haul alone must go: applied %s, mesh %s",
+                  applied(), slMesh().toString));
+    ctrlZ("C-H1-door-bev Ctrl+Z 2");
+    assert(tool() == "polyBevel" && !applied() && slHistoryLen() == 1
+           && slMesh().canon == base.canon,
+           format("C-H1-door-bev z2: the arm's group goes, the tool and its row stay: tool '%s', "
+                  ~ "applied %s, rows %s, mesh %s", tool(), applied(), slHistoryLabels(),
+                  slMesh().toString));
+    ctrlZ("C-H1-door-bev Ctrl+Z 3");
+    assert(tool() == "" && slHistoryLen() == 0 && slMesh().canon == base.canon,
+           format("C-H1-door-bev z3: the activation row goes last: tool '%s', rows %s",
+                  tool(), slHistoryLabels()));
+}
+
+// ---------------------------------------------------------------------------
+// doApply — the headless apply REPLACES the live window, so its undo returns
+// the window's base, never the arm's ring as orphan geometry.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("doApply")) return;
+    const base = rig("doApply");
+    slLine("tool.set poly.bevel on");
+    slLine("tool.attr poly.bevel inset 0.1");
+    slLine("tool.doApply");
+    const applied1 = slMesh();
+    assert(applied1.verts == 12 && applied1.canon != base.canon && !applied(),
+           format("bevel floor (doApply): the headless apply did not bevel: mesh %s, applied %s",
+                  applied1.toString, applied()));
+    slLine("history.undo");
+    assert(slMesh().canon == base.canon,
+           format("doApply: undoing the headless apply must return the window's base, not the "
+                  ~ "arm's ring: mesh %s, rows %s", slMesh().toString, slHistoryLabels()));
+    slLine("tool.set poly.bevel off");
+    assert(slMesh().canon == base.canon && slHistoryLen() == 1,
+           format("doApply: dropping the tool after the undo must record nothing: mesh %s, rows %s",
+                  slMesh().toString, slHistoryLabels()));
 }
 
 // ---------------------------------------------------------------------------

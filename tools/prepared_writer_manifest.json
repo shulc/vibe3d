@@ -886,7 +886,7 @@
     {
       "aggregate": "PolyBevelTool",
       "module": "tools.edit.poly_bevel",
-      "semantic_sha256": "68c0481fd6eb04fb0c86b2faf61636476977d35466ef58724d3b9a83c955dfd4",
+      "semantic_sha256": "027209bf256475141cceee0d2349d0ff99c1c6a82d22c2d2001c7b5fb4bf0608",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -1243,6 +1243,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "signature": "PolyBevelTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
       "signature": "SliceTool",
@@ -1463,7 +1470,7 @@
     {
       "aggregate": "PolyBevelTool",
       "module": "tools.edit.poly_bevel",
-      "semantic_sha256": "ee6512085a1d77b6a559c7d7c9dc04548a2b6790a97eeef3a6ebe70e3801c5e5",
+      "semantic_sha256": "764fa460643209e9c48330d45d6ab7442d813b7a15737b2cac475633d271ea4e",
       "signature": "Param[]()",
       "symbol": "params"
     },

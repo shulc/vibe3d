@@ -647,7 +647,7 @@ B3D_PRODUCER_DIGESTS = {
     "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
     "tools/edit/edge_bevel":"8c47f66199de95b827047be61df795f14fb018e720c32e4cb151bab20d1d547d",
     "tools/edit/edge_extrude":"293c94c99cb663a063dc0dfd59c345dce2a68a141bdf41972b21b9ba58cbcf8a",
-    "tools/edit/poly_bevel":"6ee1932c80dcfca11ae55b5e30ca81260eb513ad79176286b4a6df1c6a39818b",
+    "tools/edit/poly_bevel":"fc6fbfa26a6ca5e0db343abcaea3ec81b4ab9c087cebf33afb240b7524e21199",
     "tools/edit/poly_extrude":"1645a6f9603d75a3bd03662a7a47db845c018bf38b6b754471f658113ae8f192",
     "tools/edit/poly_inset_tool":"7b39c23988c01f31c8956395c1834b00bfaefde748ed19646cfe40465d320dd4",
     "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
@@ -812,8 +812,10 @@ else: fail("P1.0b.3d wrong-original mutation did not RED")
 for module, guard, inverted in (
     ("tools.edit.edge_extrude", "(extrude_ != 0.0f || width_ != 0.0f) &&",
      "(extrude_ == 0.0f && width_ == 0.0f) &&"),
-    ("tools.edit.poly_bevel", "(inset_ != 0.0f || shift_ != 0.0f) &&",
-     "(inset_ == 0.0f && shift_ == 0.0f) &&"),
+    # Slice M3b: the arm's zero-width ring is an applied operation, not an
+    # identity preview; the guard is the window's own "holds geometry" answer.
+    ("tools.edit.poly_bevel", "hasUncommittedEdit() &&",
+     "!hasUncommittedEdit() &&"),
     ("tools.edit.poly_extrude", "distance_ != 0.0f &&",
      "distance_ == 0.0f &&"),
 ):
@@ -3027,7 +3029,7 @@ def poly_bevel_param_gate(s):
                 "image.expectedLive = MeshSnapshot.capture(live);",
                 "image.expectedBefore = MeshSnapshot.capture(baseline);",
                 "preview_.prepareImage(image.preview);",
-                "preparedPreview.run(image.candidate, before,",
+                "preparedPreview.run(image.candidate, opBase(),",
                 "ed.bevelFacesByMask(ed.operandFaceMask(), inset_",
                 "preparedPreview.savePreparedNext(image.preview);",
                 "preview_.matchesImage(image.preview)",

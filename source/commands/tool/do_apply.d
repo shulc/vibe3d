@@ -50,6 +50,12 @@ class ToolDoApplyCommand : Command {
         auto t = toolHost.getActiveTool();
         if (t is null) return false;
 
+        // The headless apply REPLACES the live window of a tool whose session
+        // owns its steps (slice M3b: Polygon Bevel's arm applies at once), so
+        // the window goes first and this row's undo returns the mesh under it
+        // — never the window's preview as geometry no row created.
+        if (t.sessionPolicy().sessionSteps && t.hasUncommittedEdit())
+            t.cancelUncommittedEdit();
         snap = MeshSnapshot.capture(*mesh);
         noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (!t.applyHeadless()) {
