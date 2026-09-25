@@ -490,3 +490,62 @@ unittest { // U8: stopping detaches a queued load before acceptance
     assert(state.generation == 0 && state.total == 0,
         "U8 stopped request was accepted after shutdown");
 }
+
+unittest { // U9: `processed` needs one COMPLETED frame after the dispatching one
+    // Card test-sleep-removal. The composition root calls tickEventPlayer and
+    // then tickAll in one frame; the tool update, flush and draw of that frame
+    // run AFTER the tickAll pass that could serve a status read. `finished`
+    // flips in that pass already, `processed` must not.
+    setEventPlayerClockForTest(0, 1000);
+    setEventPlayerModifierForTest(KMOD_NONE);
+    scope(exit) clearEventPlayerControlsForTest();
+    shared size_t delivered;
+    immutable port = freePort();
+    auto server = new HttpServer(port);
+    server.setEventPlayerSink((SDL_Event*, bool) { atomicOp!"+="(delivered, 1); });
+    startReady(server);
+    scope(exit) if (server.running) server.stop();
+
+    auto idle = jsonReply(requestAndTick(server, port, "GET",
+        "/api/play-events/status", ""), "HTTP/1.1 200 OK", "U9 idle");
+    assert(idle["finished"].type == JSONType.true_
+        && idle["processed"].type == JSONType.true_,
+        "U9 a server that never played must read processed: " ~ idle.toString());
+
+    auto accepted = requestAndTick(server, port, "POST", "/api/play-events", bLog());
+    jsonReply(accepted, "HTTP/1.1 200 OK", "U9 load");
+    auto loaded = jsonReply(requestAndTick(server, port, "GET",
+        "/api/play-events/status", ""), "HTTP/1.1 200 OK", "U9 loaded");
+    assert(loaded["finished"].type == JSONType.false_
+        && loaded["processed"].type == JSONType.false_,
+        "U9 an undelivered log read processed: " ~ loaded.toString());
+
+    // The dispatching frame: the player drains, then this frame's tickAll.
+    server.tickEventPlayer();
+    assert(atomicLoad(delivered) == 3,
+        "U9 population floor: the three events were not dispatched");
+    auto sameFrame = jsonReply(requestAndTick(server, port, "GET",
+        "/api/play-events/status", ""), "HTTP/1.1 200 OK", "U9 same frame");
+    assert(sameFrame["finished"].type == JSONType.true_,
+        "U9 finished must flip in the dispatching frame: " ~ sameFrame.toString());
+    assert(sameFrame["processed"].type == JSONType.false_,
+        "U9 processed answered inside the dispatching frame, before its "
+        ~ "update/flush/draw: " ~ sameFrame.toString());
+
+    // The next frame: its own player tick (idle) then tickAll.
+    server.tickEventPlayer();
+    auto nextFrame = jsonReply(requestAndTick(server, port, "GET",
+        "/api/play-events/status", ""), "HTTP/1.1 200 OK", "U9 next frame");
+    assert(nextFrame["processed"].type == JSONType.true_,
+        "U9 processed did not hold one frame later: " ~ nextFrame.toString());
+    assert(nextFrame["frame"].integer == sameFrame["frame"].integer + 1,
+        "U9 frame must count tickAll passes: " ~ sameFrame.toString()
+        ~ " then " ~ nextFrame.toString());
+
+    // An idle player tick must not re-open the barrier.
+    server.tickEventPlayer();
+    auto later = jsonReply(requestAndTick(server, port, "GET",
+        "/api/play-events/status", ""), "HTTP/1.1 200 OK", "U9 idle tick");
+    assert(later["processed"].type == JSONType.true_,
+        "U9 an idle player tick re-opened the barrier: " ~ later.toString());
+}

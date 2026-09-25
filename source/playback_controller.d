@@ -24,6 +24,12 @@ struct PlaybackStatus {
     size_t remaining;
     size_t immediateMotions;
     ulong generation;
+    /// Filled by the HTTP owner, not by `status()`: `frame` is the tickAll pass
+    /// that served the read, and `processed` is `finished` plus at least one
+    /// COMPLETED frame after the one that dispatched the last event (card
+    /// test-sleep-removal; witness tests/unit/playback_owner_test.d U9).
+    bool processed;
+    ulong frame;
 }
 
 /// Main-thread owner for the HTTP playback player (tasks 5960 D2 and 6810).
@@ -121,13 +127,16 @@ struct PlaybackController {
     }
 }
 
-/// Compact by contract: run_test.d has a byte reader for `"finished":false`.
+/// Compact by contract: run_test.d has byte readers for `"finished":false`
+/// and `"processed":false`.
 string encodePlaybackStatus(PlaybackStatus status) {
     return format(
-        `{"finished":%s,"total":%d,"remaining":%d,"immediateMotions":%d,"generation":%d}`,
+        `{"finished":%s,"total":%d,"remaining":%d,"immediateMotions":%d,"generation":%d,"processed":%s,"frame":%d}`,
         status.finished ? "true" : "false",
         status.total,
         status.remaining,
         status.immediateMotions,
-        status.generation);
+        status.generation,
+        status.processed ? "true" : "false",
+        status.frame);
 }

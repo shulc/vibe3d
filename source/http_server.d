@@ -24,7 +24,8 @@ import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
 
 import eventlog : ImmediateEventSink;
-import playback_controller : PlaybackController, encodePlaybackStatus;
+import playback_controller : PlaybackController, PlaybackStatus,
+    encodePlaybackStatus;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
 import app_version : appVersion;
@@ -1146,6 +1147,14 @@ class HttpServer {
 
     // Main-thread owner of the HTTP event player (task 5960 D2).
     private PlaybackController playbackController;
+    // The PROCESSED barrier (card test-sleep-removal). `finished` flips inside
+    // the frame that dispatched the last event, BEFORE that frame's tool
+    // update, flush and draw; a read served in that same tickAll pass would
+    // precede them. So `processed` requires a LATER pass: the frame that
+    // consumed the event has then run to completion. Both counters are touched
+    // only on the tick thread. Witness: tests/unit/playback_owner_test.d U9.
+    private ulong tickPass_;
+    private ulong playbackFinishPass_;
 
     // ========================================================================
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
@@ -1966,7 +1975,7 @@ class HttpServer {
         playEventsStatusBridge = new MainThreadBridge!(PlayEventsStatusReq,
                 PlayEventsStatusResp)(this,
             (ref PlayEventsStatusReq req, ref PlayEventsStatusResp resp) {
-                resp.result = encodePlaybackStatus(playbackController.status());
+                resp.result = encodePlaybackStatus(settledPlaybackStatus());
             }, "/api/play-events/status");
 
         frameCountsBridge = new MainThreadBridge!(FrameCountsReq,
@@ -2343,7 +2352,7 @@ class HttpServer {
         }
 
         public auto playbackStatusForTest() const {
-            return playbackController.status();
+            return settledPlaybackStatus();
         }
 
         public auto playbackViewportForTest() const {
@@ -4812,7 +4821,21 @@ class HttpServer {
      * for time-based playback of a previously loaded event log.
      */
     public bool tickEventPlayer() {
-        return playbackController.tick();
+        immutable bool wasActive = !playbackController.status().finished;
+        immutable bool more = playbackController.tick();
+        // The composition root calls this just BEFORE tickAll, so the pass
+        // that closes the dispatching frame's drain is the next one.
+        if (wasActive && !more)
+            playbackFinishPass_ = tickPass_ + 1;
+        return more;
+    }
+
+    /// The player's snapshot plus the frame barrier (see `tickPass_`).
+    private PlaybackStatus settledPlaybackStatus() const {
+        auto status = playbackController.status();
+        status.frame = tickPass_;
+        status.processed = status.finished && tickPass_ > playbackFinishPass_;
+        return status;
     }
 
     /// Serve the two frame-count operations at the owner-thread frame boundary.
@@ -4872,6 +4895,7 @@ class HttpServer {
             if (atomicLoad(tickThreadIdentity_) == 0)
                 atomicStore(tickThreadIdentity_, identity);
         }
+        ++tickPass_;
         foreach (b; bridges) b.tick();
         // Second half of the readiness predicate (task 1740). Set AFTER the
         // drain, not before: the claim being published is "a bridged request
