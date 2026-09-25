@@ -1,6 +1,6 @@
 // Review of slice M4 (BLOCKER): C-H1-es with a PREDECESSOR armed first.
 // The Ctrl+Z that removes Edge Slice's first group pops its key-door row, and
-// the row's undo restores the tool it replaced (C-M4-token-switch, gap 375);
+// the row's undo restores the tool it replaced (C-M4-token-switch, gap 376);
 // the redo re-arms Edge Slice with that gesture, released (§22, tasks
 // 7112/7137) — whether or not the predecessor writes activation rows of its
 // own (the redo scope is the pre-M4 one: kept unless the predecessor writes

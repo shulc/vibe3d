@@ -849,7 +849,7 @@ unittest { // M4 pair: the row below must carry the RECORD's token, and redo pai
 unittest { // M4 pair, boundary (not captured): with its session gone, a record pops alone
     // The record carries its activation row only while THAT session is the
     // active one; after the tool dropped (no tool, token 0) the record is its
-    // own step and the row stays (gap 377 names the uncaptured half).
+    // own step and the row stays (gap 378 names the uncaptured half).
     Mesh m = makeCube();
     auto r = rig();
     auto t = new CarryTool;
