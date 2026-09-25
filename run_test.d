@@ -393,7 +393,7 @@ ulong treeSize(string path) {
 // TESTS RAN. What used to make overlap unsafe is now partitioned instead of
 // serialised:
 //   * ports -- without `-p`, slot k's workers take its own window
-//     (slotPortBase(k) + worker; a private test family uses 28080..). WITH `-p` the caller owns [p, p+j): two
+//     (slotPortBase(k) + worker; a private test family uses its own block at 28080..). WITH `-p` the caller owns [p, p+j): two
 //     concurrent runs given overlapping ranges still kill each other's
 //     workers (killStaleVibe clears by port), so an explicit `-p` must be
 //     disjoint from every other run's range on the host;

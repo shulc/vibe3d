@@ -51,9 +51,30 @@ enum int kDefaultRunSlots = 2;
 /// windows end at 8295, below the lane port blocks that start at 8300. A
 /// PRIVATE family (the test seam) gets windows at 28080.. instead: a test's
 /// nested runner must never clear a production run's workers by port.
+///
+/// Each private family has its OWN block of six windows, chosen by a hash of
+/// its base path (card slot-resource-isolation). Every private family used to
+/// start at 28080, so two concurrent private families handed the same ports to
+/// their workers, and `killStaleVibe` (which clears a `--test --http-port N`
+/// holder by port) would clear the other family's worker. The hash leaves a
+/// 1-in-kPrivateFamilies chance that two given bases share a block; a
+/// stateless derivation cannot do better, and the canonical family never
+/// shares a port with any private one.
 enum ushort kDefaultPortBase = 8080;
 enum ushort kPrivatePortBase = 28080;
 enum ushort kSlotPortStride  = 36;
+enum int    kPrivateFamilySpan = kMaxRunSlots * kSlotPortStride;
+enum int    kPrivateFamilies =
+    (ushort.max + 1 - kPrivatePortBase) / kPrivateFamilySpan;
+
+/// Which private port block `base` owns, 0 .. kPrivateFamilies-1.
+int privateFamilyIndex(string base)
+{
+    import std.digest.crc : crc32Of;
+    const d = crc32Of(base);
+    const uint h = d[0] | (d[1] << 8) | (d[2] << 16) | (cast(uint)d[3] << 24);
+    return cast(int)(h % kPrivateFamilies);
+}
 
 string runSlotBase()
 {
@@ -84,7 +105,9 @@ string worktreeLockPath(string base, string root)
 
 ushort slotPortBase(int k, string base = kCanonicalRunSlotBase)
 {
-    const origin = base == kCanonicalRunSlotBase ? kDefaultPortBase : kPrivatePortBase;
+    const origin = base == kCanonicalRunSlotBase
+        ? kDefaultPortBase
+        : kPrivatePortBase + privateFamilyIndex(base) * kPrivateFamilySpan;
     return cast(ushort)(origin + k * kSlotPortStride);
 }
 

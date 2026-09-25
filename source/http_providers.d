@@ -1241,10 +1241,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                                              bool wantHash,
                                              bool composedFrame) {
             import bindbc.opengl;
-            import std.array  : appender, split;
-            import std.conv   : to;
+            import std.array  : appender;
             import std.format : format;
-            import std.string : strip;
+            import viewport_probe_sampling : putProbePoints;
 
             int W, H;
             bool renders;
@@ -1301,34 +1300,17 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
 
             auto buf = appender!string();
             buf.put(head);
-            buf.put(`,"points":[`);
-            bool first = true;
-            foreach (spec; points.split(";")) {
-                auto s = spec.strip();
-                if (s.length == 0) continue;
-                auto xy = s.split(",");
-                if (xy.length != 2) continue;
-                int px, py;
-                try {
-                    px = xy[0].strip.to!int;
-                    py = xy[1].strip.to!int;
-                } catch (Exception) {
-                    continue;
-                }
-                if (!first) buf.put(",");
-                first = false;
-                if (px < 0 || py < 0 || px >= W || py >= H) {
-                    buf.put(format(`{"x":%d,"y":%d,"error":"outside the cell"}`, px, py));
-                    continue;
-                }
-                ubyte[4] rgba;
-                // Flip Y: caller passes top-left origin, GL reads bottom-up.
-                glReadPixels(px, H - 1 - py, 1, 1,
-                             GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
-                buf.put(format(`{"x":%d,"y":%d,"r":%d,"g":%d,"b":%d,"a":%d}`,
-                               px, py, rgba[0], rgba[1], rgba[2], rgba[3]));
-            }
-            buf.put("]");
+            buf.put(",");
+            // One readback per request (card slot-resource-isolation): a
+            // per-point glReadPixels is one GPU round trip each, and on a
+            // shared GPU a 3000-point lattice outran the bridge's 5 s wait.
+            putProbePoints(buf, points, W, H,
+                (int rx, int ry, int rw, int rh, ubyte[] rgba) {
+                    // Default pack state (row length 0), as the hash read
+                    // below relies on; nothing in the tree changes it.
+                    glReadPixels(rx, ry, rw, rh,
+                                 GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
+                });
 
             if (wantHash) {
                 // FNV-1a over the whole RGBA8 buffer. Cheap, stable, and a

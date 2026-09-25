@@ -30,8 +30,9 @@ import core.time     : msecs;
 import core.sys.posix.fcntl  : open, O_CREAT, O_RDWR;
 import core.sys.posix.unistd : close;
 
-import tools.harness.runslots : RunSlot, kSlotPortStride, releaseSlot,
-    runSlotPath, tryAcquireFreeSlot;
+import tools.harness.runslots : RunSlot, kCanonicalRunSlotBase, kMaxRunSlots,
+    kPrivateFamilies, kSlotPortStride, privateFamilyIndex, releaseSlot,
+    runSlotPath, slotPortBase, tryAcquireFreeSlot;
 
 private extern(C) int flock(int fd, int operation) nothrow @nogc;
 private enum LOCK_EX = 2, LOCK_NB = 4;
@@ -276,9 +277,13 @@ unittest // 5. a real run's workers take the HELD slot's port window
     scope(exit) releaseSlot(zero);
     auto r = execute([runnerPath, "-j", "40", "--no-build", "--lock-timeout", "1"],
                      env, Config.none, size_t.max, repoRoot);
-    assert(r.status == 2 && r.output.canFind("exceeds this slot's 36-port window (28116..28151)"),
-        format("a slot-1 run did not derive the slot-1 window 28116.. (status %d):\n%s",
-               r.status, r.output));
+    // The family's own block (card slot-resource-isolation): slot 1 of THIS
+    // base, which is not 28116 unless the base hashes to block 0.
+    const lo = slotPortBase(1, base), hi = lo + kSlotPortStride - 1;
+    assert(r.status == 2 && r.output.canFind(format(
+            "exceeds this slot's 36-port window (%d..%d)", lo, hi)),
+        format("a slot-1 run did not derive this family's slot-1 window %d.. (status %d):\n%s",
+               lo, r.status, r.output));
 }
 
 unittest // 4. inside a user namespace the lease is read from the INHERITED fd
@@ -307,4 +312,49 @@ unittest // 4. inside a user namespace the lease is read from the INHERITED fd
     assert(r.status == 0 && r.output.canFind("(borrowed)"), format(
         "a descendant in a user namespace could not borrow through its inherited "
       ~ "descriptor (status %d):\n%s", r.status, r.output));
+}
+
+unittest // 6. two concurrent families never hand their workers one port (card slot-resource-isolation)
+{
+    // The shape two gate pairs produce: each gate's tests name a private
+    // family after their own pid, so the bases differ only in that number.
+    // Before this card every private family started at 28080, so these two
+    // windows were IDENTICAL and a nested runner's killStaleVibe would clear
+    // the other family's worker by port.
+    bool[ushort] seen;
+    size_t ports;
+    foreach (base; ["/var/tmp/vibe3d-run-slots-ports-1053954.lock",
+                    "/var/tmp/vibe3d-run-slots-ports-966747.lock"]) {
+        foreach (k; 0 .. kMaxRunSlots)
+            foreach (w; 0 .. kSlotPortStride) {
+                const ushort p = cast(ushort)(slotPortBase(k, base) + w);
+                assert(p !in seen, format("port %d is in two slot windows (%s slot %d)",
+                                          p, base, k));
+                assert(p >= slotPortBase(kMaxRunSlots - 1) + kSlotPortStride,
+                    format("private port %d is inside the canonical family's windows", p));
+                seen[p] = true;
+                ++ports;
+            }
+    }
+    // Canonical family too: its slots 0 and 1 (the two local gate slots).
+    foreach (k; 0 .. 2) foreach (w; 0 .. kSlotPortStride) {
+        const ushort p = cast(ushort)(slotPortBase(k, kCanonicalRunSlotBase) + w);
+        assert(p !in seen, format("canonical slot %d port %d collides", k, p));
+        seen[p] = true;
+        ++ports;
+    }
+    assert(ports == 2 * 6 * 36 + 2 * 36, format("port population %d", ports));
+
+    // The block really varies with the base: 1000 names spread over at least
+    // 150 of the kPrivateFamilies blocks, and every window stays a real port.
+    bool[int] blocks;
+    foreach (i; 0 .. 1000) {
+        const b = format("/tmp/vibe3d-run-slots-x-%d.lock", i);
+        blocks[privateFamilyIndex(b)] = true;
+        assert(cast(int)slotPortBase(kMaxRunSlots - 1, b) + kSlotPortStride - 1 <= 65535,
+               "a private window runs past port 65535");
+    }
+    assert(kPrivateFamilies == 173, format("private block count %d", kPrivateFamilies));
+    assert(blocks.length >= 150,
+        format("1000 private bases landed in only %d port blocks", blocks.length));
 }
