@@ -434,6 +434,7 @@ tests.unit.removeverts_pointmap_test
 tests.unit.render_ipr_bus_witness_test
 tests.unit.request_result_ownership_test
 tests.unit.revert_entry_census_test
+tests.unit.run_slots_test
 tests.unit.run_test_display_environment_test
 tests.unit.run_test_pgid_test
 tests.unit.run_test_protocol_census_pin_test
@@ -636,6 +637,7 @@ tools.edit.poly_extrude
 tools.edit.tack
 tools.edit.topology_pen.gestures_test
 tools.harness.hostspace
+tools.harness.runslots
 tools.transform.arcball
 tools.transform.item_xform_kernels
 tools.transform.morph_route

@@ -71,6 +71,11 @@ import core.sys.posix.sys.types : ssize_t;
 import tools.harness.hostspace : SpaceAvailability, availabilityDetails,
     humanBytes, kMinPreflightFreeBytes, scratchRoot, spaceAvailability,
     spacePreflightMessage;
+import tools.harness.runslots : RunSlot, borrowInheritedSlot, configuredRunSlots,
+    kInheritedRunLockFdEnv, kInheritedRunLockPidEnv, kMaxRunSlots,
+    kSlotPortStride, runSlotBase, runSlotFamily, runSlotPath, runSlotsConfigPath,
+    slotHeld, slotPortBase, slotStamp, stampSlot, tryAcquireFreeSlot,
+    worktreeLockPath;
 
 // flock(2) is not surfaced by this druntime's posix bindings; declare it.
 extern(C) int flock(int fd, int operation) nothrow @nogc;
@@ -375,190 +380,149 @@ ulong treeSize(string path) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-process run lock
+// Cross-process run slots (task 6205; replaces the single host-wide lock)
 // ---------------------------------------------------------------------------
 //
-// Two test runs MUST NOT overlap on one host: the runner boots `vibe3d --test`
-// on ports `port + worker` and `killStaleVibe` clears stale instances by port —
-// two concurrent runs (e.g. two agents) fight over the same ports and mutually
-// kill each other's vibe3d, producing "No such file" / "Could not connect"
-// flakes. A host-wide advisory flock serialises runs: the second runner blocks
-// (printing a notice) until the first releases, or times out and bails without
-// stomping.
-//
-// The scratch tree is NOT among the reasons any more — it is keyed per checkout
-// above, and a lock could never have covered it anyway: the tree outlives the
-// run that made it whenever that run is killed, and a lock held by nobody
-// protects nothing.
-//
-// The production default is the canonical /tmp file, deliberately NOT under
-// tempDir(): tempDir() follows TMPDIR, so a capacity-isolated lane would
-// otherwise bypass the nightly perf wrapper that takes this same lock (task
-// 4870). The env override is the same TEST seam as with_perf_lock.sh and is
-// never set by a workflow; it lets the module lane exercise real flock
-// contention without taking the production lock. The price in production is
-// intentional: a test lane can wait behind a nightly measurement and, if it
-// cannot acquire within the default 600 s, exits as `lock_timeout` with NO
-// TESTS RAN. That throughput loss buys uncontaminated perf numbers. flock is
-// released when the fd closes, so a crashed holder never leaks the lock.
-enum runLockPathEnv = "VIBE3D_PERF_RUNTEST_LOCK_PATH";
-string runLockPath() {
-    const configuredPath = environment.get(runLockPathEnv, "");
-    return configuredPath.length ? configuredPath : "/tmp/vibe3d-run-test.lock";
-}
+// Several runs may share a host, up to N (VIBE3D_RUN_SLOTS, else the per-host
+// file, else 2 -- tools/harness/runslots.d owns the family, the count and the
+// port windows). Each run holds ONE slot by flock and waits, printing a
+// notice, while all N are held; after `--lock-timeout` it gives up with NO
+// TESTS RAN. What used to make overlap unsafe is now partitioned instead of
+// serialised:
+//   * ports -- without `-p`, slot k's workers take its own window
+//     (slotPortBase(k) + worker; a private test family uses 28080..). WITH `-p` the caller owns [p, p+j): two
+//     concurrent runs given overlapping ranges still kill each other's
+//     workers (killStaleVibe clears by port), so an explicit `-p` must be
+//     disjoint from every other run's range on the host;
+//   * scratch -- keyed per checkout (scratchDirFor);
+//   * one checkout run twice -- refused up front by the per-checkout build
+//     lock below, before `dub build`, so a worktree is never built twice at once.
+// Nightly perf takes every slot of the family (with_perf_lock.sh), so a
+// measurement still excludes all test runs. The canonical paths ignore TMPDIR
+// on purpose (task 4870); the env seam is for tests only. flock is released
+// when the fd closes, so a crashed holder never leaks a slot.
+string runLockPath() { return runSlotBase(); }
+
+__gshared int g_slotIndex = -1;          // the slot this run holds, -1 = none
+__gshared int g_worktreeLockFd = -1;     // per-checkout build lock, ours
 
 // A test of the runner can legitimately invoke a nested run_test.d while the
-// outer runner owns the host lock (tests/test_harness_load_log.d does this to
-// force a post-lock worker-preparation failure). Pass the owner's PID AND the
-// inherited lock descriptor to test processes, not a boolean bypass: a nested
-// runner may reuse the lease only when Linux /proc proves the PID is its live
-// ancestor and fstat(fd) identifies the same device+inode as runLockPath().
-// The descriptor identity is stable while a waiter opens the path; lock-file
-// text is not. An unrelated process must still queue.
-enum inheritedRunLockPidEnv = "VIBE3D_INHERITED_RUN_LOCK_PID";
-enum inheritedRunLockFdEnv  = "VIBE3D_INHERITED_RUN_LOCK_FD";
+// outer runner holds a slot (tests/test_harness_load_log.d does this to force
+// a post-slot worker-preparation failure). The lease is the holder's PID plus
+// the holder's descriptor NUMBER, not a boolean bypass: it is honoured only
+// when the PID is a live ancestor and /proc shows that descriptor holding a
+// flock on a slot of this family (runslots.borrowInheritedSlot). An unrelated
+// process must still queue.
+enum inheritedRunLockPidEnv = kInheritedRunLockPidEnv;
+enum inheritedRunLockFdEnv  = kInheritedRunLockFdEnv;
 
-bool processHasAncestor(int ancestor) {
-    int current = getppid();
-    foreach (_; 0 .. 64) {
-        if (current == ancestor) return true;
-        if (current <= 1) return false;
-        try {
-            int parent;
-            foreach (line; readText(format("/proc/%d/status", current)).splitLines) {
-                if (!line.startsWith("PPid:")) continue;
-                parent = line["PPid:".length .. $].strip.to!int;
-                break;
-            }
-            if (parent <= 0 || parent == current) return false;
-            current = parent;
-        } catch (Exception) {
-            return false;
-        }
-    }
-    return false;
-}
-
-bool borrowInheritedRunLock() {
-    import std.string : toStringz;
-
-    const raw = environment.get(inheritedRunLockPidEnv, "");
-    if (!raw.length) return false;
-
-    int holder;
-    try { holder = raw.to!int; } catch (Exception) { return false; }
-    if (holder <= 1 || !processHasAncestor(holder)) return false;
-
-    const rawFd = environment.get(inheritedRunLockFdEnv, "");
-    if (!rawFd.length) return false;
-    int inheritedFd;
-    try { inheritedFd = rawFd.to!int; } catch (Exception) { return false; }
-    if (inheritedFd < 0) return false;
-
-    stat_t inheritedIdentity, pathIdentity;
-    if (fstat(inheritedFd, &inheritedIdentity) != 0
-     || stat(runLockPath().toStringz, &pathIdentity) != 0
-     || inheritedIdentity.st_dev != pathIdentity.st_dev
-     || inheritedIdentity.st_ino != pathIdentity.st_ino)
-        return false;
-
-    runLockFd = inheritedFd;
-    runLockBorrowed = true;
-    g_harness.lockWaitSeconds = 0;
-    g_lockAcquiredMs = nowUnixMs();
-    return true;
-}
-
-// Acquire the host-wide run lock, waiting up to `timeoutSec` for any other
-// runner to finish. Returns true on success; false if the wait timed out.
+// Take one free slot, waiting up to `timeoutSec` while all N are held.
 bool acquireRunLock(int timeoutSec) {
-    import std.string : toStringz;
-    if (borrowInheritedRunLock()) return true;
-
-    runLockBorrowed = false;
-    runLockFd = open(runLockPath().toStringz, O_RDWR | O_CREAT, octal!"644");
-    if (runLockFd < 0) {
-        // Can't create the lockfile — degrade to no-lock rather than block CI.
-        stderr.writeln(yellow("warning: could not open run lock; running "
-            ~ "without cross-run serialisation, so a concurrent nightly "
-            ~ "perf measurement may be contaminated by this test run"));
-        return true;
-    }
-    // Fast path: grab it immediately if free.
-    if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) {
+    const base = runSlotBase();
+    RunSlot s;
+    if (borrowInheritedSlot(base, s)) {
+        runLockBorrowed = true;
+        runLockFd = -1;
+        g_slotIndex = s.index;
         g_harness.lockWaitSeconds = 0;
         g_lockAcquiredMs = nowUnixMs();
-        return recordLockHolder();
+        return true;
+    }
+    runLockBorrowed = false;
+
+    const count = configuredRunSlots();
+    if (count.error.length) {
+        stderr.writeln(red("NO TESTS RAN — invalid run-slot count: " ~ count.error));
+        return false;
+    }
+    bool take() {
+        if (!tryAcquireFreeSlot(base, count.n, s)) return false;
+        runLockFd   = s.fd;
+        g_slotIndex = s.index;
+        g_lockAcquiredMs = nowUnixMs();
+        return true;
+    }
+    if (take()) {
+        g_harness.lockWaitSeconds = 0;
+        return true;
     }
 
-    // Read the holder BEFORE recordLockHolder() overwrites the file with ours:
-    // "who were we waiting for" is the one field that turns a wait into a
-    // collision between two named lanes.
+    // Name who we wait for BEFORE a slot's stamp is overwritten by its next
+    // holder: that is what turns a wait into a collision between named lanes.
     try {
-        auto held = readText(runLockPath()).strip;
-        if (held.startsWith("pid ")) g_harness.lockHolderPid = held[4 .. $].strip.to!int;
+        auto held = slotStamp(runSlotPath(base, 0));
+        if (held.startsWith("pid "))
+            g_harness.lockHolderPid = held[4 .. $].split[0].to!int;
     } catch (Exception) {}
 
-    writeln(yellow("another test run or nightly perf measurement is in "
-        ~ "progress on this host — waiting..."));
+    writeln(yellow(format("all %d run slots on this host are held by other "
+        ~ "test runs or a nightly perf measurement — waiting...", count.n)));
     int waited = 0;
     while (waited < timeoutSec) {
         Thread.sleep(1.seconds);
         waited += 1;
-        if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) {
-            writeln(green(format("  acquired run lock after %ds", waited)));
+        if (take()) {
+            writeln(green(format("  acquired run slot %d after %ds", g_slotIndex, waited)));
             g_harness.lockWaitSeconds = waited;
-            g_lockAcquiredMs = nowUnixMs();
-            return recordLockHolder();
+            return true;
         }
         if (waited % 15 == 0)
-            writefln(yellow("  still waiting for the other run (%ds)..."), waited);
+            writefln(yellow("  still waiting for a free run slot (%ds)..."), waited);
     }
     // NOT a test failure — nothing ran. Say so first and loudly: this exits
-    // non-zero exactly like a red suite, and telling the two apart used to
-    // take reading the FIRST line of a long log (task 0685 / the 2026-08-13
-    // parallel-agent session, where it was mistaken for a regression).
+    // non-zero exactly like a red suite (task 0685).
     stderr.writeln(red(format(
-        "NO TESTS RAN — timed out after %ds waiting for the shared test/perf "
-        ~ "lock on this host. This is a host-contention exit, not a failing suite.",
-        timeoutSec)));
+        "NO TESTS RAN — timed out after %ds waiting for one of the %d shared "
+        ~ "test/perf run slots on this host. This is a host-contention exit, "
+        ~ "not a failing suite.", timeoutSec, count.n)));
     stderr.writeln(dim(
-        "    Several agents/worktrees and nightly perf share one machine and\n"
-        ~ "    one canonical lock. Waiting behind perf is intentional: it trades\n"
-        ~ "    test-lane throughput for uncontaminated performance numbers.\n"
-        ~ "    While iterating, run NARROW tests instead: `./run_test.d <name> ...`\n"
-        ~ "    (plus `dub test --config=tests`, which takes no lock). Save\n"
-        ~ "    the full suite for the merge step."));
-    stderr.writeln(dim(format("    Lock: %s (holder's pid is inside it)",
-                              runLockPath())));
-    close(runLockFd);
-    runLockFd = -1;
+        "    Several agents/worktrees and nightly perf share this machine's\n"
+        ~ "    run slots, and perf takes all of them. Full gates belong to\n"
+        ~ "    tools/local/gate-pool.sh, which queues FIFO across hosts.\n"
+        ~ "    While iterating, run NARROW tests instead: `./run_test.d <name> ...`."));
+    foreach (k; 0 .. count.n) {
+        const p = runSlotPath(base, k);
+        stderr.writeln(dim(format("    Slot %d: %s (%s)", k, p, slotStamp(p))));
+    }
     g_harness.lockWaitSeconds = timeoutSec;
     g_harness.lockTimedOut    = true;
     return false;
 }
 
-// Stamp our PID into the lockfile for diagnostics ("who holds it?").
-bool recordLockHolder() {
-    import std.string : toStringz;
-    ftruncate(runLockFd, 0);
-    string stamp = format("pid %d\n", getpid());
-    c_write(runLockFd, stamp.ptr, stamp.length);
-    return true;
-}
-
 void releaseRunLock() {
-    // The outer ancestor still owns the canonical fd for a borrowed lease.
+    // The outer ancestor still owns the slot for a borrowed lease.
     if (runLockBorrowed) {
         runLockBorrowed = false;
-        runLockFd = -1;
+        g_slotIndex = -1;
         return;
     }
     if (runLockFd >= 0) {
         flock(runLockFd, LOCK_UN);
         close(runLockFd);
         runLockFd = -1;
+        g_slotIndex = -1;
     }
+}
+
+// One run per checkout: a second run of the same worktree would rebuild
+// ./vibe3d under the first and clear its scratch tree. Non-blocking: the
+// second run is REFUSED at once rather than queued. Held until exit.
+bool acquireWorktreeLock(string root) {
+    import std.string : toStringz;
+    const path = worktreeLockPath(runSlotBase(), root);
+    g_worktreeLockFd = open(path.toStringz, O_RDWR | O_CREAT, octal!"644");
+    if (g_worktreeLockFd < 0) return true;   // cannot create: do not block CI
+    if (flock(g_worktreeLockFd, LOCK_EX | LOCK_NB) == 0) {
+        stampSlot(g_worktreeLockFd, "worktree " ~ root);
+        return true;
+    }
+    stderr.writeln(red("NO TESTS RAN — another run_test.d is already running in "
+        ~ "this checkout (" ~ root ~ "): " ~ slotStamp(path)));
+    stderr.writeln(dim("    Two runs of one worktree would build ./vibe3d and clear "
+        ~ "the scratch tree under each other.\n    Lock: " ~ path));
+    close(g_worktreeLockFd);
+    g_worktreeLockFd = -1;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +579,8 @@ enum HarnessStage : string {
     buildFailed  = "build_failed",
     staleRefused = "stale_refused",
     lockTimeout  = "lock_timeout",
+    worktreeBusy = "worktree_busy",       // another run of this checkout is live
+    slotConfigInvalid = "slot_config_invalid",
     noSuchTest   = "no_such_test",
     noBinary     = "no_binary",
     runIncomplete = "run_incomplete", // acquired the slot, but no Total/verdict was produced
@@ -783,7 +749,8 @@ bool shouldKillGroup(int p, int ownPgid) pure @safe @nogc nothrow {
 // has no home in the `dub test --config=tests` gate — the same reason
 // `tools/perf/lib/vslast.d` needed its own carve-out (dub.json's `_comment`
 // there). This block is this file's own witness instead: build+run it with
-//   dmd -unittest -I. run_test.d tools/harness/hostspace.d -of=/tmp/run_test_ut \
+//   dmd -unittest -I. run_test.d tools/harness/hostspace.d \
+//     tools/harness/runslots.d -of=/tmp/run_test_ut \
 //     && /tmp/run_test_ut
 // The line above used to read `dmd -unittest run_test.d` with a parenthetical
 // saying this module has no project-local imports and needs no import-path
@@ -2149,13 +2116,14 @@ TestResult runOne(string bin, bool verbose, ushort port) {
     cfg.preExecFunction = &ownProcessGroup;
     string[string] childEnv = environment.toAA();
     childEnv["VIBE3D_TEST_PORT"] = port.to!string;
-    if (runLockFd >= 0 && r.name == "test_harness_load_log") {
-        // std.process closes non-stdio descriptors by default. The verified
-        // nested-run lease needs the actual open-file description, so retain
-        // it across this exec and tell descendants which fd to fstat.
+    if ((runLockFd >= 0 || runLockBorrowed) && r.name == "test_harness_load_log") {
+        // The lease names the HOLDER's pid and descriptor; a borrowed slot
+        // passes its own lender's lease on unchanged (task 6205).
         cfg.flags |= Config.Flags.inheritFDs;
-        childEnv[inheritedRunLockPidEnv] = getpid().to!string;
-        childEnv[inheritedRunLockFdEnv] = runLockFd.to!string;
+        childEnv[inheritedRunLockPidEnv] = runLockBorrowed
+            ? environment.get(inheritedRunLockPidEnv, "") : getpid().to!string;
+        childEnv[inheritedRunLockFdEnv] = runLockBorrowed
+            ? environment.get(inheritedRunLockFdEnv, "") : runLockFd.to!string;
     }
 
     string outPath = bin ~ ".out";
@@ -2648,6 +2616,7 @@ int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, printRunLock, checkGate;
     bool probeDisplay;
     bool probeRunLockUntilEof;
+    bool printRunSlots;
     bool checkProtocol;
     // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
     // above for what each of these drives.
@@ -2682,16 +2651,19 @@ int main(string[] args) {
                     ~ "exit — for callers that ran `dub build` themselves (CI)", &writeStampOnly,
         "print-scratch","print the scratch directory this checkout would use "
                     ~ "and exit, creating nothing",                             &printScratch,
-        "print-run-lock","print the host-wide run-lock path and exit, "
-                    ~ "creating nothing",                                      &printRunLock,
+        "print-run-lock","print the run-slot family's base path (slot 0) "
+                    ~ "and exit, creating nothing",                            &printRunLock,
+        "print-run-slots","print the configured slot count, every slot this "
+                    ~ "host's runs may take with held/free and its holder, "
+                    ~ "and the whole family perf takes; exit",                &printRunSlots,
         "probe-worker-display","launch runner-owned ./vibe3d, read DISPLAY "
                     ~ "from its Linux /proc environment, print it and exit; "
                     ~ "test diagnostic, no build or host lock",                &probeDisplay,
-        "probe-run-lock","diagnostic: acquire the real host-wide run lock, "
+        "probe-run-lock","diagnostic: acquire a real run slot, "
                     ~ "hold it for N seconds, then exit without building or "
                     ~ "running tests",                                         &runLockProbeSeconds,
-        "probe-run-lock-until-eof","diagnostic: acquire the real host-wide "
-                    ~ "run lock and hold it until stdin closes; test-only "
+        "probe-run-lock-until-eof","diagnostic: acquire a real run slot "
+                    ~ "and hold it until stdin closes; test-only "
                     ~ "controlled-release companion to --probe-run-lock",     &probeRunLockUntilEof,
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
@@ -2716,7 +2688,9 @@ int main(string[] args) {
                     ~ "for --sweep-plan (repeatable)",                         &sweepEntry,
         "sweep-live", "(task 2080, diagnostic) one simulated live worktree "
                     ~ "root for --sweep-plan (repeatable)",                    &sweepLive,
-        "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
+        "p|port",     "HTTP base port; workers take [p, p+j). Default: the "
+                    ~ "held slot's own window (8080 + 36*slot). An explicit -p "
+                    ~ "must not overlap another concurrent run's range",       &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
         "attach",     "drive an already-running endpoint on this port (e.g. "
@@ -2724,7 +2698,7 @@ int main(string[] args) {
                     ~ "forces -j1, leaves the endpoint running",              &attach,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
                     ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude,
-        "lock-timeout", "seconds to wait for this host's shared test/perf lock before "
+        "lock-timeout", "seconds to wait for a free test/perf run slot before "
                     ~ "giving up with NO TESTS RAN (default 600). Lowered by "
                     ~ "tests/test_harness_load_log.d, which needs the give-up "
                     ~ "path to be reachable in a bounded time",              &lockTimeoutSec,
@@ -2733,7 +2707,7 @@ int main(string[] args) {
                     ~ "0 = no cap; --attach defaults to no cap)",             &timeoutSec);
 
     const bool portGiven = (port != 0);
-    if (!portGiven) port = 8080;
+    if (!portGiven) port = slotPortBase(0);   // re-derived from the held slot below
 
     // --attach: target a pre-launched endpoint (visual proxy / external vibe3d).
     // Single worker on that one port; never kill or spawn an instance.
@@ -2779,12 +2753,33 @@ int main(string[] args) {
         writeln(runLockPath());
         return 0;
     }
+    if (printRunSlots) {
+        const count = configuredRunSlots();
+        if (count.error.length) {
+            stderr.writeln(red("invalid run-slot count: " ~ count.error));
+            return 2;
+        }
+        writefln("slots %d (%s)", count.n, count.source);
+        foreach (k; 0 .. count.n) {
+            const p = runSlotPath(runSlotBase(), k);
+            const held = slotHeld(p);
+            writefln("slot %d %s %s%s", k, p, held ? "held" : "free",
+                     held ? " " ~ slotStamp(p) : "");
+        }
+        foreach (p; runSlotFamily(runSlotBase())) writeln("family ", p);
+        writeln("worktree ", worktreeLockPath(runSlotBase(), getcwd()));
+        return 0;
+    }
     if (probeDisplay)
         return probeWorkerDisplay(port);
     if (runLockProbeSeconds >= 0 || probeRunLockUntilEof) {
         if (!acquireRunLock(lockTimeoutSec)) return 1;
         scope(exit) releaseRunLock();
-        writeln("RUN LOCK ACQUIRED: ", runLockPath());
+        writeln("RUN LOCK ACQUIRED: ", runSlotPath(runLockPath(), g_slotIndex));
+        writefln("RUN SLOT: %d PORTS: %d..%d%s", g_slotIndex,
+                 slotPortBase(g_slotIndex, runSlotBase()),
+                 slotPortBase(g_slotIndex, runSlotBase()) + kSlotPortStride - 1,
+                 runLockBorrowed ? " (borrowed)" : "");
         stdout.flush();
         if (probeRunLockUntilEof)
             stdin.readln();
@@ -2979,6 +2974,39 @@ int main(string[] args) {
         return 0;
     }
 
+    // One run per checkout, then one run slot, BEFORE the barriers, the build
+    // and the default-port guard (task 6205): the build is part of the load a
+    // slot accounts for, the refusal of a duplicate run of this worktree must
+    // precede its `dub build`, and the default port is the held slot's window.
+    if (!acquireWorktreeLock(getcwd())) {
+        g_harness.stage = HarnessStage.worktreeBusy;
+        g_harness.rc = 2;
+        return 2;
+    }
+    // The canonical path ignores TMPDIR on purpose; a capacity-isolated run
+    // may therefore wait or reach `lock_timeout` after 600 s (task 4870).
+    if (!acquireRunLock(lockTimeoutSec)) {
+        g_harness.stage = g_harness.lockTimedOut ? HarnessStage.lockTimeout
+                                                 : HarnessStage.slotConfigInvalid;
+        g_harness.rc = 1;
+        return 1;
+    }
+    if (!portGiven && attach == 0) {
+        port = slotPortBase(g_slotIndex, runSlotBase());
+        if (j > kSlotPortStride) {
+            stderr.writefln(red("refusing to run: -j %d exceeds this slot's "
+                ~ "%d-port window (%d..%d); pass an explicit -p whose range "
+                ~ "no other run on this host uses."), j, kSlotPortStride,
+                port, port + kSlotPortStride - 1);
+            g_harness.stage = HarnessStage.gateRefused;
+            g_harness.rc = 2;
+            return 2;
+        }
+    }
+    writeln(dim(format("run slot %d%s; worker ports %d..%d", g_slotIndex,
+                       runLockBorrowed ? " (borrowed from the caller)" : "",
+                       port, port + j - 1)));
+
     // The default-port guard sits HERE, not up beside the option parsing, and
     // the position is the whole of task 6291's second lesson. Every mode above
     // this line — `--print-scratch`, `--print-run-lock`, `--check-gate`,
@@ -3112,15 +3140,6 @@ int main(string[] args) {
         }
     }
 
-    // Serialise with any other runner and with nightly perf BEFORE we touch
-    // ports / scratch / vibe3d. The canonical path ignores TMPDIR on purpose;
-    // a capacity-isolated run may therefore wait or reach `lock_timeout` after
-    // 600 s. See runLockPath() for the explicit throughput-for-signal trade.
-    if (!acquireRunLock(lockTimeoutSec)) {
-        g_harness.stage = HarnessStage.lockTimeout;
-        g_harness.rc = 1;
-        return 1;
-    }
     // Pessimistic until printSummary has both populated the counters and
     // emitted the Total line. Worker preparation/link failures return before
     // that point; calling them `ran` made total=0 indistinguishable from a

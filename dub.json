@@ -308,6 +308,7 @@
 			],
 			"sourceFiles": [
 				"tools/harness/hostspace.d",
+				"tools/harness/runslots.d",
 				"tools/perf/lib/vslast.d",
 				"tools/perf/lib/baseline.d",
 				"tools/perf/lib/stats.d"

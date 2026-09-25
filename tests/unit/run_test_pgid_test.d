@@ -60,6 +60,7 @@ import std.process   : environment, execute, thisProcessID;
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
 private enum hostspacePath = buildPath(repoRoot, "tools", "harness", "hostspace.d");
+private enum runslotsPath = buildPath(repoRoot, "tools", "harness", "runslots.d");
 
 unittest
 {
@@ -73,7 +74,7 @@ unittest
     scope(exit) cast(void) collectException(remove(outBin));
     scope(exit) if (exists(runLock)) cast(void) collectException(remove(runLock));
 
-    auto build = execute(["dmd", "-unittest", runnerPath, hostspacePath,
+    auto build = execute(["dmd", "-unittest", runnerPath, hostspacePath, runslotsPath,
                           "-of=" ~ outBin]);
     enforce(build.status == 0, format(
         "compiling %s with -unittest failed (status %d):\n%s",

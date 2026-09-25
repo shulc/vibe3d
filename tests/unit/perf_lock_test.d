@@ -41,7 +41,7 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.process   : execute, spawnProcess, wait, thisProcessID, environment, pipe;
 import std.stdio     : File;
-import std.string    : startsWith, strip;
+import std.string    : splitLines, startsWith, strip;
 import core.thread   : Thread;
 import core.time     : msecs;
 
@@ -91,6 +91,33 @@ unittest
             "with_perf_lock.sh --print-runtest-lock failed:\n" ~ r.output);
         return r.output.strip;
     }
+
+    // The FAMILY perf takes must be exactly the family run_test.d can hand out
+    // (task 6205): a member perf skips is a slot a test run measures beside.
+    // Under a private base: the rule is what is compared, and the defaults
+    // are pinned by the --print-run-lock equality below, which flocks nothing.
+    string[] queriedFamily(bool perf) {
+        auto env = environment.toAA;
+        env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = buildPath(tmpA, "family.lock");
+        env["VIBE3D_HARNESS_LOG"] = "off";
+        auto r = perf ? execute(["bash", scriptPath, "--print-runtest-slots"], env)
+                      : execute([runTestPath, "--print-run-slots"], env);
+        enforce(r.status == 0, "family query failed:\n" ~ r.output);
+        string[] fam;
+        foreach (line; r.output.splitLines) {
+            if (perf) { if (line.strip.length) fam ~= line.strip; }
+            else if (line.startsWith("family ")) fam ~= line["family ".length .. $].strip;
+        }
+        return fam;
+    }
+    const runFamily = queriedFamily(false);
+    const perfFamily = queriedFamily(true);
+    assert(runFamily.length == 6, format(
+        "run_test.d reports a slot family of %d, expected the measured 6:\n%s",
+        runFamily.length, runFamily));
+    assert(runFamily == perfFamily, format(
+        "with_perf_lock.sh takes a different slot family than run_test.d hands "
+      ~ "out:\n  run_test.d: %s\n  perf:       %s", runFamily, perfFamily));
 
     const runA = queriedRunLock(tmpA);
     const runB = queriedRunLock(tmpB);
@@ -150,6 +177,7 @@ private void proveTmpdirContention()
     holderEnv["TMPDIR"] = tmpA;
     holderEnv["VIBE3D_HARNESS_LOG"] = "off";
     holderEnv["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = lock;
+    holderEnv["VIBE3D_RUN_SLOTS"] = "1";   // one slot: TMPDIR must not split it
     auto releasePipe = pipe();
     auto holderOut = File(holderLog, "w");
     auto holder = spawnProcess(
@@ -188,6 +216,7 @@ private void proveTmpdirContention()
     contenderEnv["TMPDIR"] = tmpB;
     contenderEnv["VIBE3D_HARNESS_LOG"] = "off";
     contenderEnv["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = lock;
+    contenderEnv["VIBE3D_RUN_SLOTS"] = "1";
     auto blocked = execute(
         [runTestPath, "--probe-run-lock", "0", "--lock-timeout", "1"],
         contenderEnv);
@@ -251,6 +280,10 @@ unittest
         "VIBE3D_HARNESS_LOG":            "off",
     ];
     scope(exit) foreach (f; [lock, perfLock, witness]) if (exists(f)) remove(f);
+    scope(exit) foreach (k; 1 .. 6) {
+        const f = format("%s.slot.%d", lock, k);
+        if (exists(f)) remove(f);
+    }
     if (exists(witness)) remove(witness);
 
     // A waiting perf wrapper must not erase the live runner's diagnostic
@@ -306,6 +339,23 @@ unittest
     }
 
     release();
+
+    // The LAST family member alone held => still refused (task 6205): perf
+    // must take every slot, not only the configured count or slot 0.
+    {
+        const lastSlot = lock ~ ".slot.5";
+        scope(exit) if (exists(lastSlot)) remove(lastSlot);
+        const fd5 = open(lastSlot.toStringz, O_RDWR | O_CREAT, octal!"644");
+        enforce(fd5 >= 0 && flock(fd5, LOCK_EX | LOCK_NB) == 0,
+            "could not hold the last family slot " ~ lastSlot);
+        scope(exit) { flock(fd5, LOCK_UN); close(fd5); }
+        auto r = execute(["bash", scriptPath, "1", "--",
+                          "bash", "-c", "touch " ~ witness], seam);
+        assert(r.status != 0 && !exists(witness),
+            "with_perf_lock.sh measured while run slot 5 was held:\n" ~ r.output);
+        assert(r.output.canFind("REFUSED") && r.output.canFind(lastSlot),
+            "the refusal does not name the held last slot:\n" ~ r.output);
+    }
 
     // 2 (reverse direction). FREE => the command runs and its own exit code
     // survives. Without this cell the assertions above are satisfied by a

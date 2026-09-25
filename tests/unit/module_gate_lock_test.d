@@ -1,8 +1,10 @@
 // The `dub test --config=tests` process is itself a CPU-heavy host lane. It
-// must share `/tmp/vibe3d-run-test.lock` with run_test.d and nightly perf for
-// its entire lifetime (task 4980, evidence in the matching task card). The
-// intentional price is queueing: this gate can wait behind either lane until
-// its timeout. That throughput loss buys an uncontaminated performance signal.
+// holds one run SLOT of the family run_test.d and nightly perf share
+// (tools/harness/runslots.d) for its entire lifetime (task 4980; slots since
+// task 6205, evidence in the matching task cards). The intentional price is
+// queueing: while every slot is held this gate waits, up to its timeout. Under
+// a gate-pool dispatcher the gate BORROWS the dispatcher's slot instead, so one
+// gate pair is one slot.
 module tests.unit.module_gate_lock_test;
 
 import std.algorithm : canFind;
@@ -18,16 +20,11 @@ import std.string    : indexOf, toStringz;
 
 import core.thread            : Thread;
 import core.time              : seconds;
-import core.sys.posix.fcntl   : open, O_CREAT, O_RDWR;
-import core.sys.posix.unistd  : close, ftruncate, getpid;
-import core.sys.posix.sys.types : ssize_t;
 
-private extern(C) int flock(int fd, int operation) nothrow @nogc;
-private pragma(mangle, "write")
-extern(C) ssize_t c_write(int fd, const(void)* buf, size_t count) nothrow @nogc;
-private enum LOCK_EX = 2, LOCK_NB = 4;
+import tools.harness.runslots : RunSlot, borrowInheritedSlot, configuredRunSlots,
+    kCanonicalRunSlotBase, kRunSlotBaseEnv, runSlotBase, runSlotPath,
+    tryAcquireFreeSlot;
 
-private enum kCanonicalRunLock = "/tmp/vibe3d-run-test.lock";
 private enum kModuleGateTimeoutEnv = "VIBE3D_MODULE_GATE_LOCK_TIMEOUT_SECONDS";
 private enum kDefaultModuleGateTimeoutSeconds = 600;
 private enum kRunLockPathEnv = "VIBE3D_PERF_RUNTEST_LOCK_PATH";
@@ -42,7 +39,7 @@ private enum runnerPath = buildPath(repoRoot, "run_test.d");
 // until process exit, including every unittest that druntime runs before main.
 // A local variable would close too early and turn the gate into a startup-only
 // handshake. The OS closes this descriptor on every exit path.
-private __gshared int gModuleGateLockFd = -1;
+private __gshared RunSlot gModuleGateSlot;
 
 private noreturn abortModuleGate(string message)
 {
@@ -63,62 +60,48 @@ private int moduleGateTimeoutSeconds()
       ~ "timeout in seconds", kModuleGateTimeoutEnv, raw));
 }
 
-private void stampModuleGateHolder()
-{
-    if (ftruncate(gModuleGateLockFd, 0) != 0) {
-        stderr.writeln("module unittest gate: acquired lock but could not "
-                     ~ "truncate its diagnostic PID stamp");
-        return;
-    }
-    const stamp = format("pid %d module-gate\n", getpid());
-    if (c_write(gModuleGateLockFd, stamp.ptr, stamp.length) != stamp.length)
-        stderr.writeln("module unittest gate: acquired lock but could not "
-                     ~ "write its diagnostic PID stamp");
-}
-
 private void acquireModuleGateLock()
 {
-    gModuleGateLockFd = open(kCanonicalRunLock.toStringz,
-                             O_RDWR | O_CREAT, octal!"644");
-    if (gModuleGateLockFd < 0)
-        abortModuleGate("MODULE TESTS DID NOT RUN — could not open canonical "
-                      ~ "shared test/perf lock " ~ kCanonicalRunLock);
-
-    if (flock(gModuleGateLockFd, LOCK_EX | LOCK_NB) == 0) {
-        stampModuleGateHolder();
+    const base = runSlotBase();
+    if (borrowInheritedSlot(base, gModuleGateSlot)) {
+        stderr.writefln("module unittest gate: borrowing run slot %d (%s) from "
+                      ~ "its caller", gModuleGateSlot.index, gModuleGateSlot.path);
         return;
     }
+    const count = configuredRunSlots();
+    if (count.error.length)
+        abortModuleGate("MODULE TESTS DID NOT RUN — invalid run-slot count: "
+                      ~ count.error);
+    if (tryAcquireFreeSlot(base, count.n, gModuleGateSlot, "module-gate"))
+        return;
 
     const timeoutSeconds = moduleGateTimeoutSeconds();
-    stderr.writefln("module unittest gate: %s is held by another test/perf "
-                  ~ "run; waiting up to %ds. This intentional queue trades "
-                  ~ "test throughput for uncontaminated perf measurements.",
-                    kCanonicalRunLock, timeoutSeconds);
+    stderr.writefln("module unittest gate: all %d run slots of %s are held by "
+                  ~ "other test/perf runs; waiting up to %ds. This intentional "
+                  ~ "queue trades test throughput for uncontaminated perf "
+                  ~ "measurements.", count.n, base, timeoutSeconds);
     foreach (waited; 1 .. timeoutSeconds + 1) {
         Thread.sleep(1.seconds);
-        if (flock(gModuleGateLockFd, LOCK_EX | LOCK_NB) == 0) {
-            stderr.writefln("module unittest gate: acquired shared lock after %ds",
-                            waited);
-            stampModuleGateHolder();
+        if (tryAcquireFreeSlot(base, count.n, gModuleGateSlot, "module-gate")) {
+            stderr.writefln("module unittest gate: acquired run slot %d after %ds",
+                            gModuleGateSlot.index, waited);
             return;
         }
         if (waited % 15 == 0)
-            stderr.writefln("module unittest gate: still waiting for shared "
-                          ~ "test/perf lock (%ds)", waited);
+            stderr.writefln("module unittest gate: still waiting for a free "
+                          ~ "shared test/perf run slot (%ds)", waited);
     }
 
-    close(gModuleGateLockFd);
-    gModuleGateLockFd = -1;
     abortModuleGate(format(
-        "MODULE TESTS DID NOT RUN — timed out after %ds waiting for %s. "
-      ~ "The module gate intentionally queues behind nightly perf and other "
-      ~ "test runs; retry after the holder exits.",
-        timeoutSeconds, kCanonicalRunLock));
+        "MODULE TESTS DID NOT RUN — timed out after %ds waiting for one of the "
+      ~ "%d run slots of %s. The module gate intentionally queues behind "
+      ~ "nightly perf and other test runs; retry after a holder exits.",
+        timeoutSeconds, count.n, base));
 }
 
 // druntime executes module unittests before main, so this is the only startup
 // point that brackets the complete gate without relying on dub's generated
-// main. gModuleGateLockFd keeps the acquired descriptor alive until exit.
+// main. gModuleGateSlot keeps the acquired descriptor alive until exit.
 shared static this()
 {
     acquireModuleGateLock();
@@ -133,28 +116,37 @@ private string[string] isolatedChildEnvironment()
     return env;
 }
 
-unittest // the module gate and run_test.d cannot enter their runs together
+unittest // the module gate holds a real slot of the family run_test.d takes
 {
-    assert(gModuleGateLockFd >= 0,
-        "module gate reached a unittest without a live lock descriptor");
+    assert(gModuleGateSlot.held,
+        "module gate reached a unittest without holding a run slot");
+    // Ask the PRODUCTION runner which slots of the same family are held. It
+    // answers by flock, so this is the kernel's view, not ours. The family is
+    // the production default unless the seam was set for this whole binary
+    // (a standalone run on a busy host); perf_lock_test pins the default.
     auto env = isolatedChildEnvironment();
-    env.remove(kRunLockPathEnv); // exercise run_test.d's production default
-    auto child = execute([runnerPath, "--probe-run-lock", "0",
-                          "--lock-timeout", "1"], env);
-    assert(child.status != 0, format(
-        "module gate and run_test.d started simultaneously: the nested runner "
-      ~ "acquired the canonical lock while this module unittest was running:\n%s",
-        child.output));
-    assert(child.output.canFind("NO TESTS RAN"),
-        "run_test.d was blocked but did not report its zero-test timeout loudly:\n"
-      ~ child.output);
+    env["VIBE3D_RUN_SLOTS"] = "6";
+    auto child = execute([runnerPath, "--print-run-slots"], env);
+    assert(child.status == 0, "run_test.d --print-run-slots failed:\n" ~ child.output);
+    const want = format("slot %d %s held", gModuleGateSlot.index,
+                        runSlotPath(runSlotBase(), gModuleGateSlot.index));
+    assert(child.output.canFind(want), format(
+        "run_test.d does not see the module gate's slot as held; expected `%s`:\n%s",
+        want, child.output));
+    if (!gModuleGateSlot.borrowed)
+        assert(child.output.canFind(want ~ format(" pid %d module-gate", thisProcessID)),
+            "the held slot does not carry the module gate's stamp:\n" ~ child.output);
 }
 
-unittest // a second module gate must fail loudly before its main can run
+unittest // a second module gate must fail loudly while every slot is held
 {
     const probeBin = buildPath(tempDir(), format(
         "vibe3d-module-gate-timeout-%d", thisProcessID));
+    const privateBase = buildPath(tempDir(), format(
+        "vibe3d-module-gate-full-%d.lock", thisProcessID));
     scope(exit) if (exists(probeBin)) cast(void) collectException(remove(probeBin));
+    scope(exit) if (exists(privateBase))
+        cast(void) collectException(remove(privateBase));
 
     auto build = execute(["dmd", "-i", "-main", "-I" ~ repoRoot,
                           __FILE_FULL_PATH__, "-of=" ~ probeBin]);
@@ -162,8 +154,17 @@ unittest // a second module gate must fail loudly before its main can run
         "could not compile the standalone module-gate probe (status %d):\n%s",
         build.status, build.output));
 
+    // Fill the private one-slot family ourselves, so the probe's only way
+    // forward is the give-up path.
+    RunSlot full;
+    enforce(tryAcquireFreeSlot(privateBase, 1, full, "full-host witness"),
+        "could not take the private slot this cell needs held");
+    scope(exit) { import tools.harness.runslots : releaseSlot; releaseSlot(full); }
+
     auto env = isolatedChildEnvironment();
     env[kModuleGateTimeoutEnv] = "1";
+    env[kRunLockPathEnv] = privateBase;
+    env["VIBE3D_RUN_SLOTS"] = "1";
     auto child = execute([probeBin], env);
     assert(child.output.canFind("MODULE TESTS DID NOT RUN"),
         "module-gate timeout was silent; expected `MODULE TESTS DID NOT RUN`, got:\n"
@@ -223,7 +224,7 @@ unittest // the six runner-spawning witnesses must stay on private lock paths
         while ((from = text.indexOf(`"/tmp/vibe3d-run-test.lock"`, from))
                != -1) {
             ++canonicalLiterals;
-            from += kCanonicalRunLock.length;
+            from += kCanonicalRunSlotBase.length;
         }
     }
     assert(population == 6, format(

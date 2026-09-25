@@ -50,9 +50,10 @@
 //   make `lock_wait_s` default to 0 instead of -1       -> A: sentinel
 
 import std.process : Config, environment, execute, thisProcessID;
-import std.file    : exists, getcwd, mkdirRecurse, readText, remove, rmdir, tempDir;
+import std.file    : dirEntries, exists, getcwd, mkdirRecurse, readText, remove, rmdir,
+                     SpanMode, tempDir;
 import std.json    : JSONValue, parseJSON;
-import std.path    : buildPath;
+import std.path    : baseName, buildPath;
 import std.string  : indexOf, strip, startsWith, splitLines;
 import std.conv    : octal, to;
 import std.format  : format;
@@ -107,6 +108,10 @@ void main() {
         format("vibe3d-harness-lock-test-%d", thisProcessID));
     if (exists(lockFile)) remove(lockFile);
     scope(exit) if (exists(lockFile)) remove(lockFile);
+    // The runner's per-checkout build lock lives beside the private slot base.
+    scope(exit) foreach (e; dirEntries(tempDir(), baseName(lockFile) ~ ".wt.*",
+                                       SpanMode.shallow))
+        remove(e.name);
     import std.string : toStringz;
     const lockFd = open(lockFile.toStringz, O_RDWR | O_CREAT, octal!"644");
     assert(lockFd >= 0, "could not open the private runner lock " ~ lockFile);
@@ -127,6 +132,9 @@ void main() {
     string[string] env = [
         "VIBE3D_HARNESS_LOG": g_logPath,
         "VIBE3D_PERF_RUNTEST_LOCK_PATH": lockFile,
+        // One slot (task 6205): with the default two, an independent child
+        // would take the private family's free second slot instead of queueing.
+        "VIBE3D_RUN_SLOTS": "1",
         "VIBE3D_INHERITED_RUN_LOCK_PID": "",
         "VIBE3D_INHERITED_RUN_LOCK_FD": "",
     ];
@@ -175,8 +183,8 @@ void main() {
         "B: this process should hold the private runner lock, but %s names no pid.",
         lockFile));
 
-    // --stale-ok so the binary-freshness guard, which sits BEFORE the lock,
-    // cannot decide this cell's outcome instead of the lock doing it.
+    // --stale-ok so the binary-freshness guard cannot decide this cell's
+    // outcome instead of the run slot doing it.
     auto b = execute(["./run_test.d", "--lock-timeout", "1", "--no-build",
                       "--stale-ok", "test_harness_load_log"], env);
     assert(b.status == 1,
@@ -204,6 +212,7 @@ void main() {
     // ------------------------------------------------------- lease ancestry
     scenario("lease ancestry: an orphaned session cannot borrow the lock");
     inheritedEnv["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = lockFile;
+    inheritedEnv["VIBE3D_RUN_SLOTS"] = "1";
     inheritedEnv["VIBE3D_INHERITED_RUN_LOCK_PID"] = thisProcessID.to!string;
     inheritedEnv["VIBE3D_INHERITED_RUN_LOCK_FD"] = lockFd.to!string;
     auto orphaned = execute(

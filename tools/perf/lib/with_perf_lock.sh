@@ -95,8 +95,24 @@
 # reversal of the 2026-08-30 change, for a host where no test lane can run.
 set -euo pipefail
 
+# Task 6205: the test runner's single lock became a FAMILY of run slots
+# (tools/harness/runslots.d). A test run holds one; this window takes EVERY
+# member, so a measurement still excludes all test runs however many slots a
+# host is configured for. The family size and path rule are duplicated here
+# and pinned against `run_test.d --print-run-slots` by tests/unit/perf_lock_test.d.
+runtest_slot_family() {
+    local base="${VIBE3D_PERF_RUNTEST_LOCK_PATH:-/tmp/vibe3d-run-test.lock}"
+    echo "$base"
+    local k
+    for k in 1 2 3 4 5; do echo "$base.slot.$k"; done
+}
+
 if [ "${1:-}" = "--print-runtest-lock" ]; then
     echo "${VIBE3D_PERF_RUNTEST_LOCK_PATH:-/tmp/vibe3d-run-test.lock}"
+    exit 0
+fi
+if [ "${1:-}" = "--print-runtest-slots" ]; then
+    runtest_slot_family
     exit 0
 fi
 
@@ -127,7 +143,6 @@ lock_path="${VIBE3D_PERF_LOCK_PATH:-/tmp/vibe3d-perf.lock}"
 # stops excluding test runs and every number stays plausible — which is why
 # `tests/unit/perf_lock_test.d` executes both query surfaces and compares their
 # actual values rather than reconstructing either source expression.
-runtest_lock_path="${VIBE3D_PERF_RUNTEST_LOCK_PATH:-/tmp/vibe3d-run-test.lock}"
 
 # Card 3430's residual, made visible rather than assumed away: neither lock
 # excludes a browser, a build or an unrelated worker. This is a PRE-WINDOW
@@ -166,30 +181,37 @@ if [ "${VIBE3D_PERF_SKIP_RUNTEST_LOCK:-0}" = "1" ]; then
          "any number produced under this flag is comparable only with other" \
          "numbers produced under it." >&2
 else
-    echo "with_perf_lock: acquiring $runtest_lock_path (timeout ${timeout_s}s)..." >&2
-    # Read/write WITHOUT truncation: this open happens before flock waits, so
-    # `>` would erase the live runner's diagnostic stamp for the whole queue.
-    exec 8<>"$runtest_lock_path"
-    if ! flock -w "$timeout_s" 8; then
-        holder=$(cat "$runtest_lock_path" 2>/dev/null | tr -d '\n')
-        echo "with_perf_lock: REFUSED — $runtest_lock_path is still held after" \
-             "${timeout_s}s (${holder:-holder unknown}). A test run is live on" \
-             "this host: an idle 'vibe3d --test' alone holds ~26% SM" \
-             "(nvidia-smi pmon, 2026-08-30), and a neighbour's 'run_test -j16'" \
-             "moved this lane's flip case +64% in a deliberate reproduction" \
-             "(doc/tasks/backlog/3380). A number measured beside one is" \
-             "contention noise, so this refuses rather than measuring. If it" \
-             "fires repeatedly, find the holder with 'fuser" \
-             "$runtest_lock_path' — do not just raise the timeout, and do not" \
-             "set VIBE3D_PERF_SKIP_RUNTEST_LOCK to get past it." >&2
-        exit 1
-    fi
-    # We own the lock now; replace any prior holder's diagnostic stamp. The
-    # truncate is safe only here, after flock, and the inherited fd remains
-    # the lock authority across the exec below.
-    : > "$runtest_lock_path"
-    printf 'pid %s\n' "$$" >&8
-    echo "with_perf_lock: acquired $runtest_lock_path" >&2
+    # Ascending order, blocking on each: a test run holds at most ONE slot and
+    # never waits while holding it, so this cannot deadlock. Every slot gets the
+    # full budget from the moment it is reached, not a share of it.
+    fd=20
+    while IFS= read -r slot_path; do
+        echo "with_perf_lock: acquiring $slot_path (timeout ${timeout_s}s)..." >&2
+        # Read/write WITHOUT truncation: this open happens before flock waits,
+        # so `>` would erase the live runner's diagnostic stamp for the queue.
+        eval "exec $fd<>\"\$slot_path\""
+        if ! flock -w "$timeout_s" "$fd"; then
+            holder=$(cat "$slot_path" 2>/dev/null | tr -d '\n')
+            echo "with_perf_lock: REFUSED — $slot_path is still held after" \
+                 "${timeout_s}s (${holder:-holder unknown}). A test run is live on" \
+                 "this host: an idle 'vibe3d --test' alone holds ~26% SM" \
+                 "(nvidia-smi pmon, 2026-08-30), and a neighbour's 'run_test -j16'" \
+                 "moved this lane's flip case +64% in a deliberate reproduction" \
+                 "(doc/tasks/backlog/3380). A number measured beside one is" \
+                 "contention noise, so this refuses rather than measuring. If it" \
+                 "fires repeatedly, find the holder with 'fuser" \
+                 "$slot_path' — do not just raise the timeout, and do not" \
+                 "set VIBE3D_PERF_SKIP_RUNTEST_LOCK to get past it." >&2
+            exit 1
+        fi
+        # We own the slot now; replace any prior holder's diagnostic stamp. The
+        # truncate is safe only here, after flock, and the inherited fd remains
+        # the lock authority across the exec below.
+        : > "$slot_path"
+        printf 'pid %s perf\n' "$$" > "$slot_path"
+        echo "with_perf_lock: acquired $slot_path" >&2
+        fd=$((fd + 1))
+    done < <(runtest_slot_family)
 fi
 
 echo "with_perf_lock: running: $*" >&2
