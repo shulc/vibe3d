@@ -7,8 +7,11 @@
 // `mesh.subdivide` (a Model command: the pre-apply drop branch), script
 // `mesh.select` (UiState: neither branch), `tool.set <id> off` (the drop
 // door)}. Each cell arms the tool on an empty history, makes a live edit by
-// real input (a haul with release; TransformMove hauls twice, so its run is
-// open BETWEEN gestures), runs the path and dumps {undo rows, active tool,
+// real input (a haul with release; TransformMove hauls twice off the handle,
+// and each haul records its own non-session row, so the run is CLOSED between
+// the hauls — `runOpen` false in the recording; which is why moving the
+// 6250 close ahead of the drop door (mutation m2-rows-a) cannot move a row
+// here, card M2 PF-7), runs the path and dumps {undo rows, active tool,
 // vertex digest, the tool's published state}. Every path here is a SCRIPT door
 // or the drop door, which M2 must leave exactly as it was: the file is the
 // witness that moving the close into `EditSession.closeOperation` changed no

@@ -623,6 +623,12 @@ final class EditSession {
     // only keeps its account of it. Returns what the command funnel needs:
     // whether the tool stays armed across the command.
     CloseOutcome closeOperation(CloseReason r, CommandDoor door = CommandDoor.ui) {
+        // No command close while a mouse button is held — the held-button rule
+        // `navigate` applies (slice M1a): refused, the tool is not called, and
+        // the funnel keeps its pre-M2 rules. A door's close is the door's and
+        // runs regardless, so its account is kept.
+        if (r == CloseReason.command && g_heldGestureButtons.any)
+            return CloseOutcome(false, false);
         return tools_.close(r, door);
     }
 

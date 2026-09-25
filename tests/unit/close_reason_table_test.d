@@ -22,6 +22,7 @@ import command : CmdFlags, Command, endsLiveEditBeforeUiCommand;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
+import held_gesture_buttons : g_heldGestureButtons;
 import editmode : EditMode;
 import tool : CommandClose, Tool, ToolSessionPolicy;
 import tool_activation_ownership;
@@ -199,6 +200,18 @@ unittest {
     assert(ui.resumeCalls == 1, "M2 close: a second finishClose resumed again");
     ++cells;
 
+    // A held mouse button refuses the command close (the navigate rule):
+    // the tool is not called; a door's account still runs.
+    ui.open = true;
+    g_heldGestureButtons.press(1);
+    {
+        scope(exit) g_heldGestureButtons.clear();
+        assert(es.closeOperation(CloseReason.command, CommandDoor.ui) == CloseOutcome(false, false),
+               "M2 close: a command closed a live operation while a button was held");
+        assert(ui.commitCalls == 1, "M2 close: a held-button close called the tool's commit");
+    }
+    assert(!g_heldGestureButtons.any);
+
     // (4) a refused commit: not kept, no resume.
     ui.open = true;
     ui.commits = false;
@@ -268,6 +281,18 @@ unittest {
     const doorRow = history.undoEntries()[$ - 1].cmd;
     es.finishClose();
     assert(es.lastClosedRow() is doorRow, "M2 close account: the drop door's row is not marked");
+
+    // A held button does not suspend a door's account (the door runs anyway).
+    g_heldGestureButtons.press(1);
+    {
+        scope(exit) g_heldGestureButtons.clear();
+        es.closeOperation(CloseReason.drop);
+        history.record(new StubCommand("held door row", CmdFlags.Model));
+        const heldRow = history.undoEntries()[$ - 1].cmd;
+        es.finishClose();
+        assert(es.lastClosedRow() is heldRow,
+               "M2 close account: a held button suspended the drop door's account");
+    }
 
     // ... and nothing when the door wrote nothing.
     es.closeOperation(CloseReason.drop);
