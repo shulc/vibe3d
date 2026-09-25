@@ -139,4 +139,8 @@ unittest
     assert(reads == 2, format(
         "the viewport probe provider has %d glReadPixels calls; expected 2 "
         ~ "(the one-rect point reader + the hash)", reads));
+    // And the reader reads the RECT it is handed, not 1x1 pixels in a loop
+    // (which keeps both counts above and the response bytes unchanged).
+    assert(body_.count("glReadPixels(rx, ry, rw, rh,") == 1,
+        "the probe's point reader no longer reads the whole rectangle in one call");
 }
