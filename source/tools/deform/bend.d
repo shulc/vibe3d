@@ -47,8 +47,8 @@ public:
     // Task 0393: headlessAngleDeg/headlessSpine are STICKY tool-defaults
     // (this tool has no interactive gesture — they're the whole "setting"
     // surface), already restored onto these fields by
-    // applyStickyToolDefaults() (tool_presets.d, called from app.d
-    // activateToolById) BEFORE activate() runs — don't reset them back to
+    // the attribute cache recall (prepareStickyToolDefaults, from the prepared arm)
+    // BEFORE activate() runs — don't reset them back to
     // the constructor defaults here. A brand-new (never-activated) tool
     // still gets 0/+X from the field initializers above.
     override void activate() {

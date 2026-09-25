@@ -892,9 +892,10 @@ public:
         // Settings fields (edit_/mode_/count_/selectNew_/sliceSelected_/
         // keepQuads_/sliceNgon_/sliceSplit_/sliceCaps_/gap_/curvature_/
         // curveTension_/profile_/depth_/reverseX_/reverseY_/aspect_) are
-        // STICKY tool-defaults (task 0393): applyStickyToolDefaults()
-        // (tool_presets.d) already restores them onto a freshly built tool's
-        // fields BEFORE activate() runs (app.d activateToolById), so
+        // STICKY tool-defaults (task 0393): the attribute cache recall
+        // (prepareStickyToolDefaults, from the prepared arm) already restores them
+        // onto a freshly built tool's
+        // fields BEFORE activate() runs, so
         // reinitSession must NOT reset them back to the constructor defaults
         // here — doing so silently clobbered the restore (the 0393 bug). A
         // brand-new (never-activated) tool still gets correct defaults

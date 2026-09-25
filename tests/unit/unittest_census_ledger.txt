@@ -235,3 +235,4 @@ drop 2 6 6207 unreachable run/pick key terms and their isolated struct assertion
 drop 0 1 6730 the reverse Answered-bridge needle owns the all-portless-on-httpThread property; the duplicate accumulator stayed green when neutralized
 drop 0 1 7112 action_menu_roles_test: the nav_ reachability count added in 11e68e3f was removed in the next commit because it reddened ahead of the plan-named panel-undo census (M10), shadowing it
 drop 0 1 7400 browser_pick_resume_test: the stillBoundTo(null) assert went with the unreachable null term it witnessed; removing that term crashed the process, so the cell could never redden (fa9ae42a)
+drop 3 4 M5 the dead applyStickyToolDefaults (no production caller) removed with its three unittests; the prepared recall keeps its own cell (M5 review item 5)

@@ -623,8 +623,9 @@ string fmtFloatWire(double f)
 // That is the shape this project pays for most — a guard that reads as armed
 // and is not. `prim.box`'s `segmentsX/Y/Z` are the concrete case: the ceiling
 // is a DoS clamp on an allocation scaler (doc/param_bounds_plan.md), it is
-// honoured when the value arrives as JSON, and `applyStickyToolDefaults`
-// re-applies the SAME param out of `prefs.json` through `parseInto`, where it
+// honoured when the value arrives as JSON, and the tool attribute cache recall
+// (`toolpipe.attr_cache.recallNodeAttrs`) re-applies the SAME param out of
+// `prefs.json` through `parseInto`, where it
 // was not. Two routes, one declared domain, one gate — so a new route cannot
 // be born unclamped by forgetting to copy an arm.
 //

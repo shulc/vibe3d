@@ -10,7 +10,6 @@ import tools.deform.push : PushTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import toolpipe.pipeline : g_pipeCtx;
 import params : Param, ParamProvider, injectParamsInto, parseInto;
-import prefs  : g_prefs, Prefs;
 import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
 
 // ---------------------------------------------------------------------------
@@ -233,28 +232,6 @@ private void applyToolAttrs(Tool t, string[string] attrs, string presetId) {
     }
 }
 
-// Apply the user's sticky tool-option defaults (persisted in prefs under this
-// tool/preset id) onto a freshly built tool, AFTER the constructor defaults
-// and any preset YAML attrs — so a sticky value overrides
-// config/tool_presets.yaml (that is the point). Each stored value is a wire
-// string re-applied through the same parseInto path the stage attr setter
-// uses. Unknown attrs (a stale prefs entry naming a param the tool no longer
-// exposes) are skipped silently — never throws, so a stale prefs file can't
-// block tool activation. Inert when no sticky entry exists.
-//
-// Public + typed on `ParamProvider` (not `Tool`) so it is unit-testable
-// against a tiny fake without a GL-heavy real Tool, and so it can be called
-// from the universal activation chokepoints (app.d `activateToolById` /
-// `toolHost.activate`) rather than only from the preset factory — this is
-// what makes last-used settings restore for EVERY tool (base/direct tools
-// included), not just preset-derived ones.
-void applyStickyToolDefaults(ParamProvider t, string presetId) {
-    import toolpipe.attr_cache : kToolNode, recallNodeAttrs;
-    auto sticky = g_prefs.toolAttrCache.lookup(presetId, kToolNode);
-    if (sticky is null) return;
-    recallNodeAttrs(t, *sticky, true);
-}
-
 /// Detached-candidate half of sticky restoration for the unified activation
 /// transaction. Values are parsed into the unpublished candidate, while hook
 /// names are returned as owned storage for later prepared-effect enlistment.
@@ -292,70 +269,22 @@ version (unittest) {
 }
 
 unittest {
-    auto saved = g_prefs;
-    scope(exit) g_prefs = saved;
-    g_prefs = Prefs.init;
-
-    import toolpipe.attr_cache : kToolNode;
+    import toolpipe.attr_cache : PipelineAttrCache, kToolNode;
+    PipelineAttrCache cache;
     char[] producerName = "label".dup;
     char[] producerValue = "owned-value".dup;
-    g_prefs.toolAttrCache.store("fake", kToolNode,
+    cache.store("fake", kToolNode,
         [cast(string)producerName: cast(string)producerValue]);
     auto fake = new FakeStickyProvider();
-    auto prepared = prepareStickyToolDefaults(fake,
-        g_prefs.toolAttrCache.lookup("fake", kToolNode));
+    auto prepared = prepareStickyToolDefaults(fake, cache.lookup("fake", kToolNode));
     assert(fake.label == "owned-value" && prepared.changedNames == ["label"]);
     assert(fake.changedNames.length == 0,
            "prepared sticky values invoked a live hook during preparation");
     producerName[] = 'x';
     producerValue[] = 'y';
-    g_prefs = Prefs.init;
+    cache.clear();
     assert(fake.label == "owned-value" && prepared.changedNames == ["label"],
-           "prepared sticky values borrowed prefs storage");
-}
-
-unittest {
-    // applyStickyToolDefaults — restores a persisted sticky value onto a
-    // freshly built ParamProvider and fires onParamChanged for it. This is
-    // the mechanism base/direct tools now use (Stage A), not just preset-
-    // derived ones.
-    auto saved = g_prefs;
-    scope(exit) g_prefs = saved;
-    g_prefs = Prefs.init;
-
-    import toolpipe.attr_cache : kToolNode;
-    g_prefs.toolAttrCache.store("fake", kToolNode, ["width": "0.25"]);
-    auto fake = new FakeStickyProvider();
-    applyStickyToolDefaults(fake, "fake");
-    assert(fake.width == 0.25f);
-    assert(fake.changedNames == ["width"]);
-}
-
-unittest {
-    // No sticky entry for this id -> inert (no crash, no onParamChanged).
-    auto saved = g_prefs;
-    scope(exit) g_prefs = saved;
-    g_prefs = Prefs.init;
-
-    auto fake = new FakeStickyProvider();
-    applyStickyToolDefaults(fake, "fake");
-    assert(fake.width == 1.0f);
-    assert(fake.changedNames.length == 0);
-}
-
-unittest {
-    // A stale prefs entry naming a param the provider no longer exposes is
-    // skipped silently, never throws.
-    auto saved = g_prefs;
-    scope(exit) g_prefs = saved;
-    g_prefs = Prefs.init;
-
-    import toolpipe.attr_cache : kToolNode;
-    g_prefs.toolAttrCache.store("fake", kToolNode, ["noSuchParam": "9"]);
-    auto fake = new FakeStickyProvider();
-    applyStickyToolDefaults(fake, "fake");
-    assert(fake.width == 1.0f);
-    assert(fake.changedNames.length == 0);
+           "prepared sticky values borrowed cache storage");
 }
 
 /// Register every preset as a factory + preActivate hook in `reg`.

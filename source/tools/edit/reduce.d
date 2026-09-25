@@ -115,8 +115,9 @@ public:
     override void activate() {
         active = true;
         // Task 0393: ratio_/pb_ are STICKY tool-defaults, already restored
-        // onto these fields by applyStickyToolDefaults() (tool_presets.d,
-        // called from app.d activateToolById) BEFORE activate() runs —
+        // onto these fields by the attribute cache recall
+        // (prepareStickyToolDefaults, from the prepared arm) BEFORE activate()
+        // runs —
         // don't reset them back to the constructor defaults here. A
         // brand-new (never-activated) tool still gets 0.5/true from the
         // field initializers above.

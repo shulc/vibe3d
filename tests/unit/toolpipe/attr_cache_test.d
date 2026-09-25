@@ -321,7 +321,7 @@ unittest { // u8: the prepared switch stores the predecessor and recalls in orde
                .canFind("captureDroppedNodes(retainedOldId, retainedOld,"),
         "M5 u8: the prepared switch no longer captures the predecessor's nodes");
     auto commit = bodyAt(tr, "bool commitPreparedArm(");
-    assert(at(commit, "prepared.dropped_.commitTo(g_prefs.toolAttrCache);", "commit store")
+    assert(at(commit, "prepared.dropped_.commitTo(*prepared.attrCache_);", "commit store")
          < at(commit, "prepared.pipe_.install();", "commit pipe install"),
         "M5 u8: the predecessor's nodes are committed after the pipe reset");
 

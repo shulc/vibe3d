@@ -20,12 +20,14 @@
 //                attributes, while a setting attribute is recalled;
 //   same-preset re-arm - re-arming the armed preset keeps its live values;
 //   recall before auto-fit - a size-bearing preset's fit wins over a cached
-//                geometry attribute, a cached setting is still recalled.
+//                geometry attribute, a cached setting is still recalled;
+//   undo switch - undoing a switch re-arms the predecessor with its cached
+//                values (the replay arm reads the cache).
 //
 // Order inside each cell: every floor first, then the needle.
 
-import edge_extend_gesture_helpers : Offset, armRig, engage, keyArm, offset,
-    tapKey, toolId, vertexCount;
+import edge_extend_gesture_helpers : Offset, armRig, ctrlZ, engage,
+    keyArm, offset, tapKey, toolId, vertexCount;
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import std.conv : to;
@@ -83,6 +85,11 @@ private double falloffRange() {
 
 private size_t modelVertexCount() {
     return getJson("/api/model")["vertices"].array.length;
+}
+
+/// `tool.attr <id> T ?` is a pure read that refuses unless `id` is active.
+private bool activeToolIs(string id) {
+    return postJson("/api/command", "tool.attr " ~ id ~ " T ?")["status"].str == "ok";
 }
 
 private void armElementMove(string cell) {
@@ -341,4 +348,40 @@ unittest {
     assert(again["shape"] == "smooth",
         "the cached falloff shape was not recalled at the re-arm: " ~ again["shape"]);
     command("tool.set xfrm.taper off");
+}
+
+// ---------------------------------------------------------------------------
+// Undo of a tool switch: the undone activation re-arms the predecessor through
+// the replay arm, which reads the cache (armUsesAttrCache(replayArm) == true).
+// The re-arm itself is captured (C-M4-token-switch, M0b: "the undone
+// activation restores Edge Extrude live"); the VALUES the restored predecessor
+// carries are not — gap row 314. Ours follows H6: every arm recalls the cache.
+// ---------------------------------------------------------------------------
+
+unittest {
+    enum cell = "undo switch";
+    commandId("scene.reset");
+    command("tool.pipe.attr symmetry enabled false");
+    commandId("scene.loadMesh", gridJson());
+    command("select.element vertex set 6 18");
+    command("history.clear");
+    armElementMove(cell);
+    command(format("tool.pipe.attr falloff dist %g", kTyped));
+    assert(abs(falloffRange() - kTyped) <= 1e-6,
+        cell ~ ": floor - the typed range did not reach /api/toolpipe");
+
+    tapKey(kSymW);
+    settle();
+    assert(activeToolIs("move"), cell ~ ": floor - `w` did not switch to Move");
+
+    ctrlZ();
+    assert(activeToolIs("xfrm.elementMove"),
+        cell ~ ": floor - Ctrl+Z did not restore Element Move");
+    assert(falloffAttrs()["type"] == "element",
+        cell ~ ": floor - the restored Element Move has no element falloff");
+    immutable double restored = falloffRange();
+    assert(abs(restored - kTyped) <= 1e-6,
+        format("undoing the switch restored Element Move without its cached range "
+             ~ "(range %s, typed %s)", restored, kTyped));
+    command("tool.set xfrm.elementMove off");
 }

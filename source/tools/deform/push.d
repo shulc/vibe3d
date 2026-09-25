@@ -37,9 +37,9 @@ public:
 
     // Task 0393: headlessDist is a STICKY tool-default (this tool has no
     // interactive gesture — it's the whole "setting" surface), already
-    // restored onto this field by applyStickyToolDefaults() (tool_presets.d,
-    // called from app.d activateToolById) BEFORE activate() runs — don't
-    // reset it back to the constructor default here. A brand-new
+    // restored onto this field by the attribute cache recall
+    // (prepareStickyToolDefaults, from the prepared arm) BEFORE activate()
+    // runs — don't reset it back to the constructor default here. A brand-new
     // (never-activated) tool still gets 0.0 from the field initializer above.
     override void activate() {
         super.activate();

@@ -322,16 +322,11 @@ unittest { // THE WITNESS: FalloffStage.resolveConnectMask must not allocate
 // range (lo > hi) for the interactive slider, since `hi` defaults to 0 when
 // `hasMaxI` is false regardless of what `lo` is.
 //
-// `enforceBounds()` is deliberately NOT set — asserted here as an EXPLICIT
-// negative, not an omission. `FalloffStage.setAttrImpl` overrides the base
-// `Stage.setAttrImpl` end-to-end (see the `case "steps"` switch arm above),
-// so the shared `parseInto` gate that reads `enforceBounds_` is never
-// reached on the only reachable wire route for this attr (`tool.pipe.attr
-// falloff steps <value>`); `applyStickyToolDefaults` is likewise only ever
-// called with a `Tool`, never a `Stage` (source/app.d:3997,4271). Setting the
-// flag would be a guard that LOOKS armed and is not — the exact shape this
-// codebase treats as a defect in its own right, not a decoration to add for
-// symmetry with the JSON-route Params that CAN reach `injectParamsInto`.
+// `enforceBounds()` IS set since slice M5, and this cell proves it is armed:
+// the per-preset tool attribute cache recalls stage attributes through
+// `toolpipe.attr_cache.recallNodeAttrs` -> `parseInto`, which reads the flag,
+// and the cache comes from the prefs file. `FalloffStage.setAttrImpl`'s own
+// `case "steps"` arm (`tool.pipe.attr falloff steps`) still bypasses it.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
@@ -354,11 +349,18 @@ unittest {
                       ~ "(params_widgets.d's DragInt needs a well-formed "
                       ~ "[lo,hi] range) — hasMaxI=%s maxI=%d",
                       p.hints.hasMaxI, p.hints.maxI));
-        assert(!p.enforceBounds_(),
-               "steps' enforceBounds must stay OFF: the only reachable wire "
-               ~ "route (FalloffStage.setAttrImpl's own \"steps\" case) "
-               ~ "never reads this Param at all, so the flag would be inert "
-               ~ "— an armed-looking guard nothing ever checks");
+        assert(p.enforceBounds_(),
+               "steps' enforceBounds must be ON: the attribute cache recall "
+               ~ "writes it through parseInto (slice M5)");
     }
     assert(found, "FalloffType.Selection must expose a 'steps' param");
+
+    // The armed route: a cached value out of range is clamped, not stored.
+    import toolpipe.attr_cache : recallNodeAttrs;
+    recallNodeAttrs(fs, ["steps": "5000"], false);
+    assert(fs.steps == 1024,
+        format("a cached steps 5000 was not clamped by the recall (steps %d)", fs.steps));
+    recallNodeAttrs(fs, ["steps": "0"], false);
+    assert(fs.steps == 1,
+        format("a cached steps 0 was not clamped to the floor (steps %d)", fs.steps));
 }

@@ -834,17 +834,15 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
                 // straight into `ImGui.DragInt(lo, hi, ...)` unconditionally,
                 // so `.min(1)` with no `.max()` left the widget a MALFORMED
                 // `[1, 0]` range (`hi` defaults to 0 when `hasMaxI` is
-                // false). `.enforceBounds()` is deliberately NOT added:
-                // FalloffStage's own `setAttrImpl` (the `case "steps"` arm
-                // above) is the ONLY reachable wire route for this attr, and
-                // it writes `steps` via `assignWireInt` directly — it never
-                // reads this Param's hints at all, and neither does anything
-                // else reachable (`applyStickyToolDefaults` is only ever
-                // called with a `Tool`, never a `Stage`). Setting the flag
-                // would be a guard that LOOKS armed and is not — pinned as an
-                // explicit negative in tests.unit.toolpipe.stages.falloff_test.
+                // false). `.enforceBounds()` IS set since slice M5: the
+                // per-preset tool attribute cache recalls stage attributes
+                // through `recallNodeAttrs` -> `parseInto`, which reads this
+                // Param's hints, and the cache is read from the prefs file
+                // (external input). `setAttrImpl`'s own `case "steps"` arm
+                // still writes via `assignWireInt` and ignores the hints.
+                // Witnessed in tests.unit.toolpipe.stages.falloff_test.
                 ps ~= Param.int_("steps", "Steps", &config.steps, 2)
-                        .min(1).max(1024);
+                        .min(1).max(1024).enforceBounds();
                 break;
             case FalloffType.Composite:
                 // A FalloffStage's own `type` is never Composite — that

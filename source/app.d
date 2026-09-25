@@ -3848,8 +3848,9 @@ void main(string[] args) {
                     throw e;
                 }
             },
-            // Slice M5: a tool reset re-arms at declared defaults.
-            armUsesAttrCache(why));
+            // Slice M5: the per-preset attribute cache, except where the
+            // transition table says the arm re-arms at declared defaults.
+            armUsesAttrCache(why) ? &g_prefs.toolAttrCache : null);
         preToolTickStall.arm();
         if (!commitPreparedArm(activeTool, activeToolId, prepared))
             throw new Exception("prepared tool arm was already consumed");
@@ -4268,6 +4269,10 @@ void main(string[] args) {
         session.discardOpenEdit();
         // Clear the preset's cached attributes (B step 1); the resetRearm
         // below neither stores the instance it replaces nor recalls (M5).
+        // UNWITNESSED (M5 review, mutation H11 green): every later arm is
+        // preceded by a drop that overwrites the tool node and each still-
+        // claimed stage, so only a stage the user releases after the reset
+        // could read a pre-reset value without this line; no cell drives it.
         g_prefs.toolAttrCache.removePreset(id);
         auto s = history.suspended();       // no spurious lifecycle/vertex-edit entry
         JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
