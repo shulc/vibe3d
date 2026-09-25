@@ -52,12 +52,13 @@ struct PreparedPolyBevelActivationImage {
 }
 
 struct PolyBevelParamProjection {
-    bool interactive, active, built, group, square;
+    bool interactive, active, built, group, square, applied;
     float inset, shift;
-    int segments;
+    int segments, op;
     bool opEquals(const PolyBevelParamProjection other) const nothrow @nogc {
         return interactive == other.interactive && active == other.active &&
             built == other.built && group == other.group && square == other.square &&
+            applied == other.applied && op == other.op &&
             segments == other.segments &&
             memcmp(&inset, &other.inset, float.sizeof) == 0 &&
             memcmp(&shift, &other.shift, float.sizeof) == 0;
@@ -91,12 +92,24 @@ struct PreparedPolyBevelParamImage {
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
 // ---------------------------------------------------------------------------
 class PolyBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
-    // A recording command through the UI door closes the live edit first —
-    // `Tool.commitOperation`'s in-place default — and the tool stays armed
-    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
-    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+    // The tool session model (slice M3b; captures toolcards/tool_session_model
+    // M0 C-H1/H2/H3/H5/H6-bev, M0d C-K-tab/del). The arm APPLIES the bevel
+    // (`applied`, a zero-width ring at 0/0: C-H1-bev a0) and that apply is the
+    // window's first group, joined by the activation row on the key/UI door.
+    // A plain press is a step of the live operation (C-H2-bev); a Shift or
+    // Middle press is an operation BOUNDARY: the live operation's result
+    // becomes the next one's base (`op`), Shift resets the haul, Middle clones
+    // it (C-H5-bev-shift / -mmb), and undoing the boundary step returns that
+    // operation's start (283). A UI-door recording command closes the window
+    // (one row) and the tool keeps its tag with no window (C-H3-bev, C-K-tab);
+    // the next press opens one. The window's commit is ONE row, from the
+    // window's base, whoever closes it.
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { commandClose: CommandClose.uiDoor };
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, opensAt: OpensAt.arm, noClone: false,
+            imageAttrs: ["inset", "shift", "applied", "op"],
+            haulAttrs: ["inset", "shift"], armAttr: "applied" };
         return policy;
     }
 
@@ -117,7 +130,17 @@ private:
 
     bool         active;
     bool         built;
+    // The window's base: what its one commit row starts from, and op 0's base.
     MeshSnapshot before;
+    // The session image beyond the haul (slice M3b): `opApplied_` — the live
+    // operation is applied on its base; `opIndex_` — how many operations of
+    // this window are baked into that base. `opBases_[k - 1]` is operation
+    // k's base (k >= 1), captured at the boundary that opened it and kept past
+    // an undo so a redo finds it; a new boundary drops the ones above it.
+    bool           opApplied_;
+    int            opIndex_;
+    MeshSnapshot[] opBases_;
+    int            previewOp_ = -1;   // the base the preview seam's cage is on
     // The restore-and-rebuild seam (task 1620) — see
     // tools/edit/preview_rebuild.d.
     PreviewRebuild preview_;
@@ -191,6 +214,9 @@ public:
             // the kernel + fixtures are green (don't-expose-unready-
             // params rule).
             Param.bool_("square", "Square Corner", &square_, false),
+            // The session image (slice M3b): not panel rows.
+            Param.bool_("applied", "Applied", &opApplied_, false).hidden().transient(),
+            Param.int_("op", "Operation", &opIndex_, 0).hidden().transient(),
         ];
     }
 
@@ -215,6 +241,7 @@ public:
         if (!image.valid) return;
         active = true; built = false; dragPart = -1;
         inset_ = 0.0f; shift_ = 0.0f;
+        opApplied_ = false; opIndex_ = 0; opBases_ = null; previewOp_ = -1;
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
         baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
@@ -235,28 +262,46 @@ public:
     }
 
     private void reinitSession() {
-        built    = false;
-        dragPart = -1;
         inset_   = 0.0f;
         shift_   = 0.0f;
+        rebase();
+    }
+
+    // No window: the current mesh is the next window's base. The attributes
+    // stay as they are (C-H3-bev k_sel keeps 0.04 after the command closed).
+    private void rebase() {
+        built      = false;
+        dragPart   = -1;
+        opApplied_ = false;
+        opIndex_   = 0;
+        opBases_   = null;
+        previewOp_ = -1;
         preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
 
     override void deactivate() {
-        if (active && built && (inset_ != 0.0f || shift_ != 0.0f))
+        // The window's implicit end keeps what it applied (H3: one close path
+        // for a command and a tool switch; C-K-tab keeps an idle arm's ring).
+        if (hasUncommittedEdit())
             commitEdit();
         active     = false;
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        opApplied_ = false;
+        opIndex_   = 0;
+        opBases_   = null;
+        previewOp_ = -1;
         preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
+    // The window holds geometry the history has not seen: an applied
+    // operation, or operations baked into the live one's base.
     public override bool hasUncommittedEdit() const {
-        return active && built && (inset_ != 0.0f || shift_ != 0.0f);
+        return active && ((opApplied_ && built) || opIndex_ > 0);
     }
 
     public override void cancelUncommittedEdit() {
@@ -268,17 +313,26 @@ public:
         reinitSession();
     }
 
-    // Framework "apply and continue" (task 0461, Shift+click): record the
-    // current live bevel as its own undo entry, keeping the tool active. The
-    // driver (EditSession.applyAndContinue) follows with resyncSession() ⇒
-    // reinitSession(), which re-baselines `before` onto the just-committed
-    // mesh and zeroes inset/shift — so hasUncommittedEdit() is true here and
-    // false after the driver's re-arm. Mirrors deactivate()'s commit guard
-    // exactly, minus the teardown.
-    public override bool commitUncommittedEdit() {
-        if (!hasUncommittedEdit()) return false;
-        commitEdit();
+    // The command close (slice M3b): the window is committed as its one row
+    // and the tool keeps its tag with no window (C-H3-bev, C-K-tab/del); the
+    // next press opens one. Shift is NOT apply-and-continue here — it is the
+    // tool's own operation boundary — so `commitUncommittedEdit` keeps the
+    // base `false` and `EditSession.applyAndContinue` leaves the press to it.
+    override bool commitOperation() {
+        if (!active) return false;
+        if (hasUncommittedEdit()) commitEdit();
+        rebase();
+        refreshCaches();
         return true;
+    }
+
+    // The attributes restored by the session (slice M3b): the live
+    // operation's base by `op`, the operation on it by `applied`.
+    override void rebuildPreviewFromAttrs() {
+        if (!active) return;
+        dragPart = -1;
+        toolHandles.clearHaul();
+        rebuildPreview();
     }
 
     override void onParamChanged(string pname) {
@@ -289,7 +343,7 @@ public:
     }
     private PolyBevelParamProjection paramProjection() const nothrow @nogc {
         return PolyBevelParamProjection(interactiveParamEdit, active, built,
-            group_, square_, inset_, shift_, segments_);
+            group_, square_, opApplied_, inset_, shift_, segments_, opIndex_);
     }
     final PreparedPolyBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
         PreparedPolyBevelParamImage image;
@@ -316,10 +370,10 @@ public:
                 cageDomains);
             cageShadow.close();
         }
-        if (!before.filled) return image;
+        if (!opBase().filled) return image;
         Mesh baseline;
         auto baselineShadow = beginPreparedShadow(baseline);
-        before.restore(baseline); image.expectedBefore = MeshSnapshot.capture(baseline);
+        opBase().restore(baseline); image.expectedBefore = MeshSnapshot.capture(baseline);
         image.expectedLive.restore(image.candidate);
         drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
             image.deliveryDomains);
@@ -328,12 +382,11 @@ public:
         image.applies = true;
         auto shadow = beginPreparedShadow(image.candidate);
         PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
-        const n = preparedPreview.run(image.candidate, before,
+        const n = preparedPreview.run(image.candidate, opBase(),
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandFaceMask(),
-                inset_ == 0.0f && shift_ == 0.0f, segments_,
-                group_ ? 1 : 0, square_ ? 1 : 0),
+                !opApplied_, segments_, group_ ? 1 : 0, square_ ? 1 : 0),
             (ref Mesh target) {
-                if (inset_ == 0.0f && shift_ == 0.0f) return cast(size_t)0;
+                if (!opApplied_) return cast(size_t)0;
                 auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
                 const result = ed.bevelFacesByMask(ed.operandFaceMask(), inset_,
                     shift_, group_, segments_, square_);
@@ -347,7 +400,7 @@ public:
     final bool preparedParamUpdateMatches(in PreparedPolyBevelParamImage image,
             ref const Mesh live) const nothrow @nogc {
         return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(opBase()) &&
             preview_.matchesImage(image.preview);
     }
     final void installPreparedParamUpdate(ref PreparedPolyBevelParamImage image)
@@ -405,15 +458,19 @@ public:
         root["square"]   = JSONValue(square_);
         root["built"]    = JSONValue(built);
         root["dragPart"] = JSONValue(dragPart);
+        root["applied"]  = JSONValue(opApplied_);
+        root["op"]       = JSONValue(opIndex_);
         return root;
     }
 
     override bool applyHeadless() {
         if (*editMode != EditMode.Polygons) return false;
-        if (built && before.filled) {
+        // The one-shot apply replaces the live window: back to its base.
+        if ((built || opIndex_ > 0) && before.filled)
             before.restore(*mesh);
-            built = false;
-        }
+        built = false; opApplied_ = false; opIndex_ = 0; opBases_ = null;
+        previewOp_ = -1;
+        sessionOperationEnded();
         // This path rebuilds the live mesh behind the seam's back, so the
         // key it remembers no longer describes what is standing.
         preview_.reset();
@@ -438,10 +495,10 @@ public:
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (e.button == SDL_BUTTON_RIGHT) { cancelLiveEdit(); return true; }
-        if (e.button != SDL_BUTTON_LEFT)  return false;
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
+        if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        if (mods & KMOD_ALT) return false;
         if (*editMode != EditMode.Polygons) return false;
         if (!gizmoValid) return false;
 
@@ -453,6 +510,11 @@ public:
         // nothing). The proven transform gizmo hit-tests with e.x,e.y for
         // exactly this reason (xfrm_transform.d onMouseButtonDown).
         int part = toolHandles.test(e.x, e.y, cachedVp);
+        // H5: Middle clones, Shift resets — both a new operation on the live
+        // one's result; a plain press is a step of the live operation. The
+        // handle is hit-tested first: the press is aimed at what was drawn.
+        beginOperationStep(e.button == SDL_BUTTON_MIDDLE ? PressKind.middle
+                           : (mods & KMOD_SHIFT) ? PressKind.shift : PressKind.plain);
 
         dragStartMX   = e.x; dragStartMY = e.y;
         dragBaseShift = shift_;
@@ -481,9 +543,10 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0) return false;
-        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (e.button != SDL_BUTTON_LEFT && e.button != SDL_BUTTON_MIDDLE) return false;
         dragPart = -1;
         toolHandles.clearHaul();
+        sessionStepEnds();
         return true;
     }
 
@@ -589,6 +652,46 @@ public:
     }
 
 private:
+    // The live operation's base: the window's for op 0, else the result of
+    // the operation before it (an index past the known bases clamps).
+    ref MeshSnapshot opBase() return nothrow @nogc {
+        if (opIndex_ <= 0 || opBases_.length == 0) return before;
+        const k = opIndex_ > opBases_.length ? opBases_.length : cast(size_t) opIndex_;
+        return opBases_[k - 1];
+    }
+    ref const(MeshSnapshot) opBase() const return nothrow @nogc {
+        if (opIndex_ <= 0 || opBases_.length == 0) return before;
+        const k = opIndex_ > opBases_.length ? opBases_.length : cast(size_t) opIndex_;
+        return opBases_[k - 1];
+    }
+
+    // One press of the tool's gesture (slice M3b). A boundary bakes the live
+    // operation into the next one's base BEFORE the step begins, so the step
+    // restores the new operation's start (H2, 283); the press then applies
+    // the operation; a press that opened a window reports it (after a command
+    // closed one: K-tab's liveness haul opens at the press).
+    void beginOperationStep(PressKind kind) {
+        const bool windowOpen = opApplied_ || opIndex_ > 0;
+        if (opApplied_ && kind != PressKind.plain) bakeLiveOperation();
+        sessionStepBegins(kind);
+        if (!opApplied_ && pressAppliesOperation(kind)) {
+            opApplied_ = true;
+            rebuildPreview();
+        }
+        if (!windowOpen && opApplied_) sessionOperationArmed();
+    }
+
+    void bakeLiveOperation() {
+        if (opBases_.length > cast(size_t) opIndex_) opBases_.length = cast(size_t) opIndex_;
+        opBases_ ~= MeshSnapshot.capture(*mesh);
+        ++opIndex_;
+        opApplied_ = false;
+        built      = false;
+        previewOp_ = -1;
+        preview_.reset();
+        computeGizmoFrame();
+    }
+
     bool[] currentMask() {
         // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
         return mesh.operandFaceMask();
@@ -648,13 +751,20 @@ private:
         // topology changes. The degenerate predicate is therefore a field of
         // the key. `group` and `square` change the emitted face set outright;
         // `segments` is the ring count.
-        size_t n = preview_.run(*mesh, before,
+        // A different base (an operation boundary, or an undo across one): the
+        // clean cage and the gizmo frame are that base's.
+        if (previewOp_ != opIndex_) {
+            preview_.reset();
+            if (opBase().filled) opBase().restore(*mesh);
+            computeGizmoFrame();
+            previewOp_ = opIndex_;
+        }
+        size_t n = preview_.run(*mesh, opBase(),
             (ref Mesh cage) => PreviewTopologyKey.make(
-                                   cage.operandFaceMask(),
-                                   inset_ == 0.0f && shift_ == 0.0f,
+                                   cage.operandFaceMask(), !opApplied_,
                                    segments_, group_ ? 1 : 0, square_ ? 1 : 0),
             (ref Mesh target) {
-                if (inset_ == 0.0f && shift_ == 0.0f) return cast(size_t)0;
+                if (!opApplied_) return cast(size_t)0;
                 // Task 1903 Stage F2 — ONE UNRECORDED batch per DRAG FRAME
                 // (plan §9: a recording batch per frame would build and throw
                 // away a full op-log at 60 Hz).
@@ -688,7 +798,7 @@ private:
     }
 
     final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
-        bool ok; if (active && built && (inset_ != 0.0f || shift_ != 0.0f) && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Poly Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        bool ok; if (hasUncommittedEdit() && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Poly Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
         return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.PolyBevel,ok);
     }
     void commitEdit() {
@@ -702,11 +812,16 @@ private:
     }
 
     void cancelLiveEdit() {
-        if (built && before.filled) before.restore(*mesh);
+        if ((built || opIndex_ > 0) && before.filled) before.restore(*mesh);
         preview_.reset();
-        built    = false;
-        dragPart = -1;
+        built      = false;
+        dragPart   = -1;
+        opApplied_ = false;
+        opIndex_   = 0;
+        opBases_   = null;
+        previewOp_ = -1;
         toolHandles.clearHaul();
+        sessionOperationEnded();   // the whole window is gone (slice M3b)
         refreshCaches();
     }
 
@@ -718,6 +833,7 @@ public:
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {
         interactiveParamEdit = interactive; active = true; built = false;
+        opApplied_ = true; opIndex_ = 0; opBases_ = null; previewOp_ = -1;
         inset_ = 0.2f; shift_ = 0.1f; group_ = true; segments_ = 1;
         square_ = false; before = MeshSnapshot.capture(live); preview_.reset();
     }

@@ -266,6 +266,12 @@ struct ToolSessionPolicy {
     /// H5: what a Middle press clones from the previous operation's end and a
     /// Shift press resets to the declared defaults.
     immutable(string)[] haulAttrs;
+    /// H1, `OpensAt.arm` (slice M3b, C-H1-bev): the bool image attribute that
+    /// says the tool's operation is APPLIED. The session raises it at a live
+    /// arm (`Tool.applyArmAttr`), so the arm's own apply is the window's first
+    /// group and its undo lowers it again through the image. Empty: the tool
+    /// reports its arm itself (Loop Slice, whose arm is its press, gap 205 (b)).
+    string armAttr;
 }
 
 class Tool : ParamProvider {
@@ -962,6 +968,32 @@ public:
     /// Re-derive everything the tool computes FROM its attributes (preview,
     /// phase) after `applyAttrImage` — the tool's Evaluate. Default: nothing.
     void rebuildPreviewFromAttrs() {}
+
+    /// H5 (slice M3b): whether a press of `kind` APPLIES an operation. A
+    /// Middle press on a no-clone tool is a boundary only — nothing is applied
+    /// (C-H5-es-mmb: no point); on every other tool the clone is applied at the
+    /// press (C-H5-bev-mmb: 12 -> 16 vertices on a motionless tap).
+    final bool pressAppliesOperation(PressKind kind) const nothrow @nogc {
+        return kind != PressKind.middle || !sessionPolicy().noClone;
+    }
+
+    /// H1 (slice M3b): the arm applies the tool — the policy's `armAttr` is
+    /// raised by a raw write, then the ONE rebuild evaluates the operation from
+    /// the attributes. Called by the session at a live arm; `final` like the
+    /// other image operations.
+    final void applyArmAttr() {
+        const n = sessionPolicy().armAttr;
+        if (n.length == 0) return;
+        foreach (ref p; params()) {
+            if (p.name != n) continue;
+            assert(p.kind == Param.Kind.Bool,
+                   "applyArmAttr: '" ~ n ~ "' is not a bool param of " ~ name());
+            *p.bptr = true;
+            rebuildPreviewFromAttrs();
+            return;
+        }
+        assert(false, "applyArmAttr: '" ~ n ~ "' is not a param of " ~ name());
+    }
 
     private void writeRaw(in AttrImage img, const(string)[] only) {
         auto ps = params();

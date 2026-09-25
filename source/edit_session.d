@@ -35,7 +35,7 @@ import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
                          ToolSessionLink;
 import command         : Command, ToolRunRecord;
 import std.json        : JSONValue;
-import command_history : CommandHistory;
+import command_history : CommandHistory, UndoState;
 import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import params          : ParamProvider;
@@ -956,14 +956,33 @@ private struct ToolSession {
         link.operationEnded = &operationEnded;
         link.closeOwn       = &closeOwn;
         t.bindSession(link);
+        // H1 (slice M3b, C-H1-bev): an `OpensAt.arm` tool whose policy names
+        // the attribute its arm raises is APPLIED by the arm, and that apply is
+        // the window's first group — the image before it is the group's start.
+        // An arm replayed by a history step (Suspend: the redo of an activation
+        // row) re-arms bare, like every raw redo door; the navigate redo
+        // re-seats the group itself (`replayFirstGroup_`).
+        const pol = t.sessionPolicy();
+        if (reporting_(t) && pol.opensAt == OpensAt.arm && pol.armAttr.length
+            && history_.state() != UndoState.Suspend) {
+            stepBegins(t, PressKind.plain);
+            t.applyArmAttr();
+            operationArmed(t);
+            stepEnds(t);
+        }
     }
 
     void stepBegins(Tool t, PressKind kind) {
         if (!reporting_(t)) return;
         auto before = t.captureAttrImage();
-        // H5: an in-window press opens an operation boundary of its kind; the
-        // step restores the image from BEFORE it.
-        if (live_ && kind != PressKind.plain) t.openOperation(kind, before);
+        // H5: an in-window press opens an operation boundary of its kind. The
+        // step restores the image the new operation STARTED from — after the
+        // reset / clone (H2, 283: C-H5-bev-shift z1 0.0, C-H5-bev-mmb z1 the
+        // clone's 0.04; slice M3b).
+        if (live_ && kind != PressKind.plain) {
+            t.openOperation(kind, before);
+            before = t.captureAttrImage();
+        }
         pending_ = before;
         pendingSet_ = true;
         pendingIfChanged_ = false;

@@ -25,7 +25,8 @@
 //     `final` (a compiler pin, R3.2).
 //
 // Provenance: `carried` = today's classification moved from the deleted
-// marker interface and the cutting-session ids, unchanged; `notPorted` = the
+// marker interface and the cutting-session ids, unchanged; `captured` = ported
+// by a later slice on its own capture (poly.bevel, M3b: C-H1-bev); `notPorted` = the
 // captured law H1 (every tool's arm is an activation row) is not ported for
 // this id yet (gap row 369, backlog 7307); `noCounterpart` / `uncertain` = the
 // id has no mapped counterpart, or an unsure one, in the captured flags table.
@@ -51,7 +52,7 @@ import std.json      : parseJSON;
 import std.regex     : matchFirst, regex;
 import std.string    : indexOf, startsWith, strip;
 
-private enum Prov { carried, notPorted, noCounterpart, uncertain }
+private enum Prov { carried, captured, notPorted, noCounterpart, uncertain }
 
 /// Where a row's `commandClose` comes from (slice M2): `carriedScript` = the
 /// UI half captured (C1-h-sel-fam `move`), the SCRIPT half carried from the
@@ -102,7 +103,7 @@ private immutable Row[] kTable = [
     Row("move", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("move.element", "XfrmTransformTool", true, Prov.carried, CommandClose.allDoors, CloseProv.carriedScript),
     Row("pen", "PenTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
-    Row("poly.bevel", "PolyBevelTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.captured),
+    Row("poly.bevel", "PolyBevelTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.captured),
     Row("poly.extrude", "PolyExtrudeTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("prim.arc", "ArcTool", false, Prov.noCounterpart, CommandClose.none, CloseProv.notCaptured),
     Row("prim.capsule", "CapsuleTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
@@ -145,8 +146,9 @@ private immutable Row[] kTable = [
 ];
 
 /// The classes whose policy answers `activationRow`: the deleted marker's two
-/// implementors plus the three cutting sessions (R3.5).
+/// implementors plus the three cutting sessions (R3.5), and Polygon Bevel (M3b).
 private immutable string[] kActivationRowClasses = [
+    "tools.edit.poly_bevel.PolyBevelTool",
     "tools.edit.topology_pen.tool.TopologyPenTool",
     "tools.slice.edge_slice_tool.EdgeSliceTool",
     "tools.slice.loop_slice_tool.LoopSliceTool",
@@ -231,7 +233,7 @@ unittest { // (1) id -> policy, over every registered id
         assert(toolArmEmitsLifecycle(t) == row.activationRow,
                format("M1 policy table: toolArmEmitsLifecycle(%s) is %s, table says %s",
                       row.id, !row.activationRow, row.activationRow));
-        assert(row.activationRow == (row.prov == Prov.carried),
+        assert(row.activationRow == (row.prov == Prov.carried || row.prov == Prov.captured),
                "M1 policy table: provenance of " ~ row.id ~ " disagrees with its value");
         if (!row.activationRow) ++falseRows;
         if (row.prov == Prov.notPorted) ++notPorted;
@@ -250,12 +252,13 @@ unittest { // (1) id -> policy, over every registered id
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
                   ~ "22/24/24", closeCount));
     // The M7 ratchet: ids whose arm writes no activation row yet.
-    assert(falseRows == 42 && notPorted == 38,
+    // M3b ported poly.bevel: 42 (38) -> 41 (37).
+    assert(falseRows == 41 && notPorted == 37,
            format("M1 policy table: activationRow=false on %s ids (%s not ported), "
-                  ~ "recorded 42 (38)", falseRows, notPorted));
+                  ~ "recorded 41 (37)", falseRows, notPorted));
 }
 
-unittest { // (2) exactly five tool classes declare the activation row
+unittest { // (2) exactly six tool classes declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -370,6 +373,7 @@ private struct StepRow {
     OpensAt opensAt;
     bool noClone;
     string[] imageAttrs;
+    string armAttr;
 }
 
 /// Measured on the M3 tree. Provenance: `opensAt` — M0 H1 (Edge Slice and Slice
@@ -384,6 +388,9 @@ private immutable StepRow[] kStepTable = [
     StepRow("mesh.sliceTool", OpensAt.firstPress, false,
             ["startX", "startY", "startZ", "endX", "endY", "endZ", "vectorX", "vectorY",
              "vectorZ", "axis", "gap", "frozenNormal", "haveFrozen", "axisLocked", "hasLine"]),
+    // M3b: the arm applies (C-H1-bev), Middle clones (C-H5-bev-mmb); the image
+    // is the haul plus the operation's applied flag and its base index.
+    StepRow("poly.bevel", OpensAt.arm, false, ["inset", "shift", "applied", "op"], "applied"),
 ];
 
 unittest { // (4)
@@ -392,7 +399,7 @@ unittest { // (4)
     foreach (p; manifest["products"].array)
         moduleOf[p["aggregate"].str] = p["module"].str;
     string[] stepIds;
-    size_t checkedNames, actionNames;
+    size_t checkedNames, actionNames, armAttrs;
     foreach (row; kTable) {
         auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
@@ -402,7 +409,7 @@ unittest { // (4)
                    "M3 step table: " ~ row.id ~ " declares an image without sessionSteps");
             continue;
         }
-        // Only these three: `params()` of a blitted (unconstructed) instance
+        // Only these four: `params()` of a blitted (unconstructed) instance
         // is safe for them (field addresses only), not for every tool.
         auto ps = t.params();
         bool hasParam(string n) {
@@ -425,25 +432,37 @@ unittest { // (4)
         foreach (n; pol.haulAttrs)
             assert(hasParam(n), format("M3 step table: %s haul names '%s', not one of its params",
                                        row.id, n));
+        // M3b: the attribute an arm raises is a BOOL of the image, and only an
+        // `OpensAt.arm` tool has one (the session reads it at the arm alone).
+        if (pol.armAttr.length) {
+            bool isBool;
+            foreach (ref p; ps) if (p.name == pol.armAttr) isBool = p.kind == p.Kind.Bool;
+            assert(isBool && pol.imageAttrs.canFind(pol.armAttr) && pol.opensAt == OpensAt.arm,
+                   format("M3b step table: %s arm attribute '%s' is not a bool of its image on an "
+                          ~ "arm-opened tool", row.id, pol.armAttr));
+            ++armAttrs;
+        }
         bool found;
         foreach (sr; kStepTable) {
             if (sr.id != row.id) continue;
             found = true;
             assert(pol.opensAt == sr.opensAt && pol.noClone == sr.noClone
-                   && pol.imageAttrs == sr.imageAttrs,
-                   format("M3 step table: %s policy {opensAt %s, noClone %s, image %s}, table "
-                          ~ "says {%s, %s, %s}", row.id, pol.opensAt, pol.noClone, pol.imageAttrs,
-                          sr.opensAt, sr.noClone, sr.imageAttrs));
+                   && pol.imageAttrs == sr.imageAttrs && pol.armAttr == sr.armAttr,
+                   format("M3 step table: %s policy {opensAt %s, noClone %s, image %s, arm '%s'}, "
+                          ~ "table says {%s, %s, %s, '%s'}", row.id, pol.opensAt, pol.noClone,
+                          pol.imageAttrs, pol.armAttr, sr.opensAt, sr.noClone, sr.imageAttrs,
+                          sr.armAttr));
         }
         assert(found, "M3 step table: " ~ row.id ~ " has sessionSteps but no step-table row");
     }
-    // Population floors (measured): 3 ids, 23 image names, 3 Action triggers
-    // on them (chainArm; insertAt, removeCurrent).
+    // Population floors (measured): 4 ids, 27 image names, 3 Action triggers
+    // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(stepIds);
-    assert(stepIds == ["mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool"],
+    assert(stepIds == ["mesh.edgeSliceTool", "mesh.loopSliceTool", "mesh.sliceTool", "poly.bevel"],
            format("M3 step table: sessionSteps ids %s", stepIds));
-    assert(checkedNames == 23, format("M3 step table: %s image names checked, measured 23",
+    assert(checkedNames == 27, format("M3 step table: %s image names checked, measured 27",
                                       checkedNames));
-    assert(actionNames == 3, format("M3 step table: %s Action params on the three tools, "
+    assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
+    assert(actionNames == 3, format("M3 step table: %s Action params on the four tools, "
                                     ~ "measured 3", actionNames));
 }
