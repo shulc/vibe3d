@@ -314,14 +314,14 @@ unittest { // C-H7-xfrm-falloff-elem / -center-elem (M0e): EITHER element node l
     }
 }
 
-unittest { // gap 384, the other half: a no-tool `none` is not a choice
+unittest { // gap 384, the other half: a no-tool `none` is not a choice, and withdraws one
     // A mode set to `none` with no tool armed chooses nothing, so it does not
-    // make the next ARMED write durable: that write stays loose and goes with
-    // its tool (L1, 5911). Control first: the same sequence without the
-    // no-tool write.
-    string armLooseSwitch(bool noToolNone) {
+    // make the next ARMED write durable, and it withdraws an earlier no-tool
+    // choice: either way the armed write stays loose and goes with its tool
+    // (L1, 5911). Control first: the same sequence with no no-tool write.
+    string armLooseSwitch(string[] noToolModes) {
         run("scene.reset");
-        if (noToolNone) run("tool.pipe.attr actionCenter mode none");
+        foreach (m; noToolModes) run("tool.pipe.attr actionCenter mode " ~ m);
         auto r = postJson("/api/script", "tool.set TransformMove on");
         assert(r["status"].str == "ok", "arm TransformMove failed: " ~ r.toString);
         run("tool.pipe.attr actionCenter mode local");
@@ -330,12 +330,25 @@ unittest { // gap 384, the other half: a no-tool `none` is not a choice
         assert(r["status"].str == "ok", "arm TransformScale failed: " ~ r.toString);
         return pipeAttr("actionCenter", "mode");
     }
-    immutable ctl = armLooseSwitch(false);
+    immutable ctl = armLooseSwitch([]);
     assert(ctl == "none", format("control: an armed loose centre write survived the tool switch as '%s'",
                                  ctl));
-    immutable got = armLooseSwitch(true);
+    immutable got = armLooseSwitch(["none"]);
     assert(got == "none", format("gap 384: a no-tool `actionCenter mode none` made the next armed "
                                  ~ "write durable ('%s' after the tool switch)", got));
+    immutable withdrawn = armLooseSwitch(["element", "none"]);
+    assert(withdrawn == "none", format("gap 384: a no-tool `none` after a no-tool `element` left the "
+                                       ~ "centre locked ('%s' after the tool switch)", withdrawn));
+}
+
+unittest { // gap 384 limit: the AXIS mode is not captured, so a no-tool axis write stays loose
+    run("scene.reset");
+    run("tool.pipe.attr axis mode world");
+    auto r = postJson("/api/script", "tool.set TransformMove on");
+    assert(r["status"].str == "ok", "arm TransformMove failed: " ~ r.toString);
+    immutable got = pipeAttr("axis", "mode");
+    assert(got == "none", format("C-M7-axis-node not captured: a no-tool `axis mode world` survived "
+                                 ~ "the arm as '%s'; the axis stays loose until captured", got));
 }
 
 unittest { // Magnet: no rollover flag in the table — its hovered vertex is not drawn
