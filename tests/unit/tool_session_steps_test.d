@@ -778,3 +778,57 @@ unittest { // M4 steps only on change, when the tool asks (Edge Extend's gesture
     t.loudGesture();
     assert(steps(r) == 1, "M4 steps control: without ifChanged an unchanged gesture is a step");
 }
+
+unittest { // M4 marks, the other half: a switch whose door wrote NOTHING marks nothing
+    Mesh m = makeCube();
+    auto r = rig();
+    r.session.noteArm("t.step", 7);            // StepTool: an idle switch writes no row
+    r.session.closeOperation(CloseReason.switch_);
+    auto incoming = tokenRow(&m, "t.next", "t.step", true, false, 8, 7);
+    r.history.recordToolLifecycle(incoming);
+    r.active = new StepTool;
+    r.session.noteArm("t.next", 8);
+    r.session.finishClose();
+    assert(r.session.lastClosedRow() is null && incoming.sessionToken() == 8,
+           "M4 mark: an idle switch counted the incoming activation row as the row it wrote");
+}
+
+unittest { // M4 pair: the row below must carry the RECORD's token, and redo pairs only a carrying row
+    import command : Command;
+    Mesh m = makeCube();
+    { // a record of session 5 above the carrying row of session 4: not its row
+        auto r = rig();
+        auto t = new CarryTool;
+        t.writeTo = r.history;
+        r.active = t;
+        auto act = tokenRow(&m, "t.carry", "", true, true, 4);
+        act.onDeactivate = () { r.active = null; };
+        r.history.recordToolLifecycle(act);
+        r.session.noteArm("t.carry", 5);
+        t.arr = [Pt(1, 0, null)];
+        assert(r.session.applyAndContinue());
+        assert(r.session.navigate(true));
+        assert(r.history.undoEntries().length == 1 && r.active is t,
+               "M4 pair: a record popped an activation row of ANOTHER session");
+    }
+    { // a non-carrying row: two raw undos, then a navigate redo re-arms only the row
+        auto r = rig();
+        auto t = new CarryTool;
+        t.writeTo = r.history;
+        t.carries = false;
+        r.active = t;
+        auto act = tokenRow(&m, "t.carry", "", true, false, 5);
+        act.onDeactivate = () { r.active = null; };
+        act.onActivate = (string id) { r.active = t; r.session.noteArm(id, 50); };
+        r.history.recordToolLifecycle(act);
+        r.session.noteArm("t.carry", 5);
+        t.arr = [Pt(1, 0, null)];
+        assert(r.session.applyAndContinue());
+        assert(r.history.undo() && r.history.undo() && r.history.redoEntries().length == 2,
+               "M4 pair rig: the raw undos did not leave the row and its record in redo");
+        assert(r.session.navigate(false));
+        assert(r.history.undoEntries().length == 1 && r.history.redoEntries().length == 1,
+               format("M4 pair: a non-carrying row redid its session's record with it: undo %s, redo %s",
+                      r.history.undoEntries().length, r.history.redoEntries().length));
+    }
+}
