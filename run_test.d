@@ -107,6 +107,8 @@ __gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
                                     // in its own process group (see runOne), so
                                     // it no longer gets the terminal's SIGINT —
                                     // the handler below has to deliver it.
+__gshared string helperObjHttp; // injected modules, prebuilt for HTTP-driver tests (buildHelperObject)
+__gshared string helperObjSrc;  // the same, prebuilt with the source-backed compile flags
 __gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" when mold unusable
 
 enum workerDisplayEnv = "VIBE3D_TEST_DISPLAY";
@@ -1633,21 +1635,92 @@ string[] gateViolations(string testsDir) {
     return out_;
 }
 
+/// The two compile lines a test binary can take, as FLAG STRINGS shared by the
+/// helper object build and the per-test compile, so the two cannot drift: an
+/// object built under different -version / -w / -unittest flags than the test
+/// that links it is a different program, and would link anyway.
+string httpTestFlags()   { return " -unittest -J=tests -I=tests -w"; }
+string sourceTestFlags() { return " -unittest -J=tests -I=tests" ~ sourceCompileFlags(); }
+
+/// Build the injected modules (injectedTestModules: http_client, every
+/// *_helpers.d, liveness_gate) ONCE per run into one object file, instead of
+/// recompiling them into every test binary. Measured 2026-09-25 on
+/// test_lasso_select: 1.65 s wall / 1.14 s user with the helpers on the line,
+/// 0.74 s / 0.47 s linking this object — about 0.9 s of every one of 857
+/// compiles (card gate-speedup).
+///
+/// One OBJECT, not an archive, and that is the correctness condition: an
+/// archive contributes only the members a test references, so a helper that
+/// no test imports -- liveness_gate among them, whose module destructor is the
+/// whole point of linking it into every binary (task 1111) -- would silently
+/// drop out, together with its ModuleInfo. An object is linked whole, exactly
+/// as the modules were when they were compiled on every test's line.
+///
+/// Built per run into the run's scratch dir from the sources on disk, so it is
+/// never stale: there is no cache to invalidate, and `--no-build` (which only
+/// skips `dub build` of the app) does not skip it. Returns "" on failure.
+string buildHelperObject(string scratch, string flags, string tag,
+                         string testsDir = "tests") {
+    string mods;
+    foreach (m; injectedTestModules(testsDir)) mods ~= " " ~ m;
+    const obj = buildPath(scratch, "test_helpers_" ~ tag ~ ".o");
+    auto r = executeShell(format("dmd -c%s%s -of=%s 2>&1", flags, mods, obj));
+    if (r.status != 0 || !exists(obj)) {
+        writeln("  ", red("FAIL  "), "shared test helpers (" ~ tag ~ ")");
+        writeln(r.output);
+        return "";
+    }
+    return obj;
+}
+
+// buildHelperObject's two properties, on the production function over a
+// throwaway tests dir (card gate-speedup): the object is rebuilt from the
+// sources on EVERY call (edit a helper, the next build sees the edit -- a
+// reuse-if-present cache would print 1 twice), and it links WHOLE (a module
+// the program never imports is still in its module table -- an archive would
+// drop it, and liveness_gate is exactly such a module for most tests).
+unittest {
+    import std.process : execute;
+    const dir = buildPath(tempDir(), format("run_test_helperobj_ut_%d", getpid()));
+    const td  = buildPath(dir, "tests");
+    mkdirRecurse(td);
+    scope(exit) rmdirRecurse(dir);
+    std.file.write(buildPath(td, "http_client.d"), "module http_client;\n");
+    std.file.write(buildPath(td, "liveness_gate.d"), "module liveness_gate;\n");
+    std.file.write(buildPath(td, "probe.d"),
+        "module probe; import value_helpers : value; import std.stdio : write;\n"
+      ~ "void main() { bool g; foreach (m; ModuleInfo) if (m && m.name == \"liveness_gate\") g = true;\n"
+      ~ "  write(value(), g ? \" whole\" : \" partial\"); }\n");
+    string runWith(int v) {
+        std.file.write(buildPath(td, "value_helpers.d"),
+            format("module value_helpers; int value() { return %d; }\n", v));
+        const obj = buildHelperObject(dir, " -I=" ~ td, "ut", td);
+        assert(obj.length, "buildHelperObject failed on the throwaway tree");
+        const bin = buildPath(dir, "probe");
+        auto c = execute(["dmd", "-I=" ~ td, "-od=" ~ dir, buildPath(td, "probe.d"), obj, "-of=" ~ bin]);
+        assert(c.status == 0, c.output);
+        auto r = execute([bin]);
+        assert(r.status == 0, r.output);
+        return r.output;
+    }
+    const first = runWith(1);
+    assert(first == "1 whole", "helper object: expected '1 whole', got '" ~ first ~ "'");
+    const second = runWith(2);
+    assert(second == "2 whole",
+        "helper object not rebuilt after a helper changed: expected '2 whole', got '" ~ second ~ "'");
+}
+
 /// Compile each test in `paths` into `outDir`. Tests resolve their worker's
 /// endpoint at runtime through `VIBE3D_TEST_PORT`; sources are compiled AS-IS,
 /// straight from tests/ — `outDir` receives binaries and their `.out` logs and
 /// nothing else, which is why no `-I=<outDir>` appears on the lines below.
 string[] compileTests(string[] paths, string outDir) {
-    // Pull every injected module (see injectedTestModules) into the
-    // compilation so a test can `import drag_helpers;` — or
-    // `import liveness_gate : scenario;` — without duplicating shared code.
-    // `http_client` reads the per-worker port from the child environment, so
-    // these sources are compiled without scratch copies. Globbed ONCE: the set
-    // cannot change mid-run, and re-reading tests/ per test binary was ~750
-    // directory scans a worker.
-    string helpers;
-    foreach (m; injectedTestModules()) helpers ~= " " ~ m;
-
+    // Every injected module (see injectedTestModules) is linked in as the
+    // prebuilt object of this run (buildHelperObject), so a test can `import
+    // drag_helpers;` -- or `import liveness_gate : scenario;` -- without
+    // duplicating shared code; `-I=tests` resolves the imports. `http_client`
+    // reads the per-worker port from the child environment, so these sources
+    // are compiled without scratch copies.
     string[] bins;
     foreach (p; paths) {
         string name = baseName(p).stripExtension;
@@ -1662,19 +1735,23 @@ string[] compileTests(string[] paths, string outDir) {
         // HTTP-driver tests keep the original cheap line.
         string cmd;
         if (isSourceBackedTest(p)) {
-            if (!projLibPath.length) {
+            if (!projLibPath.length || !helperObjSrc.length) {
                 writeln("  ", red("FAIL  "), name,
                     ": source-backed compile has no project test-lib");
                 return null;
             }
             // Order is load-bearing: test.o, then the project lib, then the
             // dep archives/link tail (mold is order-strict).
-            cmd = format("dmd -unittest -J=tests -I=tests%s%s %s %s%s%s -of=%s 2>&1",
-                         helpers, sourceCompileFlags(), p,
+            cmd = format("dmd%s %s %s %s%s%s -of=%s 2>&1",
+                         sourceTestFlags(), p, helperObjSrc,
                          projLibPath, sourceLinkTail(), moldFlag, of);
         } else {
-            cmd = format("dmd -unittest -J=tests -I=tests%s %s -w -of=%s 2>&1",
-                         helpers, p, of);
+            if (!helperObjHttp.length) {
+                writeln("  ", red("FAIL  "), name, ": no shared test-helper object");
+                return null;
+            }
+            cmd = format("dmd%s %s %s -of=%s 2>&1",
+                         httpTestFlags(), p, helperObjHttp, of);
         }
         auto r = executeShell(cmd);
         if (r.status != 0) {
@@ -3235,7 +3312,15 @@ int main(string[] args) {
     // out; the lib + flag are read-only thereafter. HTTP-driver tests are
     // unaffected. A source-backed run must build this library: the per-test
     // fallback costs about six times the peak RAM and cannot fit the CI VM.
+    // The injected helper modules, once per run and per compile line (see
+    // buildHelperObject); single-threaded, before the workers fan out.
+    if (tests.canFind!(t => !isSourceBackedTest(t))) {
+        helperObjHttp = buildHelperObject(scratchDir, httpTestFlags(), "http");
+        if (!helperObjHttp.length) return 1;
+    }
     if (tests.canFind!isSourceBackedTest) {
+        helperObjSrc = buildHelperObject(scratchDir, sourceTestFlags(), "src");
+        if (!helperObjSrc.length) return 1;
         projLibPath = buildProjectLib(scratchDir);
         if (!projLibPath.length) {
             stderr.writeln(red("project test-lib build failed; refusing per-test -i fallback"));
