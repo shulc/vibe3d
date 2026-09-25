@@ -253,9 +253,11 @@ unittest {
     // packet through `symmetry_pick.captureLiveSymmetry`, like the click
     // helpers, which adds `symmetry_pick` to the transform closure (+1).
     // Task 7122: `value_drag`, the shared no-handle value drag (+1 each).
-    assert(edit.queue.length == 254 && positive.queue.length == 518,
-        format("6670 import closure census changed: edit=%d/254 "
-            ~ "registration=%d/518", edit.queue.length,
+    // Slice M1a review: `edit_session` refuses navigation while a button is
+    // held, which reaches the leaf `held_gesture_buttons` (+1 each).
+    assert(edit.queue.length == 255 && positive.queue.length == 519,
+        format("6670 import closure census changed: edit=%d/255 "
+            ~ "registration=%d/519", edit.queue.length,
             positive.queue.length));
 }
 

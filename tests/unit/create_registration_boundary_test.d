@@ -225,7 +225,9 @@ unittest {
     // packet through `symmetry_pick.captureLiveSymmetry`, like the click
     // helpers, which adds `symmetry_pick` to the transform closure (+1).
     // Task 7122: `value_drag` (the shared no-handle value drag) (+1).
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 256,
+    // Slice M1a review: `edit_session` refuses navigation while a button is
+    // held, which reaches the leaf `held_gesture_buttons` (+1 each).
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 257,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,
