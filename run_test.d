@@ -2117,14 +2117,15 @@ TestResult runOne(string bin, bool verbose, ushort port) {
     cfg.preExecFunction = &ownProcessGroup;
     string[string] childEnv = environment.toAA();
     childEnv["VIBE3D_TEST_PORT"] = port.to!string;
-    if ((runLockFd >= 0 || runLockBorrowed) && r.name == "test_harness_load_log") {
-        // The lease names the HOLDER's pid and descriptor; a borrowed slot
-        // passes its own lender's lease on unchanged (task 6205).
+    if (runLockFd >= 0 && r.name == "test_harness_load_log") {
+        // std.process closes non-stdio descriptors by default. The verified
+        // nested-run lease needs the actual open-file description, so retain
+        // it across this exec and tell descendants which fd to fstat. A
+        // BORROWED slot needs nothing here: this process's environment already
+        // carries the lender's lease and childEnv copies it (task 6205).
         cfg.flags |= Config.Flags.inheritFDs;
-        childEnv[inheritedRunLockPidEnv] = runLockBorrowed
-            ? environment.get(inheritedRunLockPidEnv, "") : getpid().to!string;
-        childEnv[inheritedRunLockFdEnv] = runLockBorrowed
-            ? environment.get(inheritedRunLockFdEnv, "") : runLockFd.to!string;
+        childEnv[inheritedRunLockPidEnv] = getpid().to!string;
+        childEnv[inheritedRunLockFdEnv] = runLockFd.to!string;
     }
 
     string outPath = bin ~ ".out";
