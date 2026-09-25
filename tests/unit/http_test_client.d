@@ -116,6 +116,8 @@ unittest // census: no unit-test client reads a socket except through the helper
     import std.format : format;
     import std.path : baseName, buildPath, dirName, extension;
 
+    import std.regex : ctRegex, matchFirst;
+    static immutable readRx = ctRegex!(`\.receive(From)?\s*\(|\brecv(from|msg)?\s*\(`);
     enum root = dirName(__FILE_FULL_PATH__);
     string[] rawReaders;
     size_t users;
@@ -125,7 +127,8 @@ unittest // census: no unit-test client reads a socket except through the helper
         if (e.name == __FILE_FULL_PATH__)
             continue;
         const text = readText(e.name);
-        if (text.canFind(".receive("))
+        // Every std.socket read (receive, receiveFrom) and the raw C call.
+        if (!matchFirst(text, readRx).empty)
             rawReaders ~= e.name;
         if (text.canFind("import tests.unit.http_test_client : receiveUntilClosed;"))
             ++users;

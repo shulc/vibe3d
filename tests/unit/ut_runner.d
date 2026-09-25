@@ -17,7 +17,7 @@ module tests.unit.ut_runner;
 
 import core.exception : AssertError;
 import core.runtime : Runtime, UnitTestResult;
-import core.time : MonoTime;
+import core.time : MonoTime, seconds;
 import std.algorithm : isSorted, sort;
 import std.conv : to;
 import std.file : readText;
@@ -370,12 +370,50 @@ private UnitTestResult runShardWorker(string spec)
 // ---------------------------------------------------------------------------
 // Parent side.
 
+// Seconds a worker may go without writing a result line before it is killed.
+// A module is one line pair, and the slowest measured module takes ~15 s, so
+// the default is generous; a hung module then ends the gate red instead of
+// never. Strict like the others: a malformed value is a hard error.
+private enum stallEnvironment = "VIBE3D_UT_STALL_SECONDS";
+private enum defaultStallSeconds = 300;
+
+private long stallBudgetSeconds()
+{
+    const raw = environment.get(stallEnvironment, "");
+    if (!raw.length)
+        return defaultStallSeconds;
+    long v;
+    try
+        v = raw.strip.to!long;
+    catch (Exception)
+        assert(false, stallEnvironment ~ " must be a positive integer, got: " ~ raw);
+    if (v <= 0)
+        assert(false, stallEnvironment ~ " must be a positive integer, got: " ~ raw);
+    return v;
+}
+
+// The module a worker's result file shows as started and not finished.
+private string runningModule(string resultText)
+{
+    import std.array : split;
+    string current = "(no module started)";
+    foreach (line; resultText.splitLines)
+    {
+        const f = line.split;
+        if (f.length == 2 && f[0] == "UT-MOD-START")
+            current = f[1];
+        else if (f.length == 4 && f[0] == "UT-MOD")
+            current = "(between modules)";
+    }
+    return current;
+}
+
 private UnitTestResult runParallelParent(size_t jobs)
 {
     import core.sys.posix.unistd : getpid;
-    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : exists, getSize, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.format : format;
-    import std.process : Config, Pid, spawnProcess, tryWait;
+    import std.process : Config, kill, Pid, spawnProcess, tryWait;
     import std.stdio : stdout;
     import tests.unit.module_gate_lock_test : moduleGateSlot;
     import tests.unit.ut_shard_plan : kPinnedGroups, mergeShards, packShards,
@@ -460,10 +498,20 @@ private UnitTestResult runParallelParent(size_t jobs)
                         s, pids[$ - 1].processID, names.length, planned / 1000.0);
     }
 
+    // Reap in completion order, so each shard's wall time is its own, and
+    // print each shard's output the moment it ends: a worker that hangs must
+    // not hide the other shards' results. A worker whose result file has not
+    // grown for the stall budget is killed; merge then reports it as killed
+    // by signal 9 while running the module it was stuck in.
+    const stallBudget = stallBudgetSeconds().seconds;
     const started = MonoTime.currTime;
-    // Reap in completion order, so each shard's wall time is its own.
     auto statuses = new int[](pids.length);
     auto done = new bool[](pids.length);
+    auto lastSize = new ulong[](pids.length);
+    auto lastGrowth = new MonoTime[](pids.length);
+    lastGrowth[] = started;
+    auto stalled = new bool[](pids.length);
+    ShardOutcome[] outcomes = new ShardOutcome[](pids.length);
     size_t remaining = pids.length;
     while (remaining)
     {
@@ -472,9 +520,32 @@ private UnitTestResult runParallelParent(size_t jobs)
         {
             if (done[s])
                 continue;
+            const resultPath = buildPath(dir, format("shard-%d.result", s));
             const r = tryWait(p);
             if (!r.terminated)
+            {
+                const now = MonoTime.currTime;
+                ulong size;
+                try size = exists(resultPath) ? getSize(resultPath) : 0;
+                catch (Exception) {}
+                if (size != lastSize[s])
+                {
+                    lastSize[s] = size;
+                    lastGrowth[s] = now;
+                }
+                else if (!stalled[s] && now - lastGrowth[s] > stallBudget)
+                {
+                    stalled[s] = true;
+                    string text;
+                    try text = readText(resultPath); catch (Exception) {}
+                    stderr.writefln("UT-PARALLEL shard %d STALLED: no progress for "
+                        ~ "%s while running %s; killing pid %d", s, stallBudget,
+                        runningModule(text), p.processID);
+                    import core.sys.posix.signal : SIGKILL;
+                    kill(p, SIGKILL);
+                }
                 continue;
+            }
             done[s] = true;
             statuses[s] = r.status;
             --remaining;
@@ -484,6 +555,39 @@ private UnitTestResult runParallelParent(size_t jobs)
                             r.status >= 0 ? "exit" : "signal",
                             r.status >= 0 ? r.status : -r.status,
                             (MonoTime.currTime - started).total!"msecs" / 1000.0);
+
+            const text = exists(resultPath) ? readText(resultPath) : "";
+            outcomes[s] = ShardOutcome(s, assignedNames[s], text, r.status >= 0,
+                                       r.status >= 0 ? r.status : -r.status);
+            stdout.flush();
+            stderr.writefln("---- UT-PARALLEL shard %d output ----", s);
+            stderr.write(readText(logs[s]));
+            stderr.writefln("---- UT-PARALLEL end of shard %d output ----", s);
+            // Busy time inside modules, beside the wall above: the difference
+            // is the worker's startup/teardown plus host contention.
+            double busyMs = 0;
+            bool anyFail;
+            foreach (line; text.splitLines)
+            {
+                import std.array : split;
+                const f = line.split;
+                if (f.length == 4 && f[0] == "UT-MOD")
+                {
+                    try busyMs += f[2].to!double; catch (Exception) {}
+                    anyFail |= f[1] == "FAIL";
+                }
+            }
+            stderr.writefln("UT-PARALLEL shard %d: %d modules, %.1f s inside modules",
+                            s, assignedNames[s].length, busyMs / 1000.0);
+            // A failing shard names its whole assignment, in run order, so
+            // the failure can be replayed in one process with the same
+            // predecessors (the files in the kept shard dir hold it too).
+            if (anyFail || r.status != 0 || stalled[s])
+            {
+                import std.array : join;
+                stderr.writefln("UT-PARALLEL shard %d modules: %s", s,
+                                assignedNames[s].join(" "));
+            }
         }
         if (!reaped)
         {
@@ -492,36 +596,6 @@ private UnitTestResult runParallelParent(size_t jobs)
             Thread.sleep(20.msecs);
         }
     }
-
-    ShardOutcome[] outcomes;
-    foreach (s, status; statuses)
-    {
-        const resultPath = buildPath(dir, format("shard-%d.result", s));
-        const text = exists(resultPath) ? readText(resultPath) : "";
-        outcomes ~= ShardOutcome(s, assignedNames[s], text, status >= 0,
-                                 status >= 0 ? status : -status);
-        // Busy time inside modules, beside the wall above: the difference is
-        // the worker's startup/teardown plus host contention.
-        double busyMs = 0;
-        foreach (line; text.splitLines)
-        {
-            import std.array : split;
-            const f = line.split;
-            if (f.length == 4 && f[0] == "UT-MOD")
-                try busyMs += f[2].to!double; catch (Exception) {}
-        }
-        stderr.writefln("UT-PARALLEL shard %d: %d modules, %.1f s inside modules",
-                        s, assignedNames[s].length, busyMs / 1000.0);
-    }
-
-    // Each worker's own output, whole and in shard order.
-    foreach (s, log; logs)
-    {
-        stdout.flush();
-        stderr.writefln("---- UT-PARALLEL shard %d output ----", s);
-        stderr.write(readText(log));
-    }
-    stderr.writefln("---- UT-PARALLEL end of shard output ----");
 
     auto verdict = mergeShards(roster, outcomes);
 
@@ -541,8 +615,8 @@ private UnitTestResult runParallelParent(size_t jobs)
 
     foreach (problem; verdict.problems)
         stderr.writefln("UT-PARALLEL-INCOMPLETE %s", problem);
-    if (verdict.problems.length)
-        stderr.writefln("UT-PARALLEL-INCOMPLETE shard files kept in %s", dir);
+    if (verdict.problems.length || verdict.passed < verdict.executed)
+        stderr.writefln("UT-PARALLEL shard files kept in %s", dir);
     else
         rmdirRecurse(dir);
     assert(!verdict.problems.length || verdict.passed < verdict.executed,

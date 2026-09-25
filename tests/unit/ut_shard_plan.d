@@ -369,8 +369,9 @@ MergeVerdict mergeShards(const string[] roster, const ShardOutcome[] outcomes)
     // Executed is the dispatched population whenever anything is missing, so
     // the missing ones read as failures, never as a smaller clean total.
     v.executed = v.problems.length ? roster.length : v.reports.length;
-    if (v.passed > v.executed)
-        v.passed = v.executed;
+    // Holds by construction: passes are counted over reports seen exactly once
+    // in the roster, and executed is the roster length or the report count.
+    assert(v.passed <= v.executed, "mergeShards counted more passes than executions");
     return v;
 }
 
@@ -577,47 +578,72 @@ unittest // census: every unittest module that listens on a chosen port is pinne
     import std.algorithm : filter;
     import std.file : dirEntries, readText, SpanMode;
     import std.path : buildPath, dirName, extension;
-    import std.regex : ctRegex, matchFirst;
+    import std.regex : ctRegex, escaper, matchAll, matchFirst, regex;
+    import std.conv : text;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    // A text scan, so it over-approximates: a module qualifies when it has a
-    // unittest and either binds a socket itself or constructs AND starts an
-    // HttpServer. Each hit must be pinned in kPortGroup or exempted below
-    // with the reason its port cannot collide.
-    static immutable startRx = ctRegex!(`\b\w*(server|srv|owner|contender|replacement)\w*\.start\(\)`, "i");
-    static immutable newServerRx = ctRegex!(`new HttpServer\(`);
+    // A text scan, so it over-approximates. The POPULATION is every module
+    // with a unittest that constructs an HttpServer or binds a socket itself.
+    // A module LISTENS when it binds, or when some variable it assigned
+    // `new HttpServer(` to has `.start()` called on it -- any name.
+    static immutable newServerRx = ctRegex!(`\b(\w+)\s*=\s*new HttpServer\(`);
+    static immutable anyServerRx = ctRegex!(`new HttpServer\(`);
     static immutable bindRx = ctRegex!(`\.bind\(new InternetAddress\(`);
     static immutable moduleRx = ctRegex!(`(?m)^module\s+([\w.]+)\s*;`);
-    static immutable string[string] exempt = [
+    enum Exempt { listens, neverStarts }
+    static immutable Exempt[string] exempt = [
         // Binds port 0 and KEEPS the listener open; the kernel owns that port
         // for as long as the test needs it.
-        "tests.unit.ai3d.job_controller_test": "keeps its own listener",
+        "tests.unit.ai3d.job_controller_test": Exempt.listens,
         // Production modules with no unittest block of their own: the text
         // says `unittest` only in prose, and the bind is the product.
-        "http_transport": "production listener, no unittest block",
-        "app": "production main loop, no unittest block",
+        "http_transport": Exempt.listens,
+        "app": Exempt.listens,
+        // Construct an HttpServer and drive it in-process, never start()ing
+        // it: no socket. Exempt only while that stays true.
+        "tests.unit.portless_route_ports_test": Exempt.neverStarts,
+        "tests.unit.playback_parse_owner_test": Exempt.neverStarts,
+        "application_command_binding_ownership_test": Exempt.neverStarts,
+        "tests.unit.live_registration_rig": Exempt.neverStarts,
+        "tests.unit.version_gate_census_ai3d_remesh_test": Exempt.neverStarts,
+        "http_server": Exempt.neverStarts,
     ];
 
     string[] offenders;
-    size_t population;
+    size_t population, listeners;
     foreach (root; ["tests/unit", "source"])
         foreach (e; dirEntries(buildPath(repoRoot, root), SpanMode.depth)
                     .filter!(e => e.isFile && e.name.extension == ".d"))
         {
             if (e.name == __FILE_FULL_PATH__)
                 continue;
-            const text = readText(e.name);
-            if (!text.canFind("unittest"))
+            const src = readText(e.name);
+            if (!src.canFind("unittest"))
                 continue;
-            const binds = !!matchFirst(text, bindRx);
-            const serves = matchFirst(text, newServerRx) && matchFirst(text, startRx);
-            if (!binds && !serves)
+            const binds = !!matchFirst(src, bindRx);
+            if (!binds && !matchFirst(src, anyServerRx))
                 continue;
-            auto m = matchFirst(text, moduleRx);
+            auto m = matchFirst(src, moduleRx);
             if (!m)
                 continue;
             ++population;
-            if (!kPortGroup.canFind(m[1]) && m[1] !in exempt)
+            bool serves;
+            foreach (c; matchAll(src, newServerRx))
+                if (matchFirst(src, regex(text(`\b`, escaper(c[1]), `\.start\(\)`))))
+                    serves = true;
+            const listens = binds || serves;
+            if (listens)
+                ++listeners;
+            if (kPortGroup.canFind(m[1]))
+                continue;
+            if (auto x = m[1] in exempt)
+            {
+                if (*x == Exempt.listens || !listens)
+                    continue;
+            }
+            else if (!listens)
+                offenders ~= m[1] ~ " (constructs an HttpServer; exempt it as neverStarts or pin it)";
+            if (listens)
                 offenders ~= m[1];
         }
     assert(offenders.length == 0, format(
@@ -633,9 +659,35 @@ unittest // census: every unittest module that listens on a chosen port is pinne
                     "validatePlan(roster, shards, kPinnedGroups)"])
         assert(runner.canFind(call),
             "tests/unit/ut_runner.d no longer calls `" ~ call ~ "`");
-    // Population floor, measured 2026-09-25: a scan that matched nothing
-    // would pass the check above.
+    // Population floors, measured 2026-09-25: a scan that matched nothing
+    // would pass the checks above.
     assert(population == kPortGroup.length + exempt.length, format(
         "the port census matched %d modules, kPortGroup + exempt list %d",
         population, kPortGroup.length + exempt.length));
+    assert(listeners == kPortGroup.length + 3, format(
+        "the port census found %d listening modules, expected %d",
+        listeners, kPortGroup.length + 3));
+}
+
+unittest // CI caps the workers to its core count (the VM reports 16 vCPUs on 4 cores)
+{
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : indexOf;
+
+    enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    const ci = readText(buildPath(repoRoot, ".github", "workflows", "ci.yaml"));
+    const run = ci.indexOf("run: xvfb-run -a dub test --config=tests --compiler=dmd");
+    assert(run > 0, "ci.yaml lost its module-gate step");
+    const env = ci[0 .. run].lastIndexOfEnv;
+    assert(ci[env .. run].canFind("VIBE3D_UT_JOBS: 4"),
+        "ci.yaml's module-gate step no longer sets VIBE3D_UT_JOBS: 4; the "
+      ~ "default would start min(8, CPUs) workers on a 7.7 GiB VM");
+}
+
+version (unittest) private size_t lastIndexOfEnv(const(char)[] text)
+{
+    import std.string : lastIndexOf;
+    const at = text.lastIndexOf("      env:\n");
+    return at < 0 ? 0 : cast(size_t) at;
 }

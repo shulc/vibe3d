@@ -353,8 +353,13 @@ jobs:
       # HEAD. Same if `fetch-depth: 0` above is dropped — the revision named
       # here then does not resolve, which it says in as many words. A build with
       # genuinely no baseline (a fork, a first commit) is spelled `none`.
+      #
+      # VIBE3D_UT_JOBS caps the module gate's worker processes (task 7900).
+      # Its default is min(8, CPUs), and this VM reports 16 vCPUs on a 4-core,
+      # 7.7 GiB host: 8 workers peak near 6 GiB. 4 matches the -j4 cap.
       env:
         VIBE3D_CENSUS_BRANCH_POINT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        VIBE3D_UT_JOBS: 4
       run: xvfb-run -a dub test --config=tests --compiler=dmd
 
     - name: 'Integration tests (HTTP suite via run_all.d)'
