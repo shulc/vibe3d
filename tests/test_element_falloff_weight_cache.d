@@ -4,7 +4,7 @@
 import core.thread : Thread;
 import core.time : msecs;
 import drag_helpers : CameraState, fetchCamera, playAndWait;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, frameFence;
 import http_command_helpers : commandBody;
 import std.algorithm.searching : canFind;
 import std.conv : to;
@@ -124,10 +124,8 @@ private void assertWeightedFold(string cell, const(V3)[] base,
     }
 }
 
-private void settle()
-{
-    Thread.sleep(180.msecs);
-}
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+private void settle() { frameFence(); }
 
 private string viewportLine(CameraState camera)
 {

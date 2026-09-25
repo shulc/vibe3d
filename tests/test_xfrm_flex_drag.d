@@ -66,7 +66,8 @@
 // one vibe3d is reused per worker across test binaries, so a mode left
 // somewhere else by an earlier test would otherwise decide this one's result.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -136,15 +137,9 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
 }
 
 // Play one JSON-Lines chunk and wait for the player to drain.
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 
 double[3][] dumpVerts() {
     double[3][] outv;

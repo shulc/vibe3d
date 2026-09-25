@@ -21,7 +21,8 @@
 // step, button held). After the drag we read the rendered move + scale `right`
 // vectors via the /api/toolpipe/eval rendered-pose seam.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -88,15 +89,9 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
     return true;
 }
 
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 
 V3 readRight(JSONValue blk) {
     auto a = blk["right"].array;

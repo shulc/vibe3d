@@ -214,3 +214,15 @@ void frameFence(string baseUrl = null, uint frames = 1) {
         Thread.sleep(1.msecs);
     }
 }
+
+/// The PACE meta line (card test-sleep-removal): the player delivers one
+/// distinct `t` per frame, in order, instead of waiting the log's wall-clock
+/// schedule. For a synthetic test log whose gaps mean "a frame between these".
+enum string kPaceFramesLine = `{"t":0,"type":"PACE","mode":"frames"}` ~ "\n";
+
+/// POST `log` frame-paced and wait until it is `processed`.
+void playPacedAndWait(string log, string baseUrl = null) {
+    auto r = postJson("/api/play-events", kPaceFramesLine ~ log, baseUrl);
+    assert(r["status"].str == "success", "play-events failed: " ~ r.toString());
+    waitPlaybackProcessed(baseUrl);
+}

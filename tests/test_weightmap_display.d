@@ -38,7 +38,7 @@
 module test_weightmap_display;
 
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, frameFence, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
@@ -99,7 +99,8 @@ void postCommandObj(string cmd, string paramsJson) {
 /// The probe reads the last COMPLETED frame (the HTTP bridge is serviced
 /// before the scene render), so anything that changes the scene needs a frame
 /// to land before it is visible to a probe.
-void settle() { Thread.sleep(400.msecs); }
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+void settle() { frameFence(); }
 
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));
@@ -1202,13 +1203,7 @@ bool testFlowG() {
         auto pj = parseJSON(resp);
         enforce(pj["status"].str == "success",
                 "play-events failed: " ~ resp);
-        bool done = false;
-        foreach (i; 0 .. 200) {
-            auto st = parseJSON(httpGet("/api/play-events/status"));
-            if (st["finished"].type == JSONType.TRUE) { done = true; break; }
-            Thread.sleep(50.msecs);
-        }
-        enforce(done, "play-events did not finish within 10s");
+        waitPlaybackProcessed();
     }
     settle();
 

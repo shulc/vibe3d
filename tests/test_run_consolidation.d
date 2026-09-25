@@ -61,7 +61,7 @@
 // baseline via reset + history.clear (never drainHistory after /api/reset,
 // which is itself undoable), so undo=0 at the test floor.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -115,11 +115,8 @@ bool canUndo() {
     return c !is null && c.boolean;
 }
 
-void settle() {
-    import core.thread : Thread;
-    import core.time   : msecs;
-    Thread.sleep(120.msecs);
-}
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+void settle() { frameFence(); }
 
 void drainHistory() {
     foreach (_; 0 .. 100) {
@@ -172,11 +169,7 @@ void establishCubeBaseline() {
         postJson("/api/script", "tool.set TransformScale off");
         postJson("/api/script", "tool.set TransformRotate off");
         postJson("/api/script", "tool.set Transform off");
-        foreach (_; 0 .. 200) {
-            if (playerIdle()) break;
-            Thread.sleep(10.msecs);
-        }
-        Thread.sleep(120.msecs);
+        waitPlaybackProcessed();
         // Do NOT drainHistory() after /api/reset: SceneReset is itself undoable
         // and its revert() restores the PRE-reset (prior test's dirty) mesh, so
         // a drain-after-reset can leave a standing entry that reverts geometry

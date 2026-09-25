@@ -105,7 +105,7 @@
 // expression into an equal one and cannot go red. A green from it would be
 // logged as "expected" and would mean nothing. There is no colour-separability
 // question left here to mutate against; the pass-identity question replaced it.
-import http_client : getJson, testBaseUrl;
+import http_client : getJson, testBaseUrl, frameFence;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -136,7 +136,8 @@ private void cmd(string body_) {
 /// Picks run on the event-playback thread and reads on the HTTP one; a frame
 /// between them is what makes the second see the first. The pixel probes need
 /// it twice over — a probe reads the last COMPLETED frame.
-private void settle() { Thread.sleep(450.msecs); }
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+private void settle() { frameFence(); }
 
 // ---------------------------------------------------------------------------
 // Reading the app's answer

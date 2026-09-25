@@ -46,7 +46,7 @@
 // banks. (Previously R3 was an accepted v1 divergence: config stayed at the new
 // value across an in-session undo.)
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -107,11 +107,8 @@ long refireCount() {
     return n;
 }
 
-void settle() {
-    import core.thread : Thread;
-    import core.time   : msecs;
-    Thread.sleep(120.msecs);
-}
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+void settle() { frameFence(); }
 
 void drainHistory() {
     foreach (_; 0 .. 100) {
@@ -169,11 +166,7 @@ void establishCubeBaseline() {
         postJson("/api/script", "tool.set TransformScale off");
         postJson("/api/script", "tool.set TransformRotate off");
         postJson("/api/script", "tool.set Transform off");
-        foreach (_; 0 .. 200) {
-            if (playerIdle()) break;
-            Thread.sleep(10.msecs);
-        }
-        Thread.sleep(120.msecs);
+        waitPlaybackProcessed();
         postJson("/api/command", commandBody("scene.reset"));           // cube (SceneReset on the stack)
         postJson("/api/command", "history.clear"); // wipe stacks, keep the cube
         if (cubePristine() && undoCount() == 0) return;

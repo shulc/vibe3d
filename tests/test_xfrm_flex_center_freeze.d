@@ -26,7 +26,8 @@
 // Element-move (the frozen elementPin tier, task 1530) is covered by the existing
 // test_element_pick_drag_gizmo.d; acen.local pivots by test_acen_local_*.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -93,15 +94,9 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
     return true;
 }
 
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 
 // The live action-center (== falloff sphere anchor) and the live Move-bank
 // gizmo center, from the rendered-pose seam.
@@ -324,7 +319,7 @@ unittest {
     // (a definite point, not floating / NaN). Without the splice the revert hook
     // would leave the soft pin stale, snapping the gizmo to the weighted centroid.
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(60));
+    frameFence();
     V3 afterUndo = gizmoCenter();
     assert(afterUndo.x == afterUndo.x && afterUndo.y == afterUndo.y
         && afterUndo.z == afterUndo.z,
@@ -399,7 +394,7 @@ unittest {
     // In-session undo: the soft-pin splice in the scale undo hook keeps the gizmo
     // center finite + consistent with the falloff anchor (mirror of rotate).
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(60));
+    frameFence();
     V3 afterUndo = gizmoCenter();
     assert(afterUndo.x == afterUndo.x && afterUndo.y == afterUndo.y
         && afterUndo.z == afterUndo.z,
@@ -507,10 +502,10 @@ unittest {
     foreach (i, s; sel2) s2 ~= (i ? "," : "") ~ s.to!string;
     s2 ~= "]";
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s2 ~ `}`));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     // Force an idle update tick so the selection-change boundary fires its clear.
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 
     V3 moveReDerive = moveRight();
     assert(maxDev(moveReDerive, moveAfter) > 1e-3,

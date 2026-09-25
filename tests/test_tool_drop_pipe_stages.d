@@ -4,7 +4,7 @@
 module test_tool_drop_pipe_stages;
 
 import drag_helpers : buildDragLog, playAndWait;
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, frameFence;
 import http_command_helpers : commandBody;
 import tool_drop_pipe_stages_helpers : applyHistoryDelta;
 import std.algorithm : sort;
@@ -24,7 +24,8 @@ private JSONValue fixture() {
     return cached;
 }
 
-private void settle() { Thread.sleep(dur!"msecs"(150)); }
+// One completed frame (card test-sleep-removal) replaces the fixed sleep.
+private void settle() { frameFence(); }
 
 private void cmd(string text) {
     const body = text.indexOf(' ') < 0 ? commandBody(text) : text;

@@ -40,7 +40,8 @@
 // Modeled on tests/test_xfrm_flex_gesture_chain.d (chunked drag harness) and
 // tests/test_run_absolute_rotate.d (principal-ring arc geometry).
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -126,15 +127,9 @@ double gizmoRadius(Cam cam, V3 center) {
     return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 
 V3 readRight(JSONValue blk) {
     auto a = blk["right"].array;
@@ -203,7 +198,7 @@ double arcStartAngle(V3 nAxis, V3 camFwd, V3 right, V3 up) {
 bool ringGesture(V3 axisVec, V3 center, long wantCount, double arcDelta,
                  out double[3][] dumpPre, out double[3][] dumpPost) {
     foreach (attempt; 0 .. 16) {
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         Cam cam = fetchCam();
         double radius = gizmoRadius(cam, center);
         V3 right, up;
@@ -239,7 +234,7 @@ bool ringGesture(V3 axisVec, V3 center, long wantCount, double arcDelta,
         play(format(
             `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
             t, cast(int)x1, cast(int)y1));
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         if (undoCount() >= wantCount) {
             dumpPost = dumpVerts();
             return true;

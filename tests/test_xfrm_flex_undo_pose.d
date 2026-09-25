@@ -24,7 +24,8 @@
 // check the center is non-NaN + agrees with the gizmo center) by also asserting
 // the rendered frame returns to the PRE-gesture pose.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -80,15 +81,9 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
     if (!(cw > 0)) return false;
     px = (cx/cw*0.5+0.5)*w + vpX; py = (1-(cy/cw*0.5+0.5))*h + vpY; return true;
 }
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 V3 acenCenter() {
     auto a = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
     return V3(a[0].floating, a[1].floating, a[2].floating);
@@ -173,15 +168,15 @@ bool projectPivot(Cam cam, out double ppx, out double ppy) {
 long undoCount() { return getJson("/api/history")["undo"].array.length; }
 void undoStep() {
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");   // force an idle update tick
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 }
 void redoStep() {
     postJson("/api/command", commandBody("history.redo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 }
 
 // --- principal-ring drag helpers (ported from test_xfrm_flex_rotate_axis_chain.d).
@@ -229,7 +224,7 @@ double arcStartAngle(V3 nAxis, V3 camFwd, V3 right, V3 up) {
 // first.revert / last.apply coherence claim for an already-rotated frame.
 bool ringRotate(V3 axisVec, V3 center, long wantCount, double arcDelta) {
     foreach (attempt; 0 .. 16) {
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         Cam cam = fetchCam();
         double radius = gizmoRadius(cam, center);
         V3 right, up;
@@ -264,7 +259,7 @@ bool ringRotate(V3 axisVec, V3 center, long wantCount, double arcDelta) {
         play(format(
             `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
             t, cast(int)x1, cast(int)y1));
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         if (undoCount() >= wantCount) return true;
         // missed grab — nothing recorded; geometry unchanged, retry.
     }
@@ -349,9 +344,9 @@ unittest {
 
     // In-session Ctrl+Z.
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");   // force an idle update tick
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 
     V3 undoRotRight  = rotateRight();
     V3 undoMoveRight = moveRight();
@@ -412,9 +407,9 @@ unittest {
     assert(maxDev(postCenter, preCenter) > 0.05, "move gesture did not displace the center");
 
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 
     V3 undoMoveRight = moveRight();
     V3 undoCenter    = acenCenter();
@@ -467,9 +462,9 @@ unittest {
     assert(scDev > 0.05, "scale gesture did not engage (scDev=" ~ scDev.to!string ~ ")");
 
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 
     V3 undoScaleRight = scaleRight();
     V3 undoCenter     = acenCenter();
@@ -521,13 +516,13 @@ unittest {
 
     // Undo, then redo.
     postJson("/api/command", commandBody("history.undo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
     postJson("/api/command", commandBody("history.redo"));
-    Thread.sleep(dur!"msecs"(80));
+    frameFence();
     getJson("/api/toolpipe/eval");
-    Thread.sleep(dur!"msecs"(40));
+    frameFence();
 
     V3 redoRotRight = rotateRight();
     double redoGap = maxDev(redoRotRight, postRotRight);

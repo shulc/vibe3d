@@ -53,7 +53,8 @@
 // principal-ring gesture) and tests/test_xfrm_scale_flip_drag.d (scale Z box
 // grab pixel 400,402 on the deforming Border patch).
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, frameFence,
+    playPacedAndWait;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -138,15 +139,9 @@ double gizmoUnits(Cam cam, V3 center) {
     return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 
-void play(string log) {
-    auto r = postJson("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    foreach (i; 0 .. 200) {
-        if (getJson("/api/play-events/status")["finished"].type == JSONType.TRUE) break;
-        Thread.sleep(dur!"msecs"(20));
-    }
-    Thread.sleep(dur!"msecs"(40));
-}
+// Frame-paced, and returns once the frame that consumed the log completed
+// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
+void play(string log) { playPacedAndWait(log); }
 
 V3 readVec(JSONValue arr) {
     auto a = arr.array;
@@ -218,7 +213,7 @@ double arcStartAngle(V3 nAxis, V3 camFwd, V3 right, V3 up) {
 }
 bool ringGesture(V3 axisVec, V3 center, long wantCount, double arcDelta) {
     foreach (attempt; 0 .. 16) {
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         Cam cam = fetchCam();
         double radius = gizmoUnits(cam, center);
         V3 right, up;
@@ -253,7 +248,7 @@ bool ringGesture(V3 axisVec, V3 center, long wantCount, double arcDelta) {
         play(format(
             `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
             t, cast(int)x1, cast(int)y1));
-        Thread.sleep(dur!"msecs"(60));
+        frameFence();
         if (undoCount() >= wantCount) return true;
     }
     return false;
@@ -412,7 +407,7 @@ unittest {
     play(format(
         `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         t, x1, y1));
-    Thread.sleep(dur!"msecs"(60));
+    frameFence();
 
     assert(measured >= 8,
         "scale drag moved too few verts across steps (" ~ measured.to!string
