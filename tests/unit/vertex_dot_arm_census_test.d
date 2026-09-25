@@ -48,10 +48,11 @@ unittest {
         ~ "condition once in %s, found %d; the block moved or was rewritten "
         ~ "and every needle below would read the wrong text", path, heads));
     immutable ptrdiff_t at = code.indexOf(head);
-    enum elseArm = "} else if (showVertHover && hoveredVertex >= 0) {";
+    // Slice M6: both arms hand GL the rollover-gated hover (`vertHovForDraw`).
+    enum elseArm = "} else if (showVertHover && vertHovForDraw >= 0) {";
     immutable ptrdiff_t end = code.indexOf(elseArm, at);
     assert(end > at, "vertex-dot census: the hover-only arm (`showVertHover "
-        ~ "&& hoveredVertex >= 0`) no longer follows the block; the flag the "
+        ~ "&& vertHovForDraw >= 0`) no longer follows the block; the flag the "
         ~ "edge arm mirrors is gone from its reference site");
     immutable string arm = code[at .. end];
     assert(countOccurrences(arm, "gpu.drawVertices(") == 1,
@@ -63,7 +64,7 @@ unittest {
     assert(countOccurrences(arm, edgeArm) == 1,
         "vertex-dot census: the arm no longer derives `edgeArm` from the "
         ~ "edge selection type");
-    enum hoverArg = "edgeArm && !showVertHover ? -1 : hoveredVertex,";
+    enum hoverArg = "edgeArm && !showVertHover ? -1 : vertHovForDraw,";
     assert(countOccurrences(arm, hoverArg) == 1,
         "vertex-dot census: edge-mode hover is not gated on showVertHover "
         ~ "(the cell-has-the-pointer flag); a hovered vertex would light in "

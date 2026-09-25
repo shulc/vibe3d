@@ -1,0 +1,425 @@
+{
+ "about": "Tool session model slice M6: per registered tool id, whether the tool's own node and whether another node of its pipe carry the rollover (target highlight) flag. Static read of the reference's flag words, 2026-09-24 (gap 309); generated, do not edit.",
+ "rows": [
+  {
+   "id": "ElementMove",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": true
+  },
+  {
+   "id": "Transform",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "TransformMove",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "TransformRotate",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "TransformScale",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "edge.bevel",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "edge.extend",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "edge.extrude",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "edge.slide",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.arrayTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.bridgeTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.clone",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.dragWeld",
+   "mapping": "mapped",
+   "actor": true,
+   "stage": false
+  },
+  {
+   "id": "mesh.edgeSliceTool",
+   "mapping": "mapped",
+   "actor": true,
+   "stage": false
+  },
+  {
+   "id": "mesh.loopSliceTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.mirrorTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.polyInsetTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.radialArrayTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.radialSweepTool",
+   "mapping": "uncertain",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.reduceTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.sliceTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.smoothShiftTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.tack",
+   "mapping": "noCounterpart",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.thickenTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.topoPen",
+   "mapping": "mapped",
+   "actor": true,
+   "stage": false
+  },
+  {
+   "id": "mesh.vertexBevel",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "mesh.vertexExtrude",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "move",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "move.element",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": true
+  },
+  {
+   "id": "pen",
+   "mapping": "mapped",
+   "actor": true,
+   "stage": false
+  },
+  {
+   "id": "poly.bevel",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "poly.extrude",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.arc",
+   "mapping": "noCounterpart",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.capsule",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.cone",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.cube",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.cylinder",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.ellipsoid",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.sphere",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.torus",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.tube",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "prim.vertex",
+   "mapping": "mapped",
+   "actor": true,
+   "stage": false
+  },
+  {
+   "id": "rotate",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "scale",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "tool.strokeExtrude",
+   "mapping": "uncertain",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "vert.merge",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.bend",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.bulge",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.elementMove",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": true
+  },
+  {
+   "id": "xfrm.flare",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.flex",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.jitter",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.linearAlignTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.magnet",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.push",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.quantize",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.radialAlignTool",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.scaleUniform",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.shear",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.smooth",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.softDrag",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.softMove",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.softRotate",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.softScale",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.softTransform",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.swirl",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.taper",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.transform",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.twist",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  },
+  {
+   "id": "xfrm.vortex",
+   "mapping": "mapped",
+   "actor": false,
+   "stage": false
+  }
+ ]
+}
