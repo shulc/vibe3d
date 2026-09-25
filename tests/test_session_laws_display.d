@@ -324,17 +324,21 @@ unittest { // H8, the rotate and scale banks: a press off every ring places no a
     // bank it embeds — the owner reaches the rotate and scale banks too, or a
     // press that misses their rings would place the action centre again
     // (Q-pose, gap 245). One bank per rig, so a bank that lost its owner is
-    // the one this names.
+    // the one this names; the Move bank is off, because it answers every
+    // press first (an off-handle press is its haul) and the bank under test
+    // would never be asked.
     alias H = edge_extend_gesture_helpers;
     enum double PX = 0.5, PY = 1.35;          // the haul that opens the operation
     enum double QX = -0.6, QY = -1.2;         // far from the handle and its rings
     foreach (bank; ["rotateHandle", "scaleHandle"]) {
         H.rigNoArm([[7, 8]], true, 0.3, 0.55, false);
         H.keyArm();
-        H.typePanel("tool.attr edge.extend " ~ bank ~ " true");
-        assert(H.toolState()[bank].type == JSONType.true_,
-               format("rig (%s): the bank did not switch on: %s", bank, H.toolState().toString));
         H.frontHaul(PX, PY, H.kIncrementPx, H.kIncrementPx, 10);
+        H.typePanel("tool.attr edge.extend " ~ bank ~ " true");
+        H.typePanel("tool.attr edge.extend moveHandle false");
+        assert(H.toolState()[bank].type == JSONType.true_
+               && H.toolState()["moveHandle"].type == JSONType.false_,
+               format("rig (%s): the banks did not switch: %s", bank, H.toolState().toString));
         assert(H.runStarted() && !H.acenUserPlaced(),
                format("rig (%s): the opening haul did not open an operation, or already placed "
                       ~ "the action centre (runStarted %s)", bank, H.runStarted()));
