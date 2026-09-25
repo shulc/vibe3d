@@ -166,7 +166,7 @@ private struct SiteCount { string transition; size_t count; string why; }
 private immutable SiteCount[] kSites = [
     SiteCount("commandArm",             1, "toolHost.activatePrepared"),
     SiteCount("interactiveArm",         1, "toolHost.activate"),
-    SiteCount("replayArm",              2, "the lifecycle restore delegate inside armPreparedTool, and the switch-restorable restore delegate beside it (task 7118)"),
+    SiteCount("replayArm",              1, "the lifecycle restore delegate inside armPreparedTool (slice M4 removed the switch-restorable one: a restore is the same replay arm)"),
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
@@ -269,8 +269,9 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 22,
-        format("task 4053: the site ledger now sums to %s, recorded 22 — say in "
+    assert(total == 21,
+        format("task 4053: the site ledger now sums to %s, recorded 21 (slice M4: the "
+               ~ "switch-restore replay arm left) — say in "
                ~ "the commit which sites arrived or left", total));
 
     // And the total DECOMPOSES, which is what keeps 22 from being a number
@@ -305,10 +306,11 @@ unittest {
         dropCalls += occurrences(text, "dropActiveTool(ToolTransition.");
         armCalls  += occurrences(text, "armPreparedTool(ToolTransition.");
     }
-    // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15).
-    assert(dropCalls == 15 && armCalls == 5,
+    // Slice M2 folded the funnel's two pre-apply drop calls into one (16 -> 15);
+    // slice M4 removed the switch-restore replay arm (5 -> 4).
+    assert(dropCalls == 15 && armCalls == 4,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 15 and 5. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 15 and 4. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,

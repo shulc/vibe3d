@@ -902,10 +902,12 @@ unittest {
             resetCube();
             auto r = postJ("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`));
             assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
-            cmd("history.clear");
             setOrbitCamera();
             cmd("tool.set edge.extend on");
             settle(250);
+            // Slice M4: the arm writes its activation row (H1; a script arm
+            // keeps it as its own step), so the stack is cleared AFTER it.
+            cmd("history.clear");
         },
         {
             // Gap 217 (task 7117): the run starts with a first press, so a

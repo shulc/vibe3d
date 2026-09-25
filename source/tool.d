@@ -182,8 +182,8 @@ private enum string gestureCarrierRefusal(F) =
 
 /// A tool's policy for a recording command met while it is armed (the
 /// `commandClose` field below; slice M2): `none` — the funnel's fallback, a
-/// Model command drops the tool and a UiState one leaves it (task 0463; the
-/// 6250 command drops a tool it cannot close), `uiDoor` closes the live
+/// Model command drops the tool and a UiState one leaves it (the 6250 command
+/// drops a tool it cannot close too), `uiDoor` closes the live
 /// operation first when the command came through the UI, `allDoors` does so on
 /// either door. Every value falls back to `none`'s rule when the tool does not
 /// stay armed. The session reads it (`closeForCommand`, slice M4); the command
