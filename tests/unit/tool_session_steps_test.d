@@ -550,3 +550,23 @@ unittest { // the arm raises `armAttr` as the window's first group; a history-st
            format("M3b arm: an arm under a history step must be bare: on %s, rebuilds %s",
                   b.on, b.rebuilds));
 }
+
+unittest { // an arm attribute applies only on an arm-opened tool (opensAt, not armAttr alone)
+    static final class FirstTool : StepTool {
+        bool on;
+        override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+            static immutable ToolSessionPolicy p = { sessionSteps: true, opensAt: OpensAt.firstPress,
+                imageAttrs: ["v", "on"], armAttr: "on" };
+            return p;
+        }
+        override Param[] params() {
+            return [Param.int_("v", "V", &v, 0), Param.bool_("on", "On", &on, false)];
+        }
+    }
+    auto t = new FirstTool;
+    Tool active = t;
+    auto s = new EditSession(() => active, new CommandHistory(), () {});
+    s.noteArm("t.first");
+    assert(!t.on && t.rebuilds == 0 && !s.sessionStateJson()["live"].boolean,
+           format("M3b arm: a first-press tool's arm applied its arm attribute: on %s", t.on));
+}

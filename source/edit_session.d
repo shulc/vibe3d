@@ -968,7 +968,8 @@ private struct ToolSession {
             stepBegins(t, PressKind.plain);
             t.applyArmAttr();
             operationArmed(t);
-            stepEnds(t);
+            // No `stepEnds`: the image after the arm IS the pending one, so the
+            // arm's own rest is never a step (the next press re-begins).
         }
     }
 

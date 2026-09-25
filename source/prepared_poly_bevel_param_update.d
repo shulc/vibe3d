@@ -125,6 +125,23 @@ version(unittest) unittest {
     staleTool.mutatePreparedParamForTest(17.0f);
     assert(!staleContext.validate() && staleLayer.meshRef().vertices.length == 8);
 
+    // Slice M3b: the session image beyond the haul is in the projection — an
+    // `applied` / `op` raw write between prepare and install is a mismatch.
+    foreach (name; ["applied", "op"]) {
+        auto l = new Layer; l.meshRef() = makeCube();
+        l.meshRef().syncSelection(); l.meshRef().selectFace(0);
+        GpuMesh g;
+        auto t = new PolyBevelTool(() => &l.meshRef(), &g, &mode, LitShader.init);
+        t.seedPreparedParamForTest(l.meshRef());
+        auto c = new PreparedRecordContext(null, new RecordObserverHub());
+        c.setResourceIdentity(7, 11);
+        assert(t.prepareParamChanged(c, l, GpuUploadOwner.fakeForTest(&g)).accepted);
+        foreach (ref p; t.params()) if (p.name == name) {
+            if (name == "applied") *p.bptr = false; else *p.iptr = 1;
+        }
+        assert(!c.validate(), "M3b: a prepared bevel update validated over a changed " ~ name);
+    }
+
     auto wrongLayer = new Layer; wrongLayer.meshRef() = makeCube();
     wrongLayer.meshRef().syncSelection(); wrongLayer.meshRef().selectFace(0);
     auto wrongTool = new PolyBevelTool(() => &wrongLayer.meshRef(), &staleGpu,

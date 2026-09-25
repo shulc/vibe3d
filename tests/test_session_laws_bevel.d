@@ -13,6 +13,7 @@
 //              the tool stays with its own row (gap 300, extrapolated).
 //   doApply    the headless apply replaces the live window; its undo returns
 //              the window's base.
+//   switch-rows  a tool switch writes one row per operation of the window.
 //   C-H2-bev   two plain hauls are two steps of ONE operation (no new ring);
 //              Ctrl+Z restores the first haul's values and geometry.
 //   C-H5-mmb   a motionless Middle tap after a haul opens a NEW operation that
@@ -226,9 +227,10 @@ unittest {
            format("bevel floor (doApply): the headless apply did not bevel: mesh %s, applied %s",
                   applied1.toString, applied()));
     ctrlZ("doApply Ctrl+Z");
-    assert(slMesh().canon == base.canon,
-           format("doApply: undoing the headless apply must return the window's base, not the "
-                  ~ "arm's ring: mesh %s, rows %s", slMesh().toString, slHistoryLabels()));
+    assert(slMesh().canon == base.canon && slHistoryLen() == 1,
+           format("doApply: the Ctrl+Z must undo the headless apply's ROW (the window ended with "
+                  ~ "it) and return the window's base, not the arm's ring: mesh %s, rows %s",
+                  slMesh().toString, slHistoryLabels()));
     slLine("tool.set poly.bevel off");
     assert(slMesh().canon == base.canon && slHistoryLen() == 1,
            format("doApply: dropping the tool after the undo must record nothing: mesh %s, rows %s",
@@ -264,6 +266,7 @@ unittest {
     rig("C-H5-mmb");
     armUi("C-H5-mmb");
     const a0 = slMesh();
+    const hp0 = handle0();
     haul(0, -40, "C-H5-mmb h1");
     const s1 = shiftV(), i1 = insetV();
     const g1 = slMesh();
@@ -290,6 +293,11 @@ unittest {
            format("C-H5-bev-mmb z2: the first operation's haul must pop onto the arm's ring: "
                   ~ "mesh %s (a0 %s), op %s, applied %s, shift %s",
                   slMesh().toString, a0.toString, opIx(), applied(), shiftV()));
+    // Back across the boundary, the handle stands on operation 0's base again.
+    const hpz = handle0();
+    assert(abs(hpz[0] - hp0[0]) + abs(hpz[1] - hp0[1]) < 1.5,
+           format("C-H5-bev-mmb z2: the handle did not return to operation 0's base: %s (arm %s)",
+                  hpz, hp0));
     // A new haul and a new clone: the clone stands on THIS haul's result.
     haul(0, -20, "C-H5-mmb h1'");
     const g1b = slMesh();
@@ -340,7 +348,12 @@ unittest {
     assert(opIx() == 1 && applied() && slMesh().verts == 16,
            format("C-H5-bev-shift: a Shift press between operations must not stack another: op %s, "
                   ~ "applied %s, mesh %s", opIx(), applied(), slMesh().toString));
-    // RMB discards the whole window, both operations: the base, the tool stays.
+    ctrlZ("C-H5-shift Ctrl+Z 2");
+    assert(opIx() == 1 && !applied() && slMesh().canon == g1.canon,
+           format("bevel floor (C-H5-shift): back between operations: op %s, applied %s, mesh %s",
+                  opIx(), applied(), slMesh().toString));
+    // RMB discards the whole window — here with NOTHING of the live operation
+    // applied, only the baked first one: the base, the tool stays.
     auto c = fetchCamera();
     slPlay(motEv(20, c.vpX + 70, c.vpY + 70, 0, 0) ~ "\n" ~ btnEv(40, true, 3, c.vpX + 70, c.vpY + 70, 0)
            ~ "\n" ~ btnEv(60, false, 3, c.vpX + 70, c.vpY + 70, 0), "C-H5-shift RMB");
@@ -393,4 +406,31 @@ unittest {
                   ~ "(k_sel 0.04): tool '%s', applied %s, shift %s (h1 %s), mesh %s",
                   tool(), applied(), shiftV(), s1, slMesh().toString));
     slLine("tool.set poly.bevel off");
+}
+
+// ---------------------------------------------------------------------------
+// switch-rows — a tool SWITCH (the prepared deactivation door) writes one row
+// per operation of the window, like the drop door and the command close.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("switch-rows")) return;
+    const base = rig("switch-rows");
+    armUi("switch-rows");
+    haul(0, -40, "switch-rows h1");
+    const g1 = slMesh();
+    haul(0, -40, "switch-rows hs", 1, SL_KMOD_LSHIFT);
+    const g2 = slMesh();
+    assert(opIx() == 1 && g2.verts == 16,
+           format("bevel floor (switch-rows): two operations: op %s, mesh %s", opIx(), g2.toString));
+    slLineUi("tool.set poly.extrude on");
+    const L = slHistoryLabels();
+    assert(tool() != "polyBevel" && L.length == 3 && L[1] == "Poly Bevel" && L[2] == "Poly Bevel"
+           && slMesh().canon == g2.canon,
+           format("switch-rows: the switch must write one row per operation: tool '%s', rows %s, "
+                  ~ "mesh %s", tool(), L, slMesh().toString));
+    slLine("tool.set poly.extrude off");
+    slLine("history.undo");
+    assert(slMesh().canon == g1.canon,
+           format("switch-rows: the first undo must return the first operation's result: mesh %s "
+                  ~ "(h1 %s), rows %s", slMesh().toString, g1.toString, slHistoryLabels()));
 }
