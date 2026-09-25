@@ -13,6 +13,9 @@
 //              selection mode: vertex mode on v 36 = no tool; edge mode on the
 //              edge 0; polygon mode on the edge 0; edge mode on v the vertex
 //              dot (36) where no tool draws edges (475; ours lights one edge).
+//   C-H7-xfrm-falloff-elem / -center-elem (M0e): TransformMove with ONE
+//              element node set by hand lights the vertex (36 / 36, vertex
+//              mode and edge mode on v); plain TransformMove 0 / 0.
 //   Magnet     flags table: no rollover flag (a named flip of M6 — HEAD drew
 //              its hovered vertex).
 //   Tack       no counterpart: its hovered face stays drawn (carried).
@@ -256,6 +259,53 @@ unittest { // C-H7-elem, polygons: Element Move never highlights a FACE
     immutable size_t pEm = cellPx("polygon", "ElementMove", top, "face");
     assert(pEm == 0, format("C-H7-elem (polygon mode, face interior): Element Move drew %s px "
                             ~ "of face hover (no tool %s)", pEm, pNo));
+}
+
+/// The stage attribute `stage.attr` as /api/toolpipe reports it.
+private string pipeAttr(string stage, string attr) {
+    foreach (st; getJson("/api/toolpipe")["stages"].array)
+        if (st["id"].str == stage) return st["attrs"][attr].str;
+    assert(false, "no " ~ stage ~ " stage in /api/toolpipe");
+}
+
+/// C-H7-xfrm-*-elem (M0e): TransformMove with ONE element node set by hand.
+/// The capture set the node, then armed the tool; ours: a hand-set centre
+/// mode does not survive the arm (the arm's transient pipe reset; gap 385),
+/// so the node is set after it — the state under test is the same pipe.
+private size_t handSetCell(string type, string node, DHVec3 at, string kind) {
+    run("scene.reset");
+    run("select.typeFrom " ~ type);
+    auto r = postJson("/api/script", "tool.set TransformMove on");
+    assert(r["status"].str == "ok", "arm TransformMove failed: " ~ r.toString);
+    run(node);
+    settleFrames();
+    immutable int[2] p = windowPx(at);
+    immutable size_t n = changedPx(p);
+    assert(hovered(kind) >= 0, format("rig (%s, %s mode): the pointer resolved no hovered %s "
+                                      ~ "(falloff %s, centre %s)", node, type, kind,
+                                      pipeAttr("falloff", "type"),
+                                      pipeAttr("actionCenter", "mode")));
+    writefln("[display] %s mode, TransformMove + `%s`, on %s: %s changed px (falloff %s, "
+             ~ "centre %s)", type, node, kind, n, pipeAttr("falloff", "type"),
+             pipeAttr("actionCenter", "mode"));
+    return n;
+}
+
+unittest { // C-H7-xfrm-falloff-elem / -center-elem (M0e): EITHER element node lights the vertex
+    // The control that gives the two lit cells their meaning: plain
+    // TransformMove lights nothing (0 / 0 captured) — its actor carries no flag.
+    rig("edge", "TransformMove");
+    immutable size_t plain = changedPx(windowPx(kV));
+    assert(plain == 0, format("M0e control: plain TransformMove drew %s px at v in edge mode", plain));
+    foreach (node; ["tool.pipe.attr falloff type element",
+                    "tool.pipe.attr actionCenter mode element"]) {
+        immutable size_t v = handSetCell("vertex", node, kV, "vertex");
+        immutable size_t e = handSetCell("edge", node, kV, "vertex");
+        assert(v > 0 && e == v,
+               format("C-H7-xfrm (%s): TransformMove drew %s px (vertex mode) / %s px (edge mode, "
+                      ~ "on v); captured 36 / 36 — the vertex dot, from either element node alone",
+                      node, v, e));
+    }
 }
 
 unittest { // Magnet: no rollover flag in the table — its hovered vertex is not drawn

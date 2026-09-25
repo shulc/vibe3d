@@ -7,6 +7,7 @@ import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneInter
 import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
 import mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;
+import tool : Rollover;
 import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient,
                            PresetClaimable;
@@ -550,6 +551,13 @@ public:
     }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Acen; }
+
+    /// H7 (slice M6): the element centre carries the rollover flag, and alone
+    /// lights the hovered VERTEX under a transform tool (M0e
+    /// C-H7-xfrm-center-elem: 36 px, like Element Move's).
+    override Rollover rollovers() const nothrow @nogc {
+        return mode == Mode.Element ? Rollover.vertices : Rollover.none;
+    }
     override string   id()       const                          { return "actionCenter"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordAcen; }
 

@@ -561,10 +561,6 @@ static assert(__traits(isVirtualMethod, Tool.handleAnchorPoint));
 /// highlight, carried (plan R4.1): of the four only the tack draws one.
 private immutable string[] kCarriedTargetIds = ["mesh.tack"];
 
-/// A flags-table stage flag this tree does not carry, with its reason: our
-/// compat preset `move.element` has no element falloff (the table maps it to
-/// Element Move's nodes), so it neither picks nor highlights an element (gap 381).
-private immutable string[] kStageFlagWithoutCarrier = ["move.element"];
 
 unittest { // (6) id -> rollovers, over every registered id
     auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
@@ -602,15 +598,19 @@ unittest { // (6) id -> rollovers, over every registered id
         if (actor || kCarriedTargetIds.canFind(row.id)) targetIds ~= row.id;
         if (f["stage"].type == JSONType.true_) {
             stageIds ~= row.id;
-            // The flag of a pipe node: carried here by the element falloff the
-            // preset installs (`FalloffStage.rollovers`), or a named exception.
+            // The flag of a pipe node: carried here by an element node the
+            // preset installs — the element falloff (`FalloffStage.rollovers`)
+            // or the element centre (`ActionCenterStage.rollovers`); either
+            // alone lights the vertex (M0e).
             auto pipe = row.id in pipeOf;
             const bool elementFalloff = pipe !is null && "falloff" in *pipe
                 && (*pipe)["falloff"].get("type", "") == "element";
-            if (elementFalloff) carried ~= row.id;
-            else assert(kStageFlagWithoutCarrier.canFind(row.id),
-                        "M6 rollover table: the flags table puts a stage flag on " ~ row.id
-                        ~ " and its preset installs no element falloff to carry it");
+            const bool elementCentre = pipe !is null && "actionCenter" in *pipe
+                && (*pipe)["actionCenter"].get("mode", "") == "element";
+            assert(elementFalloff || elementCentre,
+                   "M6 rollover table: the flags table puts a stage flag on " ~ row.id
+                   ~ " and its preset installs no element node to carry it");
+            carried ~= row.id;
         }
     }
     sort(targetIds); sort(stageIds); sort(carried);
@@ -619,7 +619,7 @@ unittest { // (6) id -> rollovers, over every registered id
                          "pen", "prim.vertex"],
            format("M6 rollover table: the target flag is on %s", targetIds));
     assert(stageIds == ["ElementMove", "move.element", "xfrm.elementMove"]
-           && carried == ["ElementMove", "xfrm.elementMove"],
+           && carried == stageIds,
            format("M6 rollover table: stage flag on %s, carried by the element falloff on %s",
                   stageIds, carried));
     assert(perValue == [64, 6, 0],
@@ -627,8 +627,9 @@ unittest { // (6) id -> rollovers, over every registered id
                   perValue));
 }
 
-unittest { // (6b) the element falloff is the stage that carries the vertex flag
+unittest { // (6b) the two element nodes carry the vertex flag (M0e: either alone)
     import toolpipe.stages.falloff : FalloffStage;
+    import toolpipe.stages.actcenter : ActionCenterStage;
     import toolpipe.packets : FalloffType;
     import std.traits : EnumMembers;
     auto fs = new FalloffStage();
@@ -640,7 +641,22 @@ unittest { // (6b) the element falloff is the stage that carries the vertex flag
                format("M6: FalloffStage type %s answers rollovers %s", ty, r));
         if (r != Rollover.none) ++flagged;
     }
-    assert(flagged == 1, "M6: the element falloff alone carries a rollover flag");
+    assert(flagged == 1, "M6: one falloff type carries a rollover flag");
+    // Blitted like the tools above: `rollovers` reads `mode` only, and the
+    // constructor publishes pipe state.
+    const acInit = typeid(ActionCenterStage).initializer;
+    auto acMem = GC.malloc(acInit.length)[0 .. acInit.length];
+    acMem[] = acInit[];
+    auto ac = cast(ActionCenterStage) cast(Object) acMem.ptr;
+    flagged = 0;
+    foreach (m; EnumMembers!(ActionCenterStage.Mode)) {
+        ac.mode = m;
+        const r = ac.rollovers();
+        assert(r == (m == ActionCenterStage.Mode.Element ? Rollover.vertices : Rollover.none),
+               format("M6: ActionCenterStage mode %s answers rollovers %s", m, r));
+        if (r != Rollover.none) ++flagged;
+    }
+    assert(flagged == 1, "M6: one action-centre mode carries a rollover flag");
 }
 
 unittest { // (6c) exactly one class anchors its handle on its own operation

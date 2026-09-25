@@ -337,9 +337,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     /// H7 (slice M6): the element falloff carries the rollover flag and it
     /// highlights a VERTEX only, in every selection mode (C-H7-elem, gap 312;
     /// the flags table: Element Move's flag is on its centre and falloff nodes,
-    /// not on its transform node). Both nodes carry the flag; the falloff was
-    /// chosen because our pick is keyed on the falloff type
-    /// (`XfrmTransformTool.wantsHoverForType`); not captured (gap 383).
+    /// not on its transform node). Either element node alone lights it (M0e
+    /// C-H7-xfrm-falloff-elem; the centre: `ActionCenterStage.rollovers`).
     override Rollover rollovers() const nothrow @nogc {
         return type == FalloffType.Element ? Rollover.vertices : Rollover.none;
     }

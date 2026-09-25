@@ -2965,7 +2965,12 @@ public:
 
     override bool wantsHoverForType(EditMode type) const {
         auto fs = activeFalloffStage();
-        if (fs is null || fs.type != FalloffType.Element) return false;
+        if (fs is null || fs.type != FalloffType.Element) {
+            // The element pick is gated on the ACTION-CENTRE mode (task 1530,
+            // `tryPickElement`): with no element falloff it takes any type.
+            auto ac = activeAcenStage();
+            return ac !is null && ac.mode == ActionCenterStage.Mode.Element;
+        }
         final switch (fs.elementMode) {
             case ElementMode.Auto:    return true;
             case ElementMode.Vertex:  return type == EditMode.Vertices;
