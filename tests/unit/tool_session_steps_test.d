@@ -29,6 +29,7 @@ import commands.tool.lifecycle : ToolActivationCommand;
 import edit_session : EditSession, ParameterChangeSource, ParameterChangePhase;
 import editmode : EditMode;
 import mesh : Mesh, makeCube;
+import math : Vec3;
 import params;
 import tool : AttrImage, OpensAt, PressKind, Tool, ToolSessionPolicy;
 import tool_activation_ownership;
@@ -65,7 +66,6 @@ private class StepTool : Tool {
     int v;
     Pt[] arr;
     bool act;
-    bool live;           // hasUncommittedEdit
     int rebuilds, commits, cancels;
     OpensAt opens = OpensAt.firstPress;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
@@ -81,26 +81,27 @@ private class StepTool : Tool {
     }
     override void onParamChanged(string n) { if (n == "act") v += 100; }
     override void rebuildPreviewFromAttrs() { ++rebuilds; }
-    override bool hasUncommittedEdit() const { return live; }
-    override void cancelUncommittedEdit() { ++cancels; live = false; }
-    override bool commitOperation() { ++commits; live = false; return true; }
+    // Its live edit is a function of its image, as the cutting tools' are.
+    override bool hasUncommittedEdit() const { return arr.length > 0; }
+    override void cancelUncommittedEdit() { ++cancels; arr = null; }
+    override bool commitOperation() { ++commits; arr = null; return true; }
     // A gesture that writes the image: v = to, and one more element.
     void gesture(int to, PressKind k = PressKind.plain) {
         sessionStepBegins(k);
         v = to;
         arr ~= Pt(to, to * 0.5f, [to, to]);
-        live = true;
         sessionStepEnds();
     }
     void armIt(int to) {
         sessionStepBegins();
         v = to;
-        live = true;
+        arr ~= Pt(to, 0, null);
         sessionOperationArmed();
     }
     void endRelease() { sessionStepEnds(); }
     void enter() { closeOwnOperation(true); }
-    void ended() { live = false; sessionOperationEnded(); }
+    void discard() { closeOwnOperation(false); }
+    void ended() { arr = null; sessionOperationEnded(); }
 }
 
 private final class Rig {
@@ -193,6 +194,44 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
     assert(r.t.v == 0, "M3 replay: the first group was replayed twice (S7)");
 }
 
+unittest { // the held group is for the NEXT navigate step only, and only on its own row
+    import command : Command, CmdFlags;
+    static final class Stub : Command {
+        View v;
+        this(View view) { v = view; super(null, v, EditMode.Vertices); }
+        override string name() const { return "stub"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl() { return true; }
+        protected override void revertImpl() {}
+    }
+    Mesh m = makeCube();
+    auto r = rig();
+    auto prior = new Stub(new View(0, 0, 1, 1));
+    assert(prior.apply());
+    r.history.record(prior);
+    r.history.recordToolLifecycle(row(&m, "t.step", true));
+    r.t.gesture(21);
+    assert(r.session.navigate(true));          // ends the group with its row: held
+    assert(r.session.navigate(true));          // a second undo: the hold expires
+    assert(r.session.navigate(false));         // redo the prior row: not the held row
+    assert(r.t.v == 0, "M3 replay: the held group was replayed on another row's redo");
+    assert(r.session.navigate(false));         // redo the activation row: the hold expired
+    assert(r.t.v == 0 && !isLive(r),
+           format("M3 replay: the hold outlived the navigate step after its undo: v %s", r.t.v));
+}
+
+unittest { // a mesh changed since the group ended: the redo re-arms bare
+    Mesh m = makeCube();
+    auto r = rig();
+    r.history.recordToolLifecycle(row(&m, "t.step", true));
+    r.t.gesture(31);
+    assert(r.session.navigate(true));
+    m.addVertex(Vec3(5, 5, 5));
+    assert(r.session.navigate(false));
+    assert(r.t.v == 0 && !isLive(r),
+           format("M3 replay: a group was re-seated on a changed mesh: v %s", r.t.v));
+}
+
 unittest { // another tool's row, or a script-door row, is not this group's
     Mesh m = makeCube();
     foreach (joins; [false, true]) {
@@ -251,6 +290,47 @@ unittest {
     r.t.gesture(4);
     r.t.ended();
     assert(!isLive(r) && steps(r) == 0, "M3 end: the session kept an ended operation's steps");
+    // The tool's own discard (RMB) cancels through the session and ends it.
+    r.t.gesture(5);
+    r.t.gesture(6);
+    const cancels = r.t.cancels;
+    r.t.discard();
+    assert(r.t.cancels == cancels + 1 && !isLive(r) && steps(r) == 0,
+           "M3 discard: the tool's own cancel did not end the session's account");
+}
+
+unittest { // an idle bound tool: the session has nothing to undo; a re-arm starts afresh
+    auto r = rig();
+    assert(!r.session.navigate(true) && !isLive(r) && r.t.rebuilds == 0,
+           "M3 idle: an undo with no operation touched the tool's image");
+    r.t.gesture(1);
+    r.t.gesture(2);
+    r.t.endRelease();                          // an end with no step in flight: nothing
+    assert(steps(r) == 1, format("M3 steps: an unmatched end pushed a step (%s)", steps(r)));
+    r.session.noteArm("t.step");               // a re-arm: a fresh account
+    assert(!isLive(r) && steps(r) == 0, "M3 arm: a re-arm inherited the previous account");
+    // The panel's (interactive) door is the same Action rule.
+    r.t.gesture(3);
+    r.session.orchestrateParameterChange(r.t, "act", ParameterChangeSource.InteractiveValue,
+                                         ParameterChangePhase.ValueWritten);
+    assert(steps(r) == 1 && r.t.v == 103, "M3 Action: the panel door's Action write was no step");
+}
+
+unittest { // the step stack is bounded; the oldest is dropped
+    auto r = rig();
+    foreach (i; 0 .. 300) r.t.gesture(i);
+    assert(steps(r) == 256, format("M3 steps: %s steps after 300 gestures, cap 256", steps(r)));
+    foreach (_; 0 .. 256) r.session.navigate(true);
+    assert(isLive(r) && steps(r) == 0 && r.t.v == 43,
+           format("M3 steps: after 256 undos v %s (the oldest kept step starts at 43)", r.t.v));
+}
+
+unittest { // a `firstPress` tool's arm report opens nothing: its gesture's end does
+    auto r = rig();
+    r.t.armIt(4);
+    assert(!isLive(r), "M3 arm: a firstPress tool opened its window at an arm report");
+    r.t.endRelease();
+    assert(isLive(r) && steps(r) == 0, "M3 arm: the firstPress gesture did not open the window");
 }
 
 // ---- (6) PodArray -------------------------------------------------------------------
@@ -276,6 +356,9 @@ unittest {
     assert(!isStickyCapturable(p) && paramToJson(p) == JSONValue(0));
     store = [Pt(1, 1, null)];
     assert(paramToJson(p).integer == 1 && isUserSet(p));
+    // Never a replayable argument: the serializer skips it even when set.
+    import argstring : serializeParams;
+    assert(serializeParams([p]) == "", "M3 PodArray: the argstring serializer emitted it");
     auto pj = parseJSON(`{"pts":[1,2]}`);
     bool refused;
     try injectParamsInto([p], pj); catch (Exception e) refused = e.msg.canFind("not injectable");

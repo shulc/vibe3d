@@ -10,6 +10,9 @@
 //   C-H1-door  the same through the SCRIPT door: the first undo pops only the
 //              gesture, the tool stays; the second pops the activation (gap
 //              300, C-H1-door-es-api).                             (m3e)
+//   C-H1-door-slice  the door rule on Slice (extrapolated from Edge Slice's
+//              capture): script arm, first line, Ctrl+Z -> no line, tool stays.
+//   ES-idle-middle   a Middle tap on an idle Edge Slice opens nothing.
 //   C-H4-es    two latches, Ctrl+Z, Ctrl+Shift+Z: the popped point comes back
 //              LIVE, and a third latch continues the same window.  (m3b)
 //   C-H5-es    a Middle press inside the chain is a boundary of its own — no
@@ -104,6 +107,17 @@ unittest {
            format("C-H1-es: the first Ctrl+Z after a UI-door arm did not end Edge Slice with its "
                   ~ "activation row: tool '%s', history %s (prologue %d), mesh %s",
                   slTool(), slHistoryLabels(), Hp, slMesh().toString));
+    // The navigate redo re-seats the first group on a fresh tool — with its
+    // baseline: the next point cuts (the replayed chain is a live chain).
+    ctrlShiftZ("C-H1-es Ctrl+Shift+Z");
+    assert(slTool() == "edgeSlice" && slChain().pairs.length == 1,
+           format("C-H1-es: the navigate redo did not re-arm with the first point: tool '%s', "
+                  ~ "points %d", slTool(), slChain().pairs.length));
+    latch(slFrontRightChain(), 1, "C-H1-es replay");
+    assert(slMesh().faces > base.faces,
+           format("C-H1-es: a point latched after the replay did not cut (the replayed chain "
+                  ~ "has no baseline): mesh %s", slMesh().toString));
+    slLine("tool.set mesh.edgeSliceTool off");
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +141,52 @@ unittest {
     ctrlZ("C-H1-door Ctrl+Z 2");
     assert(slTool() != "edgeSlice" && slHistoryLen() == Hp,
            format("C-H1-door-es-api: the second Ctrl+Z did not pop the activation: tool '%s', "
+                  ~ "history %s", slTool(), slHistoryLabels()));
+}
+
+// ---------------------------------------------------------------------------
+// C-H1-door for Slice — the same door rule (gap 300 was captured on Edge
+// Slice; the plan's `arm(door)` is one rule for the three tools): armed by the
+// SCRIPT door, the first Ctrl+Z undoes the first line and its cut — back to
+// the image the window opened from, no line — and the tool stays.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("C-H1-door-slice")) return;
+    long Hp;
+    const base = boxRig(Hp);
+    slLine("tool.set mesh.sliceTool on");
+    assert(slTool() == "slice" && slHistoryLen() == Hp + 1,
+           "slice floor (C-H1-door-slice): the script arm did not write its row");
+    slSliceDrawLine();
+    assert(slMesh().faces > base.faces, "slice floor (C-H1-door-slice): the line did not cut");
+    ctrlZ("C-H1-door-slice Ctrl+Z 1");
+    assert(slTool() == "slice" && slHistoryLen() == Hp + 1 && slMesh().canon == base.canon
+           && toolState()["lineDrawn"].type == JSONType.false_,
+           format("C-H1-door-slice: the first Ctrl+Z after a script arm must undo the first line "
+                  ~ "and its cut and keep the tool: tool '%s', history %s, mesh %s, state %s",
+                  slTool(), slHistoryLabels(), slMesh().toString, toolState().toString));
+    ctrlZ("C-H1-door-slice Ctrl+Z 2");
+    assert(slTool() != "slice" && slHistoryLen() == Hp,
+           "C-H1-door-slice: the second Ctrl+Z did not pop the activation");
+}
+
+// ---------------------------------------------------------------------------
+// An IDLE Edge Slice takes no Middle press: with nothing latched there is no
+// window for a boundary to open in (the press is not the tool's), so after a
+// script arm the Ctrl+Z that follows pops the activation, not an empty group.
+// ---------------------------------------------------------------------------
+unittest {
+    if (!cell("ES-idle-middle")) return;
+    long Hp;
+    boxRig(Hp);
+    slLine("tool.set mesh.edgeSliceTool on");
+    const px = slEdgePixel(slFrontRightChain()[0][0], slFrontRightChain()[0][1], HINT_OFF[0],
+                           "ES-idle-middle");
+    slPlay(slMotion(20, px[0], px[1], 0) ~ "\n" ~ slButton(40, true, 2, px[0], px[1]) ~ "\n"
+         ~ slButton(60, false, 2, px[0], px[1]), "the idle Middle tap");
+    ctrlZ("ES-idle-middle Ctrl+Z");
+    assert(slTool() != "edgeSlice" && slHistoryLen() == Hp,
+           format("ES-idle-middle: a Middle tap on an idle Edge Slice opened a window: tool '%s', "
                   ~ "history %s", slTool(), slHistoryLabels()));
 }
 
@@ -346,9 +406,12 @@ void gesture(const Rail r, double f0, double f1, string what) {
     slPlay(log ~ slButton(220, false, 1, e[0], e[1]), what ~ " (release)");
 }
 
+/// Loop Slice's `positions`; empty when the tool is gone (no such key).
 double[] positions() {
+    auto s = toolState();
     double[] r;
-    foreach (p; toolState()["positions"].array) r ~= num(p);
+    if (!("positions" in s.object)) return r;
+    foreach (p; s["positions"].array) r ~= num(p);
     return r;
 }
 
