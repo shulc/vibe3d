@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "notes": "Off-gizmo press with the automatic action centre in a front orthographic cell, unpinned and turned by a pinned plane (rotX 30 rotY 55, B = Rx*Ry; world = origin + B.local). Values are plane-local (identity when unpinned). The press keeps the view-axis (local z) component of the centre held BEFORE the press and takes x, y from the clicked pixel, snapped to 0.01 at this zoom (pixel 0.0078125). The camera focus depth never enters. Clicks are root-pixel offsets from the cell centre; the pre-press centre is the selection box centre (whole mesh when nothing is selected) in every admissible cell.",
+  "captured_utc": "2026-09-25",
+  "harness": "toolcards/gizmo_view_cull_plane/harness (private)",
+  "task": "7134"
+ },
  "schema": 1,
  "source": "live-capture",
  "reference": "ref-editor@11.2v3",

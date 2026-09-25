@@ -1,4 +1,14 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "debug-live",
+  "notes": "Move under the Selection action centre with a linear falloff ramp from (0,0,0) (weight 1) to (2,0,0) (weight 0) on the base-squared curve; strip in XZ with x lines 0,1,2, top ortho, the three z=0 vertices selected. Drag 1: first in-plane arm 10 x 12 px; drag 2: the other in-plane arm 5 x 12 px, same run. Handle and tool delta read by a debugger hook at the handle update on every draw; D = M.T in world. Law: handle = c0 + D at every increment and after release (c0 = selection box centre, frozen); the live box centre, the live mean and c0 + w(c0) D are refuted at every moving state.",
+  "captured_utc": "2026-09-25",
+  "harness": "toolcards/bugfix_w17_attrs_acen/harness (private)",
+  "task": "7134"
+ },
  "schema": 1,
  "source": "live-capture",
  "reference": "ref-editor@11.2v3",
