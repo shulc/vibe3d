@@ -1487,8 +1487,10 @@ public:
 
     // Re-arm after the command (captured: C-H1-xfrm-rot/-scl and C-H3-move
     // re-arm, C-H1-xfrm-elem-b does not — the Element branch below). The law is
-    // per PRESET, and the preset reaches this class only as its action-centre
-    // mode, so it is decided here rather than in the class-static policy.
+    // keyed on the PRESET's transform node (C-rearm-key, gap 370), NOT on the
+    // action-centre mode this branch reads: a hand-set Element centre under
+    // TransformMove, or a Selection centre under Element Move, diverges. Kept
+    // as carried in slice M2; the per-preset field is slice M3's.
     override void resumeAfterClose() {
         auto ac = activeAcenStage();
         if (ac !is null && ac.mode == ActionCenterStage.Mode.Element) {

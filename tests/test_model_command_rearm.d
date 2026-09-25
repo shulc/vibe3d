@@ -224,9 +224,10 @@ unittest { // K — the SCRIPT door drops an armed tool whose policy closes on t
 }
 
 unittest { // K-tab — Tab (the UI door) keeps an IDLE in-place tool armed.
-    // Flipped by slice M2 of the tool session model (R20 law, inferred:
-    // an idle covered tool meeting a recording UI command stays, with nothing
-    // to close). Before M2 the Tab key dropped it (the 0463 pre-apply drop).
+    // Flipped by slice M2 of the tool session model. Captured: C-K-tab / C-K-del
+    // (toolcards/tool_session_model, section M0d; gap 371) — an idle Polygon
+    // Bevel survives Tab and Delete, its session ends and the tag stays. Before
+    // M2 the Tab key dropped it (the 0463 pre-apply drop).
     resetFixture("K-tab");
     command("tool.set poly.bevel on", "K-tab arm bevel");
     auto before = toolState();
