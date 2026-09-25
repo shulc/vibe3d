@@ -7,7 +7,7 @@
         "captured_utc": "2026-09-25T08:13:00Z",
         "harness": "tests/test_command_close_history_rows.d with VIBE3D_RECORD_GOLDEN=1, driven over /api/play-events and /api/command against vibe3d's own running instance at main daefbc0f (the M1 tip) -- no reference editor involved",
         "task": "M2",
-        "notes": "A regression golden of OUR history rows around a command meeting a live tool edit, recorded on the parent of slice M2 before its code change; the cells are compared canonicalised (see the test header)."
+        "notes": "A regression golden of OUR history rows around a command meeting a live tool edit, recorded on the parent of slice M2 before its code change; the cells are compared canonicalised (see the test header). Re-recorded 2026-09-25 by slice M3b (the lifetime clause): the four poly.bevel cells only, on the M3b tip, each gaining the arm's 'Activate Tool' row (Polygon Bevel activationRow, C-H1-bev); the other eight cells are byte-identical to the M2 recording."
     },
     "TransformMove x off": {
         "panel": {},
@@ -337,6 +337,18 @@
         "undo": [
             {
                 "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
                 "command": "mesh.bevel_edit",
                 "flags": 17,
                 "inSession": false,
@@ -358,6 +370,18 @@
         "tool": "polyBevel",
         "undo": [
             {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
                 "args": "mode:polygons indices:<1>",
                 "command": "mesh.select",
                 "flags": 49,
@@ -376,6 +400,18 @@
         "panel": {},
         "tool": "",
         "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
             {
                 "args": "",
                 "command": "mesh.bevel_edit",
@@ -407,6 +443,18 @@
         "panel": {},
         "tool": "",
         "undo": [
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Activate Tool",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
             {
                 "args": "",
                 "command": "mesh.bevel_edit",
