@@ -141,7 +141,7 @@ bool meshCountersUnchanged(Changes before, Changes after) {
 // mesh channel's own counter, and since delivery is SYNCHRONOUS with the edit
 // the wait is now usually one poll long rather than one frame.
 //
-// Card test-sleep-removal: a frame FENCE, not a timeout. Mesh delivery is
+// A frame FENCE, not a timeout. Mesh delivery is
 // synchronous with the request that caused it, and the document-level
 // accumulators (layer kinds, current type) drain at the flush of the frame that
 // served it; one completed frame after the last answered request therefore

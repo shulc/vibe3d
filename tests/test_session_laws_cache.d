@@ -47,7 +47,6 @@ void main() {}
 private enum double kTyped = 0.37;
 private enum int kSymW = 119;
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
 
 private void settle() { quiesce(); }
 

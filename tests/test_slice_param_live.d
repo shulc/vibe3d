@@ -64,7 +64,6 @@ double sumAbsCoord() {
     return s;
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 
 void settle() { quiesce(); }   // post-playback drain guard
 

@@ -69,7 +69,6 @@ float floatAttr(string[string] attrs, string key) {
     return attrs[key].to!float;
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
 
 void settle() { quiesce(); }
 

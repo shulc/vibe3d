@@ -23,7 +23,6 @@ private void cmd(string script) { postOk(script); }
 private void command(string id, string params = "{}") {
     postOk(commandBody(id, params));
 }
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 private void settle() { quiesce(); }
 
 private void resetCube() {

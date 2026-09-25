@@ -68,7 +68,6 @@ void cmd(string line) {
 // with it. `settle` is generous on purpose: at ~230 fps in --test this is
 // dozens of frames, and the counters it reads are frame-exact, so a longer
 // sleep cannot make a passing assertion pass "more".
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 void settle() { quiesce(); }
 
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }

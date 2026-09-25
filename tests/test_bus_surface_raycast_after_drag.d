@@ -95,7 +95,6 @@ void cmd(string line) {
         "/api/command '" ~ line ~ "' failed: " ~ r.toString);
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
 
 void settle() { quiesce(); }
 

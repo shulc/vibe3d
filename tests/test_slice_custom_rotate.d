@@ -59,7 +59,6 @@ JSONValue getToolState() { return parseJSON(cast(string) get(BASE ~ "/api/tool/s
 size_t vertCount() { return getModel()["vertices"].array.length; }
 size_t faceCount() { return getModel()["faces"].array.length; }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 
 void settle() { quiesce(); }   // post-playback drain guard
 

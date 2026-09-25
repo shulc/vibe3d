@@ -315,7 +315,6 @@ private bool testRayPlaneIntersect(Vec3 origin, Vec3 dir,
 
 // settle: identical to test_relocate_boundary.d — wait ~120ms for the
 // main loop to process the injected events before reading geometry/pivot.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (120.msecs).
 private void settle() { quiesce(); }
 
 // Read the authoritative gizmo pivot from /api/toolpipe/eval.

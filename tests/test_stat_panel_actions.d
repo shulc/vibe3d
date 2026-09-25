@@ -47,7 +47,6 @@ void cmd(string line) {
             "command `" ~ line ~ "` failed: " ~ resp);
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 
 void settle() { quiesce(); }
 void resetApp() { httpPost("/api/command", commandBody("scene.reset", "{}")); settle(); }

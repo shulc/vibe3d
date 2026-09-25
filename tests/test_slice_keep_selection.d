@@ -56,7 +56,6 @@ size_t faceCount() { return getModel()["faces"].array.length; }
 JSONValue getSelection() { return parseJSON(cast(string) get(BASE ~ "/api/selection")); }
 size_t selCount(string key) { return getSelection()[key].array.length; }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 
 void settle() { quiesce(); }   // post-command settle guard
 

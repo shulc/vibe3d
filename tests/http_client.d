@@ -174,7 +174,7 @@ string postRawAllowingErrorStatus(string path, string body_, string baseUrl = nu
 }
 
 // ---------------------------------------------------------------------------
-// Frame barriers (card test-sleep-removal). Both read /api/play-events/status,
+// Frame barriers. Both read /api/play-events/status,
 // which is served on the main thread inside a tickAll pass and reports that
 // pass as `frame`. They replace fixed sleeps with an observation of the frame
 // loop, so they cost a few frames rather than a guessed wall-clock margin.
@@ -215,7 +215,7 @@ void frameFence(string baseUrl = null, uint frames = 1) {
     }
 }
 
-/// The PACE meta line (card test-sleep-removal): the player delivers one
+/// The PACE meta line: the player delivers one
 /// distinct `t` per frame, in order, instead of waiting the log's wall-clock
 /// schedule. For a synthetic test log whose gaps mean "a frame between these".
 enum string kPaceFramesLine = `{"t":0,"type":"PACE","mode":"frames"}` ~ "\n";
@@ -231,9 +231,18 @@ void playPacedAndWait(string log, string baseUrl = null) {
 /// loop does not own: an in-flight subpatch preview build. After it returns,
 /// no build is pending and a frame has completed since the last one landed.
 /// Never use it while a test HOLDS a build (`/api/subpatch/hold`): the build
-/// cannot land and this times out. Card test-sleep-removal.
+/// cannot land and this times out.
 void quiesce(string baseUrl = null) {
     frameFence(baseUrl);
+    waitPreviewBuilt(baseUrl);
+}
+
+/// The asynchronous half of `quiesce` alone: if a subpatch preview build is
+/// pending, wait for it to land and then for one completed frame; otherwise
+/// return after a single read. The replay helpers call it after every log, so
+/// a polygon rig pays one GET and a subpatch rig never reads a half-built
+/// preview. Same HOLD caveat as `quiesce`.
+void waitPreviewBuilt(string baseUrl = null) {
     immutable deadline = MonoTime.currTime + 30.seconds;
     bool waited = false;
     for (;;) {

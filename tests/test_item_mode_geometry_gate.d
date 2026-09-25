@@ -136,7 +136,6 @@ private void cmd(string body_) {
 /// Picks run on the event-playback thread and reads on the HTTP one; a frame
 /// between them is what makes the second see the first. The pixel probes need
 /// it twice over — a probe reads the last COMPLETED frame.
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 private void settle() { frameFence(); }
 
 // ---------------------------------------------------------------------------

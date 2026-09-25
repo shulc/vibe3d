@@ -61,7 +61,6 @@ void cmd(string text) {
     assert(r["status"].str == "ok", "command failed: " ~ text ~ " → " ~ r.toString);
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (130.msecs).
 
 void settle() { quiesce(); }
 

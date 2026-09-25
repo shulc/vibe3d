@@ -24,7 +24,8 @@ module symmetry_selection_helpers;
 // `sideFloorSummary` — placed after `lawSummary` — requires every floor to have
 // run, so the floor cannot stay silently skipped on a tree that has the law.
 
-import http_client : frameFence, getJson, postJson, waitPlaybackProcessed;
+import http_client : frameFence, getJson, postJson, waitPlaybackProcessed,
+    waitPreviewBuilt;
 import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
                       CameraState, DHVec3 = Vec3;
 
@@ -129,7 +130,6 @@ void cmd(string s) {
     assert(r["status"].str == "ok", "rig: /api/command `" ~ s ~ "` failed: " ~ r.toString);
 }
 
-// One completed frame (card test-sleep-removal); `ms` is the retired sleep.
 void settle(int ms = 120) { frameFence(); }
 
 string intList(int[] ix) {
@@ -274,7 +274,6 @@ string toolId() {
 
 string vpLine() {
     auto c = fetchCamera();
-    // PACE: one frame per distinct `t`, no wall-clock wait (card test-sleep-removal).
     return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
                   ~ `{"t":0.000,"type":"PACE","mode":"frames"}` ~ "\n",
                   c.vpX, c.vpY, c.width, c.height);
@@ -284,6 +283,7 @@ void play(string events) {
     auto r = postJson("/api/play-events", vpLine() ~ events);
     assert(r["status"].str == "success", "rig: play-events failed: " ~ r.toString);
     waitPlaybackProcessed();
+    waitPreviewBuilt();
 }
 
 int[2] px(V3 w) {

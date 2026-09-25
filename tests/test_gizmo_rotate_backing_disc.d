@@ -203,7 +203,6 @@ private double num(JSONValue j, string[] path...) {
     }
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (350.msecs).
 
 private void settle() { quiesce(); }
 

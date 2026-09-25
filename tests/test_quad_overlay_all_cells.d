@@ -104,7 +104,6 @@ void script(string s) {
 // The probe and the dump read the last COMPLETED frame (the HTTP bridge is
 // serviced before the scene render), so anything that changes the scene needs
 // a frame or two to land before it is visible.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 void settle() { quiesce(); }
 
 void resetApp() {

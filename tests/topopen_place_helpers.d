@@ -23,7 +23,7 @@ module topopen_place_helpers;
 
 
 public import http_client : getJson, postJson;
-import http_client : testBaseUrl, waitPlaybackProcessed;
+import http_client : testBaseUrl, waitPlaybackProcessed, waitPreviewBuilt;
 import http_command_helpers : commandBody;
 import std.json;
 import std.math    : sqrt, sin, cos, PI, abs;
@@ -80,6 +80,7 @@ HistorySurfaceCounts historySurfaceCounts() {
 /// dispatched the last event has run its tool update and draw.
 void waitPlayerIdle() {
     waitPlaybackProcessed(baseUrl);
+    waitPreviewBuilt(baseUrl);
 }
 
 // ---------------------------------------------------------------------------

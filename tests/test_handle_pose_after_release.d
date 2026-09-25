@@ -34,7 +34,6 @@ private void command(string s) {
     auto r = postJson("/api/command", s);
     assert(r["status"].str == "ok", "command `"~s~"` failed: "~r.toString);
 }
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (180.msecs).
 private void settle() { quiesce(); }
 
 private string viewportLine(CameraState c) {

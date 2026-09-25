@@ -492,7 +492,7 @@ unittest { // U8: stopping detaches a queued load before acceptance
 }
 
 unittest { // U9: `processed` needs one COMPLETED frame after the dispatching one
-    // Card test-sleep-removal. The composition root calls tickEventPlayer and
+    // The composition root calls tickEventPlayer and
     // then tickAll in one frame; the tool update, flush and draw of that frame
     // run AFTER the tickAll pass that could serve a status read. `finished`
     // flips in that pass already, `processed` must not.
@@ -551,7 +551,7 @@ unittest { // U9: `processed` needs one COMPLETED frame after the dispatching on
 }
 
 unittest { // U10: a PACE line delivers one timestamp group per frame, no clock
-    // Card test-sleep-removal. The clock is frozen at acceptance, so an
+    // The clock is frozen at acceptance, so an
     // un-paced player would deliver only the t=0 group, ever.
     setEventPlayerClockForTest(0, 1000);
     setEventPlayerModifierForTest(KMOD_NONE);

@@ -1147,7 +1147,7 @@ class HttpServer {
 
     // Main-thread owner of the HTTP event player (task 5960 D2).
     private PlaybackController playbackController;
-    // The PROCESSED barrier (card test-sleep-removal). `finished` flips inside
+    // The PROCESSED barrier. `finished` flips inside
     // the frame that dispatched the last event, BEFORE that frame's tool
     // update, flush and draw; a read served in that same tickAll pass would
     // precede them. So `processed` requires a LATER pass: the frame that

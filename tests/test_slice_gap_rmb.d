@@ -44,7 +44,6 @@ JSONValue getToolState() { return parseJSON(cast(string) get(BASE ~ "/api/tool/s
 size_t vertCount() { return getModel()["vertices"].array.length; }
 size_t faceCount() { return getModel()["faces"].array.length; }
 double gapOf()     { return getToolState()["gap"].floating; }
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 void settle() { quiesce(); }
 
 void scr(Vec3 w, const ref Viewport vp, out int px, out int py) {

@@ -16,7 +16,7 @@ module slice_leak_helpers;
 // lines. The asserts below are floors on the rig itself (the gesture landed,
 // the picker resolved the named edge), each with its own message.
 
-import http_client : getJson, postRaw, waitPlaybackProcessed;
+import http_client : getJson, postRaw, waitPlaybackProcessed, waitPreviewBuilt;
 import drag_helpers : Vec3, Viewport, CameraState, fetchCamera,
     viewportFromCamera, projectToWindow;
 import std.algorithm : canFind, count, map, sort, min, max;
@@ -76,7 +76,6 @@ bool slAlive() {
 
 string slHeader() {
     auto c = fetchCamera();
-    // PACE: one frame per distinct `t`, no wall-clock wait (card test-sleep-removal).
     return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
                   ~ `{"t":0.000,"type":"PACE","mode":"frames"}`,
                   c.vpX, c.vpY, c.width, c.height);
@@ -91,6 +90,7 @@ bool slPlayTolerant(string events, string what) {
         assert(r["status"].str == "success",
                "play-events (" ~ what ~ ") refused: " ~ r.toString);
         waitPlaybackProcessed();
+        waitPreviewBuilt();
         return true;
     } catch (Exception) {
         return false;

@@ -25,7 +25,6 @@ private JSONValue fixture() {
     return cached;
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(150)).
 
 private void settle() { quiesce(); }
 

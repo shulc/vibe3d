@@ -96,7 +96,6 @@ void cmd(string argstring) {
 
 // The handle registry is rebuilt on every interactive draw, and the tool's
 // cached viewport is written there too — a press must follow a frame.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(200)).
 void settle() { quiesce(); }
 
 double num(JSONValue v) {

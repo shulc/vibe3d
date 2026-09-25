@@ -26,8 +26,8 @@ struct PlaybackStatus {
     ulong generation;
     /// Filled by the HTTP owner, not by `status()`: `frame` is the tickAll pass
     /// that served the read, and `processed` is `finished` plus at least one
-    /// COMPLETED frame after the one that dispatched the last event (card
-    /// test-sleep-removal; witness tests/unit/playback_owner_test.d U9).
+    /// COMPLETED frame after the one that dispatched the last event
+    /// (witness tests/unit/playback_owner_test.d U9).
     bool processed;
     ulong frame;
 }

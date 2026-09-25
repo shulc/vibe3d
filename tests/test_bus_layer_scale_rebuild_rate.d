@@ -95,7 +95,6 @@ void resetApp() {
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 void settle() { quiesce(); }
 
 long bgGpuUploads()      { return getJson("/api/changes")["bgGpuUploads"].integer; }

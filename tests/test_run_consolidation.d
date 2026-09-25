@@ -115,7 +115,6 @@ bool canUndo() {
     return c !is null && c.boolean;
 }
 
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 void settle() { frameFence(); }
 
 void drainHistory() {

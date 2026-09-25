@@ -86,7 +86,6 @@ void selectEdgeZero() {
     assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
 
 void settle() { quiesce(); }
 

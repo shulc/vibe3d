@@ -65,7 +65,6 @@ private Vec3 focus() {
                 cast(float)number(j["focus"]["z"]));
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
 
 private void settle() { quiesce(); }
 

@@ -61,7 +61,6 @@ void toolOff(string id) { cmd("tool.set " ~ id ~ " off"); }
 
 JSONValue getToolState() { return parseJSON(cast(string) get(baseUrl ~ "/api/tool/state")); }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
 
 void settle() { quiesce(); }
 

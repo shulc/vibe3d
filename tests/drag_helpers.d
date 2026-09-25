@@ -225,7 +225,7 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float gizmoPixels = 120.0f) {
 // via the standard SDL_BUTTON(x) = 1 << (x-1) convention — lets a caller
 // drive a MIDDLE-button drag (e.g. Shift+MMB Add Loop) through this same
 // helper instead of hand-rolling its own JSON-Lines builder.
-// Every builder below is frame-PACED (card test-sleep-removal): the player
+// Every builder below is frame-PACED: the player
 // delivers one distinct `t` per frame, so the 50 ms gaps keep their meaning
 // ("each lands in its own frame") without being waited out in wall-clock time.
 enum string kPaceLine = `{"t":0.000,"type":"PACE","mode":"frames"}` ~ "\n";

@@ -77,7 +77,6 @@ JSONValue getModel()     { return parseJSON(cast(string) get(baseUrl ~ "/api/mod
 JSONValue getHistory()   { return parseJSON(cast(string) get(baseUrl ~ "/api/history")); }
 JSONValue getToolState() { return parseJSON(cast(string) get(baseUrl ~ "/api/tool/state")); }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
 
 void settle() { quiesce(); }
 

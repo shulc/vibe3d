@@ -122,7 +122,6 @@ private void cmd(string body_) {
 
 /// The picks below run on the event-playback thread and the reads on the HTTP
 /// one; a frame between them is what makes the second see the first.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 private void settle() { quiesce(); }
 
 private struct Cell { int vx, vy, vw, vh; }

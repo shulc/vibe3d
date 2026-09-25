@@ -79,7 +79,6 @@ void script(string line) {
             "script `" ~ line ~ "` failed: " ~ resp);
 }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 
 void settle() { quiesce(); }
 

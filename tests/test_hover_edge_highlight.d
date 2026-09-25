@@ -61,7 +61,6 @@ void main() {}
 alias BASE = testBaseUrl;
 
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (300.msecs).
 
 
 void settle() { quiesce(); }

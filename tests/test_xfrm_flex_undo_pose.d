@@ -81,8 +81,6 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
     if (!(cw > 0)) return false;
     px = (cx/cw*0.5+0.5)*w + vpX; py = (1-(cy/cw*0.5+0.5))*h + vpY; return true;
 }
-// Frame-paced, and returns once the frame that consumed the log completed
-// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
 void play(string log) { playPacedAndWait(log); }
 V3 acenCenter() {
     auto a = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;

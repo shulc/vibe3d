@@ -139,8 +139,6 @@ double gizmoUnits(Cam cam, V3 center) {
     return pxPerUnit > 1e-6 ? 120.0 / pxPerUnit : 0.5;
 }
 
-// Frame-paced, and returns once the frame that consumed the log completed
-// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
 void play(string log) { playPacedAndWait(log); }
 
 V3 readVec(JSONValue arr) {

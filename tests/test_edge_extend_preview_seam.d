@@ -81,7 +81,6 @@ void cmd(string s) {
 JSONValue changes() { return getJson("/api/changes"); }
 JSONValue model()   { return getJson("/api/model"); }
 JSONValue state()   { return getJson("/api/tool/state"); }
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (140.msecs).
 void settle() { quiesce(); }
 
 long counter(JSONValue a, JSONValue b, string key) {

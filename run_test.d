@@ -2451,10 +2451,16 @@ bool resetBetweenTests(ushort port, ref string failure) {
         // 2. Drain any in-flight event-log replay so its leftover mouse events
         //    cannot perturb the reset. /api/play-events/status reports
         //    {"finished":true} when idle (absent ⇒ never played ⇒ idle).
-        //    `"processed":true` (card test-sleep-removal) is the frame barrier:
+        //    `"processed":true` is the frame barrier:
         //    every event dispatched AND the frame that consumed the last one
         //    has completed, which is exactly what 2b below used to sleep for.
         //    A binary that predates the field falls back to 2b.
+        //    Why reverting this to `finished` alone stays green: the status
+        //    route is served in the bridge drain, and the reset commands below
+        //    are separate requests, each served in a LATER drain pass -- so
+        //    request ordering already puts a frame boundary between the last
+        //    event and the reset. `processed` states that boundary instead of
+        //    relying on it; no suite cell can tell the two apart.
         bool processed = false;
         foreach (_; 0 .. 1000) {
             auto s = curl("GET", "/api/play-events/status");

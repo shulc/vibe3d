@@ -91,7 +91,6 @@ double attr(string tool, string name) {
 }
 // The registry is rebuilt on every interactive draw, so a read must follow a
 // frame. Same 130 ms the other handle tests settle for.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(160)).
 void settle() { quiesce(); }
 
 // --------------------------------------------------------------------------

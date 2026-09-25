@@ -209,7 +209,6 @@ enum string kStatus = "open";
 // ---------------------------------------------------------------------------
 
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
 
 
 void settle() { quiesce(); }

@@ -481,7 +481,7 @@ struct EventPlayer {
     private ImmediateEventSink immediateSink_;
     private size_t immediateMotions_;
 
-    // Frame pacing (card test-sleep-removal), set per log by its PACE line.
+    // Frame pacing, set per log by its PACE line.
     // A log's `t` is a SCHEDULE, and for a synthetic test log its gaps only
     // ever meant "let a frame pass between these": paced, each distinct `t`
     // is delivered on its own frame, in order, with no wall-clock wait. That

@@ -99,8 +99,7 @@ void postCommandObj(string cmd, string paramsJson) {
 /// The probe reads the last COMPLETED frame (the HTTP bridge is serviced
 /// before the scene render), so anything that changes the scene needs a frame
 /// to land before it is visible to a probe.
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
-void settle() { frameFence(); }
+void settle() { frameFence(null, 2); }
 
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));

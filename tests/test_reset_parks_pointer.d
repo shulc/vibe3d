@@ -62,7 +62,6 @@ void script(string line) {
 }
 
 /// A state change is visible to a probe only once a frame has RENDERED with it.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 void settle() { quiesce(); }
 
 double num(JSONValue j, string[] path...) {

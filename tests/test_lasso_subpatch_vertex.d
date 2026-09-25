@@ -41,7 +41,6 @@ void main() {}
 
 enum string kFixture = import("fixtures/delete_makepoly_lasso_hide_keys.json");
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (250.msecs).
 
 void settle() { quiesce(); }
 

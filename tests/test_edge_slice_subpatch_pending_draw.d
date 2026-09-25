@@ -61,7 +61,6 @@ private bool near(Px a, Px b, int slack = 1) {
 }
 
 /// A probe reads the last COMPLETED frame, so a state change needs two.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
 private void settle() { quiesce(); }
 
 /// Probe WINDOW pixels of cell 0 (converted to FBO coordinates here).

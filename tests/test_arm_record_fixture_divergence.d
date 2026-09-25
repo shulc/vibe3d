@@ -15,7 +15,6 @@ alias BASE = testBaseUrl;
 enum string fixtureConsumerProvenance = `{"schema":1,"source":"live-capture","reference_token":"ref-editor@11.2v3","method":"debug-live","captured_utc":"2026-08-31","task":"3690"}`;
 
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (150.msecs).
 
 
 void settle() { quiesce(); }

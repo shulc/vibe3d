@@ -1,4 +1,4 @@
-// Card test-sleep-removal: the two frame barriers every suite driver now uses
+// The two frame barriers every suite driver now uses
 // in place of fixed sleeps (tests/http_client.d `waitPlaybackProcessed` and
 // `frameFence`).
 //

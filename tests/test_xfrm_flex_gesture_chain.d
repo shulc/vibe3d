@@ -91,8 +91,6 @@ bool project(V3 world, const ref double[16] view, const ref double[16] p,
     return true;
 }
 
-// Frame-paced, and returns once the frame that consumed the log completed
-// (card test-sleep-removal): the gaps in `t` are frames, never waited out.
 void play(string log) { playPacedAndWait(log); }
 
 V3 readRight(JSONValue blk) {

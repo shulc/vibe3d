@@ -41,7 +41,6 @@ void main() {}
 
 enum string kFixture = import("fixtures/lasso_polygon_facing_by_style.json");
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (300.msecs).
 
 void settle() { quiesce(); }
 

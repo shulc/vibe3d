@@ -92,7 +92,6 @@ void cmd(string line) {
 }
 /// A state change is visible only once a frame has RENDERED with it, and a
 /// probe reads the last COMPLETED frame — so this has to cover two.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (450.msecs).
 void settle() { quiesce(); }
 
 struct Px {

@@ -24,7 +24,6 @@ private JSONValue fixture() {
     return cached;
 }
 
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 private void settle() { frameFence(); }
 
 private void cmd(string text) {

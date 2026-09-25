@@ -124,7 +124,6 @@ private void assertWeightedFold(string cell, const(V3)[] base,
     }
 }
 
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 private void settle() { frameFence(); }
 
 private string viewportLine(CameraState camera)

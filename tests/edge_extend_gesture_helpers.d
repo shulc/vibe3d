@@ -31,7 +31,8 @@ module edge_extend_gesture_helpers;
 // press starts a fresh extend", gap 174, is refuted), so every witness reads
 // state freely between presses.
 
-import http_client : frameFence, getJson, postJson, waitPlaybackProcessed;
+import http_client : frameFence, getJson, postJson, waitPlaybackProcessed,
+    waitPreviewBuilt;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -201,7 +202,6 @@ void armRig(int[2][] pairs, double focusX, bool symmetry = false, string axisMod
     assert(offset() == Offset(0, 0, 0), "armed extend does not start at offset 0");
 }
 
-// One completed frame (card test-sleep-removal); `ms` is the retired sleep.
 void settle(int ms = 120) { frameFence(); }
 
 // --- screen geometry ------------------------------------------------------
@@ -273,7 +273,6 @@ Px thirdPx() { auto c = viewCentre(); return Px(c.x + kThirdDx, c.y + kThirdDy);
 
 private string header() {
     auto c = getJson("/api/camera");
-    // PACE: one frame per distinct `t`, no wall-clock wait (card test-sleep-removal).
     return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n"
         ~ `{"t":0.000,"type":"PACE","mode":"frames"}` ~ "\n",
         c["vpX"].integer, c["vpY"].integer, c["width"].integer, c["height"].integer);
@@ -283,6 +282,7 @@ void play(string body_) {
     auto r = postJson("/api/play-events", header() ~ body_);
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
     waitPlaybackProcessed();
+    waitPreviewBuilt();
 }
 
 /// Hover (button up) then press — the hover lets the arbiter see the arm.

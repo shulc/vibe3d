@@ -107,7 +107,6 @@ long refireCount() {
     return n;
 }
 
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 void settle() { frameFence(); }
 
 void drainHistory() {

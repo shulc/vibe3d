@@ -131,7 +131,6 @@ private void cmd(string body_) {
 
 /// The probe reads the last COMPLETED frame and the HTTP bridge is serviced
 /// before the render, so a change needs a frame to become visible.
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (400.msecs).
 private void settle() { quiesce(); }
 
 private struct Cell { int vx, vy, vw, vh; }

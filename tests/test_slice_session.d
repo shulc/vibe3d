@@ -58,7 +58,6 @@ JSONValue getSelection() { return parseJSON(cast(string) get(BASE ~ "/api/select
 // ("selectedVertices" / "selectedEdges" / "selectedFaces").
 size_t selCount(string key) { return getSelection()[key].array.length; }
 
-// Card test-sleep-removal: quiesce (frame fence + no pending preview build) replaces the fixed sleep (dur!"msecs"(180)).
 
 void settle() { quiesce(); }   // post-playback drain guard
 

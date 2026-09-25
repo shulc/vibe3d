@@ -214,7 +214,6 @@ private void command(string text)
         "command `" ~ text ~ "` failed: " ~ result.toString);
 }
 
-// One completed frame (card test-sleep-removal) replaces the fixed sleep.
 private void settle() { frameFence(); }
 
 private string viewportLine(CameraState camera)
@@ -469,7 +468,7 @@ private void assertIdleHandle(double[3] expected, string cell)
     assert(distance(vector(transformEval()["gizmoCenter"]), expected) <= 1e-5,
         "6207 " ~ cell ~ " handle must equal c+M*T after release");
     // Idle = frames with no input; the tool's idle update has no timer, so
-    // ten completed frames stand for the old 1 s (card test-sleep-removal).
+    // ten completed frames stand for the old 1 s.
     frameFence(null, 10);
     assert(distance(vector(transformEval()["gizmoCenter"]), expected) <= 1e-5,
         "6207 " ~ cell ~ " handle must remain at c+M*T after idle");
