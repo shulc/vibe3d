@@ -40,7 +40,7 @@
 module test_viewport_display;
 
 
-import http_client : testBaseUrl;
+import http_client : frameFence, testBaseUrl;
 import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
@@ -93,10 +93,11 @@ void postCommand(string cmd, string params = "") {
 
 // The probe reads the last COMPLETED frame (the HTTP bridge is serviced
 // before the scene render), so anything that changes the scene needs a frame
-// to land before it is visible to a probe.
+// to land before it is visible to a probe. That frame is a frame FENCE, not a
+// sleep (card test-sleep-removal): one completed frame after the request.
 void resetApp() {
     httpPost("/api/command", commandBody("scene.reset", "{}"));
-    Thread.sleep(400.msecs);
+    frameFence();
 }
 
 bool jsonBool(JSONValue j, string[] path...) {
@@ -302,7 +303,7 @@ bool testFlowC() {
     // ...and it is NOT a constant: moving the camera must change it. Without
     // this, a probe that silently returned zeros would pass C2 forever.
     httpPost("/api/camera", `{"azimuth":0.9,"elevation":0.4,"distance":7.5}`);
-    Thread.sleep(400.msecs);
+    frameFence();
     auto r3 = probe(0, "", true);
     enforce(r3.hash != r.hash,
         "the digest must change when the scene changes — the probe is "
@@ -429,7 +430,7 @@ bool testFlowE() {
         "the single cell must be rendered");
 
     postCommand("viewport.layout", "Quad");
-    Thread.sleep(400.msecs);
+    frameFence();
 
     auto j = displayDump();
     enforce(cast(int)jsonNum(j, "cellCount") == 4,
@@ -469,7 +470,7 @@ bool testFlowE() {
     writeln("    E3 PASS: all four cells carry state + both resolved plans");
 
     postCommand("viewport.layout", "Single");
-    Thread.sleep(200.msecs);
+    frameFence();
     return true;
 }
 
@@ -510,7 +511,7 @@ bool testFlowF() {
     // Add an empty layer: it becomes primary, so the cube demotes to a
     // background layer and now draws through the BACKDROP plan.
     postCommand("layer.add");
-    Thread.sleep(500.msecs);
+    frameFence();
 
     auto dump = displayDump()["cells"].array[0];
     immutable double planDim = jsonNum(dump, "plan", "backdrop", "dim");
@@ -584,7 +585,7 @@ void restoreDisplayDefaults() {
         } catch (Exception) { /* cell not in this layout */ }
     }
     try { postCommand("viewport.layout", "Single"); } catch (Exception) {}
-    Thread.sleep(250.msecs);
+    frameFence();
 }
 
 // --------------------------------------------------------------------------
@@ -649,12 +650,12 @@ void setSolidCamera(double azimuth) {
     httpPost("/api/camera", format(
         `{"azimuth":%.10f,"elevation":%.10f,"distance":%.10f}`,
         azimuth, kSolidEl, kSolidDist));
-    Thread.sleep(400.msecs);
+    frameFence();
 }
 
 void setStyle(string s) {
     postCommand("viewport.displayStyle", s);
-    Thread.sleep(400.msecs);
+    frameFence();
 }
 
 /// Largest per-channel spread over a set of samples — 0 means every sample is
@@ -705,7 +706,7 @@ string postCommandExpectingRefusal(string cmd, string paramsJson) {
 }
 
 string bufferHash(int cell = 0) {
-    Thread.sleep(500.msecs);          // let the change land in a completed frame
+    frameFence();          // let the change land in a completed frame
     auto j = parseJSON(httpGet(format("/api/viewport/probe?cell=%d&hash=1", cell)));
     enforce("hash" in j, "probe did not return a buffer digest: " ~ j.toString);
     return j["hash"].str;
@@ -783,10 +784,10 @@ bool testFlowG() {
             pts ~= format("%d,%d;", x, y);
 
     postCommand("viewport.displayStyle", "shaded");
-    Thread.sleep(400.msecs);
+    frameFence();
     auto shaded = probe(0, pts);
     postCommand("viewport.displayStyle", "wireframe");
-    Thread.sleep(400.msecs);
+    frameFence();
     auto wire = probe(0, pts);
     enforce(shaded.points.length == wire.points.length,
             "probe returned a different number of points for the two styles");
@@ -822,13 +823,13 @@ bool testFlowG() {
             "with both sides of the model on screen the facing term must "
             ~ "resolve off too");
         postCommand("viewport.displayStyle", "shaded");
-        Thread.sleep(400.msecs);
+        frameFence();
         auto svShaded = displayDump()["cells"].array[0]["selectVisibility"];
         enforce(jsonBool(svShaded, "occlusion"),
             "a shaded cell must resolve the occlusion term back ON — a policy "
             ~ "stuck at one value would make the wireframe row above vacuous");
         postCommand("viewport.displayStyle", "wireframe");
-        Thread.sleep(400.msecs);
+        frameFence();
     }
     writeln("    G1b PASS: selectVisibility = StyleAware, terms follow the style");
 
@@ -974,7 +975,7 @@ bool testFlowH() {
     // And the forcing relation: a lines-only surface with the overlay off is
     // not an empty viewport.
     postCommand("viewport.displayStyle", "wireframe");
-    Thread.sleep(300.msecs);
+    frameFence();
     auto pw = displayDump()["cells"].array[0]["plan"]["active"];
     enforce(jsonBool(pw, "drawWire"),
         "a lines-only surface style with the overlay set to None must still "
@@ -1015,7 +1016,7 @@ bool testFlowI() {
     postCommand("viewport.displayStyle", "shaded");
     postCommand("viewport.wireOverlay", "uniform");
     postCommand("viewport.wireAlpha", "1.0");
-    Thread.sleep(400.msecs);
+    frameFence();
     auto opaque = probe(0, pts);
 
     // The measurement set is defined BY the opaque image — the pixels the
@@ -1052,7 +1053,7 @@ bool testFlowI() {
 
     ProbeResult sampleAt(string alpha) {
         postCommand("viewport.wireAlpha", alpha);
-        Thread.sleep(400.msecs);
+        frameFence();
         return probe(0, pts);
     }
 
@@ -1145,7 +1146,7 @@ bool testFlowJ() {
     scope(exit) restoreDisplayDefaults();
 
     postCommand("viewport.layout", "Quad");
-    Thread.sleep(400.msecs);
+    frameFence();
     enforce(cast(int)jsonNum(displayDump(), "cellCount") == 4,
         "precondition: Quad must report four cells");
 
@@ -1176,7 +1177,7 @@ bool testFlowJ() {
     postCommandRaw("viewport.displayStyle",
         format(`{"_positional":["%s"],"viewport":2}`, wantId));
     postCommandRaw("viewport.wireAlpha", `{"_positional":[0.25],"viewport":2}`);
-    Thread.sleep(300.msecs);
+    frameFence();
 
     enforce(want != baseStyle[2],
         "the write must change cell 2, or this flow asserts nothing");
@@ -1208,7 +1209,7 @@ bool testFlowJ() {
     // silently land on the active cell — a test that quietly retargeted would
     // assert nothing.
     postCommand("viewport.layout", "Single");
-    Thread.sleep(300.msecs);
+    frameFence();
     auto msg = postCommandExpectingRefusal("viewport.displayStyle",
         `{"_positional":["wireframe"],"viewport":3}`);
     enforce(msg.length > 0, "the refusal must carry a message");
@@ -1579,7 +1580,7 @@ bool testFlowN() {
     // Demote the cube to a background layer: an added empty layer becomes
     // primary, so layer 0 (the cube) becomes visible-but-not-selected.
     postCommand("layer.add");
-    Thread.sleep(500.msecs);
+    frameFence();
 
     setStyle("shaded");    auto bgShaded = probe(0, pts).points;
     setStyle("wireframe"); auto bgWire   = probe(0, pts).points;
@@ -1622,7 +1623,7 @@ bool testFlowN() {
     // compared a frame against itself, N3 read 0 differences, and the "layers
     // vanished" failure it reported was the harness, not the renderer.
     postCommandRaw("layer.setVisible", `{"index":0,"value":false}`);
-    Thread.sleep(500.msecs);
+    frameFence();
     auto lay = parseJSON(httpGet("/api/layers"));
     enforce(!jsonBool(lay["layers"].array[0], "visible"),
         "precondition: layer 0 must actually be hidden — this flow's whole "
