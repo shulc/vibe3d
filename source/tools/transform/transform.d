@@ -1888,7 +1888,7 @@ protected:
                     import tools.create.create_common : planeLocalViewport;
                     import tools.transform.relocate_plane : orthoRelocateThroughPrior;
                     import math : transformPoint;
-                    auto frame = wf.isAuto ? primitiveParameterFrame() : wf;
+                    auto frame = primitiveParameterFrame();   // world identity unless pinned
                     Viewport l = planeLocalViewport(cachedVp, frame);
                     Vec3 o, d;
                     screenPointToRay(cast(float)sx, cast(float)sy, l, o, d);
