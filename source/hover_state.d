@@ -30,7 +30,7 @@ __gshared bool g_hoverIndexSpaceStale = false;
 /// under the cursor while a tool is armed. It is DATA — the rollover flag of
 /// the tool's policy (`ToolSessionPolicy.rollovers`) and of the pipe stages it
 /// runs with (`Stage.rollovers`), each from the captured flags table and the
-/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/310) — read by ONE
+/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/312) — read by ONE
 /// viewport path (`ui/viewport_render.d : rolloverShown`). WHICH elements are
 /// hovered is a separate question, the tool's pick need
 /// (`Tool.wantsHoverForType`): a tool that picks no type shows nothing
@@ -40,14 +40,14 @@ enum Rollover : ubyte {
     /// Polygon Bevel, Move, vertex Bevel — 0 px).
     none,
     /// The hovered target outside a drag, live edit or not (Edge Slice keeps
-    /// its target edge through a live chain, C-H7: 286 px).
+    /// its target edge through a live chain, C-H7: 286 px). A drag hides it:
+    /// the picker holds its drag-start index while the preview rebuilds the
+    /// edge array under it (the stale-alias rule of the viewport's edge pass).
     target,
-    /// As `target`, but hidden while an edit is live — a vibe3d divergence,
-    /// only for ids with no counterpart in the flags table.
-    untilLive,
-    /// Only a hovered VERTEX, outside a drag, in every selection mode: the
-    /// element falloff's flag (C-H7-elem: Element Move 36 px on a vertex, 0 on
-    /// an edge in edge and polygon mode).
+    /// Only a hovered VERTEX, in every selection mode: the element falloff's
+    /// flag (C-H7-elem: Element Move 36 px on a vertex, 0 on an edge in edge
+    /// and polygon mode). A drag keeps it — the element picked at drag start
+    /// stays lit, as before the slice (not captured; gap 382).
     vertices,
 }
 
@@ -57,8 +57,7 @@ bool rolloverDraws(Rollover r, EditMode type, bool dragging, bool live)
     final switch (r) {
         case Rollover.none:      return false;
         case Rollover.target:    return !dragging;
-        case Rollover.untilLive: return !dragging && !live;
-        case Rollover.vertices:  return !dragging && type == EditMode.Vertices;
+        case Rollover.vertices:  return type == EditMode.Vertices;
     }
 }
 

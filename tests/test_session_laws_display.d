@@ -5,7 +5,7 @@
 // H7 — PIXELS, because a draw-call census cannot see a highlight: the absolute
 // difference of two frames (pointer off the mesh / pointer on the target),
 // counted over a square box around the target — not a colour classifier (the
-// trap of task 6207). Captured (toolcards/tool_session_model/, gap 309/310):
+// trap of task 6207). Captured (toolcards/tool_session_model/, gap 309/312):
 //   C-H7       Slice, Edge Extend, Polygon Bevel armed: 0; Edge Slice > 0;
 //              no tool > 0 (edge mode 286 px, polygon mode 2606 px).
 //   C-H7-vert  vertex mode: Move and vertex Bevel 0; no tool > 0 (36 px).
@@ -255,7 +255,7 @@ unittest { // Magnet: no rollover flag in the table — its hovered vertex is no
 
 unittest { // Tack: no counterpart — the face it aims at stays drawn (carried)
     immutable size_t n = cellPx("polygon", "mesh.tack", kE, "face");
-    assert(n > 0, "tack (untilLive, no counterpart): the hovered face is no longer drawn");
+    assert(n > 0, "tack (target, carried: no counterpart): the hovered face is no longer drawn");
 }
 
 // ---------------------------------------------------------------------------

@@ -246,7 +246,7 @@ public:
     // With no tool armed the selection type decides (the branches below). With
     // one, the hovered element of `type` is drawn iff the tool's policy flag or
     // a flag of its pipe's stages draws it (`hover_state.rolloverDraws`: none /
-    // target / untilLive / vertices; C-H7, C-H7-vert, C-H7-elem, gap 309/310).
+    // target / vertices; C-H7, C-H7-vert, C-H7-elem, gap 309/312).
     // Which elements are hovered at all is the tool's pick need, not this.
     bool rolloverShown(EditMode type) {
         if (activeTool is null) return true;

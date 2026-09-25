@@ -335,7 +335,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Wght; }
 
     /// H7 (slice M6): the element falloff carries the rollover flag and it
-    /// highlights a VERTEX only, in every selection mode (C-H7-elem, gap 310;
+    /// highlights a VERTEX only, in every selection mode (C-H7-elem, gap 312;
     /// the flags table: Element Move's flag is on its centre and falloff nodes,
     /// not on its transform node). Keyed like the transform tool's element pick
     /// (`XfrmTransformTool.wantsHoverForType`): on the falloff TYPE.

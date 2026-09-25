@@ -309,10 +309,10 @@ public:
     override ToolFlag flags() const { return ToolFlag.HoverPolygons; }
 
     // H7 (slice M6): no counterpart in the flags table; the hovered face it
-    // aims at stays drawn, as before the slice (a vibe3d divergence, recorded
-    // in the policy table). It holds no live edit, so the rule is `target`'s.
+    // aims at stays drawn, as before the slice (carried, recorded in the
+    // policy table).
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        static immutable ToolSessionPolicy policy = { rollovers: Rollover.untilLive };
+        static immutable ToolSessionPolicy policy = { rollovers: Rollover.target };
         return policy;
     }
 

@@ -557,8 +557,8 @@ static assert(!__traits(compiles, { import hover_state : TargetHighlightKeeper; 
 static assert(__traits(isVirtualMethod, Tool.handleAnchorPoint));
 
 /// The ids with no mapped counterpart (or an unsure one) keep their pre-M6
-/// highlight as a named divergence (plan R4.1): only the tack draws one.
-private immutable string[] kUntilLiveIds = ["mesh.tack"];
+/// highlight, carried (plan R4.1): of the four only the tack draws one.
+private immutable string[] kCarriedTargetIds = ["mesh.tack"];
 
 /// A flags-table stage flag this tree does not carry, with its reason: our
 /// compat preset `move.element` has no element falloff (the table maps it to
@@ -577,7 +577,7 @@ unittest { // (6) id -> rollovers, over every registered id
     assert(flags.length == kTable.length,
            format("M6 rollover table: %s flag rows for %s registered ids", flags.length,
                   kTable.length));
-    size_t[4] perValue;
+    size_t[3] perValue;
     string[] targetIds, stageIds, carried;
     foreach (i, row; kTable) {
         const f = flags[i];
@@ -588,16 +588,17 @@ unittest { // (6) id -> rollovers, over every registered id
         immutable bool actor = f["actor"].type == JSONType.true_;
         immutable string mapping = f["mapping"].str;
         Rollover want = actor ? Rollover.target : Rollover.none;
-        if (kUntilLiveIds.canFind(row.id)) {
+        if (kCarriedTargetIds.canFind(row.id)) {
             assert(mapping != "mapped" && !actor,
-                   "M6 rollover table: untilLive is for an id with no counterpart, not " ~ row.id);
-            want = Rollover.untilLive;
+                   "M6 rollover table: a carried flag is for an id with no counterpart, not "
+                   ~ row.id);
+            want = Rollover.target;
         }
         assert(pol.rollovers == want,
                format("M6 rollover table: %s (%s) rollovers %s, the flags table says %s (%s)",
                       row.id, row.cls, pol.rollovers, want, mapping));
         ++perValue[pol.rollovers];
-        if (actor) targetIds ~= row.id;
+        if (actor || kCarriedTargetIds.canFind(row.id)) targetIds ~= row.id;
         if (f["stage"].type == JSONType.true_) {
             stageIds ~= row.id;
             // The flag of a pipe node: carried here by the element falloff the
@@ -613,16 +614,16 @@ unittest { // (6) id -> rollovers, over every registered id
     }
     sort(targetIds); sort(stageIds); sort(carried);
     // Population floors (measured on the M6 tree, from the fixture).
-    assert(targetIds == ["mesh.dragWeld", "mesh.edgeSliceTool", "mesh.topoPen", "pen",
-                         "prim.vertex"],
-           format("M6 rollover table: the actor flag is on %s", targetIds));
+    assert(targetIds == ["mesh.dragWeld", "mesh.edgeSliceTool", "mesh.tack", "mesh.topoPen",
+                         "pen", "prim.vertex"],
+           format("M6 rollover table: the target flag is on %s", targetIds));
     assert(stageIds == ["ElementMove", "move.element", "xfrm.elementMove"]
            && carried == ["ElementMove", "xfrm.elementMove"],
            format("M6 rollover table: stage flag on %s, carried by the element falloff on %s",
                   stageIds, carried));
-    assert(perValue == [64, 5, 1, 0],
-           format("M6 rollover table: none/target/untilLive/vertices on %s ids, recorded "
-                  ~ "64/5/1/0", perValue));
+    assert(perValue == [64, 6, 0],
+           format("M6 rollover table: none/target/vertices on %s ids, recorded 64/6/0",
+                  perValue));
 }
 
 unittest { // (6b) the element falloff is the stage that carries the vertex flag
