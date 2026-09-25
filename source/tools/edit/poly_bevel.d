@@ -866,11 +866,14 @@ public:
         freeLockAxis = PART_INSET; freeShiftPerPixel = 18;
         freeInsetPerPixel = 19; cachedVp.view[0] = 20;
         before = MeshSnapshot.capture(oldMesh); preview_.seedForTest(oldMesh);
+        opApplied_ = true; opIndex_ = 2; previewOp_ = 5;   // a stale window (review R2)
+        opBases_ = [MeshSnapshot.capture(oldMesh), MeshSnapshot.capture(oldMesh)];
     }
     version(unittest) final bool preparedActivationDirtyForTest() const
             nothrow @nogc {
         return !active && built && dragPart == 9 && inset_ == 7 && shift_ == 8 &&
             !group_ && segments_ == 3 && square_ && !gizmoValid &&
+            opApplied_ && opIndex_ == 2 && opBases_.length == 2 && previewOp_ == 5 &&
             anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
             shiftAxis == Vec3(7,8,9) && insetAxis == Vec3(10,11,12) &&
             gizmoSelHash == 13 && preview_.dirtyForTest();
@@ -880,6 +883,7 @@ public:
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedShift,
             Vec3 expectedInset, ulong expectedHash) const nothrow @nogc {
         return active && !built && dragPart == -1 && inset_ == 0 && shift_ == 0 &&
+            !opApplied_ && opIndex_ == 0 && opBases_.length == 0 && previewOp_ == -1 &&
             !group_ && segments_ == 3 && square_ && before.filled &&
             before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first &&
