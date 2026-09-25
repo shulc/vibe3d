@@ -827,14 +827,14 @@ private enum string[] kPinnedToolInterfaces = [
 ];
 
 private enum string[] kToolComposition = toolClassComposition();
-static assert(kToolComposition.length == 48 + 1 + kPinnedToolInterfaces.length,
-    format("M7 tool pin: %s entries (48 classes + | + %s interfaces measured)",
-           kToolComposition.length, kPinnedToolInterfaces.length));
-static assert(kToolComposition[49 .. $] == kPinnedToolInterfaces,
-    "M7 tool pin: the concrete tool classes implement [" ~ kToolComposition[49 .. $].join(", ")
+private enum size_t kToolBar = () { foreach (i, n; kToolComposition) if (n == "|") return i; assert(0); }();
+static assert(kToolComposition[kToolBar + 1 .. $] == kPinnedToolInterfaces,
+    "M7 tool pin: the concrete tool classes implement [" ~ kToolComposition[kToolBar + 1 .. $].join(", ")
     ~ "], pinned [" ~ kPinnedToolInterfaces.join(", ") ~ "]: express a per-tool capability as "
     ~ "ToolSessionPolicy data or a Tool operation (doc/tool_session_model_plan_2026-09-24.md), "
     ~ "not a new interface");
+// Population floor: the pin read the 48 classes block (8) scans.
+static assert(kToolBar == 48, "M7 tool pin: read concrete tool classes, measured 48");
 
 unittest { // (9) the compile-time module list IS the runtime scan
     bool[string] mods, classes, ifaces;
@@ -852,9 +852,9 @@ unittest { // (9) the compile-time module list IS the runtime scan
     assert(mods.keys.sort.array == kToolClassModules,
            format("M7 tool pin: tool modules with a concrete class %s, pinned list %s",
                   mods.keys.sort, kToolClassModules));
-    assert(classes.keys.sort.array == kToolComposition[0 .. 48],
+    assert(classes.keys.sort.array == kToolComposition[0 .. kToolBar],
            format("M7 tool pin: runtime classes %s, compile-time %s", classes.keys.sort,
-                  kToolComposition[0 .. 48]));
+                  kToolComposition[0 .. kToolBar]));
     assert(ifaces.keys.sort.array == kPinnedToolInterfaces,
            format("M7 tool pin: runtime interfaces %s, pinned %s", ifaces.keys.sort,
                   kPinnedToolInterfaces));
