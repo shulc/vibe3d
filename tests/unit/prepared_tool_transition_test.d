@@ -779,7 +779,18 @@ private class PlainOutgoingDoorTool : Tool, PreparedToolDoorClient {
     }
 }
 
+/// An incoming tool whose session owns its steps (the cutting tools, Edge
+/// Extend): its row's redo is the §22 one.
+private class StepsDoorTool : TestPreparedDoorTool {
+    this(size_t* calls) { super(false, calls); }
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true, sessionSteps: true };
+        return policy;
+    }
+}
+
 private struct SwitchUndoTrace {
+    size_t redoAfterUndo;
     string previousId;
     size_t activationRows;
     string activated;
@@ -789,7 +800,7 @@ private struct SwitchUndoTrace {
 
 // Switch from `outgoing` (registered as `outgoingId`) to a classified
 // emitter candidate, then undo the one activation row the switch recorded.
-private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId) {
+private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId, bool stepsIncoming = false) {
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
     g_pipeCtx = null;
@@ -814,7 +825,8 @@ private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId) {
     JSONValue args = JSONValue.emptyObject;
     SwitchUndoTrace tr;
     size_t calls;
-    ToolFactory factory = () => new TestPreparedDoorTool(false, &calls);
+    ToolFactory factory = () => stepsIncoming ? new StepsDoorTool(&calls)
+                                              : new TestPreparedDoorTool(false, &calls);
     PreparedArm arm = prepareArm(factory, "test.incoming", outgoing, history,
         observers, layer, pipeline, attrs, host, args, pose, 17, 23,
         &layer.meshRef(), view, mode, outgoingId,
@@ -832,6 +844,7 @@ private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId) {
         }
     if (tr.activationRows != 1) return tr;
     assert(history.undo(), "switch rig: the activation row did not undo");
+    tr.redoAfterUndo = history.redoEntries().length;
     return tr;
 }
 
@@ -852,4 +865,15 @@ unittest { // P3: an emitter predecessor keeps the same shape (onActivate)
     assert(tr.previousId == "test.emitter" && tr.activated == "test.emitter"
         && !tr.deactivated,
         "an emitter predecessor's restore changed shape");
+}
+
+unittest { // review of M4: the redo of a sessionSteps row survives its undo only over a
+    import std.format : format;
+           // predecessor that writes no activation row (§22 / gap 205 scope, unchanged)
+    size_t calls;
+    auto plain = switchThenUndo(new PlainOutgoingDoorTool, "test.plain", true);
+    auto emitter = switchThenUndo(new TestPreparedDoorTool(false, &calls), "test.emitter", true);
+    assert(plain.redoAfterUndo == 1 && emitter.redoAfterUndo == 0,
+           format("M4 review: redo after undo — over an unclassified predecessor %s (want 1), over a "
+                  ~ "row-writing one %s (want 0)", plain.redoAfterUndo, emitter.redoAfterUndo));
 }

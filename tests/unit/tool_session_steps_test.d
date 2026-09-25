@@ -870,7 +870,9 @@ unittest { // M4 pair, boundary (not captured): with its session gone, a record 
 unittest { // M4 review: a pair whose row refuses its undo is reported, the record's step stands
     Mesh m = makeCube();
     static final class RefusingRow : ToolActivationCommand {
-        this(Mesh* m, View v) { super(m, v, EditMode.Vertices, "t.carry", "", true, true, true, 5); }
+        // A predecessor of the same id with another token: a split pair must
+        // not hand it over (the row was NOT undone).
+        this(Mesh* m, View v) { super(m, v, EditMode.Vertices, "t.carry", "t.carry", true, true, true, 5, 9); }
         protected override void revertImpl() { failRevert("refused (test)"); }
     }
     auto r = rig();
@@ -885,6 +887,8 @@ unittest { // M4 review: a pair whose row refuses its undo is reported, the reco
     assert(r.history.undoEntries().length == 0 && r.history.redoEntries().length == 1 && r.active is t,
            format("M4 split pair: undo %s, redo %s", r.history.undoEntries().length,
                   r.history.redoEntries().length));
+    assert(tokenOf(r) == 5, format("M4 split pair: the refused row's predecessor token was adopted: %s",
+                                   tokenOf(r)));
 }
 
 unittest { // M4 review: a key-door row over an UNCLASSIFIED predecessor keeps its redo (§22)
