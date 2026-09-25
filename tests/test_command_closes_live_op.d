@@ -321,3 +321,25 @@ unittest { // MV-R: the re-arm is a FRESH run — the panel's channels start fro
            "move [: the transform did not re-arm in place after the command (TX kept "
            ~ JSONValue(t1).toString ~ ")");
 }
+
+unittest { // MV-LA: `layer.attr` through the UI door CONTINUES the transform run
+    // (the Layers panel's rows, the carve-out shared with the drop rule): the
+    // run is not closed, so the haul's channels are not reset by a re-arm.
+    moveLive();
+    slLine("tool.set TransformMove on");
+    Thread.sleep(300.msecs);
+    ssh.haul([0.5, -0.3, 0.5], 8, 0, 5);
+    auto t0 = getJson("/api/tool/state")["values"]["t"].array;
+    assert(abs(t0[0].floating) > 1e-3, "MV-LA floor: the haul wrote no TX");
+    const L0 = slHistoryLabels();
+    auto r = postJson("/api/command?origin=ui", "layer.attr 0 pos.y 0.25");
+    assert(r["status"].str == "ok", "MV-LA floor: the UI layer.attr failed: " ~ r.toString);
+    assert(slHistoryLabels().length == L0.length + 1,
+           format("MV-LA floor: layer.attr is not a recording command here: %s", addedSince(L0)));
+    auto st = getJson("/api/tool/state");
+    assert(st["tool"].str == "xfrm", "MV-LA: the UI layer.attr dropped the transform");
+    auto t1 = st["values"]["t"].array;
+    assert(abs(t1[0].floating - t0[0].floating) < 1e-6,
+           "move layer.attr: the Layers-panel command closed the transform run (channels reset "
+           ~ JSONValue(t0).toString ~ " -> " ~ JSONValue(t1).toString ~ ")");
+}

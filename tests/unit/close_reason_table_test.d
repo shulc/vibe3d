@@ -10,6 +10,7 @@
 // (3) The written-row account (C2): a close marks the row it WROTE — by the
 //     undo top's identity — and nothing when it wrote none, for a command
 //     close and for a door close alike.
+// (5) `endsLiveEditBeforeUiCommand`: which UI commands close a live operation.
 // (4) The resume, through the production `CommandExecutor` wired to the
 //     production `EditSession` exactly as `app.d` wires them (C3): it runs
 //     after the command recorded, once, only from the non-reentrant frame,
@@ -17,7 +18,7 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/close_reason_table_test.d
 module tests.unit.close_reason_table_test;
 
-import command : CmdFlags, Command;
+import command : CmdFlags, Command, endsLiveEditBeforeUiCommand;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
@@ -118,6 +119,36 @@ private class CountingTool : Tool {
         ++resumeCalls;
         if (log !is null) *log ~= "resume";
     }
+}
+
+// ---- (5) the UI-door predicate ------------------------------------------------------
+
+unittest {
+    struct P { string id; CmdFlags flags; bool closes; }
+    immutable P[] rows = [
+        P("mesh.hide",            CmdFlags.UiState, true),
+        P("select.invert",        CmdFlags.Model,   true),
+        P("mesh.flip",            CmdFlags.Model,   true),
+        P("mesh.delete",          CmdFlags.Model,   true),
+        P("mesh.subpatch_toggle", CmdFlags.Model,   true),
+        P("layer.select",         CmdFlags.UiState, true),
+        P("viewport.fit",         CmdFlags.SideEffect, false),
+        P("falloff.set",          CmdFlags.SideEffect, false),
+        P("mesh.quiet",           cast(CmdFlags)(CmdFlags.Model | CmdFlags.UndoSuppress), false),
+        P("tool.doApply",         CmdFlags.Model,   false),
+        P("history.undo",         CmdFlags.Model,   false),
+        P("scene.reset",          CmdFlags.Model,   false),
+        P("file.new",             CmdFlags.Model,   false),
+        P("layer.attr",           CmdFlags.Model,   false),
+    ];
+    size_t n;
+    foreach (r; rows) {
+        assert(endsLiveEditBeforeUiCommand(new StubCommand(r.id, r.flags)) == r.closes,
+               format("M2 UI-door predicate: %s (%s) closes=%s, expected %s", r.id, r.flags,
+                      !r.closes, r.closes));
+        ++n;
+    }
+    assert(n == 14, format("M2 UI-door predicate: %s rows, expected 14", n));
 }
 
 // ---- (2) the routine ------------------------------------------------------------
@@ -316,6 +347,16 @@ unittest {
     assert(ex.applyOrRefireFromUi(dropper, RecordMode.Record, null));
     assert(held is null && t3.resumeCalls == 0,
            format("M2 funnel: a dropped tool was resumed: %s", log));
+
+    // A tool that does not close on commands (`none`) meeting a UiState UI
+    // command: the funnel's old rule — nothing happens to it.
+    log = null;
+    auto quiet = new CountingTool(CommandClose.none, true, &log);
+    held = quiet;
+    drops = 0;
+    assert(ex.applyOrRefireFromUi(new StubCommand("mesh.hide", CmdFlags.UiState), RecordMode.Record, null));
+    assert(held is quiet && drops == 0 && quiet.commitCalls == 0,
+           format("M2 funnel: a UiState UI command changed a `none` tool's path: drops %s", drops));
 
     // A command that REPLACES the tool while it applies (no drop door ran):
     // the closed tool's resume must not reach its successor.
